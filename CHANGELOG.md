@@ -9,6 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`RegistryCatalog` + `SupportsRegistryCataloging` protocol — a
+  discoverability layer over every registry in the process** (Stage 2 of
+  the multiple-dispatch plan from PR #184; builds on PR #204).  A new
+  global `probpipe.registry_catalog` singleton indexes every built-in
+  registry by name (`"inference"`, `"converters"`, `"bijectors"`),
+  exposes a uniform `describe(name)` / `list()` / `names()` surface, and
+  prints a terminal-friendly table at the REPL and an HTML table in
+  Jupyter.  Two new methods on `BaseDispatchRegistry` —
+  `method_summaries() -> list[MethodSummary]` and `describe_method(name)
+  -> MethodSummary` — carry the rich introspection the catalog uses;
+  `list_methods() -> list[str]` is unchanged.  Non-conforming registries
+  (`ConverterRegistry` and the new bijector facade `bijector_registry`)
+  satisfy the protocol via small adapter additions; their dispatch
+  behaviour is unchanged.  Re-exported at the top level:
+  `probpipe.registry_catalog`, `probpipe.MethodSummary`,
+  `probpipe.RegistryInfo`, `probpipe.SupportsRegistryCataloging`.
+
 - **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
   control.** Three modes are available: `FULL` retains live references to every
   parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
@@ -35,6 +52,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **`BaseDispatchRegistry.__init__` accepts optional keyword-only
+  `name`, `description`, and `register_in_catalog` parameters
+  (back-compatible).** Construction without arguments still works
+  unchanged — a bare `UnaryDispatchRegistry()` / `BinaryDispatchRegistry()`
+  has an empty `self.name` and does not register in
+  `registry_catalog`. Passing `name="..."` opts the registry into the
+  catalog automatically; pass `register_in_catalog=False` to construct
+  a named but isolated registry (used by tests that exercise catalog
+  round-trips without polluting the global singleton).  `kind: ClassVar[str]
+  = "dispatch"` is now defined on `BaseDispatchRegistry` and inherited
+  by `UnaryDispatchRegistry` / `BinaryDispatchRegistry`.
+
+### Internal
+
+- **Docstring re-flow on `BaseDispatchRegistry.set_priorities`.** Carried
+  over from a follow-up that didn't make it into PR #204: the "Overrides
+  also" paragraph in the class docstring is re-flowed so the second
+  sentence reads continuously (no semantic change).
 
 - **Adopt `ruff format` for code formatting.** Formatting is now owned by
   `ruff format` (Black-style) rather than the previous manual horizontal-packing

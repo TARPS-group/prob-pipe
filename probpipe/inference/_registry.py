@@ -21,5 +21,8 @@ __all__ = ["InferenceMethod", "inference_method_registry"]
 InferenceMethod = UnaryDispatchMethod
 
 # The singleton registry — a plain UnaryDispatchRegistry, no subclass
-# needed.
-inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = UnaryDispatchRegistry()
+# needed.  Named so it auto-registers in the global registry catalog.
+inference_method_registry: UnaryDispatchRegistry[UnaryDispatchMethod] = UnaryDispatchRegistry(
+    name="inference",
+    description="Inference-method dispatch for condition_on.",
+)

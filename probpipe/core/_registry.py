@@ -32,7 +32,10 @@ from __future__ import annotations
 import warnings
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any, ClassVar
+
+if TYPE_CHECKING:
+    from ._registry_catalog import MethodSummary
 
 __all__ = [
     "OPT_IN_ONLY_PRIORITY",
@@ -77,7 +80,15 @@ class BaseDispatchMethod(ABC):
     ``check``/``execute``.  The ``supported_types`` method is **not**
     defined here — its return shape is arity-dependent and is declared
     by :class:`UnaryDispatchMethod` and :class:`BinaryDispatchMethod`.
+
+    An optional ``description`` class attribute (default ``""``) lets a
+    concrete method carry a one-line blurb that surfaces in
+    :class:`~probpipe.core._registry_catalog.MethodSummary` records used
+    by the registry catalog.
     """
+
+    #: Optional one-line description shown in catalog summaries.
+    description: ClassVar[str] = ""
 
     @property
     @abstractmethod
@@ -207,18 +218,91 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     methods at runtime (for example, demote ``blackjax_nuts`` for an
     environment where the JAX compilation tax outweighs its per-step
     speed advantage) without forking and re-registering the method
-    class.  Overrides also
-    provide the supported escape hatch for moving a method into or out
-    of opt-in-only status — a transition that emits a
-    :class:`UserWarning` because it changes whether the method
-    participates in auto-dispatch at all.
+    class.  Overrides also provide the supported escape hatch for
+    moving a method into or out of opt-in-only status — a transition
+    that emits a :class:`UserWarning` because it changes whether the
+    method participates in auto-dispatch at all.
+
+    Catalog integration
+    -------------------
+    A dispatch registry constructed with a non-empty ``name`` self-registers
+    in the global :data:`~probpipe.core._registry_catalog.registry_catalog`
+    so it can be discovered via
+    ``probpipe.registry_catalog["<name>"]``.  The default for
+    ``register_in_catalog`` is derived from whether a ``name`` was
+    supplied; passing ``register_in_catalog=False`` opts out explicitly
+    (used by tests that want isolated registries).
+
+    Two read APIs live on the registry:
+
+    - :meth:`list_methods` returns the priority-ordered ``list[str]`` of
+      method names.  This is the dispatch-side convenience that callers
+      pass back as ``method="..."``; existing tutorial notebooks and
+      tests depend on this shape.
+    - :meth:`method_summaries` returns ``list[MethodSummary]`` — the
+      rich introspection records the catalog renders in
+      ``describe(name)``.  This is the surface satisfying
+      :class:`~probpipe.core._registry_catalog.SupportsRegistryCataloging`.
     """
 
-    def __init__(self) -> None:
+    #: Catalog ``kind`` for dispatch registries.  Subclasses inherit.
+    kind: ClassVar[str] = "dispatch"
+
+    def __init__(
+        self,
+        *,
+        name: str | None = None,
+        description: str = "",
+        register_in_catalog: bool | None = None,
+    ) -> None:
+        """Create a registry, optionally registering it in the catalog.
+
+        Parameters
+        ----------
+        name
+            Identifier used as the catalog key.  ``None`` (the default)
+            constructs an *unnamed* registry that does not appear in the
+            catalog; this preserves the bare ``UnaryDispatchRegistry()``
+            / ``BinaryDispatchRegistry()`` call form used throughout the
+            test suite.
+        description
+            One-line human-readable purpose statement, shown in catalog
+            descriptions.
+        register_in_catalog
+            ``None`` (default) → auto-derived as ``name is not None``.
+            ``True`` requires a non-empty *name* or :class:`ValueError`
+            is raised.  ``False`` skips catalog registration even when a
+            name was given (used to construct named registries for
+            catalog-round-trip tests without polluting the global
+            singleton).
+
+        Raises
+        ------
+        ValueError
+            If ``register_in_catalog`` is ``True`` but no ``name`` was
+            supplied.
+        """
+        if register_in_catalog is None:
+            register_in_catalog = name is not None
+        if register_in_catalog and not name:
+            raise ValueError(
+                "Cannot register a registry in the catalog without a name; "
+                "either pass name='...' or set register_in_catalog=False."
+            )
+        self.name: str = name or ""
+        self.description: str = description
         self._methods: list[M] = []
         self._name_index: dict[str, M] = {}
         self._priority_overrides: dict[str, int] = {}
         self._type_cache: dict[Any, list[M]] = {}
+        if register_in_catalog:
+            # Lazy import: the catalog imports OPT_IN_ONLY_PRIORITY from
+            # this module, so doing the import in-function keeps
+            # _registry_catalog -> _registry as the only module-load-time
+            # edge.
+            from ._registry_catalog import registry_catalog
+
+            registry_catalog.register(self)
 
     # -- registration -------------------------------------------------------
 
@@ -311,8 +395,74 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             raise KeyError(f"No method named {name!r}. Available: {available}") from None
 
     def list_methods(self) -> list[str]:
-        """Return method names in priority order (highest first)."""
+        """Return method names in priority order (highest first).
+
+        This is the dispatch-side convenience: each returned string is a
+        valid value for ``method="..."`` in :meth:`check` / :meth:`execute`.
+        For richer per-method introspection (priority, supported types,
+        module path) use :meth:`method_summaries`.
+        """
         return [m.name for m in self._methods]
+
+    def method_summaries(self) -> list[MethodSummary]:
+        """Return one :class:`MethodSummary` per registered method.
+
+        Walks the methods in priority order (matching
+        :meth:`list_methods`).  Each summary carries the method's
+        effective priority (override-aware), its
+        :meth:`~UnaryDispatchMethod.supported_types` result, the
+        :attr:`BaseDispatchMethod.description` if any, and the
+        ``type(method).__module__`` for source-navigation in tooling.
+
+        Surface targeted by
+        :class:`~probpipe.core._registry_catalog.SupportsRegistryCataloging`.
+        """
+        # Local import: the catalog module imports from this module, so
+        # keeping this import lazy prevents a load-order cycle.
+        from ._registry_catalog import MethodSummary
+
+        # ``supported_types`` is declared abstractly on
+        # ``UnaryDispatchMethod`` and ``BinaryDispatchMethod`` rather
+        # than on ``BaseDispatchMethod`` (its return shape is
+        # arity-dependent).  At runtime every instantiable method is one
+        # of those two; the access is safe.  Suppress the static-check
+        # complaint here rather than weakening the base class.
+        return [
+            MethodSummary(
+                name=m.name,
+                priority=self._effective_priority(m),
+                supported_types=m.supported_types(),  # type: ignore[attr-defined]
+                description=type(m).description,
+                module_path=type(m).__module__,
+            )
+            for m in self._methods
+        ]
+
+    def describe_method(self, name: str) -> MethodSummary:
+        """Return the :class:`MethodSummary` for the named method.
+
+        Raises
+        ------
+        KeyError
+            If *name* is not registered.  The error message lists the
+            available names.
+        """
+        from ._registry_catalog import MethodSummary
+
+        try:
+            m = self._name_index[name]
+        except KeyError:
+            available = ", ".join(sorted(self._name_index)) or "(none)"
+            raise KeyError(f"No method named {name!r}. Available: {available}") from None
+        # See ``method_summaries`` for the rationale behind the
+        # ``# type: ignore`` on the ``supported_types`` access.
+        return MethodSummary(
+            name=m.name,
+            priority=self._effective_priority(m),
+            supported_types=m.supported_types(),  # type: ignore[attr-defined]
+            description=type(m).description,
+            module_path=type(m).__module__,
+        )
 
     def _is_auto_dispatchable(self, m: M) -> bool:
         """True if *m* participates in auto-dispatch.
