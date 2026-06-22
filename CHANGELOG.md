@@ -22,8 +22,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`quantile` op and `SupportsQuantile` protocol.** `quantile(dist, q)` returns
   per-field quantile(s) at probability level(s) `q`, parallel to
   `mean`/`variance`/`cov`. `RecordEmpiricalDistribution` implements it
-  weight-aware: `jnp.quantile` (type-7) for uniform weights, a midpoint-CDF
-  (Hazen) weighted quantile otherwise.
+  weight-aware via the midpoint-CDF (Hazen, type-5) quantile, used for both
+  uniform and non-uniform weights so the estimator is continuous in the
+  weights.
 
 - **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
   control.** Three modes are available: `FULL` retains live references to every

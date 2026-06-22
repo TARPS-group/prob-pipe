@@ -26,13 +26,16 @@ def _np_weighted_quantile(values, weights, qs):
 
 
 class TestQuantileOp:
-    def test_uniform_matches_jnp_quantile(self):
+    def test_uniform_matches_numpy_hazen(self):
         samples = jax.random.normal(jax.random.PRNGKey(0), (1000,))
         emp = EmpiricalDistribution(samples, name="x")
-        q = jnp.array([0.1, 0.5, 0.9])
-        # Uniform weights → exactly jnp.quantile along the sample axis.
+        q = np.array([0.1, 0.5, 0.9])
+        # Uniform weights use the same type-5 (Hazen) convention as the weighted
+        # path — not jnp.quantile's type-7 — so the two paths stay consistent.
         np.testing.assert_allclose(
-            np.asarray(quantile(emp, q)), np.asarray(jnp.quantile(samples, q)), atol=1e-5
+            np.asarray(quantile(emp, jnp.asarray(q))),
+            np.quantile(np.asarray(samples), q, method="hazen"),
+            atol=1e-5,
         )
 
     def test_scalar_q_returns_scalar_shape(self):
@@ -78,10 +81,11 @@ class TestQuantileOp:
         # (n, 2) samples, q a 3-vector → per-field quantile shape (3, 2).
         samples = jax.random.normal(jax.random.PRNGKey(4), (1000, 2))
         emp = EmpiricalDistribution(samples, name="z")
-        out = np.asarray(quantile(emp, jnp.array([0.25, 0.5, 0.75])))
+        q = np.array([0.25, 0.5, 0.75])
+        out = np.asarray(quantile(emp, jnp.asarray(q)))
         assert out.shape == (3, 2)
         np.testing.assert_allclose(
-            out, np.asarray(jnp.quantile(samples, jnp.array([0.25, 0.5, 0.75]), axis=0)), atol=1e-5
+            out, np.quantile(np.asarray(samples), q, axis=0, method="hazen"), atol=1e-5
         )
 
     def test_raises_on_unsupported_distribution(self):

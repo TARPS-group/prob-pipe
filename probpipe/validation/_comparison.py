@@ -76,6 +76,10 @@ def _sample_cov(d: Array) -> Array:
     return (centered.T @ centered) / (d.shape[0] - 1)
 
 
+class _MissingReference(ValueError):
+    """A metric's required reference pieces are absent from the :class:`Reference`."""
+
+
 @dataclass(frozen=True)
 class Reference:
     """A reference posterior to score an approximation against.
@@ -127,13 +131,16 @@ class Reference:
             score_fn=score_fn,
         )
 
-    def _require(self, *names: str) -> None:
-        missing = [n for n in names if getattr(self, n) is None]
-        if missing:
-            raise ValueError(
-                f"this metric needs reference {', '.join(missing)}; the Reference "
-                f"carries only {[k for k in ('mean', 'cov', 'draws', 'score_fn') if getattr(self, k) is not None]}"
-            )
+
+def _require(ref: Reference, *names: str) -> None:
+    """Raise :class:`_MissingReference` if *ref* is missing any named piece."""
+    missing = [n for n in names if getattr(ref, n) is None]
+    if missing:
+        present = [k for k in ("mean", "cov", "draws", "score_fn") if getattr(ref, k) is not None]
+        raise _MissingReference(
+            f"this metric needs reference {', '.join(missing)}; "
+            f"the Reference carries only {present}"
+        )
 
 
 # -- moment metrics ---------------------------------------------------------
@@ -147,7 +154,7 @@ def standardized_mean_error(approx: Any, ref: Reference) -> Array:
     reported in units of reference posterior standard deviations. Computed as
     ``‖L⁻¹(μ̂ − μ_ref)‖₂`` with ``L = chol(Σ_ref)``.
     """
-    ref._require("mean", "cov")
+    _require(ref, "mean", "cov")
     mu_hat = _as_draws(approx).mean(axis=0)
     diff = mu_hat - ref.mean
     chol = jnp.linalg.cholesky(ref.cov)
@@ -163,7 +170,7 @@ def relative_cov_error(approx: Any, ref: Reference) -> Array:
     worst-direction variance-ratio error. ``Σ_ref⁻¹ Σ̂`` is formed by a Cholesky
     solve.
     """
-    ref._require("cov")
+    _require(ref, "cov")
     cov_hat = _sample_cov(_as_draws(approx))
     chol = jnp.linalg.cholesky(ref.cov)
     whitened = jax.scipy.linalg.cho_solve((chol, True), cov_hat)  # Σ_ref⁻¹ Σ̂
@@ -178,7 +185,7 @@ def std_ratios(approx: Any, ref: Reference) -> Array:
     :func:`relative_cov_error` subsumes it. A reference coordinate with zero
     variance yields ``inf`` for that ratio.
     """
-    ref._require("cov")
+    _require(ref, "cov")
     var_hat = jnp.diag(_sample_cov(_as_draws(approx)))
     var_ref = jnp.diag(ref.cov)
     return jnp.sqrt(var_hat / var_ref)
@@ -318,24 +325,27 @@ def score_posterior(
         key = jax.random.PRNGKey(0)
     out: dict[str, Array] = {}
     for name in metrics:
-        if name == "standardized_mean_error":
-            if reference.mean is not None and reference.cov is not None:
+        # The moment metrics ``_require`` their reference pieces and raise
+        # ``_MissingReference`` when absent; catch that to skip them. The
+        # sample/score metrics take the relevant piece directly, so guard on it.
+        try:
+            if name == "standardized_mean_error":
                 out[name] = standardized_mean_error(approx, reference)
-        elif name == "relative_cov_error":
-            if reference.cov is not None:
+            elif name == "relative_cov_error":
                 out[name] = relative_cov_error(approx, reference)
-        elif name == "std_ratios":
-            if reference.cov is not None:
+            elif name == "std_ratios":
                 out[name] = std_ratios(approx, reference)
-        elif name == "sliced_wasserstein":
-            if reference.draws is not None:
-                out[name] = sliced_wasserstein(approx, reference.draws, key=key)
-        elif name == "mmd":
-            if reference.draws is not None:
-                out[name] = mmd(approx, reference.draws)
-        elif name == "ksd":
-            if reference.score_fn is not None:
-                out[name] = ksd(approx, reference.score_fn)
-        else:
-            raise ValueError(f"unknown metric {name!r}")
+            elif name == "sliced_wasserstein":
+                if reference.draws is not None:
+                    out[name] = sliced_wasserstein(approx, reference.draws, key=key)
+            elif name == "mmd":
+                if reference.draws is not None:
+                    out[name] = mmd(approx, reference.draws)
+            elif name == "ksd":
+                if reference.score_fn is not None:
+                    out[name] = ksd(approx, reference.score_fn)
+            else:
+                raise ValueError(f"unknown metric {name!r}")
+        except _MissingReference:
+            continue
     return out

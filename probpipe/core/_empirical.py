@@ -114,10 +114,10 @@ def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:
     is a scalar or ``(Q,)`` array of probabilities. Returns shape
     ``(*q.shape, *event)``. Uses the midpoint-CDF (Hazen, type-5) plotting
     positions with linear interpolation: each sorted atom sits at its
-    cumulative weight less half its own weight. For uniform weights this is the
-    type-5 empirical quantile, which coincides with ``jnp.quantile`` (type-7,
-    the uniform-weight path in :meth:`RecordEmpiricalDistribution._quantile`)
-    only at the median and the extremes, not at interior levels.
+    cumulative weight less half its own weight. For uniform weights this
+    reduces to the type-5 empirical quantile, which differs from
+    ``jnp.quantile`` (type-7) at interior levels but agrees at the median and
+    the extremes.
     """
     n = values.shape[0]
     event = values.shape[1:]
@@ -666,22 +666,15 @@ class RecordEmpiricalDistribution(
     def _quantile(self, q: ArrayLike) -> NumericRecord:
         """Per-field quantile(s) at probability level(s) ``q`` (weight-aware).
 
-        For uniform weights this is ``jnp.quantile`` (type-7, linear) along the
-        sample axis — matching the NumPy/JAX default. For non-uniform weights it
-        is the midpoint-CDF (Hazen, type-5) weighted quantile (see
-        :func:`_weighted_quantile`). The two conventions agree at the median and
-        the extremes but differ at interior levels by ``O(1/n)``.
+        Uses the midpoint-CDF (Hazen, type-5) plotting positions with linear
+        interpolation (see :func:`_weighted_quantile`) for both uniform and
+        non-uniform weights, so the estimator is continuous in the weights.
         """
         qa = jnp.asarray(q)
-        if self._w.is_uniform:
+        weights = self._w.normalized
 
-            def op(a: Array) -> Array:
-                return jnp.quantile(a, qa, axis=0)
-        else:
-            weights = self._w.normalized
-
-            def op(a: Array) -> Array:
-                return _weighted_quantile(a, weights, qa)
+        def op(a: Array) -> Array:
+            return _weighted_quantile(a, weights, qa)
 
         return _fieldwise_op(self._record_data, op)
 
