@@ -1,4 +1,4 @@
-"""The ``quantile`` op + ``RecordEmpiricalDistribution._quantile`` (issue #301)."""
+"""The ``quantile`` op + ``RecordEmpiricalDistribution._quantile``."""
 
 from __future__ import annotations
 
@@ -98,6 +98,8 @@ class TestQuantileOp:
             quantile(emp, 1.5)
         with pytest.raises(ValueError, match=r"\[0, 1\]"):
             quantile(emp, jnp.array([0.2, -0.1]))
+        with pytest.raises(ValueError, match=r"\[0, 1\]"):
+            quantile(emp, jnp.nan)
 
     def test_single_field_result_is_numeric_record(self):
         # A single-field empirical returns a NumericRecord that the shim coerces

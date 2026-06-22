@@ -1,4 +1,4 @@
-"""Posterior-vs-reference comparison metrics (issue #301).
+"""Posterior-vs-reference comparison metrics.
 
 Each metric is checked against an independent baseline (closed form, a known
 identity, or a clearly-separated case), with measured tolerances per
@@ -67,6 +67,14 @@ class TestMomentMetrics:
         ref = Reference(draws=draws)
         with pytest.raises(ValueError, match="mean"):
             standardized_mean_error(draws, ref)
+
+    def test_too_few_draws_for_covariance_raises(self):
+        # Sample covariance is undefined for < 2 draws — raise instead of NaN.
+        with pytest.raises(ValueError, match=">= 2 draws"):
+            Reference.from_draws(jnp.zeros((1, 2)))
+        ref = Reference.from_moments(mean=jnp.zeros(2), cov=jnp.eye(2))
+        with pytest.raises(ValueError, match=">= 2 draws"):
+            relative_cov_error(jnp.zeros((1, 2)), ref)
 
     def test_relative_cov_error_non_diagonal(self):
         # Non-diagonal Σ_ref with a non-commuting Σ̂ (a case the diagonal tests miss):
@@ -267,3 +275,22 @@ class TestInputHandling:
         sw_j = jax.jit(lambda a, b: sliced_wasserstein(a, b, key=jax.random.PRNGKey(0)))
         eager = float(sliced_wasserstein(x, y, key=jax.random.PRNGKey(0)))
         assert float(sw_j(x, y)) == pytest.approx(eager, abs=1e-5)
+
+    def test_moment_metrics_jit_with_reference_pytree(self):
+        # Reference is a registered pytree, so the moment metrics and
+        # score_posterior jit with it passed as a (traced) argument, not only
+        # when it is closed over.
+        approx = _mvn(jax.random.PRNGKey(5), 300, jnp.zeros(2), jnp.eye(2))
+        ref = Reference.from_draws(
+            _mvn(jax.random.PRNGKey(6), 500, jnp.zeros(2), jnp.eye(2)), score_fn=lambda t: -t
+        )
+        for metric in (standardized_mean_error, relative_cov_error):
+            assert float(jax.jit(metric)(approx, ref)) == pytest.approx(
+                float(metric(approx, ref)), abs=1e-5
+            )
+        card = jax.jit(score_posterior)(approx, ref)
+        assert set(card) == {"standardized_mean_error", "relative_cov_error"} | {
+            "sliced_wasserstein",
+            "mmd",
+            "ksd",
+        }

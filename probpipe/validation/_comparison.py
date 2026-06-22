@@ -24,9 +24,11 @@ workflow-function output-wrapping would otherwise coerce into single-field
 records.
 
 All metrics return 0-d (or, for ``std_ratios``, 1-d) JAX arrays and are
-jit-compatible. The moment metrics Cholesky-factor ``Σ_ref`` and so require it
-to be positive definite; a non-PD reference covariance yields NaN rather than
-raising.
+jit-compatible; :class:`Reference` is a registered JAX pytree, so the moment
+metrics and :func:`score_posterior` jit with the reference passed as either a
+traced argument or a closed-over constant. The moment metrics Cholesky-factor
+``Σ_ref`` and so require it to be positive definite; a non-PD reference
+covariance yields NaN rather than raising.
 """
 
 from __future__ import annotations
@@ -84,6 +86,8 @@ def _as_draws(x: DrawsLike) -> Array:
 
 def _sample_cov(d: Array) -> Array:
     """Unbiased sample covariance of ``(n, d)`` draws → ``(d, d)`` (``atleast_2d`` for ``d=1``)."""
+    if d.shape[0] < 2:
+        raise ValueError(f"sample covariance needs >= 2 draws, got {d.shape[0]}")
     return jnp.atleast_2d(jnp.cov(d, rowvar=False))
 
 
@@ -153,6 +157,23 @@ class Reference:
             draws=None if draws is None else _as_draws(draws),
             score_fn=score_fn,
         )
+
+
+def _reference_flatten(ref: Reference) -> tuple[tuple, tuple]:
+    # Arrays are dynamic children; the score_fn is static aux data.
+    return (ref.mean, ref.cov, ref.draws), (ref.score_fn,)
+
+
+def _reference_unflatten(aux: tuple, children: tuple) -> Reference:
+    mean, cov, draws = children
+    (score_fn,) = aux
+    return Reference(mean=mean, cov=cov, draws=draws, score_fn=score_fn)
+
+
+# Register Reference as a pytree so the moment metrics and score_posterior are
+# jit-compatible with the reference passed as a (traced) argument, not only when
+# it is closed over.
+jax.tree_util.register_pytree_node(Reference, _reference_flatten, _reference_unflatten)
 
 
 def _require(ref: Reference, *names: str) -> None:

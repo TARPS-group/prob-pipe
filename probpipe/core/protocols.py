@@ -29,6 +29,7 @@ Protocol hierarchy
     SupportsMean              standalone; exact _mean()
     SupportsVariance          standalone; exact _variance()
     SupportsCovariance        standalone; exact _cov()
+    SupportsQuantile          standalone; exact _quantile(q)
 
     SupportsUnnormalizedLogProb
         ↑ inherits
@@ -616,6 +617,7 @@ __all__ = [
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",
+    "SupportsQuantile",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
     "SupportsSampling",

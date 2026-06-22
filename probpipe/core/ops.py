@@ -272,7 +272,7 @@ def quantile(dist: SupportsQuantile, q: Any) -> Any:
             f"{type(dist).__name__} does not support quantile (does not implement SupportsQuantile)"
         )
     qa = jnp.asarray(q)
-    if not isinstance(qa, jax.core.Tracer) and bool(jnp.any((qa < 0) | (qa > 1))):
+    if not isinstance(qa, jax.core.Tracer) and bool(jnp.any((qa < 0) | (qa > 1) | jnp.isnan(qa))):
         raise ValueError(f"quantile probabilities must lie in [0, 1]; got {q!r}")
     return dist._quantile(q)
 
