@@ -14,8 +14,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   trusted reference: `Reference` (a container for analytic / long-NUTS /
   sandwich references — high-precision `(mean, cov)`, `draws`, and/or a target
   `score_fn`), `standardized_mean_error` (Mahalanobis mean error
-  `‖Σ_ref^{-1/2}(μ̂ − μ_ref)‖₂`), `relative_cov_error` (operator-norm
-  `‖I − Σ_ref⁻¹ Σ̂‖₂`), `std_ratios`, `sliced_wasserstein`, `mmd` (unbiased
+  `‖Σ_ref^{-1/2}(μ̂ − μ_ref)‖₂`), `relative_cov_error` (operator-norm whitened
+  covariance error `‖I − Σ_ref^{-1/2} Σ̂ Σ_ref^{-1/2}‖₂`), `std_ratios`,
+  `sliced_wasserstein`, `mmd` (unbiased
   RBF), `ksd` (IMQ kernel Stein discrepancy), and the `score_posterior`
   aggregator.
 

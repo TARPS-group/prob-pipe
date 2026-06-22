@@ -69,20 +69,19 @@ class TestMomentMetrics:
             standardized_mean_error(draws, ref)
 
     def test_relative_cov_error_non_diagonal(self):
-        # Non-diagonal Σ_ref with a non-commuting Σ̂: the implementation matches
-        # its definition ‖I − Σ_ref⁻¹Σ̂‖₂ exactly (not only on diagonal cases),
-        # and — per the docstring — strictly upper-bounds the worst variance-ratio
-        # deviation max_d|1 − λ_d| when Σ̂ and Σ_ref do not commute (gap ≈ 0.08 here).
+        # Non-diagonal Σ_ref with a non-commuting Σ̂ (a case the diagonal tests miss):
+        # the symmetric whitened form equals the worst variance-ratio deviation
+        # max_d|1 − λ_d| exactly, where the λ_d are the generalized eigenvalues of
+        # (Σ̂, Σ_ref) — computed here via an independent numpy eigendecomposition.
         sigma_ref = jnp.array([[2.0, 0.8], [0.8, 1.0]])
         approx = _mvn(
             jax.random.PRNGKey(40), 40000, jnp.zeros(2), jnp.array([[1.0, -0.5], [-0.5, 3.0]])
         )
         got = float(relative_cov_error(approx, Reference.from_moments(jnp.zeros(2), sigma_ref)))
-        rel = np.linalg.solve(np.asarray(sigma_ref), np.cov(np.asarray(approx), rowvar=False))
-        expected = np.linalg.norm(np.eye(2) - rel, 2)
-        worst_ratio = np.max(np.abs(1 - np.linalg.eigvals(rel).real))
-        np.testing.assert_allclose(got, expected, rtol=1e-4)  # matches the definition
-        assert got > worst_ratio + 0.05  # strict upper bound on the non-commuting case
+        lam = np.linalg.eigvals(
+            np.linalg.solve(np.asarray(sigma_ref), np.cov(np.asarray(approx), rowvar=False))
+        ).real
+        np.testing.assert_allclose(got, np.max(np.abs(1 - lam)), rtol=1e-4)
 
     def test_moment_metrics_reject_dimension_mismatch(self):
         approx = _mvn(jax.random.PRNGKey(0), 100, jnp.zeros(2), jnp.eye(2))  # d = 2

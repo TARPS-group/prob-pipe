@@ -188,22 +188,23 @@ def standardized_mean_error(approx: DrawsLike, ref: Reference) -> Array:
 
 
 def relative_cov_error(approx: DrawsLike, ref: Reference) -> Array:
-    r"""Operator-norm relative covariance error: ``‖I − Σ_ref⁻¹ Σ̂‖₂``.
+    r"""Operator-norm whitened covariance error: ``‖I − Σ_ref^{-1/2} Σ̂ Σ_ref^{-1/2}‖₂``.
 
-    The spectral norm (largest singular value) of the relative-covariance
-    deviation ``Σ_ref⁻¹ Σ̂ − I`` — ``0`` iff ``Σ̂ = Σ_ref``, and an upper bound on
-    the worst-direction variance-ratio error ``max_d |1 − λ_d|`` (the ``λ_d`` are
-    the eigenvalues of ``Σ_ref⁻¹ Σ̂``, i.e. the generalized variance ratios), with
-    equality when ``Σ̂`` and ``Σ_ref`` commute. ``Σ_ref⁻¹ Σ̂`` is formed by a
-    Cholesky solve.
+    The spectral norm of the symmetrically whitened covariance deviation from
+    identity. Because the whitened matrix is symmetric, this *equals* the
+    worst-direction variance-ratio error ``max_d |1 − λ_d|``, where the ``λ_d``
+    are the eigenvalues of ``Σ_ref⁻¹ Σ̂`` (the generalized variance ratios) —
+    ``0`` iff ``Σ̂ = Σ_ref``. The whitening ``Σ_ref^{-1/2} Σ̂ Σ_ref^{-1/2}`` is
+    computed as ``L⁻¹ Σ̂ L⁻ᵀ`` via two triangular solves, ``L = chol(Σ_ref)``.
     """
     _require(ref, "cov")
     cov_hat = _sample_cov(_as_draws(approx))
     if cov_hat.shape != ref.cov.shape:
         raise ValueError(f"approximation cov {cov_hat.shape} != reference cov {ref.cov.shape}")
-    chol = jnp.linalg.cholesky(ref.cov)
-    relative = jax.scipy.linalg.cho_solve((chol, True), cov_hat)  # Σ_ref⁻¹ Σ̂
-    deviation = jnp.eye(relative.shape[0]) - relative
+    chol = jnp.linalg.cholesky(ref.cov)  # L, lower-triangular
+    whitened = jax.scipy.linalg.solve_triangular(chol, cov_hat, lower=True)  # L⁻¹ Σ̂
+    whitened = jax.scipy.linalg.solve_triangular(chol, whitened.T, lower=True)  # L⁻¹ Σ̂ L⁻ᵀ
+    deviation = jnp.eye(whitened.shape[0]) - whitened
     return jnp.linalg.norm(deviation, ord=2)
 
 
