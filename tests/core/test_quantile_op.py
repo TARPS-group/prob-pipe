@@ -57,8 +57,8 @@ class TestQuantileOp:
 
     def test_weighted_quantile_vector_event(self):
         # Non-uniform weights + a 2-D event exercise the reshape/vmap in
-        # _weighted_quantile (the uniform path routes to jnp.quantile instead),
-        # checked against an independent NumPy midpoint-CDF weighted quantile.
+        # _weighted_quantile, checked against an independent NumPy midpoint-CDF
+        # weighted quantile.
         samples = jax.random.normal(jax.random.PRNGKey(7), (500, 2))
         weights = jnp.arange(1.0, 501.0)
         emp = EmpiricalDistribution(samples, weights=weights, name="z")

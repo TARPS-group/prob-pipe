@@ -244,7 +244,7 @@ def mmd(x: Any, y: Any, *, bandwidth: float | str = "median") -> Array:
     dxx, dyy, dxy = _sq_dists(x, x), _sq_dists(y, y), _sq_dists(x, y)
     if bandwidth == "median":
         ell2 = jnp.median(dxy)
-        ell2 = jnp.where(ell2 > 0, ell2, 1.0)
+        ell2 = jnp.where(ell2 > 0, ell2, 1.0)  # unit fallback for a degenerate sample
     else:
         ell2 = jnp.asarray(bandwidth) ** 2
     kxx, kyy, kxy = jnp.exp(-dxx / ell2), jnp.exp(-dyy / ell2), jnp.exp(-dxy / ell2)
@@ -276,9 +276,10 @@ def ksd(
     diff = x[:, None, :] - x[None, :, :]  # (n, n, d)
     sq = jnp.sum(diff**2, axis=-1)  # (n, n)
     if bandwidth == "median":
+        # NaN the diagonal so nanmedian ignores the (zero) self-distances.
         offdiag = sq + jnp.diag(jnp.full(n, jnp.nan))
         c2 = jnp.nanmedian(offdiag)
-        c2 = jnp.where(c2 > 0, c2, 1.0)
+        c2 = jnp.where(c2 > 0, c2, 1.0)  # unit fallback for a degenerate sample
     else:
         c2 = jnp.asarray(bandwidth) ** 2
     beta = -0.5
