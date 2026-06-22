@@ -606,3 +606,169 @@ class TestShapeAccessorBackCompat:
         assert hash(a) == hash(b)
         assert a != c
         assert hash(a) != hash(c)
+
+
+# ---------------------------------------------------------------------------
+# Numeric queries & projection: is_numeric / is_multi_field /
+# non_numeric_fields / numeric_subset
+# ---------------------------------------------------------------------------
+
+
+def _dist_spec() -> DistributionSpec:
+    return DistributionSpec(inner_template=EventTemplate(a=()))
+
+
+def _func_spec() -> FunctionSpec:
+    return FunctionSpec(input_template=EventTemplate(a=()), output_template=EventTemplate(b=()))
+
+
+class TestIsNumeric:
+    def test_all_arrayspec(self):
+        assert EventTemplate(x=(), y=(3,)).is_numeric is True
+
+    def test_nested_all_numeric(self):
+        tpl = EventTemplate(x=(), params=EventTemplate(a=(), b=(3,)))
+        assert tpl.is_numeric is True
+
+    def test_mixed_opaque(self):
+        assert EventTemplate(x=(), label=None).is_numeric is False
+
+    def test_distribution_leaf(self):
+        assert EventTemplate(x=(), d=_dist_spec()).is_numeric is False
+
+    def test_function_leaf(self):
+        assert EventTemplate(x=(), f=_func_spec()).is_numeric is False
+
+    def test_nested_mixed(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None))
+        assert tpl.is_numeric is False
+
+
+class TestIsMultiField:
+    def test_single_field(self):
+        assert EventTemplate(x=()).is_multi_field is False
+
+    def test_multi_field(self):
+        assert EventTemplate(x=(), y=()).is_multi_field is True
+
+    def test_single_opaque_leaf(self):
+        assert EventTemplate(label=None).is_multi_field is False
+
+    def test_two_leaves_mixed(self):
+        assert EventTemplate(x=(), label=None).is_multi_field is True
+
+    def test_single_leaf_under_nested_field(self):
+        # One top-level field nesting a single leaf -> one leaf -> not multi.
+        assert EventTemplate(a=EventTemplate(b=())).is_multi_field is False
+
+    def test_multiple_leaves_under_one_nested_field(self):
+        # jhuggins' case: a single top-level field 'a' with leaves a/b, a/c.
+        tpl = EventTemplate(a=EventTemplate(b=(), c=()))
+        assert tpl.fields == ("a",)  # one top-level field ...
+        assert tpl.is_multi_field is True  # ... but two leaves -> multi-field
+
+    def test_deeply_nested_single_leaf(self):
+        tpl = EventTemplate(a=EventTemplate(b=EventTemplate(c=())))
+        assert tpl.is_multi_field is False
+
+
+class TestNumericFields:
+    def test_all_numeric(self):
+        assert EventTemplate(x=(), y=(3,)).numeric_fields() == ("x", "y")
+
+    def test_exact_numeric_names(self):
+        tpl = EventTemplate(x=(), label=None, d=_dist_spec(), y=(2,), f=_func_spec())
+        assert tpl.numeric_fields() == ("x", "y")
+
+    def test_nested_all_numeric_is_numeric(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(3,)))
+        assert tpl.numeric_fields() == ("x", "nested")
+
+    def test_nested_mixed_not_listed(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None))
+        assert tpl.numeric_fields() == ("x",)
+
+    def test_all_non_numeric_empty(self):
+        assert EventTemplate(label=None, d=_dist_spec()).numeric_fields() == ()
+
+
+class TestNonNumericFields:
+    def test_all_numeric_empty(self):
+        assert EventTemplate(x=(), y=(3,)).non_numeric_fields() == ()
+
+    def test_exact_non_numeric_names(self):
+        tpl = EventTemplate(x=(), label=None, d=_dist_spec(), y=(2,), f=_func_spec())
+        assert tpl.non_numeric_fields() == ("label", "d", "f")
+
+    def test_nested_mixed_is_non_numeric(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None))
+        assert tpl.non_numeric_fields() == ("nested",)
+
+    def test_nested_numeric_not_listed(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(3,)))
+        assert tpl.non_numeric_fields() == ()
+
+    def test_complement_partitions_fields(self):
+        tpl = EventTemplate(
+            x=(),
+            label=None,
+            nested_num=EventTemplate(a=(), b=(3,)),
+            d=_dist_spec(),
+            nested_mixed=EventTemplate(a=(), label=None),
+        )
+        numeric = tpl.numeric_fields()
+        non_numeric = tpl.non_numeric_fields()
+        assert set(numeric).isdisjoint(non_numeric)
+        assert set(numeric) | set(non_numeric) == set(tpl.fields)
+
+
+class TestNumericSubset:
+    def test_drops_non_numeric_keeps_numeric(self):
+        tpl = EventTemplate(x=(), label=None, d=_dist_spec(), y=(3,))
+        sub = tpl.numeric_subset()
+        assert isinstance(sub, NumericEventTemplate)
+        assert sub.fields == ("x", "y")
+
+    def test_recurses_into_nested(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None, b=(3,)))
+        sub = tpl.numeric_subset()
+        assert sub.fields == ("x", "nested")
+        assert isinstance(sub["nested"], NumericEventTemplate)
+        assert sub["nested"].fields == ("a", "b")
+
+    def test_prunes_emptied_nested(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(label=None, tag=None))
+        sub = tpl.numeric_subset()
+        assert sub.fields == ("x",)
+
+    def test_path_stable(self):
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None, b=(3,)))
+        sub = tpl.numeric_subset()
+        assert sub.leaf_shapes == {"x": (), "nested/a": (), "nested/b": (3,)}
+
+    def test_idempotent_on_all_numeric(self):
+        tpl = EventTemplate(x=(), y=(3,), nested=EventTemplate(a=(), b=(2,)))
+        sub = tpl.numeric_subset()
+        assert sub == tpl
+        assert sub.numeric_subset() == sub
+
+    def test_returns_numeric_template_with_flat_size(self):
+        tpl = EventTemplate(x=(), label=None, y=(3,), z=(2, 4))
+        sub = tpl.numeric_subset()
+        assert isinstance(sub, NumericEventTemplate)
+        assert sub.flat_size == 1 + 3 + 8
+
+    def test_raises_when_no_numeric_leaves(self):
+        tpl = EventTemplate(label=None, tag=None)
+        with pytest.raises(ValueError, match="ArraySpec leaves survive"):
+            tpl.numeric_subset()
+
+    def test_raises_names_dropped_fields(self):
+        tpl = EventTemplate(label=None, d=_dist_spec())
+        with pytest.raises(ValueError, match="label"):
+            tpl.numeric_subset()
+
+    def test_raises_when_only_nested_empties(self):
+        tpl = EventTemplate(nested=EventTemplate(label=None, tag=None))
+        with pytest.raises(ValueError, match="nested"):
+            tpl.numeric_subset()
