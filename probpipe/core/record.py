@@ -1087,34 +1087,30 @@ class EventTemplate:
     # -- 1-D numeric (de)serialization --------------------------------------
 
     def to_vector(self, value: NumericRecord | NumericRecordArray) -> Array:
-        """Serialize the numeric leaves of *value* into a dense 1-D vector.
+        """Serialize the numeric leaves of *value* into its 1-D vector representation.
 
-        ``to_vector`` is ProbPipe's **numeric** (de)serialization, paired with
-        :meth:`from_vector`. It is defined only when the template is
-        :attr:`is_numeric`, and produces a single dense
-        :class:`~probpipe.custom_types.Array` whose entries are the value's
-        numeric leaves, raveled and concatenated — the flat encoding samplers
-        and optimisers consume.
+        ``to_vector`` / :meth:`from_vector` convert between the structured and
+        vector representations of a **numeric** value. A numeric value is in
+        general a structured tree of array-valued leaves, with
+        :attr:`~NumericEventTemplate.flat_size` the total number of scalar
+        values making up those arrays. ``to_vector`` converts the structured
+        value to its unique flat representation: an array of shape
+        ``(flat_size,)``. A batch of numeric values is flattened to a matrix:
+        an array of shape ``(*batch_shape, flat_size)``.
 
-        It is deliberately distinct from ``flatten``. ``flatten`` is the
-        general JAX-pytree operation (``value -> (leaves, aux)``, in the sense
-        of :func:`jax.tree_util.tree_flatten`): it works for *any* leaf type
-        and decomposes a value into its pytree leaves plus a structural ``aux``,
-        preserving structure rather than producing a numeric buffer.
-        ``to_vector`` instead collapses only-numeric leaves into a flat numeric
-        vector and is undefined when any leaf is non-numeric. (#235 reserves
-        the ``flatten`` / ``unflatten`` names for that pytree meaning in a later
-        phase; until that consolidation lands, ``to_vector`` delegates to the
-        existing 1-D :meth:`NumericRecord.flatten` /
-        :meth:`NumericRecordArray.flatten`.)
+        This method is distinct from ``flatten``. The latter follows the
+        JAX-pytree terminology, implying the mapping ``value -> (leaves, aux)``
+        in the sense of :func:`jax.tree_util.tree_flatten`. ``flatten`` returns
+        the list of the leaves of the value object, and thus is defined for all
+        values (not just numeric ones). ``to_vector`` applies only to numeric
+        values, and goes further in that it ravels the leaf arrays to a 1-D
+        representation.
 
         Leaves are visited in **canonical leaf order** — the deterministic,
-        depth-first, insertion-order traversal also used by :attr:`leaf_shapes`,
-        :attr:`~NumericEventTemplate.numeric_leaf_shapes`, and
-        :attr:`~NumericEventTemplate.flat_size`. The structural operation lives
-        on the template; a :class:`~probpipe.NumericRecord` delegates to it, so
-        ``nr.to_vector() == nr.event_template.to_vector(nr)`` and, for a *value*
-        matching this template, ``self.to_vector(v) == v.flatten()``.
+        depth-first, insertion-order traversal also used by :attr:`leaf_shapes`.
+        The structural operation lives on the event template; a
+        :class:`~probpipe.NumericRecord` inherits the functionality from the
+        template.
 
         Parameters
         ----------
@@ -1145,7 +1141,7 @@ class EventTemplate:
         See Also
         --------
         from_vector : Reconstruct a value from a flat vector (the inverse).
-        numeric_subset : Project a mixed template to its numeric core.
+        numeric_subset : Project a mixed template to its numeric leaves.
         """
         if not self.is_numeric:
             raise TypeError(
@@ -1157,12 +1153,26 @@ class EventTemplate:
         from ._numeric_record import NumericRecord
         from ._record_array import NumericRecordArray
 
-        if not isinstance(value, (NumericRecord, NumericRecordArray)):
+        if isinstance(value, NumericRecordArray):
+            batch_shape = value.batch_shape
+        elif isinstance(value, NumericRecord):
+            batch_shape = ()
+        else:
             raise TypeError(
                 f"to_vector expects a NumericRecord (single) or "
                 f"NumericRecordArray (batched), got {type(value).__name__}."
             )
-        return value.flatten()
+
+        # Ravel each numeric leaf in canonical leaf order and concatenate along
+        # the trailing axis; any leading batch axes are preserved.
+        parts: list[Array] = []
+        for path in self.leaf_shapes:
+            leaf = value[path]
+            if batch_shape:
+                parts.append(jnp.reshape(leaf, (*batch_shape, -1)))
+            else:
+                parts.append(jnp.ravel(leaf))
+        return jnp.concatenate(parts, axis=-1)
 
     def from_vector(
         self,
@@ -1241,7 +1251,7 @@ class EventTemplate:
         See Also
         --------
         to_vector : Serialize a value to a flat vector (the inverse).
-        numeric_subset : Project a mixed template to its numeric core.
+        numeric_subset : Project a mixed template to its numeric leaves.
         """
         from ._numeric_record import NumericRecord
         from ._record_array import NumericRecordArray, RecordArray

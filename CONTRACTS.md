@@ -31,6 +31,11 @@ if it were user-guide reference text.
    - canonical orderings (e.g. the leaf-traversal order for vectorization);
    - **every** error/raise condition;
    - invariants and round-trip guarantees (e.g. `from_vector(to_vector(v)) == v`).
+
+   **Code documentation must stand on its own — no references to transient artifacts.** Do not cite
+   PRs, issues, tracking numbers, or other out-of-band discussion in docstrings or code comments.
+   The contract is whatever the docstring states; a reader should never need to open a PR or issue to
+   understand it. (Such references belong in commit messages and PR descriptions, not the code.)
    Update the index in this file when you add or change a cross-cutting contract.
 
 3. **Analyze clarity; make the code obey the contract.** As part of every PR:
