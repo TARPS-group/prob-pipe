@@ -1,4 +1,4 @@
-"""Posterior-vs-reference comparison metrics (issue #301, PR 1).
+"""Posterior-vs-reference comparison metrics (issue #301).
 
 Each metric is checked against an independent baseline (closed form, a known
 identity, or a clearly-separated case), with measured tolerances per
@@ -12,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
+from probpipe import EmpiricalDistribution
 from probpipe.validation import (
     Reference,
     ksd,
@@ -48,11 +49,11 @@ class TestMomentMetrics:
         assert float(relative_cov_error(draws, ref)) == pytest.approx(0.0, abs=1e-4)
 
     def test_relative_cov_error_operator_norm_value(self):
-        # Σ_ref = I; approx ~ N(0, diag(4, 1)) → M ≈ diag(4, 1); ‖I − M‖₂ ≈ 3.
+        # Σ_ref = I; approx ~ N(0, diag(4, 1)) → M ≈ diag(3.95, 0.99); ‖I − M‖₂ ≈ 3.
         approx = _mvn(jax.random.PRNGKey(1), 20000, jnp.zeros(2), jnp.diag(jnp.array([4.0, 1.0])))
         ref = Reference.from_moments(mean=jnp.zeros(2), cov=jnp.eye(2))
-        # Observed across seeds ~2.9–3.1 at n=20000.
-        assert float(relative_cov_error(approx, ref)) == pytest.approx(3.0, abs=0.2)
+        # = 2.97 at this seed (n=20000); ~2.9–3.15 across seeds.
+        assert float(relative_cov_error(approx, ref)) == pytest.approx(3.0, abs=0.15)
 
     def test_std_ratios(self):
         approx = _mvn(jax.random.PRNGKey(2), 20000, jnp.zeros(2), jnp.diag(jnp.array([4.0, 4.0])))
@@ -73,14 +74,23 @@ class TestDistances:
         k1, k2 = jax.random.split(jax.random.PRNGKey(3))
         x = _mvn(k1, 400, jnp.zeros(2), jnp.eye(2))
         y = _mvn(k2, 400, jnp.zeros(2), jnp.eye(2))
-        # Independent same-distribution samples → unbiased MMD² ≈ 0.
-        assert abs(float(mmd(x, y))) < 0.02
+        # Independent same-distribution samples → unbiased MMD² ≈ 0
+        # (|MMD²| = 0.005 at this seed; ≤ 0.006 across seeds, n=400).
+        assert abs(float(mmd(x, y))) < 0.015
 
     def test_mmd_separated_distributions_positive(self):
         k1, k2 = jax.random.split(jax.random.PRNGKey(4))
         x = _mvn(k1, 400, jnp.zeros(2), jnp.eye(2))
         y = _mvn(k2, 400, jnp.array([3.0, 3.0]), jnp.eye(2))
+        # Means 3√2 apart → unbiased MMD² clearly positive (~0.88 at this seed).
         assert float(mmd(x, y)) > 0.1
+
+    def test_mmd_float_bandwidth_hand_computed(self):
+        # Exercises the non-median (float-bandwidth) path against a closed form.
+        # For x = y = {0, 1} and ℓ² = 1: off_xx = off_yy = e⁻¹, cross-mean =
+        # (1 + e⁻¹)/2, so MMD²_u = 2e⁻¹ − (1 + e⁻¹) = e⁻¹ − 1.
+        pts = jnp.array([[0.0], [1.0]])
+        assert float(mmd(pts, pts, bandwidth=1.0)) == pytest.approx(np.exp(-1.0) - 1.0, abs=1e-5)
 
     def test_sliced_wasserstein_mean_shift_1d(self):
         # d = 1: sliced W₂ reduces to 1-D W₂ ≈ |mean shift| for equal-variance Gaussians.
@@ -94,21 +104,32 @@ class TestDistances:
         k1, k2 = jax.random.split(jax.random.PRNGKey(7))
         x = jax.random.normal(k1, (2000, 1))
         y = jax.random.normal(k2, (2000, 1))
+        # Same distribution → sliced W₂ ≈ 0 (0.05 at this seed, n=2000).
         assert float(sliced_wasserstein(x, y, key=jax.random.PRNGKey(8))) < 0.15
 
 
 class TestKSD:
     def test_ksd_matched_small(self):
         x = _mvn(jax.random.PRNGKey(9), 500, jnp.zeros(2), jnp.eye(2))
-        # Samples match the target N(0, I) (score = -x) → KSD small.
-        assert float(ksd(x, lambda t: -t)) < 0.3
+        # Samples match the target N(0, I) (score = -x) → KSD ≈ 0
+        # (0.0 at this seed; ≤ 0.04 across seeds, n=500).
+        assert float(ksd(x, lambda t: -t)) < 0.05
 
     def test_ksd_mismatch_larger(self):
         x = _mvn(jax.random.PRNGKey(10), 500, jnp.zeros(2), jnp.eye(2))
         matched = float(ksd(x, lambda t: -t))
         mismatch = float(ksd(x, lambda t: -(t - 3.0)))  # score of N(3, I); samples are N(0, I)
         assert mismatch > matched
-        assert mismatch > 0.5
+        # mismatch ≈ 2.8, matched ≈ 0.02 at this seed (~2.7–2.85 across seeds).
+        assert mismatch > 2.0
+
+    def test_ksd_float_bandwidth(self):
+        # Exercises the non-median (float c²) path: matched score → ≈ 0,
+        # mismatched score → clearly larger (0.0 vs 2.86 at this seed, c² = 2.25).
+        xm = _mvn(jax.random.PRNGKey(9), 500, jnp.zeros(2), jnp.eye(2))
+        xs = _mvn(jax.random.PRNGKey(10), 500, jnp.zeros(2), jnp.eye(2))
+        assert float(ksd(xm, lambda t: -t, bandwidth=1.5)) < 0.05
+        assert float(ksd(xs, lambda t: -(t - 3.0), bandwidth=1.5)) > 2.0
 
 
 class TestScorePosterior:
@@ -130,3 +151,65 @@ class TestScorePosterior:
         card2 = score_posterior(approx, moments, key=jax.random.PRNGKey(14))
         assert "standardized_mean_error" in card2
         assert {"ksd", "mmd", "sliced_wasserstein"}.isdisjoint(card2)
+
+    def test_skips_absent_moment_pieces(self):
+        # A draws-only reference lacks (mean, cov): score_posterior skips the
+        # moment metrics rather than raising (unlike the direct metric calls).
+        draws = _mvn(jax.random.PRNGKey(15), 400, jnp.zeros(2), jnp.eye(2))
+        approx = _mvn(jax.random.PRNGKey(16), 400, jnp.zeros(2), jnp.eye(2))
+        ref = Reference(draws=draws)
+        card = score_posterior(
+            approx,
+            ref,
+            metrics=("standardized_mean_error", "relative_cov_error", "std_ratios", "mmd"),
+            key=jax.random.PRNGKey(17),
+        )
+        assert "mmd" in card  # draws present
+        assert {"standardized_mean_error", "relative_cov_error", "std_ratios"}.isdisjoint(card)
+
+    def test_custom_metric_selection_and_unknown(self):
+        approx = _mvn(jax.random.PRNGKey(18), 200, jnp.zeros(2), jnp.eye(2))
+        ref = Reference.from_moments(mean=jnp.zeros(2), cov=jnp.eye(2))
+        assert set(score_posterior(approx, ref, metrics=("std_ratios",))) == {"std_ratios"}
+        with pytest.raises(ValueError, match="unknown metric"):
+            score_posterior(approx, ref, metrics=("bogus",))
+
+
+class TestInputHandling:
+    def test_rejects_non_2d_input(self):
+        bad = jnp.zeros((300, 2, 3))  # 3-D: not an (n, d) draws matrix
+        with pytest.raises(ValueError, match="n, d"):
+            mmd(bad, bad)
+
+    def test_mismatched_dimension_raises(self):
+        x = _mvn(jax.random.PRNGKey(0), 100, jnp.zeros(2), jnp.eye(2))
+        y = _mvn(jax.random.PRNGKey(1), 100, jnp.zeros(3), jnp.eye(3))
+        with pytest.raises(ValueError, match="share a dimension"):
+            mmd(x, y)
+
+    def test_too_few_draws_raises(self):
+        one, two = jnp.zeros((1, 2)), jnp.zeros((2, 2))
+        with pytest.raises(ValueError, match=">= 2"):
+            mmd(one, two)
+        with pytest.raises(ValueError, match=">= 2"):
+            ksd(one, lambda t: -t)
+
+    def test_accepts_distribution_input(self):
+        # A distribution exposing flat_samples scores identically to its raw draws.
+        draws = _mvn(jax.random.PRNGKey(2), 400, jnp.zeros(2), jnp.eye(2))
+        emp = EmpiricalDistribution(draws, name="z")
+        ref = Reference.from_moments(mean=jnp.array([0.1, -0.2]), cov=jnp.eye(2))
+        from_dist = float(standardized_mean_error(emp, ref))
+        from_array = float(standardized_mean_error(draws, ref))
+        assert from_dist == pytest.approx(from_array, abs=1e-6)
+
+    def test_metrics_jit_compatible(self):
+        k1, k2 = jax.random.split(jax.random.PRNGKey(3))
+        x = _mvn(k1, 300, jnp.zeros(2), jnp.eye(2))
+        y = _mvn(k2, 300, jnp.zeros(2), jnp.eye(2))
+        assert float(jax.jit(mmd)(x, y)) == pytest.approx(float(mmd(x, y)), abs=1e-5)
+        ksd_j = jax.jit(lambda a: ksd(a, lambda t: -t))
+        assert float(ksd_j(x)) == pytest.approx(float(ksd(x, lambda t: -t)), abs=1e-5)
+        sw_j = jax.jit(lambda a, b: sliced_wasserstein(a, b, key=jax.random.PRNGKey(0)))
+        eager = float(sliced_wasserstein(x, y, key=jax.random.PRNGKey(0)))
+        assert float(sw_j(x, y)) == pytest.approx(eager, abs=1e-5)

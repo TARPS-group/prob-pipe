@@ -32,6 +32,8 @@ conditioning, and conversion. Each op dispatches via the matching
 
 ::: probpipe.core.ops.cov
 
+::: probpipe.core.ops.quantile
+
 ::: probpipe.core.ops.expectation
 
 ## Conditioning

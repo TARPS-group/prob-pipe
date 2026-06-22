@@ -1,4 +1,4 @@
-"""The ``quantile`` op + ``RecordEmpiricalDistribution._quantile`` (issue #301, PR 1)."""
+"""The ``quantile`` op + ``RecordEmpiricalDistribution._quantile`` (issue #301)."""
 
 from __future__ import annotations
 
@@ -7,8 +7,22 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EmpiricalDistribution, Normal, quantile
+from probpipe import EmpiricalDistribution, Normal, NumericRecord, SupportsQuantile, quantile
 from probpipe.core.record import Record
+
+
+def _np_weighted_quantile(values, weights, qs):
+    """Independent midpoint-CDF (Hazen) weighted quantile, per column (NumPy)."""
+    n = values.shape[0]
+    event = values.shape[1:]
+    flat = values.reshape(n, -1)
+    out = np.empty((len(qs), flat.shape[1]))
+    for j in range(flat.shape[1]):
+        order = np.argsort(flat[:, j])
+        v, w = flat[order, j], weights[order]
+        cdf = (np.cumsum(w) - 0.5 * w) / w.sum()
+        out[:, j] = np.interp(qs, cdf, v)
+    return out.reshape(len(qs), *event)
 
 
 class TestQuantileOp:
@@ -28,12 +42,28 @@ class TestQuantileOp:
         assert med.shape == ()
         assert float(med) == pytest.approx(float(jnp.median(samples)), abs=1e-5)
 
-    def test_weighted_quantile_shifts_toward_upweighted_values(self):
-        # Linear weights favoring larger values pull the weighted median above 0.5.
+    def test_weighted_quantile_matches_analytic_cdf(self):
+        # Weights ∝ value give density f(x) ∝ x on [0, 1], so F(x) = x² and the
+        # q-quantile is √q — an independent analytic baseline for the weighted path.
         samples = jnp.linspace(0.0, 1.0, 101)
-        emp = EmpiricalDistribution(samples, weights=samples + 1e-3, name="x")
-        wq = float(np.asarray(quantile(emp, 0.5)))
-        assert 0.6 < wq < 0.8  # closed-form ≈ 1/√2 ≈ 0.707
+        emp = EmpiricalDistribution(samples, weights=samples, name="x")
+        q = jnp.array([0.1, 0.5, 0.9])
+        wq = np.asarray(quantile(emp, q))
+        # Hazen weighted quantile; discretization error ≤ 0.005 on 101 points.
+        np.testing.assert_allclose(wq, np.sqrt(np.asarray(q)), atol=0.02)
+
+    def test_weighted_quantile_vector_event(self):
+        # Non-uniform weights + a 2-D event exercise the reshape/vmap in
+        # _weighted_quantile (the uniform path routes to jnp.quantile instead),
+        # checked against an independent NumPy midpoint-CDF weighted quantile.
+        samples = jax.random.normal(jax.random.PRNGKey(7), (500, 2))
+        weights = jnp.arange(1.0, 501.0)
+        emp = EmpiricalDistribution(samples, weights=weights, name="z")
+        qs = [0.25, 0.75]
+        out = np.asarray(quantile(emp, jnp.array(qs)))
+        assert out.shape == (2, 2)
+        ref = _np_weighted_quantile(np.asarray(samples), np.asarray(weights), qs)
+        np.testing.assert_allclose(out, ref, atol=1e-5)
 
     def test_multifield_per_field_quantiles(self):
         key = jax.random.PRNGKey(2)
@@ -57,3 +87,15 @@ class TestQuantileOp:
     def test_raises_on_unsupported_distribution(self):
         with pytest.raises(TypeError, match="quantile"):
             quantile(Normal(loc=0.0, scale=1.0, name="x"), 0.5)
+
+    def test_single_field_result_is_numeric_record(self):
+        # A single-field empirical returns a NumericRecord that the shim coerces
+        # to a bare scalar — pin the type so the unwrap contract can't drift.
+        emp = EmpiricalDistribution(jax.random.normal(jax.random.PRNGKey(8), (200,)), name="x")
+        res = quantile(emp, 0.5)
+        assert isinstance(res, NumericRecord)
+        assert np.asarray(res).shape == ()
+
+    def test_empirical_satisfies_supports_quantile(self):
+        emp = EmpiricalDistribution(jnp.arange(10.0), name="x")
+        assert isinstance(emp, SupportsQuantile)

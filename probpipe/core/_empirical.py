@@ -61,6 +61,7 @@ from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
     SupportsMean,
+    SupportsQuantile,
     SupportsSampling,
     SupportsVariance,
 )
@@ -111,8 +112,12 @@ def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:
 
     ``values`` has shape ``(n, *event)``, ``weights`` shape ``(n,)``, and ``q``
     is a scalar or ``(Q,)`` array of probabilities. Returns shape
-    ``(*q.shape, *event)`` — matching ``jnp.quantile(values, q, axis=0)`` for
-    uniform weights — via the midpoint-CDF convention with linear interpolation.
+    ``(*q.shape, *event)``. Uses the midpoint-CDF (Hazen, type-5) plotting
+    positions with linear interpolation: each sorted atom sits at its
+    cumulative weight less half its own weight. For uniform weights this is the
+    type-5 empirical quantile, which coincides with ``jnp.quantile`` (type-7,
+    the uniform-weight path in :meth:`RecordEmpiricalDistribution._quantile`)
+    only at the median and the extremes, not at interior levels.
     """
     n = values.shape[0]
     event = values.shape[1:]
@@ -386,6 +391,7 @@ class RecordEmpiricalDistribution(
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
+    SupportsQuantile,
 ):
     """Empirical distribution over Record-structured numeric samples.
 
@@ -403,7 +409,8 @@ class RecordEmpiricalDistribution(
     Inherits :class:`NumericRecordDistribution` shape semantics
     (``event_template``, ``event_shapes``, ``event_size``,
     ``batch_shape``) plus exact weighted moments
-    (``mean``, ``variance``, ``cov``) over each field.
+    (``mean``, ``variance``, ``cov``) and weighted ``quantile`` over each
+    field.
 
     Parameters
     ----------
@@ -656,11 +663,14 @@ class RecordEmpiricalDistribution(
         """
         return _fieldwise_op(self._record_data, self._w.covariance)
 
-    def _quantile(self, q: Any) -> NumericRecord:
+    def _quantile(self, q: ArrayLike) -> NumericRecord:
         """Per-field quantile(s) at probability level(s) ``q`` (weight-aware).
 
-        For uniform weights this is ``jnp.quantile`` along the sample axis; for
-        non-uniform weights it is the midpoint-CDF weighted quantile.
+        For uniform weights this is ``jnp.quantile`` (type-7, linear) along the
+        sample axis — matching the NumPy/JAX default. For non-uniform weights it
+        is the midpoint-CDF (Hazen, type-5) weighted quantile (see
+        :func:`_weighted_quantile`). The two conventions agree at the median and
+        the extremes but differ at interior levels by ``O(1/n)``.
         """
         qa = jnp.asarray(q)
         if self._w.is_uniform:

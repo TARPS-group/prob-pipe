@@ -2,9 +2,13 @@
 
 These score a posterior *approximation* against a trusted *reference* (analytic,
 long-NUTS, or sandwich) — answering "does this method recover the right
-posterior?", as opposed to the per-fit convergence diagnostics in
-:mod:`probpipe.diagnostics`. They are plain, dependency-light JAX functions used
-by the inference test suite and the ``probpipe-benchmark`` harness.
+posterior?", as opposed to per-fit convergence diagnostics (ESS, R-hat), which
+are tracked separately in #193. They are plain, dependency-light JAX functions
+used by the inference test suite and the ``probpipe-benchmark`` harness.
+
+The approximation under test is consumed as draws (anything exposing
+``flat_samples``, or a raw ``(n, d)`` array); the moment metrics use its sample
+mean and covariance rather than any analytic moments it may expose.
 
 Three metric families, by what the reference must carry (see :class:`Reference`):
 
@@ -14,8 +18,15 @@ Three metric families, by what the reference must carry (see :class:`Reference`)
 - **score** — ``ksd`` needs only the target score ``∇ log π`` (no reference
   draws).
 
+These are deliberately plain functions rather than ``@workflow_function`` ops:
+they return bare arrays (or, for :func:`score_posterior`, a ``dict``), which the
+workflow-function output-wrapping would otherwise coerce into single-field
+records.
+
 All metrics return 0-d (or, for ``std_ratios``, 1-d) JAX arrays and are
-jit-compatible.
+jit-compatible. The moment metrics Cholesky-factor ``Σ_ref`` and so require it
+to be positive definite; a non-PD reference covariance yields NaN rather than
+raising.
 """
 
 from __future__ import annotations
@@ -164,7 +175,8 @@ def std_ratios(approx: Any, ref: Reference) -> Array:
     r"""Per-coordinate standard-deviation ratios ``σ̂_d / σ_{ref,d}`` (a ``(d,)`` array).
 
     A coordinate-wise readout for reporting; the full-covariance
-    :func:`relative_cov_error` subsumes it.
+    :func:`relative_cov_error` subsumes it. A reference coordinate with zero
+    variance yields ``inf`` for that ratio.
     """
     ref._require("cov")
     var_hat = jnp.diag(_sample_cov(_as_draws(approx)))
@@ -191,6 +203,8 @@ def sliced_wasserstein(
     ``(mean_θ W₂²(P_θ x, P_θ y))^{1/2}``.
     """
     x, y = _as_draws(x), _as_draws(y)
+    if x.shape[1] != y.shape[1]:
+        raise ValueError(f"x and y must share a dimension, got {x.shape[1]} and {y.shape[1]}")
     proj = jax.random.normal(key, (n_projections, x.shape[-1]))
     proj = proj / jnp.linalg.norm(proj, axis=-1, keepdims=True)
     xp, yp = x @ proj.T, y @ proj.T  # (n, P)
@@ -215,7 +229,11 @@ def mmd(x: Any, y: Any, *, bandwidth: float | str = "median") -> Array:
     heuristic). The unbiased estimator can be slightly negative.
     """
     x, y = _as_draws(x), _as_draws(y)
+    if x.shape[1] != y.shape[1]:
+        raise ValueError(f"x and y must share a dimension, got {x.shape[1]} and {y.shape[1]}")
     m, n = x.shape[0], y.shape[0]
+    if m < 2 or n < 2:
+        raise ValueError(f"unbiased MMD needs >= 2 draws per sample, got {m} and {n}")
     dxx, dyy, dxy = _sq_dists(x, x), _sq_dists(y, y), _sq_dists(x, y)
     if bandwidth == "median":
         ell2 = jnp.median(dxy)
@@ -245,6 +263,8 @@ def ksd(
     """
     x = _as_draws(x)
     n, d = x.shape
+    if n < 2:
+        raise ValueError(f"KSD U-statistic needs >= 2 draws, got {n}")
     scores = jax.vmap(score_fn)(x)  # (n, d)
     diff = x[:, None, :] - x[None, :, :]  # (n, n, d)
     sq = jnp.sum(diff**2, axis=-1)  # (n, n)
@@ -299,11 +319,14 @@ def score_posterior(
     out: dict[str, Array] = {}
     for name in metrics:
         if name == "standardized_mean_error":
-            out[name] = standardized_mean_error(approx, reference)
+            if reference.mean is not None and reference.cov is not None:
+                out[name] = standardized_mean_error(approx, reference)
         elif name == "relative_cov_error":
-            out[name] = relative_cov_error(approx, reference)
+            if reference.cov is not None:
+                out[name] = relative_cov_error(approx, reference)
         elif name == "std_ratios":
-            out[name] = std_ratios(approx, reference)
+            if reference.cov is not None:
+                out[name] = std_ratios(approx, reference)
         elif name == "sliced_wasserstein":
             if reference.draws is not None:
                 out[name] = sliced_wasserstein(approx, reference.draws, key=key)

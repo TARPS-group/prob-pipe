@@ -105,6 +105,7 @@ nav:
       - Random functions: api/distributions/random_functions.md
     - Records and data: api/records.md
     - Modeling and inference: api/inference.md
+    - Validation: api/validation.md
     - Workflows and orchestration: api/workflows.md
     - Constraints and bijectors: api/constraints.md
     - Conversion and interop: api/converters.md
