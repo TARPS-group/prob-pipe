@@ -1134,7 +1134,7 @@ class EventTemplate:
             If this template is not :attr:`is_numeric` — it has non-numeric
             leaves, so there is no canonical numeric vector. The message names
             the offending fields and points at :meth:`numeric_subset` (which
-            projects to the numeric core first); ``to_vector`` never silently
+            projects to the numeric leaves first); ``to_vector`` never silently
             drops non-numeric leaves. Also raised if *value* is not a
             :class:`~probpipe.NumericRecord` / :class:`~probpipe.NumericRecordArray`.
 
@@ -1147,7 +1147,7 @@ class EventTemplate:
             raise TypeError(
                 f"{type(self).__name__}.to_vector requires an all-numeric "
                 f"template, but these fields are non-numeric: "
-                f"{self.non_numeric_fields()}. Project to the numeric core "
+                f"{self.non_numeric_fields()}. Project to the numeric leaves "
                 f"first with numeric_subset()."
             )
         from ._numeric_record import NumericRecord
@@ -1242,8 +1242,8 @@ class EventTemplate:
         -----
         **Round-trip invariant.** ``self.from_vector(self.to_vector(v)) == v``
         for any numeric ``value`` ``v`` matching this (numeric) template. For a
-        mixed template ``T`` with numeric core ``Tn = T.numeric_subset()``, the
-        analogous round trip
+        mixed template ``T`` whose numeric leaves form ``Tn = T.numeric_subset()``,
+        the analogous round trip
         ``T.from_vector(Tn.to_vector(vn), non_numeric=dropped)`` rebuilds the
         full mixed value (a plain :class:`~probpipe.Record` /
         :class:`~probpipe.RecordArray`) from its numeric part ``vn`` and the
@@ -1274,9 +1274,8 @@ class EventTemplate:
                 f"a full value."
             )
 
-        # numeric_subset() is idempotent on an already-numeric template, so this
-        # is the numeric core in both cases; it gives the canonical leaf order
-        # and the expected trailing-axis length.
+        # vector_size is the total scalar count across the numeric leaves;
+        # numeric_subset() is idempotent on an already-numeric template.
         num_tpl = self if isinstance(self, NumericEventTemplate) else self.numeric_subset()
         vector_size = num_tpl.flat_size
         if vec.shape[-1] != vector_size:
@@ -1287,21 +1286,13 @@ class EventTemplate:
 
         batched = vec.ndim > 1
         batch_shape = tuple(vec.shape[:-1]) if batched else ()
+        supplied = dict(non_numeric) if non_numeric else {}
 
-        if batched:
-            numeric_core: NumericRecord | NumericRecordArray = NumericRecordArray.unflatten(
-                vec, template=num_tpl, batch_shape=batch_shape
-            )
-        else:
-            numeric_core = NumericRecord.unflatten(vec, template=num_tpl)
-
-        if numeric:
-            return numeric_core
-
-        # Mixed reconstruction: weave the dropped (non-numeric) leaves back in
-        # at their canonical paths, walking ``self`` so the result matches the
-        # full (un-projected) structure.
-        supplied = dict(non_numeric)  # type: ignore[arg-type]
+        # Record classes for the rebuilt value: an all-numeric template rebuilds
+        # NumericRecord(Array); a mixed template rebuilds a plain Record(Array)
+        # carrying the supplied non-numeric leaves alongside the numeric ones.
+        single_cls = NumericRecord if numeric else Record
+        batched_cls = NumericRecordArray if numeric else RecordArray
 
         def _check_batch(path: str, val: Any) -> None:
             shape = getattr(val, "shape", None)
@@ -1312,7 +1303,14 @@ class EventTemplate:
                     f"batch_shape {batch_shape}."
                 )
 
+        # Walk the template in canonical leaf order, slicing ``vec`` into each
+        # numeric leaf and reshaping it to (*batch_shape, *event_shape); a single
+        # offset advances along vec's trailing axis. Non-numeric leaves (mixed
+        # templates only) are filled from ``non_numeric`` and consume no vector.
+        offset = 0
+
         def _build(template: EventTemplate, prefix: str) -> Record:
+            nonlocal offset
             fields: dict[str, Any] = {}
             for name in template.fields:
                 spec = template[name]
@@ -1320,7 +1318,10 @@ class EventTemplate:
                 if isinstance(spec, EventTemplate):
                     fields[name] = _build(spec, f"{path}{_PATH_SEP}")
                 elif isinstance(spec, ArraySpec):
-                    fields[name] = numeric_core[path]
+                    size = prod(spec.shape) if spec.shape else 1
+                    chunk = vec[..., offset : offset + size]
+                    offset += size
+                    fields[name] = jnp.reshape(chunk, (*batch_shape, *spec.shape))
                 else:
                     # Opaque / distribution / function leaf — supplied by caller.
                     if path not in supplied:
@@ -1333,8 +1334,8 @@ class EventTemplate:
                         _check_batch(path, val)
                     fields[name] = val
             if batched:
-                return RecordArray(fields, batch_shape=batch_shape, template=template)
-            return Record(fields)
+                return batched_cls(fields, batch_shape=batch_shape, template=template)
+            return single_cls(fields)
 
         return _build(self, "")
 
