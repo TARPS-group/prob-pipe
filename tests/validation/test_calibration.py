@@ -217,23 +217,25 @@ class TestSBC:
         assert hist.shape == (2, 10)
         assert np.all(hist.sum(axis=1) == 32)
 
-    def test_detects_miscalibration(self):
-        # A model whose generate_data carries an unmodeled +3 mean shift: the
-        # posterior systematically misses θ★, so ranks collapse to the low tail
-        # and SBC rejects calibration.
-        model = SimpleModel(Normal(loc=0.0, scale=2.0, name="mu"), _BiasedMeanLikelihood(3.0))
+    def test_detects_subtle_miscalibration(self):
+        # A *sub-posterior-SD* mean shift is still caught. generate_data carries an
+        # unmodeled +0.2 shift while the posterior SD is ≈ 0.31 (precision
+        # 1/4 + 10 = 10.25), so the per-fit bias is only ≈ 0.6 posterior SD — yet
+        # SBC rejects because the shift is *systematic* across simulations and
+        # accumulates. Measured ks_pvalue.max ≤ 0.002 over seeds 0–2 at S=24.
+        model = SimpleModel(Normal(loc=0.0, scale=2.0, name="mu"), _BiasedMeanLikelihood(0.2))
         res = simulation_based_calibration(
             model,
-            num_simulations=16,
+            num_simulations=24,
             num_posterior_draws=100,
             num_observations=10,
             num_warmup=100,
             key=jax.random.PRNGKey(0),
         )
         assert res.passed is False
-        assert float(res.ks_pvalue.max()) < 0.05  # uniformity rejected for every param
-        # θ★ sits in the low tail of the (upward-biased) posterior → mean rank ≈ 0.
-        assert ((res.ranks + 0.5) / (res.num_posterior_draws + 1)).mean() < 0.1
+        assert float(res.ks_pvalue.max()) < 0.05  # uniformity rejected
+        # The upward bias pushes θ★ into the lower tail → mean rank below 0.5.
+        assert ((res.ranks + 0.5) / (res.num_posterior_draws + 1)).mean() < 0.45
 
     def test_rejects_bad_num_simulations(self):
         model, n = _gaussian_glm()
