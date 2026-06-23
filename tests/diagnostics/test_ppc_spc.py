@@ -277,12 +277,40 @@ class TestAddPpc:
         )
         assert result is None
 
-    def test_raises_without_observed_data(self, posterior):
-        with pytest.raises(ValueError):
+    def test_prior_predictive_without_observed_data(self, posterior):
+        add_ppc(
+            posterior,
+            test_fns=_mean,
+            observed_data=None,
+            num_observations=7,
+            generative_likelihood=_NumpyLikelihood(),
+            n_replications=5,
+        )
+
+        ppc_ds = posterior._auxiliary["diagnostics"]["runs"]["ppc"].to_dataset()
+        assert ppc_ds.attrs["has_observed_data"] is False
+        assert bool(ppc_ds.attrs["wrote_arviz_observed_data"]) is False
+        assert "replicated_stat_mean" in ppc_ds.data_vars
+        assert np.isnan(float(ppc_ds["p_value"].sel(test_fn="_mean")))
+        assert np.isnan(float(ppc_ds["observed"].sel(test_fn="_mean")))
+
+    def test_num_observations_required_without_observed_data(self, posterior):
+        with pytest.raises(ValueError, match="num_observations is required"):
             add_ppc(
                 posterior,
                 test_fns=_mean,
                 observed_data=None,
+                generative_likelihood=_NumpyLikelihood(),
+                n_replications=5,
+            )
+
+    def test_num_observations_must_be_positive(self, posterior):
+        with pytest.raises(ValueError, match="positive integer"):
+            add_ppc(
+                posterior,
+                test_fns=_mean,
+                observed_data=None,
+                num_observations=0,
                 generative_likelihood=_NumpyLikelihood(),
                 n_replications=5,
             )
