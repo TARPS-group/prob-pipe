@@ -245,7 +245,7 @@ class DiagnosticRunView(DatasetView):
     This class is generic. It does not know whether the run is PPC, LOO, etc.
     """
 
-    __slots__ = ("name", "_tree")
+    __slots__ = ("name",)
 
     def __init__(self, name: str, tree: Any | None) -> None:
         super().__init__(tree)
