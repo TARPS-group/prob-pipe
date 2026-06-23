@@ -416,9 +416,13 @@ def add_loo(
     # Extract scalar summaries
     # ------------------------------------------------------------------
 
-    elpd_loo = _safe_float(_record_get(loo_result, "elpd_loo"))
+    elpd_loo = _safe_float(
+        _record_get(loo_result, "elpd_loo", _record_get(loo_result, "elpd"))
+    )
     se = _safe_float(_record_get(loo_result, "se"))
-    p_loo = _safe_float(_record_get(loo_result, "p_loo"))
+    p_loo = _safe_float(
+        _record_get(loo_result, "p_loo", _record_get(loo_result, "p"))
+    )
 
     # Some ArviZ versions expose looic; others only expose elpd_loo.
     looic_raw = _record_get(loo_result, "looic", None)
