@@ -4,13 +4,11 @@ from __future__ import annotations
 
 import jax.numpy as jnp
 import numpy as np
-import pytest
 
 from probpipe import Normal, Record
 from probpipe.core._fingerprint import fingerprint
 from probpipe.core.node import WorkflowFunction
 from probpipe.core.provenance import ParentInfo, Provenance
-
 
 # ===========================================================================
 # 1. Return type and format

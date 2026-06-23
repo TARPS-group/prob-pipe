@@ -60,7 +60,7 @@ def fingerprint(obj: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _update(h: "hashlib._Hash", obj: Any, depth: int) -> None:
+def _update(h: hashlib._Hash, obj: Any, depth: int) -> None:
     if depth > 32:
         h.update(b"[max_depth]")
         return
@@ -119,7 +119,7 @@ def _update(h: "hashlib._Hash", obj: Any, depth: int) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _update_array(h: "hashlib._Hash", arr: Any) -> None:
+def _update_array(h: hashlib._Hash, arr: Any) -> None:
     """Hash an array by shape, dtype, and content bytes."""
     import numpy as np
 
@@ -165,7 +165,7 @@ def _is_record(obj: Any) -> bool:
         return False
 
 
-def _update_record(h: "hashlib._Hash", record: Any, depth: int) -> None:
+def _update_record(h: hashlib._Hash, record: Any, depth: int) -> None:
     """Hash a Record field-by-field in insertion order."""
     h.update(b"record:")
     h.update(type(record).__name__.encode())
@@ -191,7 +191,7 @@ def _is_distribution(obj: Any) -> bool:
         return False
 
 
-def _update_distribution(h: "hashlib._Hash", dist: Any, depth: int) -> None:
+def _update_distribution(h: hashlib._Hash, dist: Any, depth: int) -> None:
     """Hash a distribution by class name, distribution name, and parameters.
 
     For TFP-backed distributions (those with a ``_tfp_dist`` attribute) the
@@ -242,7 +242,7 @@ def _is_workflow_function(obj: Any) -> bool:
         return False
 
 
-def _update_workflow_function(h: "hashlib._Hash", wf: Any) -> None:
+def _update_workflow_function(h: hashlib._Hash, wf: Any) -> None:
     """Hash a WorkflowFunction by its user function's bytecode.
 
     Hashes ``_func.__code__`` directly rather than the Prefect task-wrapper
