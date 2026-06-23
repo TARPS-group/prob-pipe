@@ -35,3 +35,16 @@ set into a scorecard, skipping any whose reference pieces are absent.
 ::: probpipe.validation.ksd
 
 ::: probpipe.validation.score_posterior
+
+## Calibration and coverage
+
+Method self-consistency checks: simulation-based calibration drives the inference
+method over many `(θ★, data, posterior)` replications and tests whether the rank
+of the truth among the posterior draws is uniform; interval coverage checks
+whether central credible intervals contain the truth at their nominal rate.
+
+::: probpipe.validation.simulation_based_calibration
+
+::: probpipe.validation.SBCResult
+
+::: probpipe.validation.interval_coverage
