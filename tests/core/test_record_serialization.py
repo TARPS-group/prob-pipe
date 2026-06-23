@@ -111,7 +111,7 @@ def test_numeric_event_template_pickle_roundtrip():
     t2 = roundtrip(t)
     assert type(t2) is NumericEventTemplate
     assert t2.fields == ("x", "y")
-    assert t2.flat_size == 4  # () + (3,)
+    assert t2.vector_size == 4  # () + (3,)
 
 
 # ---------------------------------------------------------------------------
@@ -124,14 +124,14 @@ def test_numeric_record_pickle_roundtrip():
     nr2 = roundtrip(nr)
     assert nr2.fields == ("r", "K", "phi")
     assert float(nr2["r"]) == pytest.approx(1.8)
-    assert nr2.flat_size == 3
+    assert nr2.vector_size == 3
 
 
-def test_numeric_record_flat_size_recomputed():
+def test_numeric_record_vector_size_recomputed():
     nr = NumericRecord(a=jnp.ones((2, 3)))
-    assert nr.flat_size == 6
+    assert nr.vector_size == 6
     nr2 = roundtrip(nr)
-    assert nr2.flat_size == 6
+    assert nr2.vector_size == 6
 
 
 def test_numeric_record_cloudpickle_roundtrip():

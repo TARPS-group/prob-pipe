@@ -1,7 +1,9 @@
 """NumericRecord — Record subclass where every leaf is a ``jax.Array``.
 
-Adds ``flatten`` / ``unflatten`` / ``flat_size`` for 1-D serialisation.
-Construction validates that every leaf is a numeric value (numeric
+Adds ``to_vector`` / ``vector_size`` for the numeric 1-D serialisation
+(the inverse, ``from_vector``, lives on :class:`EventTemplate`); the
+general JAX-pytree ``flatten`` / ``unflatten`` are inherited from
+:class:`Record`. Construction validates that every leaf is a numeric value (numeric
 array, numeric scalar, or nested ``NumericRecord``) and coerces each
 to ``jnp.ndarray`` so the post-construction invariant is "every leaf
 is a ``jax.Array``" (or a nested ``NumericRecord``).
@@ -31,7 +33,7 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import aux_for
-from .record import ArraySpec, EventTemplate, Record, _record_flatten, _spec_size
+from .record import EventTemplate, Record, _record_flatten
 
 __all__ = ["_NUMERIC_DTYPE_KINDS", "NumericRecord", "_is_numeric_leaf"]
 
@@ -77,8 +79,10 @@ def _is_numeric_leaf(val: Any) -> bool:
 class NumericRecord(Record):
     """``Record`` where every leaf is a ``jax.Array``.
 
-    Adds :meth:`flatten` / :meth:`unflatten` / :attr:`flat_size` for
-    serialising the record to / from a flat 1-D vector. Construction
+    Adds :meth:`to_vector` / :attr:`vector_size` for serialising the
+    record to its flat 1-D vector (the inverse, ``from_vector``, lives on
+    :class:`EventTemplate`); the general JAX-pytree :meth:`~Record.flatten`
+    / :meth:`~Record.unflatten` are inherited from :class:`Record`. Construction
     validates that every leaf is a numeric value (or a nested
     :class:`NumericRecord`) and coerces scalar / numpy / xarray /
     pandas leaves to ``jnp.ndarray`` so downstream code sees a uniform
@@ -110,7 +114,7 @@ class NumericRecord(Record):
     ``__slots__`` + ``__setattr__`` guard on the base class.
     """
 
-    __slots__ = ("_aux", "_flat_size")
+    __slots__ = ("_aux", "_vector_size")
 
     def __init__(
         self,
@@ -132,14 +136,14 @@ class NumericRecord(Record):
             raw_fields = fields
         validated, aux = self._validate_and_coerce(raw_fields)
         super().__init__(validated, name=name)
-        # Cache flat_size — leaves are immutable arrays after construction.
+        # Cache vector_size — leaves are immutable arrays after construction.
         total = 0
         for val in self._store.values():
             if isinstance(val, NumericRecord):
-                total += val.flat_size
+                total += val.vector_size
             else:
                 total += int(val.size)
-        object.__setattr__(self, "_flat_size", total)
+        object.__setattr__(self, "_vector_size", total)
         # Aux is ``None`` if no field had a registered hook — keeps the
         # common all-jax case allocation-free and lets ``to_native``
         # short-circuit.
@@ -185,61 +189,33 @@ class NumericRecord(Record):
             out[field_name] = raw if isinstance(raw, jnp.ndarray) else jnp.asarray(raw)
         return out, aux
 
-    # -- Flat-array conversion ----------------------------------------------
+    # -- 1-D vector conversion ----------------------------------------------
 
     @property
-    def flat_size(self) -> int:
-        """Total number of scalar elements across all numeric leaves."""
-        return self._flat_size
+    def vector_size(self) -> int:
+        """Length of this record's 1-D vector (``to_vector`` / ``from_vector``).
 
-    def flatten(self) -> jnp.ndarray:
-        """Concatenate all leaf arrays into a single 1-D vector.
-
-        Fields are traversed in insertion order; nested ``NumericRecord``
-        are traversed depth-first. Each leaf is raveled before
-        concatenation.
+        The total number of scalar elements across all numeric leaves — the
+        length of :meth:`to_vector`'s output.
         """
-        parts: list[jnp.ndarray] = []
-        for val in self._store.values():
-            if isinstance(val, NumericRecord):
-                parts.append(val.flatten())
-            else:
-                parts.append(jnp.ravel(val))
-        return jnp.concatenate(parts)
+        return self._vector_size
 
-    @classmethod
-    def unflatten(
-        cls,
-        flat: jnp.ndarray,
-        *,
-        template: EventTemplate,
-    ) -> NumericRecord:
-        """Reconstruct a ``NumericRecord`` from a flat array.
+    def to_vector(self) -> jnp.ndarray:
+        """Serialize to the dense 1-D vector of shape ``(vector_size,)``.
 
-        Parameters
-        ----------
-        flat : array
-            1-D array of concatenated scalars.
-        template : EventTemplate
-            Provides field names and shapes for reconstruction.
+        Instance-level convenience for the numeric 1-D serialization whose
+        structural definition lives on :meth:`EventTemplate.to_vector`: builds
+        this record's event template and delegates. Leaves are visited in
+        canonical leaf order (insertion order, depth-first into nested records)
+        and raveled before concatenation. The inverse,
+        :meth:`EventTemplate.from_vector`, reconstructs the record from such a
+        vector.
+
+        This is distinct from the JAX-pytree :meth:`~Record.flatten`, which
+        returns ``(leaves, aux)`` keeping each leaf whole; ``to_vector`` ravels
+        and concatenates the numeric leaves into a single dense vector.
         """
-        fields: dict[str, jnp.ndarray | NumericRecord] = {}
-        offset = 0
-
-        for field_name in template.fields:
-            spec = template[field_name]
-            size = _spec_size(spec)
-            chunk = flat[offset : offset + size]
-            if isinstance(spec, EventTemplate):
-                fields[field_name] = cls.unflatten(chunk, template=spec)
-            else:
-                # ArraySpec leaf — ``_spec_size`` above rejects every other
-                # leaf kind, so the spec is necessarily an ArraySpec here.
-                assert isinstance(spec, ArraySpec)
-                fields[field_name] = chunk.reshape(spec.shape)
-            offset += size
-
-        return cls(fields)
+        return EventTemplate.from_record(self).to_vector(self)
 
     @classmethod
     def from_record(cls, record: Record) -> NumericRecord:

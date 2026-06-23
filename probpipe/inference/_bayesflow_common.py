@@ -169,12 +169,14 @@ def _simulate_offline(
     leaf_keys = tuple(template.numeric_leaf_shapes)
     k_theta, k_sim = jax.random.split(key)
     theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
-    # Round-trip through the canonical flat layout: single-field priors' raw draws
-    # are not field-indexable by name, so unflatten gives uniform named access.
-    theta_flat = jnp.asarray(theta.flatten()).reshape(num_simulations, -1)
-    record = NumericRecordArray.unflatten(
-        theta_flat, template=template, batch_shape=(num_simulations,)
-    )
+    # Round-trip through the canonical 1-D vector layout: single-field priors'
+    # raw draws are not field-indexable by name, so from_vector gives uniform
+    # named access. Structured draws serialize via to_vector; raw arrays ravel.
+    if isinstance(theta, NumericRecordArray):
+        theta_flat = jnp.asarray(theta.to_vector()).reshape(num_simulations, -1)
+    else:
+        theta_flat = jnp.asarray(theta).reshape(num_simulations, -1)
+    record = template.from_vector(theta_flat)
     # Invert before flattening: matrix-valued bijectors (positive-definite) require
     # the leaf's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
@@ -187,8 +189,9 @@ def _simulate_offline(
 
     def _one(flat_row: Array, k: PRNGKey) -> Array:
         # Per-draw structured params (named-field access), per the
-        # GenerativeLikelihood contract.
-        params = NumericRecordArray.unflatten(flat_row, template=template, batch_shape=())
+        # GenerativeLikelihood contract. ``flat_row`` is 1-D, so from_vector
+        # rebuilds a single NumericRecord.
+        params = template.from_vector(flat_row)
         return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
 
     if sim_backend == "jax":

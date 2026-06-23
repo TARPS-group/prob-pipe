@@ -491,14 +491,14 @@ class NumericRecordDistribution(RecordDistribution):
         """Total number of scalar elements in one sample.
 
         For a :class:`NumericEventTemplate` this is the cached
-        ``flat_size``. For a general ``EventTemplate``, sums the
+        ``vector_size``. For a general ``EventTemplate``, sums the
         numeric-leaf shapes; opaque leaves contribute zero.
         """
         from .record import NumericEventTemplate
 
         tpl = self.event_template
         if isinstance(tpl, NumericEventTemplate):
-            return tpl.flat_size
+            return tpl.vector_size
         return sum(
             prod(shape) if shape else 1 for shape in tpl.leaf_shapes.values() if shape is not None
         )
@@ -518,9 +518,9 @@ class NumericRecordDistribution(RecordDistribution):
         from .record import Record
 
         if isinstance(value, (NumericRecordArray, NumericRecord)):
-            return value.flatten()
+            return value.to_vector()
         if isinstance(value, Record):
-            return NumericRecord.from_record(value).flatten()
+            return NumericRecord.from_record(value).to_vector()
         value = jnp.asarray(value)
         if not event_shape:
             return value[..., None]
@@ -538,14 +538,11 @@ class NumericRecordDistribution(RecordDistribution):
         for ``_log_prob`` compatibility (preserves the original "single-
         leaf returns raw array" contract).
         """
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
-
         flat = jnp.asarray(flat)
         if template is not None and len(template.fields) > 1:
-            if flat.ndim < 2:
-                return NumericRecord.unflatten(flat, template=template)
-            return NumericRecordArray.unflatten(flat, template=template)
+            # ``from_vector`` selects single (NumericRecord) vs batched
+            # (NumericRecordArray) from the rank of ``flat``.
+            return template.from_vector(flat)
         # Single-field path
         if template is None or not template.fields:
             return flat[..., 0]
@@ -771,8 +768,8 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
     """
 
     @property
-    def flat_size(self) -> int:
-        """Number of scalar elements — equal to ``event_shape[0]``.
+    def vector_size(self) -> int:
+        """Length of the per-element 1-D vector — equal to ``event_shape[0]``.
 
         Validates the flat contract on access: subclasses with
         non-1-D ``event_shape`` raise ``TypeError`` here rather than
@@ -819,7 +816,7 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
         TypeError
             If ``template`` is not a ``NumericEventTemplate``.
         ValueError
-            If ``self.flat_size`` does not match ``template.flat_size``.
+            If ``self.vector_size`` does not match ``template.vector_size``.
         """
         from .record import NumericEventTemplate
 
@@ -829,10 +826,10 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
                 f"got {type(template).__name__}. Opaque (None) leaves "
                 f"cannot be reconstructed from a flat numeric array."
             )
-        if self.flat_size != template.flat_size:
+        if self.vector_size != template.vector_size:
             raise ValueError(
-                f"flat_size mismatch: source flat_size={self.flat_size}, "
-                f"template.flat_size={template.flat_size}."
+                f"vector_size mismatch: source vector_size={self.vector_size}, "
+                f"template.vector_size={template.vector_size}."
             )
         cls = _numeric_record_distribution_view_class_for_base(self)
         return cls(self, template, name=name)
@@ -1038,14 +1035,10 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 base_sample,
                 event_shape=self._base.event_shape,
             )
-            tpl = self.event_template
-            if sample_shape == ():
-                return NumericRecord.unflatten(flat, template=tpl)
-            return NumericRecordArray.unflatten(
-                flat,
-                template=tpl,
-                batch_shape=sample_shape,
-            )
+            # ``from_vector`` selects single (NumericRecord, flat is 1-D) vs
+            # batched (NumericRecordArray, batch_shape == sample_shape) from the
+            # rank of ``flat``.
+            return self.event_template.from_vector(flat)
 
         extra_methods["_sample"] = _sample
 
@@ -1054,7 +1047,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
 
         def _log_prob(self, x) -> Array:
             if isinstance(x, (NumericRecord, NumericRecordArray)):
-                flat = x.flatten()
+                flat = x.to_vector()
             else:
                 flat = jnp.asarray(x)
             value = self._base.unflatten_value(
@@ -1073,7 +1066,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 self._base._mean(),
                 event_shape=self._base.event_shape,
             )
-            return NumericRecord.unflatten(flat, template=self.event_template)
+            return self.event_template.from_vector(flat)
 
         extra_methods["_mean"] = _mean
 
@@ -1085,7 +1078,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 self._base._variance(),
                 event_shape=self._base.event_shape,
             )
-            return NumericRecord.unflatten(flat, template=self.event_template)
+            return self.event_template.from_vector(flat)
 
         extra_methods["_variance"] = _variance
 
@@ -1128,7 +1121,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             template = self.event_template
 
             def _f_on_flat(flat_row):
-                return f(NumericRecord.unflatten(flat_row, template=template))
+                return f(template.from_vector(flat_row))
 
             evals = jax.vmap(_f_on_flat)(flat_samples)
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST

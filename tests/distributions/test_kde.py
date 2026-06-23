@@ -56,9 +56,9 @@ class TestEventTemplateConstructor:
         assert kde.event_template is two_field_template
         assert kde.event_template.fields == ("intercept", "slope")
 
-    def test_mismatched_flat_size_raises(self, flat_samples):
-        bad_tpl = EventTemplate(a=(), b=(), c=())  # flat_size=3, samples flat dim=2
-        with pytest.raises(ValueError, match="flat_size"):
+    def test_mismatched_vector_size_raises(self, flat_samples):
+        bad_tpl = EventTemplate(a=(), b=(), c=())  # vector_size=3, samples flat dim=2
+        with pytest.raises(ValueError, match="vector_size"):
             KDEDistribution(flat_samples, event_template=bad_tpl, name="bad")
 
     def test_single_field_template_unchanged(self, flat_samples):

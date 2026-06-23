@@ -31,9 +31,10 @@ from probpipe import (
     learn_amortized_likelihood,
     learn_amortized_ratio,
 )
-from probpipe.core._record_array import NumericRecordArray
 from probpipe.inference._bayesflow_common import _adapter_field_keys
 from probpipe.modeling import GenerativeLikelihood, Likelihood
+
+from ._bayesflow_helpers import theta_vec
 
 # Conjugate model: theta ~ N(0, I_2), y_i = theta + sigma * eps. With n rows the
 # posterior is N(sum(y) / (n + sigma^2), sigma^2 / (n + sigma^2) I).
@@ -48,7 +49,7 @@ class _ConjugateSim(Likelihood, GenerativeLikelihood):
 
     def generate_data(self, params, num_observations, *, key=None):
         key = key if key is not None else jax.random.PRNGKey(0)
-        t = params.flatten()
+        t = theta_vec(params)
         return t[None, :] + _SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
 
 
@@ -188,9 +189,7 @@ class TestSurrogateContract:
         """Structured per-draw records and flat vectors give identical scores
         (the MCMC helper passes flat vectors; predictive paths pass records)."""
         flat = jnp.array([0.4, -0.3])
-        record = NumericRecordArray.unflatten(
-            flat, template=_prior().event_template, batch_shape=()
-        )
+        record = _prior().event_template.from_vector(flat)
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
             float(nle.log_likelihood(flat, y_row)),
@@ -231,7 +230,7 @@ class TestSurrogateContract:
 
             def generate_data(self, params, num_observations, *, key=None):
                 key = key if key is not None else jax.random.PRNGKey(0)
-                a = params.flatten()[0]
+                a = theta_vec(params)[0]
                 return a + 0.1 * jax.random.normal(key, (num_observations, 1))
 
         lik = learn_amortized_ratio(
@@ -364,7 +363,7 @@ class TestConditioning:
 
         class _TrueGaussianLik(Likelihood):
             def log_likelihood(self, params, data):
-                t = params.flatten() if hasattr(params, "flatten") else params
+                t = theta_vec(params)
                 t = jnp.ravel(jnp.asarray(t))
                 rows = jnp.atleast_2d(jnp.asarray(data))
                 resid = (rows - t[None, :]) / _SIGMA
@@ -418,7 +417,7 @@ class TestConditioning:
 
             def generate_data(self, params, num_observations, *, key=None):
                 key = key if key is not None else jax.random.PRNGKey(0)
-                lam = params.flatten()[0]
+                lam = theta_vec(params)[0]
                 counts = jax.random.poisson(key, lam, (num_observations, 2))
                 return counts.astype(jnp.float32)
 
@@ -514,7 +513,7 @@ class TestValidation:
 
             def generate_data(self, params, num_observations, *, key=None):
                 key = key if key is not None else jax.random.PRNGKey(0)
-                a = params.flatten()[0]
+                a = theta_vec(params)[0]
                 return a + 0.1 * jax.random.normal(key, (num_observations, 1))
 
         with pytest.raises(ValueError, match="learn_amortized_ratio"):

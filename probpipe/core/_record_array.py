@@ -2,14 +2,15 @@
 
 A ``RecordArray`` stores a batch of Records with consistent field structure.
 Each field has shape ``(*batch_shape, *leaf_shape)``.  ``NumericRecordArray``
-adds numeric operations: ``flatten``, ``unflatten``, ``mean``, ``var``.
+adds numeric operations: ``to_vector`` (1-D serialization, inverse
+``EventTemplate.from_vector``), ``mean``, ``var``. The general JAX-pytree
+``flatten`` / ``unflatten`` are inherited from ``Record``.
 """
 
 from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Callable, Iterator
-from math import prod
 from typing import Any
 
 import jax
@@ -18,7 +19,7 @@ import numpy as np
 
 from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
-from .record import _PATH_SEP, ArraySpec, EventTemplate, Record, _spec_size
+from .record import _PATH_SEP, ArraySpec, EventTemplate, Record
 
 __all__ = [
     "NumericRecordArray",
@@ -365,7 +366,8 @@ class RecordArray(Record):
 class NumericRecordArray(RecordArray):
     """Batch of NumericRecords — all leaves are numeric arrays.
 
-    Adds ``flatten``/``unflatten``, ``mean``, ``var`` operations.
+    Adds ``to_vector``, ``mean``, ``var`` operations (the general
+    JAX-pytree ``flatten`` / ``unflatten`` are inherited from ``Record``).
     Construction validates that every leaf has a numeric dtype and
     shape ``(*batch_shape, *event_shape)`` matching the template, so
     pytree round-trips (``jax.tree.map``) cannot silently produce a
@@ -435,84 +437,24 @@ class NumericRecordArray(RecordArray):
             (dict(self._store), self._batch_shape, self._template, self._name, self._source),
         )
 
-    # -- Flatten / unflatten ------------------------------------------------
+    # -- 1-D vector conversion ----------------------------------------------
 
-    def flatten(self) -> jnp.ndarray:
-        """Flatten event dimensions into a single trailing axis.
+    def to_vector(self) -> jnp.ndarray:
+        """Serialize each batch element to its 1-D vector.
 
-        Returns array of shape ``(*batch_shape, flat_event_size)``. Nested
-        record fields are flattened depth-first in field order, matching
-        :meth:`unflatten` and :meth:`NumericRecord.flatten`.
+        Instance-level convenience for the numeric 1-D serialization whose
+        structural definition lives on :meth:`EventTemplate.to_vector`:
+        delegates to this array's :attr:`template`. Returns a matrix of shape
+        ``(*batch_shape, vector_size)`` — one raveled vector per batch element,
+        leaves visited in canonical leaf order (insertion order, depth-first
+        into nested records). The inverse, :meth:`EventTemplate.from_vector`,
+        reconstructs the batch.
+
+        Distinct from the JAX-pytree :meth:`~Record.flatten` (which returns
+        ``(leaves, aux)`` keeping each batched leaf whole); ``to_vector`` ravels
+        and concatenates each element's event dimensions into a dense matrix.
         """
-        n_batch = len(self._batch_shape)
-
-        def _flat_field(val: Any) -> jnp.ndarray:
-            # A nested record-array field (from unflatten, or a batched _sample)
-            # carries the same batch axis and flattens its own leaves.
-            if isinstance(val, RecordArray):
-                return val.flatten()
-            # A nested plain Record whose leaves still carry the batch axis
-            # (a non-canonical batched draw): flatten each leaf and concatenate.
-            if isinstance(val, Record):
-                return jnp.concatenate([_flat_field(val[f]) for f in val.fields], axis=-1)
-            return jnp.reshape(val, (*self._batch_shape, prod(val.shape[n_batch:])))
-
-        parts = [_flat_field(self._store[name]) for name in self._store]
-        return jnp.concatenate(parts, axis=-1)
-
-    @classmethod
-    def unflatten(
-        cls,
-        flat: jnp.ndarray,
-        *,
-        template: EventTemplate,
-        batch_shape: tuple[int, ...] | None = None,
-    ) -> NumericRecordArray:
-        """Reconstruct from a flat array.
-
-        The inverse of :meth:`flatten`: nested ``EventTemplate`` specs are
-        rebuilt recursively, so a template with nested fields yields nested
-        ``NumericRecordArray`` fields, matching the depth-first leaf order
-        ``flatten`` uses.
-
-        Parameters
-        ----------
-        flat : array
-            Shape ``(*batch_shape, flat_event_size)``.
-        template : EventTemplate
-            Structural description providing field names and event shapes.
-        batch_shape : tuple of int, optional
-            If not provided, inferred as ``flat.shape[:-1]``.
-
-        Returns
-        -------
-        NumericRecordArray
-            Array of the template's structure with the given ``batch_shape``;
-            nested template fields become nested ``NumericRecordArray`` fields.
-        """
-        if batch_shape is None:
-            batch_shape = flat.shape[:-1]
-
-        fields: dict[str, jnp.ndarray] = {}
-        offset = 0
-        for name in template.fields:
-            spec = template[name]
-            size = _spec_size(spec)
-            chunk = flat[..., offset : offset + size]
-            if isinstance(spec, EventTemplate):
-                fields[name] = cls.unflatten(
-                    chunk,
-                    template=spec,
-                    batch_shape=batch_shape,
-                )
-            else:
-                # ArraySpec leaf — ``_spec_size`` above rejects every other
-                # leaf kind, so the spec is necessarily an ArraySpec here.
-                assert isinstance(spec, ArraySpec)
-                fields[name] = jnp.reshape(chunk, batch_shape + spec.shape)
-            offset += size
-
-        return cls(fields, batch_shape=batch_shape, template=template)
+        return self.template.to_vector(self)
 
     # -- Reductions ---------------------------------------------------------
 

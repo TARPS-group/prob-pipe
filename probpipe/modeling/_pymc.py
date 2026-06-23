@@ -174,7 +174,7 @@ class PyMCModel(ProbabilisticModel):
         Derived from :attr:`event_template`; raises on a non-concrete
         free-RV shape, as the template does.
         """
-        return (self.event_template.flat_size,)
+        return (self.event_template.vector_size,)
 
     def _event_template_for(
         self,

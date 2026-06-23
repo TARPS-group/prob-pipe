@@ -230,7 +230,7 @@ def get_init_state(
 
                 if not isinstance(s, NumericRecord):
                     s = NumericRecord.from_record(s)
-                s = s.flatten()
+                s = s.to_vector()
             return jnp.atleast_1d(jnp.asarray(s, dtype=target_dtype))
         except Exception:
             logger.debug(

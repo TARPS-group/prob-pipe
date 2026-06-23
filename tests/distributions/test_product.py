@@ -306,11 +306,9 @@ class TestNestedSampleFlatten:
         assert isinstance(s["outer"], Record) and not isinstance(s["outer"], RecordArray)
 
     def test_batched_nested_flatten_roundtrip(self, nested):
-        from probpipe.core._record_array import NumericRecordArray
-
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
         leaves = list(nested.event_template.numeric_leaf_shapes)
-        flat = s.flatten()
+        flat = s.to_vector()
         assert flat.shape == (6, len(leaves))  # ('outer/a', 'outer/b', 'm')
         # Primary check: flatten places each sampled leaf into its own column in
         # canonical leaf order -- compared against the sample's own slash leaves.
@@ -319,7 +317,7 @@ class TestNestedSampleFlatten:
         for i, leaf in enumerate(leaves):
             np.testing.assert_allclose(flat[:, i], s[leaf], atol=1e-6)
         # Secondary: the columns round-trip back to the same leaves via unflatten.
-        rec = NumericRecordArray.unflatten(flat, template=nested.event_template, batch_shape=(6,))
+        rec = nested.event_template.from_vector(flat)
         for leaf in leaves:
             np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
 

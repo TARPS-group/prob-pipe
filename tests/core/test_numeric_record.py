@@ -153,32 +153,32 @@ class TestConstruction:
 
 
 # ---------------------------------------------------------------------------
-# Flatten / unflatten
+# to_vector / from_vector (numeric 1-D serialization)
 # ---------------------------------------------------------------------------
 
 
-class TestFlattenUnflatten:
+class TestToVectorFromVector:
     def test_flatten_scalars(self):
         nr = NumericRecord(a=1.0, b=2.0, c=3.0)
-        flat = nr.flatten()
+        flat = nr.to_vector()
         assert flat.shape == (3,)
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
     def test_flatten_arrays(self):
         nr = NumericRecord(x=jnp.array([1.0, 2.0]), y=jnp.array([3.0]))
-        flat = nr.flatten()
+        flat = nr.to_vector()
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
     def test_flatten_nested(self):
         inner = NumericRecord(x=1.0, y=2.0)
         outer = NumericRecord(a=inner, b=3.0)
-        flat = outer.flatten()
+        flat = outer.to_vector()
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
     def test_unflatten_with_event_template(self):
         tpl = EventTemplate(a=(), b=(3,))
         flat = jnp.array([1.0, 2.0, 3.0, 4.0])
-        nr = NumericRecord.unflatten(flat, template=tpl)
+        nr = tpl.from_vector(flat)
         assert isinstance(nr, NumericRecord)
         np.testing.assert_allclose(nr["a"], 1.0)
         np.testing.assert_allclose(nr["b"], [2.0, 3.0, 4.0])
@@ -186,8 +186,8 @@ class TestFlattenUnflatten:
     def test_roundtrip_with_template(self):
         tpl = EventTemplate(r=(), K=(), phi=())
         nr = NumericRecord(r=1.8, K=70.0, phi=10.0)
-        flat = nr.flatten()
-        nr2 = NumericRecord.unflatten(flat, template=tpl)
+        flat = nr.to_vector()
+        nr2 = tpl.from_vector(flat)
         np.testing.assert_allclose(float(nr2["r"]), 1.8)
         np.testing.assert_allclose(float(nr2["K"]), 70.0)
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
@@ -198,20 +198,20 @@ class TestFlattenUnflatten:
         inner_tpl = NumericEventTemplate(x=(), y=(2,))
         outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
-        nr = NumericRecord.unflatten(flat, template=outer_tpl)
+        nr = outer_tpl.from_vector(flat)
         assert isinstance(nr["params"], NumericRecord)
         np.testing.assert_allclose(nr["params"]["x"], 0.0)
         np.testing.assert_allclose(nr["params"]["y"], [1.0, 2.0])
         np.testing.assert_allclose(nr["z"], [3.0, 4.0, 5.0])
 
-    def test_unflatten_opaque_raises(self):
+    def test_from_vector_mixed_requires_non_numeric(self):
         tpl = EventTemplate(label=None, x=())
-        with pytest.raises(TypeError, match="opaque"):
-            NumericRecord.unflatten(jnp.array([1.0]), template=tpl)
+        with pytest.raises(ValueError, match="non_numeric"):
+            tpl.from_vector(jnp.array([1.0]))
 
-    def test_flat_size(self):
+    def test_vector_size(self):
         nr = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
-        assert nr.flat_size == 11
+        assert nr.vector_size == 11
 
 
 # ---------------------------------------------------------------------------

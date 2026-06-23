@@ -14,7 +14,7 @@ The Record family
 | :class:`Record`                                             | Single structured value; fields may be arrays, scalars, strings, xarray, nested Record. |
 | :class:`~probpipe.NumericRecord` (subclass)                 | Single structured value; every leaf is a ``jax.Array`` (post-construction invariant).   |
 | :class:`~probpipe.RecordArray`                              | Batch of ``Record`` elements sharing a :class:`EventTemplate`.                         |
-| :class:`~probpipe.NumericRecordArray` (subclass)            | Batch of :class:`~probpipe.NumericRecord` elements with ``flatten`` / ``mean`` / ``var``. |
+| :class:`~probpipe.NumericRecordArray` (subclass)            | Batch of :class:`~probpipe.NumericRecord` elements with ``to_vector`` / ``mean`` / ``var``. |
 | :class:`EventTemplate`                                     | Structural skeleton: field names, per-field leaf shapes or ``None`` for opaque leaves.  |
 
 **When to reach for which:**
@@ -23,9 +23,9 @@ The Record family
   plus a label string, a DataFrame, an xarray object, ...) — or when
   you want to keep the original backend objects intact. ``Record``
   performs no coercion and accepts arbitrary leaves.
-* Use :class:`~probpipe.NumericRecord` when you want to flatten /
-  unflatten to a 1-D vector, take reductions, or pass the value
-  through :func:`jax.numpy` operations. Construction coerces every
+* Use :class:`~probpipe.NumericRecord` when you want to convert to /
+  from a 1-D vector (``to_vector`` / ``from_vector``), take reductions,
+  or pass the value through :func:`jax.numpy` operations. Construction coerces every
   leaf to a ``jax.Array`` (the post-construction invariant) and
   captures backend-specific metadata (xarray dims/coords, pandas
   index) via the aux registry so :meth:`NumericRecord.to_native` can
@@ -37,8 +37,8 @@ The Record family
   from ``NumericRecordArray``); field indexing returns the batched
   array.
 * Use :class:`EventTemplate` whenever you need to round-trip
-  unflatten → flatten without an example instance, or describe the
-  expected structure of a distribution's sample.
+  ``from_vector`` → ``to_vector`` without an example instance, or describe
+  the expected structure of a distribution's sample.
 
 Usage::
 
@@ -49,7 +49,7 @@ Usage::
 
     params["r"]            # → jnp.array(1.8)
     params.fields          # → ('r', 'K', 'phi')   # insertion order
-    params.flatten()       # → jnp.array([1.8, 70., 10.])
+    params.to_vector()     # → jnp.array([1.8, 70., 10.])
 
     data["counts"]         # → np.array([2, 1, 3, 0, 5]) (stored verbatim)
     data["label"]          # → "horseshoe"
@@ -501,6 +501,69 @@ class Record:
                 fields[name] = fn(name, val)
         return type(self)(fields)
 
+    # -- JAX-pytree (de)serialization ---------------------------------------
+
+    def flatten(self) -> tuple[list[Any], jax.tree_util.PyTreeDef]:
+        """Decompose into ``(leaves, aux)``, à la :func:`jax.tree_util.tree_flatten`.
+
+        The general **JAX-pytree** operation, defined for *any* leaf type
+        (numeric or opaque). Returns this record's pytree *leaves* — the
+        stored values in canonical leaf order (insertion order, descending
+        depth-first into nested records) — together with the structural
+        *aux* (a :class:`jax.tree_util.PyTreeDef`). :meth:`unflatten` is the
+        inverse: ``Record.unflatten(*record.flatten()) == record``.
+
+        This is distinct from :meth:`EventTemplate.to_vector`. ``flatten``
+        keeps each leaf whole (any type) and carries the full structure in
+        ``aux``; ``to_vector`` applies only to *numeric* values and goes
+        further, ravelling and concatenating the numeric leaves into a
+        single dense 1-D ``vec``.
+
+        Returns
+        -------
+        tuple
+            ``(leaves, aux)`` — ``leaves`` is the list of pytree leaves in
+            canonical leaf order; ``aux`` is the ``jax.tree_util.PyTreeDef``
+            describing the structure.
+
+        See Also
+        --------
+        unflatten : Reconstruct a value from ``(leaves, aux)`` (the inverse).
+        EventTemplate.to_vector : Dense 1-D serialization of a numeric value.
+        """
+        return jax.tree_util.tree_flatten(self)
+
+    @staticmethod
+    def unflatten(leaves: list[Any], aux: jax.tree_util.PyTreeDef) -> Any:
+        """Reconstruct a value from ``(leaves, aux)``, à la :func:`jax.tree_util.tree_unflatten`.
+
+        The inverse of :meth:`flatten`: rebuilds the original (possibly
+        nested) value from its pytree *leaves* and the *aux* structure.
+        Defined for any leaf type; the concrete result class is encoded in
+        ``aux``, so ``Record.unflatten`` and ``NumericRecord.unflatten``
+        behave identically (the static method does not depend on which
+        class it is called on).
+
+        Parameters
+        ----------
+        leaves : list
+            Pytree leaves in canonical leaf order, as returned by
+            :meth:`flatten`.
+        aux : jax.tree_util.PyTreeDef
+            The structural definition returned by :meth:`flatten`.
+
+        Returns
+        -------
+        Any
+            The reconstructed value, of the class encoded in ``aux``.
+
+        See Also
+        --------
+        flatten : Decompose a value into ``(leaves, aux)`` (the inverse).
+        EventTemplate.from_vector : Reconstruct a numeric value from a dense 1-D ``vec``.
+        """
+        return jax.tree_util.tree_unflatten(aux, leaves)
+
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
@@ -760,53 +823,96 @@ def _full_leaf_shape(val: Any) -> tuple[int, ...] | None:
 
 
 class EventTemplate:
-    """Structural description of a Record: field names, leaf shapes, nesting.
+    """Structural description of a value: its named, possibly-nested leaf structure.
 
-    Stores the skeleton of a Record without data — field names, per-field
-    shapes (for numeric leaves) or ``None`` (for opaque leaves), and
-    optional nested ``EventTemplate`` for hierarchical structure.
+    An ``EventTemplate`` describes the **structure** of a value — the names,
+    nesting, and per-leaf kind / shape that make it up — independently of the
+    concrete data. The same structural type describes a :class:`Record` value,
+    one *event* (a single draw) of a :class:`~probpipe.Distribution`, and the
+    input / output of a workflow function. Every :class:`Record` carries an
+    ``EventTemplate``, but the type is general: it is ProbPipe's schema for any
+    structured value.
 
-    Inspired by JAX's ``PyTreeDef``: a template can reconstruct a Record
-    from flat data, and describes the expected structure for type-checking
-    and flattening.
+    The word *event* follows probabilistic-programming usage and **generalizes**
+    the ``event`` / ``event_shape`` notion from other PPLs (TensorFlow
+    Probability, distrax, NumPyro). There, ``event_shape`` is the shape of a
+    single draw of one array-valued random variable; here an *event* is one
+    structured value — a named, possibly-nested tree of leaves — so a template
+    generalizes a single ``event_shape`` to the full per-leaf shape structure of
+    a draw.
+
+    Terminology
+    -----------
+    Used precisely throughout this class:
+
+    - **field** — a *top-level* entry of the template: a ``name -> spec`` pair,
+      where the spec is either a leaf or a nested ``EventTemplate``.
+      :attr:`fields` lists these names in insertion order; it does **not**
+      descend into nested sub-templates.
+    - **leaf** — a *terminal* node: an :class:`ArraySpec` / :class:`OpaqueSpec`
+      / :class:`DistributionSpec` / :class:`FunctionSpec`. A nested
+      ``EventTemplate`` is an *internal node*, not a leaf.
+    - **path** — the ``/``-delimited sequence of field names from the root to a
+      node (e.g. ``"physics/mass"``); a top-level field is a single-segment
+      path. Paths round-trip with :meth:`Record.__getitem__`'s path syntax.
+    - **canonical leaf order** — the order in which leaves are traversed:
+      depth-first, following each level's insertion order. This is the single
+      ordering every leaf-wise operation uses. :attr:`leaf_paths` is its
+      canonical definition — it returns the path to every leaf in this order;
+      :meth:`to_vector` / :meth:`from_vector` lay out and read leaves in it, and
+      :attr:`leaf_shapes` is keyed by it.
+
+    PyTree contract
+    ---------------
+    An ``EventTemplate`` — and every value it describes — is a JAX pytree.
+    *Internal nodes* are nested ``EventTemplate``\\s (and, at the value level,
+    the :class:`Record` / :class:`~probpipe.RecordArray` containers); a node's
+    field names are its keys. *Leaves* are the terminal specs (:class:`ArraySpec`
+    / :class:`OpaqueSpec` / :class:`DistributionSpec` / :class:`FunctionSpec`)
+    and, at the value level, the array or opaque objects they stand for. A leaf's
+    ``/``-delimited path is the string form of its JAX key path, and the
+    canonical leaf order is JAX's left-to-right depth-first leaf order.
+    :meth:`~probpipe.Record.flatten` / :meth:`~probpipe.Record.unflatten` are the
+    value-level pytree (de)composition; :attr:`leaf_paths` enumerates the leaf
+    keys in the same order.
 
     Parameters
     ----------
     **field_specs
-        Named fields.  Each value is one of:
+        Named fields. Each value is one of:
 
-        - ``tuple[int, ...]`` — shape of a numeric array leaf
-          (e.g., ``()`` for scalar, ``(3,)`` for 3-vector); normalised to
-          :class:`ArraySpec`.
+        - ``tuple[int, ...]`` — shape of a numeric array leaf (e.g. ``()`` for a
+          scalar, ``(3,)`` for a 3-vector); normalised to :class:`ArraySpec`.
         - ``None`` — opaque (non-array) leaf; normalised to :class:`OpaqueSpec`.
         - a leaf spec — :class:`ArraySpec` / :class:`OpaqueSpec` /
           :class:`DistributionSpec` / :class:`FunctionSpec` (passed through).
-        - ``EventTemplate`` — nested sub-structure (kept as-is).
+        - ``EventTemplate`` — a nested sub-structure (an internal node).
 
     Examples
     --------
     ::
 
-        EventTemplate(x=(), y=(3,))                    # -> NumericEventTemplate
+        EventTemplate(x=(), y=(3,))                     # -> NumericEventTemplate
         EventTemplate(label=None, x=())                 # -> EventTemplate (mixed)
         EventTemplate(physics=EventTemplate(force=(), mass=()), obs=())
 
     Notes
     -----
-    Leaves are stored as frozen, hashable spec objects
-    (``ArraySpec`` / ``OpaqueSpec`` / ``DistributionSpec`` / ``FunctionSpec``);
-    ``__getitem__`` returns the stored spec (or nested template), while
-    shape-shaped access stays on ``leaf_shapes`` / ``event_shapes`` /
-    ``field_event_shape``.
+    Inspired by JAX's ``PyTreeDef``: a template can reconstruct a value from its
+    leaves and describes the expected structure for type-checking and
+    vectorization. Leaves are stored as frozen, hashable spec objects, so a
+    template is itself hashable (usable as a jit / treedef cache key).
+    ``__getitem__`` returns the stored spec (or nested template); shape-shaped
+    access lives on :attr:`leaf_shapes` / :attr:`event_shapes` /
+    :meth:`field_event_shape`.
 
     Calling ``EventTemplate(...)`` directly auto-promotes to a
-    :class:`NumericEventTemplate` when every spec is numeric (and
-    every nested sub-template is itself all-numeric). That keeps
-    ``flat_size`` and ``numeric_leaf_shapes`` reachable in the common
-    all-numeric case without requiring the caller to name the subclass.
-    Mixed templates (any ``None`` spec) stay as plain ``EventTemplate``
-    and do not expose ``flat_size`` — it isn't a meaningful quantity
-    once opaque leaves are in the mix.
+    :class:`NumericEventTemplate` when every spec is numeric (and every nested
+    sub-template is itself all-numeric), so :attr:`vector_size` and
+    :attr:`numeric_leaf_shapes` are reachable in the common all-numeric case
+    without naming the subclass. Mixed templates (any opaque / ``None`` spec)
+    stay plain ``EventTemplate`` and do not expose :attr:`vector_size` — it is
+    not a meaningful quantity once opaque leaves are present.
     """
 
     __slots__ = ("_specs",)
@@ -870,17 +976,53 @@ class EventTemplate:
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names in insertion order."""
+        """Top-level field names, in insertion order.
+
+        Returns the names of the template's *top-level* fields only (see the
+        Terminology section); it does **not** descend into nested
+        sub-templates, so a nested field contributes a single name here. For
+        the path to every leaf in canonical leaf order, use :attr:`leaf_paths`;
+        the two coincide for a flat template (one where every field is a leaf).
+        """
         return tuple(self._specs.keys())
 
     @property
-    def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
-        """Per-field leaf shapes.  ``None`` for opaque (non-array) leaves.
+    def leaf_paths(self) -> tuple[str, ...]:
+        """Path to every leaf, in canonical leaf order.
 
-        For nested ``EventTemplate`` fields, returns the nested
-        template's ``leaf_shapes`` (not the template itself), keyed by
-        ``/``-delimited paths so the keys round-trip with
-        :meth:`Record.__getitem__`'s path syntax.
+        Returns the ``/``-delimited path (see the Terminology section) to each
+        leaf of the template, traversed depth-first in each level's insertion
+        order. This property **is the canonical definition** of that order and
+        of the leaf keys it yields: every leaf-wise operation in ProbPipe visits
+        leaves in exactly this order and names them by exactly these paths —
+        :meth:`to_vector` / :meth:`from_vector` lay out and read the per-leaf
+        blocks in it, :meth:`~probpipe.Record.flatten` returns the value's
+        leaves in it, and :attr:`leaf_shapes` (and
+        :attr:`~NumericEventTemplate.numeric_leaf_shapes`) are keyed by these
+        same paths. A nested field expands into one path per nested leaf; a flat
+        template's ``leaf_paths`` equals its :attr:`fields`.
+
+        Returns
+        -------
+        tuple of str
+            One ``/``-delimited path per leaf, in canonical leaf order.
+        """
+        paths: list[str] = []
+        for name, spec in self._specs.items():
+            if isinstance(spec, EventTemplate):
+                paths.extend(f"{name}{_PATH_SEP}{sub}" for sub in spec.leaf_paths)
+            else:
+                paths.append(name)
+        return tuple(paths)
+
+    @property
+    def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
+        """Per-leaf shapes, keyed by :attr:`leaf_paths` (canonical leaf order).
+
+        Maps each leaf's ``/``-delimited path to its array shape, or ``None``
+        for an opaque (non-array) leaf. The keys are exactly :attr:`leaf_paths`,
+        in canonical leaf order; a nested sub-template contributes one entry per
+        nested leaf.
         """
         result: dict[str, tuple[int, ...] | None] = {}
         for name, spec in self._specs.items():
@@ -896,14 +1038,14 @@ class EventTemplate:
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-top-level-field event shapes.
+        """Per-field event shapes, keyed by :attr:`fields` (top-level).
 
-        Unlike :attr:`leaf_shapes` (which descends into nested
-        sub-templates and emits one entry per leaf), ``event_shapes``
-        emits one entry per top-level field. Nested sub-templates and
-        opaque leaves collapse to ``()``. This is the view that downstream
-        Distribution code wants when answering "what is the per-field event
-        shape of one draw?".
+        Emits one entry per *top-level* field — keyed by :attr:`fields`, not by
+        :attr:`leaf_paths`. An :class:`ArraySpec` field returns its shape; a
+        nested sub-template or opaque leaf collapses to ``()``. Contrast
+        :attr:`leaf_shapes`, which descends and emits one entry per leaf. This
+        is the view downstream Distribution code wants when answering "what is
+        the per-field event shape of one draw?".
         """
         return {name: self.field_event_shape(name) for name in self._specs}
 
@@ -1051,7 +1193,7 @@ class EventTemplate:
         Returns
         -------
         NumericEventTemplate
-            The numeric-leaf sub-template, so that :attr:`flat_size` and
+            The numeric-leaf sub-template, so that :attr:`vector_size` and
             :attr:`numeric_leaf_shapes` are available.
 
         Raises
@@ -1092,11 +1234,11 @@ class EventTemplate:
         ``to_vector`` / :meth:`from_vector` convert between the structured and
         vector representations of a **numeric** value. A numeric value is in
         general a structured tree of array-valued leaves, with
-        :attr:`~NumericEventTemplate.flat_size` the total number of scalar
+        :attr:`~NumericEventTemplate.vector_size` the total number of scalar
         values making up those arrays. ``to_vector`` converts the structured
         value to its unique flat representation: an array of shape
-        ``(flat_size,)``. A batch of numeric values is flattened to a matrix:
-        an array of shape ``(*batch_shape, flat_size)``.
+        ``(vector_size,)``. A batch of numeric values is flattened to a matrix:
+        an array of shape ``(*batch_shape, vector_size)``.
 
         This method is distinct from ``flatten``. The latter follows the
         JAX-pytree terminology, implying the mapping ``value -> (leaves, aux)``
@@ -1127,7 +1269,7 @@ class EventTemplate:
             The concatenated numeric leaves, dtype-promoted by
             ``jnp.concatenate``. Shape ``(vector_size,)`` for a single
             ``value`` and ``(*B, vector_size)`` for a batched ``value`` with
-            ``batch_shape == B``, where ``vector_size == self.flat_size``.
+            ``batch_shape == B``, where ``vector_size == self.vector_size``.
 
         Raises
         ------
@@ -1164,11 +1306,12 @@ class EventTemplate:
                 f"NumericRecordArray (batched), got {type(value).__name__}."
             )
 
-        # ``tree_leaves`` yields the numeric leaves in canonical leaf order; ravel
-        # each leaf's event dimensions and concatenate along the trailing axis.
-        # Reshaping to ``(*batch_shape, -1)`` preserves leading batch axes
-        # (``batch_shape == ()`` for a single value gives a 1-D result).
-        leaves = jax.tree_util.tree_leaves(value)
+        # Delegate leaf traversal to the JAX-pytree ``flatten``: it yields the
+        # numeric leaves in canonical leaf order. Ravel each leaf's event
+        # dimensions and concatenate along the trailing axis. Reshaping to
+        # ``(*batch_shape, -1)`` preserves leading batch axes (``batch_shape ==
+        # ()`` for a single value gives a 1-D result).
+        leaves, _aux = value.flatten()
         return jnp.concatenate([jnp.reshape(leaf, (*batch_shape, -1)) for leaf in leaves], axis=-1)
 
     def from_vector(
@@ -1188,8 +1331,8 @@ class EventTemplate:
         batched: a vector of shape ``(vector_size,)`` rebuilds a single value,
         while a matrix of shape ``(*batch_shape, vector_size)`` rebuilds a batch
         with that ``batch_shape``. Here ``vector_size`` is the total scalar
-        count, :attr:`~NumericEventTemplate.flat_size` (for a mixed template, the
-        ``flat_size`` of its :meth:`numeric_subset`).
+        count, :attr:`~NumericEventTemplate.vector_size` (for a mixed template,
+        the ``vector_size`` of its :meth:`numeric_subset`).
 
         This method is distinct from ``unflatten``. The latter is the inverse of
         the JAX-pytree ``flatten`` (the mapping ``(leaves, aux) -> value`` in the
@@ -1255,9 +1398,6 @@ class EventTemplate:
         to_vector : Serialize a value to a flat vector (the inverse).
         numeric_subset : Project a mixed template to its numeric leaves.
         """
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray, RecordArray
-
         vec = jnp.asarray(vec)
         numeric = self.is_numeric
 
@@ -1278,7 +1418,7 @@ class EventTemplate:
         # vector_size is the total scalar count across the numeric leaves;
         # numeric_subset() is idempotent on an already-numeric template.
         num_tpl = self if isinstance(self, NumericEventTemplate) else self.numeric_subset()
-        vector_size = num_tpl.flat_size
+        vector_size = num_tpl.vector_size
         if vec.shape[-1] != vector_size:
             raise ValueError(
                 f"{type(self).__name__}.from_vector: vec trailing axis is "
@@ -1289,12 +1429,6 @@ class EventTemplate:
         batch_shape = tuple(vec.shape[:-1]) if batched else ()
         non_numeric = dict(non_numeric) if non_numeric else {}
 
-        # Record classes for the rebuilt value: an all-numeric template rebuilds
-        # NumericRecord(Array); a mixed template rebuilds a plain Record(Array)
-        # carrying the supplied non-numeric leaves alongside the numeric ones.
-        single_cls = NumericRecord if numeric else Record
-        batched_cls = NumericRecordArray if numeric else RecordArray
-
         def _check_batch(path: str, val: Any) -> None:
             shape = getattr(val, "shape", None)
             if shape is not None and tuple(shape[: len(batch_shape)]) != batch_shape:
@@ -1304,25 +1438,29 @@ class EventTemplate:
                     f"batch_shape {batch_shape}."
                 )
 
-        # Walk the template in canonical leaf order, slicing ``vec`` into each
-        # numeric leaf and reshaping it to (*batch_shape, *event_shape); a single
-        # offset advances along vec's trailing axis. Non-numeric leaves (mixed
-        # templates only) are filled from ``non_numeric`` and consume no vector.
+        # Collect the reconstructed value's pytree leaves in canonical leaf order:
+        # slice ``vec`` into each numeric leaf (reshaped to (*batch_shape,
+        # *event_shape), one offset advancing along vec's trailing axis) and pull
+        # each dropped non-numeric leaf (mixed templates only) from ``non_numeric``,
+        # which consumes no vector. Leaf reconstruction (assembling these leaves
+        # into the structured value) is then delegated to the JAX-pytree
+        # ``unflatten``; the matching treedef is derived from this template and
+        # batch_shape so the assembly logic lives in one place.
         offset = 0
+        leaves: list[Any] = []
 
-        def _build(template: EventTemplate, prefix: str) -> Record:
+        def _collect(template: EventTemplate, prefix: str) -> None:
             nonlocal offset
-            fields: dict[str, Any] = {}
             for name in template.fields:
                 spec = template[name]
                 path = f"{prefix}{name}"
                 if isinstance(spec, EventTemplate):
-                    fields[name] = _build(spec, f"{path}{_PATH_SEP}")
+                    _collect(spec, f"{path}{_PATH_SEP}")
                 elif isinstance(spec, ArraySpec):
                     size = prod(spec.shape) if spec.shape else 1
                     chunk = vec[..., offset : offset + size]
                     offset += size
-                    fields[name] = jnp.reshape(chunk, (*batch_shape, *spec.shape))
+                    leaves.append(jnp.reshape(chunk, (*batch_shape, *spec.shape)))
                 else:
                     # Opaque / distribution / function leaf — supplied by caller.
                     if path not in non_numeric:
@@ -1333,12 +1471,11 @@ class EventTemplate:
                     val = non_numeric[path]
                     if batched:
                         _check_batch(path, val)
-                    fields[name] = val
-            if batched:
-                return batched_cls(fields, batch_shape=batch_shape, template=template)
-            return single_cls(fields)
+                    leaves.append(val)
 
-        return _build(self, "")
+        _collect(self, "")
+        treedef = _value_treedef(self, batch_shape, numeric=numeric)
+        return Record.unflatten(leaves, treedef)
 
     def __contains__(self, name: str) -> bool:
         return name in self._specs
@@ -1403,13 +1540,13 @@ class EventTemplate:
         and is treated as opaque (``None``) even if it contains numbers.
         Wrap it in ``np.asarray(...)`` or ``jnp.asarray(...)`` before
         putting it in the Record if you want a numeric template entry.
-        Downstream operations that call ``NumericRecord.unflatten`` will
+        Downstream operations that call :meth:`from_vector` will
         otherwise raise on the opaque field.
         """
         # Promote plain ``EventTemplate.from_record`` to
         # ``NumericEventTemplate`` when the source signals it is all-numeric
         # (a ``NumericRecord`` or any Record whose recursive leaves are
-        # numeric). That keeps ``flat_size`` reachable for the common
+        # numeric). That keeps ``vector_size`` reachable for the common
         # all-numeric case without requiring callers to name the subclass.
         target_cls = cls
         if cls is EventTemplate:
@@ -1458,19 +1595,20 @@ class NumericEventTemplate(EventTemplate):
     Extends :class:`EventTemplate` by requiring each spec to be a shape
     tuple (or a nested :class:`NumericEventTemplate`) — no opaque
     ``None`` leaves are allowed. That restriction is what makes
-    :attr:`flat_size` and :meth:`numeric_leaf_shapes` meaningful:
-    ``flat_size`` is the total number of scalar elements across every
-    numeric leaf, and the unflatten machinery (``NumericRecord.unflatten``
-    / ``NumericRecordArray.unflatten``) requires a template of this
-    class so that every field can be reconstructed from a slice of the
-    flat buffer.
+    :attr:`vector_size` and :meth:`numeric_leaf_shapes` meaningful:
+    ``vector_size`` is the length of the per-element 1-D vector — the total
+    number of scalar elements across every numeric leaf — and
+    :meth:`~EventTemplate.from_vector` requires a template of this class so
+    that every field can be reconstructed from a slice of that vector. A
+    *batch* of such values is a matrix of shape ``(*batch_shape, vector_size)``,
+    not a single vector.
 
     Use :meth:`EventTemplate.from_record` on a :class:`NumericRecord`
     (it auto-promotes) or call this constructor directly when you have
     the shape specs in hand.
     """
 
-    __slots__ = ("_flat_size",)
+    __slots__ = ("_vector_size",)
 
     def _post_validate(self, field_specs: dict[str, _FieldSpec]) -> None:
         for name, spec in field_specs.items():
@@ -1503,33 +1641,39 @@ class NumericEventTemplate(EventTemplate):
         **field_specs: _FieldSpecInput,
     ):
         super().__init__(_dict, **field_specs)
-        object.__setattr__(self, "_flat_size", self._compute_flat_size())
+        object.__setattr__(self, "_vector_size", self._compute_vector_size())
 
     @property
     def numeric_leaf_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field shapes for numeric leaves.
+        """Per-leaf shapes, keyed by :attr:`leaf_paths` (canonical leaf order).
 
-        On :class:`NumericEventTemplate` every leaf is numeric, so this
-        is equivalent to :attr:`leaf_shapes`. Kept as a distinct name for
-        symmetry with historical callers that used it as a filter.
+        On :class:`NumericEventTemplate` every leaf is numeric, so this equals
+        :attr:`leaf_shapes` (no ``None`` entries). Kept as a distinct name for
+        symmetry with historical callers that used it as a numeric filter.
         """
         return dict(self.leaf_shapes)
 
-    def _compute_flat_size(self) -> int:
+    def _compute_vector_size(self) -> int:
         """Total scalar count across all numeric leaves."""
         total = 0
         for spec in self._specs.values():
             if isinstance(spec, NumericEventTemplate):
-                total += spec.flat_size
+                total += spec.vector_size
             else:
                 # spec is an ArraySpec — validated by ``_post_validate``.
                 total += prod(spec.shape) if spec.shape else 1
         return total
 
     @property
-    def flat_size(self) -> int:
-        """Total number of scalar elements across all numeric leaves."""
-        return self._flat_size
+    def vector_size(self) -> int:
+        """Length of the per-element 1-D vector (``to_vector`` / ``from_vector``).
+
+        The total number of scalar elements across all numeric leaves — the
+        trailing-axis length of :meth:`~EventTemplate.to_vector`'s output. A
+        single value serializes to shape ``(vector_size,)``; a batch serializes
+        to a matrix ``(*batch_shape, vector_size)``, not a single vector.
+        """
+        return self._vector_size
 
 
 # ---------------------------------------------------------------------------
@@ -1540,30 +1684,76 @@ class NumericEventTemplate(EventTemplate):
 def _spec_size(spec: _FieldSpec) -> int:
     """Number of scalar elements a leaf-spec stands for.
 
-    Shared by ``NumericRecord.unflatten`` and ``NumericRecordArray.unflatten``
-    when walking a template and slicing a flat buffer. Nested specs must be
-    :class:`NumericEventTemplate` so that ``.flat_size`` is defined;
-    non-array leaves (:class:`OpaqueSpec` / :class:`DistributionSpec` /
-    :class:`FunctionSpec`) have no flat size and raise.
+    Used when walking a template and slicing a flat vector into per-leaf chunks
+    (e.g. sizing the numeric-leaf blocks of an approximate distribution). Nested
+    specs must be :class:`NumericEventTemplate` so that ``.vector_size`` is
+    defined; non-array leaves (:class:`OpaqueSpec` / :class:`DistributionSpec` /
+    :class:`FunctionSpec`) have no vector size and raise.
     """
     if isinstance(spec, NumericEventTemplate):
-        return spec.flat_size
+        return spec.vector_size
     if isinstance(spec, EventTemplate):
         raise TypeError(
             f"nested {type(spec).__name__} contains non-numeric leaves; "
-            f"unflatten requires a NumericEventTemplate."
+            f"vector (de)serialization requires a NumericEventTemplate."
         )
     if isinstance(spec, ArraySpec):
         return prod(spec.shape) if spec.shape else 1
     if isinstance(spec, OpaqueSpec):
         raise TypeError(
-            "opaque template fields have no flat size; unflatten is only "
-            "defined for numeric-leaf (ArraySpec) fields."
+            "opaque template fields have no vector size; vector (de)serialization "
+            "is only defined for numeric-leaf (ArraySpec) fields."
         )
     raise TypeError(
-        f"non-array template field ({type(spec).__name__}) has no flat size; "
-        f"unflatten is only defined for numeric-leaf (ArraySpec) fields."
+        f"non-array template field ({type(spec).__name__}) has no vector size; "
+        f"vector (de)serialization is only defined for numeric-leaf (ArraySpec) fields."
     )
+
+
+def _value_treedef(
+    template: EventTemplate,
+    batch_shape: tuple[int, ...],
+    *,
+    numeric: bool,
+) -> jax.tree_util.PyTreeDef:
+    """PyTreeDef of the value :meth:`EventTemplate.from_vector` reconstructs.
+
+    Builds a throwaway skeleton that mirrors the structure ``from_vector``
+    produces — ``NumericRecord`` / ``NumericRecordArray`` for a *numeric*
+    template, plain ``Record`` / ``RecordArray`` for a mixed one — and returns
+    its ``jax.tree_util.tree_structure``. The treedef depends only on the
+    container structure (field names, nesting, ``batch_shape``, template), not
+    on leaf values, so its placeholder leaves are cheap: zero-stride broadcast
+    arrays for numeric leaves (no allocation) and a scalar sentinel for the
+    opaque leaves of a mixed template. The returned treedef pairs with the real
+    ordered leaves in :func:`jax.tree_util.tree_unflatten`, letting
+    ``from_vector`` delegate leaf reconstruction to ``Record.unflatten``.
+    """
+    from ._numeric_record import NumericRecord
+    from ._record_array import NumericRecordArray, RecordArray
+
+    single_cls = NumericRecord if numeric else Record
+    batched_cls = NumericRecordArray if numeric else RecordArray
+    numeric_fill = jnp.zeros((), dtype=jnp.float32)
+
+    def _build(tpl: EventTemplate) -> Record:
+        fields: dict[str, Any] = {}
+        for name in tpl.fields:
+            spec = tpl[name]
+            if isinstance(spec, EventTemplate):
+                fields[name] = _build(spec)
+            elif isinstance(spec, ArraySpec):
+                fields[name] = jnp.broadcast_to(numeric_fill, (*batch_shape, *spec.shape))
+            else:
+                # Opaque / distribution / function leaf (mixed templates only) —
+                # any object is a valid pytree leaf; the value is irrelevant to
+                # the treedef.
+                fields[name] = 0
+        if batch_shape:
+            return batched_cls(fields, batch_shape=batch_shape, template=tpl)
+        return single_cls(fields)
+
+    return jax.tree_util.tree_structure(_build(template))
 
 
 # ---------------------------------------------------------------------------

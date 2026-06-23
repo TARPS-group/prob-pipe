@@ -122,13 +122,58 @@ class TestLeafShapes:
         assert tpl.numeric_leaf_shapes == {"x": (), "y": (3,)}
 
     def test_numeric_leaf_shapes_not_on_base_template(self):
-        """``flat_size`` / ``numeric_leaf_shapes`` are only meaningful
+        """``vector_size`` / ``numeric_leaf_shapes`` are only meaningful
         when every leaf is numeric — they live on
         :class:`NumericEventTemplate`, not the base ``EventTemplate``.
         """
         tpl = EventTemplate(label=None, x=(), y=(3,))
         assert not hasattr(tpl, "numeric_leaf_shapes")
-        assert not hasattr(tpl, "flat_size")
+        assert not hasattr(tpl, "vector_size")
+
+
+# ---------------------------------------------------------------------------
+# leaf_paths (canonical leaf order — the single source of truth)
+# ---------------------------------------------------------------------------
+
+
+class TestLeafPaths:
+    def test_flat_equals_fields(self):
+        # For a flat template (every field a leaf), leaf_paths == fields.
+        tpl = EventTemplate(x=(), y=(3,))
+        assert tpl.leaf_paths == ("x", "y") == tpl.fields
+
+    def test_includes_opaque_leaves(self):
+        # leaf_paths enumerates every leaf, numeric or opaque.
+        tpl = EventTemplate(label=None, x=())
+        assert tpl.leaf_paths == ("label", "x")
+
+    def test_nested_depth_first_insertion_order(self):
+        # A nested field expands into one path per nested leaf; fields stays
+        # top-level only.
+        inner = EventTemplate(a=(), b=(2,))
+        outer = EventTemplate(inner=inner, z=(3,))
+        assert outer.leaf_paths == ("inner/a", "inner/b", "z")
+        assert outer.fields == ("inner", "z")
+
+    def test_depth2(self):
+        tpl = EventTemplate(outer=EventTemplate(deep=EventTemplate(g=(), h=()), a=()), m=())
+        assert tpl.leaf_paths == ("outer/deep/g", "outer/deep/h", "outer/a", "m")
+
+    def test_keys_match_leaf_shapes_in_order(self):
+        # leaf_shapes is keyed by leaf_paths, in the same canonical order.
+        tpl = EventTemplate(outer=EventTemplate(a=(2,), b=()), label=None, m=())
+        assert tuple(tpl.leaf_shapes) == tpl.leaf_paths
+
+    def test_order_matches_flatten_and_to_vector(self):
+        # The canonical leaf order is the order flatten() / to_vector() use.
+        v = NumericRecord(
+            x=jnp.array([1.0, 2.0]),
+            nested=NumericRecord(a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
+        )
+        tpl = EventTemplate.from_record(v)
+        assert tpl.leaf_paths == ("x", "nested/a", "nested/b")
+        # to_vector concatenates leaves in leaf_paths order: x(2) | a(1) | b(2).
+        np.testing.assert_allclose(tpl.to_vector(v), [1.0, 2.0, 3.0, 4.0, 5.0])
 
 
 # ---------------------------------------------------------------------------
@@ -173,27 +218,27 @@ class TestEventShapes:
 
 
 # ---------------------------------------------------------------------------
-# flat_size (on NumericEventTemplate)
+# vector_size (on NumericEventTemplate)
 # ---------------------------------------------------------------------------
 
 
 class TestFlatSize:
     def test_scalars(self):
         tpl = NumericEventTemplate(a=(), b=(), c=())
-        assert tpl.flat_size == 3
+        assert tpl.vector_size == 3
 
     def test_arrays(self):
         tpl = NumericEventTemplate(x=(5,), y=(2, 3))
-        assert tpl.flat_size == 11
+        assert tpl.vector_size == 11
 
     def test_nested(self):
         inner = NumericEventTemplate(r=(), K=())
         outer = NumericEventTemplate(params=inner, obs=(4,))
-        assert outer.flat_size == 6
+        assert outer.vector_size == 6
 
     def test_scalar_only(self):
         tpl = NumericEventTemplate(a=())
-        assert tpl.flat_size == 1
+        assert tpl.vector_size == 1
 
     def test_rejects_opaque_leaf(self):
         with pytest.raises(TypeError, match="opaque"):
@@ -316,21 +361,21 @@ class TestFromRecord:
         assert tpl["x"] == ArraySpec((3,))
         assert tpl["y"] == ArraySpec(())
 
-    def test_roundtrip_flat_size(self):
+    def test_roundtrip_vector_size(self):
         from probpipe.core._numeric_record import NumericRecord
 
         r = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
         tpl = EventTemplate.from_record(r)
         # Auto-promoted to NumericEventTemplate because the input was a
-        # NumericRecord, so ``flat_size`` is reachable.
+        # NumericRecord, so ``vector_size`` is reachable.
         assert isinstance(tpl, NumericEventTemplate)
-        assert tpl.flat_size == r.flat_size
+        assert tpl.vector_size == r.vector_size
 
     def test_from_numeric_record_promotes(self):
         """Calling ``from_record`` on a ``NumericRecord`` returns a
         :class:`NumericEventTemplate`, even through the base
         ``EventTemplate.from_record`` classmethod, so downstream code
-        that needs ``flat_size`` keeps working without the caller having
+        that needs ``vector_size`` keeps working without the caller having
         to name the subclass explicitly."""
         from probpipe.core._numeric_record import NumericRecord
 
@@ -593,10 +638,10 @@ class TestShapeAccessorBackCompat:
         assert tpl.field_event_shape("label") == ()
         assert tpl.field_event_shape("params") == ()
 
-    def test_flat_size_unchanged(self):
+    def test_vector_size_unchanged(self):
         tpl = EventTemplate(x=(), y=(3,), z=(2, 4))
         assert isinstance(tpl, NumericEventTemplate)
-        assert tpl.flat_size == 1 + 3 + 8
+        assert tpl.vector_size == 1 + 3 + 8
 
     def test_hash_eq_order_sensitive(self):
         a = EventTemplate(x=(), y=(3,))
@@ -752,11 +797,11 @@ class TestNumericSubset:
         assert sub == tpl
         assert sub.numeric_subset() == sub
 
-    def test_returns_numeric_template_with_flat_size(self):
+    def test_returns_numeric_template_with_vector_size(self):
         tpl = EventTemplate(x=(), label=None, y=(3,), z=(2, 4))
         sub = tpl.numeric_subset()
         assert isinstance(sub, NumericEventTemplate)
-        assert sub.flat_size == 1 + 3 + 8
+        assert sub.vector_size == 1 + 3 + 8
 
     def test_raises_when_no_numeric_leaves(self):
         tpl = EventTemplate(label=None, tag=None)
@@ -800,24 +845,25 @@ class TestToVector:
         vec = tpl.to_vector(v)
         assert vec.shape == (1 + 3 + 8,)
 
-    def test_vector_size_equals_flat_size(self):
+    def test_to_vector_shape_is_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,), z=(2, 4))
         v = NumericRecord(x=0.0, y=jnp.zeros(3), z=jnp.zeros((2, 4)))
-        assert tpl.to_vector(v).shape == (tpl.flat_size,)
+        assert tpl.to_vector(v).shape == (tpl.vector_size,)
 
-    def test_order_and_value_match_numeric_record_flatten(self):
-        # The canonical leaf order must agree with NumericRecord.flatten so the
-        # two are interchangeable (PR-1c contract).
+    def test_order_and_value_match_instance_to_vector(self):
+        # The template-level to_vector must agree with the instance-level
+        # NumericRecord.to_vector (same canonical leaf order), so the two are
+        # interchangeable.
         v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
         tpl = EventTemplate.from_record(v)
-        assert jnp.array_equal(tpl.to_vector(v), v.flatten())
+        assert jnp.array_equal(tpl.to_vector(v), v.to_vector())
 
-    def test_batched_shape_is_batch_shape_plus_flat_size(self):
+    def test_batched_shape_is_batch_shape_plus_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,))
-        flat = jnp.arange(2 * 5 * tpl.flat_size, dtype=float).reshape(2, 5, tpl.flat_size)
+        flat = jnp.arange(2 * 5 * tpl.vector_size, dtype=float).reshape(2, 5, tpl.vector_size)
         v = tpl.from_vector(flat)
         assert isinstance(v, NumericRecordArray)
-        assert tpl.to_vector(v).shape == (2, 5, tpl.flat_size)
+        assert tpl.to_vector(v).shape == (2, 5, tpl.vector_size)
 
     def test_non_numeric_template_raises(self):
         tpl = EventTemplate(x=(), label=None, d=_dist_spec())
@@ -866,7 +912,7 @@ class TestFromVectorRoundTripSingle:
 class TestFromVectorRoundTripBatched:
     def test_single_batch_axis(self):
         tpl = EventTemplate(x=(), y=(3,))
-        flat = jnp.arange(4 * tpl.flat_size, dtype=float).reshape(4, tpl.flat_size)
+        flat = jnp.arange(4 * tpl.vector_size, dtype=float).reshape(4, tpl.vector_size)
         v = tpl.from_vector(flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (4,)
@@ -875,7 +921,7 @@ class TestFromVectorRoundTripBatched:
     def test_multi_axis_batch_shape(self):
         # batch_shape=(2, 3) catches trailing-axis split / reshape bugs.
         tpl = EventTemplate(x=(), y=(3,), z=(2, 2))
-        flat = jnp.arange(2 * 3 * tpl.flat_size, dtype=float).reshape(2, 3, tpl.flat_size)
+        flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
         v = tpl.from_vector(flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (2, 3)
@@ -886,7 +932,7 @@ class TestFromVectorRoundTripBatched:
         # Nested numeric subtree + multi-axis batch: from_vector builds a nested
         # NumericRecordArray as a field of the outer NumericRecordArray.
         tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(2,)), y=(3,))
-        flat = jnp.arange(2 * 3 * tpl.flat_size, dtype=float).reshape(2, 3, tpl.flat_size)
+        flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
         v = tpl.from_vector(flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (2, 3)
@@ -934,7 +980,7 @@ class TestFromVectorNonNumericReconstruction:
 
     def test_batched_full_value(self):
         tpl = EventTemplate(x=(), label=None)
-        vec = jnp.arange(6.0).reshape(2, 3, 1)  # batch_shape=(2, 3), flat_size=1
+        vec = jnp.arange(6.0).reshape(2, 3, 1)  # batch_shape=(2, 3), vector_size=1
         labels = np.array([["a", "b", "c"], ["d", "e", "f"]], dtype=object)
         rebuilt = tpl.from_vector(vec, non_numeric={"label": labels})
         assert isinstance(rebuilt, RecordArray)
@@ -948,7 +994,7 @@ class TestFromVectorNonNumericReconstruction:
         # batched non-numeric leaf in alongside.
         tpl = EventTemplate(x=(), label=None, phys=EventTemplate(force=(), mass=()))
         sub = tpl.numeric_subset()  # leaves: x, phys/force, phys/mass
-        vec = jnp.arange(2 * 3 * sub.flat_size, dtype=float).reshape(2, 3, sub.flat_size)
+        vec = jnp.arange(2 * 3 * sub.vector_size, dtype=float).reshape(2, 3, sub.vector_size)
         labels = np.array([["a", "b", "c"], ["d", "e", "f"]], dtype=object)
         rebuilt = tpl.from_vector(vec, non_numeric={"label": labels})
         assert isinstance(rebuilt, RecordArray)

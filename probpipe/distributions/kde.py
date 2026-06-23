@@ -63,7 +63,7 @@ class KDEDistribution(TFPDistribution):
         — preserving named fields end-to-end across e.g. an MCMC posterior
         being routed through KDE as the new prior in
         :class:`~probpipe.modeling.IncrementalConditioner`. The template's
-        ``flat_size`` must equal ``samples.shape[1]``.
+        ``vector_size`` must equal ``samples.shape[1]``.
     name : str or None
         Distribution name for provenance.
     """
@@ -100,7 +100,7 @@ class KDEDistribution(TFPDistribution):
         # template's flat width matches the samples' trailing dimension.
         if event_template is not None and len(event_template.fields) > 1:
             if isinstance(event_template, NumericEventTemplate):
-                expected = event_template.flat_size
+                expected = event_template.vector_size
             else:
                 expected = sum(
                     int(jnp.prod(jnp.array(shape))) if shape else 1
@@ -108,7 +108,7 @@ class KDEDistribution(TFPDistribution):
                 )
             if expected != d:
                 raise ValueError(
-                    f"event_template flat_size ({expected}) does not match "
+                    f"event_template vector_size ({expected}) does not match "
                     f"samples flat dimension ({d}); template fields="
                     f"{event_template.fields}"
                 )
