@@ -175,8 +175,7 @@ class Provenance:
                 obj=p if keep else None,
             )
 
-        refs = tuple(_make_parent(p) for p in parents
-        )
+        refs = tuple(_make_parent(p) for p in parents)
         return cls(operation, parents=refs, metadata=metadata or {})
 
 
