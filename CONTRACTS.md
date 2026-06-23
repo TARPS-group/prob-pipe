@@ -32,6 +32,16 @@ if it were user-guide reference text.
    - **every** error/raise condition;
    - invariants and round-trip guarantees (e.g. `from_vector(to_vector(v)) == v`).
 
+   **Lead with the contract; defer the rationale.** The opening of every docstring — the one-line
+   summary and the first paragraph(s) — must describe the **API**: what the abstraction *is*, what it
+   accepts and returns, and how a caller uses it. Write it as precise, clear reference text for a
+   *user*, not as a design log: prefer plain language, define or avoid jargon, and state the contract
+   directly. Keep design reasoning, motivation, history, and implementation trade-offs *out* of the
+   opening; when including them is genuinely justified, put them **later** — typically in a NumPy-style
+   **Notes** section (or an explicitly labelled interim-detail note, per directive 5). A reader
+   skimming the first lines should learn how to *use* the abstraction correctly, not why it was built
+   that way.
+
    **Code documentation must stand on its own — no references to transient artifacts.** Do not cite
    PRs, issues, tracking numbers, or other out-of-band discussion in docstrings or code comments.
    The contract is whatever the docstring states; a reader should never need to open a PR or issue to
@@ -94,6 +104,7 @@ if it were user-guide reference text.
 ## Per-PR checklist (copy into the PR description)
 - [ ] Contract of every touched abstraction was clear before coding (ambiguities resolved & noted).
 - [ ] New/changed contracts fully documented in docstrings (types, shapes, orderings, raises, invariants).
+- [ ] Docstring openings lead with the API/contract (precise, clear, low-jargon); design rationale deferred to a Notes section.
 - [ ] Code verified to obey the documented contract; tests assert it (shapes + orderings + error cases).
 - [ ] Docstrings describe the plan's **target** contract/terminology, not stale neighboring code; any temporary coexistence is labeled as an interim implementation detail.
 - [ ] Variable names consistent with the canonical table above.
