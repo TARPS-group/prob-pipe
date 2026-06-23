@@ -41,15 +41,14 @@ __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 
 
 def _flatten_point(point: Any, fields: tuple[str, ...] | None) -> Array:
-    """Flatten one parameter draw to a 1-D vector matching ``flat_samples`` order.
+    """Flatten one parameter draw to the 1-D layout of ``flat_samples``.
 
-    A bare array is raveled; a ``Record`` is flattened field-by-field in the
-    posterior's field order (falling back to the point's own field order if the
-    posterior does not expose ``fields``) so it lines up with ``flat_samples``.
+    The single-draw analogue of :attr:`flat_samples`: ``prior._sample`` returns a
+    bare array for a single-field prior (raveled directly) or a ``Record`` for a
+    multi-field prior (fields raveled and concatenated in posterior field order).
     """
     if hasattr(point, "fields"):
-        order = fields if fields is not None else point.fields
-        return jnp.concatenate([jnp.ravel(jnp.asarray(point[f])) for f in order])
+        return jnp.concatenate([jnp.ravel(jnp.asarray(point[f])) for f in fields])
     return jnp.ravel(jnp.asarray(point))
 
 
