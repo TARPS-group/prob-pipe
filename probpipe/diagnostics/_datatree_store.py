@@ -28,11 +28,15 @@ def _flatten_datatree(tree: "xr.DataTree") -> dict[str, Any]:
     def _walk(node: "xr.DataTree", prefix: str = "") -> None:
         try:
             ds = node.to_dataset()
-            if len(ds.data_vars) > 0 or len(ds.coords) > 0 or len(ds.attrs) > 0:
-                if prefix:
-                    out[prefix] = ds
-        except Exception:
-            pass
+        except Exception as exc:
+            path = prefix or "/"
+            raise RuntimeError(
+                f"Could not export existing diagnostics DataTree node at {path!r}."
+            ) from exc
+
+        if len(ds.data_vars) > 0 or len(ds.coords) > 0 or len(ds.attrs) > 0:
+            if prefix:
+                out[prefix] = ds
 
         children = getattr(node, "children", {}) or {}
         for child_name in children:

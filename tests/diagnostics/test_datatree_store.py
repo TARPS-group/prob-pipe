@@ -68,14 +68,15 @@ class TestAddGroup:
         val = float(retrieved["rhat"].values)
         assert val == pytest.approx(1.001)
 
-    def test_flatten_datatree_ignores_nodes_that_cannot_export_dataset(self):
+    def test_flatten_datatree_raises_when_node_cannot_export_dataset(self):
         class _BadNode:
             children = {}
 
             def to_dataset(self):
                 raise RuntimeError("no dataset")
 
-        assert _flatten_datatree(_BadNode()) == {}
+        with pytest.raises(RuntimeError, match="DataTree node at '/'"):
+            _flatten_datatree(_BadNode())
 
 
 # ---------------------------------------------------------------------------
