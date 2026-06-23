@@ -882,6 +882,23 @@ class TestFromVectorRoundTripBatched:
         assert jnp.array_equal(tpl.to_vector(v), flat)
         assert tpl.from_vector(tpl.to_vector(v)) == v
 
+    def test_nested_multi_axis_batch_shape(self):
+        # Nested numeric subtree + multi-axis batch: from_vector builds a nested
+        # NumericRecordArray as a field of the outer NumericRecordArray.
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(2,)), y=(3,))
+        flat = jnp.arange(2 * 3 * tpl.flat_size, dtype=float).reshape(2, 3, tpl.flat_size)
+        v = tpl.from_vector(flat)
+        assert isinstance(v, NumericRecordArray)
+        assert v.batch_shape == (2, 3)
+        assert isinstance(v["nested"], NumericRecordArray)
+        assert v["nested/b"].shape == (2, 3, 2)
+        # NOTE: assert via the vector round-trip, not ``from_vector(...) == v``.
+        # RecordArray.__eq__ is currently broken for a nested *Array field (it
+        # calls jnp.array_equal on the nested array, which raises, then falls
+        # back to an identity check). Tracked in #235 (batch-records PR); once
+        # that is fixed, simplify to ``tpl.from_vector(tpl.to_vector(v)) == v``.
+        assert jnp.array_equal(tpl.to_vector(v), flat)
+
 
 class TestFromVectorErrors:
     def test_wrong_trailing_size_raises(self):
@@ -924,6 +941,29 @@ class TestFromVectorNonNumericReconstruction:
         assert rebuilt.batch_shape == (2, 3)
         assert jnp.array_equal(rebuilt["x"], vec.reshape(2, 3))
         assert (np.asarray(rebuilt["label"]) == labels).all()
+
+    def test_nested_batched_full_value(self):
+        # Nested numeric subtree + opaque leaf + multi-axis batch: from_vector
+        # rebuilds a nested RecordArray inside the outer RecordArray, weaving the
+        # batched non-numeric leaf in alongside.
+        tpl = EventTemplate(x=(), label=None, phys=EventTemplate(force=(), mass=()))
+        sub = tpl.numeric_subset()  # leaves: x, phys/force, phys/mass
+        vec = jnp.arange(2 * 3 * sub.flat_size, dtype=float).reshape(2, 3, sub.flat_size)
+        labels = np.array([["a", "b", "c"], ["d", "e", "f"]], dtype=object)
+        rebuilt = tpl.from_vector(vec, non_numeric={"label": labels})
+        assert isinstance(rebuilt, RecordArray)
+        assert rebuilt.batch_shape == (2, 3)
+        assert isinstance(rebuilt["phys"], RecordArray)
+        assert rebuilt["phys/force"].shape == (2, 3)
+        assert rebuilt["phys/mass"].shape == (2, 3)
+        assert (np.asarray(rebuilt["label"]) == labels).all()
+        # The numeric leaves must round-trip; assert on the numeric subset's
+        # vector rather than ``== full`` (RecordArray.__eq__ is broken for a
+        # nested *Array field — see test_nested_multi_axis_batch_shape / #235).
+        numeric = sub.from_vector(vec)
+        assert jnp.array_equal(rebuilt["x"], numeric["x"])
+        assert jnp.array_equal(rebuilt["phys/force"], numeric["phys/force"])
+        assert jnp.array_equal(rebuilt["phys/mass"], numeric["phys/mass"])
 
     def test_missing_dropped_leaf_raises(self):
         tpl = EventTemplate(x=(), label=None)

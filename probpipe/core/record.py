@@ -1106,11 +1106,12 @@ class EventTemplate:
         values, and goes further in that it ravels the leaf arrays to a 1-D
         representation.
 
-        Leaves are visited in **canonical leaf order** — the deterministic,
-        depth-first, insertion-order traversal also used by :attr:`leaf_shapes`.
-        The structural operation lives on the event template; a
-        :class:`~probpipe.NumericRecord` inherits the functionality from the
-        template.
+        Leaves are visited in the value's pytree-leaf order, which for a *value*
+        matching this template coincides with the template's **canonical leaf
+        order** — the deterministic, depth-first, insertion-order traversal also
+        used by :attr:`leaf_shapes`. The structural operation lives on the event
+        template; a :class:`~probpipe.NumericRecord` inherits the functionality
+        from the template.
 
         Parameters
         ----------
