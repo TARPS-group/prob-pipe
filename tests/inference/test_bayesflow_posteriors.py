@@ -26,8 +26,15 @@ from probpipe import (
     condition_on,
     learn_amortized_posterior,
 )
-from probpipe.core._record_array import NumericRecordArray
 from probpipe.modeling import GenerativeLikelihood, Likelihood
+
+
+def _theta_vec(params):
+    """Coerce a per-draw params object to its 1-D vector (mirrors ``_theta_row``).
+
+    Structured records serialize via ``to_vector``; raw array-likes ravel.
+    """
+    return params.to_vector() if hasattr(params, "to_vector") else jnp.ravel(jnp.asarray(params))
 
 
 class _ToyLikelihood(Likelihood, GenerativeLikelihood):
@@ -39,7 +46,7 @@ class _ToyLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = params.flatten()  # structured record (training) or raw array (direct)
+        t = _theta_vec(params)  # structured record (training) or raw array (direct)
         a, b = t[0], t[1]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([a + b, a - b])
@@ -65,7 +72,7 @@ class _VecLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = params.flatten()
+        t = _theta_vec(params)
         m0, m1, s = t[0], t[1], t[2]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([m0 + s, m1 - s])
@@ -87,7 +94,7 @@ class _SingleFieldLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = params.flatten()
+        t = _theta_vec(params)
         key = key if key is not None else jax.random.PRNGKey(0)
         return t[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
 
@@ -101,7 +108,7 @@ class _NonJaxLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = np.asarray(params.flatten())
+        t = np.asarray(_theta_vec(params))
         a, b = float(t[0]), float(t[1])
         seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**16))
         noise = np.random.default_rng(seed).standard_normal((num_observations, 2))
@@ -116,7 +123,7 @@ class _ScalarLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        a = params.flatten()[0]
+        a = _theta_vec(params)[0]
         key = key if key is not None else jax.random.PRNGKey(0)
         return a + 0.1 * jax.random.normal(key, (num_observations, 1))
 
@@ -131,7 +138,7 @@ class _MultiFieldLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = params.flatten()
+        t = _theta_vec(params)
         a, b0, b1, c = t[0], t[1], t[2], t[3]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([a + b0, a - b0, b1 + c, b1 - c, a + c, b0 * b1, a, c])
@@ -162,7 +169,7 @@ class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
 
     def generate_data(self, params, num_observations, *, key=None):
         key = key if key is not None else jax.random.PRNGKey(0)
-        t = params.flatten()
+        t = _theta_vec(params)
         return t[None, :] + _CONJ_SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
 
 
@@ -189,7 +196,7 @@ class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = params.flatten()
+        t = _theta_vec(params)
         r, m = t[0], t[1]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([r + m, r - m])
@@ -226,11 +233,9 @@ class _NestedLikelihood(Likelihood, GenerativeLikelihood):
 
 def _nested_observe(r, m, c, seed):
     """Observe ``_NestedLikelihood`` at a given (r, m, c) by building the nested
-    per-draw record via ``unflatten`` (flatten order ``[r, m, c]``) -- the same
+    per-draw record via ``from_vector`` (leaf order ``[r, m, c]``) -- the same
     structured object the offline simulator passes the simulator at train time."""
-    rec = NumericRecordArray.unflatten(
-        jnp.array([r, m, c]), template=_nested_prior().event_template, batch_shape=()
-    )
+    rec = _nested_prior().event_template.from_vector(jnp.array([r, m, c]))
     return _NestedLikelihood().generate_data(rec, 1, key=jax.random.PRNGKey(seed))[0]
 
 

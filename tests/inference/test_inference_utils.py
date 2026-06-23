@@ -16,7 +16,6 @@ from probpipe import (
     SimpleModel,
 )
 from probpipe.core._distribution_base import Distribution
-from probpipe.core._numeric_record import NumericRecord
 from probpipe.core.protocols import SupportsSampling
 from probpipe.inference._inference_utils import (
     as_prng_key,
@@ -80,7 +79,7 @@ class TestBuildTargetLogProbFlat:
         )
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = NumericRecord.unflatten(flat_init, template=template)
+        record_init = template.from_vector(flat_init)
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),
@@ -88,13 +87,13 @@ class TestBuildTargetLogProbFlat:
             atol=1e-6,
         )
 
-    def test_flat_init_dim_matches_template_flat_size(self, small_model):
+    def test_flat_init_dim_matches_template_vector_size(self, small_model):
         _, flat_init, template = build_target_log_prob_flat(
             small_model,
             observed=None,
         )
-        # Both fields are scalar Normals: flat_size == 2.
-        assert flat_init.shape == (template.flat_size,) == (2,)
+        # Both fields are scalar Normals: vector_size == 2.
+        assert flat_init.shape == (template.vector_size,) == (2,)
 
     def test_template_field_order_preserved(self, small_model):
         _, _, template = build_target_log_prob_flat(small_model, observed=None)

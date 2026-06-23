@@ -327,9 +327,9 @@ class TestApproximateDistributionValuesTemplate:
             mean=(3,),
             cov=(2, 2),
         )
-        flat_size = 3 + 4  # 3 + 2*2
-        chain = jax.random.normal(jax.random.PRNGKey(0), (20, flat_size))
-        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size), name="z")
+        vector_size = 3 + 4  # 3 + 2*2
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, vector_size))
+        prior = MultivariateNormal(loc=jnp.zeros(vector_size), cov=jnp.eye(vector_size), name="z")
         post = make_posterior(
             [chain],
             parents=(prior,),
@@ -365,9 +365,9 @@ class TestApproximateDistributionValuesTemplate:
             params=EventTemplate(a=(), b=()),
             scale=(),
         )
-        flat_size = 3  # a + b + scale
-        chain = jax.random.normal(jax.random.PRNGKey(0), (30, flat_size))
-        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size), name="z")
+        vector_size = 3  # a + b + scale
+        chain = jax.random.normal(jax.random.PRNGKey(0), (30, vector_size))
+        prior = MultivariateNormal(loc=jnp.zeros(vector_size), cov=jnp.eye(vector_size), name="z")
         post = make_posterior(
             [chain],
             parents=(prior,),
@@ -387,7 +387,7 @@ class TestApproximateDistributionValuesTemplate:
         With Option B's per-top-level-field split, every accessor on
         ``ApproximateDistribution`` is keyed by the user-supplied
         template's top-level fields. Nested ``EventTemplate`` fields
-        are stored as a flat ``(n, nested_flat_size)`` slice under the
+        are stored as a flat ``(n, nested_vector_size)`` slice under the
         top-level field name; the nested structure is recoverable via
         ``event_template[field]`` and ``draws()``.
         """
@@ -395,11 +395,11 @@ class TestApproximateDistributionValuesTemplate:
             params=EventTemplate(a=(), b=()),
             scale=(),
         )
-        flat_size = 3  # a + b + scale
-        chain = jax.random.normal(jax.random.PRNGKey(0), (40, flat_size))
+        vector_size = 3  # a + b + scale
+        chain = jax.random.normal(jax.random.PRNGKey(0), (40, vector_size))
         prior = MultivariateNormal(
-            loc=jnp.zeros(flat_size),
-            cov=jnp.eye(flat_size),
+            loc=jnp.zeros(vector_size),
+            cov=jnp.eye(vector_size),
             name="z",
         )
         post = make_posterior(
@@ -444,7 +444,7 @@ class TestApproximateDistributionValuesTemplate:
         assert draws["params"]["b"].shape == (40,)
         assert draws["scale"].shape == (40,)
         # ``flat_samples`` view is the (n, total_dim) matrix.
-        assert post.flat_samples.shape == (40, flat_size)
+        assert post.flat_samples.shape == (40, vector_size)
 
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
@@ -1047,8 +1047,8 @@ class TestRecordDistributionProperties:
         assert posterior.event_shapes == {"K": (), "phi": (), "r": ()}
 
     def test_record_distribution_event_size(self, posterior, template):
-        """``event_size`` matches template.flat_size."""
-        assert posterior.event_size == template.flat_size
+        """``event_size`` matches template.vector_size."""
+        assert posterior.event_size == template.vector_size
 
 
 class TestValuesSelect:
