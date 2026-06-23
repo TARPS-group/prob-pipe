@@ -75,6 +75,16 @@ def test_to_arviz_dataset_flat_empirical_and_filtering():
     assert ds["alpha"].shape == (1, 3)
 
 
+def test_to_arviz_dataset_prepends_chain_for_matrix_valued_params():
+    post = _DrawsPosterior({"omega": np.arange(24.0).reshape(4, 2, 3)})
+
+    ds = to_arviz_dataset(post)
+
+    assert ds["omega"].dims == ("chain", "draw", "dim_0", "dim_1")
+    assert ds["omega"].shape == (1, 4, 2, 3)
+    np.testing.assert_array_equal(ds["omega"].values[0], post.draws()["omega"])
+
+
 def test_to_arviz_dataset_delegates_for_approximate_distribution(monkeypatch):
     class _ApproxPosterior:
         chains = [object()]

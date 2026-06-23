@@ -5,10 +5,13 @@ import json
 
 import numpy as np
 import pytest
+import xarray as xr
 
 import probpipe.diagnostics._utils as utils
 from probpipe.diagnostics._utils import (
     _as_numpy,
+    _component_name,
+    _dataset_values,
     _json_dumps_safe,
     _record_get,
     _resolve_generative_likelihood,
@@ -186,6 +189,39 @@ class TestJsonDumpsSafe:
         monkeypatch.setattr(utils.json, "dumps", _always_fails)
 
         assert _json_dumps_safe(object()) == "{}"
+
+
+# ---------------------------------------------------------------------------
+# Diagnostic dataset flattening
+# ---------------------------------------------------------------------------
+
+
+class TestDiagnosticDatasetValues:
+    def test_component_name_formats_scalar_and_indexed_names(self):
+        assert _component_name("alpha", ()) == "alpha"
+        assert _component_name("beta", (1, 2)) == "beta[1, 2]"
+
+    def test_dataset_values_flattens_scalar_vector_and_matrix_values(self):
+        ds = xr.Dataset(
+            {
+                "alpha": xr.DataArray(np.array(1.5)),
+                "beta": xr.DataArray(np.array([2.0, 3.0]), dims=["dim_0"]),
+                "omega": xr.DataArray(
+                    np.array([[4.0, 5.0], [6.0, 7.0]]),
+                    dims=["dim_0", "dim_1"],
+                ),
+            }
+        )
+
+        assert _dataset_values(ds) == {
+            "alpha": 1.5,
+            "beta[0]": 2.0,
+            "beta[1]": 3.0,
+            "omega[0, 0]": 4.0,
+            "omega[0, 1]": 5.0,
+            "omega[1, 0]": 6.0,
+            "omega[1, 1]": 7.0,
+        }
 
 
 # ---------------------------------------------------------------------------

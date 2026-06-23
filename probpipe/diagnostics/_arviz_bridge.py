@@ -140,7 +140,7 @@ def to_arviz_dataset(
         arr = np.asarray(arr, dtype=float)
         if arr.ndim == 0:
             arr = arr.reshape(1, 1)
-        elif arr.ndim in (1, 2):
+        elif arr.ndim >= 1:
             arr = arr.reshape((1,) + arr.shape)
         event_dims = [f"dim_{i}" for i in range(arr.ndim - 2)]
         dims = ["chain", "draw"] + event_dims
