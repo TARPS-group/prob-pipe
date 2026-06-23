@@ -289,7 +289,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
             # {"p_value": {"var_mean_ratio": 0.43}, ...}
 
             posterior.diagnostics.runs[0].plot_fn
-            # "az.plot_ppc"
+            # "" unless the run wrote ArviZ-compatible plotting inputs
 
         Notes
         -----

@@ -187,6 +187,9 @@ class TestAddPpc:
         assert posterior._auxiliary is not None
         ppc_ds = posterior._auxiliary["diagnostics"]["runs"]["ppc"].to_dataset()
         assert "p_value" in ppc_ds.data_vars
+        assert ppc_ds.attrs["plot_ready"] is False
+        assert ppc_ds.attrs["plot_fn"] == ""
+        assert ppc_ds.attrs["plot_groups"] == "[]"
 
     def test_p_value_in_range(self, posterior):
         observed = np.random.default_rng(1).standard_normal(50)
