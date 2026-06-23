@@ -1,4 +1,4 @@
-"""Unified interface for Posterior/Prior/Sequential Predictive Checks.
+"""Unified interface for posterior predictive checks.
 
 Bridges the existing JAX-native engine in
 ``probpipe.validation._predictive_check`` with the diagnostics workflow.
@@ -10,7 +10,6 @@ This module has two layers:
 1. Private pure ops returning ``Record`` objects:
 
    - ``_ppc_op``
-   - ``_spc_op``
 
    These compute diagnostics and return structured ``Record`` results.
    They do not mutate ``_auxiliary``. Not part of the public API.
@@ -18,7 +17,6 @@ This module has two layers:
 2. In-place writer wrappers returning ``None``:
 
    - ``add_ppc``
-   - ``add_spc``
 
    These call the pure ops, write results into ``distribution._auxiliary``,
    and return ``None``.
@@ -51,24 +49,20 @@ from ..validation._predictive_check import (
 from .._utils import _auto_key
 from ._utils import (
     _resolve_generative_likelihood,
-    _record_get,
     _safe_float,
-    _as_numpy,
     _json_dumps_safe,
 )
 from ._datatree import _add_group
 
 __all__ = [
     "add_ppc",
-    "add_spc",
 ]
 
 
 # ---------------------------------------------------------------------
 # General helpers
 # ---------------------------------------------------------------------
-# _record_get, _safe_float, _as_numpy, _json_dumps_safe are imported
-# from ._utils — see imports above.
+# Shared conversion helpers are imported from ._utils — see imports above.
 
 
 def _observed_data_to_dataset(observed_data: Any, var_name: str = "y") -> xr.Dataset:
@@ -456,196 +450,5 @@ def add_ppc(
     )
 
     _write_ppc_record(posterior, record)
-
-    return None
-
-
-# ---------------------------------------------------------------------
-# SPC pure op
-# ---------------------------------------------------------------------
-
-
-def _spc_op(
-    distributions: Sequence[Distribution],
-    test_fns: Callable | Sequence[Callable],
-    observed_data_sequence: Sequence,
-    *,
-    generative_likelihood=None,
-    n_replications: int = 500,
-    key: PRNGKey | None = None,
-) -> Record:
-    """Pure sequential predictive check operation returning a ``Record``.
-
-    This function calls :func:`_ppc_op` for each time step and returns a
-    structured SPC ``Record``. It does not mutate any distribution.
-    """
-    distributions = list(distributions)
-    observed_data_sequence = list(observed_data_sequence)
-
-    if len(distributions) != len(observed_data_sequence):
-        raise ValueError(
-            "distributions and observed_data_sequence must have the same length: "
-            f"got {len(distributions)} and {len(observed_data_sequence)}."
-        )
-
-    if len(distributions) == 0:
-        raise ValueError("distributions must contain at least one distribution.")
-
-    gl = _resolve_generative_likelihood(distributions[0], generative_likelihood)
-
-    if callable(test_fns):
-        test_fns = [test_fns]
-    else:
-        test_fns = list(test_fns)
-
-    fn_names = [getattr(fn, "__name__", repr(fn)) for fn in test_fns]
-
-    ppc_records: list[Record] = []
-
-    for dist, obs in zip(distributions, observed_data_sequence):
-        rec = _ppc_op(
-            posterior=dist,
-            test_fns=test_fns,
-            observed_data=obs,
-            generative_likelihood=gl,
-            n_replications=n_replications,
-            key=key,
-        )
-        ppc_records.append(rec)
-
-    p_values_by_fn: dict[str, list[float]] = {name: [] for name in fn_names}
-
-    for rec in ppc_records:
-        result = rec["result"]
-        p_value_dict = result["p_value"]
-
-        for name in fn_names:
-            val = p_value_dict.get(name, float("nan"))
-            p_values_by_fn[name].append(_safe_float(val))
-
-    p_value_matrix = np.asarray(
-        [p_values_by_fn[name] for name in fn_names],
-        dtype=float,
-    )
-
-    spc_ds = xr.Dataset(
-        {
-            "p_value": xr.DataArray(
-                p_value_matrix,
-                dims=["test_fn", "time"],
-                coords={
-                    "test_fn": fn_names,
-                    "time": np.arange(len(distributions)),
-                },
-            )
-        }
-    )
-
-    attrs = {
-        "kind": "spc",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "n_steps": len(distributions),
-        "n_replications": int(n_replications),
-        "test_fns": json.dumps(fn_names),
-        "plot_ready": False,
-        "plot_fn": "",
-        "plot_groups": json.dumps([]),
-    }
-
-    spc_ds.attrs = attrs
-
-    result_record = Record(
-        name="spc_result",
-        p_values=p_values_by_fn,
-        n_steps=len(distributions),
-    )
-
-    return Record(
-        name="spc_diagnostic",
-        kind="spc",
-        result=result_record,
-        dataset=spc_ds,
-        ppc_records=ppc_records,
-        plot_fn="",
-        plot_ready=False,
-        attrs=attrs,
-    )
-
-
-# ---------------------------------------------------------------------
-# SPC writer wrapper
-# ---------------------------------------------------------------------
-
-
-def _write_spc_record(
-    distributions: Sequence[Distribution],
-    record: Record,
-) -> None:
-    """Write SPC diagnostic Record into the final distribution.
-
-    Also writes the per-step PPC Records into their corresponding
-    distributions.
-    """
-    distributions = list(distributions)
-
-    ppc_records = record["ppc_records"]
-
-    for dist, ppc_record in zip(distributions, ppc_records):
-        _write_ppc_record(dist, ppc_record)
-
-    final_dist = distributions[-1]
-
-    _add_group(
-        final_dist,
-        "diagnostics/runs/spc",
-        _dataset_from_record(record),
-    )
-
-
-def add_spc(
-    distributions: Sequence[Distribution],
-    test_fns: Callable | Sequence[Callable],
-    observed_data_sequence: Sequence,
-    *,
-    generative_likelihood=None,
-    n_replications: int = 500,
-    key: PRNGKey | None = None,
-) -> None:
-    """Compute sequential predictive checks and write results in place.
-
-    This is the in-place wrapper around :func:`_spc_op`. Each distribution
-    receives its per-step PPC diagnostic output. The final distribution also
-    receives the SPC summary under::
-
-        diagnostics/runs/spc
-
-    Parameters
-    ----------
-    distributions : sequence of Distribution
-        One distribution per time step.
-    test_fns : callable or sequence of callables
-        One or more test statistics mapping data to a scalar.
-    observed_data_sequence : sequence
-        One observed dataset per time step (same length as ``distributions``).
-    generative_likelihood : optional
-        Generative likelihood. Resolved from the first distribution if not
-        provided.
-    n_replications : int
-        Number of replicated datasets.
-    key : PRNGKey or None
-        JAX PRNG key.
-    """
-    distributions = list(distributions)
-
-    record = _spc_op(
-        distributions=distributions,
-        test_fns=test_fns,
-        observed_data_sequence=observed_data_sequence,
-        generative_likelihood=generative_likelihood,
-        n_replications=n_replications,
-        key=key,
-    )
-
-    _write_spc_record(distributions, record)
 
     return None

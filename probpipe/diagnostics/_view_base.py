@@ -242,8 +242,7 @@ class DatasetView(DataTreeView):
 class DiagnosticRunView(DatasetView):
     """Generic accessor for one ``/diagnostics/runs/<name>/`` node.
 
-    This class is generic. It does not know whether the run is PPC, LOO,
-    sensitivity analysis, etc.
+    This class is generic. It does not know whether the run is PPC, LOO, etc.
     """
 
     __slots__ = ("name", "_tree")

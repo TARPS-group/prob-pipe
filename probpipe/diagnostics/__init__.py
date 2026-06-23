@@ -15,7 +15,6 @@ In-place diagnostic functions mutate ``posterior._auxiliary`` and return
         add_mcse,
         add_mcmc_diagnostics,
         add_ppc,
-        add_spc,
         add_loo,
     )
 
@@ -82,14 +81,10 @@ __all__ += [
 
 
 # ── Predictive checks ────────────────────────────────────────────────────
-from ._ppc_spc import (
-    add_ppc,
-    add_spc,
-)
+from ._ppc_spc import add_ppc
 
 __all__ += [
     "add_ppc",
-    "add_spc",
 ]
 
 
@@ -98,20 +93,6 @@ from ._loo import add_loo
 
 __all__ += [
     "add_loo",
-]
-
-
-# ── Sensitivity analysis ─────────────────────────────────────────────────
-from ._sensitivity import (
-    prior_sensitivity,
-    data_sensitivity,
-    power_scale_sensitivity,
-)
-
-__all__ += [
-    "prior_sensitivity",
-    "data_sensitivity",
-    "power_scale_sensitivity",
 ]
 
 
