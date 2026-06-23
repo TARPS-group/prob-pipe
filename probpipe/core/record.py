@@ -1286,7 +1286,8 @@ class EventTemplate:
 
         batched = vec.ndim > 1
         batch_shape = tuple(vec.shape[:-1]) if batched else ()
-        supplied = dict(non_numeric) if non_numeric else {}
+        # Normalise to a dict for lookup (None / empty already validated above).
+        non_numeric = dict(non_numeric) if non_numeric else {}
 
         # Record classes for the rebuilt value: an all-numeric template rebuilds
         # NumericRecord(Array); a mixed template rebuilds a plain Record(Array)
@@ -1324,12 +1325,12 @@ class EventTemplate:
                     fields[name] = jnp.reshape(chunk, (*batch_shape, *spec.shape))
                 else:
                     # Opaque / distribution / function leaf — supplied by caller.
-                    if path not in supplied:
+                    if path not in non_numeric:
                         raise ValueError(
                             f"{type(self).__name__}.from_vector: missing non_numeric "
                             f"value for dropped leaf {path!r}."
                         )
-                    val = supplied[path]
+                    val = non_numeric[path]
                     if batched:
                         _check_batch(path, val)
                     fields[name] = val
