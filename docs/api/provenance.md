@@ -84,6 +84,37 @@ assert any(a.obj is prior for a in ancestors)
 ancestors[0].obj.sample(key, (10,))
 ```
 
+## Content fingerprints
+
+Every `ParentInfo` descriptor carries a `fingerprint` — a 16-character hex
+string that stably identifies the parent's content across processes.  It is
+populated automatically by `Provenance.create()` and visible in `to_dict()`
+output:
+
+```python
+prior = Normal(loc=0.0, scale=1.0, name="prior")
+posterior = wf(prior)
+
+anc = provenance_ancestors(posterior)[0]
+print(anc.fingerprint)   # e.g. "8d86780c50cea472"
+
+d = posterior.source.to_dict()
+print(d["parents"][0]["fingerprint"])   # same digest
+```
+
+The fingerprint covers the full content of the parent:
+
+| Parent type | What is hashed |
+|---|---|
+| TFP-backed distribution (`Normal`, `Gamma`, …) | class name + distribution name + all TFP constructor parameters |
+| `EmpiricalDistribution` | class name + name + sample arrays |
+| `Record` | field names + values, recursively |
+| `WorkflowFunction` | user function bytecode (not the Prefect wrapper closure) |
+| JAX / NumPy array | shape + dtype + raw bytes (large arrays are sampled) |
+
+The fingerprint is intended as the foundation for a future Prefect
+`cache_key_fn` that will enable cross-run task caching and failure recovery.
+
 ## API reference
 
 ::: probpipe.ProvenanceMode
