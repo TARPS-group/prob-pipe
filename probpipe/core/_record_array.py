@@ -19,7 +19,8 @@ import numpy as np
 
 from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
-from .record import _PATH_SEP, ArraySpec, EventTemplate, Record
+from .event_template import ArraySpec, EventTemplate
+from .record import _PATH_SEP, Record
 
 __all__ = [
     "NumericRecordArray",
@@ -302,7 +303,7 @@ class RecordArray(Record):
         if not records:
             raise ValueError("Cannot stack empty list of Records")
         if template is None:
-            template = EventTemplate.from_record(records[0])
+            template = EventTemplate.infer_from(records[0])
         fields: dict[str, Any] = {}
         for name in template.fields:
             field_vals = [r[name] for r in records]

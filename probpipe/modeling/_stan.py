@@ -15,8 +15,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core.distribution import Distribution
+from ..core.event_template import NumericEventTemplate
 from ..core.protocols import SupportsLogProb
-from ..core.record import NumericEventTemplate
 from ..custom_types import Array, ArrayLike
 from ._base import ProbabilisticModel
 

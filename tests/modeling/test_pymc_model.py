@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from probpipe import ApproximateDistribution
-from probpipe.core.record import ArraySpec
+from probpipe.core.event_template import ArraySpec
 from probpipe.modeling import PyMCModel
 
 

@@ -14,7 +14,7 @@ from probpipe import (
     RecordArray,
     provenance_ancestors,
 )
-from probpipe.core.record import EventTemplate
+from probpipe.core.event_template import EventTemplate
 
 # ---------------------------------------------------------------------------
 # RecordArray construction
@@ -842,7 +842,7 @@ class TestHierarchy:
     def test_custom_name_kwarg_honored(self):
         """RecordArray accepts a ``name=`` kwarg at construction,
         matching Record's API."""
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         tpl = EventTemplate(x=())
         ra = NumericRecordArray(

@@ -26,13 +26,14 @@ from ._empirical import (
     RecordEmpiricalDistribution,
 )
 from ._record_array import RecordArray
+from .event_template import EventTemplate
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
-from .record import EventTemplate, Record
+from .record import Record
 
 # ---------------------------------------------------------------------------
 # MarginalizedBroadcastDistribution — output marginal of a broadcast

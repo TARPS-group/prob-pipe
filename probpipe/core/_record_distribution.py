@@ -21,6 +21,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from ._distribution_base import Distribution, _DistributionMeta
+from .event_template import ArraySpec, EventTemplate
 from .protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -28,7 +29,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import ArraySpec, EventTemplate, Record
+from .record import Record
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
 

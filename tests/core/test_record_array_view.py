@@ -38,7 +38,7 @@ from probpipe import (
     workflow_function,
 )
 from probpipe.core._record_array import _RecordArrayView
-from probpipe.core.record import EventTemplate
+from probpipe.core.event_template import EventTemplate
 
 # ---------------------------------------------------------------------------
 # Fixtures

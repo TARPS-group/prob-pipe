@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from probpipe import SupportsLogProb, log_prob
-from probpipe.core.record import ArraySpec
+from probpipe.core.event_template import ArraySpec
 from probpipe.modeling._stan import StanModel, _param_blocks, _UnconstrainedStanView
 
 # ---------------------------------------------------------------------------

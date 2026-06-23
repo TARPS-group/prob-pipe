@@ -21,12 +21,13 @@ from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._record_array import NumericRecordArray
 from ..core.constraints import Constraint, real
-from ..core.record import NumericEventTemplate, Record
+from ..core.event_template import NumericEventTemplate
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
 if TYPE_CHECKING:
-    from ..core.record import EventTemplate
+    from ..core.event_template import EventTemplate
 
 __all__ = ["KDEDistribution"]
 

@@ -11,8 +11,9 @@ import jax.numpy as jnp
 
 from .._weights import Weights
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
+from ..core.event_template import ArraySpec, EventTemplate, OpaqueSpec, _spec_size
 from ..core.provenance import Provenance
-from ..core.record import ArraySpec, EventTemplate, OpaqueSpec, Record, _spec_size
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 
 __all__ = ["ApproximateDistribution", "make_posterior"]

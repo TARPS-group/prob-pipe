@@ -36,8 +36,9 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core.distribution import Distribution
+from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsSampling
-from ..core.record import EventTemplate, Record
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 
 logger = logging.getLogger(__name__)
@@ -229,7 +230,7 @@ def get_init_state(
                 from ..core._numeric_record import NumericRecord
 
                 if not isinstance(s, NumericRecord):
-                    s = NumericRecord.from_record(s)
+                    s = s.to_numeric()
                 s = s.to_vector()
             return jnp.atleast_1d(jnp.asarray(s, dtype=target_dtype))
         except Exception:

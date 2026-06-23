@@ -873,7 +873,7 @@ class TestProtocolConversion:
         :class:`IncrementalConditioner` updates beyond batch 1 don't
         collapse to a flat ``posterior`` field (issue #267).
         """
-        from probpipe.core.record import NumericEventTemplate
+        from probpipe.core.event_template import NumericEventTemplate
         from probpipe.distributions.kde import KDEDistribution
         from probpipe.inference._approximate_distribution import (
             ApproximateDistribution,

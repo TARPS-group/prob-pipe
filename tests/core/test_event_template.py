@@ -5,7 +5,7 @@ import numpy as np
 import pytest
 
 from probpipe import NumericRecord, NumericRecordArray, Record, RecordArray
-from probpipe.core.record import (
+from probpipe.core.event_template import (
     ArraySpec,
     DistributionSpec,
     EventTemplate,
@@ -170,7 +170,7 @@ class TestLeafPaths:
             x=jnp.array([1.0, 2.0]),
             nested=NumericRecord(a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
         )
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         assert tpl.leaf_paths == ("x", "nested/a", "nested/b")
         # to_vector concatenates leaves in leaf_paths order: x(2) | a(1) | b(2).
         np.testing.assert_allclose(tpl.to_vector(v), [1.0, 2.0, 3.0, 4.0, 5.0])
@@ -335,21 +335,21 @@ class TestEqualityAndHashing:
 class TestFromRecord:
     def test_scalar_fields(self):
         r = Record(a=1.0, b=2.0)
-        tpl = EventTemplate.from_record(r)
+        tpl = EventTemplate.infer_from(r)
         assert tpl.fields == ("a", "b")
         assert tpl["a"] == ArraySpec(())
         assert tpl["b"] == ArraySpec(())
 
     def test_array_fields(self):
         r = Record(x=jnp.zeros(5), y=jnp.zeros((2, 3)))
-        tpl = EventTemplate.from_record(r)
+        tpl = EventTemplate.infer_from(r)
         assert tpl["x"] == ArraySpec((5,))
         assert tpl["y"] == ArraySpec((2, 3))
 
     def test_nested_record(self):
         inner = Record(x=1.0, y=jnp.zeros(3))
         outer = Record(params=inner, z=2.0)
-        tpl = EventTemplate.from_record(outer)
+        tpl = EventTemplate.infer_from(outer)
         assert isinstance(tpl["params"], EventTemplate)
         assert tpl["params"]["x"] == ArraySpec(())
         assert tpl["params"]["y"] == ArraySpec((3,))
@@ -357,7 +357,7 @@ class TestFromRecord:
 
     def test_batch_shape_stripping(self):
         r = Record(x=jnp.zeros((100, 3)), y=jnp.zeros((100,)))
-        tpl = EventTemplate.from_record(r, batch_shape=(100,))
+        tpl = EventTemplate.infer_from(r, batch_shape=(100,))
         assert tpl["x"] == ArraySpec((3,))
         assert tpl["y"] == ArraySpec(())
 
@@ -365,7 +365,7 @@ class TestFromRecord:
         from probpipe.core._numeric_record import NumericRecord
 
         r = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
-        tpl = EventTemplate.from_record(r)
+        tpl = EventTemplate.infer_from(r)
         # Auto-promoted to NumericEventTemplate because the input was a
         # NumericRecord, so ``vector_size`` is reachable.
         assert isinstance(tpl, NumericEventTemplate)
@@ -374,13 +374,13 @@ class TestFromRecord:
     def test_from_numeric_record_promotes(self):
         """Calling ``from_record`` on a ``NumericRecord`` returns a
         :class:`NumericEventTemplate`, even through the base
-        ``EventTemplate.from_record`` classmethod, so downstream code
+        ``EventTemplate.infer_from`` classmethod, so downstream code
         that needs ``vector_size`` keeps working without the caller having
         to name the subclass explicitly."""
         from probpipe.core._numeric_record import NumericRecord
 
         r = NumericRecord(a=1.0, b=jnp.zeros(2))
-        tpl = EventTemplate.from_record(r)
+        tpl = EventTemplate.infer_from(r)
         assert isinstance(tpl, NumericEventTemplate)
 
     def test_from_mixed_record_stays_base(self):
@@ -388,7 +388,7 @@ class TestFromRecord:
         the result is a plain :class:`EventTemplate` with an opaque
         slot."""
         r = Record(x=1.0, label="tag")
-        tpl = EventTemplate.from_record(r)
+        tpl = EventTemplate.infer_from(r)
         assert type(tpl) is EventTemplate
         assert tpl["label"] == OpaqueSpec()
 
@@ -399,7 +399,7 @@ class TestFromRecord:
         template entry — this test pins down that behavior so the
         documented guidance stays in sync with the implementation."""
         r = Record(xs=[1.0, 2.0, 3.0])
-        tpl = EventTemplate.from_record(r)
+        tpl = EventTemplate.infer_from(r)
         assert tpl["xs"] == OpaqueSpec()
 
     def test_list_leaf_after_asarray_is_numeric(self):
@@ -407,7 +407,7 @@ class TestFromRecord:
         in ``np.asarray`` produces a numeric template entry."""
 
         r = Record(xs=np.asarray([1.0, 2.0, 3.0]))
-        tpl = EventTemplate.from_record(r)
+        tpl = EventTemplate.infer_from(r)
         assert tpl["xs"] == ArraySpec((3,))
 
 
@@ -827,21 +827,21 @@ class TestNumericSubset:
 class TestToVector:
     def test_scalar_value(self):
         v = NumericRecord(x=1.5)
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         vec = tpl.to_vector(v)
         assert vec.shape == (1,)
         assert jnp.array_equal(vec, jnp.asarray([1.5]))
 
     def test_vector_value(self):
         v = NumericRecord(y=jnp.arange(3.0))
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         vec = tpl.to_vector(v)
         assert vec.shape == (3,)
         assert jnp.array_equal(vec, jnp.arange(3.0))
 
     def test_multi_field_value(self):
         v = NumericRecord(x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         vec = tpl.to_vector(v)
         assert vec.shape == (1 + 3 + 8,)
 
@@ -855,7 +855,7 @@ class TestToVector:
         # NumericRecord.to_vector (same canonical leaf order), so the two are
         # interchangeable.
         v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         assert jnp.array_equal(tpl.to_vector(v), v.to_vector())
 
     def test_batched_shape_is_batch_shape_plus_vector_size(self):
@@ -883,22 +883,22 @@ class TestToVector:
 class TestFromVectorRoundTripSingle:
     def test_scalar(self):
         v = NumericRecord(x=1.5)
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         assert tpl.from_vector(tpl.to_vector(v)) == v
 
     def test_vector(self):
         v = NumericRecord(y=jnp.arange(3.0))
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         assert tpl.from_vector(tpl.to_vector(v)) == v
 
     def test_multi_field(self):
         v = NumericRecord(x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         assert tpl.from_vector(tpl.to_vector(v)) == v
 
     def test_nested(self):
         v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
-        tpl = EventTemplate.from_record(v)
+        tpl = EventTemplate.infer_from(v)
         round_tripped = tpl.from_vector(tpl.to_vector(v))
         assert isinstance(round_tripped, NumericRecord)
         assert round_tripped == v

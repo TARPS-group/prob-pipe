@@ -44,7 +44,7 @@ from math import prod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .record import NumericEventTemplate
+    from .event_template import NumericEventTemplate
 
 import jax
 import jax.numpy as jnp
@@ -243,7 +243,7 @@ class NumericRecordDistribution(RecordDistribution):
         explicitly, or declare ``event_shape`` so the auto-build can
         proceed).
         """
-        from .record import EventTemplate
+        from .event_template import EventTemplate
 
         tpl = getattr(self, "_event_template", None)
         if tpl is not None:
@@ -494,7 +494,7 @@ class NumericRecordDistribution(RecordDistribution):
         ``vector_size``. For a general ``EventTemplate``, sums the
         numeric-leaf shapes; opaque leaves contribute zero.
         """
-        from .record import NumericEventTemplate
+        from .event_template import NumericEventTemplate
 
         tpl = self.event_template
         if isinstance(tpl, NumericEventTemplate):
@@ -520,7 +520,7 @@ class NumericRecordDistribution(RecordDistribution):
         if isinstance(value, (NumericRecordArray, NumericRecord)):
             return value.to_vector()
         if isinstance(value, Record):
-            return NumericRecord.from_record(value).to_vector()
+            return value.to_numeric().to_vector()
         value = jnp.asarray(value)
         if not event_shape:
             return value[..., None]
@@ -818,7 +818,7 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
         ValueError
             If ``self.vector_size`` does not match ``template.vector_size``.
         """
-        from .record import NumericEventTemplate
+        from .event_template import NumericEventTemplate
 
         if not isinstance(template, NumericEventTemplate):
             raise TypeError(

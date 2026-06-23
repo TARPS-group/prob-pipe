@@ -57,6 +57,7 @@ from ._numeric_record_distribution import (
     NumericRecordDistribution,
 )
 from .constraints import Constraint, real
+from .event_template import EventTemplate
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -65,7 +66,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import EventTemplate, Record
+from .record import Record
 
 # ---------------------------------------------------------------------------
 # Shared helpers

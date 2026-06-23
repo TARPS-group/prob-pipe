@@ -508,9 +508,8 @@ class TestConversion:
         assert back["y"].attrs == {"units": "m"}
 
     def test_to_numeric_recurses_into_nested_records(self):
-        """``to_numeric()`` and ``NumericRecord.from_record()`` both
-        recurse into nested non-NumericRecord children (regression for
-        the divergence flagged in PR-A review)."""
+        """``to_numeric()`` recurses into nested non-NumericRecord children
+        (regression for the divergence flagged in PR-A review)."""
         from probpipe import NumericRecord
 
         outer = Record(inner=Record(a=1.0), z=2.0)
@@ -518,8 +517,8 @@ class TestConversion:
         assert isinstance(nr, NumericRecord)
         assert isinstance(nr["inner"], NumericRecord)
         assert nr["inner", "a"] == 1.0
-        # Equivalent to the from_record path.
-        nr2 = NumericRecord.from_record(outer)
+        # Deterministic: a second conversion yields the same structure.
+        nr2 = outer.to_numeric()
         assert nr.fields == nr2.fields
         for field in nr.fields:
             assert type(nr[field]) is type(nr2[field])
@@ -807,7 +806,7 @@ class TestEventTemplatePack:
     (the general field-packing behind Distribution._pack_value, #228)."""
 
     def test_pack_builds_record_in_field_order(self):
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         tpl = EventTemplate(a=(), b=(3,))
         # kwargs out of order — pack keys the Record in template field order
@@ -818,13 +817,13 @@ class TestEventTemplatePack:
         assert jnp.allclose(d["b"], jnp.ones(3))
 
     def test_pack_missing_field_raises(self):
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         with pytest.raises(TypeError, match="missing"):
             EventTemplate(a=(), b=()).pack(a=0.5)
 
     def test_pack_unexpected_field_raises(self):
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         with pytest.raises(TypeError, match="unexpected"):
             EventTemplate(a=(), b=()).pack(a=0.5, b=0.4, c=1.0)

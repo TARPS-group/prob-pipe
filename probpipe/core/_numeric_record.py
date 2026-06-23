@@ -33,7 +33,8 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import aux_for
-from .record import EventTemplate, Record, _record_flatten
+from .event_template import EventTemplate
+from .record import Record, _record_flatten
 
 __all__ = ["_NUMERIC_DTYPE_KINDS", "NumericRecord", "_is_numeric_leaf"]
 
@@ -215,23 +216,7 @@ class NumericRecord(Record):
         returns ``(leaves, aux)`` keeping each leaf whole; ``to_vector`` ravels
         and concatenates the numeric leaves into a single dense vector.
         """
-        return EventTemplate.from_record(self).to_vector(self)
-
-    @classmethod
-    def from_record(cls, record: Record) -> NumericRecord:
-        """Convert a ``Record`` to ``NumericRecord``, validating leaves.
-
-        Equivalent to ``record.to_numeric()``; both paths consult the
-        aux registry, coerce every leaf via ``jnp.asarray``, and raise
-        ``TypeError`` on non-coercible leaves. Nested ``Record``
-        children recurse, preserving structure.
-        """
-        return cls(
-            {
-                field_name: cls.from_record(val) if isinstance(val, Record) else val
-                for field_name, val in record._store.items()
-            }
-        )
+        return EventTemplate.infer_from(self).to_vector(self)
 
     # -- Conversion back to native backends --------------------------------
 

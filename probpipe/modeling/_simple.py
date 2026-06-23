@@ -5,8 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.distribution import Distribution
+from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsLogProb
-from ..core.record import EventTemplate, Record
+from ..core.record import Record
 from ..custom_types import Array
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -90,7 +91,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # unrelated types, so the ``Record`` check is sufficient on
         # its own.
         if isinstance(data_tpl, Record):
-            data_tpl = EventTemplate.from_record(data_tpl)
+            data_tpl = EventTemplate.infer_from(data_tpl)
         if data_tpl is not None:
             overlap = set(prior_tpl.fields) & set(data_tpl.fields)
             if overlap:

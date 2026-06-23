@@ -62,7 +62,7 @@ class TestRecordArrayDetection:
     def test_scalar_batch_shape_passes_through(self):
         """``batch_shape=()`` means no batch axis (scalar / zero-rank,
         not zero-length), so don't iterate."""
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         @workflow_function
         def f(p: NumericRecord) -> float:
@@ -358,7 +358,7 @@ class TestMultiDimensionalBatch:
     @pytest.fixture
     def sweep_2d(self):
         """3 x 2 sweep over (r, k)."""
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         r_values = jnp.array([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]])
         k_values = jnp.array([[10.0, 20.0], [10.0, 20.0], [10.0, 20.0]])
@@ -423,7 +423,7 @@ class TestMultiDimensionalBatch:
 
     def test_3d_sweep(self):
         """3-D sweep works too - the row-major flattening is general."""
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         shape = (2, 3, 4)
         # Generate a 2x3x4 grid of distinct values.
