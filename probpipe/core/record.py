@@ -823,53 +823,96 @@ def _full_leaf_shape(val: Any) -> tuple[int, ...] | None:
 
 
 class EventTemplate:
-    """Structural description of a Record: field names, leaf shapes, nesting.
+    """Structural description of a value: its named, possibly-nested leaf structure.
 
-    Stores the skeleton of a Record without data — field names, per-field
-    shapes (for numeric leaves) or ``None`` (for opaque leaves), and
-    optional nested ``EventTemplate`` for hierarchical structure.
+    An ``EventTemplate`` describes the **structure** of a value — the names,
+    nesting, and per-leaf kind / shape that make it up — independently of the
+    concrete data. The same structural type describes a :class:`Record` value,
+    one *event* (a single draw) of a :class:`~probpipe.Distribution`, and the
+    input / output of a workflow function. Every :class:`Record` carries an
+    ``EventTemplate``, but the type is general: it is ProbPipe's schema for any
+    structured value.
 
-    Inspired by JAX's ``PyTreeDef``: a template can reconstruct a Record
-    from flat data, and describes the expected structure for type-checking
-    and flattening.
+    The word *event* follows probabilistic-programming usage and **generalizes**
+    the ``event`` / ``event_shape`` notion from other PPLs (TensorFlow
+    Probability, distrax, NumPyro). There, ``event_shape`` is the shape of a
+    single draw of one array-valued random variable; here an *event* is one
+    structured value — a named, possibly-nested tree of leaves — so a template
+    generalizes a single ``event_shape`` to the full per-leaf shape structure of
+    a draw.
+
+    Terminology
+    -----------
+    Used precisely throughout this class:
+
+    - **field** — a *top-level* entry of the template: a ``name -> spec`` pair,
+      where the spec is either a leaf or a nested ``EventTemplate``.
+      :attr:`fields` lists these names in insertion order; it does **not**
+      descend into nested sub-templates.
+    - **leaf** — a *terminal* node: an :class:`ArraySpec` / :class:`OpaqueSpec`
+      / :class:`DistributionSpec` / :class:`FunctionSpec`. A nested
+      ``EventTemplate`` is an *internal node*, not a leaf.
+    - **path** — the ``/``-delimited sequence of field names from the root to a
+      node (e.g. ``"physics/mass"``); a top-level field is a single-segment
+      path. Paths round-trip with :meth:`Record.__getitem__`'s path syntax.
+    - **canonical leaf order** — the order in which leaves are traversed:
+      depth-first, following each level's insertion order. This is the single
+      ordering every leaf-wise operation uses. :attr:`leaf_paths` is its
+      canonical definition — it returns the path to every leaf in this order;
+      :meth:`to_vector` / :meth:`from_vector` lay out and read leaves in it, and
+      :attr:`leaf_shapes` is keyed by it.
+
+    PyTree contract
+    ---------------
+    An ``EventTemplate`` — and every value it describes — is a JAX pytree.
+    *Internal nodes* are nested ``EventTemplate``\\s (and, at the value level,
+    the :class:`Record` / :class:`~probpipe.RecordArray` containers); a node's
+    field names are its keys. *Leaves* are the terminal specs (:class:`ArraySpec`
+    / :class:`OpaqueSpec` / :class:`DistributionSpec` / :class:`FunctionSpec`)
+    and, at the value level, the array or opaque objects they stand for. A leaf's
+    ``/``-delimited path is the string form of its JAX key path, and the
+    canonical leaf order is JAX's left-to-right depth-first leaf order.
+    :meth:`~probpipe.Record.flatten` / :meth:`~probpipe.Record.unflatten` are the
+    value-level pytree (de)composition; :attr:`leaf_paths` enumerates the leaf
+    keys in the same order.
 
     Parameters
     ----------
     **field_specs
-        Named fields.  Each value is one of:
+        Named fields. Each value is one of:
 
-        - ``tuple[int, ...]`` — shape of a numeric array leaf
-          (e.g., ``()`` for scalar, ``(3,)`` for 3-vector); normalised to
-          :class:`ArraySpec`.
+        - ``tuple[int, ...]`` — shape of a numeric array leaf (e.g. ``()`` for a
+          scalar, ``(3,)`` for a 3-vector); normalised to :class:`ArraySpec`.
         - ``None`` — opaque (non-array) leaf; normalised to :class:`OpaqueSpec`.
         - a leaf spec — :class:`ArraySpec` / :class:`OpaqueSpec` /
           :class:`DistributionSpec` / :class:`FunctionSpec` (passed through).
-        - ``EventTemplate`` — nested sub-structure (kept as-is).
+        - ``EventTemplate`` — a nested sub-structure (an internal node).
 
     Examples
     --------
     ::
 
-        EventTemplate(x=(), y=(3,))                    # -> NumericEventTemplate
+        EventTemplate(x=(), y=(3,))                     # -> NumericEventTemplate
         EventTemplate(label=None, x=())                 # -> EventTemplate (mixed)
         EventTemplate(physics=EventTemplate(force=(), mass=()), obs=())
 
     Notes
     -----
-    Leaves are stored as frozen, hashable spec objects
-    (``ArraySpec`` / ``OpaqueSpec`` / ``DistributionSpec`` / ``FunctionSpec``);
-    ``__getitem__`` returns the stored spec (or nested template), while
-    shape-shaped access stays on ``leaf_shapes`` / ``event_shapes`` /
-    ``field_event_shape``.
+    Inspired by JAX's ``PyTreeDef``: a template can reconstruct a value from its
+    leaves and describes the expected structure for type-checking and
+    vectorization. Leaves are stored as frozen, hashable spec objects, so a
+    template is itself hashable (usable as a jit / treedef cache key).
+    ``__getitem__`` returns the stored spec (or nested template); shape-shaped
+    access lives on :attr:`leaf_shapes` / :attr:`event_shapes` /
+    :meth:`field_event_shape`.
 
     Calling ``EventTemplate(...)`` directly auto-promotes to a
-    :class:`NumericEventTemplate` when every spec is numeric (and
-    every nested sub-template is itself all-numeric). That keeps
-    ``vector_size`` and ``numeric_leaf_shapes`` reachable in the common
-    all-numeric case without requiring the caller to name the subclass.
-    Mixed templates (any ``None`` spec) stay as plain ``EventTemplate``
-    and do not expose ``vector_size`` — it isn't a meaningful quantity
-    once opaque leaves are in the mix.
+    :class:`NumericEventTemplate` when every spec is numeric (and every nested
+    sub-template is itself all-numeric), so :attr:`vector_size` and
+    :attr:`numeric_leaf_shapes` are reachable in the common all-numeric case
+    without naming the subclass. Mixed templates (any opaque / ``None`` spec)
+    stay plain ``EventTemplate`` and do not expose :attr:`vector_size` — it is
+    not a meaningful quantity once opaque leaves are present.
     """
 
     __slots__ = ("_specs",)
@@ -933,17 +976,53 @@ class EventTemplate:
 
     @property
     def fields(self) -> tuple[str, ...]:
-        """Field names in insertion order."""
+        """Top-level field names, in insertion order.
+
+        Returns the names of the template's *top-level* fields only (see the
+        Terminology section); it does **not** descend into nested
+        sub-templates, so a nested field contributes a single name here. For
+        the path to every leaf in canonical leaf order, use :attr:`leaf_paths`;
+        the two coincide for a flat template (one where every field is a leaf).
+        """
         return tuple(self._specs.keys())
 
     @property
-    def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
-        """Per-field leaf shapes.  ``None`` for opaque (non-array) leaves.
+    def leaf_paths(self) -> tuple[str, ...]:
+        """Path to every leaf, in canonical leaf order.
 
-        For nested ``EventTemplate`` fields, returns the nested
-        template's ``leaf_shapes`` (not the template itself), keyed by
-        ``/``-delimited paths so the keys round-trip with
-        :meth:`Record.__getitem__`'s path syntax.
+        Returns the ``/``-delimited path (see the Terminology section) to each
+        leaf of the template, traversed depth-first in each level's insertion
+        order. This property **is the canonical definition** of that order and
+        of the leaf keys it yields: every leaf-wise operation in ProbPipe visits
+        leaves in exactly this order and names them by exactly these paths —
+        :meth:`to_vector` / :meth:`from_vector` lay out and read the per-leaf
+        blocks in it, :meth:`~probpipe.Record.flatten` returns the value's
+        leaves in it, and :attr:`leaf_shapes` (and
+        :attr:`~NumericEventTemplate.numeric_leaf_shapes`) are keyed by these
+        same paths. A nested field expands into one path per nested leaf; a flat
+        template's ``leaf_paths`` equals its :attr:`fields`.
+
+        Returns
+        -------
+        tuple of str
+            One ``/``-delimited path per leaf, in canonical leaf order.
+        """
+        paths: list[str] = []
+        for name, spec in self._specs.items():
+            if isinstance(spec, EventTemplate):
+                paths.extend(f"{name}{_PATH_SEP}{sub}" for sub in spec.leaf_paths)
+            else:
+                paths.append(name)
+        return tuple(paths)
+
+    @property
+    def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
+        """Per-leaf shapes, keyed by :attr:`leaf_paths` (canonical leaf order).
+
+        Maps each leaf's ``/``-delimited path to its array shape, or ``None``
+        for an opaque (non-array) leaf. The keys are exactly :attr:`leaf_paths`,
+        in canonical leaf order; a nested sub-template contributes one entry per
+        nested leaf.
         """
         result: dict[str, tuple[int, ...] | None] = {}
         for name, spec in self._specs.items():
@@ -959,14 +1038,14 @@ class EventTemplate:
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-top-level-field event shapes.
+        """Per-field event shapes, keyed by :attr:`fields` (top-level).
 
-        Unlike :attr:`leaf_shapes` (which descends into nested
-        sub-templates and emits one entry per leaf), ``event_shapes``
-        emits one entry per top-level field. Nested sub-templates and
-        opaque leaves collapse to ``()``. This is the view that downstream
-        Distribution code wants when answering "what is the per-field event
-        shape of one draw?".
+        Emits one entry per *top-level* field — keyed by :attr:`fields`, not by
+        :attr:`leaf_paths`. An :class:`ArraySpec` field returns its shape; a
+        nested sub-template or opaque leaf collapses to ``()``. Contrast
+        :attr:`leaf_shapes`, which descends and emits one entry per leaf. This
+        is the view downstream Distribution code wants when answering "what is
+        the per-field event shape of one draw?".
         """
         return {name: self.field_event_shape(name) for name in self._specs}
 
@@ -1566,11 +1645,11 @@ class NumericEventTemplate(EventTemplate):
 
     @property
     def numeric_leaf_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field shapes for numeric leaves.
+        """Per-leaf shapes, keyed by :attr:`leaf_paths` (canonical leaf order).
 
-        On :class:`NumericEventTemplate` every leaf is numeric, so this
-        is equivalent to :attr:`leaf_shapes`. Kept as a distinct name for
-        symmetry with historical callers that used it as a filter.
+        On :class:`NumericEventTemplate` every leaf is numeric, so this equals
+        :attr:`leaf_shapes` (no ``None`` entries). Kept as a distinct name for
+        symmetry with historical callers that used it as a numeric filter.
         """
         return dict(self.leaf_shapes)
 
