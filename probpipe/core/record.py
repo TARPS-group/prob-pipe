@@ -1286,7 +1286,6 @@ class EventTemplate:
 
         batched = vec.ndim > 1
         batch_shape = tuple(vec.shape[:-1]) if batched else ()
-        # Normalise to a dict for lookup (None / empty already validated above).
         non_numeric = dict(non_numeric) if non_numeric else {}
 
         # Record classes for the rebuilt value: an all-numeric template rebuilds
