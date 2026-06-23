@@ -37,8 +37,11 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 
 from ..core.record import Record
+from ._utils import _dataset_values
 
 if TYPE_CHECKING:
+    import xarray as xr
+
     from ..inference._approximate_distribution import ApproximateDistribution
 
 __all__ = [
@@ -119,28 +122,9 @@ def _scalar_from_da(da: Any) -> float:
     return float(np.asarray(da, dtype=float).squeeze().item())
 
 
-def _component_name(param: str, index: tuple[int, ...]) -> str:
-    """Return a stable display name for an event component."""
-    if not index:
-        return param
-    suffix = ", ".join(str(i) for i in index)
-    return f"{param}[{suffix}]"
-
-
-def _values_from_dataset(ds: Any) -> dict[str, float]:
+def _values_from_dataset(ds: "xr.Dataset") -> dict[str, float]:
     """Flatten scalar or event-shaped diagnostic outputs into named values."""
-    values: dict[str, float] = {}
-
-    for param in ds.data_vars:
-        arr = np.asarray(ds[param], dtype=float)
-        if arr.shape == ():
-            values[param] = float(arr.item())
-            continue
-
-        for index in np.ndindex(arr.shape):
-            values[_component_name(param, index)] = float(arr[index])
-
-    return values
+    return _dataset_values(ds)
 
 
 def _rhat_warnings(values: dict[str, Any], threshold: float) -> list[str]:

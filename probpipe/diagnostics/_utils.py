@@ -8,6 +8,8 @@ from __future__ import annotations
 from typing import Any
 
 __all__ = [
+    "_component_name",
+    "_dataset_values",
     "_resolve_generative_likelihood",
     "_record_get",
     "_safe_float",
@@ -79,6 +81,30 @@ def _json_dumps_safe(obj: Any) -> str:
             return json.dumps(str(obj))
         except Exception:
             return "{}"
+
+
+def _component_name(param: str, index: tuple[int, ...]) -> str:
+    """Return a stable display name for an event component."""
+    if not index:
+        return param
+    suffix = ", ".join(str(i) for i in index)
+    return f"{param}[{suffix}]"
+
+
+def _dataset_values(ds: Any) -> dict[str, float]:
+    """Flatten scalar or event-shaped diagnostic outputs into named values."""
+    values: dict[str, float] = {}
+
+    for param in ds.data_vars:
+        arr = np.asarray(ds[param], dtype=float)
+        if arr.shape == ():
+            values[param] = float(arr.item())
+            continue
+
+        for index in np.ndindex(arr.shape):
+            values[_component_name(param, index)] = float(arr[index])
+
+    return values
 
 
 def _resolve_generative_likelihood(
