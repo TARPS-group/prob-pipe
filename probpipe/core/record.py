@@ -1,10 +1,19 @@
 """Record — ProbPipe's universal structured value type.
 
-A named, immutable, JAX-pytree-registered container for structured
-non-random values.  ``Record`` is the non-random counterpart to
+A named, immutable, JAX-pytree-registered container for a structured
+value.  ``Record`` is the non-random counterpart to
 :class:`~probpipe.core._distribution_base.Distribution`: it carries
 named fields of arbitrary types and stores them as-is, with no
 automatic coercion or caching.
+
+A ``Record`` is a *value* described by an :class:`EventTemplate` (the
+universal structural schema, defined in
+:mod:`probpipe.core.event_template`): the template plays the role of the
+type and the record is a value that conforms to it. Every record carries an **authoritative**
+:attr:`Record.event_template` — supplied at construction (carried forward
+from the generator that produced the value) or, absent that, inferred from
+the data once and cached. Reading ``record.event_template`` is the way to
+obtain a value's structure; it is never re-inferred per access.
 
 The Record family
 -----------------
@@ -13,9 +22,12 @@ The Record family
 |-------------------------------------------------------------|-----------------------------------------------------------------------------------------|
 | :class:`Record`                                             | Single structured value; fields may be arrays, scalars, strings, xarray, nested Record. |
 | :class:`~probpipe.NumericRecord` (subclass)                 | Single structured value; every leaf is a ``jax.Array`` (post-construction invariant).   |
-| :class:`~probpipe.RecordArray`                              | Batch of ``Record`` elements sharing a :class:`EventTemplate`.                         |
+| :class:`~probpipe.RecordArray`                              | Batch of ``Record`` elements sharing an :class:`EventTemplate`.                         |
 | :class:`~probpipe.NumericRecordArray` (subclass)            | Batch of :class:`~probpipe.NumericRecord` elements with ``to_vector`` / ``mean`` / ``var``. |
-| :class:`EventTemplate`                                     | Structural skeleton: field names, per-field leaf shapes or ``None`` for opaque leaves.  |
+
+(The structural schema itself — :class:`EventTemplate` /
+:class:`NumericEventTemplate` and the leaf specs — lives in
+:mod:`probpipe.core.event_template`.)
 
 **When to reach for which:**
 
@@ -36,9 +48,10 @@ The Record family
   single element (``Record`` from ``RecordArray``, ``NumericRecord``
   from ``NumericRecordArray``); field indexing returns the batched
   array.
-* Use :class:`EventTemplate` whenever you need to round-trip
-  ``from_vector`` → ``to_vector`` without an example instance, or describe
-  the expected structure of a distribution's sample.
+* Use :class:`EventTemplate` (in :mod:`probpipe.core.event_template`)
+  whenever you need to describe structure *without* an example instance —
+  e.g. to round-trip ``from_vector`` → ``to_vector`` from a bare schema, or
+  to state the expected structure of a distribution's sample.
 
 Usage::
 
