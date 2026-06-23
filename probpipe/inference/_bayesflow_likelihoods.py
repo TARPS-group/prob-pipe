@@ -115,16 +115,23 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         """Coerce ``params`` to a ``(d_theta,)`` row in canonical flat order.
 
         Accepts the two shapes that reach a likelihood in practice -- the
-        structured per-draw record of predictive/checking paths (flattened via
-        its own canonical layout, which matches the training layout) and the
-        flat vector the gradient-MCMC log-density assembly passes -- plus plain
-        array-likes. Width is validated against the prior's ``event_size``
-        (static under jit: shapes are concrete at trace time).
+        structured per-draw record of predictive/checking paths (serialized via
+        its own canonical 1-D vector layout, which matches the training layout)
+        and the flat vector the gradient-MCMC log-density assembly passes --
+        plus plain array-likes. Width is validated against the prior's
+        ``event_size`` (static under jit: shapes are concrete at trace time).
         """
-        if hasattr(params, "flatten"):
-            t = params.flatten()
-        elif hasattr(params, "to_numeric"):
-            t = params.to_numeric().flatten()
+        from ..core._numeric_record import NumericRecord
+        from ..core._record_array import NumericRecordArray
+        from ..core.record import Record
+
+        # ``Record`` now carries the JAX-pytree ``flatten`` (returns
+        # ``(leaves, aux)``), so dispatch on type rather than ``hasattr`` to get
+        # the canonical 1-D ``vec`` via ``to_vector``.
+        if isinstance(params, (NumericRecord, NumericRecordArray)):
+            t = params.to_vector()
+        elif isinstance(params, Record):
+            t = params.to_numeric().to_vector()
         else:
             t = params
         t = jnp.ravel(jnp.asarray(t))

@@ -274,15 +274,12 @@ class _RecordDistributionView(Distribution):
         practice are ``ApproximateDistribution`` subclasses that do
         expose ``draws()``.
         """
-        from ._record_array import NumericRecordArray, RecordArray
+        from ._record_array import RecordArray
 
         draws = self._parent.draws()
         if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])
-        result = NumericRecordArray.unflatten(
-            jnp.asarray(draws),
-            template=self._parent.event_template,
-        )
+        result = self._parent.event_template.from_vector(jnp.asarray(draws))
         return jnp.asarray(result[self._key])
 
     def __repr__(self) -> str:

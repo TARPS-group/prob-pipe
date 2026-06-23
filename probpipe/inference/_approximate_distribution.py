@@ -113,7 +113,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     :meth:`_mean` / :meth:`_variance`, and the public ops
     (``mean(post)`` / ``variance(post)``) all return Records whose
     keys match :attr:`fields`. Nested ``EventTemplate`` fields are
-    stored as a flat ``(n, nested_flat_size)`` array under the
+    stored as a flat ``(n, nested_vector_size)`` array under the
     top-level field name; the nested structure is recoverable via
     ``event_template[field]`` and via :meth:`draws`, which walks
     the full template (including nesting) using the original
@@ -171,7 +171,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         self._user_template = event_template is not None
         # Multi-field template → split the flat chain by top-level
         # field. Nested ``EventTemplate`` fields are stored as a
-        # 2-D ``(n, nested_flat_size)`` slice under the top-level
+        # 2-D ``(n, nested_vector_size)`` slice under the top-level
         # field name; the nested structure is recovered via
         # ``event_template[field]`` and ``draws()``. Slice sizes use
         # ``_spec_size``, which already handles both flat and nested
@@ -208,7 +208,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                 chunk = flat[..., offset : offset + size]
                 if isinstance(spec, EventTemplate):
                     # Nested: keep flat-per-top-level-field. Shape is
-                    # ``(*sample_shape, nested_flat_size)``.
+                    # ``(*sample_shape, nested_vector_size)``.
                     fields[field_name] = chunk
                 else:
                     # ArraySpec leaf (opaque rejected above, nested handled).
@@ -331,9 +331,9 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # historical behaviour of single-field auto-wrap empiricals
         # under the previous numeric-array hierarchy.
         if getattr(self, "_user_template", False):
-            from ..core._record_array import NumericRecordArray
-
-            return NumericRecordArray.unflatten(samples, template=self.event_template)
+            # ``from_vector`` infers batch_shape from the leading axes of the
+            # concatenated draws (a matrix ``(n, vector_size)``).
+            return self.event_template.from_vector(samples)
         return samples
 
     def __repr__(self) -> str:
