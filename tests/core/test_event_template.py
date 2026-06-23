@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Record
+from probpipe import NumericRecord, NumericRecordArray, Record, RecordArray
 from probpipe.core.record import (
     ArraySpec,
     DistributionSpec,
@@ -772,3 +772,207 @@ class TestNumericSubset:
         tpl = EventTemplate(nested=EventTemplate(label=None, tag=None))
         with pytest.raises(ValueError, match="nested"):
             tpl.numeric_subset()
+
+
+# ---------------------------------------------------------------------------
+# to_vector / from_vector — 1-D numeric (de)serialization
+# ---------------------------------------------------------------------------
+
+
+class TestToVector:
+    def test_scalar_value(self):
+        v = NumericRecord(x=1.5)
+        tpl = EventTemplate.from_record(v)
+        vec = tpl.to_vector(v)
+        assert vec.shape == (1,)
+        assert jnp.array_equal(vec, jnp.asarray([1.5]))
+
+    def test_vector_value(self):
+        v = NumericRecord(y=jnp.arange(3.0))
+        tpl = EventTemplate.from_record(v)
+        vec = tpl.to_vector(v)
+        assert vec.shape == (3,)
+        assert jnp.array_equal(vec, jnp.arange(3.0))
+
+    def test_multi_field_value(self):
+        v = NumericRecord(x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
+        tpl = EventTemplate.from_record(v)
+        vec = tpl.to_vector(v)
+        assert vec.shape == (1 + 3 + 8,)
+
+    def test_vector_size_equals_flat_size(self):
+        tpl = EventTemplate(x=(), y=(3,), z=(2, 4))
+        v = NumericRecord(x=0.0, y=jnp.zeros(3), z=jnp.zeros((2, 4)))
+        assert tpl.to_vector(v).shape == (tpl.flat_size,)
+
+    def test_order_and_value_match_numeric_record_flatten(self):
+        # The canonical leaf order must agree with NumericRecord.flatten so the
+        # two are interchangeable (PR-1c contract).
+        v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
+        tpl = EventTemplate.from_record(v)
+        assert jnp.array_equal(tpl.to_vector(v), v.flatten())
+
+    def test_batched_shape_is_batch_shape_plus_flat_size(self):
+        tpl = EventTemplate(x=(), y=(3,))
+        flat = jnp.arange(2 * 5 * tpl.flat_size, dtype=float).reshape(2, 5, tpl.flat_size)
+        v = tpl.from_vector(flat)
+        assert isinstance(v, NumericRecordArray)
+        assert tpl.to_vector(v).shape == (2, 5, tpl.flat_size)
+
+    def test_non_numeric_template_raises(self):
+        tpl = EventTemplate(x=(), label=None, d=_dist_spec())
+        v = NumericRecord(x=1.0)
+        with pytest.raises(TypeError, match="numeric_subset"):
+            tpl.to_vector(v)
+        # The error names the offending non-numeric fields.
+        with pytest.raises(TypeError, match="label"):
+            tpl.to_vector(v)
+
+    def test_non_record_value_raises(self):
+        tpl = EventTemplate(x=())
+        with pytest.raises(TypeError, match="NumericRecord"):
+            tpl.to_vector(jnp.asarray([1.0]))
+
+
+class TestFromVectorRoundTripSingle:
+    def test_scalar(self):
+        v = NumericRecord(x=1.5)
+        tpl = EventTemplate.from_record(v)
+        assert tpl.from_vector(tpl.to_vector(v)) == v
+
+    def test_vector(self):
+        v = NumericRecord(y=jnp.arange(3.0))
+        tpl = EventTemplate.from_record(v)
+        assert tpl.from_vector(tpl.to_vector(v)) == v
+
+    def test_multi_field(self):
+        v = NumericRecord(x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
+        tpl = EventTemplate.from_record(v)
+        assert tpl.from_vector(tpl.to_vector(v)) == v
+
+    def test_nested(self):
+        v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
+        tpl = EventTemplate.from_record(v)
+        round_tripped = tpl.from_vector(tpl.to_vector(v))
+        assert isinstance(round_tripped, NumericRecord)
+        assert round_tripped == v
+
+    def test_returns_single_for_1d_vec(self):
+        tpl = EventTemplate(x=(), y=(3,))
+        v = tpl.from_vector(jnp.arange(4.0))
+        assert isinstance(v, NumericRecord)
+
+
+class TestFromVectorRoundTripBatched:
+    def test_single_batch_axis(self):
+        tpl = EventTemplate(x=(), y=(3,))
+        flat = jnp.arange(4 * tpl.flat_size, dtype=float).reshape(4, tpl.flat_size)
+        v = tpl.from_vector(flat)
+        assert isinstance(v, NumericRecordArray)
+        assert v.batch_shape == (4,)
+        assert tpl.from_vector(tpl.to_vector(v)) == v
+
+    def test_multi_axis_batch_shape(self):
+        # batch_shape=(2, 3) catches trailing-axis split / reshape bugs.
+        tpl = EventTemplate(x=(), y=(3,), z=(2, 2))
+        flat = jnp.arange(2 * 3 * tpl.flat_size, dtype=float).reshape(2, 3, tpl.flat_size)
+        v = tpl.from_vector(flat)
+        assert isinstance(v, NumericRecordArray)
+        assert v.batch_shape == (2, 3)
+        assert jnp.array_equal(tpl.to_vector(v), flat)
+        assert tpl.from_vector(tpl.to_vector(v)) == v
+
+    def test_nested_multi_axis_batch_shape(self):
+        # Nested numeric subtree + multi-axis batch: from_vector builds a nested
+        # NumericRecordArray as a field of the outer NumericRecordArray.
+        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(2,)), y=(3,))
+        flat = jnp.arange(2 * 3 * tpl.flat_size, dtype=float).reshape(2, 3, tpl.flat_size)
+        v = tpl.from_vector(flat)
+        assert isinstance(v, NumericRecordArray)
+        assert v.batch_shape == (2, 3)
+        assert isinstance(v["nested"], NumericRecordArray)
+        assert v["nested/b"].shape == (2, 3, 2)
+        # NOTE: assert via the vector round-trip, not ``from_vector(...) == v``.
+        # RecordArray.__eq__ is currently broken for a nested *Array field (it
+        # calls jnp.array_equal on the nested array, which raises, then falls
+        # back to an identity check). Tracked in #235 (batch-records PR); once
+        # that is fixed, simplify to ``tpl.from_vector(tpl.to_vector(v)) == v``.
+        assert jnp.array_equal(tpl.to_vector(v), flat)
+
+
+class TestFromVectorErrors:
+    def test_wrong_trailing_size_raises(self):
+        tpl = EventTemplate(x=(), y=(3,))
+        with pytest.raises(ValueError, match="vector_size"):
+            tpl.from_vector(jnp.zeros(5))
+
+    def test_numeric_template_rejects_non_numeric(self):
+        tpl = EventTemplate(x=())
+        with pytest.raises(ValueError, match="numeric"):
+            tpl.from_vector(jnp.zeros(1), non_numeric={"label": "a"})
+
+    def test_mixed_template_requires_non_numeric(self):
+        tpl = EventTemplate(x=(), label=None)
+        with pytest.raises(ValueError, match="non_numeric"):
+            tpl.from_vector(jnp.zeros(1))
+
+
+class TestFromVectorNonNumericReconstruction:
+    def test_single_full_value(self):
+        # Mixed template -> numeric_subset -> to_vector -> from_vector(non_numeric).
+        tpl = EventTemplate(x=(), label=None, phys=EventTemplate(force=(), mass=()))
+        full = Record(
+            x=jnp.asarray(1.0),
+            label="horseshoe",
+            phys=Record(force=jnp.asarray(2.0), mass=jnp.asarray(3.0)),
+        )
+        numeric = NumericRecord(x=1.0, phys=NumericRecord(force=2.0, mass=3.0))
+        vec = tpl.numeric_subset().to_vector(numeric)
+        rebuilt = tpl.from_vector(vec, non_numeric={"label": "horseshoe"})
+        assert isinstance(rebuilt, Record)
+        assert rebuilt == full
+
+    def test_batched_full_value(self):
+        tpl = EventTemplate(x=(), label=None)
+        vec = jnp.arange(6.0).reshape(2, 3, 1)  # batch_shape=(2, 3), flat_size=1
+        labels = np.array([["a", "b", "c"], ["d", "e", "f"]], dtype=object)
+        rebuilt = tpl.from_vector(vec, non_numeric={"label": labels})
+        assert isinstance(rebuilt, RecordArray)
+        assert rebuilt.batch_shape == (2, 3)
+        assert jnp.array_equal(rebuilt["x"], vec.reshape(2, 3))
+        assert (np.asarray(rebuilt["label"]) == labels).all()
+
+    def test_nested_batched_full_value(self):
+        # Nested numeric subtree + opaque leaf + multi-axis batch: from_vector
+        # rebuilds a nested RecordArray inside the outer RecordArray, weaving the
+        # batched non-numeric leaf in alongside.
+        tpl = EventTemplate(x=(), label=None, phys=EventTemplate(force=(), mass=()))
+        sub = tpl.numeric_subset()  # leaves: x, phys/force, phys/mass
+        vec = jnp.arange(2 * 3 * sub.flat_size, dtype=float).reshape(2, 3, sub.flat_size)
+        labels = np.array([["a", "b", "c"], ["d", "e", "f"]], dtype=object)
+        rebuilt = tpl.from_vector(vec, non_numeric={"label": labels})
+        assert isinstance(rebuilt, RecordArray)
+        assert rebuilt.batch_shape == (2, 3)
+        assert isinstance(rebuilt["phys"], RecordArray)
+        assert rebuilt["phys/force"].shape == (2, 3)
+        assert rebuilt["phys/mass"].shape == (2, 3)
+        assert (np.asarray(rebuilt["label"]) == labels).all()
+        # The numeric leaves must round-trip; assert on the numeric subset's
+        # vector rather than ``== full`` (RecordArray.__eq__ is broken for a
+        # nested *Array field — see test_nested_multi_axis_batch_shape / #235).
+        numeric = sub.from_vector(vec)
+        assert jnp.array_equal(rebuilt["x"], numeric["x"])
+        assert jnp.array_equal(rebuilt["phys/force"], numeric["phys/force"])
+        assert jnp.array_equal(rebuilt["phys/mass"], numeric["phys/mass"])
+
+    def test_missing_dropped_leaf_raises(self):
+        tpl = EventTemplate(x=(), label=None)
+        with pytest.raises(ValueError, match="missing non_numeric"):
+            tpl.from_vector(jnp.zeros(1), non_numeric={"other": "a"})
+
+    def test_mismatched_non_numeric_batch_shape_raises(self):
+        tpl = EventTemplate(x=(), label=None)
+        vec = jnp.arange(6.0).reshape(2, 3, 1)
+        bad_labels = np.array(["a", "b"], dtype=object)  # batch_shape (2,) != (2, 3)
+        with pytest.raises(ValueError, match="batch_shape"):
+            tpl.from_vector(vec, non_numeric={"label": bad_labels})

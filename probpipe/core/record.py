@@ -114,14 +114,15 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..custom_types import ArrayLike
+from ..custom_types import Array, ArrayLike
 from .constraints import Constraint
 from .provenance import Provenance
 
 if TYPE_CHECKING:
-    # Annotation-only back-reference: NumericRecord lives in _numeric_record,
-    # which imports Record from here — TYPE_CHECKING avoids the runtime cycle.
+    # Annotation-only back-references: these live in modules that import
+    # Record from here, so TYPE_CHECKING avoids the runtime import cycle.
     from ._numeric_record import NumericRecord
+    from ._record_array import NumericRecordArray
 
 __all__ = [
     "ArraySpec",
@@ -1042,7 +1043,7 @@ class EventTemplate:
         :class:`DistributionSpec` / :class:`FunctionSpec` leaves; and prunes
         any nested template that becomes empty. Surviving leaves keep their
         ``/``-delimited paths (the projection is path-stable). Inference uses
-        this to recover the numeric core of a mixed template.
+        this to recover the numeric leaves of a mixed template.
 
         On an already-all-numeric template the result is an equal
         :class:`NumericEventTemplate` (the projection is idempotent).
@@ -1082,6 +1083,262 @@ class EventTemplate:
                 f"{self.non_numeric_fields()}."
             )
         return NumericEventTemplate(specs)
+
+    # -- 1-D numeric (de)serialization --------------------------------------
+
+    def to_vector(self, value: NumericRecord | NumericRecordArray) -> Array:
+        """Serialize the numeric leaves of *value* into its 1-D vector representation.
+
+        ``to_vector`` / :meth:`from_vector` convert between the structured and
+        vector representations of a **numeric** value. A numeric value is in
+        general a structured tree of array-valued leaves, with
+        :attr:`~NumericEventTemplate.flat_size` the total number of scalar
+        values making up those arrays. ``to_vector`` converts the structured
+        value to its unique flat representation: an array of shape
+        ``(flat_size,)``. A batch of numeric values is flattened to a matrix:
+        an array of shape ``(*batch_shape, flat_size)``.
+
+        This method is distinct from ``flatten``. The latter follows the
+        JAX-pytree terminology, implying the mapping ``value -> (leaves, aux)``
+        in the sense of :func:`jax.tree_util.tree_flatten`. ``flatten`` returns
+        the list of the leaves of the value object, and thus is defined for all
+        values (not just numeric ones). ``to_vector`` applies only to numeric
+        values, and goes further in that it ravels the leaf arrays to a 1-D
+        representation.
+
+        Leaves are visited in the value's pytree-leaf order, which for a *value*
+        matching this template coincides with the template's **canonical leaf
+        order** — the deterministic, depth-first, insertion-order traversal also
+        used by :attr:`leaf_shapes`. The structural operation lives on the event
+        template; a :class:`~probpipe.NumericRecord` inherits the functionality
+        from the template.
+
+        Parameters
+        ----------
+        value : NumericRecord or NumericRecordArray
+            The value to serialize; its structure must match this template. A
+            single :class:`~probpipe.NumericRecord` yields a 1-D vector; a
+            batched :class:`~probpipe.NumericRecordArray` with
+            ``batch_shape == B`` yields one vector per batch element.
+
+        Returns
+        -------
+        jax.Array
+            The concatenated numeric leaves, dtype-promoted by
+            ``jnp.concatenate``. Shape ``(vector_size,)`` for a single
+            ``value`` and ``(*B, vector_size)`` for a batched ``value`` with
+            ``batch_shape == B``, where ``vector_size == self.flat_size``.
+
+        Raises
+        ------
+        TypeError
+            If this template is not :attr:`is_numeric` — it has non-numeric
+            leaves, so there is no canonical numeric vector. The message names
+            the offending fields and points at :meth:`numeric_subset` (which
+            projects to the numeric leaves first); ``to_vector`` never silently
+            drops non-numeric leaves. Also raised if *value* is not a
+            :class:`~probpipe.NumericRecord` / :class:`~probpipe.NumericRecordArray`.
+
+        See Also
+        --------
+        from_vector : Reconstruct a value from a flat vector (the inverse).
+        numeric_subset : Project a mixed template to its numeric leaves.
+        """
+        if not self.is_numeric:
+            raise TypeError(
+                f"{type(self).__name__}.to_vector requires an all-numeric "
+                f"template, but these fields are non-numeric: "
+                f"{self.non_numeric_fields()}. Project to the numeric leaves "
+                f"first with numeric_subset()."
+            )
+        from ._numeric_record import NumericRecord
+        from ._record_array import NumericRecordArray
+
+        if isinstance(value, NumericRecordArray):
+            batch_shape = value.batch_shape
+        elif isinstance(value, NumericRecord):
+            batch_shape = ()
+        else:
+            raise TypeError(
+                f"to_vector expects a NumericRecord (single) or "
+                f"NumericRecordArray (batched), got {type(value).__name__}."
+            )
+
+        # ``tree_leaves`` yields the numeric leaves in canonical leaf order; ravel
+        # each leaf's event dimensions and concatenate along the trailing axis.
+        # Reshaping to ``(*batch_shape, -1)`` preserves leading batch axes
+        # (``batch_shape == ()`` for a single value gives a 1-D result).
+        leaves = jax.tree_util.tree_leaves(value)
+        return jnp.concatenate([jnp.reshape(leaf, (*batch_shape, -1)) for leaf in leaves], axis=-1)
+
+    def from_vector(
+        self,
+        vec: ArrayLike,
+        *,
+        non_numeric: Mapping[str, Any] | None = None,
+    ) -> Any:
+        """Reconstruct a numeric value from its 1-D vector representation.
+
+        :meth:`to_vector` / ``from_vector`` convert between the structured and
+        vector representations of a **numeric** value (see :meth:`to_vector`).
+        ``from_vector`` is the inverse: it splits *vec* along its trailing axis
+        into the template's leaves — in the same canonical leaf order
+        :meth:`to_vector` uses — reshapes each chunk to its event shape, and
+        rebuilds the structured value. The **rank of** *vec* selects single vs.
+        batched: a vector of shape ``(vector_size,)`` rebuilds a single value,
+        while a matrix of shape ``(*batch_shape, vector_size)`` rebuilds a batch
+        with that ``batch_shape``. Here ``vector_size`` is the total scalar
+        count, :attr:`~NumericEventTemplate.flat_size` (for a mixed template, the
+        ``flat_size`` of its :meth:`numeric_subset`).
+
+        This method is distinct from ``unflatten``. The latter is the inverse of
+        the JAX-pytree ``flatten`` (the mapping ``(leaves, aux) -> value`` in the
+        sense of :func:`jax.tree_util.tree_unflatten`), rebuilding an arbitrary
+        value from its leaves and structural ``aux``. ``from_vector`` applies
+        only to numeric values, and rebuilds one from its dense 1-D
+        representation alone — splitting and reshaping the vector using this
+        template's leaf shapes.
+
+        When this template is mixed (not :attr:`is_numeric`), *vec* carries only
+        the numeric leaves that :meth:`numeric_subset` keeps; pass *non_numeric*
+        to supply the dropped leaves and rebuild the full mixed value. Like
+        :meth:`to_vector`, the structural operation lives on the event template.
+
+        Parameters
+        ----------
+        vec : array-like
+            The flat numeric vector; its trailing axis must have length
+            ``vector_size``.
+        non_numeric : Mapping[str, Any], optional
+            Values for the leaves that :meth:`numeric_subset` dropped, keyed by
+            their ``/``-delimited leaf path, used to rebuild a *full* mixed
+            value from a numeric-only vector. Required — and only meaningful —
+            when this template is **not** :attr:`is_numeric`; must be ``None``
+            or empty when it is. For a batched result each supplied value must
+            itself carry the leading ``batch_shape``.
+
+        Returns
+        -------
+        NumericRecord or NumericRecordArray
+            When this template :attr:`is_numeric`: the reconstructed numeric
+            value (single → :class:`~probpipe.NumericRecord`; batched →
+            :class:`~probpipe.NumericRecordArray`).
+        Record or RecordArray
+            When this template is mixed and *non_numeric* is supplied: the full
+            mixed value, with numeric leaves taken from *vec* and the remaining
+            leaves taken from *non_numeric* (single → :class:`~probpipe.Record`;
+            batched → :class:`~probpipe.RecordArray`).
+
+        Raises
+        ------
+        ValueError
+            If *vec*'s trailing axis is not ``vector_size``; if *non_numeric*
+            is ``None`` while this template is non-numeric (the dropped leaves
+            cannot be supplied); if *non_numeric* is non-empty while this
+            template is numeric (there are no dropped leaves); if a required
+            dropped-leaf path is missing from *non_numeric*; or if a batched
+            *non_numeric* value's leading axes do not match ``batch_shape``.
+
+        Notes
+        -----
+        **Round-trip invariant.** ``self.from_vector(self.to_vector(v)) == v``
+        for any numeric ``value`` ``v`` matching this (numeric) template. For a
+        mixed template ``T`` whose numeric leaves form ``Tn = T.numeric_subset()``,
+        the analogous round trip
+        ``T.from_vector(Tn.to_vector(vn), non_numeric=dropped)`` rebuilds the
+        full mixed value (a plain :class:`~probpipe.Record` /
+        :class:`~probpipe.RecordArray`) from its numeric part ``vn`` and the
+        dropped leaves.
+
+        See Also
+        --------
+        to_vector : Serialize a value to a flat vector (the inverse).
+        numeric_subset : Project a mixed template to its numeric leaves.
+        """
+        from ._numeric_record import NumericRecord
+        from ._record_array import NumericRecordArray, RecordArray
+
+        vec = jnp.asarray(vec)
+        numeric = self.is_numeric
+
+        if numeric and non_numeric:
+            raise ValueError(
+                f"{type(self).__name__}.from_vector: this template is numeric "
+                f"(numeric_subset drops no leaves), so non_numeric must be None "
+                f"or empty, got keys {sorted(non_numeric)}."
+            )
+        if not numeric and not non_numeric:
+            raise ValueError(
+                f"{type(self).__name__}.from_vector: this template is mixed; its "
+                f"non-numeric leaves {self.non_numeric_fields()} were dropped by "
+                f"numeric_subset and must be supplied via non_numeric to rebuild "
+                f"a full value."
+            )
+
+        # vector_size is the total scalar count across the numeric leaves;
+        # numeric_subset() is idempotent on an already-numeric template.
+        num_tpl = self if isinstance(self, NumericEventTemplate) else self.numeric_subset()
+        vector_size = num_tpl.flat_size
+        if vec.shape[-1] != vector_size:
+            raise ValueError(
+                f"{type(self).__name__}.from_vector: vec trailing axis is "
+                f"{vec.shape[-1]}, expected vector_size={vector_size}."
+            )
+
+        batched = vec.ndim > 1
+        batch_shape = tuple(vec.shape[:-1]) if batched else ()
+        non_numeric = dict(non_numeric) if non_numeric else {}
+
+        # Record classes for the rebuilt value: an all-numeric template rebuilds
+        # NumericRecord(Array); a mixed template rebuilds a plain Record(Array)
+        # carrying the supplied non-numeric leaves alongside the numeric ones.
+        single_cls = NumericRecord if numeric else Record
+        batched_cls = NumericRecordArray if numeric else RecordArray
+
+        def _check_batch(path: str, val: Any) -> None:
+            shape = getattr(val, "shape", None)
+            if shape is not None and tuple(shape[: len(batch_shape)]) != batch_shape:
+                raise ValueError(
+                    f"{type(self).__name__}.from_vector: non_numeric[{path!r}] has "
+                    f"leading shape {tuple(shape[: len(batch_shape)])}, expected "
+                    f"batch_shape {batch_shape}."
+                )
+
+        # Walk the template in canonical leaf order, slicing ``vec`` into each
+        # numeric leaf and reshaping it to (*batch_shape, *event_shape); a single
+        # offset advances along vec's trailing axis. Non-numeric leaves (mixed
+        # templates only) are filled from ``non_numeric`` and consume no vector.
+        offset = 0
+
+        def _build(template: EventTemplate, prefix: str) -> Record:
+            nonlocal offset
+            fields: dict[str, Any] = {}
+            for name in template.fields:
+                spec = template[name]
+                path = f"{prefix}{name}"
+                if isinstance(spec, EventTemplate):
+                    fields[name] = _build(spec, f"{path}{_PATH_SEP}")
+                elif isinstance(spec, ArraySpec):
+                    size = prod(spec.shape) if spec.shape else 1
+                    chunk = vec[..., offset : offset + size]
+                    offset += size
+                    fields[name] = jnp.reshape(chunk, (*batch_shape, *spec.shape))
+                else:
+                    # Opaque / distribution / function leaf — supplied by caller.
+                    if path not in non_numeric:
+                        raise ValueError(
+                            f"{type(self).__name__}.from_vector: missing non_numeric "
+                            f"value for dropped leaf {path!r}."
+                        )
+                    val = non_numeric[path]
+                    if batched:
+                        _check_batch(path, val)
+                    fields[name] = val
+            if batched:
+                return batched_cls(fields, batch_shape=batch_shape, template=template)
+            return single_cls(fields)
+
+        return _build(self, "")
 
     def __contains__(self, name: str) -> bool:
         return name in self._specs
