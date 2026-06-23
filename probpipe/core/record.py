@@ -113,7 +113,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from .event_template import _PATH_SEP, _check_no_path_sep
+from .event_template import _PATH_SEP, EventTemplate, _check_no_path_sep
 from .provenance import Provenance
 
 if TYPE_CHECKING:
@@ -159,7 +159,7 @@ class Record:
         names if not provided.
     """
 
-    __slots__ = ("_name", "_source", "_store")
+    __slots__ = ("_event_template", "_name", "_source", "_store")
 
     def __init__(
         self,
@@ -167,6 +167,7 @@ class Record:
         /,
         *,
         name: str | None = None,
+        event_template: EventTemplate | None = None,
         **fields: _FieldValue,
     ):
         if _dict is not None:
@@ -183,6 +184,28 @@ class Record:
             name = "record(" + ",".join(store.keys()) + ")"
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_source", None)
+        # Authoritative structural schema. When supplied (e.g. carried forward
+        # from the generator that produced this value) it is validated against
+        # the data and stored; otherwise it is left unset and inferred — once,
+        # lazily — on first access to :attr:`event_template`. ``None`` here
+        # means "not yet inferred", never "no template": every Record has one.
+        if event_template is not None:
+            self._validate_event_template(event_template)
+        object.__setattr__(self, "_event_template", event_template)
+
+    def _validate_event_template(self, event_template: EventTemplate) -> None:
+        """Check that an explicitly-supplied template matches this value's fields.
+
+        Raises ``ValueError`` if the template's top-level field names differ
+        from this record's. (Per-leaf shape / dtype conformance is the
+        generator's responsibility; only the structural field set is checked
+        here.)
+        """
+        if set(event_template.fields) != set(self._store):
+            raise ValueError(
+                f"event_template fields {sorted(event_template.fields)} do not "
+                f"match record fields {sorted(self._store)}"
+            )
 
     # -- Name & provenance --------------------------------------------------
 
@@ -190,6 +213,31 @@ class Record:
     def name(self) -> str:
         """Name of this Record."""
         return self._name
+
+    @property
+    def event_template(self) -> EventTemplate:
+        """The authoritative :class:`EventTemplate` describing this value's structure.
+
+        Always present. When a template was supplied at construction (carried
+        forward from the producing generator) that template is returned
+        verbatim; otherwise one is inferred from the data on first access —
+        via :meth:`EventTemplate.infer_from` — and cached, so the result is
+        stable and never recomputed per access.
+
+        Notes
+        -----
+        Inference is a lossy fallback (it cannot recover an ``ArraySpec``'s
+        ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
+        ``DistributionSpec`` / ``FunctionSpec``). Like :attr:`name` and
+        :attr:`source`, the template is runtime metadata: it is not serialised
+        into the JAX pytree aux, so a value reconstructed by
+        ``tree_unflatten`` (or unpickling) re-infers it from the rebuilt data.
+        """
+        tpl = self._event_template
+        if tpl is None:
+            tpl = EventTemplate.infer_from(self)
+            object.__setattr__(self, "_event_template", tpl)
+        return tpl
 
     @property
     def source(self) -> Provenance | None:
@@ -589,6 +637,25 @@ class Record:
     # -- Equality / hash ----------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
+        """Two records are equal iff they have equal structure **and** equal data.
+
+        Concretely, equality requires (1) the same concrete type, (2) equal
+        :attr:`event_template` (so two values with structurally distinct schemas
+        — e.g. differing ``support`` on a numeric leaf — are unequal even with
+        identical bytes), and (3) field-by-field equal values (arrays compared
+        with ``jnp.array_equal``, nested records recursively, opaque leaves with
+        ``==``). Self-identity short-circuits to ``True`` so a record equals
+        itself even when a leaf contains ``NaN``.
+
+        Because a template absent at construction is *inferred from the data*,
+        two records built from equal data without explicit templates always have
+        equal templates — the template check only ever distinguishes records that
+        were given structurally different explicit schemas.
+
+        :meth:`__hash__` is consistent with this: it hashes the per-field
+        shape / dtype structure, so equal records (equal data ⟹ equal shapes)
+        always hash equal.
+        """
         # Identity fast-path: self-equality must return True even when
         # leaves contain NaN (``jnp.array_equal`` treats NaN != NaN).
         if self is other:
@@ -596,6 +663,8 @@ class Record:
         if type(self) is not type(other):
             return NotImplemented
         if self.fields != other.fields:
+            return False
+        if self.event_template != other.event_template:
             return False
         for name, a in self._store.items():
             b = other._store[name]

@@ -151,6 +151,18 @@ class RecordArray(Record):
         """Structural description of each element."""
         return self._template
 
+    @property
+    def event_template(self) -> EventTemplate:
+        """The authoritative :class:`EventTemplate` describing one element.
+
+        Uniform accessor shared with single :class:`Record` (and
+        :class:`~probpipe.core._distribution_base.Distribution`). A batch always
+        stores its template explicitly — required to recover an element's event
+        shape from a batched leaf — so this returns it directly (never inferred);
+        it is the same object as :attr:`template`.
+        """
+        return self._template
+
     # -- Field access -------------------------------------------------------
 
     def __getitem__(self, key: str | int) -> Any:

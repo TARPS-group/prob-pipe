@@ -827,3 +827,74 @@ class TestEventTemplatePack:
 
         with pytest.raises(TypeError, match="unexpected"):
             EventTemplate(a=(), b=()).pack(a=0.5, b=0.4, c=1.0)
+
+
+# ---------------------------------------------------------------------------
+# Authoritative EventTemplate storage
+# ---------------------------------------------------------------------------
+
+
+class TestEventTemplateStorage:
+    def test_inferred_when_not_supplied(self):
+        r = Record(x=jnp.asarray(1.0), label="a")
+        from probpipe.core.event_template import EventTemplate
+
+        assert isinstance(r.event_template, EventTemplate)
+        assert r.event_template.fields == ("x", "label")
+
+    def test_inferred_template_is_cached(self):
+        r = Record(x=jnp.asarray(1.0))
+        # Same object on repeated access — inferred once, never recomputed.
+        assert r.event_template is r.event_template
+
+    def test_explicit_template_returned_verbatim(self):
+        from probpipe.core.event_template import ArraySpec, EventTemplate
+
+        tpl = EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float32))
+        r = Record({"x": jnp.asarray(1.0)}, event_template=tpl)
+        assert r.event_template is tpl
+
+    def test_explicit_template_field_mismatch_raises(self):
+        from probpipe.core.event_template import EventTemplate
+
+        with pytest.raises(ValueError, match="do not"):
+            Record({"x": jnp.asarray(1.0)}, event_template=EventTemplate(y=()))
+
+    def test_numeric_record_carries_numeric_template(self):
+        from probpipe.core.event_template import NumericEventTemplate
+
+        nr = Record(a=1.0, b=jnp.zeros(3)).to_numeric()
+        assert isinstance(nr.event_template, NumericEventTemplate)
+        # to_vector delegates to the stored template.
+        np.testing.assert_array_equal(
+            np.asarray(nr.to_vector()),
+            np.asarray(nr.event_template.to_vector(nr)),
+        )
+
+    def test_equality_distinguishes_structurally_different_templates(self):
+        from probpipe.core.event_template import ArraySpec, EventTemplate
+
+        data = {"x": jnp.asarray(1.0)}
+        r_f32 = Record(
+            dict(data), event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float32))
+        )
+        r_i32 = Record(
+            dict(data), event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32))
+        )
+        # Identical bytes, structurally different schemas -> unequal.
+        assert r_f32 != r_i32
+        # Same data, both inferred -> equal templates -> equal records.
+        assert Record(x=jnp.asarray(1.0)) == Record(x=jnp.asarray(1.0))
+
+    def test_pytree_roundtrip_reinfers_template(self):
+        r = Record(x=jnp.asarray(1.0), y=jnp.zeros(2))
+        leaves, treedef = jax.tree_util.tree_flatten(r)
+        rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+        assert rebuilt == r
+        assert rebuilt.event_template == r.event_template
+
+    def test_record_array_event_template_is_template(self):
+        from probpipe import NumericRecord, RecordArray
+
+        ra = RecordArray.stack([NumericRecord(x=1.0), NumericRecord(x=2.0)])
+        assert ra.event_template is ra.template

@@ -123,6 +123,7 @@ class NumericRecord(Record):
         /,
         *,
         name: str | None = None,
+        event_template: EventTemplate | None = None,
         **fields: ArrayLike | NumericRecord,
     ):
         # Build the validated + coerced field dict *before* Record's
@@ -136,7 +137,7 @@ class NumericRecord(Record):
         else:
             raw_fields = fields
         validated, aux = self._validate_and_coerce(raw_fields)
-        super().__init__(validated, name=name)
+        super().__init__(validated, name=name, event_template=event_template)
         # Cache vector_size — leaves are immutable arrays after construction.
         total = 0
         for val in self._store.values():
@@ -205,10 +206,11 @@ class NumericRecord(Record):
         """Serialize to the dense 1-D vector of shape ``(vector_size,)``.
 
         Instance-level convenience for the numeric 1-D serialization whose
-        structural definition lives on :meth:`EventTemplate.to_vector`: builds
-        this record's event template and delegates. Leaves are visited in
-        canonical leaf order (insertion order, depth-first into nested records)
-        and raveled before concatenation. The inverse,
+        structural definition lives on :meth:`EventTemplate.to_vector`: delegates
+        to this record's authoritative :attr:`~Record.event_template`
+        (``nr.to_vector() == nr.event_template.to_vector(nr)``). Leaves are
+        visited in canonical leaf order (insertion order, depth-first into nested
+        records) and raveled before concatenation. The inverse,
         :meth:`EventTemplate.from_vector`, reconstructs the record from such a
         vector.
 
@@ -216,7 +218,7 @@ class NumericRecord(Record):
         returns ``(leaves, aux)`` keeping each leaf whole; ``to_vector`` ravels
         and concatenates the numeric leaves into a single dense vector.
         """
-        return EventTemplate.infer_from(self).to_vector(self)
+        return self.event_template.to_vector(self)
 
     # -- Conversion back to native backends --------------------------------
 
