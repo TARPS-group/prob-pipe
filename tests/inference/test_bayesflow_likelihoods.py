@@ -34,14 +34,7 @@ from probpipe import (
 from probpipe.inference._bayesflow_common import _adapter_field_keys
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 
-
-def _theta_vec(params):
-    """Coerce a per-draw params object to its 1-D vector (mirrors ``_theta_row``).
-
-    Structured records serialize via ``to_vector``; raw array-likes ravel.
-    """
-    return params.to_vector() if hasattr(params, "to_vector") else jnp.ravel(jnp.asarray(params))
-
+from ._bayesflow_helpers import theta_vec
 
 # Conjugate model: theta ~ N(0, I_2), y_i = theta + sigma * eps. With n rows the
 # posterior is N(sum(y) / (n + sigma^2), sigma^2 / (n + sigma^2) I).
@@ -56,7 +49,7 @@ class _ConjugateSim(Likelihood, GenerativeLikelihood):
 
     def generate_data(self, params, num_observations, *, key=None):
         key = key if key is not None else jax.random.PRNGKey(0)
-        t = _theta_vec(params)
+        t = theta_vec(params)
         return t[None, :] + _SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
 
 
@@ -237,7 +230,7 @@ class TestSurrogateContract:
 
             def generate_data(self, params, num_observations, *, key=None):
                 key = key if key is not None else jax.random.PRNGKey(0)
-                a = _theta_vec(params)[0]
+                a = theta_vec(params)[0]
                 return a + 0.1 * jax.random.normal(key, (num_observations, 1))
 
         lik = learn_amortized_ratio(
@@ -370,7 +363,7 @@ class TestConditioning:
 
         class _TrueGaussianLik(Likelihood):
             def log_likelihood(self, params, data):
-                t = _theta_vec(params)
+                t = theta_vec(params)
                 t = jnp.ravel(jnp.asarray(t))
                 rows = jnp.atleast_2d(jnp.asarray(data))
                 resid = (rows - t[None, :]) / _SIGMA
@@ -424,7 +417,7 @@ class TestConditioning:
 
             def generate_data(self, params, num_observations, *, key=None):
                 key = key if key is not None else jax.random.PRNGKey(0)
-                lam = _theta_vec(params)[0]
+                lam = theta_vec(params)[0]
                 counts = jax.random.poisson(key, lam, (num_observations, 2))
                 return counts.astype(jnp.float32)
 
@@ -520,7 +513,7 @@ class TestValidation:
 
             def generate_data(self, params, num_observations, *, key=None):
                 key = key if key is not None else jax.random.PRNGKey(0)
-                a = _theta_vec(params)[0]
+                a = theta_vec(params)[0]
                 return a + 0.1 * jax.random.normal(key, (num_observations, 1))
 
         with pytest.raises(ValueError, match="learn_amortized_ratio"):

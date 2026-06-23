@@ -28,13 +28,7 @@ from probpipe import (
 )
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 
-
-def _theta_vec(params):
-    """Coerce a per-draw params object to its 1-D vector (mirrors ``_theta_row``).
-
-    Structured records serialize via ``to_vector``; raw array-likes ravel.
-    """
-    return params.to_vector() if hasattr(params, "to_vector") else jnp.ravel(jnp.asarray(params))
+from ._bayesflow_helpers import theta_vec
 
 
 class _ToyLikelihood(Likelihood, GenerativeLikelihood):
@@ -46,7 +40,7 @@ class _ToyLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = _theta_vec(params)  # structured record (training) or raw array (direct)
+        t = theta_vec(params)  # structured record (training) or raw array (direct)
         a, b = t[0], t[1]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([a + b, a - b])
@@ -72,7 +66,7 @@ class _VecLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = _theta_vec(params)
+        t = theta_vec(params)
         m0, m1, s = t[0], t[1], t[2]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([m0 + s, m1 - s])
@@ -94,7 +88,7 @@ class _SingleFieldLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = _theta_vec(params)
+        t = theta_vec(params)
         key = key if key is not None else jax.random.PRNGKey(0)
         return t[None, :] + 0.1 * jax.random.normal(key, (num_observations, 2))
 
@@ -108,7 +102,7 @@ class _NonJaxLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = np.asarray(_theta_vec(params))
+        t = np.asarray(theta_vec(params))
         a, b = float(t[0]), float(t[1])
         seed = 0 if key is None else int(jax.random.randint(key, (), 0, 2**16))
         noise = np.random.default_rng(seed).standard_normal((num_observations, 2))
@@ -123,7 +117,7 @@ class _ScalarLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        a = _theta_vec(params)[0]
+        a = theta_vec(params)[0]
         key = key if key is not None else jax.random.PRNGKey(0)
         return a + 0.1 * jax.random.normal(key, (num_observations, 1))
 
@@ -138,7 +132,7 @@ class _MultiFieldLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = _theta_vec(params)
+        t = theta_vec(params)
         a, b0, b1, c = t[0], t[1], t[2], t[3]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([a + b0, a - b0, b1 + c, b1 - c, a + c, b0 * b1, a, c])
@@ -169,7 +163,7 @@ class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
 
     def generate_data(self, params, num_observations, *, key=None):
         key = key if key is not None else jax.random.PRNGKey(0)
-        t = _theta_vec(params)
+        t = theta_vec(params)
         return t[None, :] + _CONJ_SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
 
 
@@ -196,7 +190,7 @@ class _PositiveLikelihood(Likelihood, GenerativeLikelihood):
         return jnp.array(0.0)
 
     def generate_data(self, params, num_observations, *, key=None):
-        t = _theta_vec(params)
+        t = theta_vec(params)
         r, m = t[0], t[1]
         key = key if key is not None else jax.random.PRNGKey(0)
         mean = jnp.stack([r + m, r - m])
