@@ -52,6 +52,15 @@ def _flatten_point(point: Any, fields: tuple[str, ...] | None) -> Array:
     return jnp.ravel(jnp.asarray(point))
 
 
+def _ranks(draws: Array, point: Array) -> Array:
+    """SBC rank of each component of *point*: ``#{draws < point}``, in ``{0, …, n}``.
+
+    Uses strict ``<`` (ties, measure-zero for a continuous posterior, count as
+    not-below). ``draws`` is ``(n, d)``; ``point`` is ``(d,)``; returns ``(d,)``.
+    """
+    return jnp.sum(draws < point[None, :], axis=0)
+
+
 def _component_names(posterior: Any) -> tuple[str, ...] | None:
     """Per-flattened-component parameter names matching the ``flat_samples`` columns.
 
@@ -238,7 +247,7 @@ def simulation_based_calibration(
             fields = getattr(posterior, "fields", None)
             component_names = _component_names(posterior)
         theta_flat = _flatten_point(theta_star, fields)  # (p,)
-        rank_rows.append(np.asarray(jnp.sum(draws < theta_flat[None, :], axis=0)))
+        rank_rows.append(np.asarray(_ranks(draws, theta_flat)))
 
     ranks = np.stack(rank_rows).astype(int)  # (num_simulations, p)
     num_draws = int(draws.shape[0])  # actual total draws (handles multi-chain)

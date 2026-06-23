@@ -10,12 +10,42 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax as tfp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import EmpiricalDistribution, GLMLikelihood, MultivariateNormal, SimpleModel
+from probpipe import EmpiricalDistribution, GLMLikelihood, MultivariateNormal, Normal, SimpleModel
 from probpipe.core.record import Record
 from probpipe.validation import SBCResult, interval_coverage, simulation_based_calibration
-from probpipe.validation._calibration import _component_names, _flatten_point, _ks_uniform
+from probpipe.validation._calibration import (
+    _component_names,
+    _flatten_point,
+    _kolmogorov_sf,
+    _ks_uniform,
+    _ranks,
+)
+
+tfd = tfp.distributions
+
+
+class _BiasedMeanLikelihood:
+    """A deliberately miscalibrated Gaussian-mean likelihood.
+
+    ``log_likelihood`` is ``N(y; μ, 1)``, but ``generate_data`` draws from
+    ``N(μ + bias, 1)`` — the unmodeled shift makes the posterior systematically
+    miss ``θ★``, so SBC ranks are non-uniform. Used to test that SBC *detects*
+    miscalibration.
+    """
+
+    def __init__(self, bias: float):
+        self.bias = float(bias)
+
+    def log_likelihood(self, params, data):
+        mu = jnp.reshape(jnp.asarray(params), ())
+        return jnp.sum(tfd.Normal(mu, 1.0).log_prob(jnp.asarray(data)))
+
+    def generate_data(self, params, num_observations, *, key):
+        mu = jnp.reshape(jnp.asarray(params), ())
+        return mu + self.bias + jax.random.normal(key, (num_observations,))
 
 
 def _gaussian_glm(p: int = 2, n: int = 12, seed: int = 7):
@@ -73,13 +103,67 @@ class TestIntervalCoverage:
             interval_coverage(draws, jnp.zeros(3))
 
 
-class TestKSUniform:
+class TestKSFunctions:
+    def test_kolmogorov_sf_matches_scipy(self):
+        # _kolmogorov_sf sums the Kolmogorov Q_KS series at the Stephens-corrected
+        # λ; scipy.special.kolmogorov sums the same series — they must agree.
+        sp = pytest.importorskip("scipy.special")
+        for d, n in [(0.05, 50), (0.1, 100), (0.15, 200), (0.3, 30)]:
+            lam = (np.sqrt(n) + 0.12 + 0.11 / np.sqrt(n)) * d
+            assert _kolmogorov_sf(d, n) == pytest.approx(float(sp.kolmogorov(lam)), abs=1e-10)
+
+    def test_kolmogorov_sf_boundaries(self):
+        assert _kolmogorov_sf(0.0, 50) == 1.0  # zero distance → no evidence against H0
+        assert _kolmogorov_sf(-1.0, 50) == 1.0  # guarded
+        assert _kolmogorov_sf(5.0, 50) == pytest.approx(0.0, abs=1e-9)  # huge stat → ~0
+        vals = [_kolmogorov_sf(d, 100) for d in (0.05, 0.1, 0.2, 0.3)]
+        assert vals == sorted(vals, reverse=True)  # monotone decreasing in d
+
+    def test_ks_statistic_matches_scipy(self):
+        # The KS distance equals scipy's one-sample statistic against Uniform[0, 1].
+        st = pytest.importorskip("scipy.stats")
+        rng = np.random.default_rng(0)
+        for big_l, s in [(100, 50), (200, 200), (50, 120)]:
+            ranks = rng.integers(0, big_l + 1, size=(s, 1))
+            u = (ranks[:, 0] + 0.5) / (big_l + 1)
+            d = float(_ks_uniform(ranks, big_l)[0][0])
+            assert d == pytest.approx(float(st.kstest(u, "uniform").statistic), abs=1e-10)
+
+    def test_per_column_statistic_and_pvalue(self):
+        # Each column is scored independently: D_j is its KS distance and p_j is
+        # _kolmogorov_sf(D_j, num_simulations).
+        st = pytest.importorskip("scipy.stats")
+        rng = np.random.default_rng(1)
+        ranks = rng.integers(0, 101, size=(80, 3))
+        d, p = _ks_uniform(ranks, 100)
+        assert d.shape == (3,) and p.shape == (3,)
+        for j in range(3):
+            u = (ranks[:, j] + 0.5) / 101
+            assert float(d[j]) == pytest.approx(float(st.kstest(u, "uniform").statistic), abs=1e-10)
+            assert float(p[j]) == pytest.approx(_kolmogorov_sf(float(d[j]), 80), abs=1e-12)
+
     def test_flags_uniform_vs_skewed(self):
+        # End-to-end sanity: spread ranks are not rejected; bottom-decile ranks are.
         big_l, s = 100, 200
-        uniform = np.linspace(0, big_l, s).astype(int)[:, None]  # evenly spread ranks
-        assert float(_ks_uniform(uniform, big_l)[1][0]) > 0.05  # not rejected
-        skewed = (np.arange(s) % (big_l // 10))[:, None]  # all in the bottom decile
-        assert float(_ks_uniform(skewed, big_l)[1][0]) < 0.05  # rejected
+        uniform = np.linspace(0, big_l, s).astype(int)[:, None]
+        assert float(_ks_uniform(uniform, big_l)[1][0]) > 0.05
+        skewed = (np.arange(s) % (big_l // 10))[:, None]
+        assert float(_ks_uniform(skewed, big_l)[1][0]) < 0.05
+
+
+class TestRanks:
+    def test_counts_draws_strictly_below(self):
+        draws = jnp.array([[0.0], [1.0], [2.0], [3.0]])
+        np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([1.5]))), [2])
+        # Strict < : a tie at the point is not counted (3 below 3.0, not 4).
+        np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([3.0]))), [3])
+        np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([-1.0]))), [0])
+        np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([9.0]))), [4])
+
+    def test_per_component(self):
+        draws = jnp.array([[0.0, 10.0], [1.0, 20.0], [2.0, 30.0]])
+        # col 0: 2 draws below 1.5; col 1: 0 draws below 5.0.
+        np.testing.assert_array_equal(np.asarray(_ranks(draws, jnp.array([1.5, 5.0]))), [2, 0])
 
 
 class TestFlattening:
@@ -132,6 +216,24 @@ class TestSBC:
         hist = res.rank_histogram(num_bins=10)
         assert hist.shape == (2, 10)
         assert np.all(hist.sum(axis=1) == 32)
+
+    def test_detects_miscalibration(self):
+        # A model whose generate_data carries an unmodeled +3 mean shift: the
+        # posterior systematically misses θ★, so ranks collapse to the low tail
+        # and SBC rejects calibration.
+        model = SimpleModel(Normal(loc=0.0, scale=2.0, name="mu"), _BiasedMeanLikelihood(3.0))
+        res = simulation_based_calibration(
+            model,
+            num_simulations=16,
+            num_posterior_draws=100,
+            num_observations=10,
+            num_warmup=100,
+            key=jax.random.PRNGKey(0),
+        )
+        assert res.passed is False
+        assert float(res.ks_pvalue.max()) < 0.05  # uniformity rejected for every param
+        # θ★ sits in the low tail of the (upward-biased) posterior → mean rank ≈ 0.
+        assert ((res.ranks + 0.5) / (res.num_posterior_draws + 1)).mean() < 0.1
 
     def test_rejects_bad_num_simulations(self):
         model, n = _gaussian_glm()
