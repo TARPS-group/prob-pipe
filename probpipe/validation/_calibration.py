@@ -21,7 +21,6 @@ JAX-accelerated where the backend allows. The model must expose a sampleable
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -33,6 +32,7 @@ import numpy as np
 from .._utils import _auto_key
 from ..core.ops import condition_on
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._predictive_check import _supports_key_arg
 
 __all__ = ["SBCResult", "interval_coverage", "simulation_based_calibration"]
 
@@ -44,25 +44,47 @@ def _flatten_point(point: Any, fields: tuple[str, ...] | None) -> Array:
     """Flatten one parameter draw to a 1-D vector matching ``flat_samples`` order.
 
     A bare array is raveled; a ``Record`` is flattened field-by-field in the
-    posterior's field order so the comparison lines up with ``flat_samples``.
+    posterior's field order (falling back to the point's own field order if the
+    posterior does not expose ``fields``) so it lines up with ``flat_samples``.
     """
-    if fields is not None and hasattr(point, "fields"):
-        return jnp.concatenate([jnp.ravel(jnp.asarray(point[f])) for f in fields])
+    if hasattr(point, "fields"):
+        order = fields if fields is not None else point.fields
+        return jnp.concatenate([jnp.ravel(jnp.asarray(point[f])) for f in order])
     return jnp.ravel(jnp.asarray(point))
 
 
-def _kolmogorov_sf(d: float, n: int) -> float:
-    """Asymptotic survival function of the one-sample KS statistic (Stephens).
+def _component_names(posterior: Any) -> tuple[str, ...] | None:
+    """Per-flattened-component parameter names matching the ``flat_samples`` columns.
 
-    ``P(D_n ≥ d)`` under the null, via ``Q_KS(λ) = 2 Σ_k (−1)^{k−1} e^{−2k²λ²}``
-    with the small-sample correction ``λ = (√n + 0.12 + 0.11/√n) d``. Dependency
-    -free (no SciPy); accurate for the sample sizes SBC uses (``n ≳ 30``).
+    A scalar field keeps its name; a field with ``k > 1`` flattened components
+    becomes ``field[0] … field[k-1]`` (row-major), in posterior field order.
+    Returns ``None`` if the posterior exposes neither ``fields`` nor
+    ``event_shapes``.
+    """
+    fields = getattr(posterior, "fields", None)
+    shapes = getattr(posterior, "event_shapes", None)
+    if not fields or shapes is None:
+        return None
+    names: list[str] = []
+    for f in fields:
+        size = int(np.prod(shapes[f], dtype=int))
+        names.extend([f] if size == 1 else [f"{f}[{i}]" for i in range(size)])
+    return tuple(names)
+
+
+def _kolmogorov_sf(d: float, n: int) -> float:
+    """Asymptotic survival function of the one-sample KS statistic.
+
+    ``P(D_n ≥ d)`` under the null, via the Kolmogorov limit
+    ``Q_KS(λ) = 2 Σ_k (−1)^{k−1} e^{−2k²λ²}`` with Stephens' (1970) small-sample
+    correction ``λ = (√n + 0.12 + 0.11/√n) d``. Dependency-free (no SciPy);
+    accurate for the sample sizes SBC uses (``n ≳ 30``).
     """
     if d <= 0.0:
         return 1.0
     en = np.sqrt(n)
     lam = (en + 0.12 + 0.11 / en) * d
-    k = np.arange(1, 101)
+    k = np.arange(1, 101)  # series decays as e^{-2k²λ²}; 100 terms is far more than enough
     p = 2.0 * np.sum((-1.0) ** (k - 1) * np.exp(-2.0 * (k * lam) ** 2))
     return float(min(max(p, 0.0), 1.0))
 
@@ -96,10 +118,15 @@ class SBCResult:
     ranks : np.ndarray
         Integer ranks of ``θ★`` among the posterior draws, shape
         ``(num_simulations, num_params)``, each in ``{0, …, num_posterior_draws}``.
+        The rank counts draws strictly below ``θ★``; this assumes continuous
+        draws (ties are measure-zero for a continuous posterior, but would bias
+        ranks low for a discrete-valued parameter).
     num_posterior_draws : int
         ``L`` — the rank upper bound (the actual number of posterior draws used).
     param_names : tuple[str, ...] or None
-        Flattened parameter field names (posterior field order), if known.
+        Per-flattened-component names aligned with the columns of ``ranks`` /
+        ``ks_*`` (``field`` for a scalar field, ``field[i]`` otherwise), in
+        posterior field order; ``None`` if the posterior exposes no field names.
     ks_statistic : np.ndarray
         Per-parameter KS distance of the normalized ranks from ``Uniform[0, 1]``.
     ks_pvalue : np.ndarray
@@ -174,14 +201,22 @@ def simulation_based_calibration(
     -------
     SBCResult
     """
+    if num_simulations < 1:
+        raise ValueError(f"num_simulations must be >= 1, got {num_simulations}")
+    if "random_seed" in infer_kwargs:
+        raise ValueError(
+            "simulation_based_calibration manages the per-fit random_seed; "
+            "do not pass random_seed in infer_kwargs"
+        )
     if key is None:
         key = _auto_key()
     prior = model.prior
     generate = model.likelihood.generate_data
-    gen_takes_key = "key" in inspect.signature(generate).parameters
+    gen_takes_key = _supports_key_arg(model.likelihood)
 
     rank_rows: list[np.ndarray] = []
     fields: tuple[str, ...] | None = None
+    component_names: tuple[str, ...] | None = None
     draws = None
     for _ in range(num_simulations):
         key, k_theta, k_data, k_mcmc = jax.random.split(key, 4)
@@ -202,6 +237,7 @@ def simulation_based_calibration(
         draws = jnp.asarray(posterior.flat_samples)  # (L, p)
         if fields is None:
             fields = getattr(posterior, "fields", None)
+            component_names = _component_names(posterior)
         theta_flat = _flatten_point(theta_star, fields)  # (p,)
         rank_rows.append(np.asarray(jnp.sum(draws < theta_flat[None, :], axis=0)))
 
@@ -211,7 +247,7 @@ def simulation_based_calibration(
     return SBCResult(
         ranks=ranks,
         num_posterior_draws=num_draws,
-        param_names=tuple(fields) if fields else None,
+        param_names=component_names,
         ks_statistic=ks_stat,
         ks_pvalue=ks_pvalue,
         passed=bool(np.all(ks_pvalue > alpha)),
@@ -244,6 +280,8 @@ def interval_coverage(
     if draws.ndim == 1:
         draws = draws[:, None]
     truth = jnp.atleast_1d(jnp.asarray(truth))
+    if truth.shape[0] != draws.shape[1]:
+        raise ValueError(f"truth dimension {truth.shape[0]} != draws dimension {draws.shape[1]}")
     out: dict[float, Array] = {}
     for level in levels:
         lo, hi = (1.0 - level) / 2.0, (1.0 + level) / 2.0
