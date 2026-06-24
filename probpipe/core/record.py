@@ -26,9 +26,9 @@ The Record family
 | Class | Purpose |
 |---|---|
 | :class:`Record` | single value; fields may be any type (arrays, scalars, strings, nested ``Record``s). |
-| :class:`~probpipe.NumericRecord` (subclass) | single value, every leaf coerced to ``jax.Array``; adds ``to_vector`` and reductions. |
+| :class:`~probpipe.NumericRecord` (subclass) | single value, every leaf coerced to ``jax.Array``; adds 1-D ``to_vector``. |
 | :class:`~probpipe.RecordArray` | a batch of ``Record``s sharing one ``EventTemplate``; each field is shaped ``(*batch_shape, *leaf_shape)``. |
-| :class:`~probpipe.NumericRecordArray` (subclass) | a batch of ``NumericRecord``s; adds ``to_vector`` / ``mean`` / ``var``. |
+| :class:`~probpipe.NumericRecordArray` (subclass) | a batch of ``NumericRecord``s; adds 1-D ``to_vector`` and across-batch reductions (``mean`` / ``var``). |
 
 The structural schema itself — :class:`EventTemplate` /
 :class:`~probpipe.NumericEventTemplate` and the leaf specs — lives in
@@ -40,8 +40,8 @@ describe structure *without* an example value.
 * :class:`Record` — heterogeneous fields, or when you want to keep the original
   backend objects intact (it coerces nothing).
 * :class:`~probpipe.NumericRecord` — every leaf numeric: gives a uniform
-  ``jax.Array`` type, a flat 1-D vector (``to_vector`` /
-  :meth:`~probpipe.NumericEventTemplate.from_vector`), and reductions.
+  ``jax.Array`` type and a flat 1-D vector (``to_vector`` /
+  :meth:`~probpipe.NumericEventTemplate.from_vector`).
 * :class:`~probpipe.RecordArray` / :class:`~probpipe.NumericRecordArray` —
   collections (e.g. posterior draws): integer indexing materialises one element,
   string indexing returns the batched field.
