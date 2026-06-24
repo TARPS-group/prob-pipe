@@ -210,6 +210,11 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
 class EventTemplate:
     """Structural description of a value: its named, possibly-nested leaf structure.
 
+    An ``EventTemplate`` describes the **structure** of a value, independent of
+    the data itself. A value is in general allowed to be a nested, tree-like
+    structure (in JAX terminology, a PyTree). An ``EventTemplate`` encodes the
+    structure of the tree, including unique named paths to each tree leaf.
+
     The word *event* follows probabilistic-programming usage and **generalizes**
     the ``event`` / ``event_shape`` notion from other PPLs (TensorFlow
     Probability, distrax, NumPyro). There, ``event_shape`` is the shape of a
