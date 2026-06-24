@@ -466,9 +466,9 @@ class EventTemplate(_NamedTree):
     #
     # ``fields`` / ``leaf_paths`` / ``__getitem__`` (name / ``/``-path / tuple) /
     # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
-    # ``__len__`` come from :class:`_NamedTree`. A field value here is a leaf
-    # spec (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec`
-    # / :class:`FunctionSpec`) or a nested ``EventTemplate`` (an internal node).
+    # ``__len__`` come from :class:`_NamedTree`. A leaf here is a leaf spec
+    # (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec` /
+    # :class:`FunctionSpec`); an internal node is a nested ``EventTemplate``.
 
     def _field_map(self) -> Mapping[str, _FieldSpec]:
         return self._specs

@@ -320,9 +320,9 @@ class Record(_NamedTree):
     #
     # ``fields`` / ``leaf_paths`` / ``__getitem__`` (name / ``/``-path / tuple) /
     # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
-    # ``__len__`` come from :class:`_NamedTree`. A field value here is a stored
-    # value or a nested ``Record`` (an internal node); ``record[name]`` /
-    # ``record["a/b"]`` return the value at that field / path.
+    # ``__len__`` come from :class:`_NamedTree`. A leaf here is a stored
+    # (non-``Record``) value; an internal node is a nested ``Record``.
+    # ``record[name]`` / ``record["a/b"]`` return the value at that field / path.
 
     def _field_map(self) -> dict[str, _FieldValue]:
         return self._store
