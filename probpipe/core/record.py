@@ -74,11 +74,13 @@ are identical.
 
 Notes
 -----
-**Records are boundary objects.** They carry structure, identity, and provenance
-at the edges of a computation — the values you inspect, save, or flow into the
-next op. Hot numerical inner loops run on raw arrays; only their inputs and
-outputs are wrapped, so a ``Record``'s bookkeeping costs nothing where speed
-matters.
+**Performance considerations.** ``Record``s are value wrappers that carry around
+additional information (e.g. structure, provenance) that is useful in probabilistic
+workflows (e.g. for consistency, validation, debugging, etc.). They are not designed
+for optimized performance in statistical inference algorithms like MCMC. Such
+algorithms rely on standard array-based computing frameworks. ``Record``'s role
+appears at the boundaries: wrapping the inputs and outputs of expensive compute
+nodes, enabling the construction of unified probabilistic workflows.
 
 **No coercion (plain ``Record``).** Leaves are stored as-is, so ``jax.tree.map``
 and ``jnp`` operations see exactly the types you provided. A Python ``list`` /
