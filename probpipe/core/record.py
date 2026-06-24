@@ -197,12 +197,13 @@ class Record:
             name = "record(" + ",".join(store.keys()) + ")"
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_source", None)
-        # Authoritative structural schema. When supplied (e.g. carried forward
-        # from the generator that produced this value) it is validated against
-        # the data and stored; otherwise it is left unset and inferred — once,
-        # lazily — on first access to :attr:`event_template`. ``None`` here
-        # means "not yet inferred", never "no template": every Record has one.
-        if event_template is not None:
+        # Authoritative structural schema, fixed at construction. When supplied
+        # (e.g. carried forward from the generator that produced this value) it
+        # is validated against the data; otherwise it is inferred once, now,
+        # from the field data. Every Record has a template from birth.
+        if event_template is None:
+            event_template = EventTemplate.infer_from(store)
+        else:
             self._validate_event_template(event_template)
         object.__setattr__(self, "_event_template", event_template)
 
@@ -231,11 +232,10 @@ class Record:
     def event_template(self) -> EventTemplate:
         """The authoritative :class:`EventTemplate` describing this value's structure.
 
-        Always present. When a template was supplied at construction (carried
-        forward from the producing generator) that template is returned
-        verbatim; otherwise one is inferred from the data on first access —
-        via :meth:`EventTemplate.infer_from` — and cached, so the result is
-        stable and never recomputed per access.
+        Fixed at construction and always present. When a template was supplied
+        (carried forward from the producing generator) that template is
+        returned; otherwise one was inferred from the data at construction (via
+        :meth:`EventTemplate.infer_from`) and stored.
 
         Notes
         -----
@@ -243,14 +243,10 @@ class Record:
         ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
         ``DistributionSpec`` / ``FunctionSpec``). Like :attr:`name` and
         :attr:`source`, the template is runtime metadata: it is not serialised
-        into the JAX pytree aux, so a value reconstructed by
-        ``tree_unflatten`` (or unpickling) re-infers it from the rebuilt data.
+        into the JAX pytree aux, so a value reconstructed by ``tree_unflatten``
+        (or unpickling) infers a fresh template from the rebuilt data.
         """
-        tpl = self._event_template
-        if tpl is None:
-            tpl = EventTemplate.infer_from(self)
-            object.__setattr__(self, "_event_template", tpl)
-        return tpl
+        return self._event_template
 
     @property
     def source(self) -> Provenance | None:

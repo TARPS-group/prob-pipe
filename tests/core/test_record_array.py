@@ -298,14 +298,6 @@ class TestNumericRecordArrayFlatten:
         np.testing.assert_allclose(nra["b"], [2.0, 5.0])
         np.testing.assert_allclose(nra["c"], [3.0, 6.0])
 
-    def test_from_vector_mixed_requires_non_numeric(self):
-        # A mixed template's opaque leaves can't be rebuilt from the numeric
-        # vector alone; from_vector requires them via ``non_numeric``.
-        tpl = EventTemplate(label=None, x=())
-        with pytest.raises(ValueError, match="non_numeric"):
-            tpl.from_vector(jnp.zeros((5, 1)))
-
-
 # ---------------------------------------------------------------------------
 # Nested-record flatten / slash indexing (issue #262)
 # ---------------------------------------------------------------------------

@@ -204,11 +204,6 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(nr["params"]["y"], [1.0, 2.0])
         np.testing.assert_allclose(nr["z"], [3.0, 4.0, 5.0])
 
-    def test_from_vector_mixed_requires_non_numeric(self):
-        tpl = EventTemplate(label=None, x=())
-        with pytest.raises(ValueError, match="non_numeric"):
-            tpl.from_vector(jnp.array([1.0]))
-
     def test_vector_size(self):
         nr = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
         assert nr.vector_size == 11

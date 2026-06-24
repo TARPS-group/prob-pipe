@@ -801,34 +801,6 @@ class TestProvenance:
         assert names == [middle.name, "prior"]
 
 
-class TestEventTemplatePack:
-    """EventTemplate.pack builds a validated Record from named values
-    (the general field-packing behind Distribution._pack_value, #228)."""
-
-    def test_pack_builds_record_in_field_order(self):
-        from probpipe.core.event_template import EventTemplate
-
-        tpl = EventTemplate(a=(), b=(3,))
-        # kwargs out of order — pack keys the Record in template field order
-        rec = tpl.pack(b=jnp.ones(3), a=jnp.array(0.5))
-        assert rec.fields == ("a", "b")
-        d = rec.to_dict()
-        assert jnp.allclose(d["a"], 0.5)
-        assert jnp.allclose(d["b"], jnp.ones(3))
-
-    def test_pack_missing_field_raises(self):
-        from probpipe.core.event_template import EventTemplate
-
-        with pytest.raises(TypeError, match="missing"):
-            EventTemplate(a=(), b=()).pack(a=0.5)
-
-    def test_pack_unexpected_field_raises(self):
-        from probpipe.core.event_template import EventTemplate
-
-        with pytest.raises(TypeError, match="unexpected"):
-            EventTemplate(a=(), b=()).pack(a=0.5, b=0.4, c=1.0)
-
-
 # ---------------------------------------------------------------------------
 # Authoritative EventTemplate storage
 # ---------------------------------------------------------------------------

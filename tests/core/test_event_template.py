@@ -4,7 +4,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import NumericRecord, NumericRecordArray, Record, RecordArray
+from probpipe import NumericRecord, NumericRecordArray, Record
 from probpipe.core.event_template import (
     ArraySpec,
     DistributionSpec,
@@ -309,12 +309,6 @@ class TestFromRecord:
         assert tpl["params"]["x"] == ArraySpec(())
         assert tpl["params"]["y"] == ArraySpec((3,))
         assert tpl["z"] == ArraySpec(())
-
-    def test_batch_shape_stripping(self):
-        r = Record(x=jnp.zeros((100, 3)), y=jnp.zeros((100,)))
-        tpl = EventTemplate.infer_from(r, batch_shape=(100,))
-        assert tpl["x"] == ArraySpec((3,))
-        assert tpl["y"] == ArraySpec(())
 
     def test_roundtrip_vector_size(self):
         from probpipe.core._numeric_record import NumericRecord
@@ -649,56 +643,6 @@ class TestIsMultiField:
         assert tpl.is_multi_field is False
 
 
-class TestNumericFields:
-    def test_all_numeric(self):
-        assert EventTemplate(x=(), y=(3,)).numeric_fields() == ("x", "y")
-
-    def test_exact_numeric_names(self):
-        tpl = EventTemplate(x=(), label=None, d=_dist_spec(), y=(2,), f=_func_spec())
-        assert tpl.numeric_fields() == ("x", "y")
-
-    def test_nested_all_numeric_is_numeric(self):
-        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(3,)))
-        assert tpl.numeric_fields() == ("x", "nested")
-
-    def test_nested_mixed_not_listed(self):
-        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None))
-        assert tpl.numeric_fields() == ("x",)
-
-    def test_all_non_numeric_empty(self):
-        assert EventTemplate(label=None, d=_dist_spec()).numeric_fields() == ()
-
-
-class TestNonNumericFields:
-    def test_all_numeric_empty(self):
-        assert EventTemplate(x=(), y=(3,)).non_numeric_fields() == ()
-
-    def test_exact_non_numeric_names(self):
-        tpl = EventTemplate(x=(), label=None, d=_dist_spec(), y=(2,), f=_func_spec())
-        assert tpl.non_numeric_fields() == ("label", "d", "f")
-
-    def test_nested_mixed_is_non_numeric(self):
-        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None))
-        assert tpl.non_numeric_fields() == ("nested",)
-
-    def test_nested_numeric_not_listed(self):
-        tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(3,)))
-        assert tpl.non_numeric_fields() == ()
-
-    def test_complement_partitions_fields(self):
-        tpl = EventTemplate(
-            x=(),
-            label=None,
-            nested_num=EventTemplate(a=(), b=(3,)),
-            d=_dist_spec(),
-            nested_mixed=EventTemplate(a=(), label=None),
-        )
-        numeric = tpl.numeric_fields()
-        non_numeric = tpl.non_numeric_fields()
-        assert set(numeric).isdisjoint(non_numeric)
-        assert set(numeric) | set(non_numeric) == set(tpl.fields)
-
-
 class TestNumericSubset:
     def test_drops_non_numeric_keeps_numeric(self):
         tpl = EventTemplate(x=(), label=None, d=_dist_spec(), y=(3,))
@@ -797,15 +741,6 @@ class TestToVector:
         assert isinstance(v, NumericRecordArray)
         assert tpl.to_vector(v).shape == (2, 5, tpl.vector_size)
 
-    def test_non_numeric_template_raises(self):
-        tpl = EventTemplate(x=(), label=None, d=_dist_spec())
-        v = NumericRecord(x=1.0)
-        with pytest.raises(TypeError, match="numeric_subset"):
-            tpl.to_vector(v)
-        # The error names the offending non-numeric fields.
-        with pytest.raises(TypeError, match="label"):
-            tpl.to_vector(v)
-
     def test_non_record_value_raises(self):
         tpl = EventTemplate(x=())
         with pytest.raises(TypeError, match="NumericRecord"):
@@ -883,74 +818,3 @@ class TestFromVectorErrors:
         tpl = EventTemplate(x=(), y=(3,))
         with pytest.raises(ValueError, match="vector_size"):
             tpl.from_vector(jnp.zeros(5))
-
-    def test_numeric_template_rejects_non_numeric(self):
-        tpl = EventTemplate(x=())
-        with pytest.raises(ValueError, match="numeric"):
-            tpl.from_vector(jnp.zeros(1), non_numeric={"label": "a"})
-
-    def test_mixed_template_requires_non_numeric(self):
-        tpl = EventTemplate(x=(), label=None)
-        with pytest.raises(ValueError, match="non_numeric"):
-            tpl.from_vector(jnp.zeros(1))
-
-
-class TestFromVectorNonNumericReconstruction:
-    def test_single_full_value(self):
-        # Mixed template -> numeric_subset -> to_vector -> from_vector(non_numeric).
-        tpl = EventTemplate(x=(), label=None, phys=EventTemplate(force=(), mass=()))
-        full = Record(
-            x=jnp.asarray(1.0),
-            label="horseshoe",
-            phys=Record(force=jnp.asarray(2.0), mass=jnp.asarray(3.0)),
-        )
-        numeric = NumericRecord(x=1.0, phys=NumericRecord(force=2.0, mass=3.0))
-        vec = tpl.numeric_subset().to_vector(numeric)
-        rebuilt = tpl.from_vector(vec, non_numeric={"label": "horseshoe"})
-        assert isinstance(rebuilt, Record)
-        assert rebuilt == full
-
-    def test_batched_full_value(self):
-        tpl = EventTemplate(x=(), label=None)
-        vec = jnp.arange(6.0).reshape(2, 3, 1)  # batch_shape=(2, 3), vector_size=1
-        labels = np.array([["a", "b", "c"], ["d", "e", "f"]], dtype=object)
-        rebuilt = tpl.from_vector(vec, non_numeric={"label": labels})
-        assert isinstance(rebuilt, RecordArray)
-        assert rebuilt.batch_shape == (2, 3)
-        assert jnp.array_equal(rebuilt["x"], vec.reshape(2, 3))
-        assert (np.asarray(rebuilt["label"]) == labels).all()
-
-    def test_nested_batched_full_value(self):
-        # Nested numeric subtree + opaque leaf + multi-axis batch: from_vector
-        # rebuilds a nested RecordArray inside the outer RecordArray, weaving the
-        # batched non-numeric leaf in alongside.
-        tpl = EventTemplate(x=(), label=None, phys=EventTemplate(force=(), mass=()))
-        sub = tpl.numeric_subset()  # leaves: x, phys/force, phys/mass
-        vec = jnp.arange(2 * 3 * sub.vector_size, dtype=float).reshape(2, 3, sub.vector_size)
-        labels = np.array([["a", "b", "c"], ["d", "e", "f"]], dtype=object)
-        rebuilt = tpl.from_vector(vec, non_numeric={"label": labels})
-        assert isinstance(rebuilt, RecordArray)
-        assert rebuilt.batch_shape == (2, 3)
-        assert isinstance(rebuilt["phys"], RecordArray)
-        assert rebuilt["phys/force"].shape == (2, 3)
-        assert rebuilt["phys/mass"].shape == (2, 3)
-        assert (np.asarray(rebuilt["label"]) == labels).all()
-        # The numeric leaves must round-trip; assert on the numeric subset's
-        # vector rather than ``== full`` (RecordArray.__eq__ is broken for a
-        # nested *Array field — see test_nested_multi_axis_batch_shape / #235).
-        numeric = sub.from_vector(vec)
-        assert jnp.array_equal(rebuilt["x"], numeric["x"])
-        assert jnp.array_equal(rebuilt["phys/force"], numeric["phys/force"])
-        assert jnp.array_equal(rebuilt["phys/mass"], numeric["phys/mass"])
-
-    def test_missing_dropped_leaf_raises(self):
-        tpl = EventTemplate(x=(), label=None)
-        with pytest.raises(ValueError, match="missing non_numeric"):
-            tpl.from_vector(jnp.zeros(1), non_numeric={"other": "a"})
-
-    def test_mismatched_non_numeric_batch_shape_raises(self):
-        tpl = EventTemplate(x=(), label=None)
-        vec = jnp.arange(6.0).reshape(2, 3, 1)
-        bad_labels = np.array(["a", "b"], dtype=object)  # batch_shape (2,) != (2, 3)
-        with pytest.raises(ValueError, match="batch_shape"):
-            tpl.from_vector(vec, non_numeric={"label": bad_labels})
