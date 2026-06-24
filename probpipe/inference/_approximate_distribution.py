@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import prod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -11,12 +12,36 @@ import jax.numpy as jnp
 
 from .._weights import Weights
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
-from ..core.event_template import ArraySpec, EventTemplate, OpaqueSpec, _spec_size
+from ..core.event_template import ArraySpec, EventTemplate, NumericEventTemplate, OpaqueSpec
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
+
+
+def _spec_size(spec: ArraySpec | EventTemplate) -> int:
+    """Flat size of one top-level field's spec — the number of scalar elements.
+
+    Splits a flat chain into per-field column blocks: an :class:`ArraySpec`
+    contributes ``prod(shape)`` and a nested :class:`NumericEventTemplate`
+    contributes its ``vector_size``. Non-numeric specs (opaque / distribution /
+    function leaves, or a mixed nested template) have no flat size and raise
+    ``TypeError``.
+    """
+    if isinstance(spec, NumericEventTemplate):
+        return spec.vector_size
+    if isinstance(spec, EventTemplate):
+        raise TypeError(
+            f"nested {type(spec).__name__} contains non-numeric leaves; "
+            f"a flat size requires a NumericEventTemplate."
+        )
+    if isinstance(spec, ArraySpec):
+        return prod(spec.shape) if spec.shape else 1
+    raise TypeError(
+        f"template field ({type(spec).__name__}) has no flat size; only numeric "
+        f"(ArraySpec) fields and nested NumericEventTemplate fields do."
+    )
 
 
 # ---------------------------------------------------------------------------

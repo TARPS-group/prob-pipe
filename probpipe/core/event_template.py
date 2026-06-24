@@ -845,35 +845,6 @@ class NumericEventTemplate(EventTemplate):
 # ---------------------------------------------------------------------------
 
 
-def _spec_size(spec: _FieldSpec) -> int:
-    """Number of scalar elements a leaf-spec stands for.
-
-    Used when walking a template and slicing a flat vector into per-leaf chunks
-    (e.g. sizing the numeric-leaf blocks of an approximate distribution). Nested
-    specs must be :class:`NumericEventTemplate` so that ``.vector_size`` is
-    defined; non-array leaves (:class:`OpaqueSpec` / :class:`DistributionSpec` /
-    :class:`FunctionSpec`) have no vector size and raise.
-    """
-    if isinstance(spec, NumericEventTemplate):
-        return spec.vector_size
-    if isinstance(spec, EventTemplate):
-        raise TypeError(
-            f"nested {type(spec).__name__} contains non-numeric leaves; "
-            f"vector (de)serialization requires a NumericEventTemplate."
-        )
-    if isinstance(spec, ArraySpec):
-        return prod(spec.shape) if spec.shape else 1
-    if isinstance(spec, OpaqueSpec):
-        raise TypeError(
-            "opaque template fields have no vector size; vector (de)serialization "
-            "is only defined for numeric-leaf (ArraySpec) fields."
-        )
-    raise TypeError(
-        f"non-array template field ({type(spec).__name__}) has no vector size; "
-        f"vector (de)serialization is only defined for numeric-leaf (ArraySpec) fields."
-    )
-
-
 def _value_treedef(
     template: NumericEventTemplate,
     batch_shape: tuple[int, ...],
