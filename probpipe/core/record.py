@@ -107,7 +107,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from .event_template import EventTemplate, _check_no_path_sep, _NamedTree
+from .event_template import _PATH_SEP, EventTemplate, _check_no_path_sep, _NamedTree
 from .provenance import Provenance
 
 if TYPE_CHECKING:
@@ -139,6 +139,32 @@ class Record(_NamedTree):
 
     Use :class:`NumericRecord` when every leaf is numeric and you want a uniform
     ``jax.Array`` type plus 1-D vector (de)serialization.
+
+    Tree structure
+    --------------
+    A ``Record`` is a **named tree**. The *only* internal node is a nested
+    ``Record``; **every other field value is a leaf**, stored verbatim (an array,
+    scalar, string, ``dict``, ``tuple``, DataFrame, ``Distribution``, ...). Names
+    are required and unique within a node, so every leaf has a unique
+    ``/``-delimited string path. Its :attr:`event_template` mirrors this tree with
+    a leaf spec at each leaf — a nested ``Record`` ↔ a nested ``EventTemplate``;
+    an array ↔ an :class:`ArraySpec`; any non-array value ↔ an
+    :class:`OpaqueSpec`. So different values imply different specs::
+
+        Record(r=1.8, K=jnp.zeros(3)).event_template
+        # NumericEventTemplate(r=(), K=(3,))
+
+        Record(counts=np.array([2, 1, 3]), label="fox").event_template
+        # EventTemplate(counts=(3,), label=None)          # str  -> OpaqueSpec
+
+        Record(meta={"seed": 0}, x=1.0).event_template
+        # EventTemplate(meta=None, x=())                  # dict held as ONE opaque leaf
+
+        Record(physics=Record(force=1.0, mass=2.0), obs=jnp.zeros(5)).event_template
+        # NumericEventTemplate(physics=NumericEventTemplate(force=(), mass=()), obs=(5,))
+
+    A ``dict`` / ``tuple`` / ``list`` is a single opaque leaf — *not* structure.
+    To model structure, nest ``Record``s; to make a numeric leaf, pass an array.
 
     Accessing fields
     ----------------
@@ -193,6 +219,18 @@ class Record(_NamedTree):
 
     Notes
     -----
+    **JAX pytree.** A ``Record`` is a registered pytree: nested ``Record``\\s are
+    internal nodes and each field value is a child. :attr:`event_template` /
+    :attr:`~EventTemplate.leaf_paths` describe the record's *own* leaves — every
+    field value counted once. ``jax.tree_util.tree_leaves`` agrees **when every
+    leaf is an array** (e.g. :class:`NumericRecord`); it diverges only for an
+    opaque leaf whose value is itself a JAX container (a ``tuple`` / ``list`` /
+    ``dict``), which the record counts as one leaf but JAX descends into. This
+    rarely matters: ProbPipe's own traversal (``record[path]``,
+    :attr:`~EventTemplate.leaf_paths`, ``to_vector`` / ``from_vector``,
+    :meth:`map`) is what you reach for — you seldom need raw JAX traversal over a
+    ``Record``.
+
     :attr:`name`, :attr:`source`, and :attr:`event_template` are runtime metadata
     and are not serialised into the pytree aux (which holds only the field
     names), so a ``tree_unflatten``'d or unpickled record re-derives them.
@@ -230,18 +268,42 @@ class Record(_NamedTree):
         object.__setattr__(self, "_event_template", event_template)
 
     def _validate_event_template(self, event_template: EventTemplate) -> None:
-        """Check that an explicitly-supplied template matches this value's fields.
+        """Check that an explicitly-supplied template matches this record's structure.
 
-        Raises ``ValueError`` if the template's top-level field names differ
-        from this record's. (Per-leaf shape / dtype conformance is the
-        generator's responsibility; only the structural field set is checked
-        here.)
+        Validates the **whole tree**, recursively: at every level the field-name
+        sets must match, a nested ``Record`` must align with a nested
+        ``EventTemplate`` (both internal nodes), and a non-``Record`` leaf must
+        align with a leaf spec. Per-leaf shape / dtype / kind conformance is the
+        producing generator's responsibility and is *not* checked here.
+
+        Raises ``ValueError`` naming the ``/``-path of the first mismatch.
         """
-        if set(event_template.fields) != set(self._store):
-            raise ValueError(
-                f"event_template fields {sorted(event_template.fields)} do not "
-                f"match record fields {sorted(self._store)}"
-            )
+
+        def _check(record: Record, template: EventTemplate, prefix: str) -> None:
+            rec_fields = set(record._store)
+            tpl_fields = set(template.fields)
+            if rec_fields != tpl_fields:
+                where = prefix.rstrip(_PATH_SEP) or "the top level"
+                raise ValueError(
+                    f"event_template fields {sorted(tpl_fields)} do not match record "
+                    f"fields {sorted(rec_fields)} at {where}"
+                )
+            for name, value in record._store.items():
+                spec = template[name]
+                path = f"{prefix}{name}"
+                value_is_node = isinstance(value, Record)
+                spec_is_node = isinstance(spec, EventTemplate)
+                if value_is_node and spec_is_node:
+                    _check(value, spec, f"{path}{_PATH_SEP}")
+                elif value_is_node != spec_is_node:
+                    raise ValueError(
+                        f"event_template / record structure mismatch at {path!r}: "
+                        f"template has a {'nested template' if spec_is_node else 'leaf spec'} "
+                        f"but record has a {'nested Record' if value_is_node else 'leaf value'}"
+                    )
+                # both leaves -> OK (leaf-content conformance is not checked here)
+
+        _check(self, event_template, "")
 
     # -- Name & provenance --------------------------------------------------
 

@@ -870,3 +870,36 @@ class TestEventTemplateStorage:
 
         ra = RecordArray.stack([NumericRecord(x=1.0), NumericRecord(x=2.0)])
         assert ra.event_template is ra.template
+
+    def test_explicit_nested_template_validates_recursively(self):
+        from probpipe.core.event_template import EventTemplate
+
+        tpl = EventTemplate(physics=EventTemplate(force=(), mass=()), obs=(5,))
+        r = Record(
+            physics=Record(force=1.0, mass=2.0),
+            obs=jnp.zeros(5),
+            event_template=tpl,
+        )
+        assert r.event_template is tpl
+
+    def test_nested_field_name_mismatch_raises_with_path(self):
+        from probpipe.core.event_template import EventTemplate
+
+        tpl = EventTemplate(physics=EventTemplate(force=(), mass=()), obs=(5,))
+        with pytest.raises(ValueError, match="physics"):
+            Record(
+                physics=Record(force=1.0, momentum=2.0),  # wrong nested field name
+                obs=jnp.zeros(5),
+                event_template=tpl,
+            )
+
+    def test_structure_vs_leaf_mismatch_raises(self):
+        from probpipe.core.event_template import EventTemplate
+
+        # Template says ``physics`` is a leaf; record has a nested Record there.
+        with pytest.raises(ValueError, match="structure mismatch"):
+            Record(
+                physics=Record(a=1.0),
+                x=2.0,
+                event_template=EventTemplate(physics=(), x=()),
+            )

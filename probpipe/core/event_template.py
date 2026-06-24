@@ -1,25 +1,34 @@
-"""EventTemplate — ProbPipe's universal structural schema.
+"""EventTemplate — ProbPipe's structural schema.
 
-An :class:`EventTemplate` describes the **structure** of a value, independent
-of the data itself. A value is in general allowed to be a nested, tree-like
-structure (in JAX terminology, a PyTree). An :class:`EventTemplate` encodes the
-structure of the tree, including unique named paths to each tree leaf.
+An :class:`EventTemplate` describes the **structure** of a value, independent of
+the data itself. The structure is a **named tree** — an insertion-ordered map of
+named fields — and it is exactly the shape of a :class:`~probpipe.Record`: an
+``EventTemplate`` is the *schema* of a ``Record`` (or of one event / sample of a
+:class:`~probpipe.core._distribution_base.Distribution`).
 
-The structure of a leaf node is described by one of a fixed set of "spec"
-objects:
+It is **not** a description of an arbitrary JAX PyTree. The only internal node is
+a nested ``EventTemplate`` (named); positional containers (``tuple`` / ``list``)
+and bare ``dict``\\ s are never structure. A Python container you do not model as
+a nested template is a single opaque leaf (an :class:`OpaqueSpec`).
 
-| Leaf spec          | What the leaf holds                                  |
-|--------------------|------------------------------------------------------|
+Tree structure
+--------------
+- **internal node** — *only* a nested ``EventTemplate`` (named, insertion-ordered).
+- **leaf** — one of a fixed set of "spec" objects:
+
+| Leaf spec | What the leaf describes |
+|---|---|
 | :class:`ArraySpec` | a numeric array (event ``shape``, optional dtype / support) |
-| :class:`DistributionSpec` | a ``Distribution``                            |
-| :class:`FunctionSpec` | a callable (with input / output sub-templates)     |
-| :class:`OpaqueSpec`| Any other object (no structure assumed)             |
+| :class:`DistributionSpec` | a ``Distribution`` (carries the draw's sub-template) |
+| :class:`FunctionSpec` | a callable (carries input / output sub-templates) |
+| :class:`OpaqueSpec` | any other object — no structure assumed |
 
-A field whose spec is itself an ``EventTemplate`` is an *internal node*, not a
-leaf. The canonical leaf order is defined via insertion order at the top level,
-descending depth-first into nested templates. Each leaf is keyed by a unique
-leaf path, using ``/`` as the path separator. :attr:`EventTemplate.leaf_paths`
-enumerates the leaf paths in the canonical order.
+Field names are required and unique within a node; ``/`` is reserved as the path
+separator, so every leaf has a unique ``/``-delimited string path. The
+**canonical leaf order** is depth-first in insertion order;
+:attr:`EventTemplate.leaf_paths` enumerates the leaf paths in that order.
+``EventTemplate`` itself is **not** a registered JAX pytree node (its leaf specs
+are atomic); it is the *schema* of the value pytrees it describes, not a pytree.
 
 Numeric vs. mixed
 -----------------
@@ -311,10 +320,12 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
 class EventTemplate(_NamedTree):
     """Structural description of a value: its named, possibly-nested leaf structure.
 
-    An ``EventTemplate`` describes the **structure** of a value, independent of
-    the data itself. A value is in general allowed to be a nested, tree-like
-    structure (in JAX terminology, a PyTree). An ``EventTemplate`` encodes the
-    structure of the tree, including unique named paths to each tree leaf.
+    An ``EventTemplate`` describes the **structure** of a value as a **named
+    tree** — an insertion-ordered map of named fields whose only internal node
+    is a nested ``EventTemplate`` and whose leaves are leaf specs. It is the
+    schema of a :class:`~probpipe.Record` (the value type with the same
+    named-tree shape), **not** a description of an arbitrary JAX PyTree (see
+    *Terminology* and *JAX pytree contract* below).
 
     The word *event* follows probabilistic-programming usage and **generalizes**
     the ``event`` / ``event_shape`` notion from other PPLs (TensorFlow
@@ -348,23 +359,22 @@ class EventTemplate(_NamedTree):
       :meth:`to_vector` / :meth:`from_vector` lay out and read leaves in it, and
       :attr:`~NumericEventTemplate.leaf_shapes` is keyed by it.
 
-    PyTree contract
-    ---------------
-    The *values* an ``EventTemplate`` describes are JAX pytrees, and the template
-    is the schema for that pytree — the structural analog of a JAX ``PyTreeDef``,
-    enriched with each leaf's kind and shape. Nested ``EventTemplate``\\s mirror
-    the value's internal nodes (their field names are the keys), and the terminal
-    specs (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec` /
-    :class:`FunctionSpec`) mirror the value's leaves. A leaf's ``/``-delimited
-    :attr:`path <leaf_paths>` is the string form of the value's JAX key path, and
-    the canonical leaf order is JAX's left-to-right depth-first order.
+    JAX pytree contract
+    -------------------
+    An ``EventTemplate`` is **not** a registered JAX pytree node — its leaf specs
+    are atomic, so ``jax.tree_util.tree_leaves(template) == [template]``. It is
+    the *schema* of the value pytrees it describes, not a pytree itself (think of
+    it as an enriched ``PyTreeDef`` that also carries each leaf's kind / shape).
 
-    So the template lines up directly with JAX's pytree machinery on a value: for
-    a value ``v`` matching this template, ``jax.tree_util.tree_leaves(v)`` returns
-    the leaves in :attr:`leaf_paths` order, and ``jax.tree.map(f, v)`` rebuilds a
-    value with the same structure. (The ``EventTemplate`` object is itself an
-    opaque pytree *leaf*, not a node — it is structural metadata, like a
-    ``PyTreeDef``, not a container JAX recurses into.)
+    For a value ``v`` it describes (a :class:`~probpipe.Record`): a nested
+    ``EventTemplate`` mirrors a nested ``Record`` (both internal nodes), and each
+    leaf spec mirrors one field value. When every leaf is an array (the
+    :class:`NumericEventTemplate` / :class:`~probpipe.NumericRecord` case),
+    ``jax.tree_util.tree_leaves(v)`` returns the leaves in :attr:`leaf_paths`
+    order. The one place the template's leaves and JAX's diverge is an
+    :class:`OpaqueSpec` leaf whose value is *itself* a JAX container (a ``tuple``
+    / ``list`` / ``dict``): the template counts it as a single leaf while JAX
+    descends into it. See :class:`~probpipe.Record` for the full statement.
 
     Parameters
     ----------
