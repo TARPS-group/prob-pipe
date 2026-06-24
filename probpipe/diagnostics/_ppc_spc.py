@@ -32,8 +32,9 @@ ProbPipe diagnostic summaries and run metadata are written under::
 from __future__ import annotations
 
 import json
+from collections.abc import Callable, Sequence
 from datetime import datetime, timezone
-from typing import Any, Callable, Sequence
+from typing import Any
 
 import numpy as np
 import xarray as xr
