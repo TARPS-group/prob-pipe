@@ -210,21 +210,13 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
 class EventTemplate:
     """Structural description of a value: its named, possibly-nested leaf structure.
 
-    An ``EventTemplate`` describes the **structure** of a value — the names,
-    nesting, and per-leaf kind / shape that make it up — independently of the
-    concrete data. The same structural type describes a :class:`Record` value,
-    one *event* (a single draw) of a :class:`~probpipe.Distribution`, and the
-    input / output of a workflow function. Every :class:`Record` carries an
-    ``EventTemplate``, but the type is general: it is ProbPipe's schema for any
-    structured value.
-
     The word *event* follows probabilistic-programming usage and **generalizes**
     the ``event`` / ``event_shape`` notion from other PPLs (TensorFlow
     Probability, distrax, NumPyro). There, ``event_shape`` is the shape of a
-    single draw of one array-valued random variable; here an *event* is one
-    structured value — a named, possibly-nested tree of leaves — so a template
-    generalizes a single ``event_shape`` to the full per-leaf shape structure of
-    a draw.
+    single draw of one array-valued random variable. ProbPipe supports
+    distributions over general value types, not just arrays. The *event* in this
+    context can thus be a structured Python object, with structure described by
+    the ``EventTemplate``.
 
     Terminology
     -----------
@@ -239,7 +231,8 @@ class EventTemplate:
       ``EventTemplate`` is an *internal node*, not a leaf.
     - **path** — the ``/``-delimited sequence of field names from the root to a
       node (e.g. ``"physics/mass"``); a top-level field is a single-segment
-      path. Paths round-trip with :meth:`Record.__getitem__`'s path syntax.
+      path. These are the same path strings used to index into a value, e.g.
+      ``record["physics/mass"]``.
     - **canonical leaf order** — the order in which leaves are traversed:
       depth-first, following each level's insertion order. This is the single
       ordering every leaf-wise operation uses. :attr:`leaf_paths` is its
@@ -249,17 +242,21 @@ class EventTemplate:
 
     PyTree contract
     ---------------
-    An ``EventTemplate`` — and every value it describes — is a JAX pytree.
-    *Internal nodes* are nested ``EventTemplate``\\s (and, at the value level,
-    the :class:`Record` / :class:`~probpipe.RecordArray` containers); a node's
-    field names are its keys. *Leaves* are the terminal specs (:class:`ArraySpec`
-    / :class:`OpaqueSpec` / :class:`DistributionSpec` / :class:`FunctionSpec`)
-    and, at the value level, the array or opaque objects they stand for. A leaf's
-    ``/``-delimited path is the string form of its JAX key path, and the
-    canonical leaf order is JAX's left-to-right depth-first leaf order.
-    :meth:`~probpipe.Record.flatten` / :meth:`~probpipe.Record.unflatten` are the
-    value-level pytree (de)composition; :attr:`leaf_paths` enumerates the leaf
-    keys in the same order.
+    The *values* an ``EventTemplate`` describes are JAX pytrees, and the template
+    is the schema for that pytree — the structural analog of a JAX ``PyTreeDef``,
+    enriched with each leaf's kind and shape. Nested ``EventTemplate``\\s mirror
+    the value's internal nodes (their field names are the keys), and the terminal
+    specs (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec` /
+    :class:`FunctionSpec`) mirror the value's leaves. A leaf's ``/``-delimited
+    :attr:`path <leaf_paths>` is the string form of the value's JAX key path, and
+    the canonical leaf order is JAX's left-to-right depth-first order.
+
+    So the template lines up directly with JAX's pytree machinery on a value: for
+    a value ``v`` matching this template, ``jax.tree_util.tree_leaves(v)`` returns
+    the leaves in :attr:`leaf_paths` order, and ``jax.tree.map(f, v)`` rebuilds a
+    value with the same structure. (The ``EventTemplate`` object is itself an
+    opaque pytree *leaf*, not a node — it is structural metadata, like a
+    ``PyTreeDef``, not a container JAX recurses into.)
 
     Parameters
     ----------
