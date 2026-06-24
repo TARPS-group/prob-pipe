@@ -184,13 +184,12 @@ def _all_numeric(specs: Iterable[Any]) -> bool:
 _NUMERIC_KINDS = frozenset("biufc")
 
 
-def _full_leaf_shape(val: Any) -> tuple[int, ...] | None:
-    """Infer the full (pre-batch-strip) array shape of a Record leaf.
+def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
+    """Return the shape of a numeric array-like value, or ``None``.
 
-    Returns the leaf's shape for numeric scalars (``()``) and numeric arrays,
-    or ``None`` for opaque leaves (strings, object arrays, Python lists/tuples,
-    and anything without a numeric ``dtype``/``shape``). Used by
-    :meth:`EventTemplate.infer_from`.
+    A numeric scalar reports shape ``()`` and a numeric array reports its
+    ``shape``. Anything else — strings, object arrays, Python lists/tuples, and
+    any value without a numeric ``dtype`` / ``shape`` — reports ``None``.
     """
     if isinstance(val, (bool, int, float, complex, np.integer, np.floating, np.bool_)):
         return ()
@@ -972,7 +971,7 @@ class EventTemplate:
                 specs[name] = target_cls.infer_from(val, batch_shape=batch_shape)
                 continue
             # Numeric leaf → event shape (drop leading batch dims); opaque → None.
-            full_shape = _full_leaf_shape(val)
+            full_shape = _full_array_shape_or_none(val)
             specs[name] = None if full_shape is None else full_shape[n_batch:]
         return target_cls(specs)
 
