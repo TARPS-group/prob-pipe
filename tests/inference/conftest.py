@@ -97,15 +97,17 @@ class BetaBernoulliModel:
 
 @pytest.fixture(scope="session")
 def beta_bernoulli_model() -> BetaBernoulliModel:
-    """Beta(2, 2) prior + Bernoulli likelihood, k=3 of n=17 → posterior Beta(5, 16).
+    """Beta(1, 1) prior + Bernoulli likelihood, k=2 of n=13 → posterior Beta(3, 12).
 
-    A conjugate but **non-Gaussian** target (skew ≈ 0.5, bounded on [0, 1], well
-    inside the boundaries), so validating inference here checks that good behavior
-    is not an artifact of Gaussianity. The data are fixed (deterministic success
-    count) so the posterior never pins against 0/1. The exact posterior is sampled
-    directly to give a draws reference for the distributional metrics.
+    A conjugate but markedly **non-Gaussian** target (skew ≈ 0.7, bounded on
+    [0, 1], mode ≈ 0.15 so safely inside the boundaries) — chosen far enough from
+    Gaussian that a *moment-matched* Gaussian is itself rejected by the
+    distributional metrics (see the negative control in the suite), so validating
+    inference here genuinely checks behavior beyond the Gaussian case. The data
+    are fixed (deterministic success count) so the posterior never pins against
+    0/1, and the exact posterior is sampled directly to give a draws reference.
     """
-    alpha, beta, k, n = 2.0, 2.0, 3, 17
+    alpha, beta, k, n = 1.0, 1.0, 2, 13
     data = jnp.concatenate([jnp.ones(k), jnp.zeros(n - k)])
     post_alpha, post_beta = alpha + k, beta + (n - k)
     mean = post_alpha / (post_alpha + post_beta)
