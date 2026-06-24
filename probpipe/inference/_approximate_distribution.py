@@ -21,13 +21,28 @@ __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
 def _spec_size(spec: ArraySpec | EventTemplate) -> int:
-    """Flat size of one top-level field's spec — the number of scalar elements.
+    """Number of scalar elements one field contributes to a flat vector.
 
-    Splits a flat chain into per-field column blocks: an :class:`ArraySpec`
-    contributes ``prod(shape)`` and a nested :class:`NumericEventTemplate`
-    contributes its ``vector_size``. Non-numeric specs (opaque / distribution /
-    function leaves, or a mixed nested template) have no flat size and raise
-    ``TypeError``.
+    Given the spec of a single field of an :class:`EventTemplate`, return how
+    many scalars that field occupies in the dense
+    :meth:`NumericEventTemplate.to_vector` layout: ``prod(shape)`` for an
+    :class:`ArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
+    nested :class:`NumericEventTemplate`. Summing this over a template's fields
+    gives the template's own ``vector_size``; it is used here to size each
+    field's contiguous column block when splitting a flat chain.
+
+    Parameters
+    ----------
+    spec
+        One field's spec, as returned by :meth:`EventTemplate.__getitem__`.
+
+    Raises
+    ------
+    TypeError
+        If the field has no flat size — a non-numeric leaf
+        (:class:`~probpipe.OpaqueSpec` / :class:`~probpipe.DistributionSpec` /
+        :class:`~probpipe.FunctionSpec`) or a mixed (non-all-numeric) nested
+        :class:`EventTemplate`.
     """
     if isinstance(spec, NumericEventTemplate):
         return spec.vector_size
