@@ -473,6 +473,44 @@ class TestAddLoo:
         view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
         assert view.plot_ready is True
 
+    def test_matches_direct_arviz_loo(self):
+        import arviz as az
+
+        rng = np.random.default_rng(123)
+        posterior_draws = rng.normal(size=(2, 80))
+        log_likelihood = rng.normal(loc=-1.0, scale=0.1, size=(2, 80, 6))
+        post = _FakePosterior(with_arviz_log_likelihood=False)
+        posterior_ds = xr.Dataset(
+            {
+                "theta": xr.DataArray(
+                    posterior_draws,
+                    dims=["chain", "draw"],
+                )
+            }
+        )
+        _add_group(post, "arviz/posterior", posterior_ds)
+        expected = az.loo(
+            az.from_dict(
+                {
+                    "posterior": {"theta": posterior_draws},
+                    "log_likelihood": {"y": log_likelihood},
+                }
+            ),
+            pointwise=True,
+        )
+
+        add_loo(post, log_likelihood=log_likelihood)
+
+        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        expected_elpd = getattr(expected, "elpd_loo", getattr(expected, "elpd", np.nan))
+        expected_p = getattr(expected, "p_loo", getattr(expected, "p", np.nan))
+        assert view.elpd_loo == pytest.approx(float(expected_elpd))
+        assert view.se == pytest.approx(float(expected.se))
+        assert view.p_loo == pytest.approx(float(expected_p))
+        loo_ds = post._auxiliary["diagnostics"]["runs"]["loo"].to_dataset()
+        assert int(loo_ds["n_samples"]) == expected.n_samples
+        assert int(loo_ds["n_data_points"]) == expected.n_data_points
+
 
 # ---------------------------------------------------------------------------
 # _get_arviz_tree fallback paths
@@ -761,3 +799,37 @@ class TestAddLogLikelihood:
 
         ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
         assert ll_ds["y"].shape == (1, 4, 3)
+
+    def test_fast_path_and_fallback_log_likelihoods_match(self):
+        class _HybridJaxModel:
+            def __init__(self):
+                self._x = np.arange(6, dtype=float).reshape(3, 2)
+
+                class _Likelihood:
+                    def __init__(self, x):
+                        self._x = x
+
+                    def per_datum_log_likelihood(self, params, datum):
+                        try:
+                            intercept = params["intercept"]
+                            slope = params["slope"]
+                        except Exception:
+                            intercept = params[0]
+                            slope = params[1:]
+                        eta = intercept + datum["X"] @ slope
+                        return -0.5 * (datum["y"] - eta) ** 2
+
+                self._likelihood = _Likelihood(self._x)
+
+        model = _HybridJaxModel()
+        data = {"X": model._x, "y": np.array([0.0, 1.0, 2.0])}
+        fast_post = _FakePostForLL(n_chains=1, n_draws=4, n_features=2)
+        fallback_post = _FakePostForLL(n_chains=1, n_draws=4, n_features=2)
+
+        _add_log_likelihood(fast_post, model, data)
+        with patch("jax.vmap", side_effect=Exception("no vmap")):
+            _add_log_likelihood(fallback_post, model, data)
+
+        fast = fast_post._auxiliary["arviz"]["log_likelihood"].to_dataset()["y"]
+        fallback = fallback_post._auxiliary["arviz"]["log_likelihood"].to_dataset()["y"]
+        np.testing.assert_allclose(fast, fallback, rtol=1e-6)

@@ -45,6 +45,20 @@ class _KeyedLikelihood:
         return jnp.broadcast_to(params_arr[:, None], (params_arr.shape[0], n_samples))
 
 
+class _NormalLocationPosterior:
+    _auxiliary = None
+
+    def _sample(self, key, shape):
+        import jax
+
+        return jax.random.normal(key, shape)
+
+
+class _LocationLikelihood:
+    def generate_data(self, params, n_samples: int) -> np.ndarray:
+        return np.full(n_samples, float(params))
+
+
 # ---------------------------------------------------------------------------
 # Test statistics
 # ---------------------------------------------------------------------------
@@ -189,6 +203,38 @@ class TestAddPpc:
         p = view.p_values.get("_mean")
         if isinstance(p, float):
             assert 0.0 <= p <= 1.0
+
+    def test_p_value_matches_known_centered_case(self):
+        import jax
+
+        posterior = _NormalLocationPosterior()
+        add_ppc(
+            posterior,
+            test_fns=_mean,
+            observed_data=np.zeros(5),
+            generative_likelihood=_LocationLikelihood(),
+            n_replications=1000,
+            key=jax.random.PRNGKey(0),
+        )
+
+        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
+        assert view.p_values["_mean"] == pytest.approx(0.5, abs=0.06)
+
+    def test_p_value_responds_to_shifted_observed_data(self):
+        import jax
+
+        posterior = _NormalLocationPosterior()
+        add_ppc(
+            posterior,
+            test_fns=_mean,
+            observed_data=np.full(5, 3.0),
+            generative_likelihood=_LocationLikelihood(),
+            n_replications=1000,
+            key=jax.random.PRNGKey(0),
+        )
+
+        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
+        assert view.p_values["_mean"] < 0.01
 
     def test_multiple_test_fns(self, posterior):
         observed = np.random.default_rng(2).standard_normal(50)

@@ -17,8 +17,12 @@ from probpipe.diagnostics._mcmc import (
     add_mcse,
     add_rhat,
 )
-from probpipe.diagnostics._datatree_store import _mcmc_has_field
+from probpipe.diagnostics._datatree_store import (
+    _mcmc_has_field,
+    to_named_posterior_dataset,
+)
 from probpipe.diagnostics._view_base import NotComputed
+from probpipe.diagnostics._views import DiagnosticsView
 
 # conftest.py provides: posterior, posterior_single_chain, posterior_3params
 
@@ -35,6 +39,51 @@ class _VectorPosterior:
 
     def draws(self, *, chain):
         return {"beta": self._data[chain]}
+
+
+class _ScalarVectorPosterior:
+    fields = ["alpha", "beta"]
+    num_chains = 2
+    chains = [object(), object()]
+
+    def __init__(self):
+        rng = np.random.default_rng(321)
+        self._data = {
+            "alpha": rng.standard_normal((2, 160)),
+            "beta": rng.standard_normal((2, 160, 2)),
+        }
+        self._auxiliary = None
+
+    def draws(self, *, chain):
+        return {name: values[chain] for name, values in self._data.items()}
+
+
+class _NonMixingPosterior:
+    fields = ["theta"]
+    num_chains = 2
+    chains = [object(), object()]
+
+    def __init__(self):
+        rng = np.random.default_rng(456)
+        self._data = np.stack(
+            [
+                rng.normal(loc=-4.0, scale=0.1, size=120),
+                rng.normal(loc=4.0, scale=0.1, size=120),
+            ],
+            axis=0,
+        )
+        self._auxiliary = None
+
+    def draws(self, *, chain):
+        return {"theta": self._data[chain]}
+
+
+def _arviz_stats_module():
+    try:
+        import arviz_stats as azs
+    except ImportError:
+        import arviz as azs
+    return azs
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +129,26 @@ class TestAddRhat:
 
     def test_does_not_return_value(self, posterior):
         assert add_rhat(posterior) is None
+
+    def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
+        posterior = _ScalarVectorPosterior()
+        ds = to_named_posterior_dataset(posterior)
+        expected = _arviz_stats_module().rhat(ds, method="rank")
+
+        add_rhat(posterior)
+
+        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        assert view.rhat["alpha"] == pytest.approx(float(expected["alpha"]))
+        assert view.rhat["beta[0]"] == pytest.approx(float(expected["beta"][0]))
+        assert view.rhat["beta[1]"] == pytest.approx(float(expected["beta"][1]))
+
+    def test_non_mixing_chains_have_large_rhat(self):
+        posterior = _NonMixingPosterior()
+
+        add_rhat(posterior, threshold=999.0)
+
+        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        assert view.rhat["theta"] > 1.5
 
 
 class TestMcmcHelpers:
@@ -200,6 +269,21 @@ class TestAddEss:
         add_ess(posterior, force=True)
         assert calls
 
+    def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
+        posterior = _ScalarVectorPosterior()
+        ds = to_named_posterior_dataset(posterior)
+        azs = _arviz_stats_module()
+        expected_bulk = azs.ess(ds, method="bulk")
+        expected_tail = azs.ess(ds, method="tail")
+
+        add_ess(posterior, threshold=0)
+
+        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        assert view.ess_bulk["alpha"] == pytest.approx(float(expected_bulk["alpha"]))
+        assert view.ess_tail["alpha"] == pytest.approx(float(expected_tail["alpha"]))
+        assert view.ess_bulk["beta[0]"] == pytest.approx(float(expected_bulk["beta"][0]))
+        assert view.ess_tail["beta[1]"] == pytest.approx(float(expected_tail["beta"][1]))
+
 
 # ---------------------------------------------------------------------------
 # add_mcse
@@ -231,6 +315,21 @@ class TestAddMcse:
 
         monkeypatch.setattr(mcmc, "_compute_mcse_op", _fail_if_called)
         add_mcse(posterior)
+
+    def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
+        posterior = _ScalarVectorPosterior()
+        ds = to_named_posterior_dataset(posterior)
+        azs = _arviz_stats_module()
+        expected_mean = azs.mcse(ds, method="mean")
+        expected_sd = azs.mcse(ds, method="sd")
+
+        add_mcse(posterior)
+
+        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        assert view.mcse_mean["alpha"] == pytest.approx(float(expected_mean["alpha"]))
+        assert view.mcse_sd["alpha"] == pytest.approx(float(expected_sd["alpha"]))
+        assert view.mcse_mean["beta[0]"] == pytest.approx(float(expected_mean["beta"][0]))
+        assert view.mcse_sd["beta[1]"] == pytest.approx(float(expected_sd["beta"][1]))
 
 
 # ---------------------------------------------------------------------------
