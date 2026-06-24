@@ -12,12 +12,15 @@ from dataclasses import dataclass
 import jax
 import jax.numpy as jnp
 import pytest
+import tensorflow_probability.substrates.jax as tfp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, condition_on
+from probpipe import Beta, GLMLikelihood, MultivariateNormal, SimpleModel, condition_on
 from probpipe.custom_types import Array
 from probpipe.inference._approximate_distribution import ApproximateDistribution
 from probpipe.validation import Reference
+
+tfd = tfp.distributions
 
 
 @dataclass(frozen=True)
@@ -65,6 +68,67 @@ def conjugate_nuts_posterior(
         method="blackjax_nuts",
         num_results=3000,
         num_warmup=1500,
+        num_chains=2,
+        random_seed=0,
+    )
+
+
+class _BernoulliLikelihood:
+    """Bernoulli likelihood with the success probability as the parameter.
+
+    Conjugate to a Beta prior (unlike :class:`GLMLikelihood`, a logit-linear
+    model), so the posterior is Beta in closed form.
+    """
+
+    def log_likelihood(self, params, data):
+        theta = jnp.reshape(jnp.asarray(params), ())
+        return jnp.sum(tfd.Bernoulli(probs=theta).log_prob(jnp.asarray(data)))
+
+
+@dataclass(frozen=True)
+class BetaBernoulliModel:
+    """A Beta-Bernoulli conjugate model with its exact (skewed) Beta posterior."""
+
+    model: SimpleModel
+    data: Array  # 0/1 responses
+    reference: Reference  # exact Beta(α+k, β+n−k) posterior — moments and draws
+    posterior_skewness: float  # > 0 ⇒ the reference is genuinely non-Gaussian
+
+
+@pytest.fixture(scope="session")
+def beta_bernoulli_model() -> BetaBernoulliModel:
+    """Beta(2, 2) prior + Bernoulli likelihood, k=3 of n=17 → posterior Beta(5, 16).
+
+    A conjugate but **non-Gaussian** target (skew ≈ 0.5, bounded on [0, 1], well
+    inside the boundaries), so validating inference here checks that good behavior
+    is not an artifact of Gaussianity. The data are fixed (deterministic success
+    count) so the posterior never pins against 0/1. The exact posterior is sampled
+    directly to give a draws reference for the distributional metrics.
+    """
+    alpha, beta, k, n = 2.0, 2.0, 3, 17
+    data = jnp.concatenate([jnp.ones(k), jnp.zeros(n - k)])
+    post_alpha, post_beta = alpha + k, beta + (n - k)
+    mean = post_alpha / (post_alpha + post_beta)
+    var = mean * (1.0 - mean) / (post_alpha + post_beta + 1.0)
+    draws = jax.random.beta(jax.random.PRNGKey(99), post_alpha, post_beta, (5000,))[:, None]
+    skew = float(jnp.mean((draws[:, 0] - mean) ** 3) / var**1.5)
+    reference = Reference.from_moments(mean=jnp.array([mean]), cov=jnp.array([[var]]), draws=draws)
+    model = SimpleModel(Beta(alpha, beta, name="theta"), _BernoulliLikelihood())
+    return BetaBernoulliModel(model=model, data=data, reference=reference, posterior_skewness=skew)
+
+
+@pytest.fixture(scope="session")
+def beta_bernoulli_nuts_posterior(
+    beta_bernoulli_model: BetaBernoulliModel,
+) -> ApproximateDistribution:
+    """A NUTS fit of the constrained, skewed Beta-Bernoulli posterior."""
+    m = beta_bernoulli_model
+    return condition_on(
+        m.model,
+        m.data,
+        method="blackjax_nuts",
+        num_results=2000,
+        num_warmup=1000,
         num_chains=2,
         random_seed=0,
     )

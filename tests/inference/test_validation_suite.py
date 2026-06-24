@@ -47,3 +47,22 @@ class TestSGLDCovarianceBias:
         # gap — the bias #304's calibration must remove.
         assert rce_sgld > 2.0 * rce_nuts
         assert rce_sgld > 0.12
+
+
+class TestNUTSReproducesNonGaussianReference:
+    def test_recovers_skewed_beta_posterior(
+        self, beta_bernoulli_model, beta_bernoulli_nuts_posterior
+    ):
+        m = beta_bernoulli_model
+        # The reference is genuinely non-Gaussian (a right-skewed Beta posterior),
+        # so good behavior here cannot be coming from Gaussianity alone.
+        assert m.posterior_skewness > 0.3  # Gaussian skewness is 0; measured ≈ 0.54
+        # The reference carries draws, so score_posterior also runs the sample-based
+        # distances — small mmd / sliced_W confirm NUTS captures the skewed *shape*,
+        # not just the moments. Measured across seeds 0–2: rce ≤ 0.11, sme ≤ 0.06,
+        # mmd ≤ 0.001, sliced_W ≤ 0.008.
+        card = score_posterior(beta_bernoulli_nuts_posterior, m.reference)
+        assert float(card["relative_cov_error"]) < 0.2
+        assert float(card["standardized_mean_error"]) < 0.15
+        assert float(card["mmd"]) < 0.01
+        assert float(card["sliced_wasserstein"]) < 0.02
