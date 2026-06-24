@@ -138,9 +138,10 @@ class SBCResult:
     ks_statistic : np.ndarray
         Per-parameter KS distance of the normalized ranks from ``Uniform[0, 1]``.
     ks_pvalue : np.ndarray
-        Per-parameter KS p-value; small ⇒ ranks are non-uniform ⇒ miscalibrated.
-    passed : bool
-        Whether every parameter's p-value exceeds the test level ``alpha``.
+        Per-parameter KS p-value against ``Uniform[0, 1]``; small ⇒ ranks are
+        non-uniform ⇒ miscalibrated. This is a diagnostic — inspect it (and the
+        rank histogram) and apply your own threshold, with a multiple-comparison
+        correction across parameters, rather than reading off a pass/fail verdict.
     """
 
     ranks: np.ndarray
@@ -148,7 +149,6 @@ class SBCResult:
     param_names: tuple[str, ...] | None
     ks_statistic: np.ndarray
     ks_pvalue: np.ndarray
-    passed: bool
 
     def rank_histogram(self, num_bins: int = 20) -> np.ndarray:
         """Rank histogram per parameter, shape ``(num_params, num_bins)``.
@@ -168,7 +168,6 @@ def simulation_based_calibration(
     num_posterior_draws: int,
     num_observations: int,
     method: str | None = None,
-    alpha: float = 0.05,
     key: PRNGKey | None = None,
     **infer_kwargs: Any,
 ) -> SBCResult:
@@ -195,8 +194,6 @@ def simulation_based_calibration(
         Observations per generated dataset.
     method
         Inference method name for :func:`condition_on` (``None`` = auto-select).
-    alpha
-        Test level for the per-parameter pass flag.
     key
         JAX PRNG key (auto-generated if ``None``). Controls θ★, the data, and the
         per-fit MCMC seed, so a fixed key makes the whole run reproducible. Do not
@@ -258,7 +255,6 @@ def simulation_based_calibration(
         param_names=component_names,
         ks_statistic=ks_stat,
         ks_pvalue=ks_pvalue,
-        passed=bool(np.all(ks_pvalue > alpha)),
     )
 
 

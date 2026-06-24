@@ -209,9 +209,6 @@ class TestSBC:
         u = (res.ranks + 0.5) / (res.num_posterior_draws + 1)
         assert np.all((u.mean(axis=0) > 0.35) & (u.mean(axis=0) < 0.65))
         assert float(np.median(res.ks_pvalue)) > 0.2
-        # `passed` reflects every per-parameter p-value clearing the default alpha.
-        assert isinstance(res.passed, bool)
-        assert res.passed == bool(res.ks_pvalue.min() > 0.05)
         # Rank histogram: (num_params, num_bins), each row sums to num_simulations.
         hist = res.rank_histogram(num_bins=10)
         assert hist.shape == (2, 10)
@@ -232,8 +229,8 @@ class TestSBC:
             num_warmup=100,
             key=jax.random.PRNGKey(0),
         )
-        assert res.passed is False
-        assert float(res.ks_pvalue.max()) < 0.05  # uniformity rejected
+        # Uniformity is rejected for every parameter — a clear miscalibration signal.
+        assert float(res.ks_pvalue.max()) < 0.05
         # The upward bias pushes θ★ into the lower tail → mean rank below 0.5.
         assert ((res.ranks + 0.5) / (res.num_posterior_draws + 1)).mean() < 0.45
 
