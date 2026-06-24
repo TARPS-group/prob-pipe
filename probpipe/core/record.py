@@ -188,6 +188,9 @@ class Record(_NamedTree):
       return a new ``Record`` instead of mutating in place.
     * **Compare**: two records are equal iff they share a type, an equal
       :attr:`event_template`, and field-by-field equal data (:meth:`__eq__`).
+      Hashing is **structural** — :meth:`__hash__` hashes the per-field shape /
+      dtype / leaf type, not the leaf values — so equal records always hash
+      equal, while unequal records may collide.
     * **Flatten** to the leaf list with :meth:`to_leaf_list` (canonical order,
       each leaf whole) and rebuild via :meth:`EventTemplate.from_leaf_list`;
       :meth:`~probpipe.NumericRecord.to_vector` is the numeric flat-array form.
