@@ -13,9 +13,9 @@ strings index nested paths: `record["params/intercept"]`.
 
 ::: probpipe.NumericRecord
 
-::: probpipe.RecordTemplate
+::: probpipe.EventTemplate
 
-::: probpipe.NumericRecordTemplate
+::: probpipe.NumericEventTemplate
 
 ## Record arrays
 

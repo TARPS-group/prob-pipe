@@ -29,6 +29,7 @@ Protocol hierarchy
     SupportsMean              standalone; exact _mean()
     SupportsVariance          standalone; exact _variance()
     SupportsCovariance        standalone; exact _cov()
+    SupportsQuantile          standalone; exact _quantile(q)
 
     SupportsUnnormalizedLogProb
         ↑ inherits
@@ -53,13 +54,10 @@ import functools
 from typing import (
     TYPE_CHECKING,
     Any,
-    Callable,
     ClassVar,
     Protocol,
     runtime_checkable,
 )
-
-import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
 
@@ -70,6 +68,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 # Decorator for default moment implementations via expectation
 # ---------------------------------------------------------------------------
+
 
 def compute_expectation(method):
     """Decorator providing a default moment implementation via ``expectation``.
@@ -98,12 +97,12 @@ def compute_expectation(method):
 # Expectation & sampling
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class SupportsExpectation(Protocol):
     """Distribution that can compute ``E[f(X)]``."""
 
-    def _expectation(self, f: Any, *, key: Any, num_evaluations: Any,
-                     return_dist: Any) -> Any: ...
+    def _expectation(self, f: Any, *, key: Any, num_evaluations: Any, return_dist: Any) -> Any: ...
 
 
 @runtime_checkable
@@ -165,6 +164,7 @@ class SupportsSampling(Protocol):
 # Density evaluation
 # ---------------------------------------------------------------------------
 
+
 @runtime_checkable
 class SupportsUnnormalizedLogProb[T](Protocol):
     """Distribution with an unnormalized log-density.
@@ -207,6 +207,7 @@ class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
 # ---------------------------------------------------------------------------
 # Moment protocols
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class SupportsMean(Protocol):
@@ -263,9 +264,22 @@ class SupportsCovariance(Protocol):
     def _cov(self) -> Any: ...
 
 
+@runtime_checkable
+class SupportsQuantile(Protocol):
+    """Distribution with quantiles via ``_quantile(q)``.
+
+    ``_quantile(q)`` returns the per-field ``q``-quantile(s); ``q`` is a scalar
+    or array of probabilities in ``[0, 1]``. For finite-sample distributions
+    this is the weight-aware empirical quantile.
+    """
+
+    def _quantile(self, q: Any) -> Any: ...
+
+
 # ---------------------------------------------------------------------------
 # Random-measure protocols
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class SupportsRandomLogProb(Protocol):
@@ -306,6 +320,7 @@ class SupportsRandomUnnormalizedLogProb(Protocol):
 # ---------------------------------------------------------------------------
 # Conditioning
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class SupportsConditioning(Protocol):
@@ -371,7 +386,7 @@ class _DistributionArrayBackend(Protocol):
     @property
     def event_shape(self) -> tuple[int, ...]: ...
 
-    def cell(self, index: int | tuple[int, ...]) -> "Distribution":
+    def cell(self, index: int | tuple[int, ...]) -> Distribution:
         """Fabricate a scalar ``Distribution`` for the cell at ``index``."""
         ...
 
@@ -457,7 +472,8 @@ class SupportsArrayBackend(Protocol):
 
 
 def protocols_supported_by_all(
-    leaves: list, candidates: tuple[type, ...],
+    leaves: list,
+    candidates: tuple[type, ...],
 ) -> tuple[type, ...]:
     """Return the subset of *candidates* that every leaf satisfies.
 
@@ -469,7 +485,7 @@ def protocols_supported_by_all(
     tuple of ``SupportsFoo`` protocols to test against; get back the
     protocols that are satisfied by every leaf, in the given order.
     """
-    return tuple(p for p in candidates if all(isinstance(l, p) for l in leaves))
+    return tuple(p for p in candidates if all(isinstance(leaf, p) for leaf in leaves))
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +571,7 @@ def _default_per_datum_log_likelihood(
     broadcasting overhead inside ``log_likelihood``).
     """
     import jax
+
     batch = jax.tree.map(lambda x: x[None, ...], datum)
     return likelihood.log_likelihood(params, batch)
 
@@ -570,8 +587,11 @@ class GenerativeLikelihood[P, D](Protocol):
     """
 
     def generate_data(
-        self, params: P, num_observations: int,
-        *, key: PRNGKey | None = None,
+        self,
+        params: P,
+        num_observations: int,
+        *,
+        key: PRNGKey | None = None,
     ) -> D:
         """Generate ``num_observations`` synthetic data points from ``params``.
 
@@ -588,20 +608,21 @@ class GenerativeLikelihood[P, D](Protocol):
 
 
 __all__ = [
-    "compute_expectation",
-    "SupportsExpectation",
-    "SupportsSampling",
-    "SupportsUnnormalizedLogProb",
-    "SupportsLogProb",
-    "SupportsMean",
-    "SupportsVariance",
-    "SupportsCovariance",
-    "SupportsRandomLogProb",
-    "SupportsRandomUnnormalizedLogProb",
-    "SupportsConditioning",
-    "SupportsArrayBackend",
-    "Likelihood",
     "ConditionallyIndependentLikelihood",
     "GenerativeLikelihood",
+    "Likelihood",
+    "SupportsArrayBackend",
+    "SupportsConditioning",
+    "SupportsCovariance",
+    "SupportsExpectation",
+    "SupportsLogProb",
+    "SupportsMean",
+    "SupportsQuantile",
+    "SupportsRandomLogProb",
+    "SupportsRandomUnnormalizedLogProb",
+    "SupportsSampling",
+    "SupportsUnnormalizedLogProb",
+    "SupportsVariance",
+    "compute_expectation",
     "protocols_supported_by_all",
 ]

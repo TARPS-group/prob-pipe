@@ -6,15 +6,14 @@ import numpy as np
 import pytest
 import scipy.stats
 
+from probpipe import cov, log_prob, mean, sample, variance
+from probpipe.core.distribution import NumericRecordDistribution
 from probpipe.distributions import (
     Dirichlet,
     Multinomial,
-    Wishart,
     VonMisesFisher,
+    Wishart,
 )
-from probpipe.core.distribution import NumericRecordDistribution
-from probpipe import cov, log_prob, mean, sample, variance
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -41,9 +40,7 @@ def key():
             id="Wishart",
         ),
         pytest.param(
-            lambda: VonMisesFisher(
-                mean_direction=[1.0, 0.0, 0.0], concentration=5.0, name="v"
-            ),
+            lambda: VonMisesFisher(mean_direction=[1.0, 0.0, 0.0], concentration=5.0, name="v"),
             id="VonMisesFisher",
         ),
     ]
@@ -80,7 +77,7 @@ class TestGeneric:
 
     def test_sample_shape(self, multivariate_dist, key):
         samples = sample(multivariate_dist, key=key, sample_shape=(5,))
-        expected = (5,) + multivariate_dist.event_shape
+        expected = (5, *multivariate_dist.event_shape)
         assert samples.shape == expected
 
     def test_log_prob_shape(self, multivariate_dist, key):
@@ -109,9 +106,7 @@ class TestGeneric:
         w = Wishart(df=5.0, scale_tril=jnp.eye(3), name="sigma")
         assert w.name == "sigma"
 
-        v = VonMisesFisher(
-            mean_direction=[1.0, 0.0, 0.0], concentration=5.0, name="dir"
-        )
+        v = VonMisesFisher(mean_direction=[1.0, 0.0, 0.0], concentration=5.0, name="dir")
         assert v.name == "dir"
 
 
@@ -218,7 +213,7 @@ class TestMultivariateMoments:
         alpha = np.array([1.0, 2.0, 3.0])
         alpha_0 = alpha.sum()
         d = Dirichlet(concentration=alpha, name="d")
-        expected = alpha * (alpha_0 - alpha) / (alpha_0 ** 2 * (alpha_0 + 1))
+        expected = alpha * (alpha_0 - alpha) / (alpha_0**2 * (alpha_0 + 1))
         np.testing.assert_allclose(variance(d), expected, rtol=1e-6)
 
     def test_dirichlet_cov_matches_scipy(self):

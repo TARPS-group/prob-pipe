@@ -13,8 +13,8 @@ import pytest
 
 nutpie = pytest.importorskip("nutpie")
 
-from probpipe.inference import ApproximateDistribution  # noqa: E402
-from probpipe.inference._nutpie import (  # noqa: E402
+from probpipe.inference import ApproximateDistribution
+from probpipe.inference._nutpie import (
     _compile_for_nutpie,
     _extract_chains,
     condition_on_nutpie,
@@ -35,8 +35,7 @@ class TestCompileForNutpie:
         model = MagicMock()
         model._stan_data = {"N": 10, "x": [1, 2, 3]}
         model._bridgestan_model.return_value = "bs_model"
-        with patch.object(nutpie, "compile_stan_model",
-                          return_value="compiled") as compile_stan:
+        with patch.object(nutpie, "compile_stan_model", return_value="compiled") as compile_stan:
             compiled, pymc_build = _compile_for_nutpie(model, data={"y": [4, 5, 6]})
         compile_stan.assert_called_once_with("bs_model")
         # Construction data (N, x) is preserved, not dropped for the observed y.
@@ -69,11 +68,10 @@ class TestCompileForNutpie:
 
     def test_pymc_path(self):
         """Models with _pymc_model use nutpie.compile_pymc_model and
-        return the conditioned build for record_template derivation."""
+        return the conditioned build for event_template derivation."""
         model = MagicMock(spec=[])
         model._pymc_model = MagicMock(return_value="pm_model")
-        with patch.object(nutpie, "compile_pymc_model",
-                          return_value="compiled") as compile_pymc:
+        with patch.object(nutpie, "compile_pymc_model", return_value="compiled") as compile_pymc:
             compiled, pymc_build = _compile_for_nutpie(model, data={"y": [1, 2]})
         compile_pymc.assert_called_once_with("pm_model")
         model._pymc_model.assert_called_once_with(data={"y": [1, 2]})
@@ -118,9 +116,7 @@ class TestExtractChains:
 
         mock_posterior = MagicMock()
         mock_posterior.data_vars = ["mu", "sigma"]
-        mock_posterior.__getitem__ = (
-            lambda self, k: {"mu": mu_var, "sigma": sigma_var}[k]
-        )
+        mock_posterior.__getitem__ = lambda self, k: {"mu": mu_var, "sigma": sigma_var}[k]
         mock_trace.posterior = mock_posterior
 
         chains, param_names = _extract_chains(mock_trace, num_chains=2)
@@ -170,13 +166,13 @@ class TestExtractChains:
         vz.values = z
         mock_posterior = MagicMock()
         mock_posterior.data_vars = ["alpha", "mu", "zeta"]  # nutpie's sorted order
-        mock_posterior.__getitem__ = (
-            lambda self, k: {"alpha": va, "mu": vm, "zeta": vz}[k]
-        )
+        mock_posterior.__getitem__ = lambda self, k: {"alpha": va, "mu": vm, "zeta": vz}[k]
         mock_trace.posterior = mock_posterior
 
         chains, names = _extract_chains(
-            mock_trace, num_chains=1, keep_names=["zeta", "alpha", "mu"],
+            mock_trace,
+            num_chains=1,
+            keep_names=["zeta", "alpha", "mu"],
         )
         assert names == ["zeta", "alpha", "mu"]
         # Columns concatenated in keep_names order: zeta=3, alpha=1, mu=2.
@@ -193,9 +189,7 @@ class TestExtractChains:
 class TestNutpieStanIntegration:
     """nutpie sampling of a StanModel preserves construction-time data."""
 
-    def test_construction_data_survives_conditioning(
-        self, _stan_toolchain, tmp_path_factory
-    ):
+    def test_construction_data_survives_conditioning(self, _stan_toolchain, tmp_path_factory):
         """A StanModel built with fixed data (N, x) samples via nutpie when
         conditioned on y.  Without merging the construction data, the rebuilt
         BridgeStan model would lack N and x and fail to instantiate — so
@@ -235,8 +229,12 @@ class TestNutpieStanIntegration:
         )
 
         result = condition_on_nutpie._func(
-            model, data={"y": y.tolist()},
-            num_results=200, num_warmup=200, num_chains=2, random_seed=0,
+            model,
+            data={"y": y.tolist()},
+            num_results=200,
+            num_warmup=200,
+            num_chains=2,
+            random_seed=0,
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
@@ -258,7 +256,7 @@ class TestNutpieStanIntegration:
 
 pm = pytest.importorskip("pymc")
 
-from probpipe.modeling import PyMCModel  # noqa: E402
+from probpipe.modeling import PyMCModel
 
 
 def _gaussian_pymc_fn(y=None):
@@ -280,8 +278,12 @@ class TestNutpieIntegration:
         y_obs = np.array([1.2, 0.8, 1.1, 0.9, 1.0], dtype=float)
         model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
         result = condition_on_nutpie._func(
-            model, data={"y": y_obs},
-            num_results=500, num_warmup=200, num_chains=2, random_seed=42,
+            model,
+            data={"y": y_obs},
+            num_results=500,
+            num_warmup=200,
+            num_chains=2,
+            random_seed=42,
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
@@ -294,7 +296,7 @@ class TestNutpieIntegration:
         y_bar = float(y_obs.mean())
         post_mean = 5.0 * y_bar / (1.0 / 100.0 + 5.0)
         post_sd = np.sqrt(1.0 / (1.0 / 100.0 + 5.0))
-        # PyMCModel now provides a record_template (one field per PyMC RV),
+        # PyMCModel now provides an event_template (one field per PyMC RV),
         # so draws() returns a NumericRecordArray keyed by RV name. The
         # only parameter is `mu`, with event_shape ().
         draws = result.draws()
@@ -309,8 +311,12 @@ class TestNutpieIntegration:
         model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
         y_obs = np.array([0.0, 1.0], dtype=float)
         result = condition_on_nutpie._func(
-            model, data={"y": y_obs},
-            num_results=50, num_warmup=50, num_chains=1, random_seed=0,
+            model,
+            data={"y": y_obs},
+            num_results=50,
+            num_warmup=50,
+            num_chains=1,
+            random_seed=0,
         )
         assert result.inference_data is not None
         # arviz-like trace exposes posterior as an xarray Dataset/DataTree
@@ -326,6 +332,7 @@ class TestNutpieIntegration:
         alphabetical order while the template uses declaration order,
         the means would be assigned to the wrong fields.
         """
+
         def model_fn(y=None):
             with pm.Model() as m:
                 zeta = pm.Normal("zeta", 100.0, 1.0)
@@ -336,8 +343,12 @@ class TestNutpieIntegration:
 
         model = PyMCModel(model_fn, name="ordering")
         result = condition_on_nutpie._func(
-            model, data={"y": np.zeros(4, dtype=float)},
-            num_results=300, num_warmup=300, num_chains=1, random_seed=0,
+            model,
+            data={"y": np.zeros(4, dtype=float)},
+            num_results=300,
+            num_warmup=300,
+            num_chains=1,
+            random_seed=0,
         )
         draws = result.draws()
         assert draws.fields == ("zeta", "alpha", "mu")
@@ -355,6 +366,7 @@ class TestNutpieIntegration:
         the param order is ``(mu, X)``, so distinct priors catch any
         column mislabeling.
         """
+
         def model_fn(X=None, y=None):
             with pm.Model() as m:
                 mu = pm.Normal("mu", 100.0, 0.5)
@@ -364,14 +376,14 @@ class TestNutpieIntegration:
 
         model = PyMCModel(model_fn, name="partial")
         result = condition_on_nutpie._func(
-            model, data={"y": np.zeros(5, dtype=float)},
-            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+            model,
+            data={"y": np.zeros(5, dtype=float)},
+            num_results=200,
+            num_warmup=200,
+            num_chains=1,
+            random_seed=0,
         )
         draws = result.draws()
         assert set(draws.fields) == {"mu", "X"}
-        np.testing.assert_allclose(
-            float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0
-        )
-        np.testing.assert_allclose(
-            float(jnp.mean(jnp.asarray(draws["X"]))), -100.0, atol=10.0
-        )
+        np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0)
+        np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["X"]))), -100.0, atol=10.0)

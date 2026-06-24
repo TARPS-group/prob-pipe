@@ -12,10 +12,10 @@ from typing import Any
 
 from ._registry import ConversionInfo, ConversionMethod, Converter
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _is_protocol(tp: Any) -> bool:
     """Return ``True`` if *tp* is a ``@runtime_checkable`` Protocol class.
@@ -45,6 +45,7 @@ def _resolve_target_for_log_prob(dist: Any) -> type:
 # ---------------------------------------------------------------------------
 # ProtocolConverter
 # ---------------------------------------------------------------------------
+
 
 class ProtocolConverter(Converter):
     """Converter that resolves ``@runtime_checkable`` protocol targets.
@@ -110,10 +111,7 @@ class ProtocolConverter(Converter):
                 estimated_time=0.0,
                 source_type=type(source),
                 target_type=target_type,
-                description=(
-                    f"{type(source).__name__} already satisfies "
-                    f"{target_type.__name__}"
-                ),
+                description=(f"{type(source).__name__} already satisfies {target_type.__name__}"),
             )
 
         resolver = self._resolvers.get(target_type)
@@ -122,10 +120,7 @@ class ProtocolConverter(Converter):
                 feasible=False,
                 source_type=type(source),
                 target_type=target_type,
-                description=(
-                    f"No protocol resolver registered for "
-                    f"{target_type.__name__}"
-                ),
+                description=(f"No protocol resolver registered for {target_type.__name__}"),
             )
 
         # Resolve and probe the concrete conversion
@@ -141,10 +136,7 @@ class ProtocolConverter(Converter):
         **kwargs: Any,
     ) -> Any:
         if not _is_protocol(target_type):
-            raise TypeError(
-                f"ProtocolConverter only handles protocol targets, "
-                f"got {target_type!r}"
-            )
+            raise TypeError(f"ProtocolConverter only handles protocol targets, got {target_type!r}")
 
         if isinstance(source, target_type):
             return source
@@ -160,14 +152,10 @@ class ProtocolConverter(Converter):
             )
 
         concrete_type = resolver(source)
-        return self._registry.convert(
-            source, concrete_type, key=key, **kwargs
-        )
+        return self._registry.convert(source, concrete_type, key=key, **kwargs)
 
     @property
     def priority(self) -> int:
         # Highest priority so protocol targets are intercepted before
         # concrete converters (which would reject them).
         return 200
-
-

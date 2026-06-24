@@ -9,12 +9,11 @@ if TYPE_CHECKING:
 
 import jax.numpy as jnp
 
-from ..core.distribution import RecordEmpiricalDistribution, Distribution
-from ..core._record_distribution import _RecordDistributionView
-from ..core.provenance import Provenance
-from ..core.record import Record, RecordTemplate, _spec_size
-from ..custom_types import Array, ArrayLike, PRNGKey
 from .._weights import Weights
+from ..core.distribution import Distribution, RecordEmpiricalDistribution
+from ..core.provenance import Provenance
+from ..core.record import ArraySpec, EventTemplate, OpaqueSpec, Record, _spec_size
+from ..custom_types import Array, ArrayLike
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
 
@@ -25,10 +24,11 @@ __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
 def _column_permutation(
-    record_template: RecordTemplate, field_order: list[str],
+    event_template: EventTemplate,
+    field_order: list[str],
 ) -> list[int]:
     """Column-index permutation mapping a *field_order*-laid-out flat chain
-    into ``record_template.fields`` order.
+    into ``event_template.fields`` order.
 
     *field_order* names the field each contiguous column-block of the flat
     chain occupies. The returned ``perm`` satisfies: ``flat[..., perm]``
@@ -42,18 +42,18 @@ def _column_permutation(
         If *field_order* is not a permutation of the template's fields, or
         a field has an opaque (``spec=None``) leaf with no flat size.
     """
-    if sorted(field_order) != sorted(record_template.fields):
+    if sorted(field_order) != sorted(event_template.fields):
         raise ValueError(
             f"field_order {list(field_order)} is not a permutation of "
-            f"template fields {list(record_template.fields)}."
+            f"template fields {list(event_template.fields)}."
         )
     sizes: dict[str, int] = {}
-    for field_name in record_template.fields:
-        spec = record_template[field_name]
-        if spec is None:
+    for field_name in event_template.fields:
+        spec = event_template[field_name]
+        if isinstance(spec, OpaqueSpec):
             raise ValueError(
                 f"ApproximateDistribution requires a numeric template; "
-                f"field {field_name!r} has spec=None (opaque). Opaque "
+                f"field {field_name!r} has an opaque spec. Opaque "
                 f"leaves don't have a flat size."
             )
         sizes[field_name] = _spec_size(spec)
@@ -63,7 +63,7 @@ def _column_permutation(
         bounds[field_name] = (offset, offset + sizes[field_name])
         offset += sizes[field_name]
     perm: list[int] = []
-    for field_name in record_template.fields:
+    for field_name in event_template.fields:
         lo, hi = bounds[field_name]
         perm.extend(range(lo, hi))
     return perm
@@ -90,7 +90,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         Optional per-sample importance weights (across all chains).
     name : str or None
         Distribution name for provenance.
-    record_template : RecordTemplate or None
+    event_template : EventTemplate or None
         If given, names the posterior's fields: the concatenated chain is
         split into per-field arrays (multi-field) so :meth:`draws`,
         :meth:`_mean` / :meth:`_variance`, etc. return Records keyed by
@@ -99,23 +99,23 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     field_order : list of str or None
         Names the field each contiguous column-block of *chains* belongs
         to, in the order they appear. Default (``None``) assumes the
-        columns are already in ``record_template.fields`` order. Pass this
+        columns are already in ``event_template.fields`` order. Pass this
         when the chain's column order may differ (e.g. a backend that
         sorts variable names) so columns are aligned to fields by name
-        rather than position. Requires *record_template*, and must be a
+        rather than position. Requires *event_template*, and must be a
         permutation of its fields.
 
     Notes
     -----
-    When ``record_template`` is multi-field, ``__init__`` slices the
+    When ``event_template`` is multi-field, ``__init__`` slices the
     concatenated chain into per-top-level-field arrays so
     :attr:`fields`, :attr:`event_shapes`, :attr:`dtypes`,
     :meth:`_mean` / :meth:`_variance`, and the public ops
     (``mean(post)`` / ``variance(post)``) all return Records whose
-    keys match :attr:`fields`. Nested ``RecordTemplate`` fields are
-    stored as a flat ``(n, nested_flat_size)`` array under the
+    keys match :attr:`fields`. Nested ``EventTemplate`` fields are
+    stored as a flat ``(n, nested_vector_size)`` array under the
     top-level field name; the nested structure is recoverable via
-    ``record_template[field]`` and via :meth:`draws`, which walks
+    ``event_template[field]`` and via :meth:`draws`, which walks
     the full template (including nesting) using the original
     per-chain samples.
     """
@@ -126,7 +126,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         *,
         weights: ArrayLike | Weights | None = None,
         name: str | None = None,
-        record_template: RecordTemplate | None = None,
+        event_template: EventTemplate | None = None,
         field_order: list[str] | None = None,
     ):
         if not chains:
@@ -137,20 +137,20 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
         # When the caller's chain columns are laid out in a different
         # field order than the template — e.g. a backend whose trace
-        # sorts variable names — permute them into ``record_template``
+        # sorts variable names — permute them into ``event_template``
         # order. The positional split below (and ``draws()`` unflatten)
         # then map each column to the right field by name rather than by
         # position, so callers don't have to pre-sort. See issue #233.
         if field_order is not None:
-            if record_template is None:
+            if event_template is None:
                 raise ValueError(
-                    "field_order requires a record_template; it names "
+                    "field_order requires an event_template; it names "
                     "template fields and is meaningless without one."
                 )
             # Validates field_order is a permutation of the template
             # fields (raises otherwise) for any field count, so a
             # single-field typo or wrong name is also caught.
-            perm = _column_permutation(record_template, field_order)
+            perm = _column_permutation(event_template, field_order)
             # Validate width for any field count, *before* the gather:
             # ``c[..., perm]`` would otherwise silently drop extra columns
             # (too-wide chain) or clamp out-of-bounds indices (too-narrow),
@@ -161,22 +161,22 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                         f"chain last dim ({c.shape[-1]}) doesn't match "
                         f"the template total flat size ({len(perm)})."
                     )
-            if len(record_template.fields) > 1:
+            if len(event_template.fields) > 1:
                 self._chains = [c[..., perm] for c in self._chains]
                 self._concatenated = None
 
         flat = self._concat_chains()
         # Track whether the user explicitly supplied a template; we use
         # this in ``draws()`` to decide whether to wrap the output.
-        self._user_template = record_template is not None
+        self._user_template = event_template is not None
         # Multi-field template → split the flat chain by top-level
-        # field. Nested ``RecordTemplate`` fields are stored as a
-        # 2-D ``(n, nested_flat_size)`` slice under the top-level
+        # field. Nested ``EventTemplate`` fields are stored as a
+        # 2-D ``(n, nested_vector_size)`` slice under the top-level
         # field name; the nested structure is recovered via
-        # ``record_template[field]`` and ``draws()``. Slice sizes use
+        # ``event_template[field]`` and ``draws()``. Slice sizes use
         # ``_spec_size``, which already handles both flat and nested
         # specs.
-        if record_template is not None and len(record_template.fields) > 1:
+        if event_template is not None and len(event_template.fields) > 1:
             # Compute per-field sizes upfront so we can sanity-check the
             # chain's last dim against the template's total flat size
             # (catching template/data mismatch before silent slicing past
@@ -185,13 +185,13 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             # error names the offending field rather than the generic
             # ``_spec_size`` message.
             sizes: list[int] = []
-            for field_name in record_template.fields:
-                spec = record_template[field_name]
-                if spec is None:
+            for field_name in event_template.fields:
+                spec = event_template[field_name]
+                if isinstance(spec, OpaqueSpec):
                     raise ValueError(
                         f"ApproximateDistribution requires a numeric "
-                        f"template; field {field_name!r} has spec=None "
-                        f"(opaque). Opaque leaves don't have a flat size."
+                        f"template; field {field_name!r} has an opaque "
+                        f"spec. Opaque leaves don't have a flat size."
                     )
                 sizes.append(_spec_size(spec))
             total = sum(sizes)
@@ -199,33 +199,35 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                 raise ValueError(
                     f"chain last dim ({flat.shape[-1]}) doesn't match "
                     f"template total flat size ({total}); template "
-                    f"fields={record_template.fields}, sizes={sizes}."
+                    f"fields={event_template.fields}, sizes={sizes}."
                 )
             offset = 0
             fields: dict[str, Array] = {}
-            for field_name, size in zip(record_template.fields, sizes):
-                spec = record_template[field_name]
+            for field_name, size in zip(event_template.fields, sizes):
+                spec = event_template[field_name]
                 chunk = flat[..., offset : offset + size]
-                if isinstance(spec, RecordTemplate):
+                if isinstance(spec, EventTemplate):
                     # Nested: keep flat-per-top-level-field. Shape is
-                    # ``(*sample_shape, nested_flat_size)``.
+                    # ``(*sample_shape, nested_vector_size)``.
                     fields[field_name] = chunk
                 else:
-                    shape = spec if spec is not None else ()
+                    # ArraySpec leaf (opaque rejected above, nested handled).
+                    assert isinstance(spec, ArraySpec)
+                    shape = spec.shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
             super().__init__(Record(fields), weights=weights, name=name or "posterior")
-            self._record_template = record_template
+            self._event_template = event_template
         else:
             # Single-field path: ``name`` (default ``"posterior"``)
             # becomes the auto-wrapped field name. If the user passed a
             # single-field template, rename to honor it.
             field_name = name or "posterior"
-            if record_template is not None and len(record_template.fields) == 1:
-                field_name = record_template.fields[0]
+            if event_template is not None and len(event_template.fields) == 1:
+                field_name = event_template.fields[0]
             super().__init__(flat, weights=weights, name=field_name)
-            if record_template is not None:
-                self._record_template = record_template
+            if event_template is not None:
+                self._event_template = event_template
 
     def _concat_chains(self) -> Array:
         """Lazily concatenated view of all chains."""
@@ -320,7 +322,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         *,
         include_warmup: bool = False,
     ) -> Array | Record:
-        """Access draws, optionally named via record_template.
+        """Access draws, optionally named vian event_template.
 
         Parameters
         ----------
@@ -333,7 +335,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         Returns
         -------
         Array or Record
-            If ``record_template`` is set, returns a :class:`~probpipe.Record`
+            If ``event_template`` is set, returns a :class:`~probpipe.Record`
             with named fields.  Otherwise returns a raw array.
         """
         if chain is not None:
@@ -347,8 +349,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             if include_warmup:
                 warmup = self.warmup_samples
                 if warmup is not None:
-                    parts = [jnp.concatenate([w, c], axis=0)
-                             for w, c in zip(warmup, parts)]
+                    parts = [jnp.concatenate([w, c], axis=0) for w, c in zip(warmup, parts)]
             samples = jnp.concatenate(parts, axis=0)
 
         # Honor any user-supplied template (single-field or multi-field).
@@ -356,8 +357,9 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # historical behaviour of single-field auto-wrap empiricals
         # under the previous numeric-array hierarchy.
         if getattr(self, "_user_template", False):
-            from ..core._record_array import NumericRecordArray
-            return NumericRecordArray.unflatten(samples, template=self.record_template)
+            # ``from_vector`` infers batch_shape from the leading axes of the
+            # concatenated draws (a matrix ``(n, vector_size)``).
+            return self.event_template.from_vector(samples)
         return samples
 
     def __repr__(self) -> str:
@@ -388,7 +390,7 @@ def make_posterior(
     algorithm: str,
     *,
     auxiliary: DataTree | None = None,
-    record_template: RecordTemplate | None = None,
+    event_template: EventTemplate | None = None,
     field_order: list[str] | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:
@@ -405,12 +407,12 @@ def make_posterior(
     auxiliary : DataTree or None
         Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
-    record_template : RecordTemplate or None
+    event_template : EventTemplate or None
         If provided, ``draws()`` returns named ``Record``.
     field_order : list of str or None
         Names the field each contiguous column-block of ``chains`` belongs
         to. Default (``None``) assumes the columns are laid out in
-        ``record_template.fields`` order. Pass this when the chain's column
+        ``event_template.fields`` order. Pass this when the chain's column
         order may differ from the template's (e.g. a backend that sorts
         variable names) so columns are aligned to fields by name rather
         than position (see issue #233).
@@ -425,7 +427,9 @@ def make_posterior(
     import xarray as xr
 
     result = ApproximateDistribution(
-        chains, name="posterior", record_template=record_template,
+        chains,
+        name="posterior",
+        event_template=event_template,
         field_order=field_order,
     )
 
@@ -442,6 +446,8 @@ def make_posterior(
         result._auxiliary = xr.DataTree.from_dict(dicto)
 
     result.with_source(
-        Provenance(algorithm, parents=parents, metadata={"algorithm": algorithm, **meta})
+        Provenance.create(
+            algorithm, parents=list(parents), metadata={"algorithm": algorithm, **meta}
+        )
     )
     return result

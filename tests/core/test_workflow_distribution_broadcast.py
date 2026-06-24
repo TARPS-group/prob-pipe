@@ -61,10 +61,7 @@ class TestExecuteDistributionBroadcast:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [
-                request.func(**call_values)
-                for call_values in request.call_value_list
-            ]
+            return [request.func(**call_values) for call_values in request.call_value_list]
 
         monkeypatch.setattr(
             _workflow_distribution_broadcast._workflow_execution,
@@ -94,8 +91,7 @@ class TestExecuteDistributionBroadcast:
         assert len(request.call_value_list) == 5
         assert all(call_values["offset"] == 2.0 for call_values in request.call_value_list)
         assert all(
-            not isinstance(call_values["x"], Normal)
-            for call_values in request.call_value_list
+            not isinstance(call_values["x"], Normal) for call_values in request.call_value_list
         )
         assert result.source.metadata == {
             "dispatch": "thread",

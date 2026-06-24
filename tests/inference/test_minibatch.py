@@ -34,7 +34,6 @@ from probpipe.inference._minibatch import (
     _RandomMinibatchLogProb,
 )
 
-
 # -- Fixtures ------------------------------------------------------------------
 
 
@@ -83,13 +82,16 @@ class TestConstruction:
 
     def test_construction_rejects_non_log_prob_prior(self, likelihood, data_record):
         """Prior must satisfy SupportsLogProb."""
+
         class _BarePrior:
             pass
+
         with pytest.raises(TypeError, match="SupportsLogProb"):
             MinibatchedDistribution(_BarePrior(), likelihood, data_record, batch_size=32)
 
     def test_construction_rejects_non_cil_likelihood(self, prior, data_record):
         """A bare ``Likelihood`` (no ``per_datum_log_likelihood``) is rejected."""
+
         class _BareLikelihood:
             def log_likelihood(self, params, data):
                 return jnp.asarray(0.0)
@@ -122,10 +124,16 @@ class TestAccessors:
     """The convenience properties exposed for inspection / debugging."""
 
     def test_properties_match_constructor_args(
-        self, prior, likelihood, data_record,
+        self,
+        prior,
+        likelihood,
+        data_record,
     ):
         m = MinibatchedDistribution(
-            prior, likelihood, data_record, batch_size=25,
+            prior,
+            likelihood,
+            data_record,
+            batch_size=25,
             with_replacement=True,
             name="custom_name",
         )
@@ -154,6 +162,7 @@ class TestProtocols:
         Use ``_random_unnormalized_log_prob`` to get the stochastic
         log-density callable that SGMCMC kernels consume."""
         from probpipe.core.protocols import SupportsSampling
+
         assert not isinstance(measure, SupportsSampling)
 
     def test_isinstance_supports_random_unnormalized_log_prob(self, measure):
@@ -197,7 +206,8 @@ class TestInnerDraw:
         batch = inner.batch
         prior_lp = prior._log_prob(theta)
         per_datum = jax.vmap(
-            likelihood.per_datum_log_likelihood, in_axes=(None, 0),
+            likelihood.per_datum_log_likelihood,
+            in_axes=(None, 0),
         )(theta, batch)
         expected = prior_lp + measure._rescale_factor * jnp.sum(per_datum)
 
@@ -205,7 +215,10 @@ class TestInnerDraw:
         np.testing.assert_allclose(float(actual), float(expected), rtol=1e-5)
 
     def test_record_and_recordarray_inputs_equivalent(
-        self, prior, likelihood, regression_data,
+        self,
+        prior,
+        likelihood,
+        regression_data,
     ):
         """``Record`` and ``NumericRecordArray`` data inputs produce
         identical log-densities given the same minibatch indices.
@@ -215,14 +228,15 @@ class TestInnerDraw:
         per-minibatch surrogate regardless of which container type the
         user passes.
         """
-        from probpipe import NumericRecordArray, NumericRecordTemplate
+        from probpipe import NumericEventTemplate, NumericRecordArray
+
         X, y = regression_data
         n = X.shape[0]
         record_data = Record(X=X, y=y)
         recordarray_data = NumericRecordArray(
             {"X": jnp.asarray(X), "y": jnp.asarray(y)},
             batch_shape=(n,),
-            template=NumericRecordTemplate(X=(X.shape[1],), y=()),
+            template=NumericEventTemplate(X=(X.shape[1],), y=()),
         )
 
         m_rec = MinibatchedDistribution(prior, likelihood, record_data, batch_size=20)
@@ -238,7 +252,10 @@ class TestInnerDraw:
     def test_with_replacement_flag(self, prior, likelihood, data_record):
         """``with_replacement=True`` allows repeated indices."""
         m_wr = MinibatchedDistribution(
-            prior, likelihood, data_record, batch_size=5,
+            prior,
+            likelihood,
+            data_record,
+            batch_size=5,
             with_replacement=True,
         )
         # Stress test: with batch_size=5 and replacement, over many draws
@@ -255,7 +272,11 @@ class TestInnerDraw:
         )
 
     def test_batch_size_equals_dataset_size_matches_full(
-        self, prior, likelihood, data_record, regression_data,
+        self,
+        prior,
+        likelihood,
+        data_record,
+        regression_data,
     ):
         """``batch_size == N`` is the degenerate full-batch case.
 
@@ -266,7 +287,11 @@ class TestInnerDraw:
         X, _ = regression_data
         N = X.shape[0]
         m_full = MinibatchedDistribution(
-            prior, likelihood, data_record, batch_size=N, with_replacement=False,
+            prior,
+            likelihood,
+            data_record,
+            batch_size=N,
+            with_replacement=False,
         )
         inner = m_full._draw_one(jax.random.PRNGKey(11))
         assert inner.rescale_factor == 1.0
@@ -274,7 +299,8 @@ class TestInnerDraw:
         theta = jnp.array([0.2, -0.3])
         # Full-data log-density
         per_datum = jax.vmap(
-            likelihood.per_datum_log_likelihood, in_axes=(None, 0),
+            likelihood.per_datum_log_likelihood,
+            in_axes=(None, 0),
         )(theta, data_record)
         full = prior._log_prob(theta) + jnp.sum(per_datum)
 
@@ -305,6 +331,7 @@ class TestBareArrayData:
             Defines ``log_likelihood`` and ``per_datum_log_likelihood``
             so the protocol check (``isinstance(lik, CIL)``) succeeds.
             """
+
             def log_likelihood(self, params, data):
                 return -0.5 * jnp.sum(jnp.asarray(data) ** 2)
 
@@ -312,7 +339,10 @@ class TestBareArrayData:
                 return -0.5 * jnp.asarray(datum) ** 2
 
         m = MinibatchedDistribution(
-            prior, _ResponseOnlyLikelihood(), y, batch_size=20,
+            prior,
+            _ResponseOnlyLikelihood(),
+            y,
+            batch_size=20,
         )
         assert m.dataset_size == N
 
@@ -338,7 +368,8 @@ class TestMathematicalCorrectness:
         theta = jnp.array([0.3, -0.2])
         # Full reference:
         per_datum = jax.vmap(
-            likelihood.per_datum_log_likelihood, in_axes=(None, 0),
+            likelihood.per_datum_log_likelihood,
+            in_axes=(None, 0),
         )(theta, data_record)
         full_lp = float(prior._log_prob(theta) + jnp.sum(per_datum))
 
@@ -361,7 +392,8 @@ class TestMathematicalCorrectness:
 
         def full_log_density(t):
             per_datum = jax.vmap(
-                likelihood.per_datum_log_likelihood, in_axes=(None, 0),
+                likelihood.per_datum_log_likelihood,
+                in_axes=(None, 0),
             )(t, data_record)
             return prior._log_prob(t) + jnp.sum(per_datum)
 

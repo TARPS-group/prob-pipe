@@ -37,7 +37,6 @@ from probpipe import (
 from probpipe.distributions._tfp_base import _allow_batched_tfp_init
 from probpipe.distributions.kde import KDEDistribution
 
-
 # ---------------------------------------------------------------------------
 # Rejection fires across the TFP family
 # ---------------------------------------------------------------------------
@@ -58,14 +57,11 @@ class TestRejectionAcrossClasses:
 
     def test_beta_batched_rejected(self):
         with pytest.raises(ValueError, match=r"batch_shape"):
-            Beta(alpha=jnp.array([1.0, 2.0]),
-                 beta=jnp.array([1.0, 1.0]),
-                 name="b")
+            Beta(alpha=jnp.array([1.0, 2.0]), beta=jnp.array([1.0, 1.0]), name="b")
 
     def test_gamma_batched_rejected(self):
         with pytest.raises(ValueError, match=r"batch_shape"):
-            Gamma(concentration=jnp.array([1.0, 2.0, 3.0]),
-                  rate=1.0, name="g")
+            Gamma(concentration=jnp.array([1.0, 2.0, 3.0]), rate=1.0, name="g")
 
     def test_mvn_batched_rejected(self):
         # MVN with batched loc: loc.shape=(2, d) implies batch_shape=(2,).
@@ -149,14 +145,19 @@ class TestScalarConstructionUnchanged:
 class TestMigrationPath:
     def test_universal_factory_works_in_place_of_legacy_form(self):
         da = DistributionArray.from_batched_params(
-            Normal, loc=jnp.zeros(5), scale=1.0, name="x",
+            Normal,
+            loc=jnp.zeros(5),
+            scale=1.0,
+            name="x",
         )
         assert da.batch_shape == (5,)
         assert da[0].name == "x_0"
 
     def test_per_class_alias_works(self):
         da = Normal.from_batched_params(
-            loc=jnp.zeros(5), scale=1.0, name="x",
+            loc=jnp.zeros(5),
+            scale=1.0,
+            name="x",
         )
         assert da.batch_shape == (5,)
 

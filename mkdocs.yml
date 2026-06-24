@@ -55,6 +55,8 @@ plugins:
 
 
 markdown_extensions:
+  - attr_list
+  - md_in_html
   - admonition
   - pymdownx.details
   - pymdownx.superfences
@@ -82,16 +84,17 @@ nav:
     - Ray via Prefect: orchestration/ray.md
   - User Guide:
     - Overview: user_guide.md
-    - Distribution basics: examples/01_distributions.ipynb
-    - Records and Record Distributions: examples/02_records.ipynb
-    - Broadcasting and workflow functions: examples/03_broadcasting.ipynb
-    - Joint distributions: examples/04_joint_distributions.ipynb
-    - External backends: examples/05_external_backends.ipynb
-    - Converting between representations: examples/06_converting_representations.ipynb
-    - Sequential updating: examples/07_sequential_updating.ipynb
-    - JAX interop (gradients, jit, vmap): examples/08_jax_interop.ipynb
-    - Bagged posteriors: examples/09_bagged_posteriors.ipynb
-    - Random functions and Gaussian emulators: examples/10_random_functions_and_emulators.ipynb
+    - Distribution basics: user_guide/01_distributions.ipynb
+    - Records and Record Distributions: user_guide/02_records.ipynb
+    - Broadcasting and workflow functions: user_guide/03_broadcasting.ipynb
+    - Joint distributions: user_guide/04_joint_distributions.ipynb
+    - External backends: user_guide/05_external_backends.ipynb
+    - Converting between representations: user_guide/06_converting_representations.ipynb
+    - Sequential updating: user_guide/07_sequential_updating.ipynb
+    - JAX interop (gradients, jit, vmap): user_guide/08_jax_interop.ipynb
+    - Bagged posteriors: user_guide/09_bagged_posteriors.ipynb
+    - Random functions and Gaussian emulators: user_guide/10_random_functions_and_emulators.ipynb
+    - Scalability with Prefect: user_guide/11_prefect_scalability.ipynb
   - API Reference:
     - Overview: api/index.md
     - Operations: api/operations.md
@@ -105,6 +108,7 @@ nav:
       - Random functions: api/distributions/random_functions.md
     - Records and data: api/records.md
     - Modeling and inference: api/inference.md
+    - Validation: api/validation.md
     - Workflows and orchestration: api/workflows.md
     - Constraints and bijectors: api/constraints.md
     - Conversion and interop: api/converters.md

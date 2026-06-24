@@ -7,18 +7,24 @@ import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-from probpipe.distributions import (
-    TransformedDistribution,
-    Normal,
-    MultivariateNormal,
+from probpipe import (
+    EmpiricalDistribution,
+    NumericRecordDistribution,
+    log_prob,
+    mean,
+    sample,
+    variance,
 )
-from probpipe import NumericRecordDistribution, EmpiricalDistribution
 from probpipe.core.constraints import (
-    real,
     positive,
+    real,
     unit_interval,
 )
-from probpipe import log_prob, mean, sample, variance
+from probpipe.distributions import (
+    MultivariateNormal,
+    Normal,
+    TransformedDistribution,
+)
 
 
 @pytest.fixture
@@ -82,9 +88,7 @@ class TestTFPBase:
         assert jnp.all(samples > 0)
 
     def test_multivariate_exp(self, key):
-        base = MultivariateNormal(
-            loc=jnp.zeros(3), cov=jnp.eye(3), name="z"
-        )
+        base = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         td = TransformedDistribution(base, tfb.Exp())
         samples = jnp.asarray(sample(td, key=key, sample_shape=(10,)))
         assert samples.shape == (10, 3)
@@ -218,18 +222,21 @@ class TestTransformedProtocolDuckTyping:
     def test_isinstance_log_prob_from_tfp_base(self):
         """TFP base supports SupportsLogProb → transformed does too."""
         from probpipe import SupportsLogProb
+
         td = TransformedDistribution(Normal(0, 1, name="x"), tfb.Exp())
         assert isinstance(td, SupportsLogProb)
 
     def test_isinstance_mean_from_tfp_base(self):
         """TFP base supports SupportsMean → transformed does too."""
         from probpipe import SupportsMean
+
         td = TransformedDistribution(Normal(0, 1, name="x"), tfb.Exp())
         assert isinstance(td, SupportsMean)
 
     def test_empirical_base_has_mean(self):
         """RecordEmpiricalDistribution supports SupportsMean → transformed does too."""
         from probpipe import SupportsMean
+
         emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         td = TransformedDistribution(emp, tfb.Exp())
         assert isinstance(td, SupportsMean)
@@ -237,6 +244,7 @@ class TestTransformedProtocolDuckTyping:
     def test_empirical_base_no_log_prob(self):
         """RecordEmpiricalDistribution lacks SupportsLogProb → transformed lacks it."""
         from probpipe import SupportsLogProb
+
         emp = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         td = TransformedDistribution(emp, tfb.Exp())
         assert not isinstance(td, SupportsLogProb)
@@ -253,6 +261,7 @@ class TestBijectorCorrectness:
     def test_identity_preserves_moments(self, key):
         """Identity bijector: moments and log_prob are unchanged."""
         import numpy as np
+
         base = Normal(loc=2.0, scale=0.5, name="x")
         td = TransformedDistribution(base, tfb.Identity())
         # Moments
@@ -277,6 +286,7 @@ class TestBijectorCorrectness:
         """
         import numpy as np
         import tensorflow_probability.substrates.jax.distributions as tfd
+
         base = Normal(loc=0.0, scale=1.0, name="x")
         bijector = tfb.Exp()
         td = TransformedDistribution(base, bijector)
@@ -285,5 +295,6 @@ class TestBijectorCorrectness:
         np.testing.assert_allclose(
             np.asarray(log_prob(td, ys)),
             np.asarray(tfp_ref.log_prob(ys)),
-            rtol=1e-5, atol=1e-6,
+            rtol=1e-5,
+            atol=1e-6,
         )

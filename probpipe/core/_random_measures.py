@@ -85,9 +85,8 @@ from __future__ import annotations
 from abc import abstractmethod
 
 from ..custom_types import Array
-from .constraints import Constraint
 from ._distribution_base import Distribution
-
+from .constraints import Constraint
 
 # ---------------------------------------------------------------------------
 # RandomMeasure[T]

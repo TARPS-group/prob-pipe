@@ -21,7 +21,6 @@ from probpipe import (
 )
 from probpipe.core.protocols import _default_per_datum_log_likelihood
 
-
 # -- Protocol structure --------------------------------------------------------
 
 
@@ -32,6 +31,7 @@ class TestProtocol:
 
     def test_runtime_checkable(self):
         """The Protocol is marked @runtime_checkable."""
+
         # If runtime_checkable, isinstance works on a structural match.
         # A bare Likelihood (no per_datum_log_likelihood) should be False.
         class _BareLikelihood:
@@ -40,7 +40,8 @@ class TestProtocol:
 
         assert isinstance(_BareLikelihood(), Likelihood)
         assert not isinstance(
-            _BareLikelihood(), ConditionallyIndependentLikelihood,
+            _BareLikelihood(),
+            ConditionallyIndependentLikelihood,
         )
 
 
@@ -54,37 +55,45 @@ def bernoulli_glm():
     ``GLMLikelihood`` adds the intercept internally (``fit_intercept=True``
     default); ``params`` is ``(intercept, slope_0, slope_1)``.
     """
-    X = jnp.array([
+    X = jnp.array(
+        [
+            [0.0, 0.0],
+            [1.0, 0.0],
+            [0.0, 1.0],
+            [1.0, 1.0],
+            [0.5, 0.5],
+        ]
+    )
+    return GLMLikelihood(tfp_glm.Bernoulli(), x=X), X
+
+
+_BERNOULLI_X = jnp.array(
+    [
         [0.0, 0.0],
         [1.0, 0.0],
         [0.0, 1.0],
         [1.0, 1.0],
         [0.5, 0.5],
-    ])
-    return GLMLikelihood(tfp_glm.Bernoulli(), x=X), X
-
-
-_BERNOULLI_X = jnp.array([
-    [0.0, 0.0],
-    [1.0, 0.0],
-    [0.0, 1.0],
-    [1.0, 1.0],
-    [0.5, 0.5],
-])
-_NORMAL_X = jnp.array([
-    [0.5],
-    [-0.5],
-    [1.0],
-])
+    ]
+)
+_NORMAL_X = jnp.array(
+    [
+        [0.5],
+        [-0.5],
+        [1.0],
+    ]
+)
 
 _PER_DATUM_CASES = [
     # (id, family_factory, X, params (intercept, *slopes), y)
-    ("bernoulli", tfp_glm.Bernoulli, _BERNOULLI_X,
-     jnp.array([0.5, -0.5, 0.25]),
-     jnp.array([1.0, 0.0, 1.0, 1.0, 0.0])),
-    ("normal", tfp_glm.Normal, _NORMAL_X,
-     jnp.array([0.0, 1.0]),
-     jnp.array([0.6, -0.4, 1.1])),
+    (
+        "bernoulli",
+        tfp_glm.Bernoulli,
+        _BERNOULLI_X,
+        jnp.array([0.5, -0.5, 0.25]),
+        jnp.array([1.0, 0.0, 1.0, 1.0, 0.0]),
+    ),
+    ("normal", tfp_glm.Normal, _NORMAL_X, jnp.array([0.0, 1.0]), jnp.array([0.6, -0.4, 1.1])),
 ]
 
 
@@ -108,18 +117,21 @@ class TestGLMLikelihood:
         """
         glm = GLMLikelihood(family_factory(), x=X)
         full = glm.log_likelihood(params, y)
-        per_row = jnp.stack([
-            glm.per_datum_log_likelihood(
-                params, Record(X=X[i], y=y[i]),
-            )
-            for i in range(X.shape[0])
-        ])
+        per_row = jnp.stack(
+            [
+                glm.per_datum_log_likelihood(
+                    params,
+                    Record(X=X[i], y=y[i]),
+                )
+                for i in range(X.shape[0])
+            ]
+        )
         np.testing.assert_allclose(float(full), float(jnp.sum(per_row)), rtol=1e-5)
 
     def test_per_datum_requires_record_datum(self, bernoulli_glm):
         """A non-Record datum raises ``TypeError`` with a message
         pointing at the expected ``Record(X=..., y=...)`` form."""
-        glm, X = bernoulli_glm
+        glm, _X = bernoulli_glm
         params = jnp.array([0.5, -0.5, 0.25])
         with pytest.raises(TypeError, match="Record"):
             glm.per_datum_log_likelihood(params, jnp.array([0.0, 0.0, 1.0]))
@@ -133,8 +145,10 @@ class TestDefaultFallback:
         """``_default_per_datum_log_likelihood`` evaluates the full
         likelihood on a length-1 batch around the datum.
         """
+
         class _SumLikelihood:
             """A toy likelihood: log_likelihood is sum of data, ignoring params."""
+
             def log_likelihood(self, params, data):
                 return jnp.sum(jnp.asarray(data))
 
@@ -150,8 +164,10 @@ class TestDefaultFallback:
         """The fallback's ``jax.tree.map(lambda x: x[None, ...], datum)``
         also works on Record-shaped data — each leaf gets a leading axis.
         """
+
         class _RecordLikelihood:
             """Sum across all leaves of the Record."""
+
             def log_likelihood(self, params, data):
                 # data is Record(X=..., y=...) with shape (n, ...) leaves
                 return jnp.sum(jnp.asarray(data["X"])) + jnp.sum(jnp.asarray(data["y"]))
@@ -172,6 +188,7 @@ class TestDefaultFallback:
 class TestNegativeSpace:
     def test_bare_likelihood_rejected_by_protocol_check(self):
         """A class with only ``log_likelihood`` (no per_datum) doesn't satisfy CIL."""
+
         class _BareLikelihood:
             def log_likelihood(self, params, data):
                 return jnp.asarray(0.0)

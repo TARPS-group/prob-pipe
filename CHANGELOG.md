@@ -9,6 +9,89 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`probpipe.validation` posterior-vs-reference comparison metrics.** A
+  dependency-light scoring layer for validating inference methods against a
+  trusted reference: `Reference` (a container for analytic / long-NUTS /
+  sandwich references — high-precision `(mean, cov)`, `draws`, and/or a target
+  `score_fn`), `standardized_mean_error` (Mahalanobis mean error
+  `‖Σ_ref^{-1/2}(μ̂ − μ_ref)‖₂`), `relative_cov_error` (operator-norm whitened
+  covariance error `‖I − Σ_ref^{-1/2} Σ̂ Σ_ref^{-1/2}‖₂`), `std_ratios`,
+  `sliced_wasserstein`, `mmd` (unbiased
+  RBF), `ksd` (IMQ kernel Stein discrepancy), and the `score_posterior`
+  aggregator.
+
+- **`quantile` op and `SupportsQuantile` protocol.** `quantile(dist, q)` returns
+  per-field quantile(s) at probability level(s) `q`, parallel to
+  `mean`/`variance`/`cov`. `RecordEmpiricalDistribution` implements it
+  weight-aware via the midpoint-CDF (Hazen, type-5) quantile, used for both
+  uniform and non-uniform weights so the estimator is continuous in the
+  weights.
+
+- **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
+  control.** Three modes are available: `FULL` retains live references to every
+  parent distribution (good for interactive debugging); `LIGHTWEIGHT` (the new
+  default) stores only `ParentInfo` descriptors — type name, distribution name,
+  and the parent's own provenance chain — so parent data arrays are free to be
+  garbage-collected once a workflow step completes; `OFF` skips provenance
+  entirely for minimum overhead.  The mode is set once at startup:
+  ```python
+  import probpipe
+  from probpipe import ProvenanceMode
+  probpipe.provenance_config.mode = ProvenanceMode.FULL  # for debugging
+  ```
+
+- **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
+  `type_name`, `name`, `source` (the parent's own `Provenance`, kept in all
+  non-OFF modes so the ancestry DAG remains traversable), `fingerprint`
+  (reserved for a future caching layer), and `obj` (the live parent object,
+  set only in FULL mode).
+
+- **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
+  reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and
+  returns `None` in OFF mode.  All ~15 provenance assembly sites in the
+  codebase now route through this single entry point, so mode behavior is
+  uniform everywhere.
+
+### Changed
+
+- **User Guide notebooks moved from the former examples section.** The docs nav
+  and grouped overview now list all 11 User Guide notebooks under
+  `/user_guide/.../`, including the Prefect scalability guide.
+
+- **Adopt `ruff format` for code formatting.** Formatting is now owned by
+  `ruff format` (Black-style) rather than the previous manual horizontal-packing
+  conventions: the source tree was reformatted in one mechanical sweep (recorded
+  in `.git-blame-ignore-revs`), a `ruff-format` pre-commit hook reformats on
+  commit, and `ruff format --check` is a **blocking** CI step. Notebooks are
+  excluded so the docs' tutorial cells keep their hand layout; string quotes
+  normalize to double. See
+  [CONTRIBUTING.md § Code formatting](CONTRIBUTING.md#code-formatting).
+
+- **`provenance_ancestors()` now returns `ParentInfo` descriptors, not live
+  Distribution objects (breaking change).**  Under the previous always-live
+  model, every element of the returned list was a `Distribution` or `Record`
+  that could be sampled, inspected, etc.  Under the new LIGHTWEIGHT default,
+  elements are `ParentInfo` instances:
+  ```python
+  # Before
+  ancestor = provenance_ancestors(result)[0]   # Distribution
+  ancestor.sample(key, (10,))                  # worked
+
+  # After (LIGHTWEIGHT default)
+  ancestor = provenance_ancestors(result)[0]   # ParentInfo
+  ancestor.name                                # "prior"
+  ancestor.obj                                 # None — parent may be GC'd
+
+  # To restore live-object access, opt in to FULL mode
+  probpipe.provenance_config.mode = ProvenanceMode.FULL
+  ancestor = provenance_ancestors(result)[0]
+  ancestor.obj                                 # live Distribution
+  ancestor.obj.sample(key, (10,))              # works
+  ```
+  Code that checks `x in provenance_ancestors(result)` or accesses
+  `.samples` / `.log_prob` on ancestors needs to be updated — either
+  switch to FULL mode, or use `ancestor.name` / `ancestor.type_name` for
+  identity checks.
 - **Two-distribution packaging: `probpipe-core` (minimal) and `probpipe`
   (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
   every inference backend is an optional extra), and a new code-less `probpipe`
@@ -75,6 +158,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   column-major order; a flat array may still be passed positionally.
 
 ### Changed
+
+- **`RecordTemplate` → `EventTemplate` rename + leaf-spec representation
+  (#235, Phase 1a).** `RecordTemplate` is now `EventTemplate`,
+  `NumericRecordTemplate` is `NumericEventTemplate`, and
+  `Distribution.record_template` is `event_template` (hard rename, **no
+  deprecation alias** — pre-stable). Template leaves are now a closed sum of
+  frozen, hashable specs (`ArraySpec` / `OpaqueSpec` / `DistributionSpec` /
+  `FunctionSpec`) instead of `tuple[int, ...] | None`; construction-time sugar
+  is preserved (`EventTemplate(x=(3,), label=None, sub=…)` still works) and
+  `__getitem__` now returns the spec object (shape access stays on
+  `leaf_shapes` / `event_shapes` / `field_event_shape`). Behavior-preserving
+  otherwise.
 
 - **`SupportsLogProb` / `SupportsUnnormalizedLogProb` are now generic in the
   sample type (#228)** — `SupportsLogProb[T]`. Annotation-level only; runtime
@@ -296,17 +391,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   works for contributors with an existing pip setup. See
   [CONTRIBUTING.md](CONTRIBUTING.md#installation).
 
-- **Ruff linting + pre-commit hooks.** A `lint (advisory)` CI job runs
-  `ruff check` and annotates PRs with violations; it is **advisory for
-  now** (does not gate merges) while the pre-existing lint backlog is
-  burned down and large refactors are in flight. A new
+- **Ruff linting + pre-commit hooks.** The `lint & format` CI job runs
+  `ruff check` over the whole tree as a **blocking** gate. A
   `.pre-commit-config.yaml` (install with `uvx pre-commit install`) runs
-  ruff plus file-hygiene hooks on staged files. The ruff config gains
-  ignores for ambiguous-unicode rules (`RUF001/2/3` — false positives on
-  mathematical notation) and per-file ignores for notebook
-  import/semicolon idioms (`E402`/`E702`). `ruff format` is intentionally
-  not adopted; its style conflicts with the documented formatting
-  conventions. See [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
+  ruff (lint + format) plus file-hygiene hooks on staged files. The lint
+  config (`[tool.ruff.lint]`) selects the `E`/`W`/`F`/`I`/`UP`/`B`/`SIM`/`RUF`
+  families, ignores the ambiguous-unicode rules (`RUF001/2/3` — false
+  positives on mathematical notation), and excludes notebooks (executed in
+  CI instead). See [CONTRIBUTING.md](CONTRIBUTING.md#linting--pre-commit).
 
 - **`pymc_nuts` reclaims multi-core sampling.** The method previously
   forced `cores=1` to avoid an `os.fork()` deadlock against JAX's worker

@@ -145,9 +145,13 @@ def test_var_keyword_receives_workflow_control_names():
     )
 
     assert result.num_atoms == 5
-    assert seen == [
-        {"seed": 42, "n_broadcast_samples": 99, "include_inputs": True},
-    ] * 5
+    assert (
+        seen
+        == [
+            {"seed": 42, "n_broadcast_samples": 99, "include_inputs": True},
+        ]
+        * 5
+    )
 
 
 def test_unbindable_call_time_control_name_is_rejected():

@@ -115,16 +115,23 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         """Coerce ``params`` to a ``(d_theta,)`` row in canonical flat order.
 
         Accepts the two shapes that reach a likelihood in practice -- the
-        structured per-draw record of predictive/checking paths (flattened via
-        its own canonical layout, which matches the training layout) and the
-        flat vector the gradient-MCMC log-density assembly passes -- plus plain
-        array-likes. Width is validated against the prior's ``event_size``
-        (static under jit: shapes are concrete at trace time).
+        structured per-draw record of predictive/checking paths (serialized via
+        its own canonical 1-D vector layout, which matches the training layout)
+        and the flat vector the gradient-MCMC log-density assembly passes --
+        plus plain array-likes. Width is validated against the prior's
+        ``event_size`` (static under jit: shapes are concrete at trace time).
         """
-        if hasattr(params, "flatten"):
-            t = params.flatten()
-        elif hasattr(params, "to_numeric"):
-            t = params.to_numeric().flatten()
+        from ..core._numeric_record import NumericRecord
+        from ..core._record_array import NumericRecordArray
+        from ..core.record import Record
+
+        # ``Record`` now carries the JAX-pytree ``flatten`` (returns
+        # ``(leaves, aux)``), so dispatch on type rather than ``hasattr`` to get
+        # the canonical 1-D ``vec`` via ``to_vector``.
+        if isinstance(params, (NumericRecord, NumericRecordArray)):
+            t = params.to_vector()
+        elif isinstance(params, Record):
+            t = params.to_numeric().to_vector()
         else:
             t = params
         t = jnp.ravel(jnp.asarray(t))
@@ -183,7 +190,11 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         return self._row_scores(theta[None, :], row)[0]
 
     def generate_data(
-        self, params: Any, num_observations: int, *, key: PRNGKey | None = None,
+        self,
+        params: Any,
+        num_observations: int,
+        *,
+        key: PRNGKey | None = None,
     ) -> Any:
         """Delegate to the training simulator (``GenerativeLikelihood`` passthrough)."""
         return self._simulator.generate_data(params, num_observations, key=key)
@@ -240,20 +251,19 @@ class BayesFlowLikelihood(_BayesFlowLikelihoodBase):
         # standardization log-det-jacobian converts that density back to the
         # original y units, making the values equal to the public log_prob.
         if self._dequantized:
-            data_rows = data_rows + 0.5   # midpoint of the trained cell [y, y+1)
+            data_rows = data_rows + 0.5  # midpoint of the trained cell [y, y+1)
         a = self._approximator
         conds = a.standardizer.maybe_standardize(
-            theta_rows, key="inference_conditions", stage="inference")
+            theta_rows, key="inference_conditions", stage="inference"
+        )
         z, ldj = a.standardizer.maybe_standardize(
-            data_rows, key="inference_variables", stage="inference", log_det_jac=True)
+            data_rows, key="inference_variables", stage="inference", log_det_jac=True
+        )
         return a.inference_network.log_prob(z, conditions=conds) + ldj
 
     def __repr__(self) -> str:
         dq = ", dequantized=True" if self._dequantized else ""
-        return (
-            f"BayesFlowLikelihood(theta_dim={self._theta_dim}, "
-            f"data_dim={self._data_dim}{dq})"
-        )
+        return f"BayesFlowLikelihood(theta_dim={self._theta_dim}, data_dim={self._data_dim}{dq})"
 
 
 class BayesFlowRatio(_BayesFlowLikelihoodBase):
@@ -284,16 +294,15 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase):
         # its jacobian cancels -- the logits already live in original units.
         a = self._approximator
         thv = a.standardizer.maybe_standardize(
-            theta_rows, key="inference_variables", stage="inference")
+            theta_rows, key="inference_variables", stage="inference"
+        )
         conds = a.standardizer.maybe_standardize(
-            data_rows, key="inference_conditions", stage="inference")
+            data_rows, key="inference_conditions", stage="inference"
+        )
         return a.logits(thv, conds, stage="inference")
 
     def __repr__(self) -> str:
-        return (
-            f"BayesFlowRatio(theta_dim={self._theta_dim}, "
-            f"data_dim={self._data_dim})"
-        )
+        return f"BayesFlowRatio(theta_dim={self._theta_dim}, data_dim={self._data_dim})"
 
 
 # ---------------------------------------------------------------------------
@@ -327,14 +336,20 @@ def _train_offline(
     jitter is added to the simulated observations after simulation (the
     simulator stays untouched). Returns ``(approximator, d_y)``.
     """
-    record_template = _validate_learn_inputs(
-        prior, simulator, caller=caller, sim_backend=sim_backend,
-        counts=(("num_simulations", num_simulations), ("batch_size", batch_size),
-                ("epochs", epochs)),
+    event_template = _validate_learn_inputs(
+        prior,
+        simulator,
+        caller=caller,
+        sim_backend=sim_backend,
+        counts=(
+            ("num_simulations", num_simulations),
+            ("batch_size", batch_size),
+            ("epochs", epochs),
+        ),
     )
     # Numeric leaves (slash paths for a nested prior; == fields for a flat one).
     # NLE/NRE feed raw theta to the network, so no bijectors -- just the keying.
-    leaf_keys = tuple(record_template.numeric_leaf_shapes)
+    leaf_keys = tuple(event_template.numeric_leaf_shapes)
 
     bf = _import_bayesflow()
     with _isolated_keras_seeding(random_seed):
@@ -349,8 +364,12 @@ def _train_offline(
             # tolerance measured on it -- bit-identical.
             key, k_jitter = jax.random.split(key)
         named, y = _simulate_offline(
-            prior, simulator, num_simulations, key,
-            sim_backend=sim_backend, bijectors=None,   # raw theta: it is a net input
+            prior,
+            simulator,
+            num_simulations,
+            key,
+            sim_backend=sim_backend,
+            bijectors=None,  # raw theta: it is a net input
         )
         if dequantize:
             if float(np.abs(y).max()) >= 2.0**23:
@@ -360,14 +379,16 @@ def _train_offline(
                     "jitter and the midpoint shift. Rescale the observations "
                     "or use learn_amortized_ratio."
                 )
-            y = np.asarray(jnp.asarray(y) + jax.random.uniform(k_jitter, y.shape),
-                           dtype="float32")
+            y = np.asarray(jnp.asarray(y) + jax.random.uniform(k_jitter, y.shape), dtype="float32")
         internal_keys = _adapter_field_keys(leaf_keys)
         sims = {k: named[lk] for k, lk in zip(internal_keys, leaf_keys)}
         sims[_OBSERVATION_KEY] = y
 
-        obs_role = ("inference_variables" if theta_role == "inference_conditions"
-                    else "inference_conditions")
+        obs_role = (
+            "inference_variables"
+            if theta_role == "inference_conditions"
+            else "inference_conditions"
+        )
         adapter = (
             bf.Adapter()
             .convert_dtype("float64", "float32")
@@ -493,14 +514,23 @@ def learn_amortized_likelihood(
         return bf.ContinuousApproximator(inference_network=net, adapter=adapter)
 
     approximator, data_dim = _train_offline(
-        prior, simulator, caller="learn_amortized_likelihood",
-        num_simulations=num_simulations, epochs=epochs, batch_size=batch_size,
-        sim_backend=sim_backend, random_seed=random_seed,
-        theta_role="inference_conditions", build_approximator=_build,
-        optimizer=optimizer, fit_kwargs=fit_kwargs, dequantize=dequantize,
+        prior,
+        simulator,
+        caller="learn_amortized_likelihood",
+        num_simulations=num_simulations,
+        epochs=epochs,
+        batch_size=batch_size,
+        sim_backend=sim_backend,
+        random_seed=random_seed,
+        theta_role="inference_conditions",
+        build_approximator=_build,
+        optimizer=optimizer,
+        fit_kwargs=fit_kwargs,
+        dequantize=dequantize,
     )
-    return BayesFlowLikelihood(approximator, prior, simulator, data_dim=data_dim,
-                               dequantized=dequantize)
+    return BayesFlowLikelihood(
+        approximator, prior, simulator, data_dim=data_dim, dequantized=dequantize
+    )
 
 
 def learn_amortized_ratio(
@@ -572,14 +602,20 @@ def learn_amortized_ratio(
 
     def _build(bf: Any, adapter: Any, data_dim: int) -> Any:
         net = inference_network if inference_network is not None else bf.networks.MLP()
-        return bf.approximators.RatioApproximator(
-            inference_network=net, adapter=adapter)
+        return bf.approximators.RatioApproximator(inference_network=net, adapter=adapter)
 
     approximator, data_dim = _train_offline(
-        prior, simulator, caller="learn_amortized_ratio",
-        num_simulations=num_simulations, epochs=epochs, batch_size=batch_size,
-        sim_backend=sim_backend, random_seed=random_seed,
-        theta_role="inference_variables", build_approximator=_build,
-        optimizer=optimizer, fit_kwargs=fit_kwargs,
+        prior,
+        simulator,
+        caller="learn_amortized_ratio",
+        num_simulations=num_simulations,
+        epochs=epochs,
+        batch_size=batch_size,
+        sim_backend=sim_backend,
+        random_seed=random_seed,
+        theta_role="inference_variables",
+        build_approximator=_build,
+        optimizer=optimizer,
+        fit_kwargs=fit_kwargs,
     )
     return BayesFlowRatio(approximator, prior, simulator, data_dim=data_dim)

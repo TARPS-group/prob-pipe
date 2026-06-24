@@ -33,7 +33,6 @@ from probpipe.core._distribution_array import (
     _make_distribution_array,
 )
 
-
 # ---------------------------------------------------------------------------
 # Construction & invariants
 # ---------------------------------------------------------------------------
@@ -91,6 +90,7 @@ class TestConstruction:
         comps = [Normal(loc=0.0, scale=1.0, name="d0")]
         da = _make_distribution_array(comps)
         from probpipe.core._distribution_base import Distribution
+
         assert isinstance(da, Distribution)
 
     def test_repr(self):
@@ -134,6 +134,7 @@ class TestContainerSurface:
 
     def test_len_is_leading_axis_multi_d(self):
         from probpipe import DistributionArray
+
         da = DistributionArray.from_batched_params(
             Normal,
             batch_shape=(2, 3),
@@ -150,6 +151,7 @@ class TestContainerSurface:
 
     def test_size_is_total_cells_multi_d(self):
         from probpipe import DistributionArray
+
         da = DistributionArray.from_batched_params(
             Normal,
             batch_shape=(2, 3),
@@ -162,6 +164,7 @@ class TestContainerSurface:
     def test_size_matches_numpy_convention(self):
         """``da.size`` follows the numpy / jax rule ``size == prod(shape)``."""
         from probpipe import DistributionArray
+
         da = DistributionArray.from_batched_params(
             Normal,
             batch_shape=(2, 3),
@@ -183,6 +186,7 @@ class TestContainerSurface:
         """Multi-d iteration yields leading-axis slices as sub-arrays
         (mirrors ``iter(np.zeros((2, 3)))``)."""
         from probpipe import DistributionArray
+
         da = DistributionArray.from_batched_params(
             Normal,
             batch_shape=(2, 3),
@@ -206,7 +210,9 @@ class TestContainerSurface:
         ``_flat_component`` / ``components`` for the single cell.
         Fully-joint GRF predictions with no extra batch axes return
         a 0-d DA."""
-        from probpipe import DistributionArray, MultivariateNormal as _MVN
+        from probpipe import DistributionArray
+        from probpipe import MultivariateNormal as _MVN
+
         da = DistributionArray.from_batched_params(
             _MVN,
             batch_shape=(),
@@ -224,7 +230,9 @@ class TestContainerSurface:
         """``len(np.zeros(()))`` raises ``TypeError``; so does
         ``len(da)`` on a 0-d ``DistributionArray``. ``da.size``
         still works."""
-        from probpipe import DistributionArray, MultivariateNormal as _MVN
+        from probpipe import DistributionArray
+        from probpipe import MultivariateNormal as _MVN
+
         da = DistributionArray.from_batched_params(
             _MVN,
             batch_shape=(),
@@ -264,6 +272,7 @@ class TestZeroDDispatch:
         GRF with ``joint_inputs=joint_outputs=True`` produces when
         there are no extra batch axes."""
         from probpipe import DistributionArray, MultivariateNormal
+
         return DistributionArray.from_batched_params(
             MultivariateNormal,
             batch_shape=(),
@@ -298,6 +307,7 @@ class TestZeroDDispatch:
         # path under test (which goes ``log_prob(da)`` → unwrap to
         # the single cell → MVN ``_log_prob``).
         import math
+
         expected = -0.5 * 3 * math.log(2 * math.pi)
         np.testing.assert_allclose(float(jnp.asarray(lp)), expected, atol=1e-5)
 
@@ -306,6 +316,7 @@ class TestZeroDDispatch:
         return a 1-element batch, not a scalar. Only ``batch_shape
         == ()`` collapses."""
         from probpipe import DistributionArray
+
         da = DistributionArray.from_batched_params(
             Normal,
             batch_shape=(1,),
@@ -352,14 +363,12 @@ class TestSampleViaSweep:
     def test_components_drive_samples(self):
         """Per-cell mean of the 1000-sample draw concentrates at each
         component's own mean — confirms cell-by-cell dispatch."""
-        comps = [Normal(loc=float(i) * 100, scale=1e-3, name=f"d{i}")
-                 for i in range(3)]
+        comps = [Normal(loc=float(i) * 100, scale=1e-3, name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
         s = sample(da, sample_shape=(1000,))
         # batch_shape (3,), leaf (1000,) → field shape (3, 1000).
         means = s["sample"].mean(axis=-1)
-        np.testing.assert_allclose(means, jnp.array([0.0, 100.0, 200.0]),
-                                   atol=0.2)
+        np.testing.assert_allclose(means, jnp.array([0.0, 100.0, 200.0]), atol=0.2)
 
     def test_multi_d_batch_shape(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(6)]
@@ -379,6 +388,7 @@ class TestSampleViaSweep:
         da = _make_distribution_array(comps)
         s = sample(da)
         from probpipe import RecordArray
+
         assert isinstance(s, RecordArray)
         assert s.batch_shape == (3,)
         np.testing.assert_allclose(s["x"], [0.0, 1.0, 2.0], atol=1e-2)
@@ -437,6 +447,7 @@ class TestMeanVianSweep:
         da = _make_distribution_array(comps)
         m = mean(da)
         from probpipe import RecordArray
+
         assert isinstance(m, RecordArray)
         assert m.batch_shape == (3,)
         np.testing.assert_allclose(m["x"], [0.0, 1.0, 2.0])
@@ -445,8 +456,7 @@ class TestMeanVianSweep:
 
 class TestVarianceViaSweep:
     def test_scalar_components_variance(self):
-        comps = [Normal(loc=0.0, scale=float(i + 1), name=f"d{i}")
-                 for i in range(3)]
+        comps = [Normal(loc=0.0, scale=float(i + 1), name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
         v = variance(da)
         assert isinstance(v, NumericRecordArray)
@@ -475,8 +485,7 @@ class TestLogProbViaSweep:
         # Cell i evaluates Normal(i, 1) at 0 → gaussian log-density at
         # distance ``i`` from the mean.
         expected = jnp.array(
-            [Normal(loc=float(i), scale=1.0, name=f"d{i}")._log_prob(0.0)
-             for i in range(3)]
+            [Normal(loc=float(i), scale=1.0, name=f"d{i}")._log_prob(0.0) for i in range(3)]
         )
         np.testing.assert_allclose(lp["log_prob"], expected, rtol=1e-5)
 
@@ -515,6 +524,7 @@ class TestBackendDelegatedStorage:
 
     def _make_backend(self, n=5):
         from probpipe import Normal
+
         return Normal._make_array_backend(
             name="x",
             batch_shape=(n,),
@@ -524,6 +534,7 @@ class TestBackendDelegatedStorage:
 
     def test_from_backend_returns_distribution_array(self):
         from probpipe import DistributionArray
+
         backend = self._make_backend(n=5)
         da = DistributionArray._from_backend(backend, name="batched_x")
         assert isinstance(da, DistributionArray)
@@ -535,6 +546,7 @@ class TestBackendDelegatedStorage:
 
     def test_from_backend_does_not_materialise_components_eagerly(self):
         from probpipe import DistributionArray
+
         backend = self._make_backend(n=5)
         da = DistributionArray._from_backend(backend, name="x")
         # Components stay None until first .components access; the
@@ -543,6 +555,7 @@ class TestBackendDelegatedStorage:
 
     def test_indexing_routes_through_backend_cell(self):
         from probpipe import DistributionArray, Normal
+
         backend = self._make_backend(n=5)
         da = DistributionArray._from_backend(backend, name="x")
         # Each int access fabricates fresh; identity differs.
@@ -558,6 +571,7 @@ class TestBackendDelegatedStorage:
 
     def test_flat_component_routes_through_backend_cell(self):
         from probpipe import DistributionArray, Normal
+
         backend = self._make_backend(n=4)
         da = DistributionArray._from_backend(backend, name="x")
         for i in range(4):
@@ -568,6 +582,7 @@ class TestBackendDelegatedStorage:
 
     def test_iteration_lazy_via_backend(self):
         from probpipe import DistributionArray, Normal
+
         backend = self._make_backend(n=4)
         da = DistributionArray._from_backend(backend, name="x")
         cells = list(da)
@@ -581,6 +596,7 @@ class TestBackendDelegatedStorage:
 
     def test_components_property_materialises_lazily_and_caches(self):
         from probpipe import DistributionArray
+
         backend = self._make_backend(n=3)
         da = DistributionArray._from_backend(backend, name="x")
         c1 = da.components
@@ -594,6 +610,7 @@ class TestBackendDelegatedStorage:
 
     def test_slice_indexing_materialises_components(self):
         from probpipe import DistributionArray
+
         backend = self._make_backend(n=5)
         da = DistributionArray._from_backend(backend, name="x")
         sub = da[1:4]
@@ -604,6 +621,7 @@ class TestBackendDelegatedStorage:
 
     def test_repr_indicates_backend_mode(self):
         from probpipe import DistributionArray
+
         backend = self._make_backend(n=3)
         backed = DistributionArray._from_backend(backend, name="x")
         assert "backend=True" in repr(backed)
@@ -612,6 +630,7 @@ class TestBackendDelegatedStorage:
         """Construction via the explicit components list still works
         identically — no _backend, eager _components tuple."""
         from probpipe import DistributionArray, Normal
+
         comps = [Normal(loc=float(i), scale=1.0, name=f"c_{i}") for i in range(3)]
         da = DistributionArray(comps, name="literal")
         assert da._backend is None
@@ -621,9 +640,13 @@ class TestBackendDelegatedStorage:
 
     def test_multi_d_batch_shape_via_backend(self):
         from probpipe import DistributionArray, Normal
+
         loc = jnp.arange(6.0).reshape(2, 3)
         backend = Normal._make_array_backend(
-            name="g", batch_shape=(2, 3), loc=loc, scale=1.0,
+            name="g",
+            batch_shape=(2, 3),
+            loc=loc,
+            scale=1.0,
         )
         da = DistributionArray._from_backend(backend, name="g")
         assert da.batch_shape == (2, 3)
@@ -641,10 +664,14 @@ class TestFromBatchedParams:
     """Public entry point that dispatches on ``SupportsArrayBackend``."""
 
     def test_normal_uses_tfp_backend(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
         from probpipe.distributions._tfp_base import _TFPArrayBackend
+
         da = DistributionArray.from_batched_params(
-            Normal, loc=jnp.arange(5.0), scale=1.0, name="x",
+            Normal,
+            loc=jnp.arange(5.0),
+            scale=1.0,
+            name="x",
         )
         assert isinstance(da, DistributionArray)
         assert isinstance(da._backend, _TFPArrayBackend)
@@ -653,45 +680,63 @@ class TestFromBatchedParams:
         assert len(da) == 5
 
     def test_per_cell_name_auto_suffix(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
+
         da = DistributionArray.from_batched_params(
-            Normal, loc=jnp.arange(3.0), scale=jnp.ones(3), name="weights",
+            Normal,
+            loc=jnp.arange(3.0),
+            scale=jnp.ones(3),
+            name="weights",
         )
         assert da[0].name == "weights_0"
         assert da[1].name == "weights_1"
         assert da[2].name == "weights_2"
 
     def test_per_cell_params_correctly_sliced(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
+
         da = DistributionArray.from_batched_params(
-            Normal, loc=jnp.arange(4.0), scale=jnp.linspace(0.1, 0.4, 4),
+            Normal,
+            loc=jnp.arange(4.0),
+            scale=jnp.linspace(0.1, 0.4, 4),
             name="x",
         )
         for i in range(4):
             cell = da[i]
             assert float(cell.loc) == float(i)
             np.testing.assert_allclose(
-                float(cell.scale), 0.1 + 0.1 * i, atol=1e-6,
+                float(cell.scale),
+                0.1 + 0.1 * i,
+                atol=1e-6,
             )
 
     def test_scalar_param_broadcasts_through_cells(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
+
         da = DistributionArray.from_batched_params(
-            Normal, loc=jnp.zeros(3), scale=2.5, name="x",
+            Normal,
+            loc=jnp.zeros(3),
+            scale=2.5,
+            name="x",
         )
         for i in range(3):
             assert float(da[i].scale) == 2.5
 
     def test_inferred_batch_shape_uses_broadcast(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
+
         # Both arrays imply batch_shape=(4,) — broadcast convention.
         da = DistributionArray.from_batched_params(
-            Normal, loc=jnp.arange(4.0), scale=jnp.ones(4), name="x",
+            Normal,
+            loc=jnp.arange(4.0),
+            scale=jnp.ones(4),
+            name="x",
         )
         assert da.batch_shape == (4,)
 
     def test_explicit_batch_shape_honored(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
+
         da = DistributionArray.from_batched_params(
             Normal,
             batch_shape=(2, 3),
@@ -705,18 +750,23 @@ class TestFromBatchedParams:
         assert da[1, 2].name == "g_5"
 
     def test_no_array_params_requires_explicit_batch_shape(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
+
         with pytest.raises(ValueError, match="batch_shape"):
             DistributionArray.from_batched_params(
-                Normal, loc=0.0, scale=1.0, name="x",
+                Normal,
+                loc=0.0,
+                scale=1.0,
+                name="x",
             )
 
     def test_multivariate_normal_via_factory(self):
         """MVN-style classes need explicit ``batch_shape`` because
         their per-param event ranks differ (``loc`` is
         ``(*batch, d)``, ``scale_tril`` is ``(*batch, d, d)``)."""
-        from probpipe import MultivariateNormal, DistributionArray
+        from probpipe import DistributionArray, MultivariateNormal
         from probpipe.distributions._tfp_base import _TFPArrayBackend
+
         d = 3
         da = DistributionArray.from_batched_params(
             MultivariateNormal,
@@ -733,7 +783,8 @@ class TestFromBatchedParams:
     def test_inference_punts_on_event_rank_mismatch(self):
         """Without explicit ``batch_shape``, MVN-style heterogeneous
         event-rank params raise a clear ``ValueError``."""
-        from probpipe import MultivariateNormal, DistributionArray
+        from probpipe import DistributionArray, MultivariateNormal
+
         d = 3
         with pytest.raises(ValueError, match="batch_shape"):
             DistributionArray.from_batched_params(
@@ -765,7 +816,9 @@ class TestFromBatchedParams:
                 return ()
 
         da = DistributionArray.from_batched_params(
-            MyDist, value=jnp.arange(3.0), name="m",
+            MyDist,
+            value=jnp.arange(3.0),
+            name="m",
         )
         # Fallback path: literal components, no backend.
         assert da._backend is None
@@ -785,35 +838,40 @@ class TestFromBatchedParams:
         against TFP's own batched form (which is what
         ``_TFPArrayBackend`` wraps internally anyway).
         """
-        from probpipe import Normal, DistributionArray
         import tensorflow_probability.substrates.jax.distributions as tfd
+
+        from probpipe import DistributionArray, Normal
+
         loc = jnp.array([0.5, -1.2, 3.7, 0.0])
         scale = jnp.array([0.1, 0.2, 0.3, 0.4])
 
         native = tfd.Normal(loc=loc, scale=scale)
         da = DistributionArray.from_batched_params(
-            Normal, loc=loc, scale=scale, name="x",
+            Normal,
+            loc=loc,
+            scale=scale,
+            name="x",
         )
         # Sample shapes match.
         key = jax.random.PRNGKey(42)
         native_samples = native.sample(seed=key)
         da_samples = da._backend._sample(key)
-        np.testing.assert_allclose(
-            np.asarray(native_samples), np.asarray(da_samples)
-        )
+        np.testing.assert_allclose(np.asarray(native_samples), np.asarray(da_samples))
         # Mean / variance match.
-        np.testing.assert_allclose(
-            np.asarray(native.mean()), np.asarray(da._backend._mean())
-        )
+        np.testing.assert_allclose(np.asarray(native.mean()), np.asarray(da._backend._mean()))
         np.testing.assert_allclose(
             np.asarray(native.variance()),
             np.asarray(da._backend._variance()),
         )
 
     def test_iteration_matches_indexing(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
+
         da = DistributionArray.from_batched_params(
-            Normal, loc=jnp.arange(4.0), scale=jnp.ones(4), name="x",
+            Normal,
+            loc=jnp.arange(4.0),
+            scale=jnp.ones(4),
+            name="x",
         )
         for i, cell in enumerate(da):
             assert float(cell.loc) == float(da[i].loc)
@@ -829,11 +887,13 @@ class TestDistributionFromBatchedParamsAlias:
     """Ergonomic per-class alias on Distribution[T]."""
 
     def test_alias_dispatches_to_distribution_array_factory(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
         from probpipe.distributions._tfp_base import _TFPArrayBackend
 
         da = Normal.from_batched_params(
-            loc=jnp.arange(5.0), scale=1.0, name="x",
+            loc=jnp.arange(5.0),
+            scale=1.0,
+            name="x",
         )
         assert isinstance(da, DistributionArray)
         assert isinstance(da._backend, _TFPArrayBackend)
@@ -841,15 +901,21 @@ class TestDistributionFromBatchedParamsAlias:
         assert da[0].name == "x_0"
 
     def test_alias_matches_classmethod_call(self):
-        from probpipe import Normal, DistributionArray
+        from probpipe import DistributionArray, Normal
+
         loc = jnp.arange(4.0)
         scale = jnp.linspace(0.1, 0.4, 4)
 
         via_alias = Normal.from_batched_params(
-            loc=loc, scale=scale, name="x",
+            loc=loc,
+            scale=scale,
+            name="x",
         )
         via_factory = DistributionArray.from_batched_params(
-            Normal, loc=loc, scale=scale, name="x",
+            Normal,
+            loc=loc,
+            scale=scale,
+            name="x",
         )
         # Same backend type, same per-cell parameters / names.
         assert type(via_alias._backend) is type(via_factory._backend)
@@ -861,19 +927,23 @@ class TestDistributionFromBatchedParamsAlias:
             assert float(a.scale) == float(f.scale)
 
     def test_alias_inherited_by_all_distribution_subclasses(self):
-        from probpipe.core._distribution_base import Distribution
         from probpipe import (
-            Normal, Beta, Gamma, MultivariateNormal,
+            Beta,
             EmpiricalDistribution,
+            Gamma,
+            MultivariateNormal,
+            Normal,
         )
+        from probpipe.core._distribution_base import Distribution
+
         # Every Distribution subclass inherits the alias.
-        for cls in (Distribution, Normal, Beta, Gamma,
-                    MultivariateNormal, EmpiricalDistribution):
+        for cls in (Distribution, Normal, Beta, Gamma, MultivariateNormal, EmpiricalDistribution):
             assert hasattr(cls, "from_batched_params")
             assert callable(cls.from_batched_params)
 
     def test_alias_with_explicit_batch_shape(self):
         from probpipe import MultivariateNormal
+
         d = 3
         da = MultivariateNormal.from_batched_params(
             batch_shape=(2,),

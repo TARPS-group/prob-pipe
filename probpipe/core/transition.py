@@ -19,6 +19,7 @@ Core API::
 
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable, Iterable
 from typing import Any
 
@@ -90,16 +91,15 @@ def iterate[T, S](
 
         # Auto-attach provenance if not already set
         if result.source is None:
-            try:
+            # write-once guard: re-sourcing an already-sourced result raises
+            with contextlib.suppress(RuntimeError):
                 result.with_source(
-                    Provenance(
+                    Provenance.create(
                         "iterate",
-                        parents=(current,),
+                        parents=[current],
                         metadata={"step": i},
                     )
                 )
-            except RuntimeError:
-                pass  # write-once guard
 
         dists.append(result)
         current = result
@@ -217,7 +217,6 @@ def with_resampling(
     :class:`~probpipe.core.distribution.EmpiricalDistribution` type.
     """
     import jax
-    import jax.numpy as jnp
 
     inner_name = _step_fn_name(step_fn)
     call_count = 0
@@ -240,17 +239,18 @@ def with_resampling(
                 # Resample per-field (samples is a NumericRecord; index
                 # each field's stacked array along the sample axis).
                 from .record import Record
-                new_record = Record({
-                    f: out_dist.samples[f][indices]
-                    for f in out_dist.samples.fields
-                })
+
+                new_record = Record(
+                    {f: out_dist.samples[f][indices] for f in out_dist.samples.fields}
+                )
                 resampled = EmpiricalDistribution(
-                    new_record, name=out_dist.name,
+                    new_record,
+                    name=out_dist.name,
                 )
                 resampled.with_source(
-                    Provenance(
+                    Provenance.create(
                         "resample",
-                        parents=(out_dist,),
+                        parents=[out_dist],
                         metadata={"ess": ess, "ess_ratio": ess_ratio},
                     )
                 )

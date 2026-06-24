@@ -2,27 +2,27 @@
 
 import jax
 import jax.numpy as jnp
-import math
 import numpy as np
 import pytest
 
 from probpipe import (
     Distribution,
     FlatNumericRecordDistribution,
+    FlattenedDistributionView,
+    MultivariateNormal,
+    Normal,
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
-    FlattenedDistributionView,
-    Normal,
-    MultivariateNormal,
     from_distribution,
-    EmpiricalDistribution,
+    log_prob,
+    sample,
+    unnormalized_log_prob,
 )
-from probpipe import log_prob, sample, unnormalized_log_prob
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def key():
@@ -57,6 +57,7 @@ def matrix_mvn():
 # Hierarchy checks
 # ---------------------------------------------------------------------------
 
+
 class TestHierarchy:
     def test_arraydist_is_pytreearraydist(self, scalar_normal):
         assert isinstance(scalar_normal, NumericRecordDistribution)
@@ -75,13 +76,16 @@ class TestHierarchy:
 # Distribution[T] base class methods
 # ---------------------------------------------------------------------------
 
+
 class TestDistributionBase:
     """Tests for methods defined on Distribution[T] itself."""
 
     def test_log_prob_raises_by_default(self):
         """Distribution[T] without SupportsLogProb raises TypeError."""
+
         class StubDist(Distribution):
             pass
+
         d = StubDist(name="stub")
         with pytest.raises(TypeError, match="does not support log_prob"):
             log_prob(d, jnp.array(0.0))
@@ -119,6 +123,7 @@ class TestDistributionBase:
 # NumericRecordDistribution trivial pytree interface
 # ---------------------------------------------------------------------------
 
+
 class TestArrayDistributionPyTreeInterface:
     def test_treedef_scalar(self, scalar_normal):
         td = scalar_normal.treedef
@@ -153,6 +158,7 @@ class TestArrayDistributionPyTreeInterface:
 # flatten_value / unflatten_value on NumericRecordDistribution
 # ---------------------------------------------------------------------------
 
+
 class TestArrayDistFlattenUnflatten:
     def test_flatten_vector_sample(self, vector_mvn, key):
         s = sample(vector_mvn, key=key)
@@ -164,18 +170,21 @@ class TestArrayDistFlattenUnflatten:
         s = sample(vector_mvn, key=key)
         flat = vector_mvn.flatten_value(s, event_shape=vector_mvn.event_shape)
         restored = vector_mvn.unflatten_value(
-            flat, template=vector_mvn.record_template,
+            flat,
+            template=vector_mvn.event_template,
         )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
     def test_flatten_unflatten_roundtrip_batched(self, vector_mvn, key):
         samples = jnp.asarray(sample(vector_mvn, key=key, sample_shape=(5,)))
         flat = vector_mvn.flatten_value(
-            samples, event_shape=vector_mvn.event_shape,
+            samples,
+            event_shape=vector_mvn.event_shape,
         )
         assert flat.shape == (5, 3)
         restored = vector_mvn.unflatten_value(
-            flat, template=vector_mvn.record_template,
+            flat,
+            template=vector_mvn.event_template,
         )
         np.testing.assert_allclose(restored, samples, atol=1e-6)
 
@@ -184,7 +193,8 @@ class TestArrayDistFlattenUnflatten:
         flat = matrix_mvn.flatten_value(s, event_shape=matrix_mvn.event_shape)
         assert flat.shape == (4,)
         restored = matrix_mvn.unflatten_value(
-            flat, template=matrix_mvn.record_template,
+            flat,
+            template=matrix_mvn.event_template,
         )
         np.testing.assert_allclose(restored, s, atol=1e-6)
 
@@ -192,6 +202,7 @@ class TestArrayDistFlattenUnflatten:
 # ---------------------------------------------------------------------------
 # as_flat_distribution / FlattenedDistributionView
 # ---------------------------------------------------------------------------
+
 
 class TestFlattenedDistributionView:
     def test_as_flat_returns_flattened_view(self, vector_mvn):
@@ -221,7 +232,8 @@ class TestFlattenedDistributionView:
         flat_dist = vector_mvn.as_flat_distribution()
         s = sample(vector_mvn, key=key)
         flat_sample = vector_mvn.flatten_value(
-            s, event_shape=vector_mvn.event_shape,
+            s,
+            event_shape=vector_mvn.event_shape,
         )
 
         lp_original = log_prob(vector_mvn, s)
@@ -239,7 +251,8 @@ class TestFlattenedDistributionView:
         np.testing.assert_allclose(
             restored,
             vector_mvn.unflatten_value(
-                flat_sample, template=vector_mvn.record_template,
+                flat_sample,
+                template=vector_mvn.event_template,
             ),
             atol=1e-6,
         )
@@ -258,7 +271,8 @@ class TestFlattenedDistributionView:
         flat_dist = matrix_mvn.as_flat_distribution()
         s = sample(matrix_mvn, key=key)
         flat_sample = matrix_mvn.flatten_value(
-            s, event_shape=matrix_mvn.event_shape,
+            s,
+            event_shape=matrix_mvn.event_shape,
         )
 
         lp_original = log_prob(matrix_mvn, s)
@@ -270,23 +284,25 @@ class TestFlattenedDistributionView:
 # supports property
 # ---------------------------------------------------------------------------
 
+
 class TestSupports:
     def test_supports_is_per_field_dict(self, scalar_normal):
         """supports returns a per-field dict of constraints."""
         from probpipe import real
+
         result = scalar_normal.supports
         assert isinstance(result, dict)
         assert len(result) == 1
         # The single field's constraint should match .support
-        assert list(result.values())[0] == scalar_normal.support
-        assert list(result.values())[0] == real
+        assert next(iter(result.values())) == scalar_normal.support
+        assert next(iter(result.values())) == real
 
     def test_dtypes_is_per_field_dict(self, scalar_normal):
         """dtypes returns a per-field dict of dtypes."""
         result = scalar_normal.dtypes
         assert isinstance(result, dict)
         assert len(result) == 1
-        assert list(result.values())[0] == scalar_normal.dtype
+        assert next(iter(result.values())) == scalar_normal.dtype
 
 
 # ---------------------------------------------------------------------------
@@ -311,19 +327,19 @@ class TestCanonicalConvenience:
         today triggers (every shipped class is single-leaf via the
         auto-template helper)."""
         from probpipe import NumericRecord
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class TwoField(NumericRecordDistribution):
             # Multi-leaf subclasses bypass the single-field auto-template
-            # by overriding ``record_template`` directly. The base
+            # by overriding ``event_template`` directly. The base
             # ``event_shape`` raises ``NotImplementedError`` for
             # multi-leaf templates — there's no single-field shortcut
             # to provide — so we leave it inherited (callers should
             # reach for ``event_shapes`` instead).
 
             @property
-            def record_template(self):
-                return RecordTemplate(a=(), b=(2,))
+            def event_template(self):
+                return EventTemplate(a=(), b=(2,))
 
             @property
             def dtypes(self):
@@ -332,6 +348,7 @@ class TestCanonicalConvenience:
             @property
             def supports(self):
                 from probpipe import real
+
                 return {"a": real, "b": real}
 
             def _sample(self, key, sample_shape=()):
@@ -341,7 +358,7 @@ class TestCanonicalConvenience:
                 # template's per-field event shapes.
                 return NumericRecord(
                     a=jnp.zeros(sample_shape),
-                    b=jnp.zeros(sample_shape + (2,)),
+                    b=jnp.zeros((*sample_shape, 2)),
                 )
 
         return TwoField(name="two_field")
@@ -354,7 +371,7 @@ class TestCanonicalConvenience:
         (``dtype`` equals the single value in ``dtypes``).
         """
         assert scalar_normal.dtype == jnp.float32
-        assert scalar_normal.dtype == list(scalar_normal.dtypes.values())[0]
+        assert scalar_normal.dtype == next(iter(scalar_normal.dtypes.values()))
 
     def test_dtype_returns_none_when_dtypes_mixed(self, multi_leaf_dist):
         """Multi-leaf with mixed dtypes: ``dtype`` is ``None``."""
@@ -368,7 +385,8 @@ class TestCanonicalConvenience:
             _ = multi_leaf_dist.support
 
     def test_check_support_compatible_includes_field_name_on_multi_leaf(
-        self, multi_leaf_dist,
+        self,
+        multi_leaf_dist,
     ):
         """``_check_support_compatible`` reads canonical ``supports``
         (per-leaf) on the source. For a multi-leaf source, the field
@@ -380,14 +398,17 @@ class TestCanonicalConvenience:
         check raises with its name.
         """
         from probpipe import Gamma
+
         target = Gamma(concentration=1.0, rate=1.0, name="gamma_target")
         with pytest.raises(
-            ValueError, match=r"TwoField field 'a' \(support=real\)",
+            ValueError,
+            match=r"TwoField field 'a' \(support=real\)",
         ):
             target._check_support_compatible(multi_leaf_dist)
 
     def test_check_support_compatible_multi_field_target_field_count_mismatch(
-        self, multi_leaf_dist,
+        self,
+        multi_leaf_dist,
     ):
         """Multi-field target with a different field count from the
         source raises ``ValueError`` rather than silently truncating
@@ -397,14 +418,14 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class ThreeField(NumericRecordDistribution):
             """Multi-field target with three fields (source has two)."""
 
             @property
-            def record_template(self):
-                return RecordTemplate(a=(), b=(), c=())
+            def event_template(self):
+                return EventTemplate(a=(), b=(), c=())
 
             @property
             def dtypes(self):
@@ -413,10 +434,12 @@ class TestCanonicalConvenience:
             @property
             def supports(self):
                 from probpipe import positive
+
                 return {"a": positive, "b": positive, "c": positive}
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 from probpipe import NumericRecord
+
                 return NumericRecord(
                     a=jnp.zeros(sample_shape),
                     b=jnp.zeros(sample_shape),
@@ -435,16 +458,16 @@ class TestCanonicalConvenience:
         positionally; the first incompatible pair raises with both
         field names in the message.
         """
+        from probpipe import NumericRecord, positive, real
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import RecordTemplate
-        from probpipe import NumericRecord, positive, real
+        from probpipe.core.record import EventTemplate
 
         class TwoFieldSource(NumericRecordDistribution):
             @property
-            def record_template(self):
-                return RecordTemplate(s1=(), s2=())
+            def event_template(self):
+                return EventTemplate(s1=(), s2=())
 
             @property
             def dtypes(self):
@@ -456,13 +479,14 @@ class TestCanonicalConvenience:
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 return NumericRecord(
-                    s1=jnp.zeros(sample_shape), s2=jnp.zeros(sample_shape),
+                    s1=jnp.zeros(sample_shape),
+                    s2=jnp.zeros(sample_shape),
                 )
 
         class TwoFieldTarget(NumericRecordDistribution):
             @property
-            def record_template(self):
-                return RecordTemplate(t1=(), t2=())
+            def event_template(self):
+                return EventTemplate(t1=(), t2=())
 
             @property
             def dtypes(self):
@@ -474,7 +498,8 @@ class TestCanonicalConvenience:
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 return NumericRecord(
-                    t1=jnp.zeros(sample_shape), t2=jnp.zeros(sample_shape),
+                    t1=jnp.zeros(sample_shape),
+                    t2=jnp.zeros(sample_shape),
                 )
 
         source = TwoFieldSource(name="source")
@@ -491,6 +516,7 @@ class TestCanonicalConvenience:
         leaves) are treated as "unknown" — the check returns silently
         rather than raising ``AttributeError``.
         """
+
         class _NoSupportsSource:
             """Pretends to be a source but has no ``supports`` attribute."""
 
@@ -499,7 +525,8 @@ class TestCanonicalConvenience:
         scalar_normal._check_support_compatible(_NoSupportsSource())  # no raise
 
     def test_check_support_compatible_skips_when_supports_not_implemented(
-        self, scalar_normal,
+        self,
+        scalar_normal,
     ):
         """A source whose ``supports`` property raises
         ``NotImplementedError`` (the default for any
@@ -513,14 +540,14 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import RecordTemplate
+        from probpipe.core.record import EventTemplate
 
         class _UnimplSupportsSource(NumericRecordDistribution):
             """Multi-field NRD that explicitly doesn't declare supports."""
 
             @property
-            def record_template(self):
-                return RecordTemplate(a=(), b=())
+            def event_template(self):
+                return EventTemplate(a=(), b=())
 
             @property
             def dtypes(self):
@@ -531,8 +558,10 @@ class TestCanonicalConvenience:
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 from probpipe import NumericRecord
+
                 return NumericRecord(
-                    a=jnp.zeros(sample_shape), b=jnp.zeros(sample_shape),
+                    a=jnp.zeros(sample_shape),
+                    b=jnp.zeros(sample_shape),
                 )
 
         scalar_normal._check_support_compatible(
@@ -546,11 +575,10 @@ class TestCanonicalConvenience:
     def test_treedef_record_for_multi_leaf(self, multi_leaf_dist):
         """Multi-leaf: ``treedef`` matches a ``NumericRecord`` skeleton
         with the same field names — locks the relationship between
-        ``record_template`` and the sample pytree."""
+        ``event_template`` and the sample pytree."""
         from probpipe import NumericRecord
-        expected = jax.tree.structure(
-            NumericRecord(a=jnp.zeros(()), b=jnp.zeros((2,)))
-        )
+
+        expected = jax.tree.structure(NumericRecord(a=jnp.zeros(()), b=jnp.zeros((2,))))
         assert multi_leaf_dist.treedef == expected
 
     def test_treedef_is_cached(self, multi_leaf_dist):
@@ -573,6 +601,7 @@ class TestCanonicalConvenience:
         ``NumericRecord``.
         """
         from probpipe import NumericRecord
+
         out = multi_leaf_dist._sample(jax.random.PRNGKey(0), ())
         assert isinstance(out, NumericRecord)
         assert tuple(out.keys()) == ("a", "b")
@@ -593,16 +622,19 @@ class TestIntegerDtypeReporting:
 
     def test_bernoulli_dtype_is_int32(self):
         from probpipe import Bernoulli
+
         assert Bernoulli(probs=0.5, name="x").dtype == jnp.int32
 
     def test_categorical_dtype_is_int32(self):
         from probpipe import Categorical
+
         assert Categorical(probs=jnp.array([0.5, 0.5]), name="x").dtype == jnp.int32
 
     def test_normal_dtype_is_float(self):
         """Normal continues to report float (no regression on the
         always-float family)."""
         from probpipe import Normal
+
         assert jnp.issubdtype(Normal(loc=0.0, scale=1.0, name="x").dtype, jnp.floating)
 
     def test_poisson_dtype_is_float(self):
@@ -612,12 +644,14 @@ class TestIntegerDtypeReporting:
         CHANGELOG-documented behaviour.
         """
         from probpipe import Poisson
+
         assert Poisson(rate=2.0, name="x").dtype == jnp.float32
 
 
 # ---------------------------------------------------------------------------
 # FlattenedDistributionView on EmpiricalDistribution
 # ---------------------------------------------------------------------------
+
 
 class TestFlattenedDistributionViewEmpirical:
     def test_empirical_flatten_roundtrip(self, key):

@@ -9,23 +9,20 @@ Covers:
 - condition_on → ApproximateDistribution
 """
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
-    Likelihood,
     ApproximateDistribution,
+    EventTemplate,
     MultivariateNormal,
+    Record,
     SimpleModel,
     SupportsLogProb,
     SupportsSampling,
-    Record,
-    RecordTemplate,
     condition_on,
 )
-
 
 # ---------------------------------------------------------------------------
 # Test likelihood (plain class — satisfies Likelihood protocol)
@@ -75,7 +72,7 @@ class TestSimpleModel:
     def test_requires_record_distribution_prior(self):
         """SimpleModel rejects priors that satisfy SupportsLogProb but
         aren't a ``RecordDistribution`` — the model uses
-        ``prior.record_template`` to merge in likelihood data fields,
+        ``prior.event_template`` to merge in likelihood data fields,
         so an unnamed prior is structurally incompatible.
 
         The intersection of ``SupportsLogProb`` and
@@ -125,7 +122,7 @@ class TestSimpleModel:
         assert model.likelihood is likelihood
 
     def test_supports_named_components(self, model):
-        assert hasattr(model, 'fields')
+        assert hasattr(model, "fields")
 
     def test_getitem_parameters(self, model, prior):
         assert model["parameters"] is prior
@@ -192,14 +189,23 @@ class TestSimpleModelConditioningPaths:
 
     def test_condition_on_hmc(self, model, data):
         result = condition_on(
-            model, data, num_results=30, num_warmup=10, step_size=0.3,
-            random_seed=42, method="tfp_hmc",
+            model,
+            data,
+            num_results=30,
+            num_warmup=10,
+            step_size=0.3,
+            random_seed=42,
+            method="tfp_hmc",
         )
         assert isinstance(result, ApproximateDistribution)
 
     def test_condition_on_zero_warmup(self, model, data):
         result = condition_on(
-            model, data, num_results=30, num_warmup=0, step_size=0.3,
+            model,
+            data,
+            num_results=30,
+            num_warmup=0,
+            step_size=0.3,
             random_seed=42,
         )
         assert isinstance(result, ApproximateDistribution)
@@ -207,12 +213,18 @@ class TestSimpleModelConditioningPaths:
     def test_condition_on_bad_method(self, model, data):
         with pytest.raises(KeyError):
             from probpipe import condition_on
+
             condition_on(model, data, method="nonexistent_method")
 
     def test_condition_on_explicit_init(self, model, data):
         result = condition_on(
-            model, data, num_results=30, num_warmup=10, step_size=0.3,
-            random_seed=42, init=jnp.ones(2),
+            model,
+            data,
+            num_results=30,
+            num_warmup=10,
+            step_size=0.3,
+            random_seed=42,
+            init=jnp.ones(2),
         )
         assert isinstance(result, ApproximateDistribution)
 
@@ -230,7 +242,12 @@ class TestSimpleModelConditioningPaths:
         model = SimpleModel(prior, NonTraceableLikelihood())
         data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
         result = condition_on(
-            model, data, num_results=30, num_warmup=10, step_size=0.3, random_seed=42,
+            model,
+            data,
+            num_results=30,
+            num_warmup=10,
+            step_size=0.3,
+            random_seed=42,
         )
         assert isinstance(result, ApproximateDistribution)
 
@@ -240,7 +257,11 @@ class TestSimpleModelConditioningPaths:
         model = SimpleModel(prior, GaussianLikelihood())
         data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
         result = condition_on(
-            model, data, num_results=30, num_warmup=10, random_seed=42,
+            model,
+            data,
+            num_results=30,
+            num_warmup=10,
+            random_seed=42,
         )
         assert result.inference_data is not None
         assert hasattr(result.inference_data, "posterior")
@@ -268,21 +289,21 @@ class _ValuesAwareLikelihood:
 
 
 class TestSimpleModelWithValues:
-    """SimpleModel propagates record_template and accepts Record data."""
+    """SimpleModel propagates event_template and accepts Record data."""
 
     @pytest.fixture
     def prior_with_template(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._record_template = RecordTemplate(a=(), b=())
+        prior._event_template = EventTemplate(a=(), b=())
         return prior
 
     @pytest.fixture
     def likelihood(self):
         return _ValuesAwareLikelihood()
 
-    def test_record_template_propagated(self, prior_with_template, likelihood):
+    def test_event_template_propagated(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
-        assert model.record_template is prior_with_template.record_template
+        assert model.event_template is prior_with_template.event_template
 
     def test_fields_from_template(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
@@ -304,8 +325,12 @@ class TestSimpleModelWithValues:
         model = SimpleModel(prior_with_template, likelihood)
         data = Record(obs=jnp.array([[1.0, 2.0], [1.5, 2.5]]))
         result = condition_on(
-            model, data, num_results=50, num_warmup=20,
-            step_size=0.3, random_seed=42,
+            model,
+            data,
+            num_results=50,
+            num_warmup=20,
+            step_size=0.3,
+            random_seed=42,
         )
         assert isinstance(result, ApproximateDistribution)
 
@@ -313,8 +338,12 @@ class TestSimpleModelWithValues:
         model = SimpleModel(prior_with_template, likelihood)
         data = jnp.array([[1.0, 2.0], [1.5, 2.5]])
         result = condition_on(
-            model, data, num_results=50, num_warmup=20,
-            step_size=0.3, random_seed=42,
+            model,
+            data,
+            num_results=50,
+            num_warmup=20,
+            step_size=0.3,
+            random_seed=42,
         )
         assert isinstance(result, ApproximateDistribution)
 
@@ -323,12 +352,12 @@ class TestSimpleModelWithValues:
         model = SimpleModel(prior, GaussianLikelihood())
         assert "params" in model.fields
         assert model.parameter_names == ("params",)
-        assert model.record_template is not None
+        assert model.event_template is not None
 
     def test_field_overlap_raises(self):
         """SimpleModel rejects overlapping prior and data field names."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 10, name="params")
-        prior._record_template = RecordTemplate(X=(), y=())
+        prior._event_template = EventTemplate(X=(), y=())
 
         class _OverlapLikelihood:
             def log_likelihood(self, params, data):
@@ -336,13 +365,14 @@ class TestSimpleModelWithValues:
 
             @property
             def data_template(self):
-                return RecordTemplate(X=(0, 0), y=(0,))
+                return EventTemplate(X=(0, 0), y=(0,))
 
         with pytest.raises(ValueError, match="overlap"):
             SimpleModel(prior, _OverlapLikelihood())
 
     def test_getitem_data_field_returns_likelihood(self, prior_with_template, likelihood):
         """Data field names return the likelihood."""
+
         class _DataTemplateLikelihood(_ValuesAwareLikelihood):
             @property
             def data_template(self):
@@ -354,6 +384,7 @@ class TestSimpleModelWithValues:
 
     def test_condition_on_rejects_positional_and_named_data(self, prior_with_template):
         """Cannot pass both positional observed and named data kwargs."""
+
         class _DataTemplateLikelihood(_ValuesAwareLikelihood):
             @property
             def data_template(self):
@@ -362,7 +393,9 @@ class TestSimpleModelWithValues:
         model = SimpleModel(prior_with_template, _DataTemplateLikelihood())
         with pytest.raises(ValueError, match="Cannot provide both"):
             condition_on(
-                model, jnp.array([1.0, 2.0]),
+                model,
+                jnp.array([1.0, 2.0]),
                 obs=jnp.array([1.0, 2.0]),
-                num_results=50, random_seed=42,
+                num_results=50,
+                random_seed=42,
             )

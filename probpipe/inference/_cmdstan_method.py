@@ -16,6 +16,7 @@ def _import_cmdstanpy():
     """Import cmdstanpy or raise a helpful error."""
     try:
         import cmdstanpy
+
         return cmdstanpy
     except ImportError as e:
         raise ImportError(
@@ -29,6 +30,7 @@ class CmdStanNutsMethod(InferenceMethod):
 
     def __init__(self) -> None:
         from ..modeling._stan import StanModel
+
         self._model_type = StanModel
 
     @property
@@ -47,8 +49,9 @@ class CmdStanNutsMethod(InferenceMethod):
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires StanModel")
+            return MethodInfo(
+                feasible=False, method_name=self.name, description="Requires StanModel"
+            )
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
@@ -82,7 +85,11 @@ class CmdStanNutsMethod(InferenceMethod):
         inference_data = azb.from_cmdstanpy(fit)
 
         return make_posterior(
-            chains, parents=(dist,), algorithm="cmdstan_nuts",
+            chains,
+            parents=(dist,),
+            algorithm="cmdstan_nuts",
             auxiliary=inference_data,
-            num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+            num_results=num_results,
+            num_warmup=num_warmup,
+            num_chains=num_chains,
         )

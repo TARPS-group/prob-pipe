@@ -207,10 +207,9 @@ class IncrementalConditioner[P, D](Module):
         """
         if kwargs:
             if data is not None:
-                raise ValueError(
-                    "Cannot provide both `data` and named data kwargs"
-                )
+                raise ValueError("Cannot provide both `data` and named data kwargs")
             from ..core.record import Record
+
             data = Record(kwargs)
         posterior = self._step(self._curr_posterior, data)
         self._curr_posterior = posterior

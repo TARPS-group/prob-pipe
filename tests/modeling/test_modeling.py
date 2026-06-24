@@ -1,18 +1,16 @@
 """Tests for probpipe.modeling — Likelihood protocols, IncrementalConditioner, lazy imports."""
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from probpipe import MultivariateNormal, EmpiricalDistribution
+from probpipe import EmpiricalDistribution, MultivariateNormal
 from probpipe.modeling import (
     GenerativeLikelihood,
     IncrementalConditioner,
     Likelihood,
-    SimpleModel,
 )
-
 
 # ---------------------------------------------------------------------------
 # Lazy imports — probpipe.modeling.__getattr__ branches
@@ -24,16 +22,19 @@ class TestLazyImports:
 
     def test_stanmodel_lazy_load(self):
         from probpipe.modeling import StanModel
+
         assert StanModel is not None
 
     def test_pymcmodel_lazy_load(self):
         from probpipe.modeling import PyMCModel
+
         assert PyMCModel is not None
 
     def test_unknown_attr_raises(self):
         import probpipe.modeling as mod
+
         with pytest.raises(AttributeError, match="has no attribute"):
-            mod.NonExistent
+            _ = mod.NonExistent
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +47,7 @@ class MultivariateNormalLikelihood:
 
     def log_likelihood(self, params, data):
         residuals = data - params[None, :]
-        return -0.5 * jnp.sum(residuals ** 2)
+        return -0.5 * jnp.sum(residuals**2)
 
 
 class SimpleGenerativeLikelihood:
@@ -54,7 +55,7 @@ class SimpleGenerativeLikelihood:
 
     def log_likelihood(self, params, data):
         residuals = data - params[None, :]
-        return -0.5 * jnp.sum(residuals ** 2)
+        return -0.5 * jnp.sum(residuals**2)
 
     def generate_data(self, params, num_observations, *, key=None):
         if key is None:
@@ -208,7 +209,7 @@ class TestIncrementalConditioner:
 
         Previously batches 2+ collapsed to a single unnamed ``posterior``
         field of shape ``(d,)`` because the samples→KDE conversion at the
-        start of each subsequent step dropped the ``record_template``.
+        start of each subsequent step dropped the ``event_template``.
         """
         import tensorflow_probability.substrates.jax.glm as tfp_glm
 
@@ -232,6 +233,5 @@ class TestIncrementalConditioner:
             cond.update(X=X[s:e], y=y[s:e])
             posterior_mean = mean(cond.curr_posterior)
             assert posterior_mean.fields == ("intercept", "slope"), (
-                f"named fields lost after batch ending at {e}: "
-                f"got {posterior_mean.fields}"
+                f"named fields lost after batch ending at {e}: got {posterior_mean.fields}"
             )

@@ -13,7 +13,7 @@ from collections.abc import Callable
 
 import jax.numpy as jnp
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..custom_types import Array, ArrayLike
 from ._distribution_base import Distribution
 
 # ---------------------------------------------------------------------------
@@ -59,16 +59,12 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
     @property
     def input_shape(self) -> tuple[int, ...]:
         """Shape of a single input point (array-valued case)."""
-        raise NotImplementedError(
-            f"{type(self).__name__} does not define input_shape"
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not define input_shape")
 
     @property
     def output_shape(self) -> tuple[int, ...]:
         """Shape of a single output point (array-valued case)."""
-        raise NotImplementedError(
-            f"{type(self).__name__} does not define output_shape"
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not define output_shape")
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +220,7 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
         """
         ndim_input = len(self._input_shape)
         n = X.shape[-(ndim_input + 1)]
-        extra_batch = tuple(X.shape[:-(ndim_input + 1)])
+        extra_batch = tuple(X.shape[: -(ndim_input + 1)])
         return extra_batch, n
 
     def _validate_X(self, X: Array) -> None:
@@ -240,13 +236,10 @@ class ArrayRandomFunction(RandomFunction[Array, Array]):
         trailing = tuple(X.shape[-ndim_input:]) if ndim_input > 0 else ()
         if trailing != self._input_shape:
             raise ValueError(
-                f"Trailing dimensions of X {trailing} do not match "
-                f"input_shape={self._input_shape}"
+                f"Trailing dimensions of X {trailing} do not match input_shape={self._input_shape}"
             )
 
-    def _validate_joint_request(
-        self, joint_inputs: bool, joint_outputs: bool
-    ) -> None:
+    def _validate_joint_request(self, joint_inputs: bool, joint_outputs: bool) -> None:
         """Check that the requested joint mode is supported."""
         if joint_inputs and not self.supports_joint_inputs:
             raise ValueError(

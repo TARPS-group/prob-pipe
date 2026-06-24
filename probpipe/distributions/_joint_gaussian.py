@@ -10,7 +10,7 @@ from types import MappingProxyType
 import jax.numpy as jnp
 
 from .._dtype import _promote_floats
-from ..core._record_distribution import _build_record_template
+from ..core._record_distribution import _build_event_template
 from ..core.distribution import (
     NumericRecordDistribution,
     _mc_expectation,
@@ -32,7 +32,15 @@ from ._joint_utils import (
 )
 
 
-class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb, SupportsMean, SupportsVariance, SupportsCovariance, SupportsConditioning):
+class JointGaussian(
+    NumericRecordDistribution,
+    SupportsSampling,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsVariance,
+    SupportsCovariance,
+    SupportsConditioning,
+):
     """
     Joint Gaussian distribution with named components and cross-covariance.
 
@@ -83,9 +91,7 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
                 f"({total_dim},) from component shapes {component_shapes}."
             )
         if cov.shape != (total_dim, total_dim):
-            raise ValueError(
-                f"cov shape {cov.shape} does not match ({total_dim}, {total_dim})."
-            )
+            raise ValueError(f"cov shape {cov.shape} does not match ({total_dim}, {total_dim}).")
 
         self._mean_vec = mean
         self._cov_mat = cov
@@ -112,7 +118,7 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
 
         self._components = components
         self._component_slices = slices  # still needed for Gaussian conditioning
-        self._record_template = _build_record_template(self._components)
+        self._event_template = _build_event_template(self._components)
         self._total_dim = total_dim  # still needed for Gaussian conditioning
 
     @property
@@ -137,7 +143,7 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        """Per-field dtype, aligned with ``record_template.fields``.
+        """Per-field dtype, aligned with ``event_template.fields``.
 
         Every field shares the (float) dtype of the mean / covariance
         arrays — ``_promote_floats`` in ``__init__`` casts both to a
@@ -159,6 +165,7 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
         sample_shape: tuple[int, ...] = (),
     ):
         from .multivariate import MultivariateNormal as MVN
+
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         flat = full_mvn._sample(key, sample_shape)
         return self._unflatten_flat_vec(flat, sample_shape=sample_shape)
@@ -166,22 +173,26 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
     def _unflatten_flat_vec(self, flat: Array, sample_shape: tuple[int, ...] = ()):
         """Split a flat Gaussian sample vector into per-component arrays."""
         from ..core._record_array import NumericRecordArray
+
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = flat[..., sl]
         if sample_shape:
             return NumericRecordArray(
-                result, batch_shape=sample_shape,
-                template=self.record_template,
+                result,
+                batch_shape=sample_shape,
+                template=self.event_template,
             )
         return Record(result)
 
     def _log_prob(self, value) -> Array:
         from ..core._record_array import RecordArray
+
         if not isinstance(value, (Record, RecordArray)):
             value = Record(value)
         from .multivariate import MultivariateNormal as MVN
+
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
         # ``Record``/``RecordArray`` carry their own structure, so the
         # static ``flatten_value`` ignores ``event_shape`` for these
@@ -210,14 +221,17 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
         return self._cov_mat
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+        return _mc_expectation(
+            self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+        )
 
     def _condition_on(self, observed=None, /, **kwargs):
         observed_leaves = _parse_condition_args(self, observed, kwargs)
         return self._condition_on_impl(observed_leaves)
 
     def _condition_on_impl(
-        self, observed_leaves: dict[KeyPath, ArrayLike],
+        self,
+        observed_leaves: dict[KeyPath, ArrayLike],
     ) -> JointGaussian:
         """Condition on observed component values using exact Gaussian formulas.
 
@@ -298,16 +312,16 @@ class JointGaussian(NumericRecordDistribution, SupportsSampling, SupportsLogProb
             name=self._name,
             **u_shapes,
         )
-        result.with_source(Provenance(
-            "condition_on",
-            parents=(self,),
-            metadata={"conditioned": list(observed.keys())},
-        ))
+        result.with_source(
+            Provenance.create(
+                "condition_on",
+                parents=[self],
+                metadata={"conditioned": list(observed.keys())},
+            )
+        )
         return result
 
     def __repr__(self) -> str:
-        comp_str = ", ".join(
-            f"{k}={v}" for k, v in self._component_shapes.items()
-        )
+        comp_str = ", ".join(f"{k}={v}" for k, v in self._component_shapes.items())
         name_str = f", name='{self._name}'" if self._name else ""
         return f"JointGaussian({comp_str}{name_str})"

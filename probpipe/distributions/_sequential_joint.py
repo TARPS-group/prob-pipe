@@ -14,17 +14,15 @@ from types import MappingProxyType
 import jax
 import jax.numpy as jnp
 
-from ..custom_types import Array, ArrayLike, PRNGKey
+from ..core._record_distribution import (
+    RecordDistribution,
+    _build_event_template,
+)
 from ..core.distribution import (
     Distribution,
     NumericRecordDistribution,
     _mc_expectation,
 )
-from ..core._record_distribution import (
-    RecordDistribution, _build_record_template,
-)
-from ..core.record import Record
-from ..core.provenance import Provenance
 from ..core.protocols import (
     SupportsConditioning,
     SupportsLogProb,
@@ -33,6 +31,9 @@ from ..core.protocols import (
     SupportsVariance,
     protocols_supported_by_all,
 )
+from ..core.provenance import Provenance
+from ..core.record import Record
+from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
     _parse_condition_args,
@@ -83,9 +84,10 @@ def _sequential_class_for_components(components: dict) -> type:
     """
     leaves = list(components.values())
     extra_bases = protocols_supported_by_all(
-        leaves, (SupportsLogProb, SupportsMean, SupportsVariance),
+        leaves,
+        (SupportsLogProb, SupportsMean, SupportsVariance),
     )
-    all_numeric = all(isinstance(l, NumericRecordDistribution) for l in leaves)
+    all_numeric = all(isinstance(leaf, NumericRecordDistribution) for leaf in leaves)
 
     key = (frozenset(extra_bases), all_numeric)
     if key in _SEQUENTIAL_CLASS_CACHE:
@@ -93,9 +95,7 @@ def _sequential_class_for_components(components: dict) -> type:
 
     # Order matters: numeric mixin in front of protocol mixins so the
     # MRO matches standalone NRDs (numeric API → protocols → object).
-    numeric_mixin: tuple[type, ...] = (
-        (NumericRecordDistribution,) if all_numeric else ()
-    )
+    numeric_mixin: tuple[type, ...] = (NumericRecordDistribution,) if all_numeric else ()
     bases = (SequentialJointDistribution, *numeric_mixin, *extra_bases)
 
     if bases == (SequentialJointDistribution,):
@@ -108,7 +108,9 @@ def _sequential_class_for_components(components: dict) -> type:
 
 
 class SequentialJointDistribution(
-    RecordDistribution, SupportsSampling, SupportsConditioning,
+    RecordDistribution,
+    SupportsSampling,
+    SupportsConditioning,
 ):
     """
     Joint distribution with autoregressive (sequential) dependence.
@@ -169,8 +171,8 @@ class SequentialJointDistribution(
         if not components:
             raise ValueError("SequentialJointDistribution requires at least one component.")
 
-        self._raw_components: dict[str, Distribution | Callable[..., Distribution]] = (
-            dict(components)
+        self._raw_components: dict[str, Distribution | Callable[..., Distribution]] = dict(
+            components
         )
         if name is None:
             name = "sequential(" + ",".join(components.keys()) + ")"
@@ -225,7 +227,7 @@ class SequentialJointDistribution(
 
         # Build _components dict from resolved prototypes (for shape introspection)
         self._components = resolved
-        self._record_template = _build_record_template(self._components)
+        self._event_template = _build_event_template(self._components)
 
         # Reparent to the dynamic subclass whose protocol bases match the
         # resolved components' capabilities. Done after component
@@ -254,9 +256,7 @@ class SequentialJointDistribution(
                 bad.append((cname, unconditioned))
         if not bad:
             return None
-        details = "; ".join(
-            f"'{c}' has unconditioned parent(s) {ps}" for c, ps in bad
-        )
+        details = "; ".join(f"'{c}' has unconditioned parent(s) {ps}" for c, ps in bad)
         return (
             f"Cannot sample from this SequentialJointDistribution: "
             f"{details}. Forward sampling would draw these ancestors "
@@ -272,7 +272,7 @@ class SequentialJointDistribution(
 
     # ``fields`` / ``event_shapes`` are inherited from
     # :class:`RecordDistribution` (one entry per top-level field,
-    # delegated to ``record_template``); ``flatten_value`` /
+    # delegated to ``event_template``); ``flatten_value`` /
     # ``unflatten_value`` are inherited from
     # :class:`NumericRecordDistribution` when every leaf is numeric
     # (the dynamic class factory adds the mixin) — otherwise they
@@ -322,12 +322,14 @@ class SequentialJointDistribution(
         sample_shape: tuple[int, ...] = (),
     ):
         from ..core._record_array import NumericRecordArray
+
         full = self._sample_sequential(key, sample_shape)
         fields = {k: v for k, v in full.items() if k not in self._conditioned_names}
         if sample_shape:
             return NumericRecordArray(
-                fields, batch_shape=sample_shape,
-                template=self.record_template,
+                fields,
+                batch_shape=sample_shape,
+                template=self.event_template,
             )
         return Record(fields)
 
@@ -419,15 +421,18 @@ class SequentialJointDistribution(
         return Record({k: v._variance() for k, v in self._proto_components.items()})
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-        return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+        return _mc_expectation(
+            self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+        )
 
     def _condition_on(self, observed=None, /, **kwargs):
         observed_leaves = _parse_condition_args(self, observed, kwargs)
         return self._condition_on_impl(observed_leaves)
 
     def _condition_on_impl(
-        self, observed_leaves: dict[KeyPath, ArrayLike],
-    ) -> "SequentialJointDistribution":
+        self,
+        observed_leaves: dict[KeyPath, ArrayLike],
+    ) -> SequentialJointDistribution:
         """Condition on observed component values.
 
         The resulting distribution is sampleable as long as every conditioned
@@ -468,8 +473,7 @@ class SequentialJointDistribution(
         # if every unconditioned leaf is numeric, the result is an
         # NRD; otherwise it's a plain ``SequentialJointDistribution``.
         unconditioned_pre = {
-            k: v for k, v in self._proto_components.items()
-            if k not in all_conditioned
+            k: v for k, v in self._proto_components.items() if k not in all_conditioned
         }
         result_cls = _sequential_class_for_components(unconditioned_pre)
         result = result_cls.__new__(result_cls)
@@ -483,17 +487,21 @@ class SequentialJointDistribution(
             **{k: jnp.asarray(v) for k, v in observed.items()},
         }
         result._sampleable_error = self._compute_sampleable_error(
-            result._conditioned_names, result._callable_parents,
+            result._conditioned_names,
+            result._callable_parents,
         )
 
         # Expose only unconditioned components
         result._components = unconditioned_pre
-        result._record_template = _build_record_template(unconditioned_pre)
+        result._event_template = _build_event_template(unconditioned_pre)
 
-        result.with_source(Provenance(
-            "condition_on", parents=(self,),
-            metadata={"conditioned": list(observed)},
-        ))
+        result.with_source(
+            Provenance.create(
+                "condition_on",
+                parents=[self],
+                metadata={"conditioned": list(observed)},
+            )
+        )
         return result
 
     def __repr__(self) -> str:

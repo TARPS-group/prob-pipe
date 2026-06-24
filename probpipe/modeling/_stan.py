@@ -16,7 +16,7 @@ import numpy as np
 
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsLogProb
-from ..core.record import NumericRecordTemplate
+from ..core.record import NumericEventTemplate
 from ..custom_types import Array, ArrayLike
 from ._base import ProbabilisticModel
 
@@ -41,7 +41,7 @@ class _StanBlock(NamedTuple):
     """One Stan parameter block recovered from BridgeStan's flattened names."""
 
     name: str
-    shape: tuple[int, ...]      # () for a scalar parameter
+    shape: tuple[int, ...]  # () for a scalar parameter
     # advanced-index arrays mapping a ``shape``-shaped array onto the block's
     # flat slice in BridgeStan's order; () for a scalar.
     gather: tuple[Array, ...]
@@ -65,18 +65,14 @@ def _param_blocks(flat_names: Sequence[str]) -> tuple[_StanBlock, ...]:
         block = flat_names[i].split(".", 1)[0]
         idx_tuples: list[tuple[int, ...]] = []
         while i < n and flat_names[i].split(".", 1)[0] == block:
-            idx_tuples.append(
-                tuple(int(x) - 1 for x in flat_names[i].split(".")[1:])
-            )
+            idx_tuples.append(tuple(int(x) - 1 for x in flat_names[i].split(".")[1:]))
             i += 1
         if idx_tuples == [()]:
             blocks.append(_StanBlock(block, (), ()))
             continue
         ndim = len(idx_tuples[0])
         shape = tuple(max(t[d] for t in idx_tuples) + 1 for d in range(ndim))
-        gather = tuple(
-            jnp.asarray([t[d] for t in idx_tuples]) for d in range(ndim)
-        )
+        gather = tuple(jnp.asarray([t[d] for t in idx_tuples]) for d in range(ndim))
         blocks.append(_StanBlock(block, shape, gather))
     return tuple(blocks)
 
@@ -112,8 +108,7 @@ def _pack_block_params(
         arr = jnp.asarray(field_kwargs[b.name])
         if tuple(arr.shape) != b.shape:
             raise TypeError(
-                f"{owner}: parameter {b.name!r} expects shape {b.shape}, "
-                f"got {tuple(arr.shape)}."
+                f"{owner}: parameter {b.name!r} expects shape {b.shape}, got {tuple(arr.shape)}."
             )
         out.append(jnp.reshape(arr, (1,)) if b.shape == () else arr[b.gather])
     return jnp.concatenate(out) if out else jnp.zeros((0,))
@@ -157,8 +152,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
             import bridgestan
         except ImportError as e:
             raise ImportError(
-                "bridgestan is required for StanModel. "
-                "Install it with: pip install bridgestan"
+                "bridgestan is required for StanModel. Install it with: pip install bridgestan"
             ) from e
 
         self._stan_file = stan_file
@@ -187,13 +181,13 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         return _param_blocks(self._bs_model.param_names())
 
     @cached_property
-    def record_template(self) -> NumericRecordTemplate:
+    def event_template(self) -> NumericEventTemplate:
         """One field per Stan parameter block, shaped from BridgeStan's names."""
-        return NumericRecordTemplate({b.name: b.shape for b in self._blocks})
+        return NumericEventTemplate({b.name: b.shape for b in self._blocks})
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.record_template.fields
+        return self.event_template.fields
 
     def __getitem__(self, key: str) -> Any:
         if key in self.fields:
@@ -215,9 +209,7 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         space, assembled into the flat array ``_log_prob`` consumes (see
         :func:`_pack_block_params`). A flat array may still be passed
         positionally."""
-        return _pack_block_params(
-            type(self).__name__, self._blocks, field_kwargs
-        )
+        return _pack_block_params(type(self).__name__, self._blocks, field_kwargs)
 
     def _log_prob(self, value: Any) -> Array:
         """Log-density in the constrained parameter space.
@@ -285,21 +277,19 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
         return _param_blocks(self._model._bs_model.param_unc_names())
 
     @cached_property
-    def record_template(self) -> NumericRecordTemplate:
+    def event_template(self) -> NumericEventTemplate:
         """One field per unconstrained Stan parameter block."""
-        return NumericRecordTemplate({b.name: b.shape for b in self._blocks})
+        return NumericEventTemplate({b.name: b.shape for b in self._blocks})
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.record_template.fields
+        return self.event_template.fields
 
     def _pack_value(self, **field_kwargs: Any) -> Array:
         """Keyword form: one array per Stan parameter block in the unconstrained
         space, assembled into the flat array ``_log_prob`` consumes. A flat
         array may still be passed positionally."""
-        return _pack_block_params(
-            type(self).__name__, self._blocks, field_kwargs
-        )
+        return _pack_block_params(type(self).__name__, self._blocks, field_kwargs)
 
     def _log_prob(self, value: Any) -> Array:
         """Log-density directly in unconstrained space."""

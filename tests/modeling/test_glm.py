@@ -1,14 +1,21 @@
 """Tests for GLMLikelihood."""
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 import scipy.stats
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import GLMLikelihood, MultivariateNormal, SimpleModel, Record, RecordTemplate, condition_on, mean
-from probpipe.modeling import Likelihood, GenerativeLikelihood
+from probpipe import (
+    EventTemplate,
+    GLMLikelihood,
+    MultivariateNormal,
+    Record,
+    SimpleModel,
+    condition_on,
+    mean,
+)
+from probpipe.modeling import GenerativeLikelihood, Likelihood
 
 
 def _sigmoid(x):
@@ -28,7 +35,6 @@ def bernoulli_lik():
 
 
 class TestGLMLikelihood:
-
     def test_satisfies_likelihood_protocol(self, poisson_lik):
         assert isinstance(poisson_lik, Likelihood)
 
@@ -45,8 +51,7 @@ class TestGLMLikelihood:
     def test_poisson_log_likelihood_matches_scipy(self, poisson_lik):
         """Poisson GLM log-likelihood must match sum of scipy.stats.poisson.logpmf."""
         params = jnp.array([1.0, 0.5])
-        data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
-                          0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
+        data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1, 0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
         ll = float(poisson_lik.log_likelihood(params, data))
 
         # Independent baseline: Poisson log link →
@@ -116,7 +121,8 @@ class TestGLMLikelihood:
         assert jnp.isfinite(ll)
         # Per-datum path with 1-D covariate.
         p_lp = lik.per_datum_log_likelihood(
-            params, Record(X=jnp.asarray(x[0]), y=jnp.array(1.0)),
+            params,
+            Record(X=jnp.asarray(x[0]), y=jnp.array(1.0)),
         )
         assert jnp.isfinite(p_lp)
 
@@ -131,8 +137,7 @@ class TestGLMLikelihood:
         X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(float)
         lik = GLMLikelihood(tfp_glm.Poisson(), X, fit_intercept=False)
         params = jnp.array([0.7])  # one slope, no intercept
-        data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
-                          0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
+        data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1, 0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
         ll = float(lik.log_likelihood(params, data))
 
         params_np = np.asarray(params)
@@ -154,8 +159,7 @@ class TestGLMLikelihood:
         """GLMLikelihood works end-to-end with SimpleModel + condition_on."""
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
         model = SimpleModel(prior, poisson_lik)
-        data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
-                           0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
+        data = jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1, 0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
         posterior = condition_on(model, data, num_results=100, num_warmup=50, random_seed=0)
         m = mean(posterior)
         assert m.shape == (2,)
@@ -175,12 +179,13 @@ class TestGLMLikelihoodDataTemplate:
 
     def test_data_template_fields(self, poisson_lik):
         tpl = poisson_lik.data_template
-        assert isinstance(tpl, RecordTemplate)
+        assert isinstance(tpl, EventTemplate)
         assert tpl.fields == ("X", "y")
 
     def test_data_template_integrates_with_simple_model(self, poisson_lik):
         """SimpleModel merges GLM data_template into fields."""
         from probpipe import Normal, ProductDistribution
+
         prior = ProductDistribution(
             intercept=Normal(loc=0.0, scale=2.0, name="intercept"),
             slope=Normal(loc=0.0, scale=2.0, name="slope"),
@@ -230,13 +235,13 @@ class TestGLMLikelihoodWithValues:
     def test_condition_on_with_record_data(self, poisson_lik):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
         model = SimpleModel(prior, poisson_lik)
-        data = Record(y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
-                                    0, 2, 6, 1, 3, 2, 0, 4, 1, 3],
-                                   dtype=float))
+        data = Record(
+            y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1, 0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
+        )
         posterior = condition_on(model, data, num_results=50, num_warmup=25, random_seed=0)
         assert mean(posterior).shape == (2,)
-        # Prior has no record_template, so draws are raw arrays.
-        # Named draws require prior._record_template to be set.
+        # Prior has no event_template, so draws are raw arrays.
+        # Named draws require prior._event_template to be set.
         draws = posterior.draws()
         flat = posterior.flatten_value(draws, event_shape=posterior.event_shape)
         assert flat.shape == (50, 2)
@@ -247,9 +252,9 @@ class TestIncrementalConditionerAutoConvert:
 
     def test_auto_convert_to_kde(self):
         """update() should work without a custom condition_fn."""
-        from probpipe.modeling import IncrementalConditioner
-        from probpipe.inference import ApproximateDistribution
         from probpipe.core.protocols import SupportsLogProb
+        from probpipe.inference import ApproximateDistribution
+        from probpipe.modeling import IncrementalConditioner
 
         X = np.asarray(np.linspace(-1, 1, 20))[:, None].astype(float)
         lik = GLMLikelihood(tfp_glm.Poisson(), X)

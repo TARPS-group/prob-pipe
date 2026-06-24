@@ -14,12 +14,11 @@ Registered at priority 100 so it is always tried first for ProbPipe types.
 
 from __future__ import annotations
 
-import math
+import contextlib
 from typing import Any
 
 import jax.numpy as jnp
 
-from ..custom_types import PRNGKey
 from .._utils import _auto_key
 from ..core.distribution import (
     Distribution,
@@ -38,6 +37,7 @@ DEFAULT_NUM_SAMPLES = 1024
 # Moment-matching helpers using expectation()
 # ---------------------------------------------------------------------------
 
+
 def _mm_provenance(source, mean_result=None, var_result=None):
     """Build provenance for a moment-matching conversion.
 
@@ -46,12 +46,13 @@ def _mm_provenance(source, mean_result=None, var_result=None):
     users can inspect conversion error.
     """
     from ..core.distribution import BootstrapDistribution
+
     metadata = {}
     if isinstance(mean_result, BootstrapDistribution):
         metadata["mean_bootstrap"] = mean_result
     if isinstance(var_result, BootstrapDistribution):
         metadata["var_bootstrap"] = var_result
-    return Provenance("from_distribution", parents=(source,), metadata=metadata)
+    return Provenance.create("from_distribution", parents=[source], metadata=metadata)
 
 
 def _point_estimate(x):
@@ -59,8 +60,9 @@ def _point_estimate(x):
     or a single-field NumericRecord (the auto-wrap form returned by
     ``RecordEmpiricalDistribution._mean`` — numeric arrays auto-wrap
     as a single-field Record)."""
-    from ..core.distribution import BootstrapDistribution
     from ..core._numeric_record import NumericRecord
+    from ..core.distribution import BootstrapDistribution
+
     if isinstance(x, BootstrapDistribution):
         x = x._mean()
     if isinstance(x, NumericRecord) and len(x.fields) == 1:
@@ -75,8 +77,10 @@ def _point_estimate(x):
 #   (source, key, **kwargs) -> Distribution
 # ---------------------------------------------------------------------------
 
+
 def _convert_to_normal(source, key, **kw):
     from ..distributions.continuous import Normal
+
     if isinstance(source, Normal):
         return source
     kw.pop("num_samples", None)
@@ -89,6 +93,7 @@ def _convert_to_normal(source, key, **kw):
 
 def _convert_to_beta(source, key, **kw):
     from ..distributions.continuous import Beta
+
     if isinstance(source, Beta):
         return source
     kw.pop("num_samples", None)
@@ -104,25 +109,27 @@ def _convert_to_beta(source, key, **kw):
 
 def _convert_to_gamma(source, key, **kw):
     from ..distributions.continuous import Gamma
+
     if isinstance(source, Gamma):
         return source
     kw.pop("num_samples", None)
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
-    r = Gamma(concentration=m ** 2 / v, rate=m / v, name=kw.get("name") or source.name)
+    r = Gamma(concentration=m**2 / v, rate=m / v, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
 def _convert_to_inverse_gamma(source, key, **kw):
     from ..distributions.continuous import InverseGamma
+
     if isinstance(source, InverseGamma):
         return source
     kw.pop("num_samples", None)
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
-    conc = m ** 2 / v + 2
-    scale = m * (m ** 2 / v + 1)
+    conc = m**2 / v + 2
+    scale = m * (m**2 / v + 1)
     r = InverseGamma(concentration=conc, scale=scale, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source, m_raw, v_raw))
     return r
@@ -130,6 +137,7 @@ def _convert_to_inverse_gamma(source, key, **kw):
 
 def _convert_to_exponential(source, key, **kw):
     from ..distributions.continuous import Exponential
+
     if isinstance(source, Exponential):
         return source
     kw.pop("num_samples", None)
@@ -142,13 +150,14 @@ def _convert_to_exponential(source, key, **kw):
 
 def _convert_to_lognormal(source, key, **kw):
     from ..distributions.continuous import LogNormal
+
     if isinstance(source, LogNormal):
         return source
     kw.pop("num_samples", None)
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
-    scale = jnp.sqrt(jnp.log(1.0 + v / (m ** 2)))
-    loc = jnp.log(m) - scale ** 2 / 2.0
+    scale = jnp.sqrt(jnp.log(1.0 + v / (m**2)))
+    loc = jnp.log(m) - scale**2 / 2.0
     r = LogNormal(loc=loc, scale=scale, name=kw.get("name") or source.name)
     r.with_source(_mm_provenance(source, m_raw, v_raw))
     return r
@@ -156,6 +165,7 @@ def _convert_to_lognormal(source, key, **kw):
 
 def _convert_to_studentt(source, key, **kw):
     from ..distributions.continuous import StudentT
+
     if isinstance(source, StudentT):
         return source
     kw.pop("num_samples", None)
@@ -163,13 +173,16 @@ def _convert_to_studentt(source, key, **kw):
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     # var = scale^2 * df/(df-2) for df>2, so scale = sqrt(var * (df-2)/df)
     df = 5.0
-    r = StudentT(df=df, loc=m, scale=jnp.sqrt(v * (df - 2.0) / df), name=kw.get("name") or source.name)
+    r = StudentT(
+        df=df, loc=m, scale=jnp.sqrt(v * (df - 2.0) / df), name=kw.get("name") or source.name
+    )
     r.with_source(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
 def _convert_to_uniform(source, key, **kw):
     from ..distributions.continuous import Uniform
+
     if isinstance(source, Uniform):
         return source
     kw.pop("num_samples", None)
@@ -183,6 +196,7 @@ def _convert_to_uniform(source, key, **kw):
 
 def _convert_to_cauchy(source, key, **kw):
     from ..distributions.continuous import Cauchy
+
     if isinstance(source, Cauchy):
         return source
     kw.pop("num_samples", None)
@@ -195,6 +209,7 @@ def _convert_to_cauchy(source, key, **kw):
 
 def _convert_to_laplace(source, key, **kw):
     from ..distributions.continuous import Laplace
+
     if isinstance(source, Laplace):
         return source
     kw.pop("num_samples", None)
@@ -207,6 +222,7 @@ def _convert_to_laplace(source, key, **kw):
 
 def _convert_to_halfnormal(source, key, **kw):
     from ..distributions.continuous import HalfNormal
+
     if isinstance(source, HalfNormal):
         return source
     kw.pop("num_samples", None)
@@ -220,6 +236,7 @@ def _convert_to_halfnormal(source, key, **kw):
 
 def _convert_to_halfcauchy(source, key, **kw):
     from ..distributions.continuous import HalfCauchy
+
     if isinstance(source, HalfCauchy):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
@@ -234,6 +251,7 @@ def _convert_to_halfcauchy(source, key, **kw):
 
 def _convert_to_pareto(source, key, **kw):
     from ..distributions.continuous import Pareto
+
     if isinstance(source, Pareto):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
@@ -250,6 +268,7 @@ def _convert_to_pareto(source, key, **kw):
 
 def _convert_to_truncatednormal(source, key, **kw):
     from ..distributions.continuous import TruncatedNormal
+
     if isinstance(source, TruncatedNormal):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
@@ -259,8 +278,10 @@ def _convert_to_truncatednormal(source, key, **kw):
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     samples = source._sample(key, (num_samples,))
     r = TruncatedNormal(
-        loc=m, scale=jnp.sqrt(v),
-        low=jnp.min(samples), high=jnp.max(samples),
+        loc=m,
+        scale=jnp.sqrt(v),
+        low=jnp.min(samples),
+        high=jnp.max(samples),
         name=kw.get("name") or source.name,
     )
     r.with_source(_mm_provenance(source, m_raw, v_raw))
@@ -269,8 +290,10 @@ def _convert_to_truncatednormal(source, key, **kw):
 
 # -- discrete ---------------------------------------------------------------
 
+
 def _convert_to_bernoulli(source, key, **kw):
     from ..distributions.discrete import Bernoulli
+
     if isinstance(source, Bernoulli):
         return source
     kw.pop("num_samples", None)
@@ -281,11 +304,14 @@ def _convert_to_bernoulli(source, key, **kw):
 
 def _convert_to_binomial(source, key, **kw):
     from ..distributions.discrete import Binomial
+
     if isinstance(source, Binomial):
         return source
     total_count = kw.pop("total_count", None)
     if total_count is None:
-        raise ValueError("total_count is required when converting to Binomial from a non-Binomial source.")
+        raise ValueError(
+            "total_count is required when converting to Binomial from a non-Binomial source."
+        )
     kw.pop("num_samples", None)
     probs = source._mean() / total_count
     r = Binomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
@@ -295,6 +321,7 @@ def _convert_to_binomial(source, key, **kw):
 
 def _convert_to_poisson(source, key, **kw):
     from ..distributions.discrete import Poisson
+
     if isinstance(source, Poisson):
         return source
     kw.pop("num_samples", None)
@@ -305,6 +332,7 @@ def _convert_to_poisson(source, key, **kw):
 
 def _convert_to_categorical(source, key, **kw):
     from ..distributions.discrete import Categorical
+
     if isinstance(source, Categorical):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
@@ -319,11 +347,14 @@ def _convert_to_categorical(source, key, **kw):
 
 def _convert_to_negativebinomial(source, key, **kw):
     from ..distributions.discrete import NegativeBinomial
+
     if isinstance(source, NegativeBinomial):
         return source
     total_count = kw.pop("total_count", None)
     if total_count is None:
-        raise ValueError("total_count is required when converting to NegativeBinomial from a non-NegativeBinomial source.")
+        raise ValueError(
+            "total_count is required when converting to NegativeBinomial from a non-NegativeBinomial source."
+        )
     kw.pop("num_samples", None)
     m = source._mean()
     probs = total_count / (total_count + m)
@@ -334,8 +365,10 @@ def _convert_to_negativebinomial(source, key, **kw):
 
 # -- multivariate -----------------------------------------------------------
 
+
 def _convert_to_multivariatenormal(source, key, **kw):
     from ..distributions.multivariate import MultivariateNormal
+
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     name = kw.get("name") or source.name
     if isinstance(source, MultivariateNormal):
@@ -367,6 +400,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
 
 def _convert_to_dirichlet(source, key, **kw):
     from ..distributions.multivariate import Dirichlet
+
     if isinstance(source, Dirichlet):
         return source
     kw.pop("num_samples", None)
@@ -382,11 +416,14 @@ def _convert_to_dirichlet(source, key, **kw):
 
 def _convert_to_multinomial(source, key, **kw):
     from ..distributions.multivariate import Multinomial
+
     if isinstance(source, Multinomial):
         return source
     total_count = kw.pop("total_count", None)
     if total_count is None:
-        raise ValueError("total_count is required when converting to Multinomial from a non-Multinomial source.")
+        raise ValueError(
+            "total_count is required when converting to Multinomial from a non-Multinomial source."
+        )
     kw.pop("num_samples", None)
     m_raw = source._mean()
     m = _point_estimate(m_raw)
@@ -399,6 +436,7 @@ def _convert_to_multinomial(source, key, **kw):
 
 def _convert_to_wishart(source, key, **kw):
     from ..distributions.multivariate import Wishart
+
     if isinstance(source, Wishart):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
@@ -409,13 +447,16 @@ def _convert_to_wishart(source, key, **kw):
     scale_mat = mean_mat / df
     scale_mat = 0.5 * (scale_mat + scale_mat.T)
     scale_mat = scale_mat + 1e-6 * jnp.eye(d)
-    r = Wishart(df=df, scale_tril=jnp.linalg.cholesky(scale_mat), name=kw.get("name") or source.name)
+    r = Wishart(
+        df=df, scale_tril=jnp.linalg.cholesky(scale_mat), name=kw.get("name") or source.name
+    )
     r.with_source(_mm_provenance(source))
     return r
 
 
 def _convert_to_vonmisesfisher(source, key, **kw):
     from ..distributions.multivariate import VonMisesFisher
+
     if isinstance(source, VonMisesFisher):
         return source
     kw.pop("num_samples", None)
@@ -424,9 +465,11 @@ def _convert_to_vonmisesfisher(source, key, **kw):
     R = jnp.linalg.norm(mean_vec)
     mean_dir = mean_vec / jnp.maximum(R, 1e-8)
     d = mean_vec.shape[-1]
-    R2 = R ** 2
+    R2 = R**2
     conc = jnp.maximum(R * (d - R2) / jnp.maximum(1.0 - R2, 1e-8), 0.0)
-    r = VonMisesFisher(mean_direction=mean_dir, concentration=conc, name=kw.get("name") or source.name)
+    r = VonMisesFisher(
+        mean_direction=mean_dir, concentration=conc, name=kw.get("name") or source.name
+    )
     r.with_source(_mm_provenance(source, m_raw))
     return r
 
@@ -449,7 +492,7 @@ def _convert_to_kde(source, key, **kw):
 
     For a ``RecordEmpiricalDistribution`` source (including its
     subclasses such as :class:`~probpipe.inference.ApproximateDistribution`),
-    the stored samples, weights, and ``record_template`` are reused
+    the stored samples, weights, and ``event_template`` are reused
     directly via :meth:`KDEDistribution.from_empirical` — which
     preserves named-field structure end-to-end. Other sources fall
     back to drawing fresh samples (single-field auto-template).
@@ -473,7 +516,7 @@ def _convert_to_kde(source, key, **kw):
     if isinstance(source, RecordEmpiricalDistribution):
         # Single-field and multi-field paths both route through
         # ``from_empirical``, which threads the source's
-        # ``record_template`` so KDE preserves named fields (issue #267).
+        # ``event_template`` so KDE preserves named fields (issue #267).
         r = KDEDistribution.from_empirical(source, bandwidth=bandwidth, name=name)
         r.with_source(_mm_provenance(source))
         return r
@@ -501,6 +544,7 @@ def _convert_to_kde(source, key, **kw):
 # ---------------------------------------------------------------------------
 # Dispatch table: target class name -> conversion function
 # ---------------------------------------------------------------------------
+
 
 def _build_dispatch_table() -> dict[str, callable]:
     """Build the dispatch table lazily to avoid circular imports."""
@@ -539,6 +583,7 @@ def _build_dispatch_table() -> dict[str, callable]:
 # The converter
 # ---------------------------------------------------------------------------
 
+
 class ProbPipeConverter(Converter):
     """Converter for ProbPipe-to-ProbPipe distribution conversions.
 
@@ -576,7 +621,9 @@ class ProbPipeConverter(Converter):
 
         target_name = target_type.__name__
         if target_name not in self._table:
-            return ConversionInfo(feasible=False, description=f"No converter for target {target_name}")
+            return ConversionInfo(
+                feasible=False, description=f"No converter for target {target_name}"
+            )
 
         # Same class = exact copy
         if isinstance(source, target_type):
@@ -601,7 +648,9 @@ class ProbPipeConverter(Converter):
             description=f"Moment-match {type(source).__name__} -> {target_name}",
         )
 
-    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Distribution:
+    def convert(
+        self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
+    ) -> Distribution:
         if key is None:
             key = _auto_key()
         target_name = target_type.__name__
@@ -635,10 +684,8 @@ class ProbPipeConverter(Converter):
         if check_support:
             check = getattr(result, "_check_support_compatible", None)
             if check is not None:
-                try:
+                with contextlib.suppress(AttributeError):
                     check(source)
-                except AttributeError:
-                    pass
 
         # Mark approximate if source is approximate or conversion used sampling
         if source.is_approximate or not isinstance(source, target_type):

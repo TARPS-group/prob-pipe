@@ -49,9 +49,7 @@ __all__ = [
     "workflow_method",
 ]
 
-_WorkflowFunctionDispatch = Literal[
-    "auto", "jax", "sequential", "thread"
-]
+_WorkflowFunctionDispatch = Literal["auto", "jax", "sequential", "thread"]
 _VALID_DISPATCH_STRATEGIES: tuple[str, ...] = get_args(_WorkflowFunctionDispatch)
 
 
@@ -115,6 +113,7 @@ def workflow_function(_func=None, /, **kwargs):
         Wrapped workflow function for bare usage, or a decorator when called
         with parentheses.
     """
+
     def decorator(func: Callable[..., Any]) -> WorkflowFunction:
         return WorkflowFunction(func=func, name=func.__name__, **kwargs)
 
@@ -243,14 +242,14 @@ class WorkflowFunction(Node):
         func: Callable,
         workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
         name: str | None = None,
-        bind: dict[str, Any] | None = None,         # construction-time bindings (defaults/config)
-        module: Any | None = None,                  # typically a Module; kept as Any to avoid import cycles
-        n_broadcast_samples: int | None = None,      # default number of samples for broadcasting
-        dispatch: _WorkflowFunctionDispatch = "auto", # "auto" | "jax" | "sequential" | "thread"
-        max_workers: int | None = None,             # ThreadPoolExecutor worker count
-        seed: int = 0,                              # JAX PRNG seed for broadcasting
-        include_inputs: bool = False,                # True → return BroadcastDistribution (joint over inputs+outputs)
-        **kwargs: Any,                              # convenience bindings (merged into bind)
+        bind: dict[str, Any] | None = None,  # construction-time bindings (defaults/config)
+        module: Any | None = None,  # typically a Module; kept as Any to avoid import cycles
+        n_broadcast_samples: int | None = None,  # default number of samples for broadcasting
+        dispatch: _WorkflowFunctionDispatch = "auto",  # "auto" | "jax" | "sequential" | "thread"
+        max_workers: int | None = None,  # ThreadPoolExecutor worker count
+        seed: int = 0,  # JAX PRNG seed for broadcasting
+        include_inputs: bool = False,  # True → return BroadcastDistribution (joint over inputs+outputs)
+        **kwargs: Any,  # convenience bindings (merged into bind)
     ):
         # Validate arguments before setting any instance state.
         if dispatch not in _VALID_DISPATCH_STRATEGIES:
@@ -285,7 +284,11 @@ class WorkflowFunction(Node):
         self.__signature__ = self._signature_info.signature
         self.__module__ = getattr(func, "__module__", None)
         self._module = module
-        self._n_broadcast_samples = n_broadcast_samples if n_broadcast_samples is not None else self.DEFAULT_N_BROADCAST_SAMPLES
+        self._n_broadcast_samples = (
+            n_broadcast_samples
+            if n_broadcast_samples is not None
+            else self.DEFAULT_N_BROADCAST_SAMPLES
+        )
         self._dispatch = dispatch
         self._max_workers = max_workers
         self._key = jax.random.PRNGKey(seed)
@@ -312,11 +315,7 @@ class WorkflowFunction(Node):
         """
         raw = self._workflow_kind_raw
 
-        kind = (
-            raw
-            if raw is not WorkflowKind.DEFAULT
-            else prefect_config.workflow_kind
-        )
+        kind = raw if raw is not WorkflowKind.DEFAULT else prefect_config.workflow_kind
 
         if kind is WorkflowKind.DEFAULT:
             kind = WorkflowKind.OFF
@@ -364,9 +363,7 @@ class WorkflowFunction(Node):
             mode=mode,
             max_workers=self._max_workers if mode == "thread" else None,
             name=self._name,
-            prefect_task_runner=(
-                prefect_config.resolve_task_runner() if is_prefect else None
-            ),
+            prefect_task_runner=(prefect_config.resolve_task_runner() if is_prefect else None),
         )
 
     def with_options(
@@ -435,10 +432,12 @@ class WorkflowFunction(Node):
             self._key = jax.random.PRNGKey(call.overrides.seed)
 
         values = _workflow_distribution_normalization.normalize_distribution_values(
-            values=call.values, hints=self._signature_info.hints,
+            values=call.values,
+            hints=self._signature_info.hints,
         )
         broadcast_plan = _workflow_plan.build_broadcast_plan(
-            values=values, hints=self._signature_info.hints,
+            values=values,
+            hints=self._signature_info.hints,
         )
 
         def execute_distribution_broadcast(
@@ -469,6 +468,7 @@ class WorkflowFunction(Node):
                 dist_args=broadcast_plan.dist_args,
             )
         if broadcast_plan.regime in ("sweep", "nested"):
+
             def distribution_broadcast(
                 row_values: dict[str, Any],
                 dist_args: list[str],
@@ -508,13 +508,17 @@ class WorkflowFunction(Node):
             execution=self._make_execution_config(),
         )
         result = _workflow_execution.execute_many(request)[0]
-        parents = tuple(
-            v for v in values.values() if hasattr(v, "source")
-        )
-        provenance = Provenance(
-            operation=f"workflow.{self._name or self._func.__name__}",
-            parents=parents,
-            metadata={"func": self._name or self._func.__name__},
+        seen: set[int] = set()
+        candidates = []
+        for v in values.values():
+            if hasattr(v, "source") and id(v) not in seen:
+                seen.add(id(v))
+                candidates.append(v)
+        name = self._name or self._func.__name__
+        provenance = Provenance.create(
+            f"workflow.{name}",
+            parents=candidates,
+            metadata={"func": name},
         )
         return _workflow_result._coerce_output(
             result,
@@ -897,6 +901,7 @@ class Module(Node):
                     f"Got (impl):          {impl_sig}"
                 )
 
+
 class AbstractModule(Module, ABC):
     """
     Base class for modules that declare workflow interfaces via @abstract_workflow_method.
@@ -904,4 +909,5 @@ class AbstractModule(Module, ABC):
     ABCMeta will prevent instantiation until all abstract workflows are implemented
     by a concrete subclass.
     """
+
     pass

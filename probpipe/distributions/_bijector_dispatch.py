@@ -149,8 +149,7 @@ def bijector_for(constraint: Constraint) -> tfb.Bijector:
             return _CONSTRAINT_BIJECTOR_REGISTRY[cls](constraint)
 
     raise NotImplementedError(
-        f"No bijector registered for {constraint!r}. "
-        f"Use ``probpipe.register_bijector`` to add one."
+        f"No bijector registered for {constraint!r}. Use ``probpipe.register_bijector`` to add one."
     )
 
 
@@ -186,9 +185,8 @@ register_bijector(
 # "not registered".
 def _no_smooth_bijector(reason: str) -> BijectorFactory:
     def _raise(c: Constraint) -> tfb.Bijector:
-        raise NotImplementedError(
-            f"{c!r} has no canonical bijector: {reason}"
-        )
+        raise NotImplementedError(f"{c!r} has no canonical bijector: {reason}")
+
     return _raise
 
 
@@ -208,14 +206,11 @@ register_bijector(
 )
 register_bijector(
     _NonNegativeInteger,
-    _no_smooth_bijector(
-        "discrete support; no continuous bijector exists"
-    ),
+    _no_smooth_bijector("discrete support; no continuous bijector exists"),
 )
 register_bijector(
     _IntegerInterval,
     _no_smooth_bijector(
-        "discrete support; consider a continuous relaxation "
-        "(e.g., Gumbel-Softmax) or rounding"
+        "discrete support; consider a continuous relaxation (e.g., Gumbel-Softmax) or rounding"
     ),
 )

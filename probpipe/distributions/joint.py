@@ -8,15 +8,15 @@ Re-export facade --- all concrete classes live in their own modules:
 *  :mod:`._joint_gaussian`    --- :class:`JointGaussian`
 """
 
-from ._product import ProductDistribution
-from ._sequential_joint import SequentialJointDistribution
 from ._joint_empirical import JointEmpirical, NumericJointEmpirical
 from ._joint_gaussian import JointGaussian
+from ._product import ProductDistribution
+from ._sequential_joint import SequentialJointDistribution
 
 __all__ = [
+    "JointEmpirical",
+    "JointGaussian",
+    "NumericJointEmpirical",
     "ProductDistribution",
     "SequentialJointDistribution",
-    "JointEmpirical",
-    "NumericJointEmpirical",
-    "JointGaussian",
 ]

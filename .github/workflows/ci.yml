@@ -13,32 +13,28 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # Advisory ruff lint. Annotates PRs with violations but does NOT gate
-  # merges (continue-on-error). ProbPipe carries a backlog from a
-  # previously-unenforced linter, and several large refactors are in
-  # flight; advisory mode surfaces issues without blocking that work or
-  # forcing a repo-wide cleanup sweep. To enforce later: drop
-  # continue-on-error and scope to changed files. The ruff version is
-  # read from .pre-commit-config.yaml (single source of truth) so this job
-  # can't drift from the pre-commit pin that `pre-commit autoupdate` bumps;
-  # keep uv.lock's ruff in sync too for local `uv run ruff`. `ruff format`
-  # is intentionally not run (its style conflicts with the conventions in
-  # CONTRIBUTING.md).
+  # Ruff lint + format gate — both blocking. `ruff check` enforces a
+  # zero-violation tree and `ruff format --check` enforces the autoformat;
+  # a new lint violation or a misformatted file fails CI. Lint scope and
+  # rule selection live in pyproject.toml ([tool.ruff.lint]). The ruff
+  # version is read from .pre-commit-config.yaml (single source of truth) so
+  # this job can't drift from the pre-commit pin that `pre-commit autoupdate`
+  # bumps; keep uv.lock's ruff in sync too for local `uv run ruff`.
   lint:
-    name: lint (advisory)
+    name: lint & format
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
 
-      # Blocking: validates .pre-commit-config.yaml structure (all hooks, not
-      # just ruff) so a corrupted config can't slip through while the ruff
-      # check itself stays advisory. Cheap — it does not run any hook.
+      # Validates .pre-commit-config.yaml structure (all hooks, not just ruff)
+      # so a corrupted config can't slip through. Cheap — it does not run any
+      # hook.
       - name: Validate pre-commit config
         run: uvx pre-commit validate-config
 
@@ -53,9 +49,11 @@ jobs:
           echo "ruff=$ver" >> "$GITHUB_OUTPUT"
           echo "Resolved ruff $ver from .pre-commit-config.yaml"
 
-      - name: Ruff check (advisory — does not gate merges)
-        continue-on-error: true
+      - name: Ruff check (blocking)
         run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" check . --output-format=github
+
+      - name: Ruff format check (blocking — the tree is autoformatted)
+        run: uvx "ruff@${{ steps.ruffver.outputs.ruff }}" format --check .
 
   # Advisory pyright type check. Reports but does NOT gate merges
   # (continue-on-error). The source carries a type-debt baseline (much of
@@ -76,7 +74,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
 
       - name: Install uv
         uses: astral-sh/setup-uv@v7
@@ -112,7 +110,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -288,7 +286,7 @@ jobs:
       KERAS_BACKEND: jax
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -375,7 +373,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -431,7 +429,7 @@ jobs:
         # under its own ~/.bridgestan/<version>/ subdir, so a stale restore can't
         # mismatch.
         if: steps.stan_check.outputs.skip != 'true'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.bridgestan
           key: bridgestan-${{ runner.os }}-${{ hashFiles('uv.lock') }}
@@ -463,19 +461,20 @@ jobs:
 
   notebooks:
     # Execute the docs notebooks to keep the reference set honest against the
-    # current codebase. Two parallel legs: `examples` (lean — dev+nutpie) and
+    # current codebase. Two parallel legs: `user_guide` (lean — dev+nutpie) and
     # `tutorials` (the SBI backends — bayesflow+pymc). Splitting roughly halves
     # the wall-clock vs one serial pass (~8 min each, on par with the test
-    # matrix) and spares the examples the ~200 MB pymc/bayesflow install (no
-    # example imports them in code). Separate from the unit-test matrix either
-    # way. Skipped per-leg when no notebook in its dir or probpipe source changes.
+    # matrix) and spares the User Guide the ~200 MB pymc/bayesflow install.
+    # User Guide notebooks do not import those backends in code. Separate from
+    # the unit-test matrix either way. Skipped per-leg when no notebook in its
+    # dir or probpipe source changes.
     name: notebooks (${{ matrix.group }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - group: examples
-            dir: docs/examples
+          - group: user_guide
+            dir: docs/user_guide
             extras: --extra dev --extra nutpie
           - group: tutorials
             dir: docs/tutorials
@@ -485,7 +484,7 @@ jobs:
       KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0   # need full history for git diff
 
@@ -571,7 +570,7 @@ jobs:
         # Dependency versions are pinned in uv.lock. --frozen fails if the
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
-        # Per-leg extras (matrix.extras): the examples leg needs only
+        # Per-leg extras (matrix.extras): the User Guide leg needs only
         # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc.
         run: uv sync --frozen --python 3.12 ${{ matrix.extras }}
 

@@ -1,4 +1,5 @@
 """Tests for probpipe.core._array_backend (aux registry + Record/NumericRecord round-trip)."""
+
 from __future__ import annotations
 
 import jax
@@ -15,7 +16,6 @@ from probpipe import (
     register_aux,
 )
 from probpipe.core._array_backend import aux_registry
-
 
 # ---------------------------------------------------------------------------
 # Registry lookup
@@ -81,6 +81,7 @@ class TestRegistryLookup:
         """An instance of a registered type's subclass picks up the
         base-class hooks (regression for the MRO-walk semantics
         documented at ``_array_backend.py:103-108``)."""
+
         class Base:
             pass
 
@@ -102,6 +103,7 @@ class TestRegistryLookup:
     def test_register_aux_overwrites_silently(self):
         """Re-registering an existing leaf type silently overwrites the
         previous hooks (documented at ``_array_backend.py:93-99``)."""
+
         class MyType:
             pass
 
@@ -187,7 +189,8 @@ class TestXarrayRoundTrip:
         assert isinstance(inner, Record)
         assert inner["temps"].dims == ("t",)
         np.testing.assert_array_equal(
-            inner["temps"].coords["t"].values, [10, 20, 30],
+            inner["temps"].coords["t"].values,
+            [10, 20, 30],
         )
         assert inner["temps"].attrs == {"units": "meters"}
 
@@ -211,7 +214,8 @@ class TestXarrayRoundTrip:
         assert back.coords["t"].attrs == {"unit": "s"}
         assert back.coords["area"].dims == ("x", "t")
         np.testing.assert_array_equal(
-            back.coords["area"].values, area,
+            back.coords["area"].values,
+            area,
         )
 
 
@@ -229,9 +233,7 @@ def pd_module():
 def datetime_series(pd_module):
     return pd_module.Series(
         [10.0, 20.0, 30.0],
-        index=pd_module.DatetimeIndex(
-            ["2024-01-01", "2024-01-02", "2024-01-03"]
-        ),
+        index=pd_module.DatetimeIndex(["2024-01-01", "2024-01-02", "2024-01-03"]),
         name="counts",
     )
 
@@ -287,9 +289,7 @@ class TestMixedBackendRecord:
 @pytest.fixture
 def da_simple():
     xr = pytest.importorskip("xarray")
-    return xr.DataArray(
-        [1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]}
-    )
+    return xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
 
 
 class TestPathEquivalence:
@@ -313,9 +313,7 @@ class TestPathEquivalence:
         b2 = Record(x=da_simple, y=2.5).to_numeric().to_native()
         # xarray fields restored identically (dims + coord values).
         assert b1["x"].dims == b2["x"].dims
-        np.testing.assert_array_equal(
-            b1["x"].coords["t"].values, b2["x"].coords["t"].values
-        )
+        np.testing.assert_array_equal(b1["x"].coords["t"].values, b2["x"].coords["t"].values)
         # Numeric pass-through fields.
         np.testing.assert_array_equal(np.asarray(b1["y"]), np.asarray(b2["y"]))
 
@@ -351,9 +349,7 @@ class TestNonCoercibleLeavesRaise:
 @pytest.fixture
 def da_zero_indexed():
     xr = pytest.importorskip("xarray")
-    return xr.DataArray(
-        [1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]}
-    )
+    return xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
 
 
 class TestTransformsDropAux:
@@ -387,8 +383,7 @@ class TestRecordArrayStackDropsAux:
         # Build per-row NumericRecords carrying xarray leaves so the
         # source records *do* carry aux.
         records = [
-            NumericRecord(x=xr.DataArray([float(i), float(i + 1)], dims=["t"]))
-            for i in range(3)
+            NumericRecord(x=xr.DataArray([float(i), float(i + 1)], dims=["t"])) for i in range(3)
         ]
         # Each source record has aux for ``x``.
         assert all(r.aux is not None for r in records)

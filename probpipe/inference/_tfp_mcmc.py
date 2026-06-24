@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Callable
-
-if TYPE_CHECKING:
-    from xarray import DataTree
+from collections.abc import Callable
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +19,7 @@ from ._inference_utils import (
     as_prng_key,
     build_mcmc_datatree,
     build_target_log_prob,
-    extract_record_template,
+    extract_event_template,
     get_init_state,
     get_prior,
     is_jax_traceable,
@@ -144,20 +142,26 @@ class _TFPGradientMethod(InferenceMethod):
         # selecting a gradient-based method that would fail at execute() time.
         # The cost is ~one JAX trace, cached by JAX on subsequent calls.
         if not isinstance(dist, SupportsUnnormalizedLogProb):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires SupportsUnnormalizedLogProb")
+            return MethodInfo(
+                feasible=False,
+                method_name=self.name,
+                description="Requires SupportsUnnormalizedLogProb",
+            )
         try:
             target = build_target_log_prob(dist, observed)
             init = get_init_state(
-                dist, kwargs.get("init"),
+                dist,
+                kwargs.get("init"),
                 random_seed=kwargs.get("random_seed", 0),
             )
             if not is_jax_traceable(target, init):
-                return MethodInfo(feasible=False, method_name=self.name,
-                                  description="Log-prob is not JAX-traceable")
+                return MethodInfo(
+                    feasible=False,
+                    method_name=self.name,
+                    description="Log-prob is not JAX-traceable",
+                )
         except Exception as e:
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description=str(e))
+            return MethodInfo(feasible=False, method_name=self.name, description=str(e))
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
@@ -165,16 +169,19 @@ class _TFPGradientMethod(InferenceMethod):
         target = build_target_log_prob(dist, observed)
         prior = get_prior(dist)
         init = get_init_state(
-            dist, kwargs.get("init"), random_seed=random_seed,
+            dist,
+            kwargs.get("init"),
+            random_seed=random_seed,
         )
-        record_template = extract_record_template(dist)
+        event_template = extract_event_template(dist)
 
         num_results = kwargs.get("num_results", 1000)
         num_warmup = kwargs.get("num_warmup", 500)
         num_chains = kwargs.get("num_chains", 1)
 
         chains, sample_stats = _run_tfp_chains(
-            target, init,
+            target,
+            init,
             algorithm=self._algorithm,
             num_results=num_results,
             num_warmup=num_warmup,
@@ -184,9 +191,14 @@ class _TFPGradientMethod(InferenceMethod):
         )
         auxiliary = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
-            chains, parents=(prior,), algorithm=self._method_name,
-            auxiliary=auxiliary, record_template=record_template,
-            num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+            chains,
+            parents=(prior,),
+            algorithm=self._method_name,
+            auxiliary=auxiliary,
+            event_template=event_template,
+            num_results=num_results,
+            num_warmup=num_warmup,
+            num_chains=num_chains,
         )
 
 

@@ -18,6 +18,7 @@ import numpy as np
 import pytest
 
 from probpipe import SupportsLogProb, log_prob
+from probpipe.core.record import ArraySpec
 from probpipe.modeling._stan import StanModel, _param_blocks, _UnconstrainedStanView
 
 # ---------------------------------------------------------------------------
@@ -50,10 +51,12 @@ class TestParamBlocks:
         assert [(b.name, b.shape) for b in blocks] == [("L", (2, 2))]
 
     def test_mixed_blocks(self):
-        names = ["mu", "theta.1", "theta.2", "theta.3",
-                 "L.1.1", "L.2.1", "L.1.2", "L.2.2"]
+        names = ["mu", "theta.1", "theta.2", "theta.3", "L.1.1", "L.2.1", "L.1.2", "L.2.2"]
         assert [(b.name, b.shape) for b in _param_blocks(names)] == [
-            ("mu", ()), ("theta", (3,)), ("L", (2, 2))]
+            ("mu", ()),
+            ("theta", (3,)),
+            ("L", (2, 2)),
+        ]
 
     def test_empty(self):
         assert _param_blocks([]) == ()
@@ -129,8 +132,7 @@ def conjugate_stan_file(_stan_toolchain, tmp_path_factory):
 @pytest.fixture(scope="module")
 def conjugate_model(conjugate_stan_file):
     """The conjugate model instantiated with data and an explicit name."""
-    return StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]},
-                     name="normal_mean")
+    return StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]}, name="normal_mean")
 
 
 @pytest.fixture(scope="module")
@@ -193,8 +195,7 @@ class TestStanModelSurface:
         assert "num_params=1" in r
 
     def test_as_unconstrained_distribution(self, conjugate_model):
-        assert isinstance(conjugate_model.as_unconstrained_distribution(),
-                          _UnconstrainedStanView)
+        assert isinstance(conjugate_model.as_unconstrained_distribution(), _UnconstrainedStanView)
 
     def test_name_defaults_to_class_name(self, conjugate_stan_file):
         # Without an explicit name, StanModel falls back to the class name to
@@ -231,13 +232,15 @@ class TestStanModelDensity:
         x = jnp.asarray([0.5])
         np.testing.assert_allclose(
             float(conjugate_model._unnormalized_log_prob(x)),
-            float(conjugate_model._log_prob(x)), atol=1e-6)
+            float(conjugate_model._log_prob(x)),
+            atol=1e-6,
+        )
 
     def test_prob_is_exp_log_prob(self, conjugate_model):
         x = jnp.asarray([0.5])
         np.testing.assert_allclose(
-            float(conjugate_model._prob(x)),
-            float(jnp.exp(conjugate_model._log_prob(x))), rtol=1e-6)
+            float(conjugate_model._prob(x)), float(jnp.exp(conjugate_model._log_prob(x))), rtol=1e-6
+        )
 
     def test_unnormalized_prob_positive(self, conjugate_model):
         up = conjugate_model._unnormalized_prob(jnp.asarray([0.5]))
@@ -259,17 +262,18 @@ class TestStanModelTransforms:
     def test_param_constrain_identity_for_real(self, conjugate_model):
         x = jnp.asarray([1.23])
         np.testing.assert_allclose(
-            np.asarray(conjugate_model.param_constrain(x)), [1.23], atol=1e-6)
+            np.asarray(conjugate_model.param_constrain(x)), [1.23], atol=1e-6
+        )
 
     def test_param_unconstrain_identity_for_real(self, conjugate_model):
         x = jnp.asarray([1.23])
         np.testing.assert_allclose(
-            np.asarray(conjugate_model.param_unconstrain(x)), [1.23], atol=1e-6)
+            np.asarray(conjugate_model.param_unconstrain(x)), [1.23], atol=1e-6
+        )
 
     def test_constrain_unconstrain_round_trip(self, conjugate_model):
         x = jnp.asarray([1.23])
-        round_trip = conjugate_model.param_constrain(
-            conjugate_model.param_unconstrain(x))
+        round_trip = conjugate_model.param_constrain(conjugate_model.param_unconstrain(x))
         np.testing.assert_allclose(np.asarray(round_trip), [1.23], atol=1e-6)
 
     def test_constrain_yields_valid_simplex(self, structured_model):
@@ -285,12 +289,11 @@ class TestStanModelTransforms:
         # constrain o unconstrain is the identity on a valid constrained point.
         # The simplex must sum to 1 exactly in float (0.25 + 0.25 + 0.5) for
         # BridgeStan's strict simplex_free to accept it.
-        constrained = jnp.array([0.5, 0.1, 0.2, 0.3, 1.0, 2.0, 3.0, 4.0,
-                                 0.25, 0.25, 0.5])
+        constrained = jnp.array([0.5, 0.1, 0.2, 0.3, 1.0, 2.0, 3.0, 4.0, 0.25, 0.25, 0.5])
         round_trip = structured_model.param_constrain(
-            structured_model.param_unconstrain(constrained))
-        np.testing.assert_allclose(np.asarray(round_trip),
-                                   np.asarray(constrained), atol=1e-5)
+            structured_model.param_unconstrain(constrained)
+        )
+        np.testing.assert_allclose(np.asarray(round_trip), np.asarray(constrained), atol=1e-5)
 
 
 class TestBridgestanModel:
@@ -320,13 +323,26 @@ class TestStanModelParameters:
 
     def test_parameter_names_stay_per_scalar(self, structured_model):
         assert structured_model.parameter_names == (
-            "mu", "theta.1", "theta.2", "theta.3",
-            "L.1.1", "L.2.1", "L.1.2", "L.2.2", "p.1", "p.2", "p.3")
+            "mu",
+            "theta.1",
+            "theta.2",
+            "theta.3",
+            "L.1.1",
+            "L.2.1",
+            "L.1.2",
+            "L.2.2",
+            "p.1",
+            "p.2",
+            "p.3",
+        )
 
-    def test_record_template_shapes(self, structured_model):
-        assert {f: structured_model.record_template[f]
-                for f in structured_model.fields} == {
-            "mu": (), "theta": (3,), "L": (2, 2), "p": (3,)}
+    def test_event_template_shapes(self, structured_model):
+        assert structured_model.event_template.event_shapes == {
+            "mu": (),
+            "theta": (3,),
+            "L": (2, 2),
+            "p": (3,),
+        }
 
     def test_param_blocks_match_real_names(self, structured_model):
         # The pure name-parser, fed BridgeStan's real param_names(), recovers
@@ -334,7 +350,11 @@ class TestStanModelParameters:
         # flattening convention out from under _param_blocks.
         blocks = _param_blocks(structured_model._bs_model.param_names())
         assert [(b.name, b.shape) for b in blocks] == [
-            ("mu", ()), ("theta", (3,)), ("L", (2, 2)), ("p", (3,))]
+            ("mu", ()),
+            ("theta", (3,)),
+            ("L", (2, 2)),
+            ("p", (3,)),
+        ]
 
     def test_getitem_uses_block_fields(self, structured_model):
         assert structured_model["theta"] == "theta"
@@ -343,30 +363,40 @@ class TestStanModelParameters:
 
     def test_pack_value_assembles_column_major(self, structured_model):
         flat = structured_model._pack_value(
-            mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
+            mu=0.5,
+            theta=jnp.array([1.0, 2.0, 3.0]),
             L=jnp.array([[10.0, 30.0], [20.0, 40.0]]),
-            p=jnp.array([0.2, 0.3, 0.5]))
+            p=jnp.array([0.2, 0.3, 0.5]),
+        )
         # L is packed column-major to match BridgeStan: [10, 20, 30, 40].
-        assert jnp.allclose(flat, jnp.array(
-            [0.5, 1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 40.0, 0.2, 0.3, 0.5]))
+        assert jnp.allclose(
+            flat, jnp.array([0.5, 1.0, 2.0, 3.0, 10.0, 20.0, 30.0, 40.0, 0.2, 0.3, 0.5])
+        )
 
     def test_pack_value_missing_block_raises(self, structured_model):
         with pytest.raises(TypeError, match="missing"):
-            structured_model._pack_value(mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
-                                         L=jnp.zeros((2, 2)))  # no p
+            structured_model._pack_value(
+                mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]), L=jnp.zeros((2, 2))
+            )  # no p
 
     def test_pack_value_unexpected_block_raises(self, structured_model):
         with pytest.raises(TypeError, match="unexpected"):
             structured_model._pack_value(
-                mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]), L=jnp.zeros((2, 2)),
-                p=jnp.array([0.2, 0.3, 0.5]), zzz=1.0)
+                mu=0.5,
+                theta=jnp.array([1.0, 2.0, 3.0]),
+                L=jnp.zeros((2, 2)),
+                p=jnp.array([0.2, 0.3, 0.5]),
+                zzz=1.0,
+            )
 
     def test_pack_value_wrong_shape_raises(self, structured_model):
         with pytest.raises(TypeError, match=r"shape \(2, 2\)"):
             structured_model._pack_value(
-                mu=0.5, theta=jnp.array([1.0, 2.0, 3.0]),
+                mu=0.5,
+                theta=jnp.array([1.0, 2.0, 3.0]),
                 L=jnp.array([1.0, 2.0, 3.0, 4.0]),  # flat, not (2, 2)
-                p=jnp.array([0.2, 0.3, 0.5]))
+                p=jnp.array([0.2, 0.3, 0.5]),
+            )
 
     def test_keyword_form_equals_positional(self, structured_model):
         # Both forms route through the same _pack_value, so this guards the
@@ -374,12 +404,14 @@ class TestStanModelParameters:
         # is validated by test_pack_value_assembles_column_major and
         # test_param_blocks_match_real_names. 0.25/0.25/0.5 are exact in float32,
         # so the simplex sums to 1 and BridgeStan's param_unconstrain accepts it.
-        kw = dict(mu=0.5, theta=jnp.array([0.1, 0.2, 0.3]),
-                  L=jnp.array([[1.0, 2.0], [3.0, 4.0]]),
-                  p=jnp.array([0.25, 0.25, 0.5]))
+        kw = dict(
+            mu=0.5,
+            theta=jnp.array([0.1, 0.2, 0.3]),
+            L=jnp.array([[1.0, 2.0], [3.0, 4.0]]),
+            p=jnp.array([0.25, 0.25, 0.5]),
+        )
         lp_kw = float(jnp.asarray(log_prob(structured_model, **kw)))
-        lp_pos = float(jnp.asarray(
-            log_prob(structured_model, structured_model._pack_value(**kw))))
+        lp_pos = float(jnp.asarray(log_prob(structured_model, structured_model._pack_value(**kw))))
         np.testing.assert_allclose(lp_kw, lp_pos, atol=1e-6)
 
 
@@ -388,8 +420,7 @@ class TestUnconstrainedStanView:
     simplex appears with one fewer dimension than in the constrained model."""
 
     def test_name_with_base(self, structured_model):
-        assert structured_model.as_unconstrained_distribution().name == \
-            "structured_unconstrained"
+        assert structured_model.as_unconstrained_distribution().name == "structured_unconstrained"
 
     def test_name_without_base(self, conjugate_stan_file):
         model = StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
@@ -404,8 +435,8 @@ class TestUnconstrainedStanView:
         view = structured_model.as_unconstrained_distribution()
         assert view.fields == ("mu", "theta", "L", "p")
         # The simplex is unconstrained in (n-1) free coordinates.
-        assert structured_model.record_template["p"] == (3,)
-        assert view.record_template["p"] == (2,)
+        assert structured_model.event_template["p"] == ArraySpec((3,))
+        assert view.event_template["p"] == ArraySpec((2,))
 
     def test_log_prob_finite_and_unnormalized_agrees(self, structured_model):
         view = structured_model.as_unconstrained_distribution()
@@ -414,8 +445,7 @@ class TestUnconstrainedStanView:
         x = jnp.zeros(view.event_shape)
         lp = view._log_prob(x)
         assert jnp.isfinite(lp)
-        np.testing.assert_allclose(
-            float(view._unnormalized_log_prob(x)), float(lp), atol=1e-6)
+        np.testing.assert_allclose(float(view._unnormalized_log_prob(x)), float(lp), atol=1e-6)
 
     def test_log_prob_finite_difference_in_mu(self, structured_model):
         # Exact value check: shifting the unconstrained mu coordinate by m moves
@@ -424,15 +454,15 @@ class TestUnconstrainedStanView:
         view = structured_model.as_unconstrained_distribution()
         x0 = jnp.zeros(view.event_shape)
         for m in (0.5, 1.0):
-            delta = (float(view._log_prob(x0.at[0].set(m)))
-                     - float(view._log_prob(x0)))
+            delta = float(view._log_prob(x0.at[0].set(m))) - float(view._log_prob(x0))
             np.testing.assert_allclose(delta, -0.5 * m**2, atol=1e-5)
 
     def test_prob_is_exp_log_prob(self, structured_model):
         view = structured_model.as_unconstrained_distribution()
         x = jnp.zeros(view.event_shape)
         np.testing.assert_allclose(
-            float(view._prob(x)), float(jnp.exp(view._log_prob(x))), rtol=1e-6)
+            float(view._prob(x)), float(jnp.exp(view._log_prob(x))), rtol=1e-6
+        )
 
     def test_repr(self, structured_model):
         r = repr(structured_model.as_unconstrained_distribution())
@@ -446,9 +476,7 @@ class TestStanModelConditionOn:
         (the registry is patched, so no actual MCMC runs)."""
         from probpipe import condition_on
 
-        with patch(
-            "probpipe.inference._registry.inference_method_registry.execute"
-        ) as mock_exec:
+        with patch("probpipe.inference._registry.inference_method_registry.execute") as mock_exec:
             mock_exec.return_value = MagicMock()
             condition_on(conjugate_model, {"y": [1, 2, 3]}, num_results=10)
             mock_exec.assert_called_once()

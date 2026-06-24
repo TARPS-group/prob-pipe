@@ -1,13 +1,11 @@
 # Pre-commit hooks for ProbPipe. Install once with `uvx pre-commit install`
 # (or `pre-commit install`); thereafter they run on staged files at commit time.
 #
-# Hooks only see the files you're changing, so they ratchet the codebase clean
-# file-by-file rather than demanding a big-bang cleanup. `ruff` here flags but
-# does NOT auto-fix (no `--fix`) — fixes stay intentional and reviewable.
-#
-# Deliberately NOT included: `ruff format`. Its black-style output conflicts
-# with the hand-tuned horizontal-packing conventions documented in
-# CONTRIBUTING.md (§ Code formatting), so formatting stays manual for now.
+# Hooks only see the files you're changing, so a commit is checked without
+# re-running over the whole tree. `ruff` here flags but
+# does NOT auto-fix (no `--fix`) — fixes stay intentional and reviewable. The
+# `ruff-format` hook DOES rewrite files (that is its job); notebooks are excluded
+# from formatting via `[tool.ruff.format]` in pyproject.toml.
 #
 # This ruff rev is the single source of truth for the version: the CI lint job
 # reads it from here, and `pre-commit autoupdate` bumps it. Keep uv.lock's ruff
@@ -19,6 +17,8 @@ repos:
       - id: ruff
         name: ruff (lint)
         args: ["--output-format=full"]
+      - id: ruff-format
+        name: ruff (format)
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0

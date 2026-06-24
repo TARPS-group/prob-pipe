@@ -9,7 +9,8 @@ Provides:
 from __future__ import annotations
 
 import copy as _copy
-from abc import ABC, abstractmethod
+from abc import ABC
+
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
 # ``@runtime_checkable`` protocols without a metaclass conflict.  The
@@ -17,18 +18,14 @@ from abc import ABC, abstractmethod
 # ecosystem (Pydantic, attrs, etc.). If a future Python release renames
 # it, the metaclass would need to switch to whatever new base ``typing``
 # exposes; the conflict-avoidance constraint itself doesn't change.
-from typing import TYPE_CHECKING, Any, _ProtocolMeta  # noqa: PLC2701
+from typing import TYPE_CHECKING, Any, _ProtocolMeta
 
 if TYPE_CHECKING:
     from xarray import DataTree
 
     from ._distribution_array import DistributionArray
-    from .record import RecordTemplate
 
-import jax
-import jax.numpy as jnp
 
-from ..custom_types import PRNGKey
 from .provenance import Provenance
 
 # ---------------------------------------------------------------------------
@@ -109,9 +106,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
     def __init__(self, *, name: str):
         if not isinstance(name, str) or not name:
-            raise TypeError(
-                f"{type(self).__name__} requires a non-empty name= argument"
-            )
+            raise TypeError(f"{type(self).__name__} requires a non-empty name= argument")
         self._name = name
 
     # -- keyword-form value construction ------------------------------------
@@ -123,7 +118,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
         Delegates field validation and ``Record`` construction to the general
         :func:`~probpipe.core.record._pack_fields` (also exposed object-style
-        as :meth:`~probpipe.core.record.RecordTemplate.pack`) and layers this
+        as :meth:`~probpipe.core.record.EventTemplate.pack`) and layers this
         distribution's value-type convention on top:
 
         * **single field** → the bare field value (``T = Array``), so a
@@ -148,6 +143,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
             match its fields exactly (missing or unexpected names).
         """
         from .record import _pack_fields
+
         fields = getattr(self, "fields", None)
         if not fields:
             raise TypeError(
@@ -318,8 +314,14 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         """Provenance describing how this distribution was created, if any."""
         return getattr(self, "_source", None)
 
-    def with_source(self, source: Provenance) -> Distribution:
-        """Attach provenance to this distribution (write-once)."""
+    def with_source(self, source: Provenance | None) -> Distribution:
+        """Attach provenance to this distribution (write-once).
+
+        Passing ``None`` (e.g. the result of ``Provenance.create()`` under
+        :attr:`ProvenanceMode.OFF`) is a no-op.
+        """
+        if source is None:
+            return self
         if getattr(self, "_source", None) is not None:
             raise RuntimeError(
                 f"Source already set on {self!r}. "
@@ -336,7 +338,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         operation and points to the original as parent.
 
         ``RecordDistribution`` overrides this to also reset its cached
-        ``_record_template`` so the auto-build path regenerates with
+        ``_event_template`` so the auto-build path regenerates with
         the new name.
         """
         clone = _copy.copy(self)
@@ -344,9 +346,9 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         # Bypass write-once guard so rename provenance can be attached
         object.__setattr__(clone, "_source", None)
         clone.with_source(
-            Provenance(
+            Provenance.create(
                 "renamed",
-                parents=(self,),
+                parents=[self],
                 metadata={"old_name": self.name, "new_name": new_name},
             )
         )
@@ -361,7 +363,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         name: str,
         batch_shape: tuple[int, ...] | None = None,
         **batched_params,
-    ) -> "DistributionArray":
+    ) -> DistributionArray:
         """Class-method alias for :meth:`DistributionArray.from_batched_params`.
 
         Lets users write the ergonomic per-class form::
@@ -388,8 +390,12 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         # subpackage and importing at module top would create a cycle
         # (DistributionArray inherits from Distribution).
         from ._distribution_array import DistributionArray
+
         return DistributionArray.from_batched_params(
-            cls, name=name, batch_shape=batch_shape, **batched_params,
+            cls,
+            name=name,
+            batch_shape=batch_shape,
+            **batched_params,
         )
 
     # -- repr ---------------------------------------------------------------

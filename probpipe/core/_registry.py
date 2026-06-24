@@ -35,14 +35,14 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "OPT_IN_ONLY_PRIORITY",
     "BaseDispatchMethod",
-    "UnaryDispatchMethod",
-    "BinaryDispatchMethod",
     "BaseDispatchRegistry",
-    "UnaryDispatchRegistry",
+    "BinaryDispatchMethod",
     "BinaryDispatchRegistry",
     "MethodInfo",
-    "OPT_IN_ONLY_PRIORITY",
+    "UnaryDispatchMethod",
+    "UnaryDispatchRegistry",
 ]
 
 # Priority value for methods that should not auto-dispatch. The registry
@@ -239,14 +239,9 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             same name is already registered.
         """
         if not method.name:
-            raise ValueError(
-                "Method.name must be a non-empty string; "
-                f"got {method.name!r}"
-            )
+            raise ValueError(f"Method.name must be a non-empty string; got {method.name!r}")
         if method.name in self._name_index:
-            raise ValueError(
-                f"Method name {method.name!r} is already registered"
-            )
+            raise ValueError(f"Method name {method.name!r} is already registered")
         self._methods.append(method)
         self._name_index[method.name] = method
         self._sort_methods()
@@ -286,14 +281,10 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         for name in name_to_priority:
             if name not in self._name_index:
                 available = ", ".join(sorted(self._name_index)) or "(none)"
-                raise KeyError(
-                    f"No method named {name!r}. Available: {available}"
-                )
+                raise KeyError(f"No method named {name!r}. Available: {available}")
         for name, new_priority in name_to_priority.items():
             old_priority = self._effective_priority(self._name_index[name])
-            if (old_priority == OPT_IN_ONLY_PRIORITY) != (
-                new_priority == OPT_IN_ONLY_PRIORITY
-            ):
+            if (old_priority == OPT_IN_ONLY_PRIORITY) != (new_priority == OPT_IN_ONLY_PRIORITY):
                 direction = (
                     "out of opt-in-only"
                     if old_priority == OPT_IN_ONLY_PRIORITY
@@ -317,9 +308,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             return self._name_index[name]
         except KeyError:
             available = ", ".join(sorted(self._name_index)) or "(none)"
-            raise KeyError(
-                f"No method named {name!r}. Available: {available}"
-            ) from None
+            raise KeyError(f"No method named {name!r}. Available: {available}") from None
 
     def list_methods(self) -> list[str]:
         """Return method names in priority order (highest first)."""
@@ -336,9 +325,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         """
         return self._effective_priority(m) != OPT_IN_ONLY_PRIORITY
 
-    def check(
-        self, *args: Any, method: str | None = None, **kwargs: Any
-    ) -> MethodInfo:
+    def check(self, *args: Any, method: str | None = None, **kwargs: Any) -> MethodInfo:
         """Check feasibility.  Auto-selects or uses the named method."""
         if method is not None:
             m = self.get_method(method)
@@ -358,9 +345,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             description=f"No applicable method for {self._format_key(key)}",
         )
 
-    def execute(
-        self, *args: Any, method: str | None = None, **kwargs: Any
-    ) -> Any:
+    def execute(self, *args: Any, method: str | None = None, **kwargs: Any) -> Any:
         """Execute using the best (or named) method.
 
         Raises ``TypeError`` if no method is applicable.
@@ -370,9 +355,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             m = self.get_method(method)
             info = m.check(*args, **kwargs)
             if not info.feasible:
-                raise TypeError(
-                    f"Method {method!r} is not applicable: {info.description}"
-                )
+                raise TypeError(f"Method {method!r} is not applicable: {info.description}")
             return m.execute(*args, **kwargs)
 
         if not args:
@@ -385,8 +368,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
                 return m.execute(*args, **kwargs)
 
         raise TypeError(
-            f"No method registered for {self._format_key(key)}. "
-            f"Available: {self.list_methods()}"
+            f"No method registered for {self._format_key(key)}. Available: {self.list_methods()}"
         )
 
     # -- internals (arity-specific overrides) --------------------------------
@@ -438,7 +420,8 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]):
         """
         if key not in self._type_cache:
             self._type_cache[key] = [
-                m for m in self._methods
+                m
+                for m in self._methods
                 if self._is_auto_dispatchable(m)
                 and any(issubclass(key, st) for st in m.supported_types())
             ]
@@ -482,8 +465,9 @@ class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]):
                 if not self._is_auto_dispatchable(m):
                     continue
                 st = m.supported_types()
-                if (any(issubclass(tl, lt) for lt in st[0])
-                        and any(issubclass(tr, rt) for rt in st[1])):
+                if any(issubclass(tl, lt) for lt in st[0]) and any(
+                    issubclass(tr, rt) for rt in st[1]
+                ):
                     matches.append(m)
             self._type_cache[key] = matches
         return self._type_cache[key]

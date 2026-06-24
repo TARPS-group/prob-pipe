@@ -26,14 +26,13 @@ from ._empirical import (
     RecordEmpiricalDistribution,
 )
 from ._record_array import RecordArray
-from ._record_distribution import RecordDistribution
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
 )
-from .record import Record, RecordTemplate
+from .record import EventTemplate, Record
 
 # ---------------------------------------------------------------------------
 # MarginalizedBroadcastDistribution — output marginal of a broadcast
@@ -77,7 +76,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         super().__init__(samples, weights=weights, log_weights=log_weights, name=name)
         if template is not None:
             # Preserve the exact template the RecordArray carried.
-            self._record_template = template
+            self._event_template = template
 
     def __repr__(self):
         return (
@@ -131,6 +130,7 @@ class _MixtureMarginal[T](Distribution[T]):
 
 # -- Mixture protocol mixins (combined dynamically) -------------------------
 
+
 class _MixtureSampling:
     """SupportsSampling mixin for mixture marginals.
 
@@ -154,10 +154,7 @@ class _MixtureSampling:
         indices = self._w.choice(key1, shape=(n_draws,))
         keys = jax.random.split(key2, n_draws)
 
-        results = [
-            self._components[int(indices[i])]._sample(keys[i], ())
-            for i in range(n_draws)
-        ]
+        results = [self._components[int(indices[i])]._sample(keys[i], ()) for i in range(n_draws)]
 
         # Dispatch on result type so a mixture of Record-returning
         # distributions produces a RecordArray rather than crashing in
@@ -165,10 +162,7 @@ class _MixtureSampling:
         # RecordArray leaves here — ``RecordArray.stack`` expects
         # scalar Records; a mixture over already-batched Record
         # samples isn't supported on this path.
-        if all(
-            isinstance(r, Record) and not isinstance(r, RecordArray)
-            for r in results
-        ):
+        if all(isinstance(r, Record) and not isinstance(r, RecordArray) for r in results):
             stacked_ra = RecordArray.stack(results)
             if sample_shape == ():
                 return stacked_ra[0]
@@ -178,7 +172,9 @@ class _MixtureSampling:
                 for name in stacked_ra.fields
             }
             return type(stacked_ra)(
-                fields, batch_shape=sample_shape, template=stacked_ra.template,
+                fields,
+                batch_shape=sample_shape,
+                template=stacked_ra.template,
             )
 
         try:
@@ -213,7 +209,7 @@ class _MixtureVariance:
         # Law of total variance: E[Var(Y|X)] + Var(E[Y|X])
         e_var = self._w.mean(variances)
         diff = means - overall_mean
-        var_e = self._w.mean(diff ** 2)
+        var_e = self._w.mean(diff**2)
         return e_var + var_e
 
 
@@ -222,9 +218,7 @@ class _MixtureLogProb:
 
     def _log_prob(self, value):
         log_w = self._w.log_normalized
-        component_lps = jnp.stack(
-            [c._log_prob(value) for c in self._components], axis=0
-        )
+        component_lps = jnp.stack([c._log_prob(value) for c in self._components], axis=0)
         return jax.scipy.special.logsumexp(log_w + component_lps)
 
 
@@ -262,7 +256,7 @@ def _make_mixture_marginal(
 
     cache_key = tuple(active_protocols)
     if cache_key not in _mixture_class_cache:
-        bases = tuple(active_mixins) + (_MixtureMarginal,) + tuple(active_protocols)
+        bases = (*tuple(active_mixins), _MixtureMarginal, *tuple(active_protocols))
         cls_name = "_DynMixtureMarginal"
         _mixture_class_cache[cache_key] = type(cls_name, bases, {})
 
@@ -350,13 +344,14 @@ def _make_marginal(
 
     if isinstance(output_samples, jnp.ndarray):
         return _RecordMarginal(
-            output_samples, weights, name=name or "marginal",
+            output_samples,
+            weights,
+            name=name or "marginal",
         )
 
     if isinstance(output_samples, list):
         if output_samples and all(
-            isinstance(r, Record) and not isinstance(r, RecordArray)
-            for r in output_samples
+            isinstance(r, Record) and not isinstance(r, RecordArray) for r in output_samples
         ):
             try:
                 ra = RecordArray.stack(output_samples)
@@ -364,11 +359,11 @@ def _make_marginal(
             except (ValueError, TypeError):
                 pass
         try:
-            stacked = jnp.stack(
-                [jnp.asarray(r) for r in output_samples], axis=0
-            )
+            stacked = jnp.stack([jnp.asarray(r) for r in output_samples], axis=0)
             return _RecordMarginal(
-                stacked, weights, name=name or "marginal",
+                stacked,
+                weights,
+                name=name or "marginal",
             )
         except (ValueError, TypeError):
             pass
@@ -449,7 +444,7 @@ def _make_stack(
         aggregate types. The error lists the observed types.
     """
     from ._distribution_array import _make_distribution_array
-    from .record import Record, RecordTemplate
+    from .record import Record
 
     # Resolve batch_shape vs. n. Exactly one must be provided.
     if batch_shape is None and n is None:
@@ -479,13 +474,11 @@ def _make_stack(
             first = outs[0]
             if all(ra.batch_shape == first.batch_shape for ra in outs):
                 fields = {
-                    fname: jnp.stack([ra[fname] for ra in outs], axis=0)
-                    for fname in first.fields
+                    fname: jnp.stack([ra[fname] for ra in outs], axis=0) for fname in first.fields
                 }
                 # Reshape the leading (n_total,) axis to batch_shape.
                 reshaped = {
-                    fname: arr.reshape(batch_shape + arr.shape[1:])
-                    for fname, arr in fields.items()
+                    fname: arr.reshape(batch_shape + arr.shape[1:]) for fname, arr in fields.items()
                 }
                 return type(first)(
                     reshaped,
@@ -499,13 +492,11 @@ def _make_stack(
         # if every leaf is numeric; otherwise fall back to the permissive
         # RecordArray class, building the fields manually so non-numeric
         # leaves (strings, xarray objects, ...) survive.
-        if outs and all(
-            isinstance(o, Record) and not isinstance(o, RecordArray)
-            for o in outs
-        ):
+        if outs and all(isinstance(o, Record) and not isinstance(o, RecordArray) for o in outs):
             # Stack flat, then reshape to batch_shape.
             try:
                 from ._record_array import NumericRecordArray
+
                 flat = NumericRecordArray.stack(list(outs))
             except (TypeError, ValueError):
                 flat = None
@@ -515,9 +506,7 @@ def _make_stack(
                 # Reshape each field's leading axis.
                 n_cur = len(flat.batch_shape)
                 new_fields = {
-                    fname: flat[fname].reshape(
-                        batch_shape + flat[fname].shape[n_cur:]
-                    )
+                    fname: flat[fname].reshape(batch_shape + flat[fname].shape[n_cur:])
                     for fname in flat.fields
                 }
                 return type(flat)(
@@ -529,9 +518,7 @@ def _make_stack(
             # numerically, object-dtype leaves use np.asarray(..., dtype=object).
             first = outs[0]
             if any(o.fields != first.fields for o in outs):
-                raise TypeError(
-                    "_make_stack: Records in list have inconsistent fields."
-                )
+                raise TypeError("_make_stack: Records in list have inconsistent fields.")
             fields: dict[str, Any] = {}
             for fname in first.fields:
                 values = [o[fname] for o in outs]
@@ -544,20 +531,22 @@ def _make_stack(
             tpl_spec: dict[str, Any] = {}
             for fname, v in fields.items():
                 if hasattr(v, "dtype") and getattr(v.dtype, "kind", None) in "biufc":
-                    tpl_spec[fname] = tuple(v.shape[len(batch_shape):])
+                    tpl_spec[fname] = tuple(v.shape[len(batch_shape) :])
                 else:
                     tpl_spec[fname] = None
             return RecordArray(
                 fields,
                 batch_shape=batch_shape,
-                template=RecordTemplate(tpl_spec),
+                template=EventTemplate(tpl_spec),
             )
 
         # All Distributions → stacked DistributionArray, shaped to
         # batch_shape.
         if outs and all(isinstance(o, Distribution) for o in outs):
             return _make_distribution_array(
-                outs, batch_shape=batch_shape, name=name,
+                outs,
+                batch_shape=batch_shape,
+                name=name,
             )
 
         # Numeric scalars / arrays → wrap in NumericRecordArray with
@@ -565,16 +554,18 @@ def _make_stack(
         # reshape leading axis to batch_shape.
         try:
             stacked = jnp.stack(
-                [jnp.asarray(o) for o in outs], axis=0,
+                [jnp.asarray(o) for o in outs],
+                axis=0,
             )
         except (TypeError, ValueError):
             stacked = None
 
         if stacked is not None:
             from ._record_array import NumericRecordArray
+
             event_shape = tuple(stacked.shape[1:])
             reshaped = stacked.reshape(batch_shape + event_shape)
-            tpl = RecordTemplate(**{field_name: event_shape})
+            tpl = EventTemplate(**{field_name: event_shape})
             return NumericRecordArray(
                 {field_name: reshaped},
                 batch_shape=batch_shape,
@@ -585,7 +576,7 @@ def _make_stack(
         # numpy object-dtype array of the opaque outputs.
         try:
             object_array = np.asarray(outs, dtype=object).reshape(batch_shape)
-            tpl = RecordTemplate(**{field_name: None})
+            tpl = EventTemplate(**{field_name: None})
             return RecordArray(
                 {field_name: object_array},
                 batch_shape=batch_shape,
@@ -611,9 +602,10 @@ def _make_stack(
                 f"(batch_shape={batch_shape})."
             )
         from ._record_array import NumericRecordArray
+
         event_shape = tuple(inner_outputs.shape[1:])
         reshaped = inner_outputs.reshape(batch_shape + event_shape)
-        tpl = RecordTemplate(**{field_name: event_shape})
+        tpl = EventTemplate(**{field_name: event_shape})
         return NumericRecordArray(
             {field_name: reshaped},
             batch_shape=batch_shape,
@@ -632,19 +624,24 @@ def _make_stack(
         resolved = [inner_outputs[f] for f in inner_outputs.fields]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
             event_shapes = tuple(v.shape[1:] for v in resolved)
-            tpl = RecordTemplate(**dict(zip(inner_outputs.fields, event_shapes)))
+            tpl = EventTemplate(**dict(zip(inner_outputs.fields, event_shapes)))
             reshaped_fields = {
                 fname: v.reshape(batch_shape + v.shape[1:])
                 for fname, v in zip(inner_outputs.fields, resolved)
             }
             try:
                 from ._record_array import NumericRecordArray
+
                 return NumericRecordArray(
-                    reshaped_fields, batch_shape=batch_shape, template=tpl,
+                    reshaped_fields,
+                    batch_shape=batch_shape,
+                    template=tpl,
                 )
             except (TypeError, ValueError):
                 return RecordArray(
-                    reshaped_fields, batch_shape=batch_shape, template=tpl,
+                    reshaped_fields,
+                    batch_shape=batch_shape,
+                    template=tpl,
                 )
 
     # Fallback — shouldn't reach here with well-formed vmap output; if
@@ -728,9 +725,9 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         self._output_distributions = output_distributions
 
         # Determine n from first broadcast arg
-        first_key = list(broadcast_args)[0]
+        first_key = next(iter(broadcast_args))
         first_arr = input_samples[first_key]
-        n = first_arr.shape[0] if hasattr(first_arr, 'shape') else len(first_arr)
+        n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         if name is None:
@@ -760,13 +757,13 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
     def samples(self) -> Any:
         """Output samples (forwarded to output marginal for backward compat)."""
         m = self.marginalize()
-        return m.samples if hasattr(m, 'samples') else m.items
+        return m.samples if hasattr(m, "samples") else m.items
 
     # -- Named components ----------------------------------------------------
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return tuple(self._broadcast_args) + ("_output",)
+        return (*tuple(self._broadcast_args), "_output")
 
     def __getitem__(self, key: str):
         if key == "_output":
@@ -797,7 +794,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
             result["_output"] = self._output_samples[indices]
 
         if sample_shape == ():
-            return jax.tree.map(lambda x: x[0] if hasattr(x, '__getitem__') else x, result)
+            return jax.tree.map(lambda x: x[0] if hasattr(x, "__getitem__") else x, result)
         return result
 
     # -- marginalization ----------------------------------------------------
