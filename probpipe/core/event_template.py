@@ -419,7 +419,7 @@ class EventTemplate(_NamedTree):
 
     def __new__(
         cls,
-        _dict: Mapping[str, _FieldSpecInput] | None = None,
+        _field_specs: Mapping[str, _FieldSpecInput] | None = None,
         /,
         **field_specs: _FieldSpecInput,
     ):
@@ -427,22 +427,22 @@ class EventTemplate(_NamedTree):
         # explicit ``NumericEventTemplate(...)`` calls bypass this path
         # and run their own strict validation.
         if cls is EventTemplate:
-            specs = _dict if _dict is not None else field_specs
+            specs = _field_specs if _field_specs is not None else field_specs
             if specs and _all_numeric(specs.values()):
                 return object.__new__(NumericEventTemplate)
         return object.__new__(cls)
 
     def __init__(
         self,
-        _dict: Mapping[str, _FieldSpecInput] | None = None,
+        _field_specs: Mapping[str, _FieldSpecInput] | None = None,
         /,
         **field_specs: _FieldSpecInput,
     ):
         source: Mapping[str, _FieldSpecInput]
-        if _dict is not None:
+        if _field_specs is not None:
             if field_specs:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
-            source = _dict
+            source = _field_specs
         else:
             source = field_specs
         if not source:
@@ -794,11 +794,11 @@ class NumericEventTemplate(EventTemplate):
 
     def __init__(
         self,
-        _dict: Mapping[str, _FieldSpecInput] | None = None,
+        _field_specs: Mapping[str, _FieldSpecInput] | None = None,
         /,
         **field_specs: _FieldSpecInput,
     ):
-        super().__init__(_dict, **field_specs)
+        super().__init__(_field_specs, **field_specs)
         object.__setattr__(self, "_vector_size", self._compute_vector_size())
 
     @property
