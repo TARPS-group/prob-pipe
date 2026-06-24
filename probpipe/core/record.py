@@ -188,6 +188,9 @@ class Record(_NamedTree):
       return a new ``Record`` instead of mutating in place.
     * **Compare**: two records are equal iff they share a type, an equal
       :attr:`event_template`, and field-by-field equal data (:meth:`__eq__`).
+    * **Flatten** to the leaf list with :meth:`to_leaf_list` (canonical order,
+      each leaf whole) and rebuild via :meth:`EventTemplate.from_leaf_list`;
+      :meth:`~probpipe.NumericRecord.to_vector` is the numeric flat-array form.
 
     Parameters
     ----------
@@ -220,16 +223,17 @@ class Record(_NamedTree):
     Notes
     -----
     **JAX pytree.** A ``Record`` is a registered pytree: nested ``Record``\\s are
-    internal nodes and each field value is a child. :attr:`event_template` /
-    :attr:`~EventTemplate.leaf_paths` describe the record's *own* leaves — every
-    field value counted once. ``jax.tree_util.tree_leaves`` agrees **when every
-    leaf is an array** (e.g. :class:`NumericRecord`); it diverges only for an
-    opaque leaf whose value is itself a JAX container (a ``tuple`` / ``list`` /
-    ``dict``), which the record counts as one leaf but JAX descends into. This
-    rarely matters: ProbPipe's own traversal (``record[path]``,
-    :attr:`~EventTemplate.leaf_paths`, ``to_vector`` / ``from_vector``,
-    :meth:`map`) is what you reach for — you seldom need raw JAX traversal over a
-    ``Record``.
+    internal nodes and each field value is a child. Its :attr:`event_template` is
+    the **source of truth** for what counts as a leaf, and ProbPipe's traversal
+    honours that granularity — :attr:`~EventTemplate.leaf_paths`,
+    :meth:`to_leaf_list`, :meth:`map`, ``record[path]``, and
+    :meth:`~probpipe.NumericRecord.to_vector` all treat a container-valued field
+    (a ``tuple`` / ``list`` / ``dict``) as a *single* opaque leaf. The
+    **JAX-pytree view is finer**: ``jax.tree_util.tree_flatten`` / ``tree_leaves``
+    / ``tree_map`` (and ``jit`` / ``vmap`` / ``grad``) descend into nested
+    ``Record``\\s *and* into such container leaves. The two coincide when every
+    leaf is an array (e.g. :class:`NumericRecord`). Reach for ProbPipe's traversal
+    for the record's own leaves; use raw JAX only when you want that finer view.
 
     :attr:`name`, :attr:`source`, and :attr:`event_template` are runtime metadata
     and are not serialised into the pytree aux (which holds only the field
@@ -582,68 +586,24 @@ class Record(_NamedTree):
                 fields[name] = fn(name, val)
         return type(self)(fields)
 
-    # -- JAX-pytree (de)serialization ---------------------------------------
+    # -- Leaf-list (de)serialization ----------------------------------------
 
-    def flatten(self) -> tuple[list[Any], jax.tree_util.PyTreeDef]:
-        """Decompose into ``(leaves, aux)``, à la :func:`jax.tree_util.tree_flatten`.
+    def to_leaf_list(self) -> list[Any]:
+        """This record's leaves, in canonical leaf order.
 
-        The general **JAX-pytree** operation, defined for *any* leaf type
-        (numeric or opaque). Returns this record's pytree *leaves* — the
-        stored values in canonical leaf order (insertion order, descending
-        depth-first into nested records) — together with the structural
-        *aux* (a :class:`jax.tree_util.PyTreeDef`). :meth:`unflatten` is the
-        inverse: ``Record.unflatten(*record.flatten()) == record``.
+        Convenience for :meth:`EventTemplate.to_leaf_list` against this record's
+        :attr:`event_template` (the source of truth for what counts as a leaf):
+        a container-valued opaque field is returned as one whole leaf, not
+        descended into. Reconstruct with
+        ``record.event_template.from_leaf_list(record.to_leaf_list())``.
 
-        This is distinct from :meth:`EventTemplate.to_vector`. ``flatten``
-        keeps each leaf whole (any type) and carries the full structure in
-        ``aux``; ``to_vector`` applies only to *numeric* values and goes
-        further, ravelling and concatenating the numeric leaves into a
-        single dense 1-D ``vec``.
-
-        Returns
-        -------
-        tuple
-            ``(leaves, aux)`` — ``leaves`` is the list of pytree leaves in
-            canonical leaf order; ``aux`` is the ``jax.tree_util.PyTreeDef``
-            describing the structure.
-
-        See Also
-        --------
-        unflatten : Reconstruct a value from ``(leaves, aux)`` (the inverse).
-        EventTemplate.to_vector : Dense 1-D serialization of a numeric value.
+        Distinct from ``jax.tree_util.tree_flatten`` (the finer JAX view, which
+        descends into a container leaf) and from
+        :meth:`~probpipe.NumericRecord.to_vector` (numeric-only; ravels and
+        concatenates the leaves into a flat array). See the *Notes* on this
+        class for the JAX-pytree contract.
         """
-        return jax.tree_util.tree_flatten(self)
-
-    @staticmethod
-    def unflatten(leaves: list[Any], aux: jax.tree_util.PyTreeDef) -> Any:
-        """Reconstruct a value from ``(leaves, aux)``, à la :func:`jax.tree_util.tree_unflatten`.
-
-        The inverse of :meth:`flatten`: rebuilds the original (possibly
-        nested) value from its pytree *leaves* and the *aux* structure.
-        Defined for any leaf type; the concrete result class is encoded in
-        ``aux``, so ``Record.unflatten`` and ``NumericRecord.unflatten``
-        behave identically (the static method does not depend on which
-        class it is called on).
-
-        Parameters
-        ----------
-        leaves : list
-            Pytree leaves in canonical leaf order, as returned by
-            :meth:`flatten`.
-        aux : jax.tree_util.PyTreeDef
-            The structural definition returned by :meth:`flatten`.
-
-        Returns
-        -------
-        Any
-            The reconstructed value, of the class encoded in ``aux``.
-
-        See Also
-        --------
-        flatten : Decompose a value into ``(leaves, aux)`` (the inverse).
-        EventTemplate.from_vector : Reconstruct a numeric value from a dense 1-D ``vec``.
-        """
-        return jax.tree_util.tree_unflatten(aux, leaves)
+        return self.event_template.to_leaf_list(self)
 
     # -- Repr ---------------------------------------------------------------
 

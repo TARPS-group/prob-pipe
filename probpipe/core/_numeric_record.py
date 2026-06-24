@@ -1,8 +1,8 @@
 """NumericRecord — Record subclass where every leaf is a ``jax.Array``.
 
 Adds ``to_vector`` / ``vector_size`` for the numeric 1-D serialisation
-(the inverse, ``from_vector``, lives on :class:`EventTemplate`); the
-general JAX-pytree ``flatten`` / ``unflatten`` are inherited from
+(the inverse, ``from_vector``, lives on :class:`NumericEventTemplate`); the
+general ``to_leaf_list`` (leaves kept whole) is inherited from
 :class:`Record`. Construction validates that every leaf is a numeric value (numeric
 array, numeric scalar, or nested ``NumericRecord``) and coerces each
 to ``jnp.ndarray`` so the post-construction invariant is "every leaf
@@ -82,8 +82,8 @@ class NumericRecord(Record):
 
     Adds :meth:`to_vector` / :attr:`vector_size` for serialising the
     record to its flat 1-D vector (the inverse, ``from_vector``, lives on
-    :class:`EventTemplate`); the general JAX-pytree :meth:`~Record.flatten`
-    / :meth:`~Record.unflatten` are inherited from :class:`Record`. Construction
+    :class:`NumericEventTemplate`); the general :meth:`~Record.to_leaf_list`
+    (leaves kept whole) is inherited from :class:`Record`. Construction
     validates that every leaf is a numeric value (or a nested
     :class:`NumericRecord`) and coerces scalar / numpy / xarray /
     pandas leaves to ``jnp.ndarray`` so downstream code sees a uniform
@@ -214,9 +214,9 @@ class NumericRecord(Record):
         :meth:`EventTemplate.from_vector`, reconstructs the record from such a
         vector.
 
-        This is distinct from the JAX-pytree :meth:`~Record.flatten`, which
-        returns ``(leaves, aux)`` keeping each leaf whole; ``to_vector`` ravels
-        and concatenates the numeric leaves into a single dense vector.
+        This is distinct from :meth:`~Record.to_leaf_list`, which keeps each leaf
+        whole (any type); ``to_vector`` ravels and concatenates the numeric
+        leaves into a single dense vector.
         """
         return self.event_template.to_vector(self)
 

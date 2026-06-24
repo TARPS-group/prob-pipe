@@ -298,6 +298,7 @@ class TestNumericRecordArrayFlatten:
         np.testing.assert_allclose(nra["b"], [2.0, 5.0])
         np.testing.assert_allclose(nra["c"], [3.0, 6.0])
 
+
 # ---------------------------------------------------------------------------
 # Nested-record flatten / slash indexing (issue #262)
 # ---------------------------------------------------------------------------

@@ -593,6 +593,62 @@ class EventTemplate(_NamedTree):
             )
         return NumericEventTemplate(specs)
 
+    # -- Leaf-list (de)serialization (general; leaves kept whole) -----------
+
+    def to_leaf_list(self, value: Any) -> list[Any]:
+        """Flatten *value* to its leaves, in canonical leaf order.
+
+        Returns *value*'s leaves — each kept *whole* (any type), one per
+        :attr:`leaf_paths` entry — at this template's granularity: a
+        container-valued opaque field (a ``tuple`` / ``list`` / ``dict``) is a
+        single leaf, **not** descended into. Pairs with :attr:`leaf_paths`
+        (``dict(zip(self.leaf_paths, leaves))`` is the keyed view); inverse of
+        :meth:`from_leaf_list`.
+
+        This is the general (any-leaf-type) counterpart of
+        :meth:`~NumericEventTemplate.to_vector`, which goes further and ravels +
+        concatenates the (numeric) leaves into a flat array. It is distinct from
+        ``jax.tree_util.tree_flatten``, whose finer view descends into a
+        container leaf (see :class:`~probpipe.Record`).
+        """
+        return [value[path] for path in self.leaf_paths]
+
+    def from_leaf_list(self, leaves: Iterable[Any]) -> Any:
+        """Rebuild a value from its *leaves* — the inverse of :meth:`to_leaf_list`.
+
+        *leaves* are taken in :attr:`leaf_paths` (canonical) order, one per leaf
+        and kept whole, and are placed at their paths to rebuild the nested
+        value mirroring this template (a nested ``EventTemplate`` → a nested
+        :class:`~probpipe.Record`; a numeric template → a
+        :class:`~probpipe.NumericRecord`). Round-trip:
+        ``tpl.from_leaf_list(tpl.to_leaf_list(v)) == v``.
+
+        Single (unbatched) values only; batched reconstruction arrives with the
+        batch abstractions (issue #235). Raises ``ValueError`` if the number of
+        *leaves* is not ``len(self.leaf_paths)``.
+        """
+        leaves = list(leaves)
+        n_leaves = len(self.leaf_paths)
+        if len(leaves) != n_leaves:
+            raise ValueError(
+                f"{type(self).__name__}.from_leaf_list: got {len(leaves)} leaves, "
+                f"expected {n_leaves} (one per leaf in leaf_paths)."
+            )
+        leaf_iter = iter(leaves)
+
+        def _build(template: EventTemplate) -> Any:
+            from ._numeric_record import NumericRecord
+            from .record import Record
+
+            fields = {
+                name: (_build(spec) if isinstance(spec, EventTemplate) else next(leaf_iter))
+                for name, spec in template._field_map().items()
+            }
+            cls = NumericRecord if isinstance(template, NumericEventTemplate) else Record
+            return cls(fields, event_template=template)
+
+        return _build(self)
+
     # -- Equality and hashing -----------------------------------------------
 
     def __eq__(self, other: object) -> bool:
@@ -837,7 +893,7 @@ class NumericEventTemplate(EventTemplate):
                 f"to_vector expects a NumericRecord (single) or "
                 f"NumericRecordArray (batched), got {type(value).__name__}."
             )
-        leaves, _aux = value.flatten()
+        leaves = self.to_leaf_list(value)
         return jnp.concatenate([jnp.reshape(leaf, (*batch_shape, -1)) for leaf in leaves], axis=-1)
 
     def from_vector(self, vec: ArrayLike) -> NumericRecord | NumericRecordArray:

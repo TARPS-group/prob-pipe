@@ -3,8 +3,7 @@
 A ``RecordArray`` stores a batch of Records with consistent field structure.
 Each field has shape ``(*batch_shape, *leaf_shape)``.  ``NumericRecordArray``
 adds numeric operations: ``to_vector`` (1-D serialization, inverse
-``EventTemplate.from_vector``), ``mean``, ``var``. The general JAX-pytree
-``flatten`` / ``unflatten`` are inherited from ``Record``.
+``NumericEventTemplate.from_vector``), ``mean``, ``var``.
 """
 
 from __future__ import annotations
@@ -463,9 +462,9 @@ class NumericRecordArray(RecordArray):
         into nested records). The inverse, :meth:`EventTemplate.from_vector`,
         reconstructs the batch.
 
-        Distinct from the JAX-pytree :meth:`~Record.flatten` (which returns
-        ``(leaves, aux)`` keeping each batched leaf whole); ``to_vector`` ravels
-        and concatenates each element's event dimensions into a dense matrix.
+        Distinct from :meth:`~Record.to_leaf_list` (which keeps each batched leaf
+        whole); ``to_vector`` ravels and concatenates each element's event
+        dimensions into a dense matrix.
         """
         return self.template.to_vector(self)
 
@@ -560,7 +559,7 @@ class NumericRecordArray(RecordArray):
 # parent's storage, plus a ``_parent`` reference. It's consciously a
 # *plain* ``RecordArray`` subclass — not a ``NumericRecordArray``
 # subclass — to avoid inheriting per-field batch-reduction methods
-# (``.mean`` / ``.var`` / ``.flatten``) that clash with the "act like
+# (``.mean`` / ``.var`` / ``.to_vector``) that clash with the "act like
 # the underlying column" intuition. Users who want numeric column ops
 # convert explicitly: ``jnp.asarray(view).mean()``.
 #

@@ -288,9 +288,10 @@ class TestNumericAPIOnRecord:
 
     ``to_vector`` / ``vector_size`` require numeric leaves, so they belong
     only on ``NumericRecord``; if someone re-adds one to ``Record``, this
-    fails. The general JAX-pytree ``flatten`` / ``unflatten`` (defined for
-    any leaf type) DO live on ``Record`` — they are asserted present here so
-    the two vocabularies don't drift. Implementation-detail attributes like
+    fails. The general ``to_leaf_list`` (leaves kept whole, any type) DOES live
+    on ``Record`` — asserted present here so the two vocabularies don't drift.
+    The JAX-pytree ``flatten`` / ``unflatten`` are *not* Record methods (use
+    ``jax.tree_util`` directly). Implementation-detail attributes like
     ``_resolved`` / ``_coords`` are intentionally not checked here.
     """
 
@@ -300,39 +301,51 @@ class TestNumericAPIOnRecord:
             assert not hasattr(v, attr), f"Record should not expose {attr!r}"
         assert not hasattr(Record, "zip")
 
-    def test_pytree_flatten_present_on_record(self):
-        # flatten/unflatten are the general JAX-pytree ops — defined for any
-        # leaf type, so they are intentionally on the Record base.
+    def test_leaf_list_present_flatten_absent(self):
+        # to_leaf_list is the general (any-leaf) ProbPipe leaf traversal on
+        # Record; the JAX-pytree flatten/unflatten are NOT Record methods.
         v = Record(a=1.0, label="x")
-        leaves, aux = v.flatten()
-        assert Record.unflatten(leaves, aux) == v
+        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
+        assert not hasattr(Record, "flatten")
+        assert not hasattr(Record, "unflatten")
 
 
-class TestPytreeFlattenUnflatten:
-    """The repurposed ``flatten`` / ``unflatten`` are the JAX-pytree ops
-    (``value -> (leaves, aux)`` / ``(leaves, aux) -> value``), defined for any
-    leaf type — distinct from the numeric ``to_vector`` / ``from_vector``.
+class TestLeafList:
+    """``to_leaf_list`` / ``from_leaf_list`` are the general (any-leaf-type)
+    leaf (de)composition at the *template's* granularity: each leaf is kept
+    whole (never raveled), visited in canonical ``leaf_paths`` order. They are
+    distinct from the numeric ``to_vector`` / ``from_vector`` (which ravel and
+    concatenate numeric leaves) and from JAX's finer pytree view (which
+    descends into container-valued opaque leaves — see
+    ``test_container_leaf_is_one_whole_leaf``).
     """
 
-    def test_flatten_returns_leaves_and_treedef(self):
+    def test_to_leaf_list_keeps_leaves_whole_in_canonical_order(self):
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe")
-        leaves, aux = v.flatten()
-        # Leaves are kept whole (not raveled/concatenated) and in any type.
-        assert leaves[0].shape == (2,)
-        assert leaves[1] == "horseshoe"
-        assert aux == jax.tree_util.tree_structure(v)
+        leaves = v.to_leaf_list()
+        assert leaves[0].shape == (2,)  # kept whole, not raveled
+        assert leaves[1] == "horseshoe"  # opaque leaf preserved as-is
+        assert list(v.leaf_paths) == ["x", "label"]  # canonical order
 
-    def test_record_roundtrip_with_opaque_leaf(self):
+    def test_container_leaf_is_one_whole_leaf(self):
+        # A tuple field is ONE opaque leaf at template granularity; JAX's
+        # pytree view descends into it (documented divergence).
+        v = Record(x=jnp.zeros(2), pair=(jnp.array(1.0), jnp.array(2.0)))
+        leaves = v.to_leaf_list()
+        assert len(leaves) == 2  # x, pair (whole)
+        assert isinstance(leaves[1], tuple)
+        assert len(jax.tree_util.tree_leaves(v)) == 3  # JAX descends the tuple
+
+    def test_roundtrip_with_opaque_leaf(self):
         # Opaque (non-numeric) leaves round-trip — unlike to_vector.
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe", count=3)
-        assert Record.unflatten(*v.flatten()) == v
+        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord
 
         v = NumericRecord(a=jnp.array([1.0, 2.0, 3.0]), b=NumericRecord(c=jnp.array(5.0)))
-        leaves, aux = v.flatten()
-        rebuilt = NumericRecord.unflatten(leaves, aux)
+        rebuilt = v.event_template.from_leaf_list(v.to_leaf_list())
         assert rebuilt == v
         assert isinstance(rebuilt, NumericRecord)
         assert isinstance(rebuilt["b"], NumericRecord)
@@ -340,36 +353,22 @@ class TestPytreeFlattenUnflatten:
     def test_mixed_nested_record_roundtrip(self):
         # A nested mixed record with both numeric and opaque leaves.
         v = Record(
-            theta=Record(loc=jnp.array([0.0, 1.0]), name="prior"),
+            theta=Record(loc=jnp.array([0.0, 1.0]), label="prior"),
             tag="run-7",
         )
-        assert Record.unflatten(*v.flatten()) == v
+        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
 
-    def test_record_array_roundtrip(self):
-        from probpipe import EventTemplate, NumericRecordArray
+    def test_wrong_leaf_count_raises(self):
+        v = Record(a=1.0, b=2.0)
+        with pytest.raises(ValueError, match="expected 2"):
+            v.event_template.from_leaf_list([1.0])
 
-        tpl = EventTemplate(x=(2,), y=())
-        nra = NumericRecordArray(
-            x=jnp.arange(6.0).reshape(3, 2),
-            y=jnp.arange(3.0),
-            batch_shape=(3,),
-            template=tpl,
-        )
-        leaves, aux = nra.flatten()
-        rebuilt = NumericRecordArray.unflatten(leaves, aux)
-        assert isinstance(rebuilt, NumericRecordArray)
-        assert rebuilt.batch_shape == (3,)
-        assert rebuilt == nra
-
-    def test_static_unflatten_class_independent(self):
-        # unflatten is static: the result class comes from aux, not the
-        # receiver, so Record.unflatten and NumericRecord.unflatten agree.
-        from probpipe import NumericRecord
-
-        v = NumericRecord(a=jnp.array(1.0))
-        leaves, aux = v.flatten()
-        assert type(Record.unflatten(leaves, aux)) is NumericRecord
-        assert type(NumericRecord.unflatten(leaves, aux)) is NumericRecord
+    def test_jax_pytree_roundtrip_still_works(self):
+        # Record stays a registered pytree; the JAX path round-trips via
+        # jax.tree_util (the documented finer-granularity escape hatch).
+        v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe")
+        leaves, treedef = jax.tree_util.tree_flatten(v)
+        assert jax.tree_util.tree_unflatten(treedef, leaves) == v
 
 
 # ---------------------------------------------------------------------------

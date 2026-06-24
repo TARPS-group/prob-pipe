@@ -73,11 +73,15 @@ if it were user-guide reference text.
      *may* note that as an explicit, clearly-labeled **interim implementation detail** — but never
      let it define the contract or blur a distinction the plan draws.
    - In particular, keep the plan's **vocabulary distinctions** intact even before the code that
-     enforces them lands. *Example:* `to_vector`/`from_vector` are the **numeric** 1-D
-     (de)serialization (require `is_numeric`); `flatten`/`unflatten` are the **general JAX-pytree**
-     ops (`value -> (leaves, aux)`, any leaf type). Do not describe them as interchangeable, or
-     `to_vector` as "the home of `flatten`", merely because today's `NumericRecord.flatten` still
-     carries the soon-to-be-retired 1-D meaning.
+     enforces them lands. *Example:* `to_vector`/`from_vector` (on `NumericEventTemplate`) are the
+     **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
+     `is_numeric`); `to_leaf_list`/`from_leaf_list` (on `EventTemplate`) are the **general**
+     (de)composition — they keep each leaf whole (any type), visited at the **template's**
+     granularity in canonical `leaf_paths` order. Both treat a container-valued opaque leaf
+     (tuple/dict/namedtuple) as **one** leaf; JAX's `jax.tree_util.tree_flatten` is the finer pytree
+     view that descends into it (`Record` is a registered pytree, but `flatten`/`unflatten` are
+     **not** `Record` methods — use `jax.tree_util` directly). Do not describe these as
+     interchangeable.
 
 ## Major abstractions & where their contract lives
 | Abstraction | Canonical contract location |
