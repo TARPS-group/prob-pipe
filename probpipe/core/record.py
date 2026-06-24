@@ -109,8 +109,6 @@ from .event_template import _PATH_SEP, EventTemplate, _check_no_path_sep
 from .provenance import Provenance
 
 if TYPE_CHECKING:
-    # Annotation-only back-references: these live in modules that import
-    # Record from here, so TYPE_CHECKING avoids the runtime import cycle.
     from ._numeric_record import NumericRecord
 
 __all__ = [
@@ -201,10 +199,6 @@ class Record:
             name = "record(" + ",".join(store.keys()) + ")"
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_source", None)
-        # Authoritative structural schema, fixed at construction. When supplied
-        # (e.g. carried forward from the generator that produced this value) it
-        # is validated against the data; otherwise it is inferred once, now,
-        # from the field data. Every Record has a template from birth.
         if event_template is None:
             event_template = EventTemplate.infer_from(store)
         else:
