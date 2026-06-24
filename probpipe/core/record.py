@@ -99,7 +99,7 @@ preserve it.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -197,8 +197,9 @@ class Record(_NamedTree):
 
     Parameters
     ----------
-    _fields : dict, optional
-        Fields as a positional mapping — an alternative to keyword ``**fields``
+    _fields : Mapping, optional
+        Fields as a positional mapping (any ``collections.abc.Mapping``, copied
+        into a ``dict`` at construction) — an alternative to keyword ``**fields``
         (passing both raises). Use it when a field name would collide with the
         ``name`` / ``event_template`` keywords. Positional-only (the leading
         underscore keeps it from shadowing a field literally named ``fields``).
@@ -248,7 +249,7 @@ class Record(_NamedTree):
 
     def __init__(
         self,
-        _fields: dict[str, _FieldValue] | None = None,
+        _fields: Mapping[str, _FieldValue] | None = None,
         /,
         *,
         name: str | None = None,
@@ -397,6 +398,10 @@ class Record(_NamedTree):
 
     def _field_map(self) -> dict[str, _FieldValue]:
         return self._fields
+
+    @classmethod
+    def _node_type(cls) -> type:
+        return Record
 
     # -- Selection ----------------------------------------------------------
 

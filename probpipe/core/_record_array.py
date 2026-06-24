@@ -9,7 +9,7 @@ adds numeric operations: ``to_vector`` (1-D serialization, inverse
 from __future__ import annotations
 
 from collections import OrderedDict
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from typing import Any
 
 import jax
@@ -73,7 +73,7 @@ class RecordArray(Record):
 
     def __init__(
         self,
-        _fields: dict[str, Any] | None = None,
+        _fields: Mapping[str, Any] | None = None,
         /,
         *,
         batch_shape: tuple[int, ...],

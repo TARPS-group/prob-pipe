@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, Provenance, Record, provenance_ancestors
+from probpipe import EventTemplate, Normal, Provenance, Record, provenance_ancestors
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -369,6 +369,32 @@ class TestLeafList:
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe")
         leaves, treedef = jax.tree_util.tree_flatten(v)
         assert jax.tree_util.tree_unflatten(treedef, leaves) == v
+
+
+class TestLeafPathsAgreement:
+    """A Record's own ``leaf_paths`` must always equal its
+    ``event_template``'s ``leaf_paths`` — both define "what is a leaf" and the
+    ``event_template`` is the source of truth. (Regression: the shared
+    ``_NamedTree`` mixin used to treat *any* nested tree as an internal node,
+    so a ``Record`` holding an ``EventTemplate`` value wrongly descended into
+    it, disagreeing with the template, which sees it as one opaque leaf.)
+    """
+
+    def test_flat(self):
+        v = Record(a=1.0, b=jnp.zeros(3), c="x")
+        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
+
+    def test_nested_in_family(self):
+        v = Record(theta=Record(loc=jnp.zeros(2), s=jnp.ones(3)), top=jnp.array(1.0))
+        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
+        assert list(v.leaf_paths) == ["theta/loc", "theta/s", "top"]
+
+    def test_cross_type_value_is_one_opaque_leaf(self):
+        # An EventTemplate stored as a Record field value is an opaque leaf,
+        # NOT an internal node: leaf_paths must not descend into it.
+        v = Record(weird=EventTemplate(a=(2,)), x=jnp.array([1.0, 2.0]))
+        assert list(v.leaf_paths) == ["weird", "x"]
+        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
 
 
 # ---------------------------------------------------------------------------

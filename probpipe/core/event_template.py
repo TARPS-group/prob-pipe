@@ -97,9 +97,10 @@ class _NamedTree:
     same way to name, address, enumerate, and iterate that structure;
     subclasses differ only in what their field values are (specs vs. data).
 
-    A subclass supplies one hook, :meth:`_field_map` (its ordered
-    ``name -> value`` mapping). A field value counts as an internal node iff it
-    is itself a ``_NamedTree``; everything else is a leaf.
+    A subclass supplies two hooks: :meth:`_field_map` (its ordered
+    ``name -> value`` mapping) and :meth:`_node_type` (the type whose instances
+    count as internal nodes). A field value is an internal node iff it is an
+    instance of that type; everything else is a leaf.
     """
 
     __slots__ = ()
@@ -107,6 +108,20 @@ class _NamedTree:
     def _field_map(self) -> Mapping[str, Any]:
         """The ordered ``field name -> field value`` mapping for this node (hook)."""
         raise NotImplementedError
+
+    @classmethod
+    def _node_type(cls) -> type:
+        """The type whose instances are internal nodes of this tree (hook).
+
+        A field value is an internal node iff it is an instance of this type;
+        every other value is a leaf. Each named-tree family **narrows** this to
+        itself (``Record`` → ``Record``, ``EventTemplate`` → ``EventTemplate``)
+        so a tree never descends into a value of the *other* family. This keeps
+        :attr:`leaf_paths` consistent with each type's own contract — in
+        particular, a ``Record``'s ``leaf_paths`` always equals its
+        ``event_template``'s ``leaf_paths``.
+        """
+        return _NamedTree
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -148,8 +163,9 @@ class _NamedTree:
             return field_map[key]
         if isinstance(key, tuple):
             node: Any = self
+            node_type = self._node_type()
             for i, name in enumerate(key):
-                if i > 0 and not isinstance(node, _NamedTree):
+                if i > 0 and not isinstance(node, node_type):
                     raise KeyError(
                         f"path {_PATH_SEP.join(key)!r} descends through non-tree "
                         f"leaf {type(node).__name__} at {_PATH_SEP.join(key[:i])!r}"
@@ -178,8 +194,9 @@ class _NamedTree:
         every leaf-wise operation uses.
         """
         paths: list[str] = []
+        node_type = self._node_type()
         for name, value in self._field_map().items():
-            if isinstance(value, _NamedTree):
+            if isinstance(value, node_type):
                 paths.extend(f"{name}{_PATH_SEP}{sub}" for sub in value.leaf_paths)
             else:
                 paths.append(name)
@@ -482,6 +499,10 @@ class EventTemplate(_NamedTree):
 
     def _field_map(self) -> Mapping[str, _FieldSpec]:
         return self._specs
+
+    @classmethod
+    def _node_type(cls) -> type:
+        return EventTemplate
 
     # -- Numeric queries & projection ---------------------------------------
 

@@ -25,6 +25,7 @@ dtype that participates in arithmetic as ``0`` / ``1``).
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 import jax
@@ -119,7 +120,7 @@ class NumericRecord(Record):
 
     def __init__(
         self,
-        _fields: dict[str, ArrayLike | NumericRecord] | None = None,
+        _fields: Mapping[str, ArrayLike | NumericRecord] | None = None,
         /,
         *,
         name: str | None = None,
