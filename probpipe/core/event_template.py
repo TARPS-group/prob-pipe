@@ -1,46 +1,36 @@
 """EventTemplate — ProbPipe's universal structural schema.
 
 An :class:`EventTemplate` describes the **structure** of a value, independent
-of the data itself: the named (possibly nested) fields and what each leaf is.
-It is ProbPipe's schema for *any* value the framework works with — a
-:class:`~probpipe.Record` value, one event / sample of a
-:class:`~probpipe.core._distribution_base.Distribution`, or the input / output
-of a workflow function. A :class:`Record` is then a *value* described by an
-``EventTemplate`` (the schema-to-value relationship is type-to-instance).
+of the data itself. A value is in general allowed to be a nested, tree-like
+structure (in JAX terminology, a PyTree). An :class:`EventTemplate` encodes the
+structure of the tree, including unique named paths to each tree leaf.
 
-The schema is a tree of named fields whose leaves are a closed sum of leaf
-specs:
+The structure of a leaf node is described by one of a fixed set of "spec"
+objects:
 
 | Leaf spec          | What the leaf holds                                  |
 |--------------------|------------------------------------------------------|
 | :class:`ArraySpec` | a numeric array (event ``shape``, optional dtype / support) |
-| :class:`OpaqueSpec`| a non-array Python object (str, DataFrame, ...)      |
 | :class:`DistributionSpec` | a ``Distribution``                            |
 | :class:`FunctionSpec` | a callable (with input / output sub-templates)     |
+| :class:`OpaqueSpec`| Any other object (no structure assumed)             |
 
 A field whose spec is itself an ``EventTemplate`` is an *internal node*, not a
-leaf. :attr:`EventTemplate.leaf_paths` enumerates the leaves in canonical order
-(insertion order, descending depth-first into nested templates), using ``/`` as
-the path separator.
+leaf. The canonical leaf order is defined via insertion order at the top level,
+descending depth-first into nested templates. Each leaf is keyed by a unique
+leaf path, using ``/`` as the path separator. :attr:`EventTemplate.leaf_paths`
+enumerates the leaf paths in the canonical order.
 
 Numeric vs. mixed
 -----------------
 
-:class:`NumericEventTemplate` is the all-``ArraySpec`` specialisation; only it
-exposes :attr:`~NumericEventTemplate.vector_size` and supports the dense 1-D
-:meth:`EventTemplate.to_vector` / :meth:`EventTemplate.from_vector` round trip.
-``EventTemplate(...)`` auto-promotes to ``NumericEventTemplate`` when every leaf
-is numeric.
-
-Layering
---------
-
-This module is **foundational**: it does not import :mod:`probpipe.core.record`
-at module load. ``EventTemplate``'s value-facing conveniences
-(:meth:`~EventTemplate.pack`, :meth:`~EventTemplate.to_vector` /
-:meth:`~EventTemplate.from_vector`, :meth:`~EventTemplate.infer_from`) construct
-or consume :class:`Record` values via function-local imports, so the import
-graph runs one way: ``record`` depends on ``event_template``, never the reverse.
+:class:`NumericEventTemplate` is the specialization in which all leaves are
+``ArraySpec``\\ s. It describes a value that is a PyTree of arrays. This
+sub-class exposes :attr:`~NumericEventTemplate.vector_size` and supports
+conversion to a flat 1-D array representation via
+:meth:`EventTemplate.to_vector`, and back to the structured representation via
+:meth:`EventTemplate.from_vector`. ``EventTemplate(...)`` auto-promotes to
+``NumericEventTemplate`` when every leaf is numeric.
 """
 
 from __future__ import annotations
