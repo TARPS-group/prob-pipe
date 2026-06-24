@@ -48,9 +48,6 @@ from ..custom_types import Array, ArrayLike
 from .constraints import Constraint
 
 if TYPE_CHECKING:
-    # Annotation-only references to the value types this schema builds /
-    # consumes. They live in modules that import *from* this one, so the
-    # imports are confined to TYPE_CHECKING to keep the graph one-way.
     from ._numeric_record import NumericRecord
     from ._record_array import NumericRecordArray
     from .record import Record
