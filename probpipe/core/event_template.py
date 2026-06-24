@@ -113,7 +113,7 @@ class DistributionSpec:
     """A leaf whose value is a ``Distribution``.
 
     ``inner_template`` is the :class:`EventTemplate` of one draw from that
-    distribution. Not yet produced in this phase.
+    distribution.
     """
 
     inner_template: EventTemplate
@@ -124,7 +124,7 @@ class FunctionSpec:
     """A leaf whose value is a callable.
 
     ``input_template`` / ``output_template`` are the :class:`EventTemplate`\\ s
-    of the callable's input and output. Not yet produced in this phase.
+    of the callable's input and output.
     """
 
     input_template: EventTemplate
