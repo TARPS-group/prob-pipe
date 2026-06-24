@@ -337,7 +337,10 @@ class TestStanModelParameters:
         )
 
     def test_event_template_shapes(self, structured_model):
-        assert structured_model.event_template.event_shapes == {
+        # event_shapes was removed in #317; leaf_shapes (on NumericEventTemplate,
+        # keyed by leaf path) is the replacement. This template is flat, so the
+        # paths are the field names.
+        assert structured_model.event_template.leaf_shapes == {
             "mu": (),
             "theta": (3,),
             "L": (2, 2),

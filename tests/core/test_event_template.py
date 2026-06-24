@@ -596,8 +596,7 @@ class TestShapeAccessorBackCompat:
 
 
 # ---------------------------------------------------------------------------
-# Numeric queries & projection: is_numeric / is_multi_field /
-# non_numeric_fields / numeric_subset
+# Numeric queries & projection: is_numeric / is_multi_field / numeric_subset
 # ---------------------------------------------------------------------------
 
 
