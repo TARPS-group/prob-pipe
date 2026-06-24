@@ -305,7 +305,9 @@ def _ppc_op(
         observed_data_dataset = _observed_data_to_dataset(observed_data, var_name="y")
 
     wrote_observed_data = observed_data_dataset is not None
-    plot_ready = False  # posterior_predictive not available without predictive_check
+    plot_ready = False  # replicated observations are not captured here.
+    plot_fn = ""
+    plot_groups: list[str] = []
 
     # ------------------------------------------------------------------
     # Build diagnostic xarray Dataset
@@ -354,8 +356,8 @@ def _ppc_op(
         "n_replications": int(n_replications),
         "has_observed_data": observed_data is not None,
         "wrote_arviz_observed_data": wrote_observed_data,
-        "plot_fn": "az.plot_ppc",
-        "plot_groups": json.dumps(["posterior_predictive", "observed_data"]),
+        "plot_fn": plot_fn,
+        "plot_groups": json.dumps(plot_groups),
         "plot_ready": plot_ready,
         "results_json": _json_dumps_safe(results),
     }
@@ -382,7 +384,7 @@ def _ppc_op(
         dataset=run_ds,
         posterior_predictive_dataset=None,
         observed_data_dataset=observed_data_dataset,
-        plot_fn="az.plot_ppc",
+        plot_fn=plot_fn,
         plot_ready=plot_ready,
         attrs=attrs,
     )

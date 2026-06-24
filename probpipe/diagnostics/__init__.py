@@ -51,12 +51,12 @@ ArviZ plotting
 
 ArviZ-compatible data live under ``posterior._auxiliary["arviz"]`` and are
 exposed as ``posterior.arviz_data``. For backward compatibility,
-``posterior.inference_data`` is an alias for the same DataTree subtree::
+``posterior.inference_data`` is an alias for the same DataTree subtree.
+Plotting support depends on which ArviZ groups have been written::
 
     import arviz as az
 
     az.plot_trace(posterior.arviz_data)
-    az.plot_ppc(posterior.arviz_data)
     az.plot_loo_pit(posterior.arviz_data)
 """
 from __future__ import annotations
