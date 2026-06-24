@@ -110,7 +110,7 @@ class NumericRecord(Record):
     raise ``TypeError`` on non-coercible leaves.
 
     Validation and coercion happen *before* the underlying ``Record`` is
-    constructed, so ``_store`` is populated exactly once and remains
+    constructed, so ``_fields`` is populated exactly once and remains
     immutable from the moment ``__init__`` returns — consistent with the
     ``__slots__`` + ``__setattr__`` guard on the base class.
     """
@@ -119,7 +119,7 @@ class NumericRecord(Record):
 
     def __init__(
         self,
-        _dict: dict[str, ArrayLike | NumericRecord] | None = None,
+        _fields: dict[str, ArrayLike | NumericRecord] | None = None,
         /,
         *,
         name: str | None = None,
@@ -127,20 +127,20 @@ class NumericRecord(Record):
         **fields: ArrayLike | NumericRecord,
     ):
         # Build the validated + coerced field dict *before* Record's
-        # __init__ runs, so ``_store`` is populated exactly once and the
+        # __init__ runs, so ``_fields`` is populated exactly once and the
         # "constructed once, never touched" invariant implied by
         # ``__slots__`` + the ``__setattr__`` guard holds.
-        if _dict is not None:
+        if _fields is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
-            raw_fields = _dict
+            raw_fields = _fields
         else:
             raw_fields = fields
         validated, aux = self._validate_and_coerce(raw_fields)
         super().__init__(validated, name=name, event_template=event_template)
         # Cache vector_size — leaves are immutable arrays after construction.
         total = 0
-        for val in self._store.values():
+        for val in self._fields.values():
             if isinstance(val, NumericRecord):
                 total += val.vector_size
             else:
@@ -155,9 +155,9 @@ class NumericRecord(Record):
     def _validate_and_coerce(
         cls, raw_fields: dict[str, Any]
     ) -> tuple[dict[str, Any], dict[str, Any]]:
-        """Return ``(validated_store, aux)`` for the raw fields.
+        """Return ``(validated_fields, aux)`` for the raw fields.
 
-        ``validated_store`` has every leaf coerced to ``jnp.ndarray``
+        ``validated_fields`` has every leaf coerced to ``jnp.ndarray``
         (or kept as a nested :class:`NumericRecord`). ``aux`` captures
         backend-specific metadata for any field whose original leaf
         type is in the aux registry; the caller stores it on
@@ -253,7 +253,7 @@ class NumericRecord(Record):
         """
         fields: dict[str, Any] = {}
         aux = self._aux or {}
-        for field_name, val in self._store.items():
+        for field_name, val in self._fields.items():
             if isinstance(val, NumericRecord):
                 fields[field_name] = val.to_native()
                 continue
@@ -288,17 +288,17 @@ class NumericRecord(Record):
     # ---------------------------------------------------------------------
 
     def __reduce__(self):
-        return (_unpickle_numeric_record, (dict(self._store), self._name, self._source))
+        return (_unpickle_numeric_record, (dict(self._fields), self._name, self._source))
 
     def _single_numeric_leaf(self):
         """Return the sole numeric leaf, or raise ``TypeError``."""
-        if len(self._store) != 1:
+        if len(self._fields) != 1:
             raise TypeError(
-                f"NumericRecord with {len(self._store)} fields is not "
+                f"NumericRecord with {len(self._fields)} fields is not "
                 f"scalar-like; access a specific field with "
                 f"record['field_name'] first."
             )
-        only = next(iter(self._store.values()))
+        only = next(iter(self._fields.values()))
         if isinstance(only, NumericRecord):
             raise TypeError(
                 "NumericRecord with a nested NumericRecord field is not "

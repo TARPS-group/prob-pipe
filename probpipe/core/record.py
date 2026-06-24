@@ -197,10 +197,11 @@ class Record(_NamedTree):
 
     Parameters
     ----------
-    _dict : dict, optional
+    _fields : dict, optional
         Fields as a positional mapping — an alternative to keyword ``**fields``
         (passing both raises). Use it when a field name would collide with the
-        ``name`` / ``event_template`` keywords.
+        ``name`` / ``event_template`` keywords. Positional-only (the leading
+        underscore keeps it from shadowing a field literally named ``fields``).
     **fields
         Named values, stored unchanged: ``jax`` / ``numpy`` arrays, Python
         scalars, strings, ``xarray`` / ``pandas`` objects, nested ``Record``s,
@@ -219,7 +220,7 @@ class Record(_NamedTree):
     Raises
     ------
     ValueError
-        If no fields are given, a field name contains ``/``, both ``_dict`` and
+        If no fields are given, a field name contains ``/``, both ``_fields`` and
         keyword fields are passed, or a supplied ``event_template`` does not
         match the field names.
 
@@ -243,33 +244,33 @@ class Record(_NamedTree):
     names), so a ``tree_unflatten``'d or unpickled record re-derives them.
     """
 
-    __slots__ = ("_event_template", "_name", "_source", "_store")
+    __slots__ = ("_event_template", "_fields", "_name", "_source")
 
     def __init__(
         self,
-        _dict: dict[str, _FieldValue] | None = None,
+        _fields: dict[str, _FieldValue] | None = None,
         /,
         *,
         name: str | None = None,
         event_template: EventTemplate | None = None,
         **fields: _FieldValue,
     ):
-        if _dict is not None:
+        if _fields is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
-            fields = _dict
+            fields = _fields
         if not fields:
             raise ValueError("Record requires at least one named field")
         for field_name in fields:
             _check_no_path_sep(field_name)
-        store = dict(fields)
-        object.__setattr__(self, "_store", store)
+        field_map = dict(fields)
+        object.__setattr__(self, "_fields", field_map)
         if name is None:
-            name = "record(" + ",".join(store.keys()) + ")"
+            name = "record(" + ",".join(field_map.keys()) + ")"
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_source", None)
         if event_template is None:
-            event_template = EventTemplate.infer_from(store)
+            event_template = EventTemplate.infer_from(field_map)
         else:
             self._validate_event_template(event_template)
         object.__setattr__(self, "_event_template", event_template)
@@ -287,7 +288,7 @@ class Record(_NamedTree):
         """
 
         def _check(record: Record, template: EventTemplate, prefix: str) -> None:
-            rec_fields = set(record._store)
+            rec_fields = set(record._fields)
             tpl_fields = set(template.fields)
             if rec_fields != tpl_fields:
                 where = prefix.rstrip(_PATH_SEP) or "the top level"
@@ -295,7 +296,7 @@ class Record(_NamedTree):
                     f"event_template fields {sorted(tpl_fields)} do not match record "
                     f"fields {sorted(rec_fields)} at {where}"
                 )
-            for name, value in record._store.items():
+            for name, value in record._fields.items():
                 spec = template[name]
                 path = f"{prefix}{name}"
                 value_is_node = isinstance(value, Record)
@@ -384,7 +385,7 @@ class Record(_NamedTree):
         raise AttributeError("Record is immutable")
 
     def __reduce__(self):
-        return (_unpickle_record, (dict(self._store), self._name, self._source))
+        return (_unpickle_record, (dict(self._fields), self._name, self._source))
 
     # -- Field access (structural protocol shared with ``EventTemplate``) ---
     #
@@ -395,7 +396,7 @@ class Record(_NamedTree):
     # ``record[name]`` / ``record["a/b"]`` return the value at that field / path.
 
     def _field_map(self) -> dict[str, _FieldValue]:
-        return self._store
+        return self._fields
 
     # -- Selection ----------------------------------------------------------
 
@@ -412,11 +413,11 @@ class Record(_NamedTree):
         """
         result: dict[str, _FieldValue] = {}
         for f in fields:
-            if f not in self._store:
+            if f not in self._fields:
                 raise KeyError(f"No field {f!r} in Record")
             result[f] = self[f]
         for arg_name, field_name in mapping.items():
-            if field_name not in self._store:
+            if field_name not in self._fields:
                 raise KeyError(f"No field {field_name!r} in Record")
             result[arg_name] = self[field_name]
         return result
@@ -443,7 +444,7 @@ class Record(_NamedTree):
         Returns an instance of ``type(self)`` so that subclasses
         (``NumericRecord``) preserve their class through the update.
         """
-        new = dict(self._store)
+        new = dict(self._fields)
         for k, v in updates.items():
             if k not in new:
                 raise KeyError(f"Cannot replace non-existent field {k!r}")
@@ -456,11 +457,11 @@ class Record(_NamedTree):
         Raises ``ValueError`` if any field names overlap. Returns an
         instance of ``type(self)``.
         """
-        overlap = set(self._store) & set(other._store)
+        overlap = set(self._fields) & set(other._fields)
         if overlap:
             raise ValueError(f"Overlapping field names: {overlap}")
-        combined = dict(self._store)
-        combined.update(other._store)
+        combined = dict(self._fields)
+        combined.update(other._fields)
         return type(self)(combined)
 
     def without(self, *names: str) -> Record:
@@ -468,7 +469,7 @@ class Record(_NamedTree):
 
         Returns an instance of ``type(self)``.
         """
-        new = {k: v for k, v in self._store.items() if k not in names}
+        new = {k: v for k, v in self._fields.items() if k not in names}
         if not new:
             raise ValueError("Cannot remove all fields from Record")
         return type(self)(new)
@@ -481,7 +482,7 @@ class Record(_NamedTree):
         Leaves are returned verbatim; no coercion to numpy or JAX.
         """
         result: dict[str, Any] = {}
-        for name, val in self._store.items():
+        for name, val in self._fields.items():
             if isinstance(val, Record):
                 result[name] = val.to_dict()
             else:
@@ -498,7 +499,7 @@ class Record(_NamedTree):
         if you need a metadata-preserving round-trip.
         """
         result: dict[str, Any] = {}
-        for name, val in self._store.items():
+        for name, val in self._fields.items():
             if isinstance(val, Record):
                 result[name] = val.to_numpy()
             elif hasattr(val, "shape") or isinstance(val, (int, float, complex)):
@@ -536,7 +537,7 @@ class Record(_NamedTree):
         return NumericRecord(
             {
                 name: val.to_numeric() if isinstance(val, Record) else val
-                for name, val in self._store.items()
+                for name, val in self._fields.items()
             }
         )
 
@@ -569,10 +570,22 @@ class Record(_NamedTree):
         """Apply *fn* to each leaf, returning a new Record.
 
         Nested ``Record`` objects are traversed and rebuilt with the same
-        class. ``fn`` sees leaves as stored (no coercion).
+        class; a container-valued opaque leaf is passed to *fn* whole (the
+        traversal visits leaves at the :attr:`event_template`'s granularity, in
+        canonical :attr:`~EventTemplate.leaf_paths` order). ``fn`` sees leaves
+        as stored (no coercion).
+
+        The result's :attr:`event_template` is **re-inferred** from the mapped
+        leaves, not carried over from this record: *fn* may change a leaf's
+        shape / dtype / type, so the original template need not describe the
+        output. A consequence is that non-inferable spec detail (an
+        ``ArraySpec``'s ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``,
+        a ``DistributionSpec`` / ``FunctionSpec``) is dropped — so even
+        ``r.map(lambda x: x)`` is not guaranteed to compare equal to ``r`` when
+        ``r``'s template carried such detail.
         """
         fields: dict[str, Any] = {}
-        for name, val in self._store.items():
+        for name, val in self._fields.items():
             if isinstance(val, Record):
                 fields[name] = val.map(fn)
             else:
@@ -580,9 +593,15 @@ class Record(_NamedTree):
         return type(self)(fields)
 
     def map_with_names(self, fn: Callable[[str, Any], Any]) -> Record:
-        """Apply *fn(name, value)* to each leaf, returning a new Record."""
+        """Apply *fn(name, value)* to each leaf, returning a new Record.
+
+        Same traversal and template re-inference as :meth:`map` (the result's
+        :attr:`event_template` is inferred from the mapped leaves, dropping
+        non-inferable spec detail). *name* is the leaf's local field name, not
+        its full ``/``-path.
+        """
         fields: dict[str, Any] = {}
-        for name, val in self._store.items():
+        for name, val in self._fields.items():
             if isinstance(val, Record):
                 fields[name] = val.map_with_names(fn)
             else:
@@ -612,7 +631,7 @@ class Record(_NamedTree):
 
     def __repr__(self) -> str:
         parts = []
-        for name, val in self._store.items():
+        for name, val in self._fields.items():
             if isinstance(val, Record):
                 parts.append(f"{name}={val!r}")
             elif hasattr(val, "shape") and val.shape != ():
@@ -628,13 +647,13 @@ class Record(_NamedTree):
     # ``result(args)``. Multi-field records raise — unwrapping one of many
     # fields would be ambiguous.
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        if len(self._store) != 1:
+        if len(self._fields) != 1:
             raise TypeError(
-                f"{type(self).__name__} with {len(self._store)} fields is not "
+                f"{type(self).__name__} with {len(self._fields)} fields is not "
                 f"callable; access a specific field with record['field_name'] "
                 f"first."
             )
-        only = next(iter(self._store.values()))
+        only = next(iter(self._fields.values()))
         if not callable(only):
             raise TypeError(
                 f"{type(self).__name__} single field is not callable (got {type(only).__name__})."
@@ -673,8 +692,8 @@ class Record(_NamedTree):
             return False
         if self.event_template != other.event_template:
             return False
-        for name, a in self._store.items():
-            b = other._store[name]
+        for name, a in self._fields.items():
+            b = other._fields[name]
             if isinstance(a, Record) and isinstance(b, Record):
                 if a != b:
                     return False
@@ -698,7 +717,7 @@ class Record(_NamedTree):
         # array wrapping hash alike (they compare equal under ``__eq__``);
         # opaque leaves fall back to ``type(val)``.
         parts: list[Any] = [type(self).__name__]
-        for name, val in self._store.items():
+        for name, val in self._fields.items():
             if isinstance(val, Record):
                 parts.append((name, hash(val)))
                 continue
@@ -772,7 +791,7 @@ def _record_flatten(v: Record) -> tuple[list, tuple[str, ...]]:
     become pytree leaves themselves, and any leaf-wise transformation
     applied by JAX must accept them.
     """
-    children = list(v._store.values())
+    children = list(v._fields.values())
     return children, v.fields
 
 
