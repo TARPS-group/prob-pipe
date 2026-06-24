@@ -127,14 +127,15 @@ type _FieldValue = Any
 
 
 class Record(_NamedTree):
-    """A single structured value: named fields bound to a schema and identity.
+    """A single structured value: named fields, with a schema, name, and provenance.
 
     A ``Record`` holds **data** (named fields, stored verbatim — no coercion), a
-    **structure** (:attr:`event_template`, fixed at construction), and an
-    **identity** (:attr:`name` plus write-once :attr:`source` provenance). It is
-    immutable and registered as a JAX pytree (the field values are the leaves,
-    the field names the aux). Fields iterate in insertion order; ``/`` is
-    reserved as the nested-path separator and rejected in field names.
+    **structure** (:attr:`event_template`, fixed at construction), a **name**
+    (:attr:`name`, a human-readable label), and **provenance** (:attr:`source`,
+    write-once — how the value was produced). It is immutable and registered as
+    a JAX pytree (the field values are the leaves, the field names the aux).
+    Fields iterate in insertion order; ``/`` is reserved as the nested-path
+    separator and rejected in field names.
 
     Use :class:`NumericRecord` when every leaf is numeric and you want a uniform
     ``jax.Array`` type plus 1-D vector (de)serialization.
