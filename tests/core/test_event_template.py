@@ -15,6 +15,22 @@ from probpipe.core.event_template import (
 )
 
 # ---------------------------------------------------------------------------
+# Path separator
+# ---------------------------------------------------------------------------
+
+
+def test_path_separator_is_slash():
+    """Docstrings spell the nested-path separator literally as ``/``.
+
+    Pin the constant so changing it trips CI and forces a conscious sweep of
+    the docstrings that hardcode the character.
+    """
+    from probpipe.core.event_template import _PATH_SEP
+
+    assert _PATH_SEP == "/"
+
+
+# ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
 

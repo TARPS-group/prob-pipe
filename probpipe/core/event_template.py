@@ -63,7 +63,9 @@ __all__ = [
 
 # Separator for nested leaf paths (``"outer/inner"``). The path convention is
 # shared between a template and the values it describes; :mod:`probpipe.core.record`
-# imports these from here so the constant has a single home.
+# imports these from here so the constant has a single home. Docstrings spell the
+# separator literally as ``/``; if it ever changes, update them (a guard test
+# pins this value so the change can't pass silently).
 _PATH_SEP = "/"
 
 
@@ -80,48 +82,48 @@ class _NamedTree:
 
     Both :class:`EventTemplate` (a tree of specs) and
     :class:`~probpipe.Record` (a tree of values) are insertion-ordered maps of
-    **fields** (top-level ``name -> child``), where a child is either a terminal
-    **leaf** or a nested tree of the same kind (an **internal node**), addressed
-    by a ``/``-delimited **path**. This mixin gives both the same way to name,
-    address, enumerate, and iterate that structure; subclasses differ only in
-    what their children are (specs vs. values).
+    **fields** — top-level ``name -> value`` entries. A field's **value** is
+    either a terminal **leaf** or a nested tree of the same kind (an **internal
+    node**), addressed by a ``/``-delimited **path**. This mixin gives both the
+    same way to name, address, enumerate, and iterate that structure;
+    subclasses differ only in what their field values are (specs vs. data).
 
-    A subclass supplies one hook, :meth:`_tree_children` (its ordered
-    ``name -> child`` mapping). A child counts as an internal node iff it is
-    itself a ``_NamedTree``; everything else is a leaf.
+    A subclass supplies one hook, :meth:`_field_map` (its ordered
+    ``name -> value`` mapping). A field value counts as an internal node iff it
+    is itself a ``_NamedTree``; everything else is a leaf.
     """
 
     __slots__ = ()
 
-    def _tree_children(self) -> Mapping[str, Any]:
-        """The ordered ``name -> child`` mapping for this node (hook)."""
+    def _field_map(self) -> Mapping[str, Any]:
+        """The ordered ``field name -> field value`` mapping for this node (hook)."""
         raise NotImplementedError
 
     @property
     def fields(self) -> tuple[str, ...]:
         """Top-level field names, in insertion order (does not descend)."""
-        return tuple(self._tree_children().keys())
+        return tuple(self._field_map().keys())
 
     def __len__(self) -> int:
-        return len(self._tree_children())
+        return len(self._field_map())
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self._tree_children())
+        return iter(self._field_map())
 
     def keys(self) -> Iterator[str]:
         """Iterate top-level field names."""
-        return iter(self._tree_children())
+        return iter(self._field_map())
 
     def values(self) -> Iterator[Any]:
-        """Iterate top-level children (one per field)."""
-        return iter(self._tree_children().values())
+        """Iterate top-level field values (one per field)."""
+        return iter(self._field_map().values())
 
     def items(self) -> Iterator[tuple[str, Any]]:
-        """Iterate ``(name, child)`` pairs for the top-level fields."""
-        return iter(self._tree_children().items())
+        """Iterate ``(name, value)`` pairs for the top-level fields."""
+        return iter(self._field_map().items())
 
     def __getitem__(self, key: str | tuple[str, ...]) -> Any:
-        """Return the child at *key* — a field name, ``/``-path, or tuple path.
+        """Return the field value at *key* — a field name, ``/``-path, or tuple path.
 
         A plain name selects a top-level field; a ``/``-delimited string (or a
         tuple of names) descends through internal nodes (``tree["a/b"]`` ==
@@ -131,10 +133,10 @@ class _NamedTree:
         if isinstance(key, str):
             if _PATH_SEP in key:
                 return self[tuple(key.split(_PATH_SEP))]
-            children = self._tree_children()
-            if key not in children:
+            field_map = self._field_map()
+            if key not in field_map:
                 raise KeyError(key)
-            return children[key]
+            return field_map[key]
         if isinstance(key, tuple):
             node: Any = self
             for i, name in enumerate(key):
@@ -150,7 +152,7 @@ class _NamedTree:
     def __contains__(self, key: object) -> bool:
         """Membership by field name or ``/``-path (missing paths are ``False``)."""
         if isinstance(key, str) and _PATH_SEP not in key:
-            return key in self._tree_children()
+            return key in self._field_map()
         try:
             self[key]  # type: ignore[index]
         except (KeyError, TypeError, IndexError):
@@ -167,9 +169,9 @@ class _NamedTree:
         every leaf-wise operation uses.
         """
         paths: list[str] = []
-        for name, child in self._tree_children().items():
-            if isinstance(child, _NamedTree):
-                paths.extend(f"{name}{_PATH_SEP}{sub}" for sub in child.leaf_paths)
+        for name, value in self._field_map().items():
+            if isinstance(value, _NamedTree):
+                paths.extend(f"{name}{_PATH_SEP}{sub}" for sub in value.leaf_paths)
             else:
                 paths.append(name)
         return tuple(paths)
@@ -464,11 +466,11 @@ class EventTemplate(_NamedTree):
     #
     # ``fields`` / ``leaf_paths`` / ``__getitem__`` (name / ``/``-path / tuple) /
     # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
-    # ``__len__`` come from :class:`_NamedTree`. Here a child is a leaf spec
-    # (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec` /
-    # :class:`FunctionSpec`) or a nested ``EventTemplate`` (an internal node).
+    # ``__len__`` come from :class:`_NamedTree`. A field value here is a leaf
+    # spec (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec`
+    # / :class:`FunctionSpec`) or a nested ``EventTemplate`` (an internal node).
 
-    def _tree_children(self) -> Mapping[str, _FieldSpec]:
+    def _field_map(self) -> Mapping[str, _FieldSpec]:
         return self._specs
 
     # -- Numeric queries & projection ---------------------------------------
