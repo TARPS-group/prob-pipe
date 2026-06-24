@@ -160,6 +160,40 @@ class TestPredictiveCheck:
                 num_replications=10,
             )
 
+    def test_numeric_record_distribution_is_unwrapped(self, monkeypatch):
+        """Workflow-resolved NumericRecord values are wrapped for sampling."""
+        import probpipe.validation._predictive_check as predictive_check_module
+        from probpipe.core._numeric_record import NumericRecord
+
+        numeric = NumericRecord(x=np.array([0.0, 1.0, 2.0]), name="posterior")
+
+        class _FakeRecordEmpiricalDistribution:
+            def __init__(self, values, name=None):
+                self.values = values
+                self.name = name
+
+            def _sample(self, key, shape):
+                assert self.values is numeric
+                assert self.name == "posterior"
+                return jax.random.normal(key, shape)
+
+        monkeypatch.setattr(
+            predictive_check_module,
+            "RecordEmpiricalDistribution",
+            _FakeRecordEmpiricalDistribution,
+        )
+
+        result = predictive_check(
+            numeric,
+            NumpyGaussianLikelihood(rng_seed=0),
+            test_fn=lambda d: float(jnp.mean(d)),
+            observed_data=jnp.ones(20),
+            num_replications=5,
+            key=jax.random.PRNGKey(0),
+        )
+
+        assert "p_value" in result
+
     def test_is_workflow_function(self):
         from probpipe.core.node import WorkflowFunction
 
@@ -310,6 +344,33 @@ class TestPredictiveCheck:
         result = {"test_fn_name": "stub", "replicated_statistics": stats}
         # No raise — the ``except TypeError`` clause swallows it.
         _record_check_in_auxiliary(dist, stats, result)
+
+    def test_xarray_importerror_skips_attachment_silently(self, monkeypatch):
+        """If xarray is unavailable, auxiliary attachment is skipped."""
+        import builtins
+
+        from probpipe.validation._predictive_check import (
+            _record_check_in_auxiliary,
+        )
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "xarray":
+                raise ImportError("xarray unavailable")
+            return real_import(name, *args, **kwargs)
+
+        class _Dist:
+            pass
+
+        dist = _Dist()
+        stats = jnp.zeros(5)
+        result = {"test_fn_name": "stub", "replicated_statistics": stats}
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        _record_check_in_auxiliary(dist, stats, result)
+
+        assert not hasattr(dist, "_auxiliary")
 
 
 # ---------------------------------------------------------------------------

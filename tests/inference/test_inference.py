@@ -77,15 +77,97 @@ class TestApproximateDistribution:
         assert two_chain_dist.algorithm == "test"
         assert two_chain_dist.source.metadata["algorithm"] == "test"
 
-    def test_auxiliary_is_inference_data(self, two_chain_dist):
+    def test_auxiliary_contains_arviz_data(self, two_chain_dist):
         assert two_chain_dist.auxiliary is not None
-        # arviz InferenceData (0.x has .groups(), 1.x DataTree has .children)
+        # ArviZ-compatible data use xarray DataTree on ArviZ 1.x.
         assert hasattr(two_chain_dist.auxiliary, "groups") or hasattr(
             two_chain_dist.auxiliary, "children"
         )
 
+    def test_arviz_data_accessor(self, two_chain_dist):
+        aux = two_chain_dist.auxiliary
+        assert aux is not None
+        assert "arviz" in aux.children
+
+        arviz_data = two_chain_dist.arviz_data
+        assert arviz_data is not None
+        assert "posterior" in arviz_data.children
+        assert "warmup" in arviz_data.children
+
     def test_inference_data_alias(self, two_chain_dist):
-        assert two_chain_dist.inference_data is two_chain_dist.auxiliary
+        aux = two_chain_dist.auxiliary
+        assert aux is not None
+        assert "arviz" in aux.children
+
+        idata = two_chain_dist.inference_data
+        assert idata is not None
+        assert "posterior" in idata.children
+        assert "warmup" in idata.children
+
+    def test_arviz_data_none_without_auxiliary(self):
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        assert dist.arviz_data is None
+        assert dist.inference_data is None
+
+    def test_arviz_data_falls_back_to_legacy_auxiliary_layout(self):
+        import xarray as xr
+
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        legacy_aux = xr.DataTree.from_dict({"posterior": xr.Dataset()})
+        dist._auxiliary = legacy_aux
+
+        assert dist.arviz_data is legacy_aux
+        assert dist.inference_data is legacy_aux
+
+    def test_warmup_samples_none_when_arviz_data_has_no_children_attr(self):
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        dist._auxiliary = object()
+
+        assert dist.warmup_samples is None
+
+    def test_make_posterior_accepts_auxiliary_dataset_nodes(self):
+        import xarray as xr
+
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        posterior = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            auxiliary={"posterior": xr.Dataset()},
+        )
+
+        assert posterior.inference_data is not None
+        assert "posterior" in posterior.inference_data.children
+
+    def test_make_posterior_skips_auxiliary_root_group(self):
+        import xarray as xr
+
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        posterior = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            auxiliary={
+                "/": xr.Dataset(attrs={"ignored": True}),
+                "posterior": xr.Dataset(),
+            },
+        )
+
+        assert posterior.auxiliary is not None
+        assert "arviz" in posterior.auxiliary.children
+        assert "posterior" in posterior.inference_data.children
+        assert "" not in posterior.inference_data.children
 
     def test_warmup_from_auxiliary(self, two_chain_dist):
         warmup = two_chain_dist.warmup_samples
@@ -321,6 +403,33 @@ class TestApproximateDistributionValuesTemplate:
                 field_order=["a"],
             )
 
+    def test_field_order_opaque_template_raises_clear_error(self):
+        """field_order cannot compute a permutation for opaque fields."""
+        template = EventTemplate(a=None, b=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
+            make_posterior(
+                [chain],
+                parents=(prior,),
+                algorithm="test",
+                event_template=template,
+                field_order=["a", "b"],
+            )
+
+    def test_multi_field_opaque_template_raises_clear_error(self):
+        """Multi-field splitting rejects opaque fields before sizing."""
+        template = EventTemplate(a=None, b=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
+            make_posterior(
+                [chain],
+                parents=(prior,),
+                algorithm="test",
+                event_template=template,
+            )
+
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
         template = EventTemplate(
@@ -463,8 +572,19 @@ class TestApproximateDistributionValuesTemplate:
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         auxiliary = build_mcmc_datatree([chain])
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test", auxiliary=auxiliary)
-        assert "posterior" in post.auxiliary
+        post = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            auxiliary=auxiliary,
+        )
+
+        assert post.auxiliary is not None
+        assert "arviz" in post.auxiliary.children
+
+        idata = post.inference_data
+        assert idata is not None
+        assert "posterior" in idata.children
 
     def test_algorithm_default_without_auxiliary(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
