@@ -243,7 +243,7 @@ class EventTemplate:
       ordering every leaf-wise operation uses. :attr:`leaf_paths` is its
       canonical definition — it returns the path to every leaf in this order;
       :meth:`to_vector` / :meth:`from_vector` lay out and read leaves in it, and
-      :attr:`leaf_shapes` is keyed by it.
+      :attr:`~NumericEventTemplate.leaf_shapes` is keyed by it.
 
     PyTree contract
     ---------------
@@ -289,14 +289,14 @@ class EventTemplate:
     leaves and describes the expected structure for type-checking and
     vectorization. Leaves are stored as frozen, hashable spec objects, so a
     template is itself hashable (usable as a jit / treedef cache key).
-    ``__getitem__`` returns the stored spec (or nested template); shape-shaped
-    access lives on :attr:`leaf_shapes` / :attr:`event_shapes` /
-    :meth:`field_event_shape`.
+    ``__getitem__`` returns the stored spec (or nested template); the
+    enumeration of leaves is :attr:`leaf_paths`, and per-leaf array shapes (on a
+    numeric template) live on :attr:`~NumericEventTemplate.leaf_shapes`.
 
     Calling ``EventTemplate(...)`` directly auto-promotes to a
     :class:`NumericEventTemplate` when every spec is numeric (and every nested
     sub-template is itself all-numeric), so :attr:`vector_size` and
-    :attr:`numeric_leaf_shapes` are reachable in the common all-numeric case
+    :attr:`~NumericEventTemplate.leaf_shapes` are reachable in the common all-numeric case
     without naming the subclass. Mixed templates (any opaque / ``None`` spec)
     stay plain ``EventTemplate`` and do not expose :attr:`vector_size` — it is
     not a meaningful quantity once opaque leaves are present.
@@ -384,9 +384,8 @@ class EventTemplate:
         leaves in exactly this order and names them by exactly these paths —
         :meth:`to_vector` / :meth:`from_vector` lay out and read the per-leaf
         blocks in it, :meth:`~probpipe.Record.flatten` returns the value's
-        leaves in it, and :attr:`leaf_shapes` (and
-        :attr:`~NumericEventTemplate.numeric_leaf_shapes`) are keyed by these
-        same paths. A nested field expands into one path per nested leaf; a flat
+        leaves in it, and :attr:`~NumericEventTemplate.leaf_shapes` is keyed by
+        these same paths. A nested field expands into one path per nested leaf; a flat
         template's ``leaf_paths`` equals its :attr:`fields`.
 
         Returns
@@ -401,53 +400,6 @@ class EventTemplate:
             else:
                 paths.append(name)
         return tuple(paths)
-
-    @property
-    def leaf_shapes(self) -> dict[str, tuple[int, ...] | None]:
-        """Per-leaf shapes, keyed by :attr:`leaf_paths` (canonical leaf order).
-
-        Maps each leaf's ``/``-delimited path to its array shape, or ``None``
-        for an opaque (non-array) leaf. The keys are exactly :attr:`leaf_paths`,
-        in canonical leaf order; a nested sub-template contributes one entry per
-        nested leaf.
-        """
-        result: dict[str, tuple[int, ...] | None] = {}
-        for name, spec in self._specs.items():
-            if isinstance(spec, EventTemplate):
-                for sub_name, sub_shape in spec.leaf_shapes.items():
-                    result[f"{name}{_PATH_SEP}{sub_name}"] = sub_shape
-            elif isinstance(spec, ArraySpec):
-                result[name] = spec.shape
-            else:
-                # Opaque / distribution / function leaves have no array shape.
-                result[name] = None
-        return result
-
-    @property
-    def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes, keyed by :attr:`fields` (top-level).
-
-        Emits one entry per *top-level* field — keyed by :attr:`fields`, not by
-        :attr:`leaf_paths`. An :class:`ArraySpec` field returns its shape; a
-        nested sub-template or opaque leaf collapses to ``()``. Contrast
-        :attr:`leaf_shapes`, which descends and emits one entry per leaf. This
-        is the view downstream Distribution code wants when answering "what is
-        the per-field event shape of one draw?".
-        """
-        return {name: self.field_event_shape(name) for name in self._specs}
-
-    def field_event_shape(self, name: str) -> tuple[int, ...]:
-        """Event shape for one top-level field.
-
-        :class:`ArraySpec` leaves return their ``shape`` verbatim; opaque /
-        distribution / function leaves and nested ``EventTemplate``
-        sub-structures collapse to ``()``. Raises ``KeyError`` if ``name`` is
-        not a top-level field.
-        """
-        spec = self._specs[name]
-        if isinstance(spec, ArraySpec):
-            return spec.shape
-        return ()
 
     def pack(self, **field_kwargs: Any) -> Record:
         """Build a :class:`Record` from named values matching this template.
@@ -506,7 +458,7 @@ class EventTemplate:
         ``EventTemplate(a=EventTemplate(b=(), c=()))`` has leaves ``a/b`` and
         ``a/c`` and is multi-field, whereas ``EventTemplate(a=EventTemplate(b=()))``
         describes the single leaf ``a/b`` and is not. Equivalent to
-        ``len(self.leaf_shapes) > 1``.
+        ``len(self.leaf_paths) > 1``.
 
         Returns
         -------
@@ -514,7 +466,7 @@ class EventTemplate:
             ``True`` iff the template has more than one leaf; ``False`` iff it
             describes exactly one leaf.
         """
-        return len(self.leaf_shapes) > 1
+        return len(self.leaf_paths) > 1
 
     def numeric_fields(self) -> tuple[str, ...]:
         """Top-level field names whose leaf is numeric.
@@ -584,7 +536,7 @@ class EventTemplate:
         -------
         NumericEventTemplate
             The numeric-leaf sub-template, so that :attr:`vector_size` and
-            :attr:`numeric_leaf_shapes` are available.
+            :attr:`~NumericEventTemplate.leaf_shapes` are available.
 
         Raises
         ------
@@ -641,7 +593,7 @@ class EventTemplate:
         Leaves are visited in the value's pytree-leaf order, which for a *value*
         matching this template coincides with the template's **canonical leaf
         order** — the deterministic, depth-first, insertion-order traversal also
-        used by :attr:`leaf_shapes`. The structural operation lives on the event
+        used by :attr:`leaf_paths`. The structural operation lives on the event
         template; a :class:`~probpipe.NumericRecord` inherits the functionality
         from the template.
 
@@ -877,8 +829,8 @@ class EventTemplate:
 
         Returns the leaf spec object (:class:`ArraySpec` / :class:`OpaqueSpec`
         / :class:`DistributionSpec` / :class:`FunctionSpec`) or, for a nested
-        field, the nested :class:`EventTemplate`. For shape-shaped access use
-        :attr:`leaf_shapes` / :attr:`event_shapes` / :meth:`field_event_shape`.
+        field, the nested :class:`EventTemplate`. For per-leaf array shapes (on a
+        numeric template) use :attr:`~NumericEventTemplate.leaf_shapes`.
         """
         return self._specs[name]
 
@@ -1005,7 +957,7 @@ class NumericEventTemplate(EventTemplate):
     Extends :class:`EventTemplate` by requiring each spec to be a shape
     tuple (or a nested :class:`NumericEventTemplate`) — no opaque
     ``None`` leaves are allowed. That restriction is what makes
-    :attr:`vector_size` and :meth:`numeric_leaf_shapes` meaningful:
+    :attr:`vector_size` and :attr:`leaf_shapes` meaningful:
     ``vector_size`` is the length of the per-element 1-D vector — the total
     number of scalar elements across every numeric leaf — and
     :meth:`~EventTemplate.from_vector` requires a template of this class so
@@ -1054,14 +1006,26 @@ class NumericEventTemplate(EventTemplate):
         object.__setattr__(self, "_vector_size", self._compute_vector_size())
 
     @property
-    def numeric_leaf_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-leaf shapes, keyed by :attr:`leaf_paths` (canonical leaf order).
+    def leaf_shapes(self) -> dict[str, tuple[int, ...]]:
+        """Per-leaf array shapes, keyed by :attr:`leaf_paths` (canonical leaf order).
 
-        On :class:`NumericEventTemplate` every leaf is numeric, so this equals
-        :attr:`leaf_shapes` (no ``None`` entries). Kept as a distinct name for
-        symmetry with historical callers that used it as a numeric filter.
+        Maps each leaf's ``/``-delimited path to its array ``shape``. Defined
+        only on :class:`NumericEventTemplate` — where every leaf is an
+        :class:`ArraySpec` and therefore *has* a shape — because a shape is an
+        array notion; on a general (mixed) :class:`EventTemplate` the leaves are
+        a heterogeneous sum with no uniform shape, so the structural view there
+        is :attr:`leaf_paths`. A nested sub-template contributes one entry per
+        nested leaf.
         """
-        return dict(self.leaf_shapes)
+        result: dict[str, tuple[int, ...]] = {}
+        for name, spec in self._specs.items():
+            if isinstance(spec, NumericEventTemplate):
+                for sub_name, sub_shape in spec.leaf_shapes.items():
+                    result[f"{name}{_PATH_SEP}{sub_name}"] = sub_shape
+            else:
+                # ``_post_validate`` guarantees a non-nested spec is an ArraySpec.
+                result[name] = spec.shape
+        return result
 
     def _compute_vector_size(self) -> int:
         """Total scalar count across all numeric leaves."""

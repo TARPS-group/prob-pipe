@@ -34,6 +34,20 @@ from .record import Record
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
 
 
+def _field_event_shape(template: EventTemplate, name: str) -> tuple[int, ...]:
+    """Event shape of one top-level field of *template*.
+
+    An :class:`ArraySpec` field returns its array ``shape``; a nested
+    sub-structure or non-array (opaque / distribution / function) field has no
+    single event shape and returns ``()``. This is a *distribution-side* view —
+    "what is the per-field event shape of one draw?" — kept here rather than on
+    :class:`EventTemplate`, whose own shape surface is leaf-level
+    (:attr:`~probpipe.NumericEventTemplate.leaf_shapes`).
+    """
+    spec = template[name]
+    return spec.shape if isinstance(spec, ArraySpec) else ()
+
+
 # ---------------------------------------------------------------------------
 # Dynamic view class factory
 # ---------------------------------------------------------------------------
@@ -457,11 +471,12 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-field event shapes (top-level fields only).
 
-        Thin delegate to :attr:`EventTemplate.event_shapes`. Nested
-        sub-templates and opaque leaves collapse to ``()``. The
+        An array-valued field reports its array shape; a nested sub-structure or
+        non-array (opaque / distribution / function) field reports ``()``. The
         metaclass guarantees ``event_template`` is non-``None``.
         """
-        return self.event_template.event_shapes
+        tpl = self.event_template
+        return {name: _field_event_shape(tpl, name) for name in tpl.fields}
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
@@ -487,7 +502,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         multi-field distributions.
         """
         name = self._single_field_name()
-        return self.event_template.field_event_shape(name)
+        return _field_event_shape(self.event_template, name)
 
     @property
     def ndim(self) -> int:

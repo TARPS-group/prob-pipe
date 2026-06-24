@@ -105,10 +105,6 @@ class TestLeafShapes:
         tpl = EventTemplate(x=(), y=(3,))
         assert tpl.leaf_shapes == {"x": (), "y": (3,)}
 
-    def test_opaque_leaf(self):
-        tpl = EventTemplate(label=None, x=())
-        assert tpl.leaf_shapes == {"label": None, "x": ()}
-
     def test_nested_flattens(self):
         inner = EventTemplate(a=(), b=(2,))
         outer = EventTemplate(inner=inner, z=(3,))
@@ -117,17 +113,17 @@ class TestLeafShapes:
         # path access.
         assert shapes == {"inner/a": (), "inner/b": (2,), "z": (3,)}
 
-    def test_numeric_leaf_shapes_on_numeric_template(self):
+    def test_leaf_shapes_on_numeric_template(self):
         tpl = NumericEventTemplate(x=(), y=(3,))
-        assert tpl.numeric_leaf_shapes == {"x": (), "y": (3,)}
+        assert tpl.leaf_shapes == {"x": (), "y": (3,)}
 
-    def test_numeric_leaf_shapes_not_on_base_template(self):
-        """``vector_size`` / ``numeric_leaf_shapes`` are only meaningful
+    def test_leaf_shapes_not_on_base_template(self):
+        """``vector_size`` / ``leaf_shapes`` are only meaningful
         when every leaf is numeric — they live on
         :class:`NumericEventTemplate`, not the base ``EventTemplate``.
         """
         tpl = EventTemplate(label=None, x=(), y=(3,))
-        assert not hasattr(tpl, "numeric_leaf_shapes")
+        assert not hasattr(tpl, "leaf_shapes")
         assert not hasattr(tpl, "vector_size")
 
 
@@ -160,8 +156,8 @@ class TestLeafPaths:
         assert tpl.leaf_paths == ("outer/deep/g", "outer/deep/h", "outer/a", "m")
 
     def test_keys_match_leaf_shapes_in_order(self):
-        # leaf_shapes is keyed by leaf_paths, in the same canonical order.
-        tpl = EventTemplate(outer=EventTemplate(a=(2,), b=()), label=None, m=())
+        # leaf_shapes (numeric template) is keyed by leaf_paths, same order.
+        tpl = EventTemplate(outer=EventTemplate(a=(2,), b=()), m=())
         assert tuple(tpl.leaf_shapes) == tpl.leaf_paths
 
     def test_order_matches_flatten_and_to_vector(self):
@@ -174,47 +170,6 @@ class TestLeafPaths:
         assert tpl.leaf_paths == ("x", "nested/a", "nested/b")
         # to_vector concatenates leaves in leaf_paths order: x(2) | a(1) | b(2).
         np.testing.assert_allclose(tpl.to_vector(v), [1.0, 2.0, 3.0, 4.0, 5.0])
-
-
-# ---------------------------------------------------------------------------
-# event_shapes / field_event_shape (top-level field view)
-# ---------------------------------------------------------------------------
-
-
-class TestEventShapes:
-    def test_event_shapes_flat_fields(self):
-        tpl = EventTemplate(x=(), y=(3,))
-        assert tpl.event_shapes == {"x": (), "y": (3,)}
-
-    def test_event_shapes_opaque_leaf_collapses(self):
-        """Opaque leaves (spec ``None``) collapse to ``()`` — the
-        downstream Distribution machinery only cares about array
-        shapes, and treats opaque fields as scalar event shape.
-        """
-        tpl = EventTemplate(label=None, x=(3,))
-        assert tpl.event_shapes == {"label": (), "x": (3,)}
-
-    def test_event_shapes_nested_collapses_to_scalar(self):
-        """Unlike ``leaf_shapes`` (which descends), ``event_shapes``
-        emits one entry per *top-level* field. Nested sub-templates
-        collapse to ``()`` — the per-leaf detail is available via
-        the nested template's own ``event_shapes``.
-        """
-        inner = EventTemplate(a=(), b=(2,))
-        outer = EventTemplate(inner=inner, z=(3,))
-        assert outer.event_shapes == {"inner": (), "z": (3,)}
-        assert inner.event_shapes == {"a": (), "b": (2,)}
-
-    def test_field_event_shape_lookup(self):
-        tpl = EventTemplate(x=(), y=(3,), label=None)
-        assert tpl.field_event_shape("x") == ()
-        assert tpl.field_event_shape("y") == (3,)
-        assert tpl.field_event_shape("label") == ()
-
-    def test_field_event_shape_keyerror_on_missing(self):
-        tpl = EventTemplate(x=())
-        with pytest.raises(KeyError):
-            tpl.field_event_shape("missing")
 
 
 # ---------------------------------------------------------------------------
@@ -615,29 +570,6 @@ class TestAutoPromotionSpecs:
 
 
 class TestShapeAccessorBackCompat:
-    def test_leaf_shapes_unchanged(self):
-        tpl = EventTemplate(
-            label=None,
-            x=(),
-            params=EventTemplate(a=(), b=(3,)),
-        )
-        assert tpl.leaf_shapes == {
-            "label": None,
-            "x": (),
-            "params/a": (),
-            "params/b": (3,),
-        }
-
-    def test_event_shapes_unchanged(self):
-        tpl = EventTemplate(label=None, x=(3,), params=EventTemplate(a=()))
-        assert tpl.event_shapes == {"label": (), "x": (3,), "params": ()}
-
-    def test_field_event_shape_unchanged(self):
-        tpl = EventTemplate(label=None, x=(3,), params=EventTemplate(a=()))
-        assert tpl.field_event_shape("x") == (3,)
-        assert tpl.field_event_shape("label") == ()
-        assert tpl.field_event_shape("params") == ()
-
     def test_vector_size_unchanged(self):
         tpl = EventTemplate(x=(), y=(3,), z=(2, 4))
         assert isinstance(tpl, NumericEventTemplate)

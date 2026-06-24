@@ -307,7 +307,7 @@ class TestNestedSampleFlatten:
 
     def test_batched_nested_flatten_roundtrip(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
-        leaves = list(nested.event_template.numeric_leaf_shapes)
+        leaves = list(nested.event_template.leaf_shapes)
         flat = s.to_vector()
         assert flat.shape == (6, len(leaves))  # ('outer/a', 'outer/b', 'm')
         # Primary check: flatten places each sampled leaf into its own column in
