@@ -19,8 +19,8 @@ import numpy as np
 
 from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
-from .event_template import ArraySpec, EventTemplate
-from .record import _PATH_SEP, Record
+from .event_template import _PATH_SEP, ArraySpec, EventTemplate
+from .record import Record
 
 __all__ = [
     "NumericRecordArray",

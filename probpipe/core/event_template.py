@@ -35,7 +35,7 @@ conversion to a flat 1-D array representation via
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterable, Mapping
+from collections.abc import Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from math import prod
 from typing import TYPE_CHECKING, Any
@@ -73,6 +73,106 @@ def _check_no_path_sep(name: str) -> None:
             f"Field name {name!r} must not contain {_PATH_SEP!r} "
             f"(reserved as the nested-path separator)."
         )
+
+
+class _NamedTree:
+    """Shared structural-access protocol for ProbPipe's named trees.
+
+    Both :class:`EventTemplate` (a tree of specs) and
+    :class:`~probpipe.Record` (a tree of values) are insertion-ordered maps of
+    **fields** (top-level ``name -> child``), where a child is either a terminal
+    **leaf** or a nested tree of the same kind (an **internal node**), addressed
+    by a ``/``-delimited **path**. This mixin gives both the same way to name,
+    address, enumerate, and iterate that structure; subclasses differ only in
+    what their children are (specs vs. values).
+
+    A subclass supplies one hook, :meth:`_tree_children` (its ordered
+    ``name -> child`` mapping). A child counts as an internal node iff it is
+    itself a ``_NamedTree``; everything else is a leaf.
+    """
+
+    __slots__ = ()
+
+    def _tree_children(self) -> Mapping[str, Any]:
+        """The ordered ``name -> child`` mapping for this node (hook)."""
+        raise NotImplementedError
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        """Top-level field names, in insertion order (does not descend)."""
+        return tuple(self._tree_children().keys())
+
+    def __len__(self) -> int:
+        return len(self._tree_children())
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._tree_children())
+
+    def keys(self) -> Iterator[str]:
+        """Iterate top-level field names."""
+        return iter(self._tree_children())
+
+    def values(self) -> Iterator[Any]:
+        """Iterate top-level children (one per field)."""
+        return iter(self._tree_children().values())
+
+    def items(self) -> Iterator[tuple[str, Any]]:
+        """Iterate ``(name, child)`` pairs for the top-level fields."""
+        return iter(self._tree_children().items())
+
+    def __getitem__(self, key: str | tuple[str, ...]) -> Any:
+        """Return the child at *key* — a field name, ``/``-path, or tuple path.
+
+        A plain name selects a top-level field; a ``/``-delimited string (or a
+        tuple of names) descends through internal nodes (``tree["a/b"]`` ==
+        ``tree["a", "b"]``). Raises ``KeyError`` for a missing field or a path
+        that descends through a leaf, and ``TypeError`` for a non-str/tuple key.
+        """
+        if isinstance(key, str):
+            if _PATH_SEP in key:
+                return self[tuple(key.split(_PATH_SEP))]
+            children = self._tree_children()
+            if key not in children:
+                raise KeyError(key)
+            return children[key]
+        if isinstance(key, tuple):
+            node: Any = self
+            for i, name in enumerate(key):
+                if i > 0 and not isinstance(node, _NamedTree):
+                    raise KeyError(
+                        f"path {_PATH_SEP.join(key)!r} descends through non-tree "
+                        f"leaf {type(node).__name__} at {_PATH_SEP.join(key[:i])!r}"
+                    )
+                node = node[name]
+            return node
+        raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
+
+    def __contains__(self, key: object) -> bool:
+        """Membership by field name or ``/``-path (missing paths are ``False``)."""
+        if isinstance(key, str) and _PATH_SEP not in key:
+            return key in self._tree_children()
+        try:
+            self[key]  # type: ignore[index]
+        except (KeyError, TypeError, IndexError):
+            return False
+        return True
+
+    @property
+    def leaf_paths(self) -> tuple[str, ...]:
+        """``/``-path to every leaf, in canonical leaf order.
+
+        Canonical leaf order is the depth-first, insertion-order traversal:
+        each internal node expands into one path per nested leaf; a flat tree's
+        ``leaf_paths`` equals its :attr:`fields`. This is the single ordering
+        every leaf-wise operation uses.
+        """
+        paths: list[str] = []
+        for name, child in self._tree_children().items():
+            if isinstance(child, _NamedTree):
+                paths.extend(f"{name}{_PATH_SEP}{sub}" for sub in child.leaf_paths)
+            else:
+                paths.append(name)
+        return tuple(paths)
 
 
 @dataclass(frozen=True)
@@ -206,7 +306,7 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
 # ---------------------------------------------------------------------------
 
 
-class EventTemplate:
+class EventTemplate(_NamedTree):
     """Structural description of a value: its named, possibly-nested leaf structure.
 
     An ``EventTemplate`` describes the **structure** of a value, independent of
@@ -235,8 +335,10 @@ class EventTemplate:
       ``EventTemplate`` is an *internal node*, not a leaf.
     - **path** — the ``/``-delimited sequence of field names from the root to a
       node (e.g. ``"physics/mass"``); a top-level field is a single-segment
-      path. These are the same path strings used to index into a value, e.g.
-      ``record["physics/mass"]``.
+      path. The same path strings index a template or the value it describes
+      (``template["physics/mass"]`` / ``record["physics/mass"]``) — the
+      structural-access protocol (indexing, membership, iteration,
+      :attr:`leaf_paths`) is shared with :class:`~probpipe.Record`.
     - **canonical leaf order** — the order in which leaves are traversed:
       depth-first, following each level's insertion order. This is the single
       ordering every leaf-wise operation uses. :attr:`leaf_paths` is its
@@ -358,47 +460,16 @@ class EventTemplate:
     def __reduce__(self):
         return (_unpickle_event_template, (dict(self._specs),))
 
-    # -- Field access -------------------------------------------------------
+    # -- Field access (structural protocol shared with ``Record``) ----------
+    #
+    # ``fields`` / ``leaf_paths`` / ``__getitem__`` (name / ``/``-path / tuple) /
+    # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
+    # ``__len__`` come from :class:`_NamedTree`. Here a child is a leaf spec
+    # (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec` /
+    # :class:`FunctionSpec`) or a nested ``EventTemplate`` (an internal node).
 
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Top-level field names, in insertion order.
-
-        Returns the names of the template's *top-level* fields only (see the
-        Terminology section); it does **not** descend into nested
-        sub-templates, so a nested field contributes a single name here. For
-        the path to every leaf in canonical leaf order, use :attr:`leaf_paths`;
-        the two coincide for a flat template (one where every field is a leaf).
-        """
-        return tuple(self._specs.keys())
-
-    @property
-    def leaf_paths(self) -> tuple[str, ...]:
-        """Path to every leaf, in canonical leaf order.
-
-        Returns the ``/``-delimited path (see the Terminology section) to each
-        leaf of the template, traversed depth-first in each level's insertion
-        order. This property **is the canonical definition** of that order and
-        of the leaf keys it yields: every leaf-wise operation in ProbPipe visits
-        leaves in exactly this order and names them by exactly these paths —
-        :meth:`to_vector` / :meth:`from_vector` lay out and read the per-leaf
-        blocks in it, :meth:`~probpipe.Record.flatten` returns the value's
-        leaves in it, and :attr:`~NumericEventTemplate.leaf_shapes` is keyed by
-        these same paths. A nested field expands into one path per nested leaf; a flat
-        template's ``leaf_paths`` equals its :attr:`fields`.
-
-        Returns
-        -------
-        tuple of str
-            One ``/``-delimited path per leaf, in canonical leaf order.
-        """
-        paths: list[str] = []
-        for name, spec in self._specs.items():
-            if isinstance(spec, EventTemplate):
-                paths.extend(f"{name}{_PATH_SEP}{sub}" for sub in spec.leaf_paths)
-            else:
-                paths.append(name)
-        return tuple(paths)
+    def _tree_children(self) -> Mapping[str, _FieldSpec]:
+        return self._specs
 
     # -- Numeric queries & projection ---------------------------------------
 
@@ -509,22 +580,6 @@ class EventTemplate:
                 f"ArraySpec leaves survive. Dropped non-numeric fields: {dropped}."
             )
         return NumericEventTemplate(specs)
-
-    def __contains__(self, name: str) -> bool:
-        return name in self._specs
-
-    def __getitem__(self, name: str) -> _FieldSpec:
-        """Return the stored spec for *name*.
-
-        Returns the leaf spec object (:class:`ArraySpec` / :class:`OpaqueSpec`
-        / :class:`DistributionSpec` / :class:`FunctionSpec`) or, for a nested
-        field, the nested :class:`EventTemplate`. For per-leaf array shapes (on a
-        numeric template) use :attr:`~NumericEventTemplate.leaf_shapes`.
-        """
-        return self._specs[name]
-
-    def __len__(self) -> int:
-        return len(self._specs)
 
     # -- Equality and hashing -----------------------------------------------
 

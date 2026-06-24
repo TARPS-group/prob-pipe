@@ -99,7 +99,7 @@ preserve it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -107,7 +107,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from .event_template import _PATH_SEP, EventTemplate, _check_no_path_sep
+from .event_template import EventTemplate, _check_no_path_sep, _NamedTree
 from .provenance import Provenance
 
 if TYPE_CHECKING:
@@ -126,7 +126,7 @@ type _FieldValue = Any
 # ---------------------------------------------------------------------------
 
 
-class Record:
+class Record(_NamedTree):
     """A single structured value: named fields bound to a schema and identity.
 
     A ``Record`` holds **data** (named fields, stored verbatim — no coercion), a
@@ -138,6 +138,29 @@ class Record:
 
     Use :class:`NumericRecord` when every leaf is numeric and you want a uniform
     ``jax.Array`` type plus 1-D vector (de)serialization.
+
+    Accessing fields
+    ----------------
+    A ``Record`` behaves like an immutable, ordered mapping over its fields,
+    using the same *field* / *leaf* / *path* vocabulary as :class:`EventTemplate`
+    (shared via the structural protocol both implement):
+
+    * **Index** by top-level field name (``record["x"]``), or by ``/``-path /
+      name-tuple to reach a nested field (``record["a/b"]`` == ``record["a",
+      "b"]``); the stored value (or sub-``Record``) is returned. Descending past
+      a non-``Record`` leaf raises :class:`KeyError`.
+    * **Membership** (``in``) accepts the same names and paths
+      (``"a/b" in record``).
+    * **Iterate** to get the top-level field names; :meth:`keys` / :meth:`values`
+      / :meth:`items` follow the ``dict`` protocol. :attr:`fields` lists the
+      top-level names; :attr:`~EventTemplate.leaf_paths` lists every leaf's path
+      in canonical leaf order.
+    * **Splat** fields into a call with :meth:`select` (a chosen / renamed
+      subset) or :meth:`select_all` (all of them).
+    * **Update immutably**: :meth:`replace`, :meth:`merge`, and :meth:`without`
+      return a new ``Record`` instead of mutating in place.
+    * **Compare**: two records are equal iff they share a type, an equal
+      :attr:`event_template`, and field-by-field equal data (:meth:`__eq__`).
 
     Parameters
     ----------
@@ -169,11 +192,9 @@ class Record:
 
     Notes
     -----
-    Two records are equal iff they share a type, an equal :attr:`event_template`,
-    and field-by-field equal data (see :meth:`__eq__`). :attr:`name`,
-    :attr:`source`, and :attr:`event_template` are runtime metadata and are not
-    serialised into the pytree aux, so a ``tree_unflatten``'d or unpickled record
-    re-derives them.
+    :attr:`name`, :attr:`source`, and :attr:`event_template` are runtime metadata
+    and are not serialised into the pytree aux (which holds only the field
+    names), so a ``tree_unflatten``'d or unpickled record re-derives them.
     """
 
     __slots__ = ("_event_template", "_name", "_source", "_store")
@@ -295,65 +316,16 @@ class Record:
     def __reduce__(self):
         return (_unpickle_record, (dict(self._store), self._name, self._source))
 
-    # -- Field access -------------------------------------------------------
+    # -- Field access (structural protocol shared with ``EventTemplate``) ---
+    #
+    # ``fields`` / ``leaf_paths`` / ``__getitem__`` (name / ``/``-path / tuple) /
+    # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
+    # ``__len__`` come from :class:`_NamedTree`. Here a child is a stored field
+    # value or a nested ``Record`` (an internal node); ``record[name]`` /
+    # ``record["a/b"]`` return the value at that field / path.
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> _FieldValue:
-        if isinstance(key, str):
-            if _PATH_SEP in key:
-                return self[tuple(key.split(_PATH_SEP))]
-            store = self._store
-            if key not in store:
-                raise KeyError(key)
-            return store[key]
-        if isinstance(key, tuple):
-            v: Any = self
-            for i, k in enumerate(key):
-                if i > 0 and not isinstance(v, Record):
-                    # Descending past a non-Record leaf is a path
-                    # error, not an indexing error — translate so that
-                    # ``"a/b" in record`` and ``record["a/b"]`` both
-                    # raise the user-friendly KeyError instead of
-                    # leaking a numpy/list-side IndexError.
-                    raise KeyError(
-                        f"path {'/'.join(key)!r} descends through "
-                        f"non-Record leaf {type(v).__name__} at "
-                        f"{'/'.join(key[:i])!r}"
-                    )
-                v = v[k]
-            return v
-        raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
-
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Field names in insertion order."""
-        return tuple(self._store.keys())
-
-    def __len__(self) -> int:
-        return len(self._store)
-
-    def __contains__(self, name: str) -> bool:
-        if _PATH_SEP in name:
-            try:
-                self[name]
-            except (KeyError, TypeError, IndexError):
-                return False
-            return True
-        return name in self._store
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._store)
-
-    def items(self) -> Iterator[tuple[str, _FieldValue]]:
-        """Iterate over (name, value) pairs."""
-        return iter(self._store.items())
-
-    def keys(self) -> Iterator[str]:
-        """Iterate over field names."""
-        return iter(self._store)
-
-    def values(self) -> Iterator[_FieldValue]:
-        """Iterate over values."""
-        return iter(self._store.values())
+    def _tree_children(self) -> dict[str, _FieldValue]:
+        return self._store
 
     # -- Selection ----------------------------------------------------------
 

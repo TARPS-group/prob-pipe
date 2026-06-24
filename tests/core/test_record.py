@@ -108,11 +108,11 @@ class TestFieldAccess:
         assert "missing/r" not in v
 
     def test_path_through_non_record_raises_clear_keyerror(self):
-        """Descending past a non-Record leaf via path syntax must raise
-        ``KeyError`` with a path-aware message — not a numpy
-        ``IndexError`` (regression for PR-A review finding #5)."""
+        """Descending past a leaf via path syntax must raise ``KeyError`` with
+        a path-aware message — not a numpy ``IndexError`` (regression for PR-A
+        review finding #5)."""
         v = Record(a=np.array([1.0, 2.0]))
-        with pytest.raises(KeyError, match="non-Record"):
+        with pytest.raises(KeyError, match="non-tree leaf"):
             v["a/b"]
         # __contains__ swallows the same case to False.
         assert "a/b" not in v
