@@ -9,11 +9,12 @@ inputs stored under ``posterior._auxiliary["arviz"]``. Users should normally
 interact with ``add_mcmc_diagnostics``, ``add_ppc``, ``add_loo``, and
 ``posterior.diagnostics`` instead of importing this module directly.
 """
-from __future__ import annotations                          
 
-from typing import Any                                      
+from __future__ import annotations
 
-import numpy as np                                          
+from typing import Any
+
+import numpy as np
 
 try:
     import xarray as xr
@@ -23,23 +24,21 @@ except ImportError:
 
 # ── Installation check ────────────────────────────────────────────────────────
 
+
 def check_arviz_installed() -> None:
     """Raise a clear ImportError if ArviZ or xarray is missing."""
     try:
         import arviz as az  # noqa: F401
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
-            "ArviZ is required for diagnostics. "
-            "Install with: pip install arviz xarray"
-        )
+            "ArviZ is required for diagnostics. Install with: pip install arviz xarray"
+        ) from exc
     if xr is None:
-        raise ImportError(
-            "xarray is required for diagnostics. "
-            "Install with: pip install xarray"
-        )
+        raise ImportError("xarray is required for diagnostics. Install with: pip install xarray")
 
 
 # ── Draw extraction ───────────────────────────────────────────────────────────
+
 
 def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     """Extract named parameter draws from a posterior distribution.
@@ -91,11 +90,12 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
 
 # ── Format conversion ─────────────────────────────────────────────────────────
 
+
 def to_arviz_dataset(
     posterior: Any,
     *,
     var_names: list[str] | None = None,
-) -> "xr.Dataset":
+) -> xr.Dataset:
     """Convert a posterior distribution to an xarray.Dataset for ArviZ 1.0.
 
     For ``ApproximateDistribution``, delegates to
@@ -118,13 +118,12 @@ def to_arviz_dataset(
         Dataset with dims ``(chain, draw, *event_shape)``.
     """
     if xr is None:
-        raise ImportError(
-            "xarray is required. Install with: pip install xarray"
-        )
+        raise ImportError("xarray is required. Install with: pip install xarray")
 
     # ── ApproximateDistribution: delegate to the canonical builder ────────────
     if hasattr(posterior, "chains") and hasattr(posterior, "fields"):
         from ._datatree_store import to_named_posterior_dataset
+
         ds = to_named_posterior_dataset(posterior)
         if var_names is not None:
             ds = ds[var_names]
@@ -141,9 +140,9 @@ def to_arviz_dataset(
         if arr.ndim == 0:
             arr = arr.reshape(1, 1)
         elif arr.ndim >= 1:
-            arr = arr.reshape((1,) + arr.shape)
+            arr = arr.reshape((1, *arr.shape))
         event_dims = [f"dim_{i}" for i in range(arr.ndim - 2)]
-        dims = ["chain", "draw"] + event_dims
+        dims = ["chain", "draw", *event_dims]
         data_vars[name] = xr.DataArray(arr, dims=dims)
 
     return xr.Dataset(data_vars)

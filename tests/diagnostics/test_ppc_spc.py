@@ -1,4 +1,5 @@
 """Tests for probpipe.diagnostics._ppc_spc."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -200,9 +201,7 @@ class TestAddPpc:
             generative_likelihood=_NumpyLikelihood(),
             n_replications=50,
         )
-        view = PPCView(
-            posterior._auxiliary["diagnostics"]["runs"]["ppc"]
-        )
+        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
         p = view.p_values.get("_mean")
         if isinstance(p, float):
             assert 0.0 <= p <= 1.0
@@ -248,9 +247,7 @@ class TestAddPpc:
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
         )
-        view = PPCView(
-            posterior._auxiliary["diagnostics"]["runs"]["ppc"]
-        )
+        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
         assert set(view.p_values.keys()) == {"_mean", "_std"}
 
     def test_observed_stored(self, posterior):
@@ -262,9 +259,7 @@ class TestAddPpc:
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
         )
-        view = PPCView(
-            posterior._auxiliary["diagnostics"]["runs"]["ppc"]
-        )
+        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
         obs = view.observed.get("_mean")
         if isinstance(obs, float):
             assert np.isfinite(obs)
@@ -345,7 +340,7 @@ class TestAddPpc:
     def test_dataset_from_record_rejects_non_dataset(self):
         from probpipe.core.record import Record
 
-        with pytest.raises(TypeError, match="xarray.Dataset"):
+        with pytest.raises(TypeError, match=r"xarray\.Dataset"):
             _dataset_from_record(Record(name="bad", dataset="not-a-dataset"))
 
     def test_write_ppc_record_stores_optional_predictive_group(self, posterior):

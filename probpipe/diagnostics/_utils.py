@@ -3,21 +3,23 @@
 Private module — do not import directly.
 All public symbols are re-exported via probpipe.diagnostics.__init__.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 __all__ = [
+    "_as_numpy",
     "_component_name",
     "_dataset_values",
-    "_resolve_generative_likelihood",
-    "_record_get",
-    "_safe_float",
-    "_as_numpy",
     "_json_dumps_safe",
+    "_record_get",
+    "_resolve_generative_likelihood",
+    "_safe_float",
 ]
 
 import json
+
 import numpy as np
 
 
@@ -57,7 +59,7 @@ def _safe_float(value: Any) -> float:
         return float("nan")
 
 
-def _as_numpy(obj: Any) -> "np.ndarray | None":
+def _as_numpy(obj: Any) -> np.ndarray | None:
     """Best-effort conversion to NumPy array."""
     if obj is None:
         return None

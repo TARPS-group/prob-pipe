@@ -1,13 +1,14 @@
 """Tests for probpipe.diagnostics._loo."""
+
 from __future__ import annotations
 
-from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 import xarray as xr
 
+from probpipe.diagnostics._datatree_store import _add_group
 from probpipe.diagnostics._loo import (
     _add_log_likelihood,
     _as_numpy,
@@ -20,9 +21,7 @@ from probpipe.diagnostics._loo import (
     _safe_int,
     add_loo,
 )
-from probpipe.diagnostics._datatree_store import _add_group
 from probpipe.diagnostics._views import LOOView
-
 
 # ---------------------------------------------------------------------------
 # Fake posterior
@@ -182,7 +181,7 @@ class TestLogLikelihoodToDataset:
 
     def test_scalar_gets_chain_draw_dims(self):
         ds = _log_likelihood_to_dataset(np.float64(1.0))
-        da = list(ds.data_vars.values())[0]
+        da = next(iter(ds.data_vars.values()))
         assert da.dims == ("chain", "draw", "obs")
         assert da.shape == (1, 1, 1)
 
@@ -520,6 +519,7 @@ class TestAddLoo:
 class TestGetArvizTree:
     def test_prefers_auxiliary_arviz(self):
         from probpipe.diagnostics._loo import _get_arviz_tree
+
         post = _FakePosterior(with_arviz_log_likelihood=True)
         tree = _get_arviz_tree(post)
         assert tree is not None
@@ -658,12 +658,15 @@ class _FakeModel:
                 # Simple Gaussian log likelihood — fully NumPy, not JAX-traceable
                 # so the fallback loop is exercised.
                 import numpy as _np
+
                 if hasattr(params, "__getitem__"):
                     try:
-                        beta = _np.concatenate([
-                            _np.atleast_1d(_np.asarray(params["intercept"])),
-                            _np.atleast_1d(_np.asarray(params["slope"])),
-                        ])
+                        beta = _np.concatenate(
+                            [
+                                _np.atleast_1d(_np.asarray(params["intercept"])),
+                                _np.atleast_1d(_np.asarray(params["slope"])),
+                            ]
+                        )
                     except Exception:
                         beta = _np.asarray(params).ravel()
                 else:
@@ -705,10 +708,12 @@ class _FakePostForLL:
             def fields(self):
                 return list(self.keys())
 
-        return _Rec({
-            "intercept": self._intercept[chain],
-            "slope": self._slope[chain],
-        })
+        return _Rec(
+            {
+                "intercept": self._intercept[chain],
+                "slope": self._slope[chain],
+            }
+        )
 
 
 class TestAddLogLikelihood:
@@ -762,6 +767,7 @@ class TestAddLogLikelihood:
     def test_add_loo_computes_missing_log_likelihood_from_model_and_data(self):
         """Integration: add_loo owns the internal log-likelihood path."""
         from unittest.mock import patch as _patch
+
         post, model, data = self._setup(n_obs=10)
 
         k = np.abs(np.random.default_rng(0).standard_normal(10)) * 0.2

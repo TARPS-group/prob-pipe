@@ -28,37 +28,33 @@ from __future__ import annotations
 
 # -- Generic view base ------------------------------------------------------
 from ._view_base import (
-    NotComputed,
-    DataTreeView,
     DatasetView,
+    DataTreeView,
     DiagnosticRunView,
-    read_scalar,
+    NotComputed,
     read_indexed,
     read_json_attr,
+    read_scalar,
 )
 
 # -- Concrete diagnostic views ---------------------------------------------
 from ._views import (
     DiagnosticsView,
+    LOOView,
     MCMCView,
     PPCView,
-    LOOView,
 )
 
 __all__ = [
-    # Sentinel
-    "NotComputed",
-    # Generic base views
     "DataTreeView",
     "DatasetView",
     "DiagnosticRunView",
-    # Concrete views
     "DiagnosticsView",
-    "MCMCView",
-    "PPCView",
     "LOOView",
-    # Generic reader helpers
-    "read_scalar",
+    "MCMCView",
+    "NotComputed",
+    "PPCView",
     "read_indexed",
     "read_json_attr",
+    "read_scalar",
 ]

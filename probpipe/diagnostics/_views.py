@@ -3,28 +3,27 @@
 These classes are domain-specific views built on top of the generic
 DataTree view base classes from ``_view_base.py``.
 """
+
 from __future__ import annotations
 
 import json
+from contextlib import suppress
 from typing import Any
 
 from ._view_base import (
-    DataTreeView,
     DatasetView,
+    DataTreeView,
     DiagnosticRunView,
     NotComputed,
-    read_indexed,
-    read_json_attr,
 )
 
-
 __all__ = [
-    "DiagnosticsView",
-    "MCMCView",
-    "PPCView",
-    "LOOView",
     "DiagnosticRunView",
+    "DiagnosticsView",
+    "LOOView",
+    "MCMCView",
     "NotComputed",
+    "PPCView",
 ]
 
 
@@ -88,10 +87,8 @@ class MCMCView(DatasetView):
 
         for key in ("rhat_warnings", "ess_warnings", "mcse_warnings"):
             raw = ds.attrs.get(key, "[]")
-            try:
+            with suppress(Exception):
                 msgs.extend(json.loads(raw))
-            except Exception:
-                pass
 
         return msgs
 
@@ -166,10 +163,7 @@ class PPCView(DatasetView):
     def __repr__(self) -> str:
         if not self.exists:
             return "PPCView(not computed)"
-        return (
-            f"PPCView(test_fns={list(self.p_values.keys())}, "
-            f"plot_ready={self.plot_ready})"
-        )
+        return f"PPCView(test_fns={list(self.p_values.keys())}, plot_ready={self.plot_ready})"
 
 
 # ---------------------------------------------------------------------------
@@ -219,10 +213,7 @@ class LOOView(DatasetView):
         msgs: list[str] = []
 
         if self.warning:
-            msgs.append(
-                "ArviZ LOO reliability warning — some Pareto-k values "
-                "may be too high."
-            )
+            msgs.append("ArviZ LOO reliability warning — some Pareto-k values may be too high.")
 
         pk_max = self.pareto_k_max
         if isinstance(pk_max, float) and pk_max > 0.7:
@@ -331,10 +322,7 @@ class DiagnosticsView(DataTreeView):
 
         children = getattr(runs_node, "children", {}) or {}
 
-        return [
-            DiagnosticRunView(name, runs_node[name])
-            for name in children
-        ]
+        return [DiagnosticRunView(name, runs_node[name]) for name in children]
 
     # ── summaries ----------------------------------------------------------
 

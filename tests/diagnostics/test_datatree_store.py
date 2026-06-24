@@ -1,4 +1,5 @@
 """Tests for probpipe.diagnostics._datatree_store."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -14,7 +15,6 @@ from probpipe.diagnostics._datatree_store import (
     to_named_posterior_dataset,
 )
 from probpipe.diagnostics._view_base import NotComputed
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -70,7 +70,8 @@ class TestAddGroup:
 
     def test_flatten_datatree_raises_when_node_cannot_export_dataset(self):
         class _BadNode:
-            children = {}
+            def __init__(self):
+                self.children = {}
 
             def to_dataset(self):
                 raise RuntimeError("no dataset")
@@ -133,7 +134,9 @@ class TestWriteMcmcField:
     def test_attrs_stored(self):
         post = _MinimalPosterior()
         _write_mcmc_field(
-            post, "rhat", {"alpha": 1.0},
+            post,
+            "rhat",
+            {"alpha": 1.0},
             attrs={"rhat_method": "rank"},
         )
         ds = post._auxiliary["diagnostics"]["mcmc"].to_dataset()
@@ -190,15 +193,13 @@ class TestToNamedPosteriorDataset:
                 return list(self.keys())
 
         class _Post:
-            fields = params
-            num_chains = n_chains
+            def __init__(self):
+                self.fields = params
+                self.num_chains = n_chains
 
             def draws(self, *, chain):
                 return _FakeRecord(
-                    {
-                        p: rng.standard_normal((n_draws,) + tuple(shapes.get(p, ())))
-                        for p in params
-                    }
+                    {p: rng.standard_normal((n_draws, *tuple(shapes.get(p, ())))) for p in params}
                 )
 
         return _Post()

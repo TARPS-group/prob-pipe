@@ -1,4 +1,5 @@
 """DataTree storage/write helpers for ProbPipe diagnostics."""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
@@ -9,23 +10,24 @@ from ._view_base import NotComputed
 
 if TYPE_CHECKING:
     import xarray as xr
+
     from ..inference._approximate_distribution import ApproximateDistribution
 
 
 __all__ = [
     "_add_group",
     "_get_or_create_mcmc_ds",
-    "_write_mcmc_field",
     "_mcmc_has_field",
+    "_write_mcmc_field",
     "to_named_posterior_dataset",
 ]
 
 
-def _flatten_datatree(tree: "xr.DataTree") -> dict[str, Any]:
+def _flatten_datatree(tree: xr.DataTree) -> dict[str, Any]:
     """Flatten a DataTree into a path -> Dataset dictionary."""
     out: dict[str, Any] = {}
 
-    def _walk(node: "xr.DataTree", prefix: str = "") -> None:
+    def _walk(node: xr.DataTree, prefix: str = "") -> None:
         try:
             ds = node.to_dataset()
         except Exception as exc:
@@ -49,9 +51,9 @@ def _flatten_datatree(tree: "xr.DataTree") -> dict[str, Any]:
 
 
 def _add_group(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     group_name: str,
-    dataset: "xr.Dataset",
+    dataset: xr.Dataset,
 ) -> None:
     """Add or replace a group in ``posterior._auxiliary`` in place.
 
@@ -77,7 +79,7 @@ def _add_group(
     )
 
 
-def _get_or_create_mcmc_ds(posterior: "ApproximateDistribution") -> "xr.Dataset":
+def _get_or_create_mcmc_ds(posterior: ApproximateDistribution) -> xr.Dataset:
     """Return existing ``/diagnostics/mcmc`` dataset or an empty one."""
     import xarray as xr
 
@@ -93,7 +95,7 @@ def _get_or_create_mcmc_ds(posterior: "ApproximateDistribution") -> "xr.Dataset"
 
 
 def _write_mcmc_field(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     field_name: str,
     values: dict[str, float | NotComputed],
     *,
@@ -128,7 +130,7 @@ def _write_mcmc_field(
 
 
 def _mcmc_has_field(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     field_name: str,
 ) -> bool:
     """Return True if ``field_name`` exists in ``/diagnostics/mcmc``."""
@@ -146,8 +148,8 @@ def _mcmc_has_field(
 
 
 def to_named_posterior_dataset(
-    posterior: "ApproximateDistribution",
-) -> "xr.Dataset":
+    posterior: ApproximateDistribution,
+) -> xr.Dataset:
     """Build a Dataset with one variable per parameter.
 
     Scalar parameters have dims ``(chain, draw)``. Vector or array-valued
@@ -159,16 +161,13 @@ def to_named_posterior_dataset(
 
     for field in posterior.fields:
         stacked = np.stack(
-            [
-                np.asarray(posterior.draws(chain=i)[field])
-                for i in range(posterior.num_chains)
-            ],
+            [np.asarray(posterior.draws(chain=i)[field]) for i in range(posterior.num_chains)],
             axis=0,
         )
         event_dims = [f"{field}_dim_{i}" for i in range(max(stacked.ndim - 2, 0))]
         data_vars[field] = xr.DataArray(
             stacked,
-            dims=["chain", "draw"] + event_dims,
+            dims=["chain", "draw", *event_dims],
         )
 
     return xr.Dataset(data_vars)

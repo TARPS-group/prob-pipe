@@ -315,7 +315,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         warmup = arviz_data["warmup"]["params"]
         n_chains = warmup.sizes.get("chain", 1)
         return [jnp.asarray(warmup.sel(chain=i).values) for i in range(n_chains)]
-      
+
     def draws(
         self,
         chain: int | None = None,

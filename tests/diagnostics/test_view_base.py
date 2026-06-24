@@ -1,4 +1,5 @@
 """Tests for probpipe.diagnostics._view_base."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -10,11 +11,10 @@ from probpipe.diagnostics._view_base import (
     DataTreeView,
     DiagnosticRunView,
     NotComputed,
-    read_json_attr,
     read_indexed,
+    read_json_attr,
     read_scalar,
 )
-
 
 # ---------------------------------------------------------------------------
 # NotComputed
@@ -196,7 +196,8 @@ class TestDataTreeView:
 
     def test_child_returns_none_when_lookup_fails(self):
         class _TreeLike:
-            children = {"child": object()}
+            def __init__(self):
+                self.children = {"child": object()}
 
             def __getitem__(self, key):
                 raise RuntimeError("cannot read child")
@@ -240,9 +241,7 @@ class TestDataTreeView:
 
 class TestDatasetView:
     def _view(self, **data_vars) -> DatasetView:
-        arrays = {
-            k: xr.DataArray(v) for k, v in data_vars.items()
-        }
+        arrays = {k: xr.DataArray(v) for k, v in data_vars.items()}
         tree = xr.DataTree(dataset=xr.Dataset(arrays))
         return DatasetView(tree)
 

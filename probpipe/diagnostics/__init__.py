@@ -59,6 +59,7 @@ Plotting support depends on which ArviZ groups have been written::
     az.plot_trace(posterior.arviz_data)
     az.plot_loo_pit(posterior.arviz_data)
 """
+
 from __future__ import annotations
 
 __all__: list[str] = []
@@ -66,17 +67,17 @@ __all__: list[str] = []
 
 # ── MCMC diagnostics ──────────────────────────────────────────────────────
 from ._mcmc import (
-    add_rhat,
     add_ess,
-    add_mcse,
     add_mcmc_diagnostics,
+    add_mcse,
+    add_rhat,
 )
 
 __all__ += [
-    "add_rhat",
     "add_ess",
-    "add_mcse",
     "add_mcmc_diagnostics",
+    "add_mcse",
+    "add_rhat",
 ]
 
 
@@ -101,28 +102,28 @@ __all__ += [
 # compatibility during the refactor.
 try:
     from .views import (
-        DiagnosticsView,
         DiagnosticRunView,
-        MCMCView,
-        PPCView,
+        DiagnosticsView,
         LOOView,
+        MCMCView,
         NotComputed,
+        PPCView,
     )
 except ImportError:
     from ._datatree import (
-        DiagnosticsView,
         DiagnosticRunView,
-        MCMCView,
-        PPCView,
+        DiagnosticsView,
         LOOView,
+        MCMCView,
         NotComputed,
+        PPCView,
     )
 
 __all__ += [
-    "DiagnosticsView",
     "DiagnosticRunView",
-    "MCMCView",
-    "PPCView",
+    "DiagnosticsView",
     "LOOView",
+    "MCMCView",
     "NotComputed",
+    "PPCView",
 ]

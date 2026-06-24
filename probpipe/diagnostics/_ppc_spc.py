@@ -29,16 +29,18 @@ ProbPipe diagnostic summaries and run metadata are written under::
 
     _auxiliary/diagnostics/
 """
+
 from __future__ import annotations
 
 import json
 from collections.abc import Callable, Sequence
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
 import xarray as xr
 
+from .._utils import _auto_key
 from ..core.distribution import Distribution
 from ..core.record import Record
 from ..custom_types import PRNGKey
@@ -47,13 +49,12 @@ from ..validation._predictive_check import (
     _predictive_check_loop,
     _supports_key_arg,
 )
-from .._utils import _auto_key
+from ._datatree import _add_group
 from ._utils import (
+    _json_dumps_safe,
     _resolve_generative_likelihood,
     _safe_float,
-    _json_dumps_safe,
 )
-from ._datatree import _add_group
 
 __all__ = [
     "add_ppc",
@@ -257,27 +258,33 @@ def _ppc_op(
 
         if num_observations is None:
             if observed_data is None:
-                raise ValueError(
-                    "num_observations is required when observed_data is not provided."
-                )
+                raise ValueError("num_observations is required when observed_data is not provided.")
             _n_samples = len(observed_data)
         else:
             _n_samples = int(num_observations)
 
         if _n_samples < 1:
-            raise ValueError(
-                "num_observations must be a positive integer."
-            )
+            raise ValueError("num_observations must be a positive integer.")
 
         _key = key if key is not None else _auto_key()
 
         if _supports_key_arg(gl):
             stats_array = _predictive_check_batched(
-                posterior, gl, fn, _n_samples, n_replications, _key,
+                posterior,
+                gl,
+                fn,
+                _n_samples,
+                n_replications,
+                _key,
             )
         else:
             stats_array = _predictive_check_loop(
-                posterior, gl, fn, _n_samples, n_replications, _key,
+                posterior,
+                gl,
+                fn,
+                _n_samples,
+                n_replications,
+                _key,
             )
 
         p_val = None
@@ -316,15 +323,9 @@ def _ppc_op(
 
     fn_names = list(results.keys())
 
-    p_values = [
-        _safe_float(results[name].get("p_value"))
-        for name in fn_names
-    ]
+    p_values = [_safe_float(results[name].get("p_value")) for name in fn_names]
 
-    observed_values = [
-        _safe_float(results[name].get("observed"))
-        for name in fn_names
-    ]
+    observed_values = [_safe_float(results[name].get("observed")) for name in fn_names]
 
     data_vars: dict[str, xr.DataArray] = {
         "p_value": xr.DataArray(
@@ -353,7 +354,7 @@ def _ppc_op(
 
     attrs = {
         "kind": "ppc",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "n_replications": int(n_replications),
         "has_observed_data": observed_data is not None,
         "wrote_arviz_observed_data": wrote_observed_data,
@@ -367,14 +368,8 @@ def _ppc_op(
 
     result_record = Record(
         name="ppc_result",
-        p_value={
-            name: _safe_float(results[name].get("p_value"))
-            for name in fn_names
-        },
-        observed={
-            name: _safe_float(results[name].get("observed"))
-            for name in fn_names
-        },
+        p_value={name: _safe_float(results[name].get("p_value")) for name in fn_names},
+        observed={name: _safe_float(results[name].get("observed")) for name in fn_names},
         replicated_summary=rep_stat_summary or {},
     )
 

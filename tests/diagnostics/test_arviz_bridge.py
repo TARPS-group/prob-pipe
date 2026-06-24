@@ -1,4 +1,5 @@
 """Focused coverage for diagnostics ArviZ bridge helpers."""
+
 from __future__ import annotations
 
 import builtins
@@ -87,8 +88,9 @@ def test_to_arviz_dataset_prepends_chain_for_matrix_valued_params():
 
 def test_to_arviz_dataset_delegates_for_approximate_distribution(monkeypatch):
     class _ApproxPosterior:
-        chains = [object()]
-        fields = ["alpha", "beta"]
+        def __init__(self):
+            self.chains = [object()]
+            self.fields = ["alpha", "beta"]
 
     source = xr.Dataset(
         {

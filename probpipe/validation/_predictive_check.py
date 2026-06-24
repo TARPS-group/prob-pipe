@@ -9,10 +9,9 @@ import jax
 import numpy as np
 
 from .._utils import _auto_key
-from ..core.distribution import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
+from ..core.distribution import Distribution, RecordEmpiricalDistribution
 from ..core.node import workflow_function
-from ..core.distribution import Distribution
 from ..core.protocols import SupportsSampling
 from ..custom_types import PRNGKey
 from ..modeling._likelihood import GenerativeLikelihood  # needed for type hint resolution
@@ -98,7 +97,7 @@ def predictive_check[P, D](
             distribution,  # NumericRecord is a Record subclass — accepted directly
             name=getattr(distribution, "name", "posterior"),
         )
-    
+
     # -- Fast path: batched generation + vmap test_fn -----------------------
     if _supports_key_arg(generative_likelihood):
         stats_array = _predictive_check_batched(

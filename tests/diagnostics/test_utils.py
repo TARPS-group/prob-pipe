@@ -1,4 +1,5 @@
 """Tests for probpipe.diagnostics._utils."""
+
 from __future__ import annotations
 
 import json
@@ -17,7 +18,6 @@ from probpipe.diagnostics._utils import (
     _resolve_generative_likelihood,
     _safe_float,
 )
-
 
 # ---------------------------------------------------------------------------
 # _record_get

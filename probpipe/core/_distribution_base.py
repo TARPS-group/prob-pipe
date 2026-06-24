@@ -23,8 +23,8 @@ from typing import TYPE_CHECKING, Any, _ProtocolMeta
 if TYPE_CHECKING:
     from xarray import DataTree
 
+    from ..diagnostics.views import DiagnosticsView
     from ._distribution_array import DistributionArray
-
 
 from .provenance import Provenance
 
@@ -224,7 +224,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         return getattr(self, "_auxiliary", None)
 
     @property
-    def diagnostics(self) -> "DiagnosticsView | None":
+    def diagnostics(self) -> DiagnosticsView | None:
         """Structured view over diagnostic results stored in ``_auxiliary``.
 
         Returns ``None`` if no diagnostics have been computed yet.
@@ -300,6 +300,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         if "diagnostics" not in children:
             return None
         from ..diagnostics.views import DiagnosticsView
+
         return DiagnosticsView(aux["diagnostics"])
 
     # -- naming & provenance ------------------------------------------------

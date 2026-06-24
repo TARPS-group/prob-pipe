@@ -1,4 +1,5 @@
 """Shared fixtures for tests/diagnostics."""
+
 from __future__ import annotations
 
 import numpy as np
@@ -15,8 +16,8 @@ class _FakeRecord(dict):
     def __getattr__(self, name):
         try:
             return self[name]
-        except KeyError:
-            raise AttributeError(name)
+        except KeyError as exc:
+            raise AttributeError(name) from exc
 
 
 class _FakePosterior:
@@ -46,10 +47,7 @@ class _FakePosterior:
         self._n_chains = n_chains
         self._n_draws = n_draws
         # shape: (n_chains, n_draws) per param
-        self._data = {
-            p: rng.standard_normal((n_chains, n_draws))
-            for p in param_names
-        }
+        self._data = {p: rng.standard_normal((n_chains, n_draws)) for p in param_names}
         self._auxiliary = None
 
     # ---- ApproximateDistribution protocol expected by diagnostics ----
@@ -66,23 +64,16 @@ class _FakePosterior:
     def chains(self) -> list[np.ndarray]:
         # Each element is (n_draws, n_params) — shape doesn't matter for
         # the chain-count; only len(chains) is used in some paths.
-        return [np.zeros((self._n_draws, len(self._param_names)))
-                for _ in range(self._n_chains)]
+        return [np.zeros((self._n_draws, len(self._param_names))) for _ in range(self._n_chains)]
 
     def draws(self, *, chain: int | None = None) -> _FakeRecord:
         if chain is None:
-            return _FakeRecord(
-                {p: self._data[p].ravel() for p in self._param_names}
-            )
-        return _FakeRecord(
-            {p: self._data[p][chain] for p in self._param_names}
-        )
+            return _FakeRecord({p: self._data[p].ravel() for p in self._param_names})
+        return _FakeRecord({p: self._data[p][chain] for p in self._param_names})
 
     def _sample(self, key, shape):
         rng = np.random.default_rng(0)
-        return _FakeRecord(
-            {p: rng.standard_normal(shape) for p in self._param_names}
-        )
+        return _FakeRecord({p: rng.standard_normal(shape) for p in self._param_names})
 
 
 @pytest.fixture

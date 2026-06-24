@@ -1,20 +1,19 @@
 """Tests for probpipe.diagnostics._views."""
+
 from __future__ import annotations
 
 import json
 
-import numpy as np
 import pytest
 import xarray as xr
 
-from probpipe.diagnostics._view_base import NotComputed, DiagnosticRunView
+from probpipe.diagnostics._view_base import NotComputed
 from probpipe.diagnostics._views import (
     DiagnosticsView,
     LOOView,
     MCMCView,
     PPCView,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,9 +34,7 @@ def _mcmc_tree(
 
     def _indexed(d):
         params = list(d.keys())
-        return xr.DataArray(
-            list(d.values()), dims=["param"], coords={"param": params}
-        )
+        return xr.DataArray(list(d.values()), dims=["param"], coords={"param": params})
 
     if rhat is not None:
         data_vars["rhat"] = _indexed(rhat)
@@ -68,10 +65,13 @@ def _ppc_tree(
 ) -> xr.DataTree:
     da_p = xr.DataArray(p_values, dims=["test_fn"], coords={"test_fn": fn_names})
     da_o = xr.DataArray(observed, dims=["test_fn"], coords={"test_fn": fn_names})
-    ds = xr.Dataset({"p_value": da_p, "observed": da_o}, attrs={
-        "plot_ready": plot_ready,
-        "timestamp": timestamp,
-    })
+    ds = xr.Dataset(
+        {"p_value": da_p, "observed": da_o},
+        attrs={
+            "plot_ready": plot_ready,
+            "timestamp": timestamp,
+        },
+    )
     return xr.DataTree(dataset=ds)
 
 
@@ -179,9 +179,7 @@ class TestPPCView:
         assert r["observed"] == pytest.approx(1.0)
 
     def test_result_multiple_fns(self):
-        view = PPCView(_ppc_tree(
-            ["mean_fn", "var_fn"], [0.4, 0.7], [1.0, 2.0]
-        ))
+        view = PPCView(_ppc_tree(["mean_fn", "var_fn"], [0.4, 0.7], [1.0, 2.0]))
         assert set(view.result.keys()) == {"mean_fn", "var_fn"}
 
     def test_result_reports_missing_observed(self):
@@ -315,16 +313,16 @@ class TestDiagnosticsView:
     def _view_with_mcmc(self, rhat=None, ess_bulk=None):
         rhat = rhat or {"alpha": 1.001, "beta": 1.0}
         ess_bulk = ess_bulk or {"alpha": 450.0, "beta": 500.0}
-        mcmc_ds = xr.Dataset({
-            "rhat": xr.DataArray(
-                list(rhat.values()), dims=["param"],
-                coords={"param": list(rhat.keys())}
-            ),
-            "ess_bulk": xr.DataArray(
-                list(ess_bulk.values()), dims=["param"],
-                coords={"param": list(ess_bulk.keys())}
-            ),
-        })
+        mcmc_ds = xr.Dataset(
+            {
+                "rhat": xr.DataArray(
+                    list(rhat.values()), dims=["param"], coords={"param": list(rhat.keys())}
+                ),
+                "ess_bulk": xr.DataArray(
+                    list(ess_bulk.values()), dims=["param"], coords={"param": list(ess_bulk.keys())}
+                ),
+            }
+        )
         tree = _diagnostics_tree(mcmc_ds=mcmc_ds)
         return DiagnosticsView(tree)
 
@@ -353,15 +351,17 @@ class TestDiagnosticsView:
         assert view.runs == []
 
     def test_runs_lists_ppc(self):
-        ppc_ds = xr.Dataset({"p_value": xr.DataArray([0.5], dims=["test_fn"],
-                                                       coords={"test_fn": ["fn"]})})
+        ppc_ds = xr.Dataset(
+            {"p_value": xr.DataArray([0.5], dims=["test_fn"], coords={"test_fn": ["fn"]})}
+        )
         tree = _diagnostics_tree(ppc_ds=ppc_ds)
         view = DiagnosticsView(tree)
         assert any(r.name == "ppc" for r in view.runs)
 
     def test_child_or_none_returns_none_when_child_lookup_fails(self):
         class _TreeLike:
-            children = {"runs": object()}
+            def __init__(self):
+                self.children = {"runs": object()}
 
             def __getitem__(self, key):
                 raise RuntimeError("cannot descend")

@@ -217,6 +217,7 @@ class TestAuxiliaryDiagnosticsAccessor:
 
     def test_diagnostics_returns_view_for_diagnostics_group(self):
         import xarray as xr
+
         from probpipe.diagnostics.views import DiagnosticsView
 
         dist = Normal(loc=0.0, scale=1.0, name="x")

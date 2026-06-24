@@ -162,8 +162,8 @@ class TestPredictiveCheck:
 
     def test_numeric_record_distribution_is_unwrapped(self, monkeypatch):
         """Workflow-resolved NumericRecord values are wrapped for sampling."""
-        from probpipe.core._numeric_record import NumericRecord
         import probpipe.validation._predictive_check as predictive_check_module
+        from probpipe.core._numeric_record import NumericRecord
 
         numeric = NumericRecord(x=np.array([0.0, 1.0, 2.0]), name="posterior")
 
@@ -348,6 +348,7 @@ class TestPredictiveCheck:
     def test_xarray_importerror_skips_attachment_silently(self, monkeypatch):
         """If xarray is unavailable, auxiliary attachment is skipped."""
         import builtins
+
         from probpipe.validation._predictive_check import (
             _record_check_in_auxiliary,
         )

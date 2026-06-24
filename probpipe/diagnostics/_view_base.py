@@ -6,6 +6,7 @@ diagnostic information from an xarray DataTree.
 It should not know about MCMC, PPC, LOO, ArviZ, or ProbPipe-specific
 diagnostic names. Those concrete views live in ``_views.py``.
 """
+
 from __future__ import annotations
 
 import json
@@ -20,13 +21,13 @@ except ImportError:  # pragma: no cover
 
 
 __all__ = [
-    "NotComputed",
     "DataTreeView",
     "DatasetView",
     "DiagnosticRunView",
-    "read_scalar",
+    "NotComputed",
     "read_indexed",
     "read_json_attr",
+    "read_scalar",
 ]
 
 
@@ -124,10 +125,7 @@ def read_indexed(
 
     coords = [str(x) for x in da.coords[dim].values]
 
-    return {
-        coord: read_scalar(da.sel({dim: coord}), label=coord)
-        for coord in coords
-    }
+    return {coord: read_scalar(da.sel({dim: coord}), label=coord) for coord in coords}
 
 
 def read_json_attr(attrs: dict[str, Any], key: str, default: Any = None) -> Any:
@@ -135,7 +133,7 @@ def read_json_attr(attrs: dict[str, Any], key: str, default: Any = None) -> Any:
     if default is None:
         default = []
 
-    raw = attrs.get(key, None)
+    raw = attrs.get(key)
 
     if raw is None:
         return default
@@ -275,8 +273,7 @@ class DiagnosticRunView(DatasetView):
                 dim = da.dims[0]
                 coords = [str(x) for x in da.coords[dim].values]
                 out[var] = {
-                    coord: read_scalar(da.sel({dim: coord}), label=coord)
-                    for coord in coords
+                    coord: read_scalar(da.sel({dim: coord}), label=coord) for coord in coords
                 }
                 continue
 

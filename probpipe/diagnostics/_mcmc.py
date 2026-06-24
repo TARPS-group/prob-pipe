@@ -28,6 +28,7 @@ The in-place wrappers write MCMC summaries under::
 The pure ops are useful for workflows where diagnostics are pure operations
 returning ProbPipe ``Record`` objects.
 """
+
 from __future__ import annotations
 
 import json
@@ -45,11 +46,10 @@ if TYPE_CHECKING:
     from ..inference._approximate_distribution import ApproximateDistribution
 
 __all__ = [
-    # In-place wrappers
-    "add_rhat",
     "add_ess",
-    "add_mcse",
     "add_mcmc_diagnostics",
+    "add_mcse",
+    "add_rhat",
 ]
 
 
@@ -66,9 +66,11 @@ def arviz_rhat(arviz_tree: Any, *, method: str = "rank") -> Any:
     _check_arviz_stats()
     try:
         import arviz_stats as azs
+
         return azs.rhat(arviz_tree, method=method)
     except ImportError:
         import arviz as az
+
         return az.rhat(arviz_tree, method=method)
 
 
@@ -76,9 +78,11 @@ def arviz_ess(arviz_tree: Any, *, method: str = "bulk") -> Any:
     _check_arviz_stats()
     try:
         import arviz_stats as azs
+
         return azs.ess(arviz_tree, method=method)
     except ImportError:
         import arviz as az
+
         return az.ess(arviz_tree, method=method)
 
 
@@ -86,9 +90,11 @@ def arviz_mcse(arviz_tree: Any, *, method: str = "mean") -> Any:
     _check_arviz_stats()
     try:
         import arviz_stats as azs
+
         return azs.mcse(arviz_tree, method=method)
     except ImportError:
         import arviz as az
+
         return az.mcse(arviz_tree, method=method)
 
 
@@ -122,7 +128,7 @@ def _scalar_from_da(da: Any) -> float:
     return float(np.asarray(da, dtype=float).squeeze().item())
 
 
-def _values_from_dataset(ds: "xr.Dataset") -> dict[str, float]:
+def _values_from_dataset(ds: xr.Dataset) -> dict[str, float]:
     """Flatten scalar or event-shaped diagnostic outputs into named values."""
     return _dataset_values(ds)
 
@@ -172,8 +178,7 @@ def _ess_warnings(
 
         if numeric_val < threshold:
             msgs.append(
-                f"Low ESS (bulk) for '{param}' ({numeric_val:.0f}) -- "
-                f"consider more iterations."
+                f"Low ESS (bulk) for '{param}' ({numeric_val:.0f}) -- consider more iterations."
             )
 
     for param, val in tail.items():
@@ -227,7 +232,7 @@ def _record_kind(record: Record) -> str:
 
 
 def _compute_rhat_op(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     *,
     method: str = "rank",
     threshold: float = _RHAT_THRESHOLD,
@@ -302,7 +307,7 @@ def _compute_rhat_op(
 
 
 def _compute_ess_op(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     *,
     threshold: int = _ESS_THRESHOLD,
 ) -> Record:
@@ -364,7 +369,7 @@ def _compute_ess_op(
 
 
 def _compute_mcse_op(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
 ) -> Record:
     """Pure MCSE diagnostic operation.
 
@@ -417,7 +422,7 @@ def _compute_mcse_op(
 
 
 def _write_mcmc_record(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     record: Record,
 ) -> None:
     """Write an MCMC diagnostic Record into ``posterior._auxiliary``."""
@@ -479,7 +484,7 @@ def _write_mcmc_record(
 
 
 def add_rhat(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     *,
     method: str = "rank",
     threshold: float = _RHAT_THRESHOLD,
@@ -515,7 +520,7 @@ def add_rhat(
 
 
 def add_ess(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     *,
     threshold: int = _ESS_THRESHOLD,
     force: bool = False,
@@ -549,7 +554,7 @@ def add_ess(
 
 
 def add_mcse(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     *,
     force: bool = False,
 ) -> None:
@@ -578,7 +583,7 @@ def add_mcse(
 
 
 def add_mcmc_diagnostics(
-    posterior: "ApproximateDistribution",
+    posterior: ApproximateDistribution,
     *,
     metrics: list[str] | None = None,
     rhat_method: str = "rank",

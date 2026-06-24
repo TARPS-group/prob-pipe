@@ -24,10 +24,11 @@ add_loo
     Compute PSIS-LOO using ArviZ and attach scalar summaries to
     ``posterior._auxiliary``.
 """
+
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import arviz as az
@@ -433,13 +434,9 @@ def add_loo(
     # Extract scalar summaries
     # ------------------------------------------------------------------
 
-    elpd_loo = _safe_float(
-        _record_get(loo_result, "elpd_loo", _record_get(loo_result, "elpd"))
-    )
+    elpd_loo = _safe_float(_record_get(loo_result, "elpd_loo", _record_get(loo_result, "elpd")))
     se = _safe_float(_record_get(loo_result, "se"))
-    p_loo = _safe_float(
-        _record_get(loo_result, "p_loo", _record_get(loo_result, "p"))
-    )
+    p_loo = _safe_float(_record_get(loo_result, "p_loo", _record_get(loo_result, "p")))
 
     # Some ArviZ versions expose looic; others only expose elpd_loo.
     looic_raw = _record_get(loo_result, "looic", None)
@@ -498,7 +495,7 @@ def add_loo(
 
     run_ds.attrs = {
         "kind": "loo",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "backend": "arviz",
         "pointwise": bool(pointwise),
         "scale": "" if scale is None else str(scale),
@@ -591,7 +588,7 @@ def _add_log_likelihood(
     n_draws = posterior.num_draws
 
     y = jnp.asarray(data["y"])
-    X = jnp.asarray(ll._x)          # (n_obs, n_features)
+    X = jnp.asarray(ll._x)  # (n_obs, n_features)
     n_obs = y.shape[0]
 
     # ------------------------------------------------------------------
@@ -599,10 +596,7 @@ def _add_log_likelihood(
     # ------------------------------------------------------------------
     ref_draws = posterior.draws(chain=0)
     fields = ref_draws.fields
-    _field_meta = [
-        (f, jnp.asarray(ref_draws[f][0]).shape)
-        for f in fields
-    ]
+    _field_meta = [(f, jnp.asarray(ref_draws[f][0]).shape) for f in fields]
 
     def _flat_to_record(flat: Any, field_meta: list) -> Record:
         """Reconstruct a named Record from a flat parameter array."""
@@ -610,7 +604,7 @@ def _add_log_likelihood(
         idx = 0
         for fname, shape in field_meta:
             size = int(np.prod(shape)) if shape else 1
-            val = flat[idx: idx + size]
+            val = flat[idx : idx + size]
             out[fname] = val.reshape(shape) if shape else val[0]
             idx += size
         return Record(**out)
@@ -618,11 +612,10 @@ def _add_log_likelihood(
     def _draws_to_flat(draws_c: Any) -> Any:
         """Stack all fields into a (n_draws, n_params) array."""
         parts = []
-        for f, shape in _field_meta:
-            arr = jnp.asarray(draws_c[f])          # (n_draws, *shape)
-            parts.append(arr.reshape(n_draws, -1) if arr.ndim > 1
-                         else arr[:, None])
-        return jnp.concatenate(parts, axis=1)       # (n_draws, n_params)
+        for f, _shape in _field_meta:
+            arr = jnp.asarray(draws_c[f])  # (n_draws, *shape)
+            parts.append(arr.reshape(n_draws, -1) if arr.ndim > 1 else arr[:, None])
+        return jnp.concatenate(parts, axis=1)  # (n_draws, n_params)
 
     # ------------------------------------------------------------------
     # Build a JAX-traceable per-(params, datum) log likelihood function.
@@ -659,14 +652,14 @@ def _add_log_likelihood(
 
     for c in range(n_chains):
         draws_c = posterior.draws(chain=c)
-        params_flat = _draws_to_flat(draws_c)       # (n_draws, n_params)
+        params_flat = _draws_to_flat(draws_c)  # (n_draws, n_params)
 
         try:
             if _log_lik_draws is None:
                 raise RuntimeError("JAX vmap is unavailable")
 
             # Fast path: vmap over (draws, obs) in one call
-            chain_ll = _log_lik_draws(params_flat, X, y)   # (n_draws, n_obs)
+            chain_ll = _log_lik_draws(params_flat, X, y)  # (n_draws, n_obs)
             log_lik[c] = np.asarray(chain_ll, dtype=np.float32)
 
         except Exception:
@@ -675,9 +668,7 @@ def _add_log_likelihood(
                 param_record = _flat_to_record(params_flat[d], _field_meta)
                 for i in range(n_obs):
                     datum = Record(X=X[i], y=y[i])
-                    log_lik[c, d, i] = float(
-                        ll.per_datum_log_likelihood(param_record, datum)
-                    )
+                    log_lik[c, d, i] = float(ll.per_datum_log_likelihood(param_record, datum))
 
     log_lik_ds = _log_likelihood_to_dataset(log_lik, var_name=var_name)
     _add_group(posterior, "arviz/log_likelihood", log_lik_ds)
