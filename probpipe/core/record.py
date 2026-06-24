@@ -120,10 +120,6 @@ __all__ = [
 # A field value: nested ``Record`` or anything else (stored as-is).
 type _FieldValue = Any
 
-# ``_PATH_SEP`` (the ``record["a/b/c"]`` separator, reserved in field names) and
-# ``_check_no_path_sep`` are imported from :mod:`probpipe.core.event_template`,
-# their single home — the path convention is shared by templates and values.
-
 
 # ---------------------------------------------------------------------------
 # Record
