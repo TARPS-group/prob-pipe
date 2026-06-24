@@ -382,6 +382,7 @@ probpipe/
 ├── record/         # Record-adjacent constructions: parameter-sweep Designs
 ├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
 ├── inference/      # Inference methods + registry (BlackJAX, TFP, nutpie, RWMH)
+├── diagnostics/    # Posterior diagnostics, ArviZ interop, and diagnostic views
 ├── converters/     # Distribution conversion registry
 ├── linalg/         # Linear algebra for random functions
 ├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
@@ -395,6 +396,12 @@ a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
 `probpipe` or from subpackage `__init__` modules, never from
 underscore modules directly.  See `probpipe/__init__.py` for the
 full public API surface.
+
+The diagnostics accessor is the one documented package-graph edge from
+`core/` back to a feature subpackage: `Distribution.diagnostics` lazily imports
+`probpipe.diagnostics.views.DiagnosticsView` only when the accessor is read.
+Keep this edge lazy so importing `probpipe.core` does not import the diagnostics
+subpackage or its optional ArviZ-facing dependencies.
 
 ### Distributions: `probpipe-core` and `probpipe`
 
