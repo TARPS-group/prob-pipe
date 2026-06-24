@@ -199,6 +199,7 @@ def _ppc_op(
     test_fns: Callable | Sequence[Callable],
     observed_data=None,
     *,
+    num_observations: int | None = None,
     generative_likelihood=None,
     n_replications: int = 500,
     key: PRNGKey | None = None,
@@ -219,6 +220,10 @@ def _ppc_op(
     observed_data : optional
         If provided, this performs posterior predictive checking. If ``None``,
         this behaves like prior predictive checking.
+
+    num_observations : int, optional
+        Number of observations per replicated dataset. Required when
+        ``observed_data`` is ``None``; otherwise defaults to ``len(observed_data)``.
 
     generative_likelihood : optional
         Generative likelihood. If not provided, this is resolved from the
@@ -249,13 +254,18 @@ def _ppc_op(
     for fn in test_fns:
         name = getattr(fn, "__name__", repr(fn))
 
-        _n_samples = (
-            len(observed_data) if observed_data is not None else None
-        )
-        if _n_samples is None:
+        if num_observations is None:
+            if observed_data is None:
+                raise ValueError(
+                    "num_observations is required when observed_data is not provided."
+                )
+            _n_samples = len(observed_data)
+        else:
+            _n_samples = int(num_observations)
+
+        if _n_samples < 1:
             raise ValueError(
-                "observed_data is required for posterior predictive checks, "
-                "or pass n_samples explicitly."
+                "num_observations must be a positive integer."
             )
 
         _key = key if key is not None else _auto_key()
@@ -414,6 +424,7 @@ def add_ppc(
     test_fns: Callable | Sequence[Callable],
     observed_data=None,
     *,
+    num_observations: int | None = None,
     generative_likelihood=None,
     n_replications: int = 500,
     key: PRNGKey | None = None,
@@ -433,6 +444,9 @@ def add_ppc(
     observed_data : optional
         If provided, performs posterior predictive checking. If ``None``,
         behaves like prior predictive checking.
+    num_observations : int, optional
+        Number of observations per replicated dataset. Required when
+        ``observed_data`` is ``None``; otherwise defaults to ``len(observed_data)``.
     generative_likelihood : optional
         Generative likelihood. Resolved from ``posterior`` if not provided.
     n_replications : int
@@ -444,6 +458,7 @@ def add_ppc(
         posterior,
         test_fns=test_fns,
         observed_data=observed_data,
+        num_observations=num_observations,
         generative_likelihood=generative_likelihood,
         n_replications=n_replications,
         key=key,
