@@ -183,13 +183,24 @@ class TestLogLikelihoodToDataset:
     def test_scalar_gets_chain_draw_dims(self):
         ds = _log_likelihood_to_dataset(np.float64(1.0))
         da = list(ds.data_vars.values())[0]
-        assert "chain" in da.dims
-        assert "draw" in da.dims
+        assert da.dims == ("chain", "draw", "obs")
+        assert da.shape == (1, 1, 1)
 
-    def test_1d_adds_chain_dim(self):
-        ds = _log_likelihood_to_dataset(np.ones(10))
-        da = ds["y"]
-        assert da.shape == (1, 10)
+    def test_1d_raises_clear_error(self):
+        with pytest.raises(ValueError, match="1-D log_likelihood"):
+            _log_likelihood_to_dataset(np.ones(10))
+
+    def test_1d_dataarray_raises_clear_error(self):
+        da = xr.DataArray(np.ones(10), dims=["draw"], name="y")
+
+        with pytest.raises(ValueError, match="pointwise log likelihood"):
+            _log_likelihood_to_dataset(da)
+
+    def test_1d_dataset_raises_clear_error(self):
+        ds = xr.Dataset({"y": xr.DataArray(np.ones(10), dims=["draw"])})
+
+        with pytest.raises(ValueError, match="pointwise log likelihood"):
+            _log_likelihood_to_dataset(ds)
 
     def test_2d_adds_chain_dim(self):
         ds = _log_likelihood_to_dataset(np.ones((10, 5)))

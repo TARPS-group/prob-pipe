@@ -144,7 +144,11 @@ def _mcmc_has_field(
 def to_named_posterior_dataset(
     posterior: "ApproximateDistribution",
 ) -> "xr.Dataset":
-    """Build an ``(chain, draw)`` Dataset with one variable per parameter."""
+    """Build a Dataset with one variable per parameter.
+
+    Scalar parameters have dims ``(chain, draw)``. Vector or array-valued
+    parameters preserve their event axes after ``draw``.
+    """
     import xarray as xr
 
     data_vars: dict[str, xr.DataArray] = {}
@@ -157,6 +161,10 @@ def to_named_posterior_dataset(
             ],
             axis=0,
         )
-        data_vars[field] = xr.DataArray(stacked, dims=["chain", "draw"])
+        event_dims = [f"{field}_dim_{i}" for i in range(max(stacked.ndim - 2, 0))]
+        data_vars[field] = xr.DataArray(
+            stacked,
+            dims=["chain", "draw"] + event_dims,
+        )
 
     return xr.Dataset(data_vars)

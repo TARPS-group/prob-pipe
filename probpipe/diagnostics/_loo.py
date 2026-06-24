@@ -177,16 +177,17 @@ def _log_likelihood_to_dataset(
 
     - ``(draw, obs)``
     - ``(chain, draw, obs)``
-    - ``(draw,)``
-    - ``(chain, draw)``
+    - ``(chain, draw)`` as scalar total log likelihood per draw
 
     For PSIS-LOO, pointwise log likelihood is preferred, usually with shape
     ``(chain, draw, obs)`` or ``(draw, obs)``.
     """
     if isinstance(log_likelihood, xr.Dataset):
+        _raise_for_1d_log_likelihood(log_likelihood)
         return log_likelihood
 
     if isinstance(log_likelihood, xr.DataArray):
+        _raise_for_1d_log_likelihood(log_likelihood)
         name = log_likelihood.name or var_name
         return xr.Dataset({name: log_likelihood})
 
@@ -194,14 +195,15 @@ def _log_likelihood_to_dataset(
 
     if arr.shape == ():
         # Scalar log likelihood is not ideal for LOO, but store defensively.
-        arr = arr.reshape(1, 1)
-        dims = ["chain", "draw"]
+        arr = arr.reshape(1, 1, 1)
+        dims = ["chain", "draw", "obs"]
 
     elif arr.ndim == 1:
-        # Draws of a scalar total log likelihood.
-        # Not ideal for pointwise LOO, but ArviZ may still reject it clearly.
-        arr = arr[np.newaxis, :]
-        dims = ["chain", "draw"]
+        raise ValueError(
+            "1-D log_likelihood looks like one total log likelihood per draw. "
+            "add_loo needs pointwise log likelihood values with shape "
+            "(draw, obs) or (chain, draw, obs)."
+        )
 
     elif arr.ndim == 2:
         # Assume (draw, obs), add singleton chain dimension.
@@ -217,6 +219,21 @@ def _log_likelihood_to_dataset(
         dims = ["chain", "draw"] + [f"obs_dim_{i}" for i in range(arr.ndim - 2)]
 
     return xr.Dataset({var_name: xr.DataArray(arr, dims=dims)})
+
+
+def _raise_for_1d_log_likelihood(log_likelihood: xr.Dataset | xr.DataArray) -> None:
+    """Reject non-pointwise 1-D log-likelihood inputs."""
+    if isinstance(log_likelihood, xr.DataArray):
+        arrays = [log_likelihood]
+    else:
+        arrays = list(log_likelihood.data_vars.values())
+
+    if any(da.ndim == 1 for da in arrays):
+        raise ValueError(
+            "1-D log_likelihood looks like one total log likelihood per draw. "
+            "add_loo needs pointwise log likelihood values with shape "
+            "(draw, obs) or (chain, draw, obs)."
+        )
 
 
 # ---------------------------------------------------------------------
