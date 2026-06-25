@@ -21,6 +21,18 @@ class TestConstruction:
         v = Record({"a": 1.0, "b": 2.0})
         assert v.fields == ("a", "b")
 
+    def test_positional_accepts_any_mapping(self):
+        # The positional arg accepts any collections.abc.Mapping, not just dict.
+        from collections import OrderedDict
+        from types import MappingProxyType
+
+        from probpipe import NumericRecord
+
+        v = Record(MappingProxyType({"a": 1.0, "b": 2.0}))
+        assert v.fields == ("a", "b")
+        nr = NumericRecord(OrderedDict([("z", jnp.zeros(2)), ("a", 1.0)]))
+        assert nr.fields == ("z", "a")  # mapping iteration order preserved
+
     def test_insertion_order_preserved(self):
         v = Record(z=1.0, a=2.0, m=3.0)
         # Insertion order, NOT alphabetical.
@@ -374,10 +386,9 @@ class TestLeafList:
 class TestLeafPathsAgreement:
     """A Record's own ``leaf_paths`` must always equal its
     ``event_template``'s ``leaf_paths`` — both define "what is a leaf" and the
-    ``event_template`` is the source of truth. (Regression: the shared
-    ``_NamedTree`` mixin used to treat *any* nested tree as an internal node,
-    so a ``Record`` holding an ``EventTemplate`` value wrongly descended into
-    it, disagreeing with the template, which sees it as one opaque leaf.)
+    ``event_template`` is the source of truth. In particular, a cross-type
+    nested value (an ``EventTemplate`` stored as a ``Record`` field value) is
+    one opaque leaf, not an internal node to descend into.
     """
 
     def test_flat(self):

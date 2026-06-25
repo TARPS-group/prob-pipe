@@ -111,6 +111,53 @@ class TestFieldAccess:
             tpl["nonexistent"]
 
 
+class TestNamedTreeSurfaceOnEventTemplate:
+    """EventTemplate gained the shared ``_NamedTree`` collection protocol:
+    ``/``-path and tuple indexing, path membership, iteration, and
+    ``keys``/``values``/``items`` — over its leaf specs, keyed by leaf path.
+    Exercised on a *nested* template (the flat case is covered above).
+    """
+
+    @pytest.fixture
+    def nested(self):
+        return EventTemplate(theta=EventTemplate(loc=(2,), scale=()), sigma=(3,))
+
+    def test_path_indexing_returns_leaf_spec(self, nested):
+        assert nested["theta/loc"] == ArraySpec((2,))
+        assert nested["theta/scale"] == ArraySpec(())
+        assert nested["sigma"] == ArraySpec((3,))
+
+    def test_tuple_indexing_matches_slash_path(self, nested):
+        assert nested["theta", "loc"] == nested["theta/loc"]
+
+    def test_partial_path_returns_subtree(self, nested):
+        assert nested["theta"] == EventTemplate(loc=(2,), scale=())
+
+    def test_path_membership(self, nested):
+        # Current (top-level) protocol: a top-level field name is a member, and
+        # a valid leaf path is a member; a path through a missing field is not.
+        # (The leaf-only membership rule is the deferred #326 redesign.)
+        assert "theta" in nested
+        assert "theta/loc" in nested
+        assert "sigma" in nested
+        assert "theta/missing" not in nested
+        assert "nonexistent" not in nested
+
+    def test_iteration_and_len_over_top_level(self, nested):
+        # __iter__ / keys / __len__ are the current (top-level) protocol;
+        # leaf_paths is the canonical leaf enumeration.
+        assert tuple(nested) == ("theta", "sigma")
+        assert tuple(nested.keys()) == ("theta", "sigma")
+        assert len(nested) == 2
+        assert list(nested.leaf_paths) == ["theta/loc", "theta/scale", "sigma"]
+
+    def test_values_and_items(self, nested):
+        values = list(nested.values())
+        assert values[0] == EventTemplate(loc=(2,), scale=())
+        assert values[1] == ArraySpec((3,))
+        assert list(nested.items()) == list(zip(nested.keys(), values))
+
+
 # ---------------------------------------------------------------------------
 # Leaf shapes
 # ---------------------------------------------------------------------------
@@ -299,17 +346,33 @@ class TestEqualityAndHashing:
 
 
 # ---------------------------------------------------------------------------
-# from_record factory
+# infer_from factory
 # ---------------------------------------------------------------------------
 
 
-class TestFromRecord:
+class TestInferFrom:
     def test_scalar_fields(self):
         r = Record(a=1.0, b=2.0)
         tpl = EventTemplate.infer_from(r)
         assert tpl.fields == ("a", "b")
         assert tpl["a"] == ArraySpec(())
         assert tpl["b"] == ArraySpec(())
+
+    def test_mapping_input_inferred_field_by_field(self):
+        # The non-Record branch: a bare mapping is inferred field by field
+        # (a nested Record contributes its own event_template).
+        tpl = EventTemplate.infer_from(
+            {"a": 1.0, "x": jnp.zeros(3), "params": Record(m=jnp.zeros(2))}
+        )
+        assert tpl.fields == ("a", "x", "params")
+        assert tpl["a"] == ArraySpec(())
+        assert tpl["x"] == ArraySpec((3,))
+        assert isinstance(tpl["params"], EventTemplate)
+        assert tpl["params"]["m"] == ArraySpec((2,))
+
+    def test_empty_mapping_raises(self):
+        with pytest.raises(ValueError, match="at least one field"):
+            EventTemplate.infer_from({})
 
     def test_array_fields(self):
         r = Record(x=jnp.zeros(5), y=jnp.zeros((2, 3)))
@@ -337,7 +400,7 @@ class TestFromRecord:
         assert tpl.vector_size == r.vector_size
 
     def test_from_numeric_record_promotes(self):
-        """Calling ``from_record`` on a ``NumericRecord`` returns a
+        """Calling ``infer_from`` on a ``NumericRecord`` returns a
         :class:`NumericEventTemplate`, even through the base
         ``EventTemplate.infer_from`` classmethod, so downstream code
         that needs ``vector_size`` keeps working without the caller having

@@ -189,8 +189,10 @@ class Record(_NamedTree):
     * **Compare**: two records are equal iff they share a type, an equal
       :attr:`event_template`, and field-by-field equal data (:meth:`__eq__`).
       Hashing is **structural** — :meth:`__hash__` hashes the per-field shape /
-      dtype / leaf type, not the leaf values — so equal records always hash
-      equal, while unequal records may collide.
+      dtype / leaf type, not the leaf values, and does not include the
+      :attr:`event_template` — so equal records always hash equal, while
+      unequal records (including ones differing only in their template) may
+      collide.
     * **Flatten** to the leaf list with :meth:`to_leaf_list` (canonical order,
       each leaf whole) and rebuild via :meth:`EventTemplate.from_leaf_list`;
       :meth:`~probpipe.NumericRecord.to_vector` is the numeric flat-array form.
@@ -743,15 +745,14 @@ def _pack_fields(
 ) -> Record:
     """Validate that *field_kwargs* names exactly *fields*, then build a Record.
 
-    The general "named values → validated :class:`Record`" operation behind
-    :meth:`EventTemplate.pack`. Raises ``TypeError`` if any field is missing
-    or unexpected; otherwise returns a ``Record`` keyed in *fields* order.
-    *owner* (optional) prefixes the error message — the calling distribution or
-    template class name.
+    The general "named values → validated :class:`Record`" operation. Raises
+    ``TypeError`` if any field is missing or unexpected; otherwise returns a
+    ``Record`` keyed in *fields* order. *owner* (optional) prefixes the error
+    message — the calling distribution or template class name.
 
-    :meth:`Distribution._pack_value` calls this directly rather than through
-    :meth:`EventTemplate.pack` because some distributions expose ``fields``
-    without a ``EventTemplate`` instance.
+    :meth:`Distribution._pack_value` is the main caller; it works from the
+    field-name tuple alone, since some distributions expose ``fields`` without
+    an :class:`EventTemplate` instance.
     """
     given = set(field_kwargs)
     expected = set(fields)

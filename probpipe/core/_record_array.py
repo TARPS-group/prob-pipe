@@ -378,8 +378,7 @@ class RecordArray(Record):
 class NumericRecordArray(RecordArray):
     """Batch of NumericRecords — all leaves are numeric arrays.
 
-    Adds ``to_vector``, ``mean``, ``var`` operations (the general
-    JAX-pytree ``flatten`` / ``unflatten`` are inherited from ``Record``).
+    Adds ``to_vector``, ``mean``, ``var`` operations.
     Construction validates that every leaf has a numeric dtype and
     shape ``(*batch_shape, *event_shape)`` matching the template, so
     pytree round-trips (``jax.tree.map``) cannot silently produce a

@@ -468,7 +468,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
    **Field access is bracket-only**: use `record["x"]`, `array["x"]`,
    `dist["x"]`.  Attribute access (`__getattr__`) was removed from
    `Record` and `RecordDistribution` because it shadowed methods and
-   properties like `.mean`, `.var`, `.fields`, `.flatten`, and produced
+   properties like `.mean`, `.var`, `.fields`, `.map`, and produced
    confusing errors.
 6. **Every distribution is named** — `Distribution.__init__` requires a
    non-empty `name: str`.  Leaf distributions (Normal, Gamma, etc.)
@@ -512,10 +512,10 @@ uv build packaging/probpipe   # probpipe (metapackage)
 |-------------|-------------|
 | `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and `auxiliary` properties |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; leaves stored verbatim (no coercion); `select()` for workflow function splatting |
-| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `flatten` / `unflatten` / `flat_size`. Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
+| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `to_vector` / `vector_size` (the numeric 1-D serialization; the inverse `from_vector` lives on `NumericEventTemplate`). Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
 | `RecordArray` | Batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array |
-| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
-| `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
+| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `to_vector` / `mean` / `var` |
+| `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); `NumericEventTemplate.from_vector` rebuilds a numeric value from its 1-D vector without an example instance |
 | `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |

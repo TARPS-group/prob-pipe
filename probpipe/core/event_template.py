@@ -207,9 +207,8 @@ class _NamedTree:
 class ArraySpec:
     """A numeric array leaf: a fixed event ``shape`` plus optional metadata.
 
-    ``dtype`` and ``support`` are optional (default ``None``); the current
-    auto-build path stores only shape, and distributions populate the extra
-    fields in a later phase. Both must be hashable when set.
+    ``dtype`` and ``support`` are optional (default ``None``); when unset the
+    leaf describes its shape only. Both must be hashable when set.
     """
 
     shape: tuple[int, ...]
@@ -730,6 +729,8 @@ class EventTemplate(_NamedTree):
         ------
         TypeError
             If *value* is neither a ``Record`` nor a mapping.
+        ValueError
+            If *value* is an empty mapping (a template needs at least one field).
         """
         from .record import Record
 
@@ -878,9 +879,9 @@ class NumericEventTemplate(EventTemplate):
         serializes to ``(*B, vector_size)``. Leaves are raveled and concatenated
         in this template's canonical leaf order (:attr:`~EventTemplate.leaf_paths`).
 
-        This differs from the JAX-pytree ``flatten`` (``value -> (leaves, aux)``,
-        any leaf type, leaves kept whole): ``to_vector`` is numeric-only and
-        ravels the leaves into a single dense vector.
+        This differs from :meth:`to_leaf_list` (which keeps each leaf whole, any
+        type): ``to_vector`` is numeric-only and ravels the leaves into a single
+        dense vector.
 
         Parameters
         ----------
@@ -928,9 +929,9 @@ class NumericEventTemplate(EventTemplate):
         ``(*batch_shape, vector_size)`` rebuilds a
         :class:`~probpipe.NumericRecordArray` with that ``batch_shape``.
 
-        This differs from the JAX-pytree ``unflatten`` (``(leaves, aux) ->
-        value``, any leaf type): ``from_vector`` is numeric-only and rebuilds
-        from a dense vector alone, using this template's leaf shapes.
+        This differs from :meth:`from_leaf_list` (which rebuilds from whole
+        leaves, any type): ``from_vector`` is numeric-only and rebuilds from a
+        dense vector alone, using this template's leaf shapes.
 
         Parameters
         ----------
