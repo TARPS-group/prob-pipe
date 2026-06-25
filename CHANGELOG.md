@@ -54,6 +54,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`EventTemplate` moved to its own module and `Record` now carries an
+  authoritative `EventTemplate` (breaking changes to the value-model surface).**
+  `EventTemplate` / `NumericEventTemplate` and the leaf specs now live in
+  `probpipe.core.event_template` (the public `probpipe.*` exports are unchanged).
+  A `Record` stores its `EventTemplate` rather than re-deriving it on access.
+  Several methods moved or were removed:
+  - **Removed** `EventTemplate.pack`, `numeric_fields`, `non_numeric_fields`,
+    `event_shapes`, and `field_event_shape`; **removed** `Record.flatten` /
+    `Record.unflatten` (use `jax.tree_util.tree_flatten` for the JAX-pytree path).
+  - **Renamed** `EventTemplate.from_record` → `EventTemplate.infer_from`
+    (best-effort, lossy inference). The value upcast is consolidated to
+    `Record.to_numeric()`.
+  - **Moved** `to_vector` / `from_vector` and `leaf_shapes` onto
+    `NumericEventTemplate`; `from_vector`'s `non_numeric` argument is dropped.
+    `numeric_leaf_shapes` is consolidated into `leaf_shapes`.
+  - **Added** `EventTemplate.to_leaf_list` / `from_leaf_list` and
+    `Record.to_leaf_list` — the general, template-granularity leaf
+    (de)composition (each leaf kept whole, in canonical `leaf_paths` order).
+
 - **User Guide notebooks moved from the former examples section.** The docs nav
   and grouped overview now list all 11 User Guide notebooks under
   `/user_guide/.../`, including the Prefect scalability guide.

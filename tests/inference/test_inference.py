@@ -27,7 +27,7 @@ from probpipe import (
     variance,
 )
 from probpipe.core.distribution import _RecordDistributionView
-from probpipe.core.record import ArraySpec
+from probpipe.core.event_template import ArraySpec
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._inference_utils import build_mcmc_datatree

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from math import prod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -11,11 +12,51 @@ import jax.numpy as jnp
 
 from .._weights import Weights
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
+from ..core.event_template import ArraySpec, EventTemplate, NumericEventTemplate, OpaqueSpec
 from ..core.provenance import Provenance
-from ..core.record import ArraySpec, EventTemplate, OpaqueSpec, Record, _spec_size
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
+
+
+def _spec_size(spec: ArraySpec | EventTemplate) -> int:
+    """Number of scalar elements one field contributes to a flat vector.
+
+    Given the spec of a single field of an :class:`EventTemplate`, return how
+    many scalars that field occupies in the dense
+    :meth:`NumericEventTemplate.to_vector` layout: ``prod(shape)`` for an
+    :class:`ArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
+    nested :class:`NumericEventTemplate`. Summing this over a template's fields
+    gives the template's own ``vector_size``; it is used here to size each
+    field's contiguous column block when splitting a flat chain.
+
+    Parameters
+    ----------
+    spec
+        One field's spec, as returned by :meth:`EventTemplate.__getitem__`.
+
+    Raises
+    ------
+    TypeError
+        If the field has no flat size — a non-numeric leaf
+        (:class:`~probpipe.OpaqueSpec` / :class:`~probpipe.DistributionSpec` /
+        :class:`~probpipe.FunctionSpec`) or a mixed (non-all-numeric) nested
+        :class:`EventTemplate`.
+    """
+    if isinstance(spec, NumericEventTemplate):
+        return spec.vector_size
+    if isinstance(spec, EventTemplate):
+        raise TypeError(
+            f"nested {type(spec).__name__} contains non-numeric leaves; "
+            f"a flat size requires a NumericEventTemplate."
+        )
+    if isinstance(spec, ArraySpec):
+        return prod(spec.shape) if spec.shape else 1
+    raise TypeError(
+        f"template field ({type(spec).__name__}) has no flat size; only numeric "
+        f"(ArraySpec) fields and nested NumericEventTemplate fields do."
+    )
 
 
 # ---------------------------------------------------------------------------

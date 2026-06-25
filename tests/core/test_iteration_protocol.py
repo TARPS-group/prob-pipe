@@ -179,7 +179,7 @@ def test_numeric_record_iterates_field_names():
 
 
 def test_record_array_iterates_field_names():
-    from probpipe.core.record import EventTemplate
+    from probpipe.core.event_template import EventTemplate
 
     ra = RecordArray(
         a=jnp.zeros((5,)),
@@ -191,7 +191,7 @@ def test_record_array_iterates_field_names():
 
 
 def test_numeric_record_array_iterates_field_names():
-    from probpipe.core.record import NumericEventTemplate
+    from probpipe.core.event_template import NumericEventTemplate
 
     nra = NumericRecordArray(
         a=jnp.zeros((4,)),

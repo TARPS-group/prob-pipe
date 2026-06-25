@@ -177,7 +177,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         self._simulator = simulator
         # Numeric leaves (slash paths for a nested prior; == fields for a flat
         # one) -- the column order the network emits, matching training.
-        self._leaf_keys = tuple(prior.event_template.numeric_leaf_shapes)
+        self._leaf_keys = tuple(prior.event_template.leaf_shapes)
         self._method = method
         self._data_dim = data_dim
         self._num_results = num_results
@@ -374,7 +374,7 @@ def learn_amortized_posterior(
     )
     # Per numeric leaf (slash paths for a nested prior; == fields for a flat
     # one). supports / bijectors are leaf-keyed, so this serves both uniformly.
-    leaf_shapes = event_template.numeric_leaf_shapes
+    leaf_shapes = event_template.leaf_shapes
     leaf_keys = tuple(leaf_shapes)
     # Built up front: also rejects discrete / unsupported-support priors before
     # any simulation runs.

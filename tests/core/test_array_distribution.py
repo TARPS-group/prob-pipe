@@ -327,7 +327,7 @@ class TestCanonicalConvenience:
         today triggers (every shipped class is single-leaf via the
         auto-template helper)."""
         from probpipe import NumericRecord
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         class TwoField(NumericRecordDistribution):
             # Multi-leaf subclasses bypass the single-field auto-template
@@ -418,7 +418,7 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         class ThreeField(NumericRecordDistribution):
             """Multi-field target with three fields (source has two)."""
@@ -462,7 +462,7 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         class TwoFieldSource(NumericRecordDistribution):
             @property
@@ -540,7 +540,7 @@ class TestCanonicalConvenience:
         from probpipe.core._numeric_record_distribution import (
             NumericRecordDistribution,
         )
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         class _UnimplSupportsSource(NumericRecordDistribution):
             """Multi-field NRD that explicitly doesn't declare supports."""

@@ -117,8 +117,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         log_prob-family ops (``log_prob(dist, field=value, ...)``).
 
         Delegates field validation and ``Record`` construction to the general
-        :func:`~probpipe.core.record._pack_fields` (also exposed object-style
-        as :meth:`~probpipe.core.record.EventTemplate.pack`) and layers this
+        :func:`~probpipe.core.record._pack_fields` and layers this
         distribution's value-type convention on top:
 
         * **single field** → the bare field value (``T = Array``), so a

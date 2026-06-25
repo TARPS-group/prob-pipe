@@ -38,7 +38,7 @@ from probpipe import (
     workflow_function,
 )
 from probpipe.core._record_array import _RecordArrayView
-from probpipe.core.record import EventTemplate
+from probpipe.core.event_template import EventTemplate
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -95,8 +95,8 @@ class TestViewConstruction:
 
     def test_view_aliases_underlying_column(self, numeric_ra):
         v = numeric_ra.view("x")
-        # No copy — the underlying array is the parent's store entry.
-        assert v._store["x"] is numeric_ra._store["x"]
+        # No copy — the underlying array is the parent's field entry.
+        assert v._fields["x"] is numeric_ra._fields["x"]
 
     def test_view_unknown_field_raises(self, numeric_ra):
         with pytest.raises(KeyError):

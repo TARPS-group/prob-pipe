@@ -35,6 +35,7 @@ from ..core.distribution import (
     RecordEmpiricalDistribution,
     _mc_expectation,
 )
+from ..core.event_template import EventTemplate
 from ..core.protocols import (
     SupportsConditioning,
     SupportsMean,
@@ -42,7 +43,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..core.provenance import Provenance
-from ..core.record import EventTemplate, Record
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,

@@ -279,7 +279,7 @@ class TestRecordDistributionViewDynamicProtocols:
             RecordDistribution,
             _RecordDistributionView,
         )
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         class _LogProbOnlyParent(RecordDistribution, SupportsLogProb):
             event_template = EventTemplate(x=(), y=())
@@ -335,7 +335,7 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         class _SampleOnlyBase(NumericRecordDistribution, SupportsSampling):
             event_template = EventTemplate(x=())
@@ -364,7 +364,7 @@ class TestFlattenedDistributionViewDynamicProtocols:
             FlattenedDistributionView,
             NumericRecordDistribution,
         )
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         class _LogProbOnlyBase(NumericRecordDistribution, SupportsLogProb):
             event_template = EventTemplate(x=())
@@ -538,8 +538,8 @@ class TestTransformedDistributionDynamicProtocols:
         import tensorflow_probability.substrates.jax.bijectors as tfb
 
         from probpipe import NumericRecordDistribution
+        from probpipe.core.event_template import EventTemplate
         from probpipe.core.protocols import SupportsLogProb
-        from probpipe.core.record import EventTemplate
 
         class _LogProbOnly(NumericRecordDistribution, SupportsLogProb):
             _sampling_cost = "low"

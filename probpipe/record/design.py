@@ -23,7 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._record_array import RecordArray
-from ..core.record import EventTemplate
+from ..core.event_template import EventTemplate
 
 __all__ = ["Design", "FullFactorialDesign"]
 

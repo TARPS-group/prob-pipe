@@ -44,7 +44,7 @@ from math import prod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .record import NumericEventTemplate
+    from .event_template import NumericEventTemplate
 
 import jax
 import jax.numpy as jnp
@@ -55,7 +55,7 @@ from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
 from ._distribution_base import Distribution
-from ._record_distribution import RecordDistribution
+from ._record_distribution import RecordDistribution, _field_event_shape
 from .constraints import (
     Constraint,
     _supports_compatible,
@@ -243,7 +243,7 @@ class NumericRecordDistribution(RecordDistribution):
         explicitly, or declare ``event_shape`` so the auto-build can
         proceed).
         """
-        from .record import EventTemplate
+        from .event_template import EventTemplate
 
         tpl = getattr(self, "_event_template", None)
         if tpl is not None:
@@ -470,7 +470,7 @@ class NumericRecordDistribution(RecordDistribution):
             from ._numeric_record import NumericRecord
 
             placeholder = NumericRecord(
-                **{name: jnp.zeros(tpl.field_event_shape(name)) for name in tpl.fields}
+                **{name: jnp.zeros(_field_event_shape(tpl, name)) for name in tpl.fields}
             )
             td = jax.tree.structure(placeholder)
         object.__setattr__(self, "_treedef", td)
@@ -494,7 +494,7 @@ class NumericRecordDistribution(RecordDistribution):
         ``vector_size``. For a general ``EventTemplate``, sums the
         numeric-leaf shapes; opaque leaves contribute zero.
         """
-        from .record import NumericEventTemplate
+        from .event_template import NumericEventTemplate
 
         tpl = self.event_template
         if isinstance(tpl, NumericEventTemplate):
@@ -520,7 +520,7 @@ class NumericRecordDistribution(RecordDistribution):
         if isinstance(value, (NumericRecordArray, NumericRecord)):
             return value.to_vector()
         if isinstance(value, Record):
-            return NumericRecord.from_record(value).to_vector()
+            return value.to_numeric().to_vector()
         value = jnp.asarray(value)
         if not event_shape:
             return value[..., None]
@@ -546,7 +546,7 @@ class NumericRecordDistribution(RecordDistribution):
         # Single-field path
         if template is None or not template.fields:
             return flat[..., 0]
-        es = template.field_event_shape(template.fields[0])
+        es = _field_event_shape(template, template.fields[0])
         if not es:
             return flat[..., 0]
         return flat.reshape(*flat.shape[:-1], *es)
@@ -818,7 +818,7 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
         ValueError
             If ``self.vector_size`` does not match ``template.vector_size``.
         """
-        from .record import NumericEventTemplate
+        from .event_template import NumericEventTemplate
 
         if not isinstance(template, NumericEventTemplate):
             raise TypeError(
@@ -1205,8 +1205,8 @@ class NumericRecordDistributionView(NumericRecordDistribution):
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes from the user-supplied template."""
-        return dict(self.event_template.numeric_leaf_shapes)
+        """Per-leaf event shapes from the user-supplied template."""
+        return dict(self.event_template.leaf_shapes)
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:

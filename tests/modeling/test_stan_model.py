@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from probpipe import SupportsLogProb, log_prob
-from probpipe.core.record import ArraySpec
+from probpipe.core.event_template import ArraySpec
 from probpipe.modeling._stan import StanModel, _param_blocks, _UnconstrainedStanView
 
 # ---------------------------------------------------------------------------
@@ -337,7 +337,9 @@ class TestStanModelParameters:
         )
 
     def test_event_template_shapes(self, structured_model):
-        assert structured_model.event_template.event_shapes == {
+        # leaf_shapes is keyed by leaf path; this template is flat, so the
+        # paths are the field names.
+        assert structured_model.event_template.leaf_shapes == {
             "mu": (),
             "theta": (3,),
             "L": (2, 2),

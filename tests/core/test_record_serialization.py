@@ -21,11 +21,13 @@ from probpipe import (
     RecordArray,
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
-from probpipe.core.record import (
+from probpipe.core.event_template import (
     ArraySpec,
     EventTemplate,
     NumericEventTemplate,
     OpaqueSpec,
+)
+from probpipe.core.record import (
     Record,
 )
 

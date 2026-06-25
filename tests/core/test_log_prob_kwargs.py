@@ -37,7 +37,7 @@ from probpipe import (
     unnormalized_prob,
 )
 from probpipe.core.distribution import Distribution
-from probpipe.core.record import EventTemplate
+from probpipe.core.event_template import EventTemplate
 
 
 class TestKwargFormScalar:

@@ -14,7 +14,7 @@ from probpipe import (
     RecordArray,
     provenance_ancestors,
 )
-from probpipe.core.record import EventTemplate
+from probpipe.core.event_template import EventTemplate
 
 # ---------------------------------------------------------------------------
 # RecordArray construction
@@ -297,13 +297,6 @@ class TestNumericRecordArrayFlatten:
         np.testing.assert_allclose(nra["a"], [1.0, 4.0])
         np.testing.assert_allclose(nra["b"], [2.0, 5.0])
         np.testing.assert_allclose(nra["c"], [3.0, 6.0])
-
-    def test_from_vector_mixed_requires_non_numeric(self):
-        # A mixed template's opaque leaves can't be rebuilt from the numeric
-        # vector alone; from_vector requires them via ``non_numeric``.
-        tpl = EventTemplate(label=None, x=())
-        with pytest.raises(ValueError, match="non_numeric"):
-            tpl.from_vector(jnp.zeros((5, 1)))
 
 
 # ---------------------------------------------------------------------------
@@ -842,7 +835,7 @@ class TestHierarchy:
     def test_custom_name_kwarg_honored(self):
         """RecordArray accepts a ``name=`` kwarg at construction,
         matching Record's API."""
-        from probpipe.core.record import EventTemplate
+        from probpipe.core.event_template import EventTemplate
 
         tpl = EventTemplate(x=())
         ra = NumericRecordArray(

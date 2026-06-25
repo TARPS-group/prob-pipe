@@ -349,7 +349,7 @@ def _train_offline(
     )
     # Numeric leaves (slash paths for a nested prior; == fields for a flat one).
     # NLE/NRE feed raw theta to the network, so no bijectors -- just the keying.
-    leaf_keys = tuple(event_template.numeric_leaf_shapes)
+    leaf_keys = tuple(event_template.leaf_shapes)
 
     bf = _import_bayesflow()
     with _isolated_keras_seeding(random_seed):

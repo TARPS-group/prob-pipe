@@ -18,7 +18,7 @@ from probpipe import (
     expectation,
     sample,
 )
-from probpipe.core.record import ArraySpec
+from probpipe.core.event_template import ArraySpec
 
 # ---------------------------------------------------------------------------
 # Construction

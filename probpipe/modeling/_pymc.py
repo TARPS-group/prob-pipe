@@ -11,7 +11,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core.record import NumericEventTemplate
+from ..core.event_template import NumericEventTemplate
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)

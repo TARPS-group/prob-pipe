@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from probpipe import NumericRecord, Record
-from probpipe.core.record import EventTemplate
+from probpipe.core.event_template import EventTemplate
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -193,7 +193,7 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
 
     def test_roundtrip_nested_template(self):
-        from probpipe.core.record import NumericEventTemplate
+        from probpipe.core.event_template import NumericEventTemplate
 
         inner_tpl = NumericEventTemplate(x=(), y=(2,))
         outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
@@ -204,32 +204,27 @@ class TestToVectorFromVector:
         np.testing.assert_allclose(nr["params"]["y"], [1.0, 2.0])
         np.testing.assert_allclose(nr["z"], [3.0, 4.0, 5.0])
 
-    def test_from_vector_mixed_requires_non_numeric(self):
-        tpl = EventTemplate(label=None, x=())
-        with pytest.raises(ValueError, match="non_numeric"):
-            tpl.from_vector(jnp.array([1.0]))
-
     def test_vector_size(self):
         nr = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
         assert nr.vector_size == 11
 
 
 # ---------------------------------------------------------------------------
-# from_record conversion
+# Record -> NumericRecord conversion (to_numeric)
 # ---------------------------------------------------------------------------
 
 
-class TestFromRecord:
+class TestToNumeric:
     def test_simple(self):
         r = Record(a=1.0, b=jnp.zeros(3))
-        nr = NumericRecord.from_record(r)
+        nr = r.to_numeric()
         assert isinstance(nr, NumericRecord)
         assert nr.fields == ("a", "b")
 
     def test_nested(self):
         inner = Record(x=1.0, y=2.0)
         outer = Record(params=inner, z=3.0)
-        nr = NumericRecord.from_record(outer)
+        nr = outer.to_numeric()
         assert isinstance(nr, NumericRecord)
         assert isinstance(nr["params"], NumericRecord)
 

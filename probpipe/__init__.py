@@ -80,6 +80,15 @@ from probpipe.core.distribution import (
     set_default_num_evaluations,
     set_return_approx_dist,
 )
+from probpipe.core.event_template import (
+    ArraySpec,
+    DistributionSpec,
+    EventTemplate,
+    FunctionSpec,
+    LeafSpec,
+    NumericEventTemplate,
+    OpaqueSpec,
+)
 from probpipe.core.node import (
     Module,
     WorkflowFunction,
@@ -103,13 +112,6 @@ from probpipe.core.protocols import (
 )
 from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestors, provenance_dag
 from probpipe.core.record import (
-    ArraySpec,
-    DistributionSpec,
-    EventTemplate,
-    FunctionSpec,
-    LeafSpec,
-    NumericEventTemplate,
-    OpaqueSpec,
     Record,
 )
 from probpipe.core.transition import (

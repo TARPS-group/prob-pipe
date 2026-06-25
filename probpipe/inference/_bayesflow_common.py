@@ -82,7 +82,7 @@ def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
 
     Both the training dict and the sample-side extraction derive these from the
-    prior's ``event_template`` leaf order (``numeric_leaf_shapes`` keys; ==
+    prior's ``event_template`` leaf order (``leaf_shapes`` keys; ==
     ``fields`` for a flat prior), so the mapping is deterministic across train
     and inference without storing it, and slash-delimited nested leaf paths
     never reach BayesFlow's key namespace.
@@ -166,7 +166,7 @@ def _simulate_offline(
     # Iterate numeric leaves (slash paths like "outer/a" for nested priors; ==
     # top-level fields for flat priors). The adapter re-keys positionally, so
     # leaf paths never reach BayesFlow's namespace.
-    leaf_keys = tuple(template.numeric_leaf_shapes)
+    leaf_keys = tuple(template.leaf_shapes)
     k_theta, k_sim = jax.random.split(key)
     theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
     # Round-trip through the canonical 1-D vector layout: single-field priors'

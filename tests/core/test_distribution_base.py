@@ -14,8 +14,8 @@ from probpipe import (
     RecordEmpiricalDistribution,
     TransformedDistribution,
 )
+from probpipe.core.event_template import ArraySpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
-from probpipe.core.record import ArraySpec
 from probpipe.distributions.kde import KDEDistribution
 
 
