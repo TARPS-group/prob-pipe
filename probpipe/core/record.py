@@ -472,42 +472,11 @@ class Record(_NamedTree):
         return self.select(*self.fields)
 
     # -- Immutable updates --------------------------------------------------
-
-    def replace(self, **updates: ArrayLike | Record) -> Record:
-        """Return a new Record with specified fields replaced.
-
-        Returns an instance of ``type(self)`` so that subclasses
-        (``NumericRecord``) preserve their class through the update.
-        """
-        new = dict(self._fields)
-        for k, v in updates.items():
-            if k not in new:
-                raise KeyError(f"Cannot replace non-existent field {k!r}")
-            new[k] = v
-        return type(self)(new)
-
-    def merge(self, other: Record) -> Record:
-        """Return a new Record combining fields from self and other.
-
-        Raises ``ValueError`` if any field names overlap. Returns an
-        instance of ``type(self)``.
-        """
-        overlap = set(self._fields) & set(other._fields)
-        if overlap:
-            raise ValueError(f"Overlapping field names: {overlap}")
-        combined = dict(self._fields)
-        combined.update(other._fields)
-        return type(self)(combined)
-
-    def without(self, *names: str) -> Record:
-        """Return a new Record with the specified fields removed.
-
-        Returns an instance of ``type(self)``.
-        """
-        new = {k: v for k, v in self._fields.items() if k not in names}
-        if not new:
-            raise ValueError("Cannot remove all fields from Record")
-        return type(self)(new)
+    #
+    # ``replace`` / ``merge`` / ``without`` are inherited from ``_NamedTree``:
+    # path-aware structural edits that thread ``event_template`` (untouched fields
+    # keep their authoritative specs; only replaced/added fields are re-inferred)
+    # and preserve ``type(self)``. See ``_NamedTree``.
 
     # -- Backend conversion -------------------------------------------------
 

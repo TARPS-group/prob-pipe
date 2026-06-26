@@ -470,6 +470,105 @@ class _NamedTree:
             f(key, leaf, *args, **kwargs) for key, leaf in self._walk_leaves()
         )
 
+    # -- Path-aware immutable edits -----------------------------------------
+    #
+    # ``without`` / ``merge`` / ``replace`` are structural tree edits, so they
+    # apply equally to a tree of values (``Record``) and a tree of specs
+    # (``EventTemplate``). For a ``Record`` the edit is *threaded through the
+    # template*: the same edit is applied to ``event_template`` so untouched
+    # fields keep their authoritative specs and only genuinely-new objects are
+    # re-inferred. The result is the same class as ``self``.
+
+    def _norm_path(self, path: Any) -> str:
+        """Normalise a path argument to its canonical ``/``-string form."""
+        return _PATH_SEP.join(self._split_path((path,)))
+
+    def _reconstruct_after_edit(self, fields: Mapping[str, Any], template_op: Callable) -> Any:
+        """Build the edited collection, threading the template for value trees.
+
+        *fields* is a flat ``path -> object`` mapping (the edited leaves). For an
+        ``EventTemplate`` the edited specs *are* the result; for a ``Record`` the
+        new ``event_template`` is *template_op* applied to ``self.event_template``.
+        """
+        if not hasattr(self, "event_template"):
+            return type(self)(fields)
+        return type(self)(fields, event_template=template_op(self.event_template))
+
+    def without(self, *paths: str) -> Any:
+        """Return a new collection with the fields/subtrees at *paths* removed.
+
+        Each path is a key (drop one leaf) or a partial path (drop a whole
+        subtree). A missing path raises ``KeyError``; removing every field raises
+        ``ValueError``. Surviving fields keep their order and their specs.
+        """
+        for path in paths:
+            self.at_path(path)  # KeyError if the path does not exist
+        drops = [self._norm_path(p) for p in paths]
+
+        def is_dropped(key: str) -> bool:
+            return any(key == d or key.startswith(f"{d}{_PATH_SEP}") for d in drops)
+
+        kept = {key: leaf for key, leaf in self._walk_leaves() if not is_dropped(key)}
+        if not kept:
+            raise ValueError("Cannot remove all fields from a collection")
+        return self._reconstruct_after_edit(kept, lambda tpl: tpl.without(*paths))
+
+    def merge(self, other: Any) -> Any:
+        """Return the union of two collections (deep, path-aware).
+
+        The merge is by field key: ``{"a/x": ...}`` and ``{"a/y": ...}`` combine
+        under a shared ``a``. A field key present in both, or a field-versus-prefix
+        clash between them, raises ``ValueError`` (the construction rules). ``self``'s
+        fields come first, then ``other``'s.
+        """
+        left = dict(self._walk_leaves())
+        right = dict(other._walk_leaves())
+        overlap = set(left) & set(right)
+        if overlap:
+            raise ValueError(f"Overlapping field keys: {sorted(overlap)}")
+        merged = {**left, **right}
+        return self._reconstruct_after_edit(merged, lambda tpl: tpl.merge(other.event_template))
+
+    def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Any:
+        """Return a new collection with the objects at the given paths replaced.
+
+        Updates are given as a path-keyed positional mapping
+        (``r.replace({"physics/mass": m})``) or flat keywords (``r.replace(obs=y)``),
+        not both. Every path must already exist (``KeyError`` otherwise — ``replace``
+        edits, it does not add). A partial path replaces a whole subtree. Untouched
+        fields keep their specs; a replaced field takes the new value's spec.
+        """
+        if _updates is not None:
+            if updates:
+                raise ValueError("Cannot pass both positional mapping and keyword arguments")
+            resolved = dict(_updates)
+        else:
+            resolved = dict(updates)
+        if not resolved:
+            return self
+        for path in resolved:
+            self.at_path(path)  # KeyError if the path does not exist
+        flat = dict(self._walk_leaves())
+        for path, new_value in resolved.items():
+            norm = self._norm_path(path)
+            if not self.is_leaf(path):
+                flat = {
+                    key: leaf
+                    for key, leaf in flat.items()
+                    if not (key == norm or key.startswith(f"{norm}{_PATH_SEP}"))
+                }
+            flat[norm] = new_value
+        spec_updates = {self._norm_path(p): self._spec_of(v) for p, v in resolved.items()}
+        return self._reconstruct_after_edit(flat, lambda tpl: tpl.replace(spec_updates))
+
+    def _spec_of(self, value: Any) -> Any:
+        """The leaf spec describing a new field *value* (for template threading)."""
+        from .record import Record
+
+        if isinstance(value, Record):
+            return value.event_template
+        return EventTemplate.infer_from({"_leaf_": value}).children["_leaf_"]
+
     @classmethod
     def from_nested_dict(cls, data: Mapping[str, Any], *, event_template: Any | None = None) -> Any:
         """Build a collection from a **nested** ``dict`` — the inverse of :meth:`to_nested_dict`.
@@ -954,28 +1053,35 @@ class EventTemplate(_NamedTree):
         """
         return [value[path] for path in self.leaf_paths]
 
-    def from_leaf_list(self, leaves: Iterable[Any]) -> Any:
-        """Rebuild a value from its *leaves* — the inverse of :meth:`to_leaf_list`.
+    def from_field_values(self, values: Iterable[Any]) -> Any:
+        """Reconstruct a value from an ordered sequence of field values.
 
-        *leaves* are taken in :attr:`leaf_paths` (canonical) order, one per leaf
-        and kept whole, and are placed at their paths to rebuild the nested
-        value mirroring this template (a nested ``EventTemplate`` → a nested
-        :class:`~probpipe.Record`; a numeric template → a
-        :class:`~probpipe.NumericRecord`). Round-trip:
-        ``tpl.from_leaf_list(tpl.to_leaf_list(v)) == v``.
+        *values* supplies one object per field, in canonical order (the order of
+        :meth:`keys`); the names and tree shape are taken from this template, so
+        the result mirrors it — a nested template builds a nested
+        :class:`~probpipe.Record`, a :class:`NumericEventTemplate` builds a
+        :class:`~probpipe.NumericRecord`. The result carries this template as its
+        **authoritative** :attr:`~probpipe.Record.event_template` (nothing is
+        inferred), so the round-trip is faithful:
+        ``tpl.from_field_values(list(r.values())) == r`` when
+        ``r.event_template == tpl``. The export side is just ``list(r.values())``.
 
         Single (unbatched) values only; batched reconstruction arrives with the
-        batch abstractions (issue #235). Raises ``ValueError`` if the number of
-        *leaves* is not ``len(self.leaf_paths)``.
+        batch abstractions. Per-leaf shape/dtype is not checked (only the count).
+
+        Raises
+        ------
+        ValueError
+            If the number of *values* is not the number of fields (``len(self)``).
         """
-        leaves = list(leaves)
+        values = list(values)
         n_leaves = len(self.leaf_paths)
-        if len(leaves) != n_leaves:
+        if len(values) != n_leaves:
             raise ValueError(
-                f"{type(self).__name__}.from_leaf_list: got {len(leaves)} leaves, "
-                f"expected {n_leaves} (one per leaf in leaf_paths)."
+                f"{type(self).__name__}.from_field_values: got {len(values)} values, "
+                f"expected {n_leaves} (one per field)."
             )
-        leaf_iter = iter(leaves)
+        leaf_iter = iter(values)
 
         def _build(template: EventTemplate) -> Any:
             from ._numeric_record import NumericRecord
@@ -989,6 +1095,10 @@ class EventTemplate(_NamedTree):
             return cls(fields, event_template=template)
 
         return _build(self)
+
+    def from_leaf_list(self, leaves: Iterable[Any]) -> Any:
+        """Deprecated alias of :meth:`from_field_values` (retained transitionally)."""
+        return self.from_field_values(leaves)
 
     # -- Equality and hashing -----------------------------------------------
 

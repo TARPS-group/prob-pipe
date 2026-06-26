@@ -187,8 +187,14 @@ class TestImmutability:
 
     def test_replace_nonexistent_raises(self):
         v = Record(a=1.0)
-        with pytest.raises(KeyError, match="non-existent"):
+        with pytest.raises(KeyError):
             v.replace(z=5.0)
+
+    def test_replace_nested_path(self):
+        v = Record(physics=Record(force=1.0, mass=2.0), obs=3.0)
+        v2 = v.replace({"physics/mass": 9.0})
+        assert v2["physics/mass"] == 9.0
+        assert v2["physics/force"] == 1.0  # untouched
 
     def test_merge(self):
         v1 = Record(a=1.0)
@@ -207,11 +213,16 @@ class TestImmutability:
         v2 = v.without("b")
         assert v2.fields == ("a", "c")
 
-    def test_without_nonexistent_key(self):
-        """Removing a key that doesn't exist silently keeps all fields."""
+    def test_without_nonexistent_key_raises(self):
+        """Removing a key that doesn't exist raises KeyError (leaf-keyed contract)."""
         v = Record(a=1.0, b=2.0)
-        v2 = v.without("z")
-        assert v2.fields == ("a", "b")
+        with pytest.raises(KeyError):
+            v.without("z")
+
+    def test_without_nested_path(self):
+        v = Record(physics=Record(force=1.0, mass=2.0), obs=3.0)
+        assert tuple(v.without("physics/mass").keys()) == ("physics/force", "obs")
+        assert tuple(v.without("physics").keys()) == ("obs",)
 
     def test_without_all_raises(self):
         v = Record(a=1.0)

@@ -321,6 +321,26 @@ class RecordArray(Record):
             fields[name] = jnp.stack(field_vals, axis=0)
         return cls(fields, batch_shape=(len(records),), template=template)
 
+    # -- Immutable edits (deferred for the batch types) ---------------------
+    #
+    # ``replace`` / ``merge`` / ``without`` are defined on ``_NamedTree`` for the
+    # single value/spec collections and thread the template through single-value
+    # construction. On a batch their semantics (which axis, how the batch shape
+    # composes) belong to the ``*Array`` → ``*Batch`` redesign, so they are not
+    # supported here yet.
+
+    def replace(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError(
+            "replace() on a RecordArray is deferred to the *Batch redesign; "
+            "operate on the underlying fields directly for now."
+        )
+
+    def merge(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError("merge() on a RecordArray is deferred to the *Batch redesign.")
+
+    def without(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError("without() on a RecordArray is deferred to the *Batch redesign.")
+
     # -- Equality / hash ----------------------------------------------------
 
     def __eq__(self, other: object) -> bool:
