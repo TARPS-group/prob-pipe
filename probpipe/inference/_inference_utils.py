@@ -35,13 +35,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-logger = logging.getLogger(__name__)
-
 from ..core.distribution import Distribution
+from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsSampling
-from ..core.record import Record, RecordTemplate
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "as_prng_key",
@@ -50,13 +50,13 @@ __all__ = [
     "build_target_log_prob",
     "build_target_log_prob_flat",
     "extract_chain_columns",
-    "posterior_var_order",
+    "extract_event_template",
     "get_init_state",
     "get_prior",
-    "extract_record_template",
     "is_jax_traceable",
     "is_simple_model",
     "parallel_chain_map",
+    "posterior_var_order",
     "run_chain_scan",
 ]
 
@@ -65,8 +65,11 @@ __all__ = [
 # Chain extraction
 # ---------------------------------------------------------------------------
 
+
 def extract_chain_columns(
-    trace: Any, names: list[str], num_chains: int,
+    trace: Any,
+    names: list[str],
+    num_chains: int,
 ) -> list[Array]:
     """Per-chain flat sample matrices from an ArviZ-like trace.
 
@@ -140,6 +143,7 @@ def posterior_var_order(trace: Any, keep: Iterable[str]) -> list[str]:
 # JAX-traceability probe
 # ---------------------------------------------------------------------------
 
+
 def is_jax_traceable(fn: Callable, init_state: jnp.ndarray) -> bool:
     """Probe whether *fn* can be traced by JAX at *init_state*.
 
@@ -169,6 +173,7 @@ def as_prng_key(seed: int | Array) -> Array:
 # ---------------------------------------------------------------------------
 # Initial-state heuristics
 # ---------------------------------------------------------------------------
+
 
 def get_init_state(
     dist: Distribution,
@@ -210,6 +215,7 @@ def get_init_state(
     target_dtype = getattr(prior, "dtype", None)
     if not isinstance(target_dtype, jnp.dtype):
         from .._dtype import _default_float_dtype
+
         target_dtype = _default_float_dtype()
 
     if init is not None:
@@ -222,20 +228,25 @@ def get_init_state(
             s = prior._sample(key, sample_shape=())
             if isinstance(s, Record):
                 from ..core._numeric_record import NumericRecord
+
                 if not isinstance(s, NumericRecord):
-                    s = NumericRecord.from_record(s)
-                s = s.flatten()
+                    s = s.to_numeric()
+                s = s.to_vector()
             return jnp.atleast_1d(jnp.asarray(s, dtype=target_dtype))
         except Exception:
             logger.debug(
-                "get_init_state: prior._sample failed for %r; falling "
-                "back to Uniform(-2, 2)", prior, exc_info=True,
+                "get_init_state: prior._sample failed for %r; falling back to Uniform(-2, 2)",
+                prior,
+                exc_info=True,
             )
 
     if hasattr(prior, "event_shape"):
         return jax.random.uniform(
-            key, shape=prior.event_shape,
-            minval=-2.0, maxval=2.0, dtype=target_dtype,
+            key,
+            shape=prior.event_shape,
+            minval=-2.0,
+            maxval=2.0,
+            dtype=target_dtype,
         )
 
     raise ValueError(
@@ -249,9 +260,11 @@ def get_init_state(
 # SimpleModel detection and prior extraction
 # ---------------------------------------------------------------------------
 
+
 def is_simple_model(dist: Distribution) -> bool:
     """Check whether *dist* is a SimpleModel (lazy import for circularity)."""
     from ..modeling._simple import SimpleModel
+
     return isinstance(dist, SimpleModel)
 
 
@@ -260,24 +273,26 @@ def get_prior(dist: Distribution) -> Distribution:
     return dist._prior if is_simple_model(dist) else dist
 
 
-def extract_record_template(dist: Distribution) -> RecordTemplate | None:
-    """Return *dist*'s prior's ``record_template``, or ``None``.
+def extract_event_template(dist: Distribution) -> EventTemplate | None:
+    """Return *dist*'s prior's ``event_template``, or ``None``.
 
     Uses ``getattr`` to tolerate priors that aren't a
     ``RecordDistribution`` (e.g. bare ``SupportsLogProb`` targets);
     SimpleModel-rooted callers can rely on the prior being a
-    ``RecordDistribution`` and read ``prior.record_template`` directly.
+    ``RecordDistribution`` and read ``prior.event_template`` directly.
     """
     prior = get_prior(dist)
-    return getattr(prior, "record_template", None)
+    return getattr(prior, "event_template", None)
 
 
 # ---------------------------------------------------------------------------
 # Target log-density construction
 # ---------------------------------------------------------------------------
 
+
 def build_target_log_prob(
-    dist: Distribution, observed: ArrayLike | Record | None,
+    dist: Distribution,
+    observed: ArrayLike | Record | None,
 ) -> Callable[[Any], Array]:
     """Build a ``target_log_prob_fn(params)`` from *dist* and *observed*.
 
@@ -302,11 +317,13 @@ def build_target_log_prob(
     its own input types).
     """
     if is_simple_model(dist):
+
         def target_log_prob_fn(params):
             lp = dist._prior._log_prob(params)
             if observed is not None:
                 lp = lp + dist._likelihood.log_likelihood(
-                    params=params, data=observed,
+                    params=params,
+                    data=observed,
                 )
             return lp
 
@@ -319,20 +336,21 @@ def build_target_log_prob(
 
 
 def build_target_log_prob_flat(
-    dist: Distribution, observed: ArrayLike | Record | None,
+    dist: Distribution,
+    observed: ArrayLike | Record | None,
     *,
     init: ArrayLike | None = None,
     random_seed: int | Array = 0,
-) -> tuple[Callable[[Array], Array], Array, RecordTemplate | None]:
+) -> tuple[Callable[[Array], Array], Array, EventTemplate | None]:
     """Build a flat-vector target + initial state + (optional) record template.
 
-    Returns ``(target_flat_fn, flat_init, record_template)``:
+    Returns ``(target_flat_fn, flat_init, event_template)``:
 
     - ``target_flat_fn(theta_flat) -> log_prob``: a callable that
       consumes a flat parameter vector.
     - ``flat_init``: the flat-vector initial chain state from
       :func:`get_init_state`.
-    - ``record_template``: the prior's ``record_template`` when the
+    - ``event_template``: the prior's ``event_template`` when the
       target's parameter space is Record-shaped; ``None`` for bare
       array-shaped targets. Passes through to
       :func:`~probpipe.inference._approximate_distribution.make_posterior`
@@ -350,7 +368,7 @@ def build_target_log_prob_flat(
        (e.g., a hand-rolled ``Distribution`` subclass implementing
        ``_unnormalized_log_prob`` over a flat ``Array``). The target
        already takes a flat input; no flattening is needed.
-       ``record_template`` is returned as ``None``.
+       ``event_template`` is returned as ``None``.
 
     Intended for use by BlackJAX-flavoured MCMC / VI backends.
     """
@@ -359,14 +377,14 @@ def build_target_log_prob_flat(
     flat_init = get_init_state(dist, init, random_seed=random_seed)
 
     flat_view = getattr(prior, "as_flat_distribution", None)
-    record_template = getattr(prior, "record_template", None)
-    if flat_view is not None and record_template is not None:
+    event_template = getattr(prior, "event_template", None)
+    if flat_view is not None and event_template is not None:
         flat_prior = flat_view()
 
         def target_flat(theta_flat: Array) -> Array:
             return target_record(flat_prior.unflatten_sample(theta_flat))
 
-        return target_flat, flat_init, record_template
+        return target_flat, flat_init, event_template
 
     # Bare array-shaped target: ``target_record`` already accepts a
     # flat array and no template is available to lift the chain.
@@ -397,8 +415,8 @@ def build_likelihood_flat(
       vector, so it is called directly.
     """
     flat_view = getattr(prior, "as_flat_distribution", None)
-    record_template = getattr(prior, "record_template", None)
-    if flat_view is not None and record_template is not None:
+    event_template = getattr(prior, "event_template", None)
+    if flat_view is not None and event_template is not None:
         flat_prior = flat_view()
 
         def loglikelihood_fn(theta_flat: Array) -> Array:
@@ -422,7 +440,7 @@ def build_mcmc_datatree(
     chains: list[Array],
     sample_stats: dict[str, np.ndarray] | None = None,
     warmup_chains: list[Array] | None = None,
-) -> "DataTree":
+) -> DataTree:
     """Build an arviz-convention DataTree from MCMC chains + diagnostics.
 
     Groups: ``posterior``, ``sample_stats`` (if provided), ``warmup``
@@ -445,13 +463,16 @@ def build_mcmc_datatree(
         warmup_array = _stack(warmup_chains)
         n_chains, n_warmup = warmup_array.shape[:2]
         event_dims = [f"params_dim_{i}" for i in range(warmup_array.ndim - 2)]
-        dims = ["chain", "draw"] + event_dims
-        warmup_ds = xr.Dataset({
-            "params": xr.DataArray(
-                warmup_array, dims=dims,
-                coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
-            ),
-        })
+        dims = ["chain", "draw", *event_dims]
+        warmup_ds = xr.Dataset(
+            {
+                "params": xr.DataArray(
+                    warmup_array,
+                    dims=dims,
+                    coords={"chain": np.arange(n_chains), "draw": np.arange(n_warmup)},
+                ),
+            }
+        )
         dt["warmup"] = xr.DataTree(dataset=warmup_ds)
 
     return dt
@@ -482,6 +503,7 @@ def run_chain_scan(
     Used by both the NUTS / HMC and the RWMH / ESS backends; the
     contract is identical because BlackJAX samplers share it.
     """
+
     def one_step(state, step_key):
         state, info = sampler.step(step_key, state)
         return state, (state.position, info)

@@ -3,7 +3,7 @@
 Standalone workflow functions for sampling, density evaluation, moments,
 conditioning, and conversion. Each op dispatches via the matching
 [protocol](extending.md#protocols), participates in
-[broadcasting](../examples/03_broadcasting.ipynb), and is subject to
+[broadcasting](../user_guide/03_broadcasting.ipynb), and is subject to
 [Prefect orchestration](workflows.md) when configured.
 
 ## Sampling
@@ -31,6 +31,8 @@ conditioning, and conversion. Each op dispatches via the matching
 ::: probpipe.core.ops.variance
 
 ::: probpipe.core.ops.cov
+
+::: probpipe.core.ops.quantile
 
 ::: probpipe.core.ops.expectation
 

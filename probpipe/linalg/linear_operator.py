@@ -1,16 +1,17 @@
 # linear_operator.py
 """
 This file contains:
-    1. the base abstract LinOp class  
-    2. subclasses that represent views of linear operations resulting from 
+    1. the base abstract LinOp class
+    2. subclasses that represent views of linear operations resulting from
        various operations (sum, product, etc.).
     3. concrete linear operator subclasses representing structured matrices
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
-from typing import Any, TypeAlias
+from typing import Any
 
 import jax.numpy as jnp
 import jax.scipy.linalg as jsla
@@ -27,14 +28,15 @@ from ..custom_types import Array, ArrayLike
 class LinAlgError(Exception):
     """Linear algebra error (e.g., singular matrix, non-positive-definite)."""
 
+
 __all__ = [
-    "LinOp",
+    "CholeskyLinOp",
     "DenseLinOp",
     "DiagonalLinOp",
+    "DiagonalRootLinOp",
+    "LinOp",
     "RootLinOp",
     "TriangularLinOp",
-    "CholeskyLinOp",
-    "DiagonalRootLinOp",
 ]
 
 
@@ -43,19 +45,23 @@ __all__ = [
 # -----------------------------------------------------------------------------
 
 # Set of allowed flags to mark properties possessed by particular linear operators
-ALLOWED_FLAGS = frozenset({
-    "symmetric",
-    "positive_definite",
-    "diagonal",
-    "triangular_lower",
-    "triangular_upper",
-    "unit_diagonal",
-    "dense",
-})
+ALLOWED_FLAGS = frozenset(
+    {
+        "symmetric",
+        "positive_definite",
+        "diagonal",
+        "triangular_lower",
+        "triangular_upper",
+        "unit_diagonal",
+        "dense",
+    }
+)
+
 
 def _promote_dtype(*dtypes: Any) -> Any:
     """Return promoted dtype for given dtypes/arrays."""
     return jnp.result_type(*dtypes)
+
 
 def _as_linear_operator(A: LinOpLike) -> LinOp:
     """
@@ -67,15 +73,13 @@ def _as_linear_operator(A: LinOpLike) -> LinOp:
         try:
             return DenseLinOp(A)
         except Exception as e:
-            raise TypeError(
-                f"Could not convert A to linear operator\n"
-                f"DenseLinOp error: {e}"
-            ) from e
+            raise TypeError(f"Could not convert A to linear operator\nDenseLinOp error: {e}") from e
 
 
 # -----------------------------------------------------------------------------
 # Core abstract linear operator class
 # -----------------------------------------------------------------------------
+
 
 class LinOp(ABC):
     """Abstract base class for a linear operator.
@@ -121,15 +125,15 @@ class LinOp(ABC):
     def is_dense(self) -> bool:
         """Default is False; DenseLinOp overrides to True"""
         return False
-    
+
     # ---- Utility methods for validation ----
 
     def _check_square(self) -> None:
-        """ Throw error if operator is not square """
+        """Throw error if operator is not square"""
         n_out, n_in = self.shape
         if n_out != n_in:
             raise LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})")
-    
+
     # ---- Optional convenience methods that implementors may override for speed ----
     def matvec(self, x: ArrayLike) -> Array:
         """Return A @ x for x shape (n_in,) -> (n_out,)."""
@@ -156,7 +160,7 @@ class LinOp(ABC):
         self._check_square()
         n, _ = self.shape
         dense_op = self.to_dense()
-        
+
         b = jnp.asarray(b)
         if b.ndim < 2:
             b = _ensure_vector(b, as_column=True)
@@ -168,7 +172,7 @@ class LinOp(ABC):
         """Return triangular LinOp L (lower) or L.T (upper) such that A = L @ L.T.
 
         Defaults to densifying the operator and then computing the Cholesky decomposition.
-        Subclasses may return other valid LinOp types that are more structured than 
+        Subclasses may return other valid LinOp types that are more structured than
         TriangularLinOp; for example, DiagonalLinOp.
         """
         self._check_square()
@@ -176,14 +180,14 @@ class LinOp(ABC):
         if not lower:
             L = L.T
         return TriangularLinOp(L, lower=lower)
-    
-    def to_cholesky_representation(self, lower: bool = True, **kwargs) -> CholeskyRepresentation:
-        """ Return representation of `self` in terms of its Cholesky factor.
 
-        In general, this represents an alternative represetation of the 
+    def to_cholesky_representation(self, lower: bool = True, **kwargs) -> CholeskyRepresentation:
+        """Return representation of `self` in terms of its Cholesky factor.
+
+        In general, this represents an alternative represetation of the
         operator. Defaults to computing the Cholesky factor and wrapping
-        the result in CholeskyLinOp. Subclasses may return other valid 
-        LinOp types when more structure is present; for example, 
+        the result in CholeskyLinOp. Subclasses may return other valid
+        LinOp types when more structure is present; for example,
         DiagonalRootLinOp.
         """
         return CholeskyLinOp(self.cholesky(lower=lower, **kwargs))
@@ -227,7 +231,6 @@ class LinOp(ABC):
         """Return frozenset of current flags (read-only view)."""
         return frozenset(self._flags)
 
-
     # ---- Basic operator algebra builds (do not densify unless unavoidable) ----
     def __matmul__(self, other: LinOp) -> LinOp:
         """Return operator representing self @ other (composition)."""
@@ -265,10 +268,10 @@ class LinOp(ABC):
         return f"{self.__class__.__name__}(shape={self.shape}, dtype={self.dtype})"
 
 
-
 # -----------------------------------------------------------------------------
 # Composite linear operator views
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
+
 
 class ProductLinOp(LinOp):
     """Operator representing composition A @ B where A and B are LinOp and shapes agree."""
@@ -507,13 +510,14 @@ class TransposedLinOp(LinOp):
 
 # -----------------------------------------------------------------------------
 # Concrete linear operator subclasses
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
+
 
 class DenseLinOp(LinOp):
     """A light wrapper around a two dimensional array.
-    
+
     A LinearOperator that is represented by storing the complete dense array
-    representation of the operator. 
+    representation of the operator.
     """
 
     def __init__(self, arr: ArrayLike, copy: bool = True) -> None:
@@ -529,7 +533,7 @@ class DenseLinOp(LinOp):
     @property
     def dtype(self) -> Any:
         return self._dtype
-    
+
     @property
     def is_dense(self) -> bool:
         return True
@@ -669,14 +673,17 @@ class TriangularLinOp(LinOp):
         b_arr = _ensure_matrix(b_arr, num_rows=self._n)
 
         return jsla.solve_triangular(
-            self.tri, b_arr, lower=self.lower, unit_diagonal=unit_diagonal,
+            self.tri,
+            b_arr,
+            lower=self.lower,
+            unit_diagonal=unit_diagonal,
         )
 
 
 class RootLinOp(LinOp):
     """A linear operator A represented by its square root S such that A = S @ S.T
-       A is guaranteed to be symmetric positive semidefinite, but not necessarily 
-       positive definite."""
+    A is guaranteed to be symmetric positive semidefinite, but not necessarily
+    positive definite."""
 
     def __init__(self, root: LinOp | ArrayLike) -> None:
         super().__init__()
@@ -704,10 +711,10 @@ class RootLinOp(LinOp):
 
     def rmatmat(self, X: ArrayLike) -> Array:
         return self.matmat(X)
-    
+
     def solve(self, b: ArrayLike, **kwargs) -> Array:
         """Linear solve using forward backward substitution
-        
+
         To compute A^{-1}b = (S @ S.T)^{-1}b first compute y = S^{-1}b
         then S.T^{-1}y.
         """
@@ -719,17 +726,17 @@ class RootLinOp(LinOp):
         S = self.root.to_dense()
         y = jnp.linalg.solve(S, b)
         return jnp.linalg.solve(S.T, y)
-    
+
     def diag(self) -> Array:
         if isinstance(self.root, DiagonalLinOp):
-            return self.root.diagonal ** 2
+            return self.root.diagonal**2
 
         S = self.root.to_dense()
-        return jnp.einsum('ij,ij->i', S, S)
-    
+        return jnp.einsum("ij,ij->i", S, S)
+
     def trace(self) -> float:
         if isinstance(self.root, DiagonalLinOp):
-            return jnp.sum(self.root.diagonal ** 2)
+            return jnp.sum(self.root.diagonal**2)
 
         S = self.root.to_dense()
         return jnp.sum(S**2)
@@ -749,8 +756,7 @@ class CholeskyLinOp(RootLinOp):
     def __init__(self, root: TriangularLinOp) -> None:
         if not isinstance(root, TriangularLinOp):
             raise ValueError(
-                f"CholeskyLinOp requires `root` to be a TriangularLinOp object."
-                f"Got {type(root)}."
+                f"CholeskyLinOp requires `root` to be a TriangularLinOp object.Got {type(root)}."
             )
 
         super().__init__(root)
@@ -780,7 +786,7 @@ class CholeskyLinOp(RootLinOp):
         """Return the diagonal of the represented SPD operator."""
         S = self.root.to_dense()
         axis = 1 if self.root.lower else 0
-        return jnp.sum(S ** 2, axis=axis)
+        return jnp.sum(S**2, axis=axis)
 
     def to_dense(self) -> Array:
         """Return the dense matrix represented by the Cholesky factor."""
@@ -808,34 +814,32 @@ class CholeskyLinOp(RootLinOp):
             return jsla.solve_triangular(S.T, y, lower=False)
         y = jsla.solve_triangular(S.T, b, lower=True)
         return jsla.solve_triangular(S, y, lower=False)
-    
 
     def cholesky(self, lower: bool = True, **kwargs) -> TriangularLinOp:
         cholesky_factor = self.root
         if lower == cholesky_factor.lower:
             return cholesky_factor
         return TriangularLinOp(cholesky_factor.to_dense().T, lower=lower)
-        
+
     def to_cholesky_representation(self, lower: bool = True, **kwargs) -> CholeskyLinOp:
-        """ Returns a copy of `self` """
+        """Returns a copy of `self`"""
         return CholeskyLinOp(self.cholesky(lower=lower))
 
 
 class DiagonalRootLinOp(DiagonalLinOp):
-    """A linear operator A represented by its diagonal square root 
-       S = diag(s1, ..., sd) such that A = S @ S.T = diag(s1^2, ..., sd^2).
-       A is guaranteed to be symmetric positive semidefinite, and is strictly
-       positive definite if all entries of all of the si are non-zero."""
-    
+    """A linear operator A represented by its diagonal square root
+    S = diag(s1, ..., sd) such that A = S @ S.T = diag(s1^2, ..., sd^2).
+    A is guaranteed to be symmetric positive semidefinite, and is strictly
+    positive definite if all entries of all of the si are non-zero."""
+
     def __init__(self, root: DiagonalLinOp) -> None:
         if not isinstance(root, DiagonalLinOp):
             raise ValueError(
-                f"DiagonalRootLinOp requires `root` to be a DiagonalLinOp object."
-                f"Got {type(root)}."
+                f"DiagonalRootLinOp requires `root` to be a DiagonalLinOp object.Got {type(root)}."
             )
 
         # Call DiagonalLinOp constructor
-        super().__init__(root.diagonal ** 2)
+        super().__init__(root.diagonal**2)
         self.root = root
 
     def cholesky(self, lower: bool = True, **kwargs) -> DiagonalLinOp:
@@ -847,8 +851,8 @@ class DiagonalRootLinOp(DiagonalLinOp):
 
 # -----------------------------------------------------------------------------
 # Type Aliases
-# ----------------------------------------------------------------------------- 
+# -----------------------------------------------------------------------------
 
-LinOpLike: TypeAlias = LinOp | ArrayLike
-CholeskyFactor: TypeAlias = TriangularLinOp | DiagonalLinOp
-CholeskyRepresentation: TypeAlias = CholeskyLinOp | DiagonalRootLinOp
+type LinOpLike = LinOp | ArrayLike
+type CholeskyFactor = TriangularLinOp | DiagonalLinOp
+type CholeskyRepresentation = CholeskyLinOp | DiagonalRootLinOp

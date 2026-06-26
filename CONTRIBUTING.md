@@ -179,57 +179,23 @@ conventions in [STYLE_GUIDE.md § 8.6](STYLE_GUIDE.md#86-numerical-correctness-a
 
 ### Code formatting
 
-Keep Python code compact horizontally. The hard upper bound is 100
-chars per line; the soft target is 80–100. **Do not introduce line
-breaks that aren't needed to stay within that range** — multi-name
-imports should be packed per line rather than spread one name per
-line, and short function calls should stay on one line.
+Formatting is owned by **`ruff format`** (Black-style) — don't hand-format
+Python. The `ruff-format` pre-commit hook reformats on commit; run it directly
+with:
 
-```python
-# Avoid — over-vertical:
-from probpipe import (
-    Normal,
-    Beta,
-    Gamma,
-    sample,
-    log_prob,
-)
-
-# Prefer — packed (drop the parens when the whole import fits one line):
-from probpipe import Normal, Beta, Gamma, sample, log_prob
+```bash
+uv run ruff format .          # reformat the tree
+uv run ruff format --check .  # verify (this is what CI enforces)
 ```
 
-Same idea applies to *where* you break a function call, container
-literal, or import — prefer keeping the first argument on the opener
-line and aligning subsequent lines under it, rather than breaking
-right after the open paren / bracket / brace. Break after `(` only
-when the opener line is already long enough that aligned continuation
-would have too little horizontal room.
-
-```python
-# Avoid — gratuitous break after `(`:
-result = expectation(
-    n, lambda x: jnp.sin(x),
-    key=jax.random.PRNGKey(10),
-)
-
-# Prefer — first arg on opener line, continuation aligned:
-result = expectation(n, lambda x: jnp.sin(x),
-                     key=jax.random.PRNGKey(10))
-
-# OK to break after `(` when the opener is already long:
-result = some.deeply.nested.module.function_with_long_name(
-    arg1, arg2, kwarg=value,
-)
-```
-
-The exception is constructions where each kwarg's value is itself a
-meaningful sub-expression — `MultivariateNormal(loc=..., cov=...)`,
-`xr.DataArray(data, dims=..., coords=...)`, etc. Per-kwarg vertical
-layout helps readability there even when the call would fit on one
-line.
-
-This applies equally to source files and notebook code cells.
+Both `ruff format --check` and `ruff check` (the linter) are **blocking** CI
+steps, so a misformatted file or a lint violation fails the build. A few
+specifics: the line
+length is 100 (`[tool.ruff]` in `pyproject.toml`); ruff keeps code on one line
+when it fits and explodes imports / call arguments one-item-per-line when it does
+not; string quotes normalize to double. Notebooks are excluded
+(`[tool.ruff.format] exclude` in `pyproject.toml`), so the docs' tutorial cells
+keep their compact, hand-curated layout.
 
 ### Code comments & docstrings
 
@@ -260,33 +226,30 @@ Linting uses [ruff](https://docs.astral.sh/ruff/) (configured in
 uvx pre-commit install      # or: pre-commit install
 ```
 
-Thereafter `ruff` (lint) plus a few file-hygiene hooks run on your staged
-files at commit time. The hooks see only the files you're changing, so the
-codebase cleans up file-by-file rather than in one sweep. To run manually:
+Thereafter `ruff` (lint + format) plus a few file-hygiene hooks run on your staged
+files at commit time. The hooks see only the files you're changing, so a commit is
+checked without re-linting the whole tree. To run manually:
 
 ```bash
 uv run ruff check .              # lint the whole tree (uses the uv.lock-pinned ruff)
 uvx pre-commit run --all-files   # run every hook over everything
 ```
 
-A full `--all-files` run is **not** expected to be clean yet: the repo carries a
-lint and file-hygiene backlog that the hooks burn down file-by-file (see below),
-so it will report — and the fixer hooks will modify — pre-existing issues in
-files you did not touch. That is expected for now, not a regression.
+`ruff check .` and `ruff format --check .` are clean tree-wide. A full
+`--all-files` run may still surface pre-existing file-hygiene nits (trailing
+whitespace, end-of-file) in files you did not touch; the fixer hooks clean those
+as the relevant files are next edited.
 
-Two deliberate choices:
+Both `ruff check` (lint) and `ruff format` are enforced:
 
-- **`ruff check` is advisory in CI for now.** ProbPipe carries a lint
-  backlog from a period when ruff wasn't enforced, and several large
-  refactors are in flight. The CI `lint (advisory)` job annotates PRs with
-  violations but does not yet gate merges; it will become blocking once the
-  backlog is burned down. Locally, the pre-commit hook flags issues on the
-  files you touch — fix them when practical; `git commit --no-verify`
-  bypasses it for a pre-existing-violation file you'd rather not clean in
-  an unrelated change.
-- **`ruff format` is not used.** Its output conflicts with the horizontal
-  packing conventions in *Code formatting* above, so formatting stays
-  manual. Only `ruff check` runs.
+- **`ruff check` (lint) is blocking in CI.** The `lint & format` job runs
+  `ruff check .` over the whole tree, which is at zero violations; a new
+  violation fails the build. Rule selection and per-file ignores live in
+  `[tool.ruff.lint]` in `pyproject.toml`. The pre-commit hook flags the same
+  issues on your staged files at commit time.
+- **`ruff format` is enforced.** Formatting is owned by `ruff format` (see
+  *Code formatting* above): `ruff format --check` is a blocking CI step and the
+  `ruff-format` pre-commit hook reformats on commit.
 
 ### Type checking
 
@@ -373,8 +336,8 @@ GitHub Actions (`.github/workflows/ci.yml`):
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
 - Test job uses extras `dev,nutpie,pymc`. The notebooks job is a two-leg
-  matrix that runs in parallel — an `examples` leg (`dev,nutpie`) for
-  `docs/examples` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
+  matrix that runs in parallel — a `user_guide` leg (`dev,nutpie`) for
+  `docs/user_guide` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
   `docs/tutorials` — each scoped to its own directory with independent
   change detection, so an unrelated leg is skipped (`bridgestan` is installed
   only in the `stan` leg, below)
@@ -386,8 +349,8 @@ GitHub Actions (`.github/workflows/ci.yml`):
   bayesflow leg — runs on pushes to main, foundational changes, or Stan-file
   changes
 - Coverage uploaded to Codecov
-- A `lint (advisory)` job runs `ruff check` and annotates PRs with
-  violations but does **not** gate merges yet (see *Linting & pre-commit*)
+- The `lint & format` job runs `ruff check` (lint) and `ruff format --check`;
+  both are **blocking** (see *Linting & pre-commit*)
 - Both the `test` and `notebooks` jobs choose what to run via a shared,
   unit-tested AST import-graph helper — `scripts/ci/import_graph.py` (tests
   in `tests/ci/`) — so a change to a source file also exercises the tests and
@@ -505,7 +468,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
    **Field access is bracket-only**: use `record["x"]`, `array["x"]`,
    `dist["x"]`.  Attribute access (`__getattr__`) was removed from
    `Record` and `RecordDistribution` because it shadowed methods and
-   properties like `.mean`, `.var`, `.fields`, `.flatten`, and produced
+   properties like `.mean`, `.var`, `.fields`, `.map`, and produced
    confusing errors.
 6. **Every distribution is named** — `Distribution.__init__` requires a
    non-empty `name: str`.  Leaf distributions (Normal, Gamma, etc.)
@@ -547,16 +510,16 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 | Abstraction | Description |
 |-------------|-------------|
-| `Distribution[T]` | Generic base parameterized by value type; provides `record_template` and `auxiliary` properties |
+| `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and `auxiliary` properties |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; leaves stored verbatim (no coercion); `select()` for workflow function splatting |
-| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `flatten` / `unflatten` / `flat_size`. Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
-| `RecordArray` | Batch of `Record` elements with a `RecordTemplate`; integer index → element, field index → batched array |
-| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
-| `RecordTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
+| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `to_vector` / `vector_size` (the numeric 1-D serialization; the inverse `from_vector` lives on `NumericEventTemplate`). Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
+| `RecordArray` | Batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array |
+| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `to_vector` / `mean` / `var` |
+| `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); `NumericEventTemplate.from_vector` rebuilds a numeric value from its 1-D vector without an example instance |
 | `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
-| `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericRecordTemplate`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
+| `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericEventTemplate`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
 | `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
 | `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordArray` keyed by `template.fields`. |
 | `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
@@ -566,7 +529,9 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `WorkflowFunction` | Orchestration-aware function wrapper (Prefect off by default; see the Prefect-orchestration section above); groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
-| `MethodRegistry` | Generic priority-based dispatch; used by the inference method registry |
+| `BaseDispatchRegistry` | Abstract base for priority-based registries: holds registration, priority management (incl. opt-in-only sentinel + override warnings), and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
+| `UnaryDispatchRegistry` | Single-argument dispatch registry; dispatches on the type of the first positional argument. Used by the inference method registry. |
+| `BinaryDispatchRegistry` | Two-argument dispatch registry; dispatches on the joint type of the first two positional args via paired `((left_types,), (right_types,))` pre-filters. |
 | `ProbabilisticModel` | Base for models (extends `Distribution`; provides `fields`) |
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
@@ -666,9 +631,11 @@ and `pandas.DataFrame`. Lookup walks the MRO of `type(obj)`, so
 registering a base class also covers its subclasses.
 
 This registry is **not** a behavioural-dispatch hierarchy — it has
-no priority system, no feasibility check, no `execute()`. Use
-`MethodRegistry` (inference) or `ConverterRegistry` (distribution
-conversion) when behaviour dispatch is needed.
+no priority system, no feasibility check, no `execute()`. Use a
+`BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` for the
+inference registry, `BinaryDispatchRegistry` for two-argument dispatch)
+or `ConverterRegistry` (distribution conversion) when behaviour
+dispatch is needed.
 
 ### Constraint → Bijector registry
 
@@ -690,9 +657,10 @@ mirrors PyTorch's `constraint_registry` semantics.
 
 Like the aux registry, this is **not** a behavioural-dispatch
 hierarchy: there is no priority system or feasibility check. Reach
-for `MethodRegistry` / `ConverterRegistry` instead when dispatch
-needs to consider the input value, environment, or installed
-backends.
+for a `BaseDispatchRegistry` subclass (`UnaryDispatchRegistry` /
+`BinaryDispatchRegistry`) or `ConverterRegistry` instead when
+dispatch needs to consider the input value, environment, or
+installed backends.
 
 ### Generic vs Record-based pattern
 

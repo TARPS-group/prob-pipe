@@ -55,6 +55,7 @@ Ray's serialization and dependency documentation before choosing between
 """
 
 import warnings
+
 warnings.filterwarnings("ignore", message=r"Explicitly requested dtype.*float64.*")
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -66,20 +67,25 @@ import numpy as np
 import pandas as pd
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-import probpipe
-from probpipe import (
-    Record, Normal, ProductDistribution,
-    EmpiricalDistribution, BootstrapReplicateDistribution,
-    GLMLikelihood, SimpleModel, WorkflowKind,
-    condition_on, mean, workflow_function,
-)
-
-
 # ---------------------------------------------------------------------------
 # 1. Configure Prefect to use RayTaskRunner
 # ---------------------------------------------------------------------------
-
 from prefect_ray import RayTaskRunner
+
+import probpipe
+from probpipe import (
+    BootstrapReplicateDistribution,
+    EmpiricalDistribution,
+    GLMLikelihood,
+    Normal,
+    ProductDistribution,
+    Record,
+    SimpleModel,
+    WorkflowKind,
+    condition_on,
+    mean,
+    workflow_function,
+)
 
 # ``address="auto"`` attaches to the persistent Ray head you launched with
 # ``ray start --head`` (see Usage above). Without that head, each flow would
@@ -121,12 +127,8 @@ prior = ProductDistribution(
     slope=Normal(loc=0.0, scale=jnp.sqrt(5.0), name="slope"),
 )
 
-model_poisson = SimpleModel(
-    prior, GLMLikelihood(tfp_glm.Poisson(), data["X"]), name="poisson"
-)
-model_nb = SimpleModel(
-    prior, GLMLikelihood(tfp_glm.NegativeBinomial(), data["X"]), name="negbin"
-)
+model_poisson = SimpleModel(prior, GLMLikelihood(tfp_glm.Poisson(), data["X"]), name="poisson")
+model_nb = SimpleModel(prior, GLMLikelihood(tfp_glm.NegativeBinomial(), data["X"]), name="negbin")
 
 print(f"Observations: {len(data['y'])}")
 print(f"Models: {model_poisson.name}, {model_nb.name}")
@@ -175,9 +177,7 @@ probpipe.prefect_config.workflow_kind = WorkflowKind.OFF
 
 for label, bagged in [("Poisson", bagged_poisson), ("NegBin", bagged_nb)]:
     ind_means = np.array([np.array(mean(p).flatten()) for p in bagged.components])
-    all_draws = np.concatenate(
-        [np.asarray(p.draws().flatten()) for p in bagged.components]
-    )
+    all_draws = np.concatenate([np.asarray(p.draws().flatten()) for p in bagged.components])
     ratio = np.var(ind_means, axis=0) / np.var(all_draws, axis=0)
     print(f"{label}:")
     print(f"  Posterior mean: {np.array2string(np.mean(ind_means, axis=0), precision=3)}")

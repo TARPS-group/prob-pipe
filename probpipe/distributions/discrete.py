@@ -4,34 +4,28 @@ Discrete distributions backed by TFP.
 
 from __future__ import annotations
 
-from typing import Any, Callable
+from collections.abc import Callable
 
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array, _promote_floats
-from .._utils import _auto_key
-from ..core.distribution import (
-    NumericRecordDistribution,
-    EmpiricalDistribution,
-)
-from ..core.provenance import Provenance
 from ..core.constraints import (
     Constraint,
     boolean,
-    non_negative_integer,
     integer_interval,
+    non_negative_integer,
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._tfp_base import TFPDistribution
 
 __all__ = [
     "Bernoulli",
     "Binomial",
-    "Poisson",
     "Categorical",
     "NegativeBinomial",
+    "Poisson",
 ]
 
 
@@ -102,7 +96,6 @@ class Bernoulli(TFPDistribution):
         return (1 - p) * f0 + p * f1
 
 
-
 class Binomial(TFPDistribution):
     """
     Binomial distribution.
@@ -133,15 +126,11 @@ class Binomial(TFPDistribution):
         if probs is not None:
             _, (self._total_count, self._probs) = _promote_floats(total_count, probs)
             self._logits = None
-            self._tfp_dist = tfd.Binomial(
-                total_count=self._total_count, probs=self._probs
-            )
+            self._tfp_dist = tfd.Binomial(total_count=self._total_count, probs=self._probs)
         else:
             _, (self._total_count, self._logits) = _promote_floats(total_count, logits)
             self._probs = None
-            self._tfp_dist = tfd.Binomial(
-                total_count=self._total_count, logits=self._logits
-            )
+            self._tfp_dist = tfd.Binomial(total_count=self._total_count, logits=self._logits)
         super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
@@ -178,15 +167,13 @@ class Binomial(TFPDistribution):
         tc = jnp.asarray(self._total_count)
         if tc.ndim != 0:
             raise ValueError(
-                "Binomial._expectation requires scalar total_count; "
-                f"got shape {tc.shape}"
+                f"Binomial._expectation requires scalar total_count; got shape {tc.shape}"
             )
         n = int(tc) + 1
         support = jnp.arange(n, dtype=self.dtype)
         probs = jnp.exp(self._tfp_dist.log_prob(support))
         f_vals = jax.vmap(f)(support)
         return jnp.einsum("n,n...->...", probs, f_vals)
-
 
 
 class Poisson(TFPDistribution):
@@ -222,7 +209,6 @@ class Poisson(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return non_negative_integer
-
 
 
 class Categorical(TFPDistribution):
@@ -293,7 +279,6 @@ class Categorical(TFPDistribution):
         return jnp.einsum("n,n...->...", probs, f_vals)
 
 
-
 class NegativeBinomial(TFPDistribution):
     """
     Negative binomial distribution.
@@ -324,9 +309,7 @@ class NegativeBinomial(TFPDistribution):
         if probs is not None:
             _, (self._total_count, self._probs) = _promote_floats(total_count, probs)
             self._logits = None
-            self._tfp_dist = tfd.NegativeBinomial(
-                total_count=self._total_count, probs=self._probs
-            )
+            self._tfp_dist = tfd.NegativeBinomial(total_count=self._total_count, probs=self._probs)
         else:
             _, (self._total_count, self._logits) = _promote_floats(total_count, logits)
             self._probs = None
@@ -354,4 +337,3 @@ class NegativeBinomial(TFPDistribution):
     @property
     def support(self) -> Constraint:
         return non_negative_integer
-

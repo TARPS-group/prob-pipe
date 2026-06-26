@@ -6,8 +6,7 @@ import numpy as np
 import pytest
 
 from probpipe import NumericRecord, Record
-from probpipe.core.record import RecordTemplate
-
+from probpipe.core.event_template import EventTemplate
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -35,10 +34,12 @@ class TestConstruction:
     def test_bool_accepted(self):
         """Python ``bool`` is a numeric leaf (JAX treats it as dtype bool)."""
         import jax.numpy as jnp
+
         v = NumericRecord(flag=True)
         assert v["flag"].dtype == jnp.bool_
         # ``bool`` array fields also work.
         import numpy as np
+
         v2 = NumericRecord(mask=np.array([True, False, True]))
         assert v2["mask"].dtype == jnp.bool_
 
@@ -92,7 +93,9 @@ class TestConstruction:
         metadata."""
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
-            [1.0, 2.0, 3.0], dims=["time"], coords={"time": [10, 20, 30]},
+            [1.0, 2.0, 3.0],
+            dims=["time"],
+            coords={"time": [10, 20, 30]},
         )
         nr = NumericRecord(y=da)
         assert isinstance(nr["y"], jnp.ndarray)
@@ -140,90 +143,88 @@ class TestConstruction:
         the two validation sites drift silently — this test pins down
         that they consume the same frozenset."""
         from probpipe.core._numeric_record import _NUMERIC_DTYPE_KINDS
-        assert _NUMERIC_DTYPE_KINDS == frozenset("biufc")
+
+        assert frozenset("biufc") == _NUMERIC_DTYPE_KINDS
         # Import path is also the import path used by
         # NumericRecordArray._validate_fields (see _record_array.py).
         from probpipe.core import _record_array
+
         assert _record_array._NUMERIC_DTYPE_KINDS is _NUMERIC_DTYPE_KINDS
 
 
 # ---------------------------------------------------------------------------
-# Flatten / unflatten
+# to_vector / from_vector (numeric 1-D serialization)
 # ---------------------------------------------------------------------------
 
 
-class TestFlattenUnflatten:
+class TestToVectorFromVector:
     def test_flatten_scalars(self):
         nr = NumericRecord(a=1.0, b=2.0, c=3.0)
-        flat = nr.flatten()
+        flat = nr.to_vector()
         assert flat.shape == (3,)
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
     def test_flatten_arrays(self):
         nr = NumericRecord(x=jnp.array([1.0, 2.0]), y=jnp.array([3.0]))
-        flat = nr.flatten()
+        flat = nr.to_vector()
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
     def test_flatten_nested(self):
         inner = NumericRecord(x=1.0, y=2.0)
         outer = NumericRecord(a=inner, b=3.0)
-        flat = outer.flatten()
+        flat = outer.to_vector()
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])
 
-    def test_unflatten_with_record_template(self):
-        tpl = RecordTemplate(a=(), b=(3,))
+    def test_unflatten_with_event_template(self):
+        tpl = EventTemplate(a=(), b=(3,))
         flat = jnp.array([1.0, 2.0, 3.0, 4.0])
-        nr = NumericRecord.unflatten(flat, template=tpl)
+        nr = tpl.from_vector(flat)
         assert isinstance(nr, NumericRecord)
         np.testing.assert_allclose(nr["a"], 1.0)
         np.testing.assert_allclose(nr["b"], [2.0, 3.0, 4.0])
 
     def test_roundtrip_with_template(self):
-        tpl = RecordTemplate(r=(), K=(), phi=())
+        tpl = EventTemplate(r=(), K=(), phi=())
         nr = NumericRecord(r=1.8, K=70.0, phi=10.0)
-        flat = nr.flatten()
-        nr2 = NumericRecord.unflatten(flat, template=tpl)
+        flat = nr.to_vector()
+        nr2 = tpl.from_vector(flat)
         np.testing.assert_allclose(float(nr2["r"]), 1.8)
         np.testing.assert_allclose(float(nr2["K"]), 70.0)
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
 
     def test_roundtrip_nested_template(self):
-        from probpipe.core.record import NumericRecordTemplate
-        inner_tpl = NumericRecordTemplate(x=(), y=(2,))
-        outer_tpl = NumericRecordTemplate(params=inner_tpl, z=(3,))
+        from probpipe.core.event_template import NumericEventTemplate
+
+        inner_tpl = NumericEventTemplate(x=(), y=(2,))
+        outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
-        nr = NumericRecord.unflatten(flat, template=outer_tpl)
+        nr = outer_tpl.from_vector(flat)
         assert isinstance(nr["params"], NumericRecord)
         np.testing.assert_allclose(nr["params"]["x"], 0.0)
         np.testing.assert_allclose(nr["params"]["y"], [1.0, 2.0])
         np.testing.assert_allclose(nr["z"], [3.0, 4.0, 5.0])
 
-    def test_unflatten_opaque_raises(self):
-        tpl = RecordTemplate(label=None, x=())
-        with pytest.raises(TypeError, match="opaque"):
-            NumericRecord.unflatten(jnp.array([1.0]), template=tpl)
-
-    def test_flat_size(self):
+    def test_vector_size(self):
         nr = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
-        assert nr.flat_size == 11
+        assert nr.vector_size == 11
 
 
 # ---------------------------------------------------------------------------
-# from_record conversion
+# Record -> NumericRecord conversion (to_numeric)
 # ---------------------------------------------------------------------------
 
 
-class TestFromRecord:
+class TestToNumeric:
     def test_simple(self):
         r = Record(a=1.0, b=jnp.zeros(3))
-        nr = NumericRecord.from_record(r)
+        nr = r.to_numeric()
         assert isinstance(nr, NumericRecord)
         assert nr.fields == ("a", "b")
 
     def test_nested(self):
         inner = Record(x=1.0, y=2.0)
         outer = Record(params=inner, z=3.0)
-        nr = NumericRecord.from_record(outer)
+        nr = outer.to_numeric()
         assert isinstance(nr, NumericRecord)
         assert isinstance(nr["params"], NumericRecord)
 

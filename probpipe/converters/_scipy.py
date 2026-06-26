@@ -10,7 +10,6 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from .._utils import _auto_key
 from ..core.distribution import (
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
@@ -21,6 +20,7 @@ from ._registry import ConversionInfo, ConversionMethod, Converter
 try:
     import scipy.stats as _stats
     from scipy.stats._distn_infrastructure import rv_frozen as _rv_frozen
+
     _HAS_SCIPY = True
 except ImportError:
     _HAS_SCIPY = False
@@ -30,9 +30,16 @@ except ImportError:
 def _build_scipy_to_probpipe() -> dict[type, tuple[str, callable]]:
     """Build scipy.stats type → (ProbPipe class, kwargs extractor)."""
     from ..distributions.continuous import (
-        Normal, Beta, Gamma, Exponential, LogNormal,
-        Uniform, Cauchy, Laplace,
+        Beta,
+        Cauchy,
+        Exponential,
+        Gamma,
+        Laplace,
+        LogNormal,
+        Normal,
+        Uniform,
     )
+
     if not _HAS_SCIPY:
         return {}
 
@@ -50,30 +57,40 @@ def _build_scipy_to_probpipe() -> dict[type, tuple[str, callable]]:
 
     # Keys are distribution *classes* (norm_gen, beta_gen, etc.)
     return {
-        type(_stats.norm): (Normal, lambda d: (
-            lambda s, loc, scale: {"loc": loc, "scale": scale}
-        )(*_extract(d))),
-        type(_stats.beta): (Beta, lambda d: (
-            lambda s, loc, scale: {"alpha": s[0], "beta": s[1]}
-        )(*_extract(d))),
-        type(_stats.gamma): (Gamma, lambda d: (
-            lambda s, loc, scale: {"concentration": s[0], "rate": 1.0 / scale}
-        )(*_extract(d))),
-        type(_stats.expon): (Exponential, lambda d: (
-            lambda s, loc, scale: {"rate": 1.0 / scale}
-        )(*_extract(d))),
-        type(_stats.lognorm): (LogNormal, lambda d: (
-            lambda s, loc, scale: {"loc": jnp.log(scale), "scale": s[0]}
-        )(*_extract(d))),
-        type(_stats.uniform): (Uniform, lambda d: (
-            lambda s, loc, scale: {"low": loc, "high": loc + scale}
-        )(*_extract(d))),
-        type(_stats.cauchy): (Cauchy, lambda d: (
-            lambda s, loc, scale: {"loc": loc, "scale": scale}
-        )(*_extract(d))),
-        type(_stats.laplace): (Laplace, lambda d: (
-            lambda s, loc, scale: {"loc": loc, "scale": scale}
-        )(*_extract(d))),
+        type(_stats.norm): (
+            Normal,
+            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_extract(d)),
+        ),
+        type(_stats.beta): (
+            Beta,
+            lambda d: (lambda s, loc, scale: {"alpha": s[0], "beta": s[1]})(*_extract(d)),
+        ),
+        type(_stats.gamma): (
+            Gamma,
+            lambda d: (lambda s, loc, scale: {"concentration": s[0], "rate": 1.0 / scale})(
+                *_extract(d)
+            ),
+        ),
+        type(_stats.expon): (
+            Exponential,
+            lambda d: (lambda s, loc, scale: {"rate": 1.0 / scale})(*_extract(d)),
+        ),
+        type(_stats.lognorm): (
+            LogNormal,
+            lambda d: (lambda s, loc, scale: {"loc": jnp.log(scale), "scale": s[0]})(*_extract(d)),
+        ),
+        type(_stats.uniform): (
+            Uniform,
+            lambda d: (lambda s, loc, scale: {"low": loc, "high": loc + scale})(*_extract(d)),
+        ),
+        type(_stats.cauchy): (
+            Cauchy,
+            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_extract(d)),
+        ),
+        type(_stats.laplace): (
+            Laplace,
+            lambda d: (lambda s, loc, scale: {"loc": loc, "scale": scale})(*_extract(d)),
+        ),
     }
 
 
@@ -86,7 +103,9 @@ def _build_probpipe_to_scipy() -> dict[str, callable]:
         "Beta": lambda d: _stats.beta(float(d._alpha), float(d._beta)),
         "Gamma": lambda d: _stats.gamma(float(d._concentration), scale=1.0 / float(d._rate)),
         "Exponential": lambda d: _stats.expon(scale=1.0 / float(d._rate)),
-        "Uniform": lambda d: _stats.uniform(loc=float(d._low), scale=float(d._high) - float(d._low)),
+        "Uniform": lambda d: _stats.uniform(
+            loc=float(d._low), scale=float(d._high) - float(d._low)
+        ),
         "Cauchy": lambda d: _stats.cauchy(loc=float(d._loc), scale=float(d._scale)),
         "Laplace": lambda d: _stats.laplace(loc=float(d._loc), scale=float(d._scale)),
     }
@@ -141,21 +160,27 @@ class ScipyConverter(Converter):
                     pp_cls, _ = self._scipy_map[dist_cls]
                     if target_type is pp_cls or issubclass(pp_cls, target_type):
                         return ConversionInfo(
-                            feasible=True, method=ConversionMethod.EXACT,
+                            feasible=True,
+                            method=ConversionMethod.EXACT,
                             estimated_time=0.0,
-                            source_type=type(source), target_type=target_type,
+                            source_type=type(source),
+                            target_type=target_type,
                             description=f"Extract parameters from scipy {dist_cls.__name__}",
                         )
                     return ConversionInfo(
-                        feasible=True, method=ConversionMethod.MOMENT_MATCH,
+                        feasible=True,
+                        method=ConversionMethod.MOMENT_MATCH,
                         estimated_time=0.1,
-                        source_type=type(source), target_type=target_type,
+                        source_type=type(source),
+                        target_type=target_type,
                     )
                 # Unknown scipy dist -> sample
                 return ConversionInfo(
-                    feasible=True, method=ConversionMethod.SAMPLE,
+                    feasible=True,
+                    method=ConversionMethod.SAMPLE,
                     estimated_time=0.2,
-                    source_type=type(source), target_type=target_type,
+                    source_type=type(source),
+                    target_type=target_type,
                     description="Sample from scipy distribution",
                 )
 
@@ -165,14 +190,18 @@ class ScipyConverter(Converter):
                 src_name = type(source).__name__
                 if src_name in self._pp_map:
                     return ConversionInfo(
-                        feasible=True, method=ConversionMethod.EXACT,
+                        feasible=True,
+                        method=ConversionMethod.EXACT,
                         estimated_time=0.0,
-                        source_type=type(source), target_type=target_type,
+                        source_type=type(source),
+                        target_type=target_type,
                     )
 
         return ConversionInfo(feasible=False)
 
-    def convert(self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any) -> Any:
+    def convert(
+        self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
+    ) -> Any:
         if not _HAS_SCIPY:
             raise TypeError("scipy is not installed")
 
@@ -184,10 +213,11 @@ class ScipyConverter(Converter):
                 params = extractor(source)
                 params.setdefault("name", dist_cls.__name__)
                 pp_dist = pp_cls(**params)
-                pp_dist.with_source(Provenance("convert_from_scipy", parents=()))
+                pp_dist.with_source(Provenance.create("convert_from_scipy", parents=[]))
                 if isinstance(pp_dist, target_type):
                     return pp_dist
                 from ._registry import converter_registry
+
                 return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
             # Unknown scipy: sample -> RecordEmpiricalDistribution
@@ -195,10 +225,11 @@ class ScipyConverter(Converter):
             samples = jnp.asarray(source.rvs(size=n))
             emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
             emp = RecordEmpiricalDistribution(samples, name=emp_name)
-            emp.with_source(Provenance("convert_from_scipy", parents=()))
+            emp.with_source(Provenance.create("convert_from_scipy", parents=[]))
             if issubclass(target_type, RecordEmpiricalDistribution):
                 return emp
             from ._registry import converter_registry
+
             return converter_registry.convert(emp, target_type, key=key, **kwargs)
 
         # Case 2: ProbPipe -> scipy

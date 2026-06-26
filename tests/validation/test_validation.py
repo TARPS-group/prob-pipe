@@ -1,24 +1,24 @@
 """Tests for probpipe.validation module."""
 
+from typing import ClassVar
+
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from probpipe import Normal, MultivariateNormal, GLMLikelihood, predictive_check
+from probpipe import GLMLikelihood, MultivariateNormal, Normal, predictive_check
 from probpipe.core.distribution import EmpiricalDistribution
 from probpipe.validation import predictive_check as pc_direct
 from probpipe.validation._predictive_check import (
-    _predictive_check_batched,
-    _predictive_check_loop,
     _supports_key_arg,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helper: JAX-based generative likelihood
 # ---------------------------------------------------------------------------
+
 
 class PoissonLikelihood:
     """Poisson regression: y_i ~ Poisson(exp(beta_0 + beta_1 * x_i))."""
@@ -41,6 +41,7 @@ class PoissonLikelihood:
 # Helper: non-JAX generative likelihood (plain numpy/Python)
 # ---------------------------------------------------------------------------
 
+
 class NumpyGaussianLikelihood:
     """Gaussian likelihood using only numpy — no JAX dependency in data gen."""
 
@@ -60,10 +61,11 @@ class NumpyGaussianLikelihood:
 # Helper: non-numeric generative likelihood (lists of strings)
 # ---------------------------------------------------------------------------
 
+
 class CategoricalLikelihood:
     """Generative likelihood that produces lists of category labels."""
 
-    _categories = ["cat", "dog", "fish"]
+    _categories: ClassVar[list[str]] = ["cat", "dog", "fish"]
 
     def __init__(self, rng_seed=0):
         self._rng = np.random.default_rng(rng_seed)
@@ -83,6 +85,7 @@ class CategoricalLikelihood:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def prior():
     return MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
@@ -96,32 +99,35 @@ def likelihood():
 
 @pytest.fixture
 def observed_data():
-    return jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1,
-                       0, 2, 6, 1, 3, 2, 0, 4, 1, 3])
+    return jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1, 0, 2, 6, 1, 3, 2, 0, 4, 1, 3])
 
 
 # ---------------------------------------------------------------------------
 # Tests — JAX-based (existing)
 # ---------------------------------------------------------------------------
 
+
 class TestPredictiveCheck:
     """Tests for the predictive_check WorkflowFunction."""
 
     def test_prior_check_returns_replicated_statistics(self, prior, likelihood):
         result = predictive_check(
-            prior, likelihood, test_fn=lambda d: float(jnp.mean(d)),
-            num_observations=20, num_replications=50, key=jax.random.PRNGKey(0),
+            prior,
+            likelihood,
+            test_fn=lambda d: float(jnp.mean(d)),
+            num_observations=20,
+            num_replications=50,
+            key=jax.random.PRNGKey(0),
         )
         assert "replicated_statistics" in result
         assert result["replicated_statistics"].num_atoms == 50
         assert "observed_statistic" not in result
         assert "p_value" not in result
 
-    def test_posterior_check_returns_p_value(
-        self, prior, likelihood, observed_data
-    ):
+    def test_posterior_check_returns_p_value(self, prior, likelihood, observed_data):
         result = predictive_check(
-            prior, likelihood,
+            prior,
+            likelihood,
             test_fn=lambda d: float(jnp.mean(d)),
             observed_data=observed_data,
             num_replications=100,
@@ -133,12 +139,11 @@ class TestPredictiveCheck:
         assert 0.0 <= result["p_value"] <= 1.0
         assert result["replicated_statistics"].num_atoms == 100
 
-    def test_num_observations_inferred_from_observed(
-        self, prior, likelihood, observed_data
-    ):
+    def test_num_observations_inferred_from_observed(self, prior, likelihood, observed_data):
         """When observed_data is provided, num_observations defaults to len(observed_data)."""
         result = predictive_check(
-            prior, likelihood,
+            prior,
+            likelihood,
             test_fn=lambda d: float(jnp.var(d)),
             observed_data=observed_data,
             num_replications=20,
@@ -149,17 +154,54 @@ class TestPredictiveCheck:
     def test_num_observations_required_without_observed(self, prior, likelihood):
         with pytest.raises(ValueError, match="num_observations is required"):
             predictive_check(
-                prior, likelihood,
+                prior,
+                likelihood,
                 test_fn=lambda d: float(jnp.mean(d)),
                 num_replications=10,
             )
 
+    def test_numeric_record_distribution_is_unwrapped(self, monkeypatch):
+        """Workflow-resolved NumericRecord values are wrapped for sampling."""
+        import probpipe.validation._predictive_check as predictive_check_module
+        from probpipe.core._numeric_record import NumericRecord
+
+        numeric = NumericRecord(x=np.array([0.0, 1.0, 2.0]), name="posterior")
+
+        class _FakeRecordEmpiricalDistribution:
+            def __init__(self, values, name=None):
+                self.values = values
+                self.name = name
+
+            def _sample(self, key, shape):
+                assert self.values is numeric
+                assert self.name == "posterior"
+                return jax.random.normal(key, shape)
+
+        monkeypatch.setattr(
+            predictive_check_module,
+            "RecordEmpiricalDistribution",
+            _FakeRecordEmpiricalDistribution,
+        )
+
+        result = predictive_check(
+            numeric,
+            NumpyGaussianLikelihood(rng_seed=0),
+            test_fn=lambda d: float(jnp.mean(d)),
+            observed_data=jnp.ones(20),
+            num_replications=5,
+            key=jax.random.PRNGKey(0),
+        )
+
+        assert "p_value" in result
+
     def test_is_workflow_function(self):
         from probpipe.core.node import WorkflowFunction
+
         assert isinstance(predictive_check, WorkflowFunction)
 
     def test_importable_from_top_level(self):
         from probpipe import predictive_check as pc
+
         assert callable(pc)
 
     def test_importable_from_subpackage(self):
@@ -171,9 +213,11 @@ class TestPredictiveCheck:
         assert prior.auxiliary is None or "predictive_check" not in prior.auxiliary
 
         predictive_check(
-            prior, likelihood,
+            prior,
+            likelihood,
             test_fn=lambda d: float(jnp.mean(d)),
-            num_observations=20, num_replications=10,
+            num_observations=20,
+            num_replications=10,
             key=jax.random.PRNGKey(10),
         )
         group = prior.auxiliary["predictive_check"]
@@ -183,23 +227,30 @@ class TestPredictiveCheck:
         assert check_ds.attrs["test_fn_name"]
 
     def test_multiple_checks_accumulate_in_auxiliary(
-        self, prior, likelihood, observed_data,
+        self,
+        prior,
+        likelihood,
+        observed_data,
     ):
         """Multiple predictive_check calls accumulate as ``check_N`` siblings."""
-        group = prior.auxiliary["predictive_check"] if (
-            prior.auxiliary is not None and "predictive_check" in prior.auxiliary
-        ) else None
+        group = (
+            prior.auxiliary["predictive_check"]
+            if (prior.auxiliary is not None and "predictive_check" in prior.auxiliary)
+            else None
+        )
         n_before = len(list(group.children)) if group is not None else 0
 
         predictive_check(
-            prior, likelihood,
+            prior,
+            likelihood,
             test_fn=lambda d: float(jnp.mean(d)),
             observed_data=observed_data,
             num_replications=10,
             key=jax.random.PRNGKey(20),
         )
         predictive_check(
-            prior, likelihood,
+            prior,
+            likelihood,
             test_fn=lambda d: float(jnp.var(d)),
             observed_data=observed_data,
             num_replications=10,
@@ -215,9 +266,11 @@ class TestPredictiveCheck:
             return float(jnp.max(data))
 
         predictive_check(
-            prior, likelihood,
+            prior,
+            likelihood,
             test_fn=my_custom_stat,
-            num_observations=20, num_replications=10,
+            num_observations=20,
+            num_replications=10,
             key=jax.random.PRNGKey(30),
         )
         group = prior.auxiliary["predictive_check"]
@@ -226,7 +279,9 @@ class TestPredictiveCheck:
         assert last.attrs["test_fn_name"] == "my_custom_stat"
 
     def test_frozen_distribution_skips_attachment_silently(
-        self, prior, likelihood,
+        self,
+        prior,
+        likelihood,
     ):
         """Distributions that disallow post-construction attribute
         writes (e.g., a custom subclass with ``__slots__`` that
@@ -290,10 +345,38 @@ class TestPredictiveCheck:
         # No raise — the ``except TypeError`` clause swallows it.
         _record_check_in_auxiliary(dist, stats, result)
 
+    def test_xarray_importerror_skips_attachment_silently(self, monkeypatch):
+        """If xarray is unavailable, auxiliary attachment is skipped."""
+        import builtins
+
+        from probpipe.validation._predictive_check import (
+            _record_check_in_auxiliary,
+        )
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "xarray":
+                raise ImportError("xarray unavailable")
+            return real_import(name, *args, **kwargs)
+
+        class _Dist:
+            pass
+
+        dist = _Dist()
+        stats = jnp.zeros(5)
+        result = {"test_fn_name": "stub", "replicated_statistics": stats}
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        _record_check_in_auxiliary(dist, stats, result)
+
+        assert not hasattr(dist, "_auxiliary")
+
 
 # ---------------------------------------------------------------------------
 # Tests — non-JAX data types
 # ---------------------------------------------------------------------------
+
 
 class TestPredictiveCheckNonJax:
     """predictive_check should work with non-JAX data types."""
@@ -305,7 +388,8 @@ class TestPredictiveCheckNonJax:
         observed = np.array([1.2, 0.8, 1.5, 0.3, 1.1])
 
         result = predictive_check(
-            prior, lik,
+            prior,
+            lik,
             test_fn=lambda d: float(np.mean(d)),
             observed_data=observed,
             num_replications=100,
@@ -322,7 +406,8 @@ class TestPredictiveCheckNonJax:
         lik = NumpyGaussianLikelihood(rng_seed=7)
 
         result = predictive_check(
-            prior, lik,
+            prior,
+            lik,
             test_fn=lambda d: float(np.std(d)),
             num_observations=50,
             num_replications=30,
@@ -339,14 +424,14 @@ class TestPredictiveCheckNonJax:
             name="logits",
         )
         lik = CategoricalLikelihood(rng_seed=99)
-        observed = ["cat", "dog", "cat", "fish", "cat",
-                     "dog", "cat", "cat", "fish", "cat"]
+        observed = ["cat", "dog", "cat", "fish", "cat", "dog", "cat", "cat", "fish", "cat"]
 
         def cat_fraction(data):
             return sum(1 for x in data if x == "cat") / len(data)
 
         result = predictive_check(
-            prior, lik,
+            prior,
+            lik,
             test_fn=cat_fraction,
             observed_data=observed,
             num_replications=50,
@@ -363,7 +448,8 @@ class TestPredictiveCheckNonJax:
         lik = NumpyGaussianLikelihood(rng_seed=11)
 
         result = predictive_check(
-            dist, lik,
+            dist,
+            lik,
             test_fn=lambda d: float(np.mean(d)),
             num_observations=10,
             num_replications=20,
@@ -375,6 +461,7 @@ class TestPredictiveCheckNonJax:
 # ---------------------------------------------------------------------------
 # Tests — batched fast path
 # ---------------------------------------------------------------------------
+
 
 class TestPredictiveCheckBatched:
     """Tests for the vectorized (batched) predictive check path."""
@@ -399,7 +486,8 @@ class TestPredictiveCheckBatched:
         """GLMLikelihood triggers the batched path and produces correct results."""
         prior, lik = glm_setup
         result = predictive_check(
-            prior, lik,
+            prior,
+            lik,
             test_fn=lambda d: jnp.mean(d),
             num_observations=20,
             num_replications=50,
@@ -412,7 +500,8 @@ class TestPredictiveCheckBatched:
         prior, lik = glm_setup
         observed = jnp.ones(20, dtype=jnp.float32) * 2
         result = predictive_check(
-            prior, lik,
+            prior,
+            lik,
             test_fn=lambda d: jnp.mean(d),
             observed_data=observed,
             num_replications=100,
@@ -433,7 +522,8 @@ class TestPredictiveCheckBatched:
             return -val
 
         result = predictive_check(
-            prior, lik,
+            prior,
+            lik,
             test_fn=non_vmapable,
             num_observations=20,
             num_replications=30,
@@ -444,7 +534,8 @@ class TestPredictiveCheckBatched:
     def test_loop_path_for_plain_likelihood(self, prior, likelihood):
         """PoissonLikelihood (no key arg) uses the loop path."""
         result = predictive_check(
-            prior, likelihood,
+            prior,
+            likelihood,
             test_fn=lambda d: float(jnp.mean(d)),
             num_observations=20,
             num_replications=30,

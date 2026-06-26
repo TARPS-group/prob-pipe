@@ -1,6 +1,6 @@
 """Pickle / cloudpickle round-trip tests for the Record family.
 
-These tests ensure that Record, RecordTemplate, NumericRecord, RecordArray,
+These tests ensure that Record, EventTemplate, NumericRecord, RecordArray,
 and NumericRecordArray can survive pickle serialization, which is required for
 Ray task distribution (Ray uses cloudpickle to ship arguments to workers).
 
@@ -21,12 +21,20 @@ from probpipe import (
     RecordArray,
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
-from probpipe.core.record import NumericRecordTemplate, Record, RecordTemplate
-
+from probpipe.core.event_template import (
+    ArraySpec,
+    EventTemplate,
+    NumericEventTemplate,
+    OpaqueSpec,
+)
+from probpipe.core.record import (
+    Record,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def roundtrip(obj):
     return pickle.loads(pickle.dumps(obj))
@@ -67,6 +75,7 @@ def test_record_immutability_after_unpickle():
 
 def test_record_provenance_preserved():
     from probpipe.core.provenance import Provenance
+
     r = Record(x=jnp.array(1.0))
     r.with_source(Provenance(operation="test_op", metadata={"k": "v"}))
     assert r._source is not None
@@ -85,26 +94,26 @@ def test_record_no_provenance_roundtrip():
 
 
 # ---------------------------------------------------------------------------
-# RecordTemplate
+# EventTemplate
 # ---------------------------------------------------------------------------
 
 
-def test_record_template_pickle_roundtrip():
-    t = RecordTemplate(label=None, x=())
+def test_event_template_pickle_roundtrip():
+    t = EventTemplate(label=None, x=())
     t2 = roundtrip(t)
-    assert type(t2) is RecordTemplate
+    assert type(t2) is EventTemplate
     assert t2.fields == ("label", "x")
-    assert t2["label"] is None
-    assert t2["x"] == ()
+    assert t2["label"] == OpaqueSpec()
+    assert t2["x"] == ArraySpec(())
 
 
-def test_numeric_record_template_pickle_roundtrip():
-    t = RecordTemplate(x=(), y=(3,))
-    assert type(t) is NumericRecordTemplate
+def test_numeric_event_template_pickle_roundtrip():
+    t = EventTemplate(x=(), y=(3,))
+    assert type(t) is NumericEventTemplate
     t2 = roundtrip(t)
-    assert type(t2) is NumericRecordTemplate
+    assert type(t2) is NumericEventTemplate
     assert t2.fields == ("x", "y")
-    assert t2.flat_size == 4  # () + (3,)
+    assert t2.vector_size == 4  # () + (3,)
 
 
 # ---------------------------------------------------------------------------
@@ -117,14 +126,14 @@ def test_numeric_record_pickle_roundtrip():
     nr2 = roundtrip(nr)
     assert nr2.fields == ("r", "K", "phi")
     assert float(nr2["r"]) == pytest.approx(1.8)
-    assert nr2.flat_size == 3
+    assert nr2.vector_size == 3
 
 
-def test_numeric_record_flat_size_recomputed():
+def test_numeric_record_vector_size_recomputed():
     nr = NumericRecord(a=jnp.ones((2, 3)))
-    assert nr.flat_size == 6
+    assert nr.vector_size == 6
     nr2 = roundtrip(nr)
-    assert nr2.flat_size == 6
+    assert nr2.vector_size == 6
 
 
 def test_numeric_record_cloudpickle_roundtrip():
@@ -140,7 +149,7 @@ def test_numeric_record_cloudpickle_roundtrip():
 
 
 def test_record_array_pickle_roundtrip():
-    template = RecordTemplate(x=(), y=(3,))
+    template = EventTemplate(x=(), y=(3,))
     ra = RecordArray(
         {"x": jnp.array([1.0, 2.0]), "y": jnp.ones((2, 3))},
         batch_shape=(2,),
@@ -153,7 +162,7 @@ def test_record_array_pickle_roundtrip():
 
 
 def test_record_array_template_preserved():
-    template = RecordTemplate(x=(), y=(3,))
+    template = EventTemplate(x=(), y=(3,))
     ra = RecordArray(
         {"x": jnp.array([1.0]), "y": jnp.ones((1, 3))},
         batch_shape=(1,),
@@ -169,7 +178,7 @@ def test_record_array_template_preserved():
 
 
 def test_numeric_record_array_pickle_roundtrip():
-    template = RecordTemplate(x=(), y=(2,))
+    template = EventTemplate(x=(), y=(2,))
     nra = NumericRecordArray(
         {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.ones((3, 2))},
         batch_shape=(3,),
@@ -182,7 +191,7 @@ def test_numeric_record_array_pickle_roundtrip():
 
 
 def test_numeric_record_array_cloudpickle_roundtrip():
-    template = RecordTemplate(x=())
+    template = EventTemplate(x=())
     nra = NumericRecordArray(
         {"x": jnp.array([1.0, 2.0])},
         batch_shape=(2,),

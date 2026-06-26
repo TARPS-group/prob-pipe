@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-from typing import Any, Callable, Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -32,7 +33,6 @@ from ..core.protocols import (
 )
 from ..custom_types import Array, ArrayLike, PRNGKey
 
-
 # ---------------------------------------------------------------------------
 # Internal bypass for the batched-parameters rejection
 # ---------------------------------------------------------------------------
@@ -50,7 +50,8 @@ from ..custom_types import Array, ArrayLike, PRNGKey
 # never use the bypass.
 
 _BATCHED_INIT_BYPASS: contextvars.ContextVar[bool] = contextvars.ContextVar(
-    "_BATCHED_INIT_BYPASS", default=False,
+    "_BATCHED_INIT_BYPASS",
+    default=False,
 )
 """Per-context flag consulted by ``TFPDistribution.__init__``'s
 batched-parameters rejection. ``ContextVar`` over a module-level bool
@@ -222,7 +223,10 @@ class TFPDistribution(
         return_dist: bool | None = None,
     ) -> Any:
         return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations,
+            self,
+            f,
+            key=key,
+            num_evaluations=num_evaluations,
             return_dist=return_dist,
         )
 
@@ -235,7 +239,7 @@ class TFPDistribution(
         name: str,
         batch_shape: tuple[int, ...],
         **batched_params: Any,
-    ) -> "_TFPArrayBackend":
+    ) -> _TFPArrayBackend:
         """Construct a fused TFP-batched backend for ``DistributionArray``.
 
         Inherited automatically by every concrete TFP-backed distribution
@@ -363,7 +367,9 @@ class _TFPArrayBackend:
             batched_params = normalised
         self._batched_params = batched_params
         self._batched_dist: TFPDistribution = _construct_batched_dist(
-            dist_cls, name=name, batched_params=batched_params,
+            dist_cls,
+            name=name,
+            batched_params=batched_params,
         )
         # Final sanity check: TFP's inferred batch_shape must match
         # the caller's declaration. Catches the rare case where a
@@ -413,17 +419,14 @@ class _TFPArrayBackend:
         """
         multi, flat = self._normalize_index(index)
         scalar_params = {
-            key: _slice_leading_axes(value, multi)
-            for key, value in self._batched_params.items()
+            key: _slice_leading_axes(value, multi) for key, value in self._batched_params.items()
         }
         return self._dist_cls(
             **scalar_params,
             name=f"{self._name}_{flat}",
         )
 
-    def _normalize_index(
-        self, index: int | tuple[int, ...]
-    ) -> tuple[tuple[int, ...], int]:
+    def _normalize_index(self, index: int | tuple[int, ...]) -> tuple[tuple[int, ...], int]:
         """Return ``(multi_index, flat_index)`` for the given input.
 
         Lets :meth:`cell` slice with the multi-d index *and* name the
@@ -439,8 +442,7 @@ class _TFPArrayBackend:
             if len(bshape) == 1:
                 if not 0 <= i < bshape[0]:
                     raise IndexError(
-                        f"_TFPArrayBackend.cell: index {i} out of range "
-                        f"for batch_shape={bshape}."
+                        f"_TFPArrayBackend.cell: index {i} out of range for batch_shape={bshape}."
                     )
                 return (i,), i
             multi = tuple(int(x) for x in np.unravel_index(i, bshape))
@@ -501,7 +503,7 @@ class _TFPArrayBackend:
         return children, aux
 
     @classmethod
-    def tree_unflatten(cls, aux, children) -> "_TFPArrayBackend":
+    def tree_unflatten(cls, aux, children) -> _TFPArrayBackend:
         """Reconstruct the backend without re-running the
         ``__init__`` shape sanity check.
 
@@ -520,7 +522,9 @@ class _TFPArrayBackend:
         instance._batch_shape = tuple(batch_shape)
         instance._batched_params = dict(zip(keys, children))
         instance._batched_dist = _construct_batched_dist(
-            dist_cls, name=name, batched_params=instance._batched_params,
+            dist_cls,
+            name=name,
+            batched_params=instance._batched_params,
         )
         return instance
 

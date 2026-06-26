@@ -17,9 +17,7 @@ from probpipe.core.protocols import SupportsSampling
 
 
 def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
-    return NumericRecordArray.stack(
-        [NumericRecord(**{field: float(value)}) for value in values]
-    )
+    return NumericRecordArray.stack([NumericRecord(**{field: float(value)}) for value in values])
 
 
 class TestBroadcastRegime:
@@ -115,12 +113,7 @@ class TestHintClassification:
 
 class TestArrayGrouping:
     def test_sibling_views_zip_into_one_group(self):
-        ra = NumericRecordArray.stack(
-            [
-                NumericRecord(x=float(i), y=float(2 * i))
-                for i in range(4)
-            ]
-        )
+        ra = NumericRecordArray.stack([NumericRecord(x=float(i), y=float(2 * i)) for i in range(4)])
 
         plan = build_broadcast_plan(
             values={"x": ra.view("x"), "y": ra.view("y")},

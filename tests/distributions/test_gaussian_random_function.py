@@ -2,25 +2,22 @@
 
 from __future__ import annotations
 
-import math
-
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
 from probpipe import (
+    ArrayRandomFunction,
     Distribution,
     DistributionArray,
-    Normal,
-    MultivariateNormal,
-    RandomFunction,
-    ArrayRandomFunction,
     GaussianRandomFunction,
     LinearBasisFunction,
+    MultivariateNormal,
+    Normal,
+    RandomFunction,
+    sample,
 )
-from probpipe import sample
-
 
 # ---------------------------------------------------------------------------
 # Dense ground-truth helpers
@@ -79,14 +76,13 @@ def _assert_da_of(dist, cls):
     assert isinstance(dist, DistributionArray)
     for i in range(dist.size):
         cell = dist._flat_component(i)
-        assert isinstance(cell, cls), (
-            f"cell {i} is {type(cell).__name__}, expected {cls.__name__}"
-        )
+        assert isinstance(cell, cls), f"cell {i} is {type(cell).__name__}, expected {cls.__name__}"
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def key():
@@ -101,7 +97,7 @@ def key():
 def _rbf_kernel(X1, X2, lengthscale=1.0, variance=1.0):
     """Simple RBF kernel for mock GP."""
     sq_dist = jnp.sum((X1[:, None, :] - X2[None, :, :]) ** 2, axis=-1)
-    return variance * jnp.exp(-0.5 * sq_dist / lengthscale ** 2)
+    return variance * jnp.exp(-0.5 * sq_dist / lengthscale**2)
 
 
 class _ScalarGP(GaussianRandomFunction):
@@ -350,6 +346,7 @@ class TestLinearBasisFunction:
     def test_marginal_mean_value(self, scalar_lbf):
         """Check mean matches manual computation."""
         from probpipe import mean as mean_op
+
         X = jnp.array([[0.0], [1.0]])
         dist = scalar_lbf(X)
         # ``scalar_lbf(X)`` returns a ``DistributionArray`` of cells;
@@ -408,9 +405,7 @@ class TestLinearBasisFunction:
 
     def test_covariance_full_joint_multi(self, multi_output_lbf):
         X = jnp.linspace(-1, 1, 5).reshape(-1, 1)
-        cov = multi_output_lbf.predict_covariance(
-            X, joint_inputs=True, joint_outputs=True
-        )
+        cov = multi_output_lbf.predict_covariance(X, joint_inputs=True, joint_outputs=True)
         assert cov.shape == (10, 10)  # 5*2 x 5*2
 
     # -- Function sampling --------------------------------------------------
@@ -585,9 +580,7 @@ class TestLinearMap:
         assert cov_per_out.shape == (2, 3, 3)
 
         # Get via full joint and extract
-        cov_full = h.predict_covariance(
-            X, joint_inputs=True, joint_outputs=True
-        )
+        cov_full = h.predict_covariance(X, joint_inputs=True, joint_outputs=True)
         assert cov_full.shape == (6, 6)
 
         # The per-output covariance for output 0 should match the
@@ -754,8 +747,10 @@ class TestIndependentSum:
         X = jnp.stack([jnp.linspace(-1, 1, 5), jnp.zeros(5)], axis=-1)  # (5, 2)
         np.testing.assert_allclose(
             h.predict_covariance(X, joint_inputs=True),
-            (gp1.predict_covariance(X, joint_inputs=True)
-             + gp2.predict_covariance(X, joint_inputs=True)),
+            (
+                gp1.predict_covariance(X, joint_inputs=True)
+                + gp2.predict_covariance(X, joint_inputs=True)
+            ),
             atol=1e-5,
         )
 
@@ -853,6 +848,7 @@ class TestAlgebraComposition:
 
 # ---------- shared fixtures for correctness tests ----------
 
+
 @pytest.fixture
 def correctness_X():
     """4 test input points for correctness checks."""
@@ -881,11 +877,14 @@ def _simple_multi_output_features(X):
     """
     x = X[..., 0]  # (n,)
     ones = jnp.ones_like(x)
-    return jnp.stack([
-        jnp.stack([ones, x], axis=-1),       # output 0: [1, x]
-        jnp.stack([x, x ** 2], axis=-1),     # output 1: [x, x^2]
-        jnp.stack([ones, -x], axis=-1),      # output 2: [1, -x]
-    ], axis=-2)  # (n, 3, 2)
+    return jnp.stack(
+        [
+            jnp.stack([ones, x], axis=-1),  # output 0: [1, x]
+            jnp.stack([x, x**2], axis=-1),  # output 1: [x, x^2]
+            jnp.stack([ones, -x], axis=-1),  # output 2: [1, -x]
+        ],
+        axis=-2,
+    )  # (n, 3, 2)
 
 
 @pytest.fixture
@@ -907,18 +906,20 @@ def correlated_lbf(correctness_w_mean, correctness_w_cov):
 def _simple_scalar_features(X):
     """Feature map: scalar input → [1, x, x^2]."""
     x = X[..., 0]
-    return jnp.stack([jnp.ones_like(x), x, x ** 2], axis=-1)  # (n, 3)
+    return jnp.stack([jnp.ones_like(x), x, x**2], axis=-1)  # (n, 3)
 
 
 @pytest.fixture
 def scalar_correctness_lbf():
     """Scalar LBF with non-trivial weight covariance."""
     w_mean = jnp.array([1.0, -0.5, 0.2])
-    w_cov = jnp.array([
-        [1.0, 0.2, -0.1],
-        [0.2, 0.8, 0.05],
-        [-0.1, 0.05, 0.3],
-    ])
+    w_cov = jnp.array(
+        [
+            [1.0, 0.2, -0.1],
+            [0.2, 0.8, 0.05],
+            [-0.1, 0.05, 0.3],
+        ]
+    )
     weights = MultivariateNormal(name="weights", loc=w_mean, cov=w_cov)
     return LinearBasisFunction(
         feature_map=_simple_scalar_features,
@@ -932,12 +933,10 @@ class TestLinearBasisFunctionCorrectness:
 
     def test_mean_scalar(self, scalar_correctness_lbf, correctness_X):
         X = correctness_X
-        phi = np.array(_simple_scalar_features(X))   # (4, 3)
+        phi = np.array(_simple_scalar_features(X))  # (4, 3)
         m = np.array([1.0, -0.5, 0.2])
         expected = phi @ m
-        np.testing.assert_allclose(
-            scalar_correctness_lbf.predict_mean(X), expected, atol=1e-5
-        )
+        np.testing.assert_allclose(scalar_correctness_lbf.predict_mean(X), expected, atol=1e-5)
 
     def test_variance_equals_cov_diag_scalar(self, scalar_correctness_lbf, correctness_X):
         X = correctness_X
@@ -947,12 +946,14 @@ class TestLinearBasisFunctionCorrectness:
 
     def test_joint_cov_scalar(self, scalar_correctness_lbf, correctness_X):
         X = correctness_X
-        phi = np.array(_simple_scalar_features(X))   # (4, 3)
-        C = np.array([
-            [1.0, 0.2, -0.1],
-            [0.2, 0.8, 0.05],
-            [-0.1, 0.05, 0.3],
-        ])
+        phi = np.array(_simple_scalar_features(X))  # (4, 3)
+        C = np.array(
+            [
+                [1.0, 0.2, -0.1],
+                [0.2, 0.8, 0.05],
+                [-0.1, 0.05, 0.3],
+            ]
+        )
         expected = phi @ C @ phi.T  # (4, 4)
         cov = scalar_correctness_lbf.predict_covariance(X, joint_inputs=True)
         np.testing.assert_allclose(cov, expected, atol=1e-5)
@@ -962,20 +963,14 @@ class TestLinearBasisFunctionCorrectness:
         phi = np.array(_simple_multi_output_features(X))  # (4, 3, 2)
         m = np.array(correctness_w_mean)
         expected = np.einsum("now,w->no", phi, m)  # (4, 3)
-        np.testing.assert_allclose(
-            correlated_lbf.predict_mean(X), expected, atol=1e-5
-        )
+        np.testing.assert_allclose(correlated_lbf.predict_mean(X), expected, atol=1e-5)
 
-    def test_full_joint_cov_multi_output(
-        self, correlated_lbf, correctness_X, correctness_w_cov
-    ):
+    def test_full_joint_cov_multi_output(self, correlated_lbf, correctness_X, correctness_w_cov):
         X = correctness_X
         phi = np.array(_simple_multi_output_features(X))  # (4, 3, 2)
         C = np.array(correctness_w_cov)
         expected = _dense_lbf_full_joint_cov(phi, C)  # (12, 12)
-        cov = correlated_lbf.predict_covariance(
-            X, joint_inputs=True, joint_outputs=True
-        )
+        cov = correlated_lbf.predict_covariance(X, joint_inputs=True, joint_outputs=True)
         np.testing.assert_allclose(cov, expected, atol=1e-5)
 
     def test_variance_equals_diag_of_per_point_cov(
@@ -983,25 +978,17 @@ class TestLinearBasisFunctionCorrectness:
     ):
         """predict_variance should equal diag of joint_outputs cov at each point."""
         X = correctness_X
-        var = correlated_lbf.predict_variance(X)      # (4, 3)
-        per_pt = correlated_lbf.predict_covariance(
-            X, joint_outputs=True
-        )                                               # (4, 3, 3)
+        var = correlated_lbf.predict_variance(X)  # (4, 3)
+        per_pt = correlated_lbf.predict_covariance(X, joint_outputs=True)  # (4, 3, 3)
         for i in range(4):
-            np.testing.assert_allclose(
-                var[i], np.diag(np.array(per_pt[i])), atol=1e-5
-            )
+            np.testing.assert_allclose(var[i], np.diag(np.array(per_pt[i])), atol=1e-5)
 
-    def test_per_output_cov_matches_full_joint_blocks(
-        self, correlated_lbf, correctness_X
-    ):
+    def test_per_output_cov_matches_full_joint_blocks(self, correlated_lbf, correctness_X):
         """joint_inputs per-output cov should match blocks of full joint."""
         X = correctness_X
         n = 4
         d_out = 3
-        per_out = correlated_lbf.predict_covariance(
-            X, joint_inputs=True
-        )  # (3, 4, 4)
+        per_out = correlated_lbf.predict_covariance(X, joint_inputs=True)  # (3, 4, 4)
         full = correlated_lbf.predict_covariance(
             X, joint_inputs=True, joint_outputs=True
         )  # (12, 12)
@@ -1018,9 +1005,7 @@ class TestLinearMapCorrectness:
     Effective feature map: Φ_h(x) = (A @ Φ_g(x)^T)^T, then standard formulas.
     """
 
-    def test_mean_ground_truth(
-        self, correlated_lbf, correctness_X, correctness_w_mean
-    ):
+    def test_mean_ground_truth(self, correlated_lbf, correctness_X, correctness_w_mean):
         A = jnp.array([[1.0, 0.0, -1.0], [0.5, 0.5, 0.0]])  # (2, 3)
         h = A @ correlated_lbf
         X = correctness_X
@@ -1032,9 +1017,7 @@ class TestLinearMapCorrectness:
         expected = np.einsum("oh,...h->...o", np.array(A), g_mean)  # (4, 2)
         np.testing.assert_allclose(h.predict_mean(X), expected, atol=1e-5)
 
-    def test_per_point_cov_ground_truth(
-        self, correlated_lbf, correctness_X, correctness_w_cov
-    ):
+    def test_per_point_cov_ground_truth(self, correlated_lbf, correctness_X, correctness_w_cov):
         """Per-point output covariance: A @ Φ(x) @ C @ Φ(x)^T @ A^T."""
         A_np = np.array([[1.0, 0.0, -1.0], [0.5, 0.5, 0.0]])
         A = jnp.array(A_np)
@@ -1047,13 +1030,11 @@ class TestLinearMapCorrectness:
         cov_jo = h.predict_covariance(X, joint_outputs=True)  # (4, 2, 2)
         for i in range(4):
             # Effective features for h at point i: A @ phi_g[i]
-            phi_h_i = A_np @ phi_g[i]   # (2, 2)
+            phi_h_i = A_np @ phi_g[i]  # (2, 2)
             expected_i = phi_h_i @ C @ phi_h_i.T  # (2, 2)
             np.testing.assert_allclose(cov_jo[i], expected_i, atol=1e-5)
 
-    def test_variance_is_diag_of_per_point_cov(
-        self, correlated_lbf, correctness_X
-    ):
+    def test_variance_is_diag_of_per_point_cov(self, correlated_lbf, correctness_X):
         A = jnp.array([[1.0, 0.0, -1.0], [0.5, 0.5, 0.0]])
         h = A @ correlated_lbf
         X = correctness_X
@@ -1061,13 +1042,9 @@ class TestLinearMapCorrectness:
         var = h.predict_variance(X)  # (4, 2)
         cov_jo = h.predict_covariance(X, joint_outputs=True)  # (4, 2, 2)
         for i in range(4):
-            np.testing.assert_allclose(
-                var[i], np.diag(np.array(cov_jo[i])), atol=1e-6
-            )
+            np.testing.assert_allclose(var[i], np.diag(np.array(cov_jo[i])), atol=1e-6)
 
-    def test_full_joint_cov_ground_truth(
-        self, correlated_lbf, correctness_X, correctness_w_cov
-    ):
+    def test_full_joint_cov_ground_truth(self, correlated_lbf, correctness_X, correctness_w_cov):
         """Full joint covariance against dense computation."""
         A_np = np.array([[1.0, 0.0, -1.0], [0.5, 0.5, 0.0]])
         A = jnp.array(A_np)
@@ -1081,14 +1058,10 @@ class TestLinearMapCorrectness:
         phi_h = np.einsum("oh,nhw->now", A_np, phi_g)  # (4, 2, 2)
         expected = _dense_lbf_full_joint_cov(phi_h, C)  # (8, 8)
 
-        cov = h.predict_covariance(
-            X, joint_inputs=True, joint_outputs=True
-        )  # (8, 8)
+        cov = h.predict_covariance(X, joint_inputs=True, joint_outputs=True)  # (8, 8)
         np.testing.assert_allclose(cov, expected, atol=1e-5)
 
-    def test_per_output_cov_ground_truth(
-        self, correlated_lbf, correctness_X, correctness_w_cov
-    ):
+    def test_per_output_cov_ground_truth(self, correlated_lbf, correctness_X, correctness_w_cov):
         """Per-output cross-input cov: key test for the covariance fix.
 
         This is the path that was buggy before (used phi**2 instead of
@@ -1104,7 +1077,7 @@ class TestLinearMapCorrectness:
         phi_g = np.array(_simple_multi_output_features(X))  # (4, 3, 2)
         C = np.array(correctness_w_cov)
         phi_h = np.einsum("oh,nhw->now", A_np, phi_g)  # (4, 2, 2)
-        full = _dense_lbf_full_joint_cov(phi_h, C)       # (8, 8)
+        full = _dense_lbf_full_joint_cov(phi_h, C)  # (8, 8)
 
         n, d_out = 4, 2
         per_out = h.predict_covariance(X, joint_inputs=True)  # (2, 4, 4)
@@ -1114,13 +1087,13 @@ class TestLinearMapCorrectness:
             idx = np.arange(n) * d_out + o
             expected_block = full[np.ix_(idx, idx)]
             np.testing.assert_allclose(
-                per_out[o], expected_block, atol=1e-5,
-                err_msg=f"Per-output cov mismatch for output {o}"
+                per_out[o],
+                expected_block,
+                atol=1e-5,
+                err_msg=f"Per-output cov mismatch for output {o}",
             )
 
-    def test_per_output_cov_cross_output_matters(
-        self, correctness_w_cov
-    ):
+    def test_per_output_cov_cross_output_matters(self, correctness_w_cov):
         """Demonstrate that ignoring cross-output correlations gives
         wrong answers, and our code gets it right.
 
@@ -1155,16 +1128,15 @@ class TestLinearMapCorrectness:
         # Wrong: the old phi**2 formula (ignores cross-output correlations)
         # Per-output base cov (joint_inputs, not joint_outputs):
         #   base_cov_w[i, j] for each output w independently
-        base_per_out = np.array(
-            base.predict_covariance(X, joint_inputs=True)
-        )  # (3, 2, 2)
-        wrong_cov = np.einsum(
-            "ow,...wij->...oij", A_np ** 2, base_per_out
-        )[0]  # squeeze the single output dim → (2, 2)
+        base_per_out = np.array(base.predict_covariance(X, joint_inputs=True))  # (3, 2, 2)
+        wrong_cov = np.einsum("ow,...wij->...oij", A_np**2, base_per_out)[
+            0
+        ]  # squeeze the single output dim → (2, 2)
 
         # These should differ
-        assert not np.allclose(correct_cov, wrong_cov, atol=1e-3), \
+        assert not np.allclose(correct_cov, wrong_cov, atol=1e-3), (
             "Test is degenerate: correct and wrong formulas agree"
+        )
 
         # Our implementation should match the correct formula
         h_cov = h.predict_covariance(X, joint_inputs=True)  # (1, 2, 2)
@@ -1174,41 +1146,37 @@ class TestLinearMapCorrectness:
 class TestScaleCorrectness:
     """Verify scalar scaling moments against ground truth."""
 
-    def test_variance_ground_truth(
-        self, scalar_correctness_lbf, correctness_X
-    ):
+    def test_variance_ground_truth(self, scalar_correctness_lbf, correctness_X):
         alpha = 3.0
         h = alpha * scalar_correctness_lbf
         X = correctness_X
 
         phi = np.array(_simple_scalar_features(X))
-        C = np.array([
-            [1.0, 0.2, -0.1],
-            [0.2, 0.8, 0.05],
-            [-0.1, 0.05, 0.3],
-        ])
-        base_var = np.diag(phi @ C @ phi.T)
-        np.testing.assert_allclose(
-            h.predict_variance(X), alpha ** 2 * base_var, atol=1e-5
+        C = np.array(
+            [
+                [1.0, 0.2, -0.1],
+                [0.2, 0.8, 0.05],
+                [-0.1, 0.05, 0.3],
+            ]
         )
+        base_var = np.diag(phi @ C @ phi.T)
+        np.testing.assert_allclose(h.predict_variance(X), alpha**2 * base_var, atol=1e-5)
 
-    def test_full_joint_cov_ground_truth(
-        self, scalar_correctness_lbf, correctness_X
-    ):
+    def test_full_joint_cov_ground_truth(self, scalar_correctness_lbf, correctness_X):
         alpha = -2.5
         h = alpha * scalar_correctness_lbf
         X = correctness_X
 
         phi = np.array(_simple_scalar_features(X))
-        C = np.array([
-            [1.0, 0.2, -0.1],
-            [0.2, 0.8, 0.05],
-            [-0.1, 0.05, 0.3],
-        ])
-        expected = alpha ** 2 * (phi @ C @ phi.T)
-        np.testing.assert_allclose(
-            h.predict_covariance(X, joint_inputs=True), expected, atol=1e-5
+        C = np.array(
+            [
+                [1.0, 0.2, -0.1],
+                [0.2, 0.8, 0.05],
+                [-0.1, 0.05, 0.3],
+            ]
         )
+        expected = alpha**2 * (phi @ C @ phi.T)
+        np.testing.assert_allclose(h.predict_covariance(X, joint_inputs=True), expected, atol=1e-5)
 
 
 class TestShiftCorrectness:
@@ -1224,22 +1192,20 @@ class TestShiftCorrectness:
         expected = phi @ m + b
         np.testing.assert_allclose(h.predict_mean(X), expected, atol=1e-5)
 
-    def test_cov_unchanged_ground_truth(
-        self, scalar_correctness_lbf, correctness_X
-    ):
+    def test_cov_unchanged_ground_truth(self, scalar_correctness_lbf, correctness_X):
         h = scalar_correctness_lbf + 999.0
         X = correctness_X
 
         phi = np.array(_simple_scalar_features(X))
-        C = np.array([
-            [1.0, 0.2, -0.1],
-            [0.2, 0.8, 0.05],
-            [-0.1, 0.05, 0.3],
-        ])
-        expected = phi @ C @ phi.T
-        np.testing.assert_allclose(
-            h.predict_covariance(X, joint_inputs=True), expected, atol=1e-5
+        C = np.array(
+            [
+                [1.0, 0.2, -0.1],
+                [0.2, 0.8, 0.05],
+                [-0.1, 0.05, 0.3],
+            ]
         )
+        expected = phi @ C @ phi.T
+        np.testing.assert_allclose(h.predict_covariance(X, joint_inputs=True), expected, atol=1e-5)
 
 
 class TestIndependentSumCorrectness:
@@ -1278,52 +1244,66 @@ class TestIndependentSumCorrectness:
 
     def test_variance_ground_truth(self, correctness_X):
         """Sum variance = sum of individual variances."""
-        C1 = np.array([
-            [1.0, 0.2, 0.0],
-            [0.2, 0.5, 0.0],
-            [0.0, 0.0, 0.3],
-        ])
-        C2 = np.array([
-            [0.5, 0.0, 0.1],
-            [0.0, 0.8, 0.0],
-            [0.1, 0.0, 0.2],
-        ])
+        C1 = np.array(
+            [
+                [1.0, 0.2, 0.0],
+                [0.2, 0.5, 0.0],
+                [0.0, 0.0, 0.3],
+            ]
+        )
+        C2 = np.array(
+            [
+                [0.5, 0.0, 0.1],
+                [0.0, 0.8, 0.0],
+                [0.1, 0.0, 0.2],
+            ]
+        )
         w1 = MultivariateNormal(name="w1", loc=jnp.zeros(3), cov=jnp.array(C1))
         w2 = MultivariateNormal(name="w2", loc=jnp.zeros(3), cov=jnp.array(C2))
         lbf1 = LinearBasisFunction(
-            feature_map=_simple_scalar_features, weights=w1, input_shape=(1,),
+            feature_map=_simple_scalar_features,
+            weights=w1,
+            input_shape=(1,),
         )
         lbf2 = LinearBasisFunction(
-            feature_map=_simple_scalar_features, weights=w2, input_shape=(1,),
+            feature_map=_simple_scalar_features,
+            weights=w2,
+            input_shape=(1,),
         )
         h = lbf1 + lbf2
         X = correctness_X
 
         phi = np.array(_simple_scalar_features(X))
         expected_var = np.diag(phi @ C1 @ phi.T) + np.diag(phi @ C2 @ phi.T)
-        np.testing.assert_allclose(
-            h.predict_variance(X), expected_var, atol=1e-5
-        )
+        np.testing.assert_allclose(h.predict_variance(X), expected_var, atol=1e-5)
 
     def test_covariance_ground_truth(self, correctness_X):
         """Sum covariance = sum of individual covariances."""
-        C1 = np.array([
-            [1.0, 0.2, 0.0],
-            [0.2, 0.5, 0.0],
-            [0.0, 0.0, 0.3],
-        ])
-        C2 = np.array([
-            [0.5, 0.0, 0.1],
-            [0.0, 0.8, 0.0],
-            [0.1, 0.0, 0.2],
-        ])
+        C1 = np.array(
+            [
+                [1.0, 0.2, 0.0],
+                [0.2, 0.5, 0.0],
+                [0.0, 0.0, 0.3],
+            ]
+        )
+        C2 = np.array(
+            [
+                [0.5, 0.0, 0.1],
+                [0.0, 0.8, 0.0],
+                [0.1, 0.0, 0.2],
+            ]
+        )
         w1 = MultivariateNormal(name="w1", loc=jnp.zeros(3), cov=jnp.array(C1))
         w2 = MultivariateNormal(name="w2", loc=jnp.zeros(3), cov=jnp.array(C2))
         lbf1 = LinearBasisFunction(
-            feature_map=_simple_scalar_features, weights=w1, input_shape=(1,),
+            feature_map=_simple_scalar_features,
+            weights=w1,
+            input_shape=(1,),
         )
         lbf2 = LinearBasisFunction(
-            feature_map=_simple_scalar_features, weights=w2, input_shape=(1,),
+            feature_map=_simple_scalar_features,
+            weights=w2,
+            input_shape=(1,),
         )
         h = lbf1 + lbf2
         X = correctness_X
@@ -1377,7 +1357,7 @@ class TestCompositionCorrectness:
         phi_g = np.array(_simple_multi_output_features(X))
         C = np.array(correctness_w_cov)
         phi_h = np.einsum("oh,nhw->now", A_np, phi_g)
-        expected_cov = alpha ** 2 * _dense_lbf_full_joint_cov(phi_h, C)
+        expected_cov = alpha**2 * _dense_lbf_full_joint_cov(phi_h, C)
         np.testing.assert_allclose(
             h.predict_covariance(X, joint_inputs=True, joint_outputs=True),
             expected_cov,
@@ -1395,7 +1375,7 @@ class TestMonteCarlo:
 
     N_SAMPLES = 20_000
     MC_ATOL_MEAN = 0.05
-    MC_ATOL_VAR = 0.25     # variance/covariance estimation has higher MC noise
+    MC_ATOL_VAR = 0.25  # variance/covariance estimation has higher MC noise
 
     def _sample_outputs(self, lbf, X, key, n_samples):
         """Draw n_samples function realizations and evaluate at X."""
@@ -1406,14 +1386,10 @@ class TestMonteCarlo:
         """LBF sample moments should match predicted moments."""
         X = correctness_X
         key = jax.random.PRNGKey(123)
-        Y = self._sample_outputs(
-            scalar_correctness_lbf, X, key, self.N_SAMPLES
-        )  # (N, 4)
+        Y = self._sample_outputs(scalar_correctness_lbf, X, key, self.N_SAMPLES)  # (N, 4)
 
         pred_mean = np.array(scalar_correctness_lbf.predict_mean(X))
-        pred_cov = np.array(
-            scalar_correctness_lbf.predict_covariance(X, joint_inputs=True)
-        )
+        pred_cov = np.array(scalar_correctness_lbf.predict_covariance(X, joint_inputs=True))
 
         emp_mean = Y.mean(axis=0)
         emp_cov = np.cov(Y, rowvar=False)
@@ -1430,9 +1406,7 @@ class TestMonteCarlo:
         key = jax.random.PRNGKey(456)
 
         # Sample base, apply A in sample space
-        Y_base = self._sample_outputs(
-            correlated_lbf, X, key, self.N_SAMPLES
-        )  # (N, 4, 3)
+        Y_base = self._sample_outputs(correlated_lbf, X, key, self.N_SAMPLES)  # (N, 4, 3)
         Y_h = np.einsum("oh,...h->...o", A_np, Y_base)  # (N, 4, 2)
 
         pred_mean = np.array(h.predict_mean(X))  # (4, 2)
@@ -1452,16 +1426,12 @@ class TestMonteCarlo:
         X = correctness_X
         key = jax.random.PRNGKey(789)
 
-        Y_base = self._sample_outputs(
-            correlated_lbf, X, key, self.N_SAMPLES
-        )
+        Y_base = self._sample_outputs(correlated_lbf, X, key, self.N_SAMPLES)
         Y_h = np.einsum("oh,...h->...o", A_np, Y_base)  # (N, 4, 2)
         # Flatten to (N, 8) for covariance estimation
         Y_flat = Y_h.reshape(self.N_SAMPLES, -1)
 
-        pred_cov = np.array(
-            h.predict_covariance(X, joint_inputs=True, joint_outputs=True)
-        )
+        pred_cov = np.array(h.predict_covariance(X, joint_inputs=True, joint_outputs=True))
         emp_cov = np.cov(Y_flat, rowvar=False)
 
         np.testing.assert_allclose(emp_cov, pred_cov, atol=self.MC_ATOL_VAR)
@@ -1473,20 +1443,14 @@ class TestMonteCarlo:
         X = correctness_X
         key = jax.random.PRNGKey(101)
 
-        Y_base = self._sample_outputs(
-            scalar_correctness_lbf, X, key, self.N_SAMPLES
-        )
+        Y_base = self._sample_outputs(scalar_correctness_lbf, X, key, self.N_SAMPLES)
         Y_h = alpha * Y_base
 
         pred_mean = np.array(h.predict_mean(X))
         pred_var = np.array(h.predict_variance(X))
 
-        np.testing.assert_allclose(
-            Y_h.mean(axis=0), pred_mean, atol=self.MC_ATOL_MEAN
-        )
-        np.testing.assert_allclose(
-            Y_h.var(axis=0), pred_var, atol=self.MC_ATOL_VAR
-        )
+        np.testing.assert_allclose(Y_h.mean(axis=0), pred_mean, atol=self.MC_ATOL_MEAN)
+        np.testing.assert_allclose(Y_h.var(axis=0), pred_var, atol=self.MC_ATOL_VAR)
 
     def test_shift_moments(self, scalar_correctness_lbf, correctness_X):
         """grf + b: sample base, shift, check moments."""
@@ -1495,20 +1459,14 @@ class TestMonteCarlo:
         X = correctness_X
         key = jax.random.PRNGKey(202)
 
-        Y_base = self._sample_outputs(
-            scalar_correctness_lbf, X, key, self.N_SAMPLES
-        )
+        Y_base = self._sample_outputs(scalar_correctness_lbf, X, key, self.N_SAMPLES)
         Y_h = Y_base + b
 
         pred_mean = np.array(h.predict_mean(X))
         pred_var = np.array(h.predict_variance(X))
 
-        np.testing.assert_allclose(
-            Y_h.mean(axis=0), pred_mean, atol=self.MC_ATOL_MEAN
-        )
-        np.testing.assert_allclose(
-            Y_h.var(axis=0), pred_var, atol=self.MC_ATOL_VAR
-        )
+        np.testing.assert_allclose(Y_h.mean(axis=0), pred_mean, atol=self.MC_ATOL_MEAN)
+        np.testing.assert_allclose(Y_h.var(axis=0), pred_var, atol=self.MC_ATOL_VAR)
 
     def test_independent_sum_moments(self, correctness_X):
         """grf1 + grf2: sample both independently, add, check moments."""
@@ -1523,10 +1481,14 @@ class TestMonteCarlo:
             cov=0.3 * jnp.eye(3),
         )
         lbf1 = LinearBasisFunction(
-            feature_map=_simple_scalar_features, weights=w1, input_shape=(1,),
+            feature_map=_simple_scalar_features,
+            weights=w1,
+            input_shape=(1,),
         )
         lbf2 = LinearBasisFunction(
-            feature_map=_simple_scalar_features, weights=w2, input_shape=(1,),
+            feature_map=_simple_scalar_features,
+            weights=w2,
+            input_shape=(1,),
         )
         h = lbf1 + lbf2
         X = correctness_X
@@ -1540,9 +1502,7 @@ class TestMonteCarlo:
         pred_cov = np.array(h.predict_covariance(X, joint_inputs=True))
         emp_cov = np.cov(Y_h, rowvar=False)
 
-        np.testing.assert_allclose(
-            Y_h.mean(axis=0), pred_mean, atol=self.MC_ATOL_MEAN
-        )
+        np.testing.assert_allclose(Y_h.mean(axis=0), pred_mean, atol=self.MC_ATOL_MEAN)
         np.testing.assert_allclose(emp_cov, pred_cov, atol=self.MC_ATOL_VAR)
 
 
@@ -1560,6 +1520,7 @@ class TestRBFKernelBaseline:
 
     def test_rbf_matches_scipy_unit(self):
         from scipy.spatial.distance import cdist
+
         rng = np.random.default_rng(0)
         X = rng.standard_normal((7, 2)).astype(np.float32)
         K = np.asarray(_rbf_kernel(jnp.asarray(X), jnp.asarray(X)))
@@ -1569,14 +1530,14 @@ class TestRBFKernelBaseline:
 
     def test_rbf_matches_scipy_with_hyperparams(self):
         from scipy.spatial.distance import cdist
+
         rng = np.random.default_rng(1)
         X = rng.standard_normal((5, 3)).astype(np.float32)
         ls = 2.0
         var = 3.5
-        K = np.asarray(_rbf_kernel(jnp.asarray(X), jnp.asarray(X),
-                                   lengthscale=ls, variance=var))
+        K = np.asarray(_rbf_kernel(jnp.asarray(X), jnp.asarray(X), lengthscale=ls, variance=var))
         sq_dist = cdist(X, X, "sqeuclidean")
-        expected = var * np.exp(-0.5 * sq_dist / ls ** 2)
+        expected = var * np.exp(-0.5 * sq_dist / ls**2)
         np.testing.assert_allclose(K, expected, atol=1e-5)
 
     def test_rbf_diagonal_equals_variance(self):

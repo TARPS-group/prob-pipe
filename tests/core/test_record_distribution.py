@@ -18,11 +18,9 @@ from probpipe import (
     Normal,
 )
 from probpipe.core._record_distribution import (
-    RecordDistribution,
     _RecordDistributionView,
 )
 from probpipe.distributions.joint import ProductDistribution
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -89,7 +87,8 @@ class TestSingleFieldShapeShim:
             _ = multi_field_dist.ndim
 
     def test_error_message_mentions_event_shapes_not_dtypes(
-        self, multi_field_dist,
+        self,
+        multi_field_dist,
     ):
         """The error message points users at ``.event_shapes`` only.
         ``.dtypes`` is only defined on ``NumericRecordDistribution``
@@ -127,7 +126,7 @@ class TestEventShapesUniformDict:
         fields, and event shapes reflect that single field."""
         samples = np.random.randn(100, 3)
         dist = EmpiricalDistribution(samples, name="x")
-        assert dist.record_template is not None
+        assert dist.event_template is not None
         assert dist.fields == ("x",)
         assert dist.event_shapes == {"x": (3,)}
         # Single-field shortcut.

@@ -12,7 +12,6 @@ import pyabc
 from pyabc.sampler import SingleCoreSampler
 
 from ..core.ops import log_prob, sample
-from ..core.record import RecordTemplate
 from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod, MethodInfo
@@ -58,7 +57,7 @@ class PyABCDistribution(pyabc.Distribution):
         self._prior = prior
         self._flat = prior.as_flat_distribution()
         self._key = key
-        self._d = self._flat.flat_size
+        self._d = self._flat.vector_size
         super().__init__(**{_flat_key(i): pyabc.RV("uniform", 0, 1) for i in range(self._d)})
 
     def rvs(self, *args: Any, **kwargs: Any) -> pyabc.Parameter:
@@ -92,7 +91,7 @@ def _smc_diagnostics(history: Any) -> DataTree:
     Builds a ``smc_diagnostics`` group indexed by generation, holding the
     epsilon (acceptance-threshold) schedule, the sample attempts, the accepted
     particles, and the acceptance rate; ``total_nr_simulations`` is a scalar
-    attribute. Recovered from ``dist.auxiliary`` after a run.
+    attribute. Recovered from ``dist.arviz_data`` after a run.
     """
     import xarray as xr
 
@@ -193,7 +192,7 @@ class PyABCSMCMethod(InferenceMethod):
             their (non-resampled) SMC importance weights. The per-generation
             convergence trajectory (epsilon schedule, sample / particle counts,
             acceptance rate) is attached as a ``smc_diagnostics`` group on
-            ``auxiliary``.
+            ``arviz_data``.
         """
         prior = dist["parameters"]
         simulator = dist["data"]
@@ -245,10 +244,10 @@ class PyABCSMCMethod(InferenceMethod):
         weights = np.asarray(weights, dtype=float)
 
         # Lift the flat columns back to name-keyed Records via the prior's layout.
-        template = RecordTemplate(**dict(prior.event_shapes))
+        template = prior.event_template
         return make_posterior(
             [jnp.asarray(flat)], parents=(dist,), algorithm="pyabc_smcabc",
-            weights=jnp.asarray(weights / weights.sum()), record_template=template,
+            weights=jnp.asarray(weights / weights.sum()), event_template=template,
             field_order=list(prior.event_shapes), auxiliary=_smc_diagnostics(history),
             n_particles=n_particles, max_populations=max_populations, eps_alpha=eps_alpha,
         )

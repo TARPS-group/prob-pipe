@@ -1,18 +1,16 @@
 # tests/linalg/test_operations.py
 import jax
 import jax.numpy as jnp
-import numpy as np
 import pytest
 
 from probpipe.linalg.linear_operator import (
+    CholeskyLinOp,
     DenseLinOp,
     DiagonalLinOp,
-    TriangularLinOp,
-    RootLinOp,
-    CholeskyLinOp,
     LinAlgError,
+    RootLinOp,
+    TriangularLinOp,
 )
-
 from probpipe.linalg.operations import (
     logdet,
     mah_dist_squared,
@@ -24,6 +22,7 @@ ALL_OPERATIONS = {"logdet", "mah_dist_squared"}
 # -----------------------------------------------------------------------------
 # Small helpers
 # -----------------------------------------------------------------------------
+
 
 # compare scalars/arrays consistently
 def _compare_results(got, expected, *, rtol=1e-4, atol=1e-4, msg=None):
@@ -37,6 +36,7 @@ def _compare_results(got, expected, *, rtol=1e-4, atol=1e-4, msg=None):
 # -----------------------------------------------------------------------------
 # Baseline/reference functions to compare against
 # -----------------------------------------------------------------------------
+
 
 def baseline_logdet(A):
     sign, logabsdet = jnp.linalg.slogdet(A)
@@ -67,10 +67,11 @@ def baseline_mah_dist_squared(x, A, y):
 def rng_key():
     return jax.random.PRNGKey(26423)
 
+
 @pytest.fixture(scope="module")
 def linop_resources(rng_key):
     """Core components used to construct various types of linear operators."""
-    k1, k2, k3 = jax.random.split(rng_key, 3)
+    k1, k2, _k3 = jax.random.split(rng_key, 3)
 
     # Symmetric positive definite
     dim_pd = 7
@@ -78,65 +79,74 @@ def linop_resources(rng_key):
     dense_pd = root_pd @ root_pd.T
     lower_chol_pd = jnp.linalg.cholesky(dense_pd)
     upper_chol_pd = lower_chol_pd.T
-    pd = {"dim": dim_pd, "root": root_pd, "dense": dense_pd,
-           "lower_chol": lower_chol_pd, "upper_chol": upper_chol_pd}
+    pd = {
+        "dim": dim_pd,
+        "root": root_pd,
+        "dense": dense_pd,
+        "lower_chol": lower_chol_pd,
+        "upper_chol": upper_chol_pd,
+    }
 
     # Diagonal matrix with positive diagonal (hence positive definite)
     dim_diag_pd = 10
     diagonal_diag_pd = jax.random.uniform(k2, shape=(dim_diag_pd,), minval=1.0, maxval=10.0)
     sqrt_diagonal_diag_pd = jnp.sqrt(diagonal_diag_pd)
-    diag_pd = {"dim": dim_diag_pd,
-               "diagonal": diagonal_diag_pd,
-               "sqrt_diagonal": sqrt_diagonal_diag_pd,
-               "dense": jnp.diag(diagonal_diag_pd),
-               "dense_root": jnp.diag(sqrt_diagonal_diag_pd)}
+    diag_pd = {
+        "dim": dim_diag_pd,
+        "diagonal": diagonal_diag_pd,
+        "sqrt_diagonal": sqrt_diagonal_diag_pd,
+        "dense": jnp.diag(diagonal_diag_pd),
+        "dense_root": jnp.diag(sqrt_diagonal_diag_pd),
+    }
 
     return {"pd": pd, "diag_pd": diag_pd}
 
 
 # Factories of the form lambda linop_resources : (linop, densified linop, supported operations)
 linop_factories = [
-    pytest.param("root_pd",
-                 lambda x: (RootLinOp(x["pd"]["root"]),
-                            x["pd"]["dense"],
-                            ALL_OPERATIONS),
-                 id="root_pd"),
-
-    pytest.param("cholesky_pd",
-                 lambda x: (CholeskyLinOp(TriangularLinOp(x["pd"]["lower_chol"], lower=True)),
-                            x["pd"]["dense"],
-                            ALL_OPERATIONS),
-                 id="cholesky_pd"),
-
-    pytest.param("dense_pd",
-                 lambda x: (DenseLinOp(x["pd"]["dense"]),
-                            x["pd"]["dense"],
-                            ALL_OPERATIONS),
-                 id="dense_pd"),
-
-    pytest.param("diagonal_diag_pd",
-                 lambda x: (DiagonalLinOp(x["diag_pd"]["diagonal"]),
-                            x["diag_pd"]["dense"],
-                            ALL_OPERATIONS),
-                 id="diagonal_diag_pd"),
-
-    pytest.param("root_diag_pd",
-                 lambda x: (RootLinOp(x["diag_pd"]["dense_root"]),
-                            x["diag_pd"]["dense"],
-                            ALL_OPERATIONS),
-                 id="root_diag_pd"),
-
-    pytest.param("cholesky_diag_pd",
-                 lambda x: (CholeskyLinOp(TriangularLinOp(x["diag_pd"]["dense_root"], lower=True)),
-                            x["diag_pd"]["dense"],
-                            ALL_OPERATIONS),
-                 id="cholesky_diag_pd"),
-
-    pytest.param("dense_diag_pd",
-                 lambda x: (DenseLinOp(x["diag_pd"]["dense"]),
-                            x["diag_pd"]["dense"],
-                            ALL_OPERATIONS),
-                 id="dense_diag_pd")
+    pytest.param(
+        "root_pd",
+        lambda x: (RootLinOp(x["pd"]["root"]), x["pd"]["dense"], ALL_OPERATIONS),
+        id="root_pd",
+    ),
+    pytest.param(
+        "cholesky_pd",
+        lambda x: (
+            CholeskyLinOp(TriangularLinOp(x["pd"]["lower_chol"], lower=True)),
+            x["pd"]["dense"],
+            ALL_OPERATIONS,
+        ),
+        id="cholesky_pd",
+    ),
+    pytest.param(
+        "dense_pd",
+        lambda x: (DenseLinOp(x["pd"]["dense"]), x["pd"]["dense"], ALL_OPERATIONS),
+        id="dense_pd",
+    ),
+    pytest.param(
+        "diagonal_diag_pd",
+        lambda x: (DiagonalLinOp(x["diag_pd"]["diagonal"]), x["diag_pd"]["dense"], ALL_OPERATIONS),
+        id="diagonal_diag_pd",
+    ),
+    pytest.param(
+        "root_diag_pd",
+        lambda x: (RootLinOp(x["diag_pd"]["dense_root"]), x["diag_pd"]["dense"], ALL_OPERATIONS),
+        id="root_diag_pd",
+    ),
+    pytest.param(
+        "cholesky_diag_pd",
+        lambda x: (
+            CholeskyLinOp(TriangularLinOp(x["diag_pd"]["dense_root"], lower=True)),
+            x["diag_pd"]["dense"],
+            ALL_OPERATIONS,
+        ),
+        id="cholesky_diag_pd",
+    ),
+    pytest.param(
+        "dense_diag_pd",
+        lambda x: (DenseLinOp(x["diag_pd"]["dense"]), x["diag_pd"]["dense"], ALL_OPERATIONS),
+        id="dense_diag_pd",
+    ),
 ]
 
 
@@ -146,8 +156,9 @@ linop_factories = [
 @pytest.mark.parametrize("factory_id,factory", linop_factories)
 @pytest.mark.parametrize("batch_mode", ["batch", "single"])
 @pytest.mark.parametrize("with_y", [False, True])
-def test_mah_dist_squared_against_baseline(factory_id, factory, batch_mode, with_y,
-                                           linop_resources, rng_key):
+def test_mah_dist_squared_against_baseline(
+    factory_id, factory, batch_mode, with_y, linop_resources, rng_key
+):
     op, dense, supports = factory(linop_resources)
 
     if "mah_dist_squared" not in supports:
@@ -167,7 +178,11 @@ def test_mah_dist_squared_against_baseline(factory_id, factory, batch_mode, with
     expected = baseline_mah_dist_squared(x, dense, y)
     got = mah_dist_squared(x, op, y)
 
-    _compare_results(got, expected, msg=f"Mismatch for operator '{factory_id}', batch_mode={batch_mode}, with_y={with_y}")
+    _compare_results(
+        got,
+        expected,
+        msg=f"Mismatch for operator '{factory_id}', batch_mode={batch_mode}, with_y={with_y}",
+    )
 
 
 def test_mah_dist_squared_broadcast_y(rng_key, linop_resources):
@@ -201,6 +216,7 @@ def test_mah_dist_squared_incorrect_shape_raises(rng_key, linop_resources):
 # -----------------------------------------------------------------------------
 # Test logdet
 # -----------------------------------------------------------------------------
+
 
 @pytest.mark.parametrize("factory_id,factory", linop_factories)
 def test_logdet_against_baseline(factory_id, factory, linop_resources):

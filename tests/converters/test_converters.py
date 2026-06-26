@@ -4,30 +4,46 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
-
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
-    Normal, Beta, Gamma, Exponential, MultivariateNormal,
-    Bernoulli, Poisson, Categorical,
-    RecordEmpiricalDistribution, EmpiricalDistribution, NumericRecordDistribution,
-    converter_registry, ConversionInfo, ConversionMethod, Converter,
+    Bernoulli,
+    Beta,
+    Categorical,
+    ConversionInfo,
+    ConversionMethod,
+    Converter,
+    EmpiricalDistribution,
+    Exponential,
+    Gamma,
+    MultivariateNormal,
+    Normal,
+    Poisson,
+    RecordEmpiricalDistribution,
+    converter_registry,
     from_distribution,
 )
 from probpipe.distributions.continuous import (
-    InverseGamma, LogNormal, StudentT, Uniform, Cauchy, Laplace,
-    HalfNormal, HalfCauchy, Pareto, TruncatedNormal,
+    Cauchy,
+    HalfCauchy,
+    HalfNormal,
+    InverseGamma,
+    Laplace,
+    LogNormal,
+    Pareto,
+    StudentT,
+    TruncatedNormal,
+    Uniform,
 )
 from probpipe.distributions.discrete import Binomial, NegativeBinomial
-from probpipe.distributions.multivariate import Dirichlet, Multinomial, Wishart, VonMisesFisher
-
+from probpipe.distributions.multivariate import Dirichlet, Multinomial, VonMisesFisher, Wishart
 
 # ---------------------------------------------------------------------------
 # Registry basics
 # ---------------------------------------------------------------------------
 
-class TestConverterRegistry:
 
+class TestConverterRegistry:
     def test_check_returns_conversioninfo(self):
         info = converter_registry.check(Normal(0, 1, name="x"), Normal)
         assert isinstance(info, ConversionInfo)
@@ -43,7 +59,9 @@ class TestConverterRegistry:
 
     def test_is_distribution_type_probpipe(self):
         assert converter_registry.is_distribution_type(Normal(0, 1, name="x"))
-        assert converter_registry.is_distribution_type(EmpiricalDistribution(jnp.ones((5, 1)), name="x"))
+        assert converter_registry.is_distribution_type(
+            EmpiricalDistribution(jnp.ones((5, 1)), name="x")
+        )
 
     def test_is_distribution_type_tfp(self):
         assert converter_registry.is_distribution_type(tfd.Normal(0, 1))
@@ -57,8 +75,8 @@ class TestConverterRegistry:
 # ProbPipe ↔ ProbPipe
 # ---------------------------------------------------------------------------
 
-class TestProbPipeConverter:
 
+class TestProbPipeConverter:
     def test_same_class_exact(self):
         n = Normal(loc=2.0, scale=0.5, name="x")
         info = converter_registry.check(n, Normal)
@@ -100,7 +118,8 @@ class TestProbPipeConverter:
         result = converter_registry.convert(g, Normal)
         assert result.source is not None
         assert result.source.operation == "from_distribution"
-        assert g in result.source.parents
+        assert len(result.source.parents) == 1
+        assert result.source.parents[0].name == "prior"
 
     def test_approximate_flag(self):
         g = Gamma(concentration=3.0, rate=1.0, name="g")
@@ -123,16 +142,30 @@ class TestProbPipeConverter:
 # Cross-family moment-matching (exercises all _convert_to_* functions)
 # ---------------------------------------------------------------------------
 
+
 class TestAllCrossFamilyConversions:
     """Exercise every _convert_to_* path with a cross-family source."""
 
     key = jax.random.PRNGKey(42)
 
-    @pytest.mark.parametrize("target_cls", [
-        Normal, Beta, InverseGamma, Exponential, LogNormal,
-        Uniform, Cauchy, Laplace, HalfNormal, HalfCauchy, Pareto,
-        TruncatedNormal, StudentT,
-    ])
+    @pytest.mark.parametrize(
+        "target_cls",
+        [
+            Normal,
+            Beta,
+            InverseGamma,
+            Exponential,
+            LogNormal,
+            Uniform,
+            Cauchy,
+            Laplace,
+            HalfNormal,
+            HalfCauchy,
+            Pareto,
+            TruncatedNormal,
+            StudentT,
+        ],
+    )
     def test_continuous_from_gamma(self, target_cls):
         """Convert Gamma(9,1) to each continuous type (skip support issues)."""
         g = Gamma(concentration=9.0, rate=1.0, name="g")
@@ -176,27 +209,23 @@ class TestAllCrossFamilyConversions:
             converter_registry.convert(p, NegativeBinomial, check_support=False)
 
     def test_dirichlet_from_mvn(self):
-        mvn = MultivariateNormal(loc=jnp.array([0.3, 0.5, 0.2]),
-                                  cov=0.01 * jnp.eye(3), name="z")
+        mvn = MultivariateNormal(loc=jnp.array([0.3, 0.5, 0.2]), cov=0.01 * jnp.eye(3), name="z")
         result = converter_registry.convert(mvn, Dirichlet, check_support=False, num_samples=500)
         assert isinstance(result, Dirichlet)
 
     def test_multinomial_from_mvn(self):
-        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0, 2.0]),
-                                  cov=jnp.eye(3), name="z")
-        result = converter_registry.convert(mvn, Multinomial, check_support=False,
-                                             total_count=10, num_samples=500)
+        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0, 2.0]), cov=jnp.eye(3), name="z")
+        result = converter_registry.convert(
+            mvn, Multinomial, check_support=False, total_count=10, num_samples=500
+        )
         assert isinstance(result, Multinomial)
 
     def test_multinomial_requires_total_count(self):
-        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0]),
-                                  cov=jnp.eye(2), name="z")
+        mvn = MultivariateNormal(loc=jnp.array([3.0, 5.0]), cov=jnp.eye(2), name="z")
         with pytest.raises(ValueError, match="total_count"):
             converter_registry.convert(mvn, Multinomial, check_support=False)
 
     def test_wishart_from_mvn(self):
-        mvn = MultivariateNormal(loc=jnp.array([1.0, 0.0]),
-                                  cov=jnp.eye(2), name="z")
         # Wishart samples are matrices; use Wishart as source for itself
         w = Wishart(df=5.0, scale_tril=jnp.eye(2), name="w")
         result = converter_registry.convert(w, Wishart)
@@ -209,8 +238,9 @@ class TestAllCrossFamilyConversions:
         assert result.num_atoms == 50
 
     def test_vonmisesfisher_same_class(self):
-        vmf = VonMisesFisher(mean_direction=jnp.array([1.0, 0.0, 0.0]),
-                              concentration=5.0, name="vmf")
+        vmf = VonMisesFisher(
+            mean_direction=jnp.array([1.0, 0.0, 0.0]), concentration=5.0, name="vmf"
+        )
         result = converter_registry.convert(vmf, VonMisesFisher)
         assert result is vmf
 
@@ -231,8 +261,8 @@ class TestAllCrossFamilyConversions:
 # TFP ↔ ProbPipe
 # ---------------------------------------------------------------------------
 
-class TestTFPConverter:
 
+class TestTFPConverter:
     def test_tfp_normal_to_probpipe(self):
         tfp_n = tfd.Normal(loc=2.0, scale=0.5)
         info = converter_registry.check(tfp_n, Normal)
@@ -361,14 +391,15 @@ class TestTFPConverter:
 # Scipy ↔ ProbPipe (optional)
 # ---------------------------------------------------------------------------
 
-class TestScipyConverter:
 
+class TestScipyConverter:
     @pytest.fixture(autouse=True)
     def _check_scipy(self):
         pytest.importorskip("scipy")
 
     def test_scipy_norm_to_probpipe(self):
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.norm(loc=1.0, scale=2.0), Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 1.0)
@@ -376,6 +407,7 @@ class TestScipyConverter:
 
     def test_scipy_beta_to_probpipe(self):
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.beta(2.0, 5.0), Beta)
         assert isinstance(result, Beta)
         np.testing.assert_allclose(float(result._alpha), 2.0)
@@ -383,14 +415,15 @@ class TestScipyConverter:
 
     def test_scipy_gamma_to_probpipe(self):
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.gamma(3.0, scale=2.0), Gamma)
         assert isinstance(result, Gamma)
         np.testing.assert_allclose(float(result._concentration), 3.0)
         np.testing.assert_allclose(float(result._rate), 0.5)  # rate = 1/scale
 
     def test_probpipe_to_scipy(self):
-        import scipy.stats as ss
         from scipy.stats._distn_infrastructure import rv_frozen
+
         n = Normal(loc=3.0, scale=1.0, name="x")
         result = converter_registry.convert(n, rv_frozen)
         assert isinstance(result, rv_frozen)
@@ -399,6 +432,7 @@ class TestScipyConverter:
 
     def test_scipy_provenance(self):
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.norm(0, 1), Normal)
         assert result.source is not None
         assert result.source.operation == "convert_from_scipy"
@@ -406,6 +440,7 @@ class TestScipyConverter:
     def test_scipy_norm_positional_args(self):
         """Scipy norm created with positional args should still extract correctly."""
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.norm(1.0, 2.0), Normal)
         assert isinstance(result, Normal)
         np.testing.assert_allclose(float(result._loc), 1.0)
@@ -414,6 +449,7 @@ class TestScipyConverter:
     def test_scipy_beta_keyword_args(self):
         """Scipy beta created with keyword args should extract correctly."""
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.beta(a=2.0, b=5.0), Beta)
         assert isinstance(result, Beta)
         np.testing.assert_allclose(float(result._alpha), 2.0)
@@ -421,12 +457,14 @@ class TestScipyConverter:
 
     def test_scipy_expon_to_probpipe(self):
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.expon(scale=2.0), Exponential)
         assert isinstance(result, Exponential)
         np.testing.assert_allclose(float(result._rate), 0.5)
 
     def test_scipy_uniform_to_probpipe(self):
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.uniform(loc=1.0, scale=3.0), Uniform)
         assert isinstance(result, Uniform)
         np.testing.assert_allclose(float(result._low), 1.0)
@@ -434,6 +472,7 @@ class TestScipyConverter:
 
     def test_scipy_laplace_to_probpipe(self):
         import scipy.stats as ss
+
         result = converter_registry.convert(ss.laplace(loc=2.0, scale=0.5), Laplace)
         assert isinstance(result, Laplace)
         np.testing.assert_allclose(float(result._loc), 2.0)
@@ -441,6 +480,7 @@ class TestScipyConverter:
 
     def test_probpipe_gamma_to_scipy(self):
         from scipy.stats._distn_infrastructure import rv_frozen
+
         g = Gamma(concentration=3.0, rate=0.5, name="g")
         result = converter_registry.convert(g, rv_frozen)
         assert isinstance(result, rv_frozen)
@@ -448,6 +488,7 @@ class TestScipyConverter:
 
     def test_probpipe_exponential_to_scipy(self):
         from scipy.stats._distn_infrastructure import rv_frozen
+
         e = Exponential(rate=2.0, name="e")
         result = converter_registry.convert(e, rv_frozen)
         assert isinstance(result, rv_frozen)
@@ -455,6 +496,7 @@ class TestScipyConverter:
 
     def test_probpipe_beta_to_scipy(self):
         from scipy.stats._distn_infrastructure import rv_frozen
+
         b = Beta(alpha=2.0, beta=5.0, name="b")
         result = converter_registry.convert(b, rv_frozen)
         assert isinstance(result, rv_frozen)
@@ -463,19 +505,24 @@ class TestScipyConverter:
     def test_unknown_scipy_fallback_to_sampling(self):
         """Unknown scipy distribution type falls back to sampling."""
         import scipy.stats as ss
+
         # Use a scipy distribution we haven't mapped (e.g., chi2)
-        result = converter_registry.convert(ss.chi2(df=3), RecordEmpiricalDistribution, num_samples=100)
+        result = converter_registry.convert(
+            ss.chi2(df=3), RecordEmpiricalDistribution, num_samples=100
+        )
         assert isinstance(result, RecordEmpiricalDistribution)
         assert result.num_atoms == 100
 
     def test_scipy_check_unknown_type(self):
         import scipy.stats as ss
+
         info = converter_registry.check(ss.chi2(df=3), Normal)
         assert info.feasible
         assert info.method == ConversionMethod.SAMPLE
 
     def test_is_distribution_type_scipy(self):
         import scipy.stats as ss
+
         assert converter_registry.is_distribution_type(ss.norm(0, 1))
 
 
@@ -483,8 +530,8 @@ class TestScipyConverter:
 # Custom converter registration
 # ---------------------------------------------------------------------------
 
-class TestCustomConverter:
 
+class TestCustomConverter:
     def test_register_custom_converter(self):
         class DummyDist:
             def __init__(self, val):
@@ -493,14 +540,18 @@ class TestCustomConverter:
         class DummyConverter(Converter):
             def source_types(self):
                 return (DummyDist,)
+
             def target_types(self):
                 return (Normal,)
+
             def check(self, source, target_type):
                 if isinstance(source, DummyDist) and target_type is Normal:
                     return ConversionInfo(feasible=True, method=ConversionMethod.EXACT)
                 return ConversionInfo(feasible=False)
+
             def convert(self, source, target_type, *, key=None, **kwargs):
                 return Normal(loc=source.val, scale=1.0, name="x")
+
             @property
             def priority(self):
                 return 10
@@ -515,8 +566,7 @@ class TestCustomConverter:
         finally:
             # Clean up: remove the dummy converter
             converter_registry._converters = [
-                c for c in converter_registry._converters
-                if not isinstance(c, DummyConverter)
+                c for c in converter_registry._converters if not isinstance(c, DummyConverter)
             ]
             converter_registry._type_cache.clear()
 
@@ -524,6 +574,7 @@ class TestCustomConverter:
 # ---------------------------------------------------------------------------
 # from_distribution() backward compatibility
 # ---------------------------------------------------------------------------
+
 
 class TestFromDistributionDelegation:
     """Verify from_distribution() delegates to the registry."""
@@ -568,6 +619,7 @@ class TestFromDistributionDelegation:
 # Edge cases
 # ---------------------------------------------------------------------------
 
+
 class TestBootstrapMetadata:
     """Verify bootstrap distributions are stored in provenance metadata
     when the source distribution uses MC fallback for mean/variance."""
@@ -604,11 +656,11 @@ class TestBootstrapMetadata:
         result = converter_registry.convert(g, Normal)
         assert result.source is not None
         assert result.source.operation == "from_distribution"
-        assert g in result.source.parents
+        assert len(result.source.parents) == 1
+        assert result.source.parents[0].name == "g"
 
 
 class TestEdgeCases:
-
     def test_convert_none_raises(self):
         with pytest.raises(TypeError):
             converter_registry.convert(None, Normal)
@@ -627,11 +679,11 @@ class TestEdgeCases:
 # ---------------------------------------------------------------------------
 
 from probpipe.core.protocols import (
-    SupportsLogProb,
-    SupportsSampling,
-    SupportsMean,
-    SupportsVariance,
     SupportsCovariance,
+    SupportsLogProb,
+    SupportsMean,
+    SupportsSampling,
+    SupportsVariance,
 )
 from probpipe.distributions.kde import KDEDistribution
 
@@ -656,7 +708,9 @@ class TestProtocolConversion:
         assert isinstance(result, KDEDistribution)
         np.testing.assert_allclose(float(result._mean()), float(emp._mean()), atol=0.01)
         np.testing.assert_allclose(
-            float(result._variance()), float(emp._variance()), atol=0.3,
+            float(result._variance()),
+            float(emp._variance()),
+            atol=0.3,
         )
 
     def test_multivariate_empirical_to_supports_log_prob(self):
@@ -669,7 +723,9 @@ class TestProtocolConversion:
         assert isinstance(result, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
         np.testing.assert_allclose(
-            np.array(result._mean()), np.array(emp._mean()), atol=0.2,
+            np.array(result._mean()),
+            np.array(emp._mean()),
+            atol=0.2,
         )
 
     def test_multi_field_record_empirical_to_kde(self):
@@ -745,7 +801,8 @@ class TestProtocolConversion:
         """
         emp = EmpiricalDistribution(["a", "b", "c"])
         with pytest.raises(
-            TypeError, match="generic .object-array. EmpiricalDistribution",
+            TypeError,
+            match=r"generic .object-array. EmpiricalDistribution",
         ):
             converter_registry.convert(emp, SupportsLogProb)
 
@@ -788,7 +845,8 @@ class TestProtocolConversion:
         emp = RecordEmpiricalDistribution(samples, name="posterior")
         result = converter_registry.convert(emp, SupportsLogProb)
         assert result.source is not None
-        assert emp in result.source.parents
+        assert len(result.source.parents) == 1
+        assert result.source.parents[0].name == "posterior"
 
     def test_multi_field_empirical_preserves_template_through_kde(self):
         """Multi-field RecordEmpirical → KDE preserves the named template
@@ -807,7 +865,7 @@ class TestProtocolConversion:
         emp = RecordEmpiricalDistribution(rec)
         result = converter_registry.convert(emp, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        assert result.record_template.fields == ("intercept", "slope")
+        assert result.event_template.fields == ("intercept", "slope")
 
     def test_approximate_distribution_preserves_template_through_kde(self):
         """``ApproximateDistribution`` (inherits from RecordEmpirical) →
@@ -815,7 +873,7 @@ class TestProtocolConversion:
         :class:`IncrementalConditioner` updates beyond batch 1 don't
         collapse to a flat ``posterior`` field (issue #267).
         """
-        from probpipe.core.record import NumericRecordTemplate
+        from probpipe.core.event_template import NumericEventTemplate
         from probpipe.distributions.kde import KDEDistribution
         from probpipe.inference._approximate_distribution import (
             ApproximateDistribution,
@@ -829,11 +887,11 @@ class TestProtocolConversion:
         approx = ApproximateDistribution(
             chains,
             name="posterior",
-            record_template=NumericRecordTemplate(intercept=(), slope=()),
+            event_template=NumericEventTemplate(intercept=(), slope=()),
         )
         result = converter_registry.convert(approx, SupportsLogProb)
         assert isinstance(result, KDEDistribution)
-        assert result.record_template.fields == ("intercept", "slope")
+        assert result.event_template.fields == ("intercept", "slope")
 
 
 # ---------------------------------------------------------------------------
@@ -885,7 +943,9 @@ class TestKDEDistribution:
         samples = jax.random.normal(jax.random.PRNGKey(0), (500,))
         kde = KDEDistribution(samples)
         np.testing.assert_allclose(
-            float(kde._mean()), float(jnp.mean(samples)), atol=0.01,
+            float(kde._mean()),
+            float(jnp.mean(samples)),
+            atol=0.01,
         )
 
     def test_variance_larger_than_sample_variance(self):
@@ -928,7 +988,9 @@ class TestKDEDistribution:
         assert isinstance(kde, KDEDistribution)
         assert kde.num_atoms == 200
         np.testing.assert_allclose(
-            float(kde._mean()), float(emp._mean()), atol=0.01,
+            float(kde._mean()),
+            float(emp._mean()),
+            atol=0.01,
         )
 
     def test_convert_normal_to_kde(self):

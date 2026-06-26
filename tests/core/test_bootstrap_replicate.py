@@ -6,19 +6,19 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    NumericRecordDistribution,
-    RecordBootstrapReplicateDistribution,
     BootstrapDistribution,
+    BootstrapReplicateDistribution,
     Distribution,
     EmpiricalDistribution,
-    BootstrapReplicateDistribution,
+    NumericRecordDistribution,
+    Record,
+    RecordBootstrapReplicateDistribution,
     SupportsExpectation,
     SupportsSampling,
-    Record,
     expectation,
     sample,
 )
-
+from probpipe.core.event_template import ArraySpec
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -181,6 +181,7 @@ class TestSampleableSource:
 
     def _normal(self):
         from probpipe import Normal
+
         return Normal(loc=0.0, scale=1.0, name="x")
 
     def test_construction_keeps_generic_base(self):
@@ -265,7 +266,9 @@ class TestProperties:
         assert dist.is_uniform is True
 
     def test_is_uniform_from_weighted_empirical(self):
-        emp = EmpiricalDistribution(jnp.ones((5, 2)), weights=jnp.array([1., 2., 3., 4., 5.]), name="x")
+        emp = EmpiricalDistribution(
+            jnp.ones((5, 2)), weights=jnp.array([1.0, 2.0, 3.0, 4.0, 5.0]), name="x"
+        )
         dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.is_uniform is False
 
@@ -274,7 +277,7 @@ class TestProperties:
         np.testing.assert_allclose(dist.weights, jnp.ones(5) / 5)
 
     def test_weights_from_weighted_empirical(self):
-        weights = jnp.array([1., 2., 3.])
+        weights = jnp.array([1.0, 2.0, 3.0])
         emp = EmpiricalDistribution(jnp.ones((3, 2)), weights=weights, name="x")
         dist = BootstrapReplicateDistribution(emp, name="x")
         assert dist.weights is not None
@@ -370,6 +373,7 @@ class TestExpectation:
 class TestRecordBootstrapReplicateDistribution:
     def test_support(self):
         from probpipe.core.constraints import real
+
         dist = RecordBootstrapReplicateDistribution(jnp.ones((5, 2)), name="x")
         assert dist.support == real
 
@@ -401,10 +405,12 @@ class TestRecordBootstrapReplicateDistribution:
         bubble up).
         """
         from probpipe.core._empirical import RecordEmpiricalDistribution
+
         emp = EmpiricalDistribution(["a", "b", "c"])
         assert not isinstance(emp, RecordEmpiricalDistribution)
         with pytest.raises(
-            TypeError, match="generic .object-array. EmpiricalDistribution",
+            TypeError,
+            match=r"generic .object-array. EmpiricalDistribution",
         ):
             RecordBootstrapReplicateDistribution(emp)
 
@@ -461,6 +467,7 @@ class TestValuesEmpiricalDistribution:
 
     def test_dispatch(self, values_data):
         from probpipe.core._empirical import RecordEmpiricalDistribution
+
         emp = EmpiricalDistribution(values_data, name="x")
         assert isinstance(emp, RecordEmpiricalDistribution)
 
@@ -491,12 +498,12 @@ class TestValuesEmpiricalDistribution:
         assert s["X"].shape == (5, 3)
         assert s["y"].shape == (5,)
 
-    def test_record_template(self, values_data):
+    def test_event_template(self, values_data):
         emp = EmpiricalDistribution(values_data, name="x")
-        tpl = emp.record_template
+        tpl = emp.event_template
         assert tpl is not None
-        assert tpl["X"] == (3,)
-        assert tpl["y"] == ()
+        assert tpl["X"] == ArraySpec((3,))
+        assert tpl["y"] == ArraySpec(())
 
     def test_fields(self, values_data):
         emp = EmpiricalDistribution(values_data, name="x")
@@ -504,6 +511,7 @@ class TestValuesEmpiricalDistribution:
 
     def test_getitem_returns_view(self, values_data):
         from probpipe.core._record_distribution import _RecordDistributionView
+
         emp = EmpiricalDistribution(values_data, name="x")
         view = emp["X"]
         assert isinstance(view, _RecordDistributionView)
@@ -549,12 +557,14 @@ class TestValuesBootstrapReplicateDistribution:
 
     def test_dispatch_from_empirical(self, values_data):
         from probpipe.core._empirical import RecordBootstrapReplicateDistribution
+
         emp = EmpiricalDistribution(values_data, name="x")
         boot = BootstrapReplicateDistribution(emp, name="x")
         assert isinstance(boot, RecordBootstrapReplicateDistribution)
 
     def test_dispatch_from_values(self, values_data):
         from probpipe.core._empirical import RecordBootstrapReplicateDistribution
+
         boot = BootstrapReplicateDistribution(values_data, name="x")
         assert isinstance(boot, RecordBootstrapReplicateDistribution)
 
@@ -582,17 +592,18 @@ class TestValuesBootstrapReplicateDistribution:
         assert s["X"].shape == (4, 20, 3)
         assert s["y"].shape == (4, 20)
 
-    def test_record_template(self, bootstrap):
-        tpl = bootstrap.record_template
+    def test_event_template(self, bootstrap):
+        tpl = bootstrap.event_template
         assert tpl is not None
-        assert tpl["X"] == (20, 3)
-        assert tpl["y"] == (20,)
+        assert tpl["X"] == ArraySpec((20, 3))
+        assert tpl["y"] == ArraySpec((20,))
 
     def test_fields(self, bootstrap):
         assert bootstrap.fields == ("X", "y")
 
     def test_getitem_returns_view(self, bootstrap):
         from probpipe.core._record_distribution import _RecordDistributionView
+
         view = bootstrap["X"]
         assert isinstance(view, _RecordDistributionView)
 

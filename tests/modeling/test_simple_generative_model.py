@@ -1,7 +1,6 @@
 """Tests for SimpleGenerativeModel."""
 
 import jax
-import jax.numpy as jnp
 import pytest
 
 from probpipe import Normal, SimpleGenerativeModel
@@ -15,7 +14,7 @@ class GaussianSimulator:
     def generate_data(self, params, num_observations, *, key=None):
         if key is None:
             key = jax.random.PRNGKey(0)
-        return params + jax.random.normal(key, shape=(num_observations,) + params.shape)
+        return params + jax.random.normal(key, shape=(num_observations, *params.shape))
 
 
 @pytest.fixture
@@ -78,7 +77,7 @@ class TestProtocols:
     def test_is_supports_sampling(self, model):
         """SimpleGenerativeModel now advertises SupportsSampling (joint draw:
         sample prior, call likelihood.generate_data)."""
-        from probpipe.core.protocols import SupportsSampling
+
         assert isinstance(model, SupportsSampling)
 
     def test_simulator_is_generative_likelihood(self, simulator):

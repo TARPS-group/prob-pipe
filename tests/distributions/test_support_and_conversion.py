@@ -3,26 +3,39 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import pytest
-from probpipe import from_distribution
+
 from probpipe import (
-    NumericRecordDistribution, RecordEmpiricalDistribution, EmpiricalDistribution,
-    Provenance,
-)
-from probpipe.distributions import (
-    MultivariateNormal,
-    Normal, Beta, Gamma, InverseGamma, Exponential, LogNormal,
-    StudentT, Uniform, Cauchy, Laplace, HalfNormal, HalfCauchy,
-    Pareto, TruncatedNormal,
-    Bernoulli, Binomial, Poisson, Categorical, NegativeBinomial,
-    Dirichlet, Multinomial, Wishart, VonMisesFisher,
+    RecordEmpiricalDistribution,
+    from_distribution,
 )
 from probpipe.core.constraints import (
-    Constraint, real, positive, non_negative, non_negative_integer,
-    boolean, unit_interval, simplex, positive_definite, sphere,
-    interval, greater_than, integer_interval,
     _supports_compatible,
+    boolean,
+    greater_than,
+    integer_interval,
+    interval,
+    non_negative,
+    non_negative_integer,
+    positive,
+    positive_definite,
+    real,
+    simplex,
+    sphere,
+    unit_interval,
 )
-
+from probpipe.distributions import (
+    Bernoulli,
+    Beta,
+    Binomial,
+    Dirichlet,
+    Gamma,
+    MultivariateNormal,
+    Normal,
+    Poisson,
+    Uniform,
+    VonMisesFisher,
+    Wishart,
+)
 
 # ── Section 1: Constraint tests ──────────────────────────────────────────────
 
@@ -286,7 +299,9 @@ class TestFromDistribution:
 
     def test_binomial_from_poisson(self, key):
         p = Poisson(rate=3.0, name="p")
-        b = from_distribution(p, Binomial, key=key, check_support=False, total_count=10, num_samples=5000)
+        b = from_distribution(
+            p, Binomial, key=key, check_support=False, total_count=10, num_samples=5000
+        )
         # mean ~ 3, so probs ~ 0.3
         assert b.probs is not None
 

@@ -106,7 +106,7 @@ class TestBroadcastDistributionProtocols:
             weights=None,
             broadcast_args=["x"],
         )
-        assert hasattr(bd, 'fields')
+        assert hasattr(bd, "fields")
 
 
 # ---------------------------------------------------------------------------
@@ -307,7 +307,10 @@ class TestMixtureMarginal:
         assert jnp.isfinite(lp)
 
     def test_sample_draws(self, key):
-        components = [Normal(loc=-100.0, scale=0.01, name="a"), Normal(loc=100.0, scale=0.01, name="b")]
+        components = [
+            Normal(loc=-100.0, scale=0.01, name="a"),
+            Normal(loc=100.0, scale=0.01, name="b"),
+        ]
         m = _make_mixture_marginal(components, None)
         draws = m._sample(key, (1000,))
         # Should be bimodal around -100 and 100
@@ -519,7 +522,7 @@ class TestArrayMarginalAdditional:
         """Full expectation over all samples."""
         samples = jnp.array([[1.0], [2.0], [3.0]])
         m = _RecordMarginal(samples, None)
-        result = m._expectation(lambda x: x ** 2)
+        result = m._expectation(lambda x: x**2)
         # E[X^2] = (1+4+9)/3 = 14/3
         np.testing.assert_allclose(result, jnp.array([14.0 / 3]), atol=1e-4)
 
@@ -544,9 +547,7 @@ class TestArrayMarginalAdditional:
         """Subsampled expectation with return_dist=False returns array."""
         samples = jnp.arange(100, dtype=jnp.float32).reshape(-1, 1)
         m = _RecordMarginal(samples, None)
-        result = m._expectation(
-            lambda x: x, key=key, num_evaluations=20, return_dist=False
-        )
+        result = m._expectation(lambda x: x, key=key, num_evaluations=20, return_dist=False)
         assert isinstance(result, jnp.ndarray)
 
     def test_expectation_subsampled_weighted(self, key):
@@ -566,9 +567,7 @@ class TestArrayMarginalAdditional:
         samples = jnp.arange(n, dtype=jnp.float32).reshape(-1, 1)
         w = jnp.ones(n) / n
         m = _RecordMarginal(samples, w)
-        result = m._expectation(
-            lambda x: x, key=key, num_evaluations=10, return_dist=False
-        )
+        result = m._expectation(lambda x: x, key=key, num_evaluations=10, return_dist=False)
         assert isinstance(result, jnp.ndarray)
 
     def test_cov_weighted(self):
@@ -670,6 +669,7 @@ class TestRecordArrayMarginal:
         @workflow_function
         def transform(x, y):
             return Record(sum=x + y, diff=x - y)
+
         return transform
 
     @pytest.fixture
@@ -680,7 +680,9 @@ class TestRecordArrayMarginal:
         )
 
     def test_record_output_produces_record_array_marginal(
-        self, record_workflow, prior,
+        self,
+        record_workflow,
+        prior,
     ):
         result = record_workflow(**prior.select("x", "y"))
         assert isinstance(result, _RecordMarginal)
@@ -729,6 +731,7 @@ class TestMakeStack:
     def test_list_of_scalars_wraps_as_numeric_record_array(self):
         from probpipe import NumericRecordArray
         from probpipe.core._broadcast_distributions import _make_stack
+
         out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo")
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
@@ -738,6 +741,7 @@ class TestMakeStack:
     def test_list_of_arrays_preserves_event_shape(self):
         from probpipe import NumericRecordArray
         from probpipe.core._broadcast_distributions import _make_stack
+
         values = [jnp.arange(3.0) + 10.0 * i for i in range(4)]
         out = _make_stack(values, n=4, field_name="demo")
         assert isinstance(out, NumericRecordArray)
@@ -747,6 +751,7 @@ class TestMakeStack:
     def test_list_of_numeric_records_promotes_to_numeric_array(self):
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._broadcast_distributions import _make_stack
+
         records = [NumericRecord(a=float(i), b=float(i) * 2) for i in range(5)]
         out = _make_stack(records, n=5, field_name="demo")
         assert isinstance(out, NumericRecordArray)
@@ -761,6 +766,7 @@ class TestMakeStack:
         opaque leaves via ``np.asarray(dtype=object)``."""
         from probpipe import NumericRecordArray, Record, RecordArray
         from probpipe.core._broadcast_distributions import _make_stack
+
         records = [Record(a=float(i), label=f"row{i}") for i in range(3)]
         out = _make_stack(records, n=3, field_name="demo")
         assert isinstance(out, RecordArray)
@@ -771,6 +777,7 @@ class TestMakeStack:
     def test_list_of_distributions_gives_distribution_array(self):
         from probpipe import DistributionArray, Normal
         from probpipe.core._broadcast_distributions import _make_stack
+
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
         out = _make_stack(comps, n=3, field_name="demo")
         assert isinstance(out, DistributionArray)
@@ -782,10 +789,9 @@ class TestMakeStack:
         n of them produces a RecordArray with batch_shape (n, m)."""
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._broadcast_distributions import _make_stack
+
         inner = [
-            NumericRecordArray.stack(
-                [NumericRecord(x=float(i * 10 + j)) for j in range(4)]
-            )
+            NumericRecordArray.stack([NumericRecord(x=float(i * 10 + j)) for j in range(4)])
             for i in range(3)
         ]
         out = _make_stack(inner, n=3, field_name="demo")
@@ -799,6 +805,7 @@ class TestMakeStack:
         output for scalar-returning fns) wraps without unstacking."""
         from probpipe import NumericRecordArray
         from probpipe.core._broadcast_distributions import _make_stack
+
         arr = jnp.arange(12.0).reshape(4, 3)
         out = _make_stack(arr, n=4, field_name="demo")
         assert isinstance(out, NumericRecordArray)
@@ -811,6 +818,7 @@ class TestMakeStack:
         input form for the pytree branch of ``_make_stack``."""
         from probpipe import NumericRecordArray, Record
         from probpipe.core._broadcast_distributions import _make_stack
+
         rec = Record(x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
         out = _make_stack(rec, n=5, field_name="demo")
         assert isinstance(out, NumericRecordArray)
@@ -818,11 +826,13 @@ class TestMakeStack:
 
     def test_length_mismatch_raises(self):
         from probpipe.core._broadcast_distributions import _make_stack
+
         with pytest.raises(ValueError, match=r"expected prod\(batch_shape\)=5"):
             _make_stack([1.0, 2.0, 3.0], n=5, field_name="demo")
 
     def test_ndarray_leading_axis_mismatch_raises(self):
         from probpipe.core._broadcast_distributions import _make_stack
+
         with pytest.raises(ValueError, match="expected leading axis"):
             _make_stack(jnp.arange(6.0), n=4, field_name="demo")
 
@@ -840,6 +850,7 @@ class TestCoerceOutput:
 
     def test_wrap_mode_with_no_provenance_wraps_scalar(self):
         from probpipe.core import _workflow_result
+
         out = _workflow_result._coerce_output(
             3.14,
             broadcast_mode=_workflow_result.BROADCAST_WRAP,
@@ -853,9 +864,8 @@ class TestCoerceOutput:
     def test_stack_mode_attaches_to_recordarray(self):
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._workflow_result import _coerce_output
-        ra = NumericRecordArray.stack(
-            [NumericRecord(x=float(i)) for i in range(3)]
-        )
+
+        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         assert ra.source is None
         prov = Provenance("sweep", parents=())
         out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
@@ -866,6 +876,7 @@ class TestCoerceOutput:
         from probpipe import DistributionArray, Normal
         from probpipe.core._broadcast_distributions import _make_stack
         from probpipe.core._workflow_result import _coerce_output
+
         da = _make_stack(
             [Normal(loc=0.0, scale=1.0, name=f"d{i}") for i in range(3)],
             n=3,
@@ -884,6 +895,7 @@ class TestCoerceOutput:
         existing source must remain."""
         from probpipe import NumericRecord
         from probpipe.core._workflow_result import _coerce_output
+
         nr = NumericRecord(x=1.0).with_source(Provenance("inner", parents=()))
         # Second set would normally raise RuntimeError; _coerce_output
         # swallows it.

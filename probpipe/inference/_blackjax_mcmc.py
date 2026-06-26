@@ -1,6 +1,6 @@
 """BlackJAX-backed gradient MCMC methods: NUTS and HMC.
 
-Two :class:`~probpipe.core._registry.Method` subclasses registered with
+Two :class:`~probpipe.core._registry.UnaryDispatchMethod` subclasses registered with
 :data:`~probpipe.inference.inference_method_registry`:
 
 * ``blackjax_nuts`` — No-U-Turn Sampler with window-adapted step size and
@@ -16,7 +16,7 @@ target whose log-density is JAX-traceable. They run on the flat-vector
 form of the target produced by
 :func:`~probpipe.inference._inference_utils.build_target_log_prob_flat`,
 then lift the resulting chain back through the prior's
-``record_template`` so the posterior preserves the structured
+``event_template`` so the posterior preserves the structured
 parameterisation.
 
 The per-draw diagnostics (``acceptance_rate``, ``is_divergent``,
@@ -40,7 +40,11 @@ import jax.numpy as jnp
 import numpy as np
 from blackjax.mcmc.dynamic_hmc import (
     build_kernel as _dynamic_hmc_build_kernel,
+)
+from blackjax.mcmc.dynamic_hmc import (
     halton_trajectory_length,
+)
+from blackjax.mcmc.dynamic_hmc import (
     init as _dynamic_hmc_init,
 )
 
@@ -60,7 +64,7 @@ from ._inference_utils import (
 )
 from ._registry import InferenceMethod
 
-__all__ = ["BlackJAXNutsMethod", "BlackJAXHmcMethod"]
+__all__ = ["BlackJAXHmcMethod", "BlackJAXNutsMethod"]
 
 Algorithm = Literal["nuts", "hmc"]
 
@@ -191,12 +195,16 @@ def _run_blackjax_chains(
         if algorithm == "hmc":
             warmup_algorithm = _halton_warmup_algorithm(num_integration_steps)
             warmup = blackjax.window_adaptation(
-                warmup_algorithm, target_log_prob_fn, initial_step_size=step_size,
+                warmup_algorithm,
+                target_log_prob_fn,
+                initial_step_size=step_size,
             )
         else:
             warmup = blackjax.window_adaptation(
-                kernel_factory, target_log_prob_fn,
-                initial_step_size=step_size, **extra_kwargs,
+                kernel_factory,
+                target_log_prob_fn,
+                initial_step_size=step_size,
+                **extra_kwargs,
             )
         (state, params), _ = warmup.run(warmup_key, init_state, num_steps=num_warmup)
         return state, params
@@ -236,7 +244,8 @@ def _run_blackjax_chains(
         return positions, infos, jnp.asarray(adapted_params["step_size"])
 
     all_positions, all_infos, adapted_step_sizes = parallel_chain_map(
-        run_one_chain, chain_keys,
+        run_one_chain,
+        chain_keys,
     )
     chains = [all_positions[c] for c in range(num_chains)]
     sample_stats = _extract_blackjax_sample_stats(all_infos, adapted_step_sizes, num_results)
@@ -244,7 +253,9 @@ def _run_blackjax_chains(
 
 
 def _extract_blackjax_sample_stats(
-    infos: Any, step_sizes: Array, num_results: int,
+    infos: Any,
+    step_sizes: Array,
+    num_results: int,
 ) -> dict[str, np.ndarray]:
     """Pack BlackJAX per-step ``info`` into a TFP-shaped sample-stats dict.
 
@@ -266,7 +277,8 @@ def _extract_blackjax_sample_stats(
             stats[key] = np.asarray(value)
     step_sizes = np.asarray(step_sizes)
     stats["step_size"] = np.broadcast_to(
-        step_sizes[:, None], (step_sizes.shape[0], num_results),
+        step_sizes[:, None],
+        (step_sizes.shape[0], num_results),
     ).copy()
     return stats
 
@@ -298,26 +310,33 @@ class _BlackJAXMCMCMethod(InferenceMethod):
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, SupportsUnnormalizedLogProb):
             return MethodInfo(
-                feasible=False, method_name=self.name,
+                feasible=False,
+                method_name=self.name,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         try:
             target_flat, flat_init, _ = build_target_log_prob_flat(dist, observed)
             if not is_jax_traceable(target_flat, flat_init):
                 return MethodInfo(
-                    feasible=False, method_name=self.name,
+                    feasible=False,
+                    method_name=self.name,
                     description="Log-prob is not JAX-traceable",
                 )
         except Exception as e:
             return MethodInfo(
-                feasible=False, method_name=self.name, description=str(e),
+                feasible=False,
+                method_name=self.name,
+                description=str(e),
             )
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
         random_seed: int = kwargs.get("random_seed", 0)
-        target_flat, flat_init, record_template = build_target_log_prob_flat(
-            dist, observed, init=kwargs.get("init"), random_seed=random_seed,
+        target_flat, flat_init, event_template = build_target_log_prob_flat(
+            dist,
+            observed,
+            init=kwargs.get("init"),
+            random_seed=random_seed,
         )
         num_results: int = kwargs.get("num_results", 1000)
         num_warmup: int = kwargs.get("num_warmup", 500)
@@ -326,7 +345,8 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)
 
         chains, sample_stats = _run_blackjax_chains(
-            target_flat, flat_init,
+            target_flat,
+            flat_init,
             algorithm=self._algorithm,
             num_results=num_results,
             num_warmup=num_warmup,
@@ -338,9 +358,14 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         auxiliary = build_mcmc_datatree(chains, sample_stats)
         prior = get_prior(dist)
         return make_posterior(
-            chains, parents=(prior,), algorithm=self._method_name,
-            auxiliary=auxiliary, record_template=record_template,
-            num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
+            chains,
+            parents=(prior,),
+            algorithm=self._method_name,
+            auxiliary=auxiliary,
+            event_template=event_template,
+            num_results=num_results,
+            num_warmup=num_warmup,
+            num_chains=num_chains,
         )
 
 

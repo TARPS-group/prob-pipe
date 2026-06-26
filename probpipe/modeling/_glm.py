@@ -6,7 +6,8 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from ..core.record import Record, RecordTemplate
+from ..core.event_template import EventTemplate
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["GLMLikelihood"]
@@ -100,9 +101,9 @@ class GLMLikelihood:
         return X @ beta
 
     @property
-    def data_template(self) -> RecordTemplate:
+    def data_template(self) -> EventTemplate:
         """Named structure of GLM data: ``X`` (design matrix) and ``y`` (response)."""
-        return RecordTemplate(X=(0, 0), y=(0,))
+        return EventTemplate(X=(0, 0), y=(0,))
 
     def _extract_X_y(self, data):
         """Extract design matrix and response from data.
@@ -150,7 +151,9 @@ class GLMLikelihood:
         return jnp.sum(self.family.log_prob(y, eta))
 
     def per_datum_log_likelihood(
-        self, params: ArrayLike | Record, datum: Record,
+        self,
+        params: ArrayLike | Record,
+        datum: Record,
     ) -> Array:
         """Log-density of a single observation given parameters.
 
@@ -176,8 +179,7 @@ class GLMLikelihood:
         """
         if not (isinstance(datum, Record) and "X" in datum and "y" in datum):
             raise TypeError(
-                "GLMLikelihood.per_datum_log_likelihood requires "
-                "datum=Record(X=x_i, y=y_i)."
+                "GLMLikelihood.per_datum_log_likelihood requires datum=Record(X=x_i, y=y_i)."
             )
         # `atleast_1d` accommodates the single-covariate case where the
         # per-observation X leaf is naturally scalar — the matmul below

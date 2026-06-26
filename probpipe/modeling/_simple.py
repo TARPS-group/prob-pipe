@@ -4,11 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-import jax.numpy as jnp
-
 from ..core.distribution import Distribution
+from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsLogProb
-from ..core.record import Record, RecordTemplate
+from ..core.record import Record
 from ..custom_types import Array
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -24,7 +23,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
     The prior must support :class:`SupportsLogProb` so that the joint
     log-density is always computable.
 
-    **Named components:** merged from the prior's ``record_template``
+    **Named components:** merged from the prior's ``event_template``
     and the likelihood's ``data_template`` when both are available.
     For example, a GLM model might have
     ``fields == ("X", "intercept", "slope", "y")``.
@@ -55,9 +54,10 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # runtime checks remain as a backstop for callers who bypass
         # the type system: the prior must be both ``SupportsLogProb``
         # (so the joint log-density is computable) and a
-        # ``RecordDistribution`` (so its ``record_template`` is a
-        # required, non-``None`` ``RecordTemplate``).
+        # ``RecordDistribution`` (so its ``event_template`` is a
+        # required, non-``None`` ``EventTemplate``).
         from ..core.distribution import RecordDistribution
+
         if not isinstance(prior, SupportsLogProb):
             raise TypeError(
                 f"SimpleModel requires a prior that supports SupportsLogProb, "
@@ -67,7 +67,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             raise TypeError(
                 f"SimpleModel requires a prior that is a "
                 f"RecordDistribution (has named fields via "
-                f"record_template); got {type(prior).__name__}."
+                f"event_template); got {type(prior).__name__}."
             )
         self._prior = prior
         self._likelihood = likelihood
@@ -75,7 +75,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # to the class name when the caller doesn't supply one.
         self._name = name if name else "SimpleModel"
 
-        # Build merged record_template: prior params + likelihood data fields.
+        # Build merged event_template: prior params + likelihood data fields.
         # This makes fields include both parameter and data names,
         # so condition_on can use component names as the sole signal for
         # splitting data kwargs from inference kwargs.
@@ -84,28 +84,26 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # ``isinstance(prior, RecordDistribution)`` guard above implies
         # the metaclass invariant); ``data_tpl`` may be ``None`` for
         # likelihoods that don't declare a data template.
-        prior_tpl: RecordTemplate = prior.record_template
-        data_tpl = getattr(likelihood, 'data_template', None)
+        prior_tpl: EventTemplate = prior.event_template
+        data_tpl = getattr(likelihood, "data_template", None)
         # Convert legacy ``Record``-typed data templates to
-        # ``RecordTemplate``. ``Record`` and ``RecordTemplate`` are
+        # ``EventTemplate``. ``Record`` and ``EventTemplate`` are
         # unrelated types, so the ``Record`` check is sufficient on
         # its own.
         if isinstance(data_tpl, Record):
-            data_tpl = RecordTemplate.from_record(data_tpl)
+            data_tpl = EventTemplate.infer_from(data_tpl)
         if data_tpl is not None:
             overlap = set(prior_tpl.fields) & set(data_tpl.fields)
             if overlap:
-                raise ValueError(
-                    f"Parameter and data field names overlap: {overlap}"
-                )
+                raise ValueError(f"Parameter and data field names overlap: {overlap}")
             merged: dict[str, Any] = {}
             for f in prior_tpl.fields:
                 merged[f] = prior_tpl[f]
             for f in data_tpl.fields:
                 merged[f] = data_tpl[f]
-            self._record_template: RecordTemplate = RecordTemplate(merged)
+            self._event_template: EventTemplate = EventTemplate(merged)
         else:
-            self._record_template = prior_tpl
+            self._event_template = prior_tpl
 
     # -- Distribution interface ---------------------------------------------
 
@@ -120,8 +118,8 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         return self._likelihood
 
     @property
-    def record_template(self) -> RecordTemplate:
-        """Merged ``RecordTemplate`` over prior fields + likelihood data fields.
+    def event_template(self) -> EventTemplate:
+        """Merged ``EventTemplate`` over prior fields + likelihood data fields.
 
         ``SimpleModel`` is not itself a :class:`RecordDistribution`, but
         it carries a template so :attr:`fields`, conditioning, and
@@ -130,23 +128,23 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         is guaranteed non-``None`` by the ``RecordDistribution``
         invariant, and the prior's fields are the floor.
         """
-        return self._record_template
+        return self._event_template
 
     # -- Named components interface ------------------------------------------
 
     @property
     def fields(self) -> tuple[str, ...]:
-        return self.record_template.fields
+        return self.event_template.fields
 
     @property
     def _prior_fields(self) -> tuple[str, ...]:
         """Prior field names in template (insertion) order."""
-        return self._prior.record_template.fields
+        return self._prior.event_template.fields
 
     @property
     def _data_fields(self) -> tuple[str, ...]:
         """Likelihood data field names in template (insertion) order."""
-        tpl = getattr(self._likelihood, 'data_template', None)
+        tpl = getattr(self._likelihood, "data_template", None)
         return tpl.fields if tpl is not None else ()
 
     def __getitem__(self, key: str) -> Distribution | Likelihood:
@@ -159,10 +157,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             return self._likelihood
         if key == "parameters":
             return self._prior
-        raise KeyError(
-            f"Unknown component: {key!r}; "
-            f"available: {self.fields}"
-        )
+        raise KeyError(f"Unknown component: {key!r}; available: {self.fields}")
 
     # -- ProbabilisticModel interface ---------------------------------------
 
@@ -222,9 +217,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
                     f"fields (no data_template); pass a (params, data) pair "
                     f"positionally instead."
                 )
-            params = self._prior._pack_value(
-                **{f: value[f] for f in self._prior_fields}
-            )
+            params = self._prior._pack_value(**{f: value[f] for f in self._prior_fields})
             data = Record(**{f: value[f] for f in data_fields})
             return params, data
         raise TypeError(

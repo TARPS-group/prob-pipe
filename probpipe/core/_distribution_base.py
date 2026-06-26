@@ -9,7 +9,8 @@ Provides:
 from __future__ import annotations
 
 import copy as _copy
-from abc import ABC, abstractmethod
+from abc import ABC
+
 # ``_ProtocolMeta`` is technically private (leading underscore in
 # ``typing``), but it's the only way to compose a custom metaclass with
 # ``@runtime_checkable`` protocols without a metaclass conflict.  The
@@ -17,18 +18,14 @@ from abc import ABC, abstractmethod
 # ecosystem (Pydantic, attrs, etc.). If a future Python release renames
 # it, the metaclass would need to switch to whatever new base ``typing``
 # exposes; the conflict-avoidance constraint itself doesn't change.
-from typing import TYPE_CHECKING, Any, _ProtocolMeta  # noqa: PLC2701
+from typing import TYPE_CHECKING, Any, _ProtocolMeta
 
 if TYPE_CHECKING:
     from xarray import DataTree
 
+    from ..diagnostics.views import DiagnosticsView
     from ._distribution_array import DistributionArray
-    from .record import RecordTemplate
 
-import jax
-import jax.numpy as jnp
-
-from ..custom_types import PRNGKey
 from .provenance import Provenance
 
 # ---------------------------------------------------------------------------
@@ -109,9 +106,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
     def __init__(self, *, name: str):
         if not isinstance(name, str) or not name:
-            raise TypeError(
-                f"{type(self).__name__} requires a non-empty name= argument"
-            )
+            raise TypeError(f"{type(self).__name__} requires a non-empty name= argument")
         self._name = name
 
     # -- keyword-form value construction ------------------------------------
@@ -122,8 +117,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         log_prob-family ops (``log_prob(dist, field=value, ...)``).
 
         Delegates field validation and ``Record`` construction to the general
-        :func:`~probpipe.core.record._pack_fields` (also exposed object-style
-        as :meth:`~probpipe.core.record.RecordTemplate.pack`) and layers this
+        :func:`~probpipe.core.record._pack_fields` and layers this
         distribution's value-type convention on top:
 
         * **single field** → the bare field value (``T = Array``), so a
@@ -148,6 +142,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
             match its fields exactly (missing or unexpected names).
         """
         from .record import _pack_fields
+
         fields = getattr(self, "fields", None)
         if not fields:
             raise TypeError(
@@ -162,47 +157,171 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
     @property
     def is_approximate(self) -> bool:
-        """Whether this distribution is an approximation (e.g., from sampling or MCMC)."""
+        """Whether this distribution is an approximation.
+
+        Approximate distributions are typically produced by sampling,
+        variational inference, MCMC, bootstrap procedures, or other numerical
+        approximations.
+        """
         return getattr(self, "_approximate", False)
 
     # -- auxiliary information ----------------------------------------------
 
     @property
     def auxiliary(self) -> DataTree | None:
-        """An xarray ``DataTree`` of auxiliary information (diagnostics,
-        sample statistics, algorithm metadata), or ``None``.
+        """Auxiliary metadata attached to this distribution.
 
-        Populated by inference methods. Follows ArviZ group conventions
-        (``posterior``, ``sample_stats``, ``warmup``, etc.) with metadata
-        stored as DataTree attributes.
+        Returns an ``xarray.DataTree`` of auxiliary information, or ``None``
+        if no auxiliary information has been attached.
 
-        **Documented exception to distribution immutability.** Unlike
-        every other piece of state on a :class:`Distribution`,
-        ``_auxiliary`` is designed to be mutated in place by validators
-        and diagnostic ops after construction — e.g.,
-        :func:`~probpipe.predictive_check` attaches its replicated-
-        statistic dataset under ``auxiliary["predictive_check"]`` on
-        the distribution it ran on. The alternative (returning a
-        renamed clone for every diagnostic) would break the
-        source/identity tracking downstream code depends on. Treat as
-        append-only: new diagnostic ops should write under their own
-        named group, never overwrite or mutate parameter-like state
-        via this channel.
+        ``_auxiliary`` is ProbPipe's general-purpose post-construction
+        metadata store. It may contain ArviZ-compatible xarray DataTree data,
+        diagnostic summaries, validation results, provenance-like metadata,
+        or other append-only metadata produced after inference.
+
+        The expected diagnostics-related layout is::
+
+            posterior._auxiliary
+            ├── arviz/          # ArviZ-compatible data and raw inputs
+            │   ├── posterior
+            │   ├── sample_stats
+            │   ├── observed_data
+            │   ├── posterior_predictive
+            │   └── log_likelihood
+            └── diagnostics/    # ProbPipe-computed results and metadata
+                ├── mcmc        # rhat, ess_bulk, ess_tail, mcse, ...
+                └── runs        # on-demand diagnostics such as ppc, loo, spc
+                    ├── ppc
+                    ├── loo
+                    └── spc
+
+        The ``/arviz/`` subtree is intended to be passed to ArviZ functions
+        and to hold raw diagnostic ingredients such as sampler statistics,
+        posterior predictive samples, and pointwise log likelihoods. In ArviZ
+        1.0+, this is an ArviZ-compatible ``DataTree`` rather than the older
+        ``InferenceData`` representation.
+
+        The ``/diagnostics/`` subtree contains ProbPipe-owned computed
+        summaries, results, warning metadata, and run metadata. It is exposed
+        through the structured ``posterior.diagnostics`` Python accessor.
+
+        Documented exception to distribution immutability
+        -------------------------------------------------
+        Unlike parameter-like state on a :class:`Distribution`, ``_auxiliary``
+        is designed to be mutated in place by inference backends, validators,
+        and diagnostic operations after construction.
+
+        Diagnostic functions such as ``add_mcmc_diagnostics`` and ``add_ppc``
+        write into ``_auxiliary`` and return ``None``. This preserves posterior
+        identity/source tracking while allowing diagnostics to annotate an
+        already-fitted posterior.
+
+        Treat this channel as append-only: new diagnostic operations should
+        write under their own named group and should not overwrite or mutate
+        parameter-like distribution state.
         """
         return getattr(self, "_auxiliary", None)
+
+    @property
+    def diagnostics(self) -> DiagnosticsView | None:
+        """Structured view over diagnostic results stored in ``_auxiliary``.
+
+        Returns ``None`` if no diagnostics have been computed yet.
+
+        ProbPipe stores auxiliary posterior metadata in a general-purpose
+        ``xarray.DataTree`` attached to the distribution. The expected layout is::
+
+            posterior._auxiliary
+            ├── arviz/          # ArviZ-compatible data and raw inputs
+            └── diagnostics/    # ProbPipe-computed results and metadata
+
+        This property returns a structured Python accessor over the
+        ``/diagnostics/`` subtree only. It is distinct from the ArviZ-compatible
+        data used for plotting or ArviZ computations.
+
+        In other words::
+
+            posterior.diagnostics
+                # structured ProbPipe view over posterior._auxiliary["diagnostics"]
+
+            posterior.arviz_data
+                # ArviZ-compatible xarray DataTree subtree, typically
+                # posterior._auxiliary["arviz"]
+
+            posterior.inference_data
+                # backward-compatible alias for posterior.arviz_data
+
+        Examples
+        --------
+        ::
+
+            posterior = condition_on(model, data)
+
+            # MCMC diagnostics mutate posterior._auxiliary in place and return None.
+            add_mcmc_diagnostics(posterior)
+
+            posterior.diagnostics.rhat
+            # {"intercept": 1.001, "slope": 1.002}
+
+            posterior.diagnostics.warnings
+            # []
+
+            posterior.diagnostics.runs
+            # []
+
+            # Posterior predictive checks are stored under diagnostics/runs/ppc.
+            add_ppc(
+                posterior,
+                test_fns=[...],
+                observed_data=y,
+                generative_likelihood=lik,
+            )
+
+            posterior.diagnostics.ppc.result
+            # {"var_mean_ratio": {"p_value": 0.43, "observed": 3.2}}
+
+            posterior.diagnostics.runs[0].result
+            # {"p_value": {"var_mean_ratio": 0.43}, ...}
+
+            posterior.diagnostics.runs[0].plot_fn
+            # "" unless the run wrote ArviZ-compatible plotting inputs
+
+        Notes
+        -----
+        The diagnostics accessor is read-only. Diagnostic functions such as
+        ``add_mcmc_diagnostics`` and ``add_ppc`` are responsible for writing
+        diagnostic results into ``posterior._auxiliary``.
+        """
+        aux = self.auxiliary
+        if aux is None:
+            return None
+        children = aux.children if hasattr(aux, "children") else {}
+        if "diagnostics" not in children:
+            return None
+        from ..diagnostics.views import DiagnosticsView
+
+        return DiagnosticsView(aux["diagnostics"])
 
     # -- naming & provenance ------------------------------------------------
 
     @property
     def name(self) -> str:
+        """Name of this distribution."""
         return self._name
 
     @property
     def source(self) -> Provenance | None:
+        """Provenance describing how this distribution was created, if any."""
         return getattr(self, "_source", None)
 
-    def with_source(self, source: Provenance) -> Distribution:
-        """Attach provenance to this distribution (write-once)."""
+    def with_source(self, source: Provenance | None) -> Distribution:
+        """Attach provenance to this distribution (write-once).
+
+        Passing ``None`` (e.g. the result of ``Provenance.create()`` under
+        :attr:`ProvenanceMode.OFF`) is a no-op.
+        """
+        if source is None:
+            return self
         if getattr(self, "_source", None) is not None:
             raise RuntimeError(
                 f"Source already set on {self!r}. "
@@ -219,7 +338,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         operation and points to the original as parent.
 
         ``RecordDistribution`` overrides this to also reset its cached
-        ``_record_template`` so the auto-build path regenerates with
+        ``_event_template`` so the auto-build path regenerates with
         the new name.
         """
         clone = _copy.copy(self)
@@ -227,9 +346,9 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         # Bypass write-once guard so rename provenance can be attached
         object.__setattr__(clone, "_source", None)
         clone.with_source(
-            Provenance(
+            Provenance.create(
                 "renamed",
-                parents=(self,),
+                parents=[self],
                 metadata={"old_name": self.name, "new_name": new_name},
             )
         )
@@ -244,7 +363,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         name: str,
         batch_shape: tuple[int, ...] | None = None,
         **batched_params,
-    ) -> "DistributionArray":
+    ) -> DistributionArray:
         """Class-method alias for :meth:`DistributionArray.from_batched_params`.
 
         Lets users write the ergonomic per-class form::
@@ -271,8 +390,12 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         # subpackage and importing at module top would create a cycle
         # (DistributionArray inherits from Distribution).
         from ._distribution_array import DistributionArray
+
         return DistributionArray.from_batched_params(
-            cls, name=name, batch_shape=batch_shape, **batched_params,
+            cls,
+            name=name,
+            batch_shape=batch_shape,
+            **batched_params,
         )
 
     # -- repr ---------------------------------------------------------------

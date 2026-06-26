@@ -175,14 +175,11 @@ def execute_distribution_broadcast(
 
 def _validate_n_broadcast_samples(n_broadcast_samples: int) -> None:
     if not isinstance(n_broadcast_samples, int):
-        raise TypeError(
-            f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}"
-        )
+        raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
 
     if n_broadcast_samples <= 0:
         raise ValueError(
-            "n_broadcast_samples must be a positive integer; "
-            f"got {n_broadcast_samples!r}"
+            f"n_broadcast_samples must be a positive integer; got {n_broadcast_samples!r}"
         )
 
     if n_broadcast_samples < MIN_BROADCAST_SAMPLES:
@@ -204,10 +201,7 @@ def _split_empirical_args(
     sample_args: dict[str, Distribution] = {}
     for name in broadcast_args:
         dist = values[name]
-        if (
-            isinstance(dist, EmpiricalDistribution)
-            and dist.num_atoms <= n_broadcast_samples
-        ):
+        if isinstance(dist, EmpiricalDistribution) and dist.num_atoms <= n_broadcast_samples:
             candidates.append((name, dist))
         else:
             sample_args[name] = dist
@@ -234,13 +228,17 @@ def _make_broadcast_provenance(
     n_broadcast_samples: int,
     workflow_name: str,
     func: Callable[..., Any],
-) -> Provenance:
-    parents = tuple(
-        values[name] for name in broadcast_args if isinstance(values[name], Distribution)
-    )
-    return Provenance(
+) -> Provenance | None:
+    seen: set[int] = set()
+    candidates = []
+    for name in broadcast_args:
+        v = values[name]
+        if isinstance(v, Distribution) and id(v) not in seen:
+            seen.add(id(v))
+            candidates.append(v)
+    return Provenance.create(
         "broadcast",
-        parents=parents,
+        parents=candidates,
         metadata={
             "dispatch": dispatch,
             "orchestrate": workflow_kind.value,
@@ -266,7 +264,8 @@ def _sample_broadcast_args(
     """
     sampled: dict[str, Array] = {}
     for arg_names in _workflow_plan.group_by_parent(
-        values=values, names=broadcast_args,
+        values=values,
+        names=broadcast_args,
     ).values():
         first = values[arg_names[0]]
         if not isinstance(first, _RecordDistributionView):
@@ -299,9 +298,7 @@ def _broadcast_jax(
     workflow_kind: WorkflowKind,
 ) -> BroadcastDistribution:
     """Execute distribution broadcasting through local ``jax.vmap``."""
-    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and (
-        task is None or flow is None
-    ):
+    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and (task is None or flow is None):
         raise RuntimeError(
             "Prefect task or flow execution was requested, but Prefect is not installed. "
             "Install with: pip install probpipe[prefect]"
@@ -309,7 +306,10 @@ def _broadcast_jax(
 
     key = get_key()
     sampled = _sample_broadcast_args(
-        values, broadcast_args, n_broadcast_samples, key,
+        values,
+        broadcast_args,
+        n_broadcast_samples,
+        key,
     )
     static = {k: v for k, v in values.items() if k not in broadcast_args}
 
@@ -402,8 +402,7 @@ def _broadcast_enumerate(
     results = _workflow_execution.execute_many(request)
 
     all_input_samples = {
-        name: jnp.stack([cv[name] for cv in call_value_list])
-        for name in all_broadcast_args
+        name: jnp.stack([cv[name] for cv in call_value_list]) for name in all_broadcast_args
     }
 
     return BroadcastDistribution(
@@ -429,7 +428,10 @@ def _broadcast_sample(
     """Sample distribution arguments and execute one function call per sample."""
     key = get_key()
     samples_per_arg = _sample_broadcast_args(
-        values, broadcast_args, n_broadcast_samples, key,
+        values,
+        broadcast_args,
+        n_broadcast_samples,
+        key,
     )
 
     call_value_list = []

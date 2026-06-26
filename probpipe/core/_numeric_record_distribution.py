@@ -39,22 +39,23 @@ express a vectorized batch of structured random variables.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from math import prod
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .record import NumericRecordTemplate
+    from .event_template import NumericEventTemplate
 
 import jax
 import jax.numpy as jnp
 
 from .._dtype import _as_float_array
 from .._utils import _auto_key
-from .._weights import Weights, weighted_mean, weighted_variance
+from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
 from ._distribution_base import Distribution
-from ._record_distribution import RecordDistribution
+from ._record_distribution import RecordDistribution, _field_event_shape
 from .constraints import (
     Constraint,
     _supports_compatible,
@@ -73,8 +74,9 @@ from .protocols import (
 # Sampling & expectation helpers
 # ---------------------------------------------------------------------------
 
+
 def _vmap_sample(
-    dist: "NumericRecordDistribution",
+    dist: NumericRecordDistribution,
     key: PRNGKey,
     sample_shape: tuple[int, ...] = (),
 ) -> Any:
@@ -95,6 +97,7 @@ def _vmap_sample(
     sample_shape : tuple of int
         Shape prefix for independent draws.
     """
+
     def _one(k: PRNGKey) -> Any:
         return dist._sample(k, ())
 
@@ -110,7 +113,7 @@ def _vmap_sample(
 
 
 def _mc_expectation(
-    dist: "NumericRecordDistribution",
+    dist: NumericRecordDistribution,
     f: Callable[[Any], Any],
     *,
     key: PRNGKey | None = None,
@@ -151,13 +154,14 @@ def _mc_expectation(
 # NumericRecordDistribution — RecordDistribution + numeric shape semantics
 # ---------------------------------------------------------------------------
 
+
 class NumericRecordDistribution(RecordDistribution):
     """Distribution over numeric arrays with Record support.
 
     Extends :class:`RecordDistribution` with numeric-specific metadata
     (per-field shape, dtype, and support). The class is the most
     general numeric random variable in ProbPipe: one draw is a pytree
-    of ``jax.Array`` leaves named via a :class:`RecordTemplate`.
+    of ``jax.Array`` leaves named via a :class:`EventTemplate`.
     Single-leaf distributions (``Normal``, ``Beta``,
     ``MultivariateNormal``, ...) are the trivial case; joint
     distributions (``ProductDistribution``, ``SequentialJointDistribution``,
@@ -178,7 +182,7 @@ class NumericRecordDistribution(RecordDistribution):
 
     | Concept   | Canonical (per-field)            | Convenience (single-leaf)                       |
     |-----------|----------------------------------|-------------------------------------------------|
-    | Structure | `record_template`                | —                                               |
+    | Structure | `event_template`                | —                                               |
     | Pytree    | `treedef` (from template)        | —                                               |
     | Shapes    | `event_shapes : dict`            | `event_shape : tuple` (raises on multi-leaf)    |
     | Dtypes    | `dtypes : dict`                  | `dtype : dtype \\| None` (unique or `None`)     |
@@ -190,9 +194,9 @@ class NumericRecordDistribution(RecordDistribution):
 
     A concrete subclass that declares ``event_shape`` and is constructed
     with a ``name=`` gets an auto-built single-field
-    ``RecordTemplate(**{name: event_shape})`` on first read of
-    :attr:`record_template`. Multi-field subclasses (joints) override
-    ``record_template`` directly to skip the auto-build.
+    ``EventTemplate(**{name: event_shape})`` on first read of
+    :attr:`event_template`. Multi-field subclasses (joints) override
+    ``event_template`` directly to skip the auto-build.
 
     ``_sample`` contract
     --------------------
@@ -205,27 +209,27 @@ class NumericRecordDistribution(RecordDistribution):
     ``sample`` op on ``self`` — call ``self._sample(key, sample_shape)``
     directly to avoid the ops layer.
 
-    The shape of one draw is fully determined by ``record_template``:
+    The shape of one draw is fully determined by ``event_template``:
 
     - **Single-leaf** template → ``_sample(key, sample_shape)`` returns
       a raw ``jax.Array`` of shape ``sample_shape + event_shape``.
     - **Multi-leaf** template → ``_sample(key, sample_shape)`` returns a
       :class:`~probpipe.NumericRecord` (or
       :class:`~probpipe.NumericRecordArray` for a non-empty
-      ``sample_shape``) keyed by ``record_template.fields``.
+      ``sample_shape``) keyed by ``event_template.fields``.
 
     The :attr:`treedef` property locks this invariant by deriving from
-    ``record_template``.
+    ``event_template``.
 
     Standard distributions (``Normal``, ``Gamma``, ``Poisson``, ...)
     inherit from this class via :class:`TFPDistribution`.
     """
 
-    # -- record_template auto-generation ------------------------------------
+    # -- event_template auto-generation ------------------------------------
 
     @property
-    def record_template(self):
-        """Auto-build a single-field ``RecordTemplate`` from
+    def event_template(self):
+        """Auto-build a single-field ``EventTemplate`` from
         ``name`` + ``event_shape`` when the subclass hasn't set one.
 
         Cached via :meth:`object.__setattr__` on first read.
@@ -235,64 +239,60 @@ class NumericRecordDistribution(RecordDistribution):
         Raises ``TypeError`` if the auto-build path can't run —
         either ``_name`` is unset, or ``event_shape`` is not
         derivable. Both error messages name the subclass and point at
-        the two construction paths (set ``_record_template``
+        the two construction paths (set ``_event_template``
         explicitly, or declare ``event_shape`` so the auto-build can
         proceed).
         """
-        from .record import RecordTemplate
-        tpl = getattr(self, "_record_template", None)
+        from .event_template import EventTemplate
+
+        tpl = getattr(self, "_event_template", None)
         if tpl is not None:
             return tpl
         name = getattr(self, "_name", None)
         if name is None:
             raise TypeError(
-                f"{type(self).__name__} has no record_template and "
-                f"no name; set _record_template explicitly (multi-leaf "
+                f"{type(self).__name__} has no event_template and "
+                f"no name; set _event_template explicitly (multi-leaf "
                 f"joints) or pass name= at construction (single-leaf)."
             )
         try:
             es = self.event_shape
         except NotImplementedError:
             raise TypeError(
-                f"{type(self).__name__} must declare event_shape or "
-                f"set _record_template explicitly."
+                f"{type(self).__name__} must declare event_shape or set _event_template explicitly."
             ) from None
-        tpl = RecordTemplate(**{name: es})
-        object.__setattr__(self, "_record_template", tpl)
+        tpl = EventTemplate(**{name: es})
+        object.__setattr__(self, "_event_template", tpl)
         return tpl
 
-    def renamed(self, new_name: str) -> "NumericRecordDistribution":
+    def renamed(self, new_name: str) -> NumericRecordDistribution:
         """Return a renamed copy, regenerating an auto-built template.
 
         Extends :meth:`Distribution.renamed`. When the cached template
         is the single-field auto-build (one field keyed by the old
-        name), the clone's ``_record_template`` is cleared so the next
+        name), the clone's ``_event_template`` is cleared so the next
         access rebuilds it under ``new_name``. Multi-leaf and
         user-supplied templates are left intact — their field names
         are part of the distribution's identity, not derived from
         ``name``.
         """
         clone = super().renamed(new_name)
-        tpl = getattr(clone, "_record_template", None)
-        if (
-            tpl is not None
-            and len(tpl.fields) == 1
-            and tpl.fields[0] == self._name
-        ):
-            object.__setattr__(clone, "_record_template", None)
+        tpl = getattr(clone, "_event_template", None)
+        if tpl is not None and len(tpl.fields) == 1 and tpl.fields[0] == self._name:
+            object.__setattr__(clone, "_event_template", None)
         return clone
 
     def _per_field_dict(self, value: Any) -> dict[str, Any]:
         """Build a ``{field: value}`` dict keyed by every field of
-        :attr:`record_template`, with *value* repeated as the value.
+        :attr:`event_template`, with *value* repeated as the value.
 
         Single-field auto-template subclasses (the common case)
         declare one scalar dtype / support / etc., but the
         canonical accessor is a per-field dict. This helper saves
         each override from spelling out
-        ``{name: value for name in record_template.fields}``.
+        ``{name: value for name in event_template.fields}``.
         """
-        return {name: value for name in self.record_template.fields}
+        return {name: value for name in self.event_template.fields}
 
     # -- per-field metadata ---------------------------------------------------
 
@@ -300,7 +300,7 @@ class NumericRecordDistribution(RecordDistribution):
     def dtypes(self) -> dict[str, jnp.dtype]:
         """Per-field dtypes — **canonical**, subclasses must override.
 
-        Returns a ``{field: dtype}`` dict aligned with ``record_template.fields``.
+        Returns a ``{field: dtype}`` dict aligned with ``event_template.fields``.
         Default raises ``NotImplementedError`` rather than returning a
         silent default-float for every field (which lied for integer-
         valued distributions like ``Bernoulli``, ``Poisson``, ``Categorical``).
@@ -345,7 +345,8 @@ class NumericRecordDistribution(RecordDistribution):
         return self.supports[self._single_field_name()]
 
     def _check_support_compatible(
-        self, source: "NumericRecordDistribution",
+        self,
+        source: NumericRecordDistribution,
     ) -> None:
         """Raise ``ValueError`` if *source*'s per-field supports are
         incompatible with *self*'s (the target's) per-field supports.
@@ -375,9 +376,7 @@ class NumericRecordDistribution(RecordDistribution):
             for field_name, source_support in source_per_field.items():
                 if _supports_compatible(source_support, target_support):
                     continue
-                field_part = (
-                    f" field {field_name!r}" if multi_leaf_source else ""
-                )
+                field_part = f" field {field_name!r}" if multi_leaf_source else ""
                 raise ValueError(
                     f"Cannot convert {type(source).__name__}{field_part} "
                     f"(support={source_support}) to {type(self).__name__} "
@@ -399,7 +398,8 @@ class NumericRecordDistribution(RecordDistribution):
                 f"Pass check_support=False to override."
             )
         for (s_name, s_sup), (t_name, t_sup) in zip(
-            source_per_field.items(), target_per_field.items(),
+            source_per_field.items(),
+            target_per_field.items(),
         ):
             if _supports_compatible(s_sup, t_sup):
                 continue
@@ -419,12 +419,12 @@ class NumericRecordDistribution(RecordDistribution):
 
         **Abstract** — every single-leaf subclass must override. The
         declared ``event_shape`` is the source of truth used by
-        :attr:`record_template`'s auto-build path; deriving it from
+        :attr:`event_template`'s auto-build path; deriving it from
         :attr:`event_shapes` here would loop back through
-        ``record_template``.
+        ``event_template``.
 
         Multi-leaf subclasses don't override (single-field convenience
-        doesn't apply); they set ``_record_template`` explicitly in
+        doesn't apply); they set ``_event_template`` explicitly in
         ``__init__`` so the auto-build never fires, and callers reach
         for :attr:`event_shapes` (per-field dict) instead.
         """
@@ -438,7 +438,7 @@ class NumericRecordDistribution(RecordDistribution):
 
     @property
     def treedef(self) -> jax.tree_util.PyTreeDef:
-        """Treedef of one sample, derived from :attr:`record_template`.
+        """Treedef of one sample, derived from :attr:`event_template`.
 
         Locks the relationship between the structural template and
         the sample's pytree shape:
@@ -458,22 +458,20 @@ class NumericRecordDistribution(RecordDistribution):
         cached = getattr(self, "_treedef", None)
         if cached is not None:
             return cached
-        # ``record_template`` is contractually non-``None`` on every
+        # ``event_template`` is contractually non-``None`` on every
         # ``RecordDistribution`` (metaclass-enforced); single-field
         # templates produce a leaf treedef matching the raw-array
         # ``_sample`` contract, multi-field templates produce a
         # ``NumericRecord`` skeleton.
-        tpl = self.record_template
+        tpl = self.event_template
         if len(tpl.fields) <= 1:
             td = jax.tree.structure(None)
         else:
             from ._numeric_record import NumericRecord
-            placeholder = NumericRecord(**{
-                name: jnp.zeros(
-                    tpl[name] if isinstance(tpl[name], tuple) else ()
-                )
-                for name in tpl.fields
-            })
+
+            placeholder = NumericRecord(
+                **{name: jnp.zeros(_field_event_shape(tpl, name)) for name in tpl.fields}
+            )
             td = jax.tree.structure(placeholder)
         object.__setattr__(self, "_treedef", td)
         return td
@@ -492,18 +490,17 @@ class NumericRecordDistribution(RecordDistribution):
     def event_size(self) -> int:
         """Total number of scalar elements in one sample.
 
-        For a :class:`NumericRecordTemplate` this is the cached
-        ``flat_size``. For a general ``RecordTemplate``, sums the
+        For a :class:`NumericEventTemplate` this is the cached
+        ``vector_size``. For a general ``EventTemplate``, sums the
         numeric-leaf shapes; opaque leaves contribute zero.
         """
-        from .record import NumericRecordTemplate
-        tpl = self.record_template
-        if isinstance(tpl, NumericRecordTemplate):
-            return tpl.flat_size
+        from .event_template import NumericEventTemplate
+
+        tpl = self.event_template
+        if isinstance(tpl, NumericEventTemplate):
+            return tpl.vector_size
         return sum(
-            prod(shape) if shape else 1
-            for shape in tpl.leaf_shapes.values()
-            if shape is not None
+            prod(shape) if shape else 1 for shape in tpl.leaf_shapes.values() if shape is not None
         )
 
     @staticmethod
@@ -519,10 +516,11 @@ class NumericRecordDistribution(RecordDistribution):
         from ._numeric_record import NumericRecord
         from ._record_array import NumericRecordArray
         from .record import Record
+
         if isinstance(value, (NumericRecordArray, NumericRecord)):
-            return value.flatten()
+            return value.to_vector()
         if isinstance(value, Record):
-            return NumericRecord.from_record(value).flatten()
+            return value.to_numeric().to_vector()
         value = jnp.asarray(value)
         if not event_shape:
             return value[..., None]
@@ -540,18 +538,15 @@ class NumericRecordDistribution(RecordDistribution):
         for ``_log_prob`` compatibility (preserves the original "single-
         leaf returns raw array" contract).
         """
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
         flat = jnp.asarray(flat)
         if template is not None and len(template.fields) > 1:
-            if flat.ndim < 2:
-                return NumericRecord.unflatten(flat, template=template)
-            return NumericRecordArray.unflatten(flat, template=template)
+            # ``from_vector`` selects single (NumericRecord) vs batched
+            # (NumericRecordArray) from the rank of ``flat``.
+            return template.from_vector(flat)
         # Single-field path
         if template is None or not template.fields:
             return flat[..., 0]
-        field_spec = template[template.fields[0]]
-        es = field_spec if isinstance(field_spec, tuple) else ()
+        es = _field_event_shape(template, template.fields[0])
         if not es:
             return flat[..., 0]
         return flat.reshape(*flat.shape[:-1], *es)
@@ -572,7 +567,7 @@ class NumericRecordDistribution(RecordDistribution):
     def as_record_distribution(
         self,
         *,
-        template: NumericRecordTemplate,
+        template: NumericEventTemplate,
         name: str | None = None,
     ) -> NumericRecordDistribution:
         """Lift this distribution to a Record-keyed view under *template*.
@@ -610,12 +605,14 @@ class NumericRecordDistribution(RecordDistribution):
         return f"{parts[0]}({', '.join(parts[1:])})"
 
 
-
 # ---------------------------------------------------------------------------
 # BootstrapDistribution
 # ---------------------------------------------------------------------------
 
-class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, SupportsMean, SupportsVariance):
+
+class BootstrapDistribution(
+    NumericRecordDistribution, SupportsSampling, SupportsMean, SupportsVariance
+):
     """Distribution over bootstrap-resampled means of a statistic.
 
     Given *n* evaluations ``f(x_1), ..., f(x_n)`` where ``x_i ~ P``,
@@ -651,7 +648,9 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
             raise ValueError("evaluations must have at least 1 dimension.")
         self._num_atoms = self._evaluations.shape[0]
         self._w = Weights(
-            n=self._num_atoms, weights=weights, log_weights=log_weights,
+            n=self._num_atoms,
+            weights=weights,
+            log_weights=log_weights,
         )
         if name is None:
             name = "bootstrap_dist"
@@ -695,6 +694,7 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw bootstrap resamples of the mean."""
+
         def _one_resample(k):
             idx = self._w.choice(k, shape=(self._num_atoms,))
             return jnp.mean(self._evaluations[idx], axis=0)
@@ -716,7 +716,10 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         return_dist: bool | None = None,
     ) -> Any:
         return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations,
+            self,
+            f,
+            key=key,
+            num_evaluations=num_evaluations,
             return_dist=return_dist,
         )
 
@@ -726,10 +729,8 @@ class BootstrapDistribution(NumericRecordDistribution, SupportsSampling, Support
         return self._per_field_dict(real)
 
     def __repr__(self) -> str:
-        return (
-            f"BootstrapDistribution(num_atoms={self._num_atoms}, "
-            f"event_shape={self.event_shape})"
-        )
+        return f"BootstrapDistribution(num_atoms={self._num_atoms}, event_shape={self.event_shape})"
+
 
 # ---------------------------------------------------------------------------
 # FlatNumericRecordDistribution — the flat-shaped subset of NRD
@@ -767,8 +768,8 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
     """
 
     @property
-    def flat_size(self) -> int:
-        """Number of scalar elements — equal to ``event_shape[0]``.
+    def vector_size(self) -> int:
+        """Length of the per-element 1-D vector — equal to ``event_shape[0]``.
 
         Validates the flat contract on access: subclasses with
         non-1-D ``event_shape`` raise ``TypeError`` here rather than
@@ -785,7 +786,7 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
     def as_record_distribution(
         self,
         *,
-        template: NumericRecordTemplate,
+        template: NumericEventTemplate,
         name: str | None = None,
     ) -> NumericRecordDistribution:
         """Lift this flat distribution to a Record-keyed view under *template*.
@@ -796,9 +797,9 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
 
         Parameters
         ----------
-        template : NumericRecordTemplate
+        template : NumericEventTemplate
             Target structural skeleton. Must be a
-            :class:`NumericRecordTemplate` — opaque (``None``) leaves
+            :class:`NumericEventTemplate` — opaque (``None``) leaves
             cannot be reconstructed from a flat numeric array.
         name : str, optional
             Name for the lifted distribution. Defaults to ``self.name``.
@@ -813,21 +814,22 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
         Raises
         ------
         TypeError
-            If ``template`` is not a ``NumericRecordTemplate``.
+            If ``template`` is not a ``NumericEventTemplate``.
         ValueError
-            If ``self.flat_size`` does not match ``template.flat_size``.
+            If ``self.vector_size`` does not match ``template.vector_size``.
         """
-        from .record import NumericRecordTemplate
-        if not isinstance(template, NumericRecordTemplate):
+        from .event_template import NumericEventTemplate
+
+        if not isinstance(template, NumericEventTemplate):
             raise TypeError(
-                f"as_record_distribution requires a NumericRecordTemplate, "
+                f"as_record_distribution requires a NumericEventTemplate, "
                 f"got {type(template).__name__}. Opaque (None) leaves "
                 f"cannot be reconstructed from a flat numeric array."
             )
-        if self.flat_size != template.flat_size:
+        if self.vector_size != template.vector_size:
             raise ValueError(
-                f"flat_size mismatch: source flat_size={self.flat_size}, "
-                f"template.flat_size={template.flat_size}."
+                f"vector_size mismatch: source vector_size={self.vector_size}, "
+                f"template.vector_size={template.vector_size}."
             )
         cls = _numeric_record_distribution_view_class_for_base(self)
         return cls(self, template, name=name)
@@ -867,7 +869,8 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Array:
             pytree_samples = self._base._sample(key, sample_shape)
             return self._base.flatten_value(
-                pytree_samples, event_shape=self._base.event_shape,
+                pytree_samples,
+                event_shape=self._base.event_shape,
             )
 
         extra_methods["_sample"] = _sample
@@ -878,7 +881,8 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         def _log_prob(self, x: ArrayLike) -> Array:
             x = jnp.asarray(x)
             value = self._base.unflatten_value(
-                x, template=self._base.record_template,
+                x,
+                template=self._base.event_template,
             )
             return self._base._log_prob(value)
 
@@ -942,7 +946,10 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
         return_dist: bool | None = None,
     ) -> Any:
         return _mc_expectation(
-            self, f, key=key, num_evaluations=num_evaluations,
+            self,
+            f,
+            key=key,
+            num_evaluations=num_evaluations,
             return_dist=return_dist,
         )
 
@@ -959,7 +966,8 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
     def unflatten_sample(self, flat_sample: ArrayLike):
         """Convenience: unflatten a flat sample back to the pytree structure."""
         return self._base.unflatten_value(
-            jnp.asarray(flat_sample), template=self._base.record_template,
+            jnp.asarray(flat_sample),
+            template=self._base.event_template,
         )
 
     def __repr__(self) -> str:
@@ -1002,12 +1010,18 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     from ._record_array import NumericRecordArray
 
     protocols: set[str] = set()
-    if isinstance(base, SupportsSampling):    protocols.add("sample")
-    if isinstance(base, SupportsLogProb):     protocols.add("log_prob")
-    if isinstance(base, SupportsMean):        protocols.add("mean")
-    if isinstance(base, SupportsVariance):    protocols.add("variance")
-    if isinstance(base, SupportsCovariance):  protocols.add("cov")
-    if isinstance(base, SupportsExpectation): protocols.add("expectation")
+    if isinstance(base, SupportsSampling):
+        protocols.add("sample")
+    if isinstance(base, SupportsLogProb):
+        protocols.add("log_prob")
+    if isinstance(base, SupportsMean):
+        protocols.add("mean")
+    if isinstance(base, SupportsVariance):
+        protocols.add("variance")
+    if isinstance(base, SupportsCovariance):
+        protocols.add("cov")
+    if isinstance(base, SupportsExpectation):
+        protocols.add("expectation")
 
     extra_bases: list[type] = []
     extra_methods: dict[str, object] = {}
@@ -1018,14 +1032,13 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()):
             base_sample = self._base._sample(key, sample_shape)
             flat = self._base.flatten_value(
-                base_sample, event_shape=self._base.event_shape,
+                base_sample,
+                event_shape=self._base.event_shape,
             )
-            tpl = self.record_template
-            if sample_shape == ():
-                return NumericRecord.unflatten(flat, template=tpl)
-            return NumericRecordArray.unflatten(
-                flat, template=tpl, batch_shape=sample_shape,
-            )
+            # ``from_vector`` selects single (NumericRecord, flat is 1-D) vs
+            # batched (NumericRecordArray, batch_shape == sample_shape) from the
+            # rank of ``flat``.
+            return self.event_template.from_vector(flat)
 
         extra_methods["_sample"] = _sample
 
@@ -1034,11 +1047,12 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
 
         def _log_prob(self, x) -> Array:
             if isinstance(x, (NumericRecord, NumericRecordArray)):
-                flat = x.flatten()
+                flat = x.to_vector()
             else:
                 flat = jnp.asarray(x)
             value = self._base.unflatten_value(
-                flat, template=self._base.record_template,
+                flat,
+                template=self._base.event_template,
             )
             return self._base._log_prob(value)
 
@@ -1049,9 +1063,10 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
 
         def _mean(self):
             flat = self._base.flatten_value(
-                self._base._mean(), event_shape=self._base.event_shape,
+                self._base._mean(),
+                event_shape=self._base.event_shape,
             )
-            return NumericRecord.unflatten(flat, template=self.record_template)
+            return self.event_template.from_vector(flat)
 
         extra_methods["_mean"] = _mean
 
@@ -1060,9 +1075,10 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
 
         def _variance(self):
             flat = self._base.flatten_value(
-                self._base._variance(), event_shape=self._base.event_shape,
+                self._base._variance(),
+                event_shape=self._base.event_shape,
             )
-            return NumericRecord.unflatten(flat, template=self.record_template)
+            return self.event_template.from_vector(flat)
 
         extra_methods["_variance"] = _variance
 
@@ -1099,12 +1115,13 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             sample_key = key if key is not None else _auto_key()
             base_samples = self._base._sample(sample_key, sample_shape=(n,))
             flat_samples = self._base.flatten_value(
-                base_samples, event_shape=self._base.event_shape,
+                base_samples,
+                event_shape=self._base.event_shape,
             )
-            template = self.record_template
+            template = self.event_template
 
             def _f_on_flat(flat_row):
-                return f(NumericRecord.unflatten(flat_row, template=template))
+                return f(template.from_vector(flat_row))
 
             evals = jax.vmap(_f_on_flat)(flat_samples)
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
@@ -1132,8 +1149,8 @@ class NumericRecordDistributionView(NumericRecordDistribution):
 
     Inverse of :class:`FlattenedDistributionView`. ``self._base`` is a
     :class:`FlatNumericRecordDistribution` (single-field, ``event_shape
-    == (N,)``); ``self.record_template`` is the user-supplied
-    :class:`NumericRecordTemplate` (not the source's auto-template).
+    == (N,)``); ``self.event_template`` is the user-supplied
+    :class:`NumericEventTemplate` (not the source's auto-template).
 
     Sampling, log-prob, and moments delegate to ``self._base`` and
     reshape via the template's flatten / unflatten machinery.
@@ -1150,7 +1167,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     def __new__(
         cls,
         base: Distribution,
-        template: NumericRecordTemplate,
+        template: NumericEventTemplate,
         *,
         name: str | None = None,
     ):
@@ -1160,7 +1177,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     def __init__(
         self,
         base: Distribution,
-        template: NumericRecordTemplate,
+        template: NumericEventTemplate,
         *,
         name: str | None = None,
     ):
@@ -1171,8 +1188,8 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         self._base = base
         self._name = name if name is not None else base.name
         # Pre-set the user-supplied template so the auto-build path in
-        # ``NumericRecordDistribution.record_template`` is skipped.
-        object.__setattr__(self, "_record_template", template)
+        # ``NumericRecordDistribution.event_template`` is skipped.
+        object.__setattr__(self, "_event_template", template)
 
     # ---- structural ---------------------------------------------------------
 
@@ -1188,8 +1205,8 @@ class NumericRecordDistributionView(NumericRecordDistribution):
 
     @property
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-field event shapes from the user-supplied template."""
-        return dict(self.record_template.numeric_leaf_shapes)
+        """Per-leaf event shapes from the user-supplied template."""
+        return dict(self.event_template.leaf_shapes)
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
@@ -1209,5 +1226,5 @@ class NumericRecordDistributionView(NumericRecordDistribution):
     def __repr__(self) -> str:
         return (
             f"NumericRecordDistributionView(base={type(self._base).__name__}, "
-            f"template={self.record_template!r})"
+            f"template={self.event_template!r})"
         )

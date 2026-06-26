@@ -7,13 +7,15 @@ import pytest
 
 pm = pytest.importorskip("pymc")
 
-import jax
-import jax.numpy as jnp
-import numpy as np
 from contextlib import contextmanager
 from unittest.mock import patch
 
+import jax
+import jax.numpy as jnp
+import numpy as np
+
 from probpipe import ApproximateDistribution
+from probpipe.core.event_template import ArraySpec
 from probpipe.modeling import PyMCModel
 
 
@@ -83,7 +85,7 @@ class TestPyMCModel:
         assert "y" in names
 
     def test_supports_named_components(self, model):
-        assert hasattr(model, 'fields')
+        assert hasattr(model, "fields")
         assert len(model.fields) > 0
 
     def test_repr(self, model):
@@ -179,8 +181,14 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         result = condition_on(
-            model, {"y": data}, method="pymc_nuts",
-            num_results=50, num_warmup=50, num_chains=2, cores=2, random_seed=0,
+            model,
+            {"y": data},
+            method="pymc_nuts",
+            num_results=50,
+            num_warmup=50,
+            num_chains=2,
+            cores=2,
+            random_seed=0,
         )
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
@@ -201,8 +209,13 @@ class TestPyMCModel:
         data = np.random.randn(50)
         with _captured_pm_sample_kwargs() as captured:
             result = condition_on(
-                model, {"y": data}, method="pymc_nuts",
-                num_results=20, num_warmup=10, num_chains=2, cores=2,
+                model,
+                {"y": data},
+                method="pymc_nuts",
+                num_results=20,
+                num_warmup=10,
+                num_chains=2,
+                cores=2,
                 random_seed=0,
             )
 
@@ -229,12 +242,16 @@ class TestPyMCModel:
             _captured_pm_sample_kwargs() as captured,
         ):
             _ = condition_on(
-                model, {"y": data}, method="pymc_nuts",
-                num_results=20, num_warmup=10, random_seed=0,
+                model,
+                {"y": data},
+                method="pymc_nuts",
+                num_results=20,
+                num_warmup=10,
+                random_seed=0,
             )
 
-        assert captured["chains"] == 4               # the documented default
-        assert captured["cores"] == 4                # min(num_chains=4, cpu_count=4)
+        assert captured["chains"] == 4  # the documented default
+        assert captured["cores"] == 4  # min(num_chains=4, cpu_count=4)
         assert captured["mp_ctx"] == "spawn"
 
     def test_single_core_default_skips_spawn(self, model):
@@ -251,52 +268,58 @@ class TestPyMCModel:
             _captured_pm_sample_kwargs() as captured,
         ):
             _ = condition_on(
-                model, {"y": data}, method="pymc_nuts",
-                num_results=20, num_warmup=10, random_seed=0,
+                model,
+                {"y": data},
+                method="pymc_nuts",
+                num_results=20,
+                num_warmup=10,
+                random_seed=0,
             )
 
         assert captured["cores"] == 1
         assert captured["mp_ctx"] is None
 
 
-class TestRecordTemplate:
-    """``PyMCModel.record_template`` exposes the free-RV layout that
+class TestEventTemplate:
+    """``PyMCModel.event_template`` exposes the free-RV layout that
     inference methods thread through to the resulting posterior.
     """
 
     def test_mixed_scalar_and_vector_rvs(self):
         """Each free RV becomes one field with its event shape."""
+
         def model_fn(y=None):
             with pm.Model() as m:
-                pm.Normal("intercept", 0, 1)             # scalar
-                pm.Normal("slope", 0, 1, shape=3)        # shape (3,)
+                pm.Normal("intercept", 0, 1)  # scalar
+                pm.Normal("slope", 0, 1, shape=3)  # shape (3,)
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel(model_fn).record_template
+        tpl = PyMCModel(model_fn).event_template
         assert tpl.fields == ("intercept", "slope")
-        assert tpl["intercept"] == ()
-        assert tpl["slope"] == (3,)
+        assert tpl["intercept"] == ArraySpec(())
+        assert tpl["slope"] == ArraySpec((3,))
 
     def test_observed_rvs_excluded(self):
         """Observed variables are not part of the parameter template."""
+
         def model_fn(y=None):
             with pm.Model() as m:
                 pm.Normal("mu", 0, 1)
                 pm.Normal("y", 0, 1, observed=y)
             return m
 
-        tpl = PyMCModel(model_fn).record_template
+        tpl = PyMCModel(model_fn).event_template
         assert tpl.fields == ("mu",)
         assert "y" not in tpl.fields
 
     def test_data_dependent_shape_reflects_conditioned_build(self):
-        """``_record_template_for(model)`` reports the data-conditioned
+        """``_event_template_for(model)`` reports the data-conditioned
         shape for an RV whose shape depends on data size, while the bare
-        ``record_template`` property reports the declared (no-data)
+        ``event_template`` property reports the declared (no-data)
         shape (issue #224).
 
-        The inference paths call ``_record_template_for`` with the model
+        The inference paths call ``_event_template_for`` with the model
         they build from data, so the template matches the chain. The
         property cannot know the conditioned shape without data, so it
         stays at the declared sentinel — and, crucially, holds no
@@ -305,26 +328,28 @@ class TestRecordTemplate:
         """
         model = PyMCModel(per_observation_effect_model_fn)
         # Declared (no-data) property: sentinel (1,) for alpha.
-        tpl = model.record_template
+        tpl = model.event_template
         assert tpl.fields == ("intercept", "alpha")
-        assert tpl["intercept"] == ()
-        assert tpl["alpha"] == (1,)
+        assert tpl["intercept"] == ArraySpec(())
+        assert tpl["alpha"] == ArraySpec((1,))
         assert model.event_shape == (1 + 1,)
 
         # Template built from a data-conditioned build picks up the real
         # shape — and the instance carries no cached state afterward.
         N = 50
-        conditioned = model._pymc_model(data={
-            "X": np.zeros(N, dtype=np.float32),
-            "y": np.zeros(N, dtype=np.float32),
-        })
+        conditioned = model._pymc_model(
+            data={
+                "X": np.zeros(N, dtype=np.float32),
+                "y": np.zeros(N, dtype=np.float32),
+            }
+        )
         names = model._conditioned_param_names(conditioned)
-        tpl_c = model._record_template_for(conditioned, names)
+        tpl_c = model._event_template_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
-        assert tpl_c["alpha"] == (N,)
+        assert tpl_c["alpha"] == ArraySpec((N,))
         assert not hasattr(model, "_last_conditioned_model")
         # Property still reports the declared shape (no hidden mutation).
-        assert model.record_template["alpha"] == (1,)
+        assert model.event_template["alpha"] == ArraySpec((1,))
 
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
         """End-to-end: NUTS with a per-observation effect produces a
@@ -340,9 +365,13 @@ class TestRecordTemplate:
         y = rng.normal(size=N).astype(np.float32)
         model = PyMCModel(per_observation_effect_model_fn)
         result = condition_on(
-            model, {"X": X, "y": y},
+            model,
+            {"X": X, "y": y},
             method="pymc_nuts",
-            num_results=20, num_warmup=10, num_chains=1, random_seed=0,
+            num_results=20,
+            num_warmup=10,
+            num_chains=1,
+            random_seed=0,
         )
         draws = result.draws()
         assert draws.fields == ("intercept", "alpha")
@@ -365,16 +394,19 @@ class TestRecordTemplate:
 
         def model_fn(y=None):
             with pm.Model() as m:
-                intercept = pm.Normal("intercept", 0, 1)      # scalar, defined first
-                pm.Normal("alpha", 0, 1, shape=3)             # shape (3,), sorts first
+                intercept = pm.Normal("intercept", 0, 1)  # scalar, defined first
+                pm.Normal("alpha", 0, 1, shape=3)  # shape (3,), sorts first
                 pm.Normal("y", mu=intercept, sigma=1.0, observed=y)
             return m
 
         y = np.zeros(8, dtype=np.float32)
         result = condition_on(
-            PyMCModel(model_fn), {"y": y},
+            PyMCModel(model_fn),
+            {"y": y},
             method="pymc_advi",
-            num_iterations=200, num_results=25, random_seed=0,
+            num_iterations=200,
+            num_results=25,
+            random_seed=0,
         )
         assert result.algorithm == "pymc_advi"
         draws = result.draws()
@@ -391,9 +423,10 @@ class TestRecordTemplate:
         data-conditioned build. ProbPipe does not support such dynamic
         random variables; the template builder must refuse cleanly.
         """
+
         def model_fn(y=None):
             with pm.Model() as m:
-                if y is None:                       # no-data build only
+                if y is None:  # no-data build only
                     pm.Normal("ghost", 0, 1)
                 mu = pm.Normal("mu", 0, 1)
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
@@ -414,16 +447,17 @@ class TestRecordTemplate:
         explicit check it would be omitted from the template and filtered
         out of the chain, silently vanishing from the posterior.
         """
+
         def model_fn(y=None):
             with pm.Model() as m:
                 mu = pm.Normal("mu", 0, 1)
-                if y is not None:                   # conditioned build only
+                if y is not None:  # conditioned build only
                     pm.Normal("extra", 0, 1)
                 pm.Normal("y", mu=mu, sigma=1.0, observed=y)
             return m
 
         model = PyMCModel(model_fn)
-        assert model.parameter_names == ("mu",)     # extra absent at construction
+        assert model.parameter_names == ("mu",)  # extra absent at construction
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         with pytest.raises(ValueError, match="dynamic random variables"):
             model._conditioned_param_names(conditioned)
@@ -437,6 +471,7 @@ class TestRecordTemplate:
         omitted it is a free RV. Conditioning on ``y`` alone must yield a
         posterior over both ``mu`` and ``X``.
         """
+
         def model_fn(X=None, y=None):
             with pm.Model() as m:
                 mu = pm.Normal("mu", 0, 1)
@@ -446,13 +481,13 @@ class TestRecordTemplate:
 
         model = PyMCModel(model_fn)
         # Declared template excludes observed names entirely.
-        assert model.record_template.fields == ("mu",)
+        assert model.event_template.fields == ("mu",)
 
         # Condition on y only — X is left free and should be inferred.
         conditioned = model._pymc_model(data={"y": np.zeros(5, dtype=np.float32)})
         names = model._conditioned_param_names(conditioned)
         assert set(names) == {"mu", "X"}
-        tpl = model._record_template_for(conditioned, names)
+        tpl = model._event_template_for(conditioned, names)
         assert set(tpl.fields) == {"mu", "X"}
 
     def test_partial_conditioning_via_inference(self):
@@ -469,9 +504,13 @@ class TestRecordTemplate:
 
         model = PyMCModel(model_fn)
         result = condition_on(
-            model, {"y": np.zeros(5, dtype=np.float32)},
+            model,
+            {"y": np.zeros(5, dtype=np.float32)},
             method="pymc_nuts",
-            num_results=20, num_warmup=10, num_chains=1, random_seed=0,
+            num_results=20,
+            num_warmup=10,
+            num_chains=1,
+            random_seed=0,
         )
         assert set(result.draws().fields) == {"mu", "X"}
 
@@ -496,14 +535,18 @@ class TestRecordTemplate:
 
         model = PyMCModel(model_fn)
         result = condition_on(
-            model, {"y": np.zeros(5, dtype=np.float32)},
+            model,
+            {"y": np.zeros(5, dtype=np.float32)},
             method="pymc_nuts",
-            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+            num_results=200,
+            num_warmup=200,
+            num_chains=1,
+            random_seed=0,
         )
         draws = result.draws()
         assert set(draws.fields) == {"mu", "X"}
-        assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0    # ~ +100
-        assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0    # ~ -100
+        assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0  # ~ +100
+        assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0  # ~ -100
 
     def test_pymc_nuts_multiparam_field_order_realigned(self):
         """End-to-end check of the name-keyed wiring (issue #233): the
@@ -529,9 +572,13 @@ class TestRecordTemplate:
 
         model = PyMCModel(model_fn)
         result = condition_on(
-            model, {"y": np.zeros(5, dtype=np.float32)},
+            model,
+            {"y": np.zeros(5, dtype=np.float32)},
             method="pymc_nuts",
-            num_results=200, num_warmup=200, num_chains=1, random_seed=0,
+            num_results=200,
+            num_warmup=200,
+            num_chains=1,
+            random_seed=0,
         )
         draws = result.draws()
         # Declared order, not nutpie/pymc's alphabetical data_vars order.
@@ -560,9 +607,13 @@ class TestRecordTemplate:
         model = PyMCModel(model_fn)
         with pytest.raises(ValueError, match="dynamic random variables"):
             condition_on(
-                model, {"y": np.zeros(5, dtype=np.float32)},
+                model,
+                {"y": np.zeros(5, dtype=np.float32)},
                 method="pymc_nuts",
-                num_results=5, num_warmup=5, num_chains=1, random_seed=0,
+                num_results=5,
+                num_warmup=5,
+                num_chains=1,
+                random_seed=0,
             )
 
     def test_non_concrete_shape_rejected(self):
@@ -585,10 +636,10 @@ class TestRecordTemplate:
             return m
 
         with pytest.raises(ValueError, match="non-concrete shape"):
-            _ = PyMCModel(model_fn).record_template
+            _ = PyMCModel(model_fn).event_template
 
     def test_event_shape_rejects_non_concrete_shape(self):
-        """``event_shape`` derives from ``record_template``, so it rejects
+        """``event_shape`` derives from ``event_template``, so it rejects
         a non-concrete free-RV shape rather than silently under-counting.
         """
         import pytensor.tensor as pt
@@ -628,6 +679,7 @@ class TestRecordDataUnpacking:
     def test_record_input_unpacked_by_field_name(self):
         """A ``Record(X=..., y=...)`` populates both observed slots."""
         from probpipe import Record
+
         rng = np.random.RandomState(0)
         N = 20
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
@@ -661,6 +713,7 @@ class TestRecordDataUnpacking:
         user-facing Record API free of NumPy-shaped friction.
         """
         from probpipe import Record
+
         X = jnp.ones((5, 2), dtype=jnp.float32)  # JAX array
         y = jnp.zeros(5, dtype=jnp.float32)
         model = PyMCModel(self._xy_model)

@@ -56,11 +56,14 @@ def build_broadcast_plan(
         is_record_array = isinstance(value, RecordArray)
         is_dist_array = isinstance(value, DistributionArray)
         if (is_record_array or is_dist_array) and len(value.batch_shape) > 0:
-            if _is_same_array_hint(
-                expected,
-                is_record_array=is_record_array,
-                is_dist_array=is_dist_array,
-            ) or expected is Any:
+            if (
+                _is_same_array_hint(
+                    expected,
+                    is_record_array=is_record_array,
+                    is_dist_array=is_dist_array,
+                )
+                or expected is Any
+            ):
                 continue
             array_args.append(name)
             continue
@@ -71,9 +74,7 @@ def build_broadcast_plan(
             dist_args.append(name)
 
     array_groups = group_array_args_by_parent(values=values, names=array_args)
-    sweep_batch_shape = tuple(
-        axis for group in array_groups for axis in group.batch_shape
-    )
+    sweep_batch_shape = tuple(axis for group in array_groups for axis in group.batch_shape)
     n_sweep = prod(sweep_batch_shape)
 
     return BroadcastPlan(

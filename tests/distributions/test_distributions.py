@@ -6,19 +6,25 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    EmpiricalDistribution,
+    MultivariateNormal,
     NumericRecordDistribution,
+    Provenance,
     RecordEmpiricalDistribution,
     TFPDistribution,
-    EmpiricalDistribution,
-    Provenance,
-    MultivariateNormal,
+    cov,
+    from_distribution,
+    log_prob,
+    mean,
+    prob,
+    sample,
+    variance,
 )
-from probpipe import cov, from_distribution, log_prob, mean, prob, sample, variance
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def key():
@@ -120,35 +126,33 @@ class TestMultivariateNormal:
     def test_log_prob_matches_scipy(self, gaussian, loc, cov_matrix, key):
         """log_prob and prob must match scipy.stats.multivariate_normal."""
         import scipy.stats
+
         scipy_mvn = scipy.stats.multivariate_normal(
             mean=np.asarray(loc), cov=np.asarray(cov_matrix)
         )
         s = sample(gaussian, key=key, sample_shape=(5,))
         s_np = np.asarray(s)
-        np.testing.assert_allclose(
-            log_prob(gaussian, s), scipy_mvn.logpdf(s_np), rtol=1e-5
-        )
-        np.testing.assert_allclose(
-            prob(gaussian, s), scipy_mvn.pdf(s_np), rtol=1e-5
-        )
+        np.testing.assert_allclose(log_prob(gaussian, s), scipy_mvn.logpdf(s_np), rtol=1e-5)
+        np.testing.assert_allclose(prob(gaussian, s), scipy_mvn.pdf(s_np), rtol=1e-5)
 
     def test_mean_and_cov(self, gaussian, loc, cov_matrix, key):
         """Sample mean and cov from 50k draws must match analytical values."""
-        import scipy.stats
+
         draws = np.asarray(sample(gaussian, key=key, sample_shape=(50_000,)))
         np.testing.assert_allclose(draws.mean(0), np.asarray(loc), atol=0.02)
         np.testing.assert_allclose(
-            np.cov(draws, rowvar=False), np.asarray(cov_matrix), atol=0.05,
+            np.cov(draws, rowvar=False),
+            np.asarray(cov_matrix),
+            atol=0.05,
         )
 
     def test_marginal_ks(self, gaussian, loc, cov_matrix, key):
         """Each MVN marginal X_i ~ N(loc_i, cov_ii): KS test on 50k samples."""
         import scipy.stats
+
         draws = np.asarray(sample(gaussian, key=key, sample_shape=(50_000,)))
         for i in range(draws.shape[1]):
-            marginal = scipy.stats.norm(
-                loc=float(loc[i]), scale=float(jnp.sqrt(cov_matrix[i, i]))
-            )
+            marginal = scipy.stats.norm(loc=float(loc[i]), scale=float(jnp.sqrt(cov_matrix[i, i])))
             _, p = scipy.stats.kstest(draws[:, i], marginal.cdf)
             assert p > 0.001, f"KS failed for marginal {i}: p={p:.4e}"
 
@@ -172,9 +176,7 @@ class TestMultivariateNormal:
         assert gaussian.dtype == loc.dtype
 
     def test_from_distribution_empirical(self, gaussian, key):
-        ed = from_distribution(
-            gaussian, RecordEmpiricalDistribution, key=key, num_samples=2000
-        )
+        ed = from_distribution(gaussian, RecordEmpiricalDistribution, key=key, num_samples=2000)
         g2 = from_distribution(ed, MultivariateNormal, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.name == "fitted"
@@ -203,9 +205,7 @@ class TestEmpiricalDistribution:
         ed = RecordEmpiricalDistribution(simple_samples, simple_weights, name="x")
         np.testing.assert_allclose(ed.weights.sum(), 1.0)
         expected_mean = jnp.sum(simple_samples.ravel() * ed.weights)
-        np.testing.assert_allclose(
-            jnp.asarray(mean(ed)).ravel(), expected_mean, atol=1e-6
-        )
+        np.testing.assert_allclose(jnp.asarray(mean(ed)).ravel(), expected_mean, atol=1e-6)
 
     def test_weights_normalized(self):
         """Unnormalized weights should be normalized internally."""
@@ -261,17 +261,13 @@ class TestEmpiricalDistribution:
     def test_mean(self, simple_samples, simple_weights):
         ed = RecordEmpiricalDistribution(simple_samples, simple_weights, name="x")
         expected = jnp.sum(simple_samples.ravel() * ed.weights)
-        np.testing.assert_allclose(
-            jnp.asarray(mean(ed)).ravel(), expected, atol=1e-6
-        )
+        np.testing.assert_allclose(jnp.asarray(mean(ed)).ravel(), expected, atol=1e-6)
 
     def test_variance(self, simple_samples, simple_weights):
         ed = RecordEmpiricalDistribution(simple_samples, simple_weights, name="x")
         mu = jnp.asarray(mean(ed))
         expected = jnp.sum(ed.weights * (simple_samples.ravel() - mu.ravel()) ** 2)
-        np.testing.assert_allclose(
-            jnp.asarray(variance(ed)).ravel(), expected, atol=1e-6
-        )
+        np.testing.assert_allclose(jnp.asarray(variance(ed)).ravel(), expected, atol=1e-6)
 
     def test_cov_matrix(self):
         samples = jnp.array([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
@@ -293,9 +289,7 @@ class TestEmpiricalDistribution:
         assert ed.name == "emp"
 
     def test_from_distribution(self, gaussian, key):
-        ed = from_distribution(
-            gaussian, RecordEmpiricalDistribution, key=key, num_samples=50
-        )
+        ed = from_distribution(gaussian, RecordEmpiricalDistribution, key=key, num_samples=50)
         assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
         assert ed.source is not None
@@ -325,6 +319,7 @@ class TestEmpiricalValidationMessages:
     def test_zero_dim_first_field_reports_shape(self):
         """First field is 0-D → message names the field and shape."""
         from probpipe import Record
+
         rec = Record(x=jnp.array(1.0))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
@@ -336,6 +331,7 @@ class TestEmpiricalValidationMessages:
         """A later field is 0-D → message names that field, its shape,
         and the reference field."""
         from probpipe import Record
+
         rec = Record(x=jnp.zeros(5), y=jnp.array(2.0))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
@@ -349,6 +345,7 @@ class TestEmpiricalValidationMessages:
         """A later field has a different sample-axis length → message
         names the field, its full shape, and the reference field."""
         from probpipe import Record
+
         rec = Record(x=jnp.zeros(5), y=jnp.zeros(7))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
@@ -376,7 +373,8 @@ class TestFlatSamples:
         ed = EmpiricalDistribution(jnp.arange(10.0), name="x")
         assert ed.flat_samples.shape == (10, 1)
         np.testing.assert_array_equal(
-            ed.flat_samples, jnp.arange(10.0).reshape(10, 1),
+            ed.flat_samples,
+            jnp.arange(10.0).reshape(10, 1),
         )
 
     def test_single_field_1d_event(self):
@@ -392,12 +390,14 @@ class TestFlatSamples:
         ed = EmpiricalDistribution(samples, name="W")
         assert ed.flat_samples.shape == (4, 6)
         np.testing.assert_array_equal(
-            ed.flat_samples, samples.reshape(4, 6),
+            ed.flat_samples,
+            samples.reshape(4, 6),
         )
 
     def test_multi_field_1d_events(self):
         # Multi-field record → column-stack in insertion order.
         from probpipe import Record
+
         rec = Record(
             mu=jnp.arange(8.0),
             log_sigma=jnp.arange(8.0) + 100.0,
@@ -407,12 +407,14 @@ class TestFlatSamples:
         # First column is mu, second is log_sigma — insertion order.
         np.testing.assert_array_equal(ed.flat_samples[:, 0], jnp.arange(8.0))
         np.testing.assert_array_equal(
-            ed.flat_samples[:, 1], jnp.arange(8.0) + 100.0,
+            ed.flat_samples[:, 1],
+            jnp.arange(8.0) + 100.0,
         )
 
     def test_multi_field_mixed_event_shapes(self):
         # mu: (10,), beta: (10, 3) → flat_samples (10, 1+3) = (10, 4).
         from probpipe import Record
+
         rec = Record(
             mu=jnp.arange(10.0),
             beta=jnp.arange(30.0).reshape(10, 3),
@@ -421,12 +423,14 @@ class TestFlatSamples:
         assert ed.flat_samples.shape == (10, 4)
         np.testing.assert_array_equal(ed.flat_samples[:, 0], jnp.arange(10.0))
         np.testing.assert_array_equal(
-            ed.flat_samples[:, 1:], jnp.arange(30.0).reshape(10, 3),
+            ed.flat_samples[:, 1:],
+            jnp.arange(30.0).reshape(10, 3),
         )
 
     def test_field_order_matches_insertion(self):
         # Insertion-order rule: flat_samples columns follow `dist.fields`.
         from probpipe import Record
+
         rec1 = Record(z=jnp.zeros(5), a=jnp.ones(5))
         rec2 = Record(a=jnp.ones(5), z=jnp.zeros(5))
         ed1 = RecordEmpiricalDistribution(rec1)
@@ -451,6 +455,7 @@ class TestFlatSamples:
         # cleanly alongside non-empty fields. Pins that the
         # reshape-then-concat pipeline doesn't choke on prod([0]) == 0.
         from probpipe import Record
+
         rec = Record(
             empty=jnp.zeros((10, 0)),
             real=jnp.arange(30.0).reshape(10, 3),
@@ -458,7 +463,8 @@ class TestFlatSamples:
         ed = RecordEmpiricalDistribution(rec)
         assert ed.flat_samples.shape == (10, 3)
         np.testing.assert_array_equal(
-            ed.flat_samples, jnp.arange(30.0).reshape(10, 3),
+            ed.flat_samples,
+            jnp.arange(30.0).reshape(10, 3),
         )
 
 
@@ -491,9 +497,8 @@ class TestEmpiricalLogWeights:
         samples = jnp.array([[1.0], [2.0]])
         with pytest.raises(ValueError, match="not both"):
             EmpiricalDistribution(
-                samples,
-                weights=jnp.array([0.5, 0.5]),
-                log_weights=jnp.array([0.0, 0.0]), name="x")
+                samples, weights=jnp.array([0.5, 0.5]), log_weights=jnp.array([0.0, 0.0]), name="x"
+            )
 
     def test_log_weights_wrong_length_raises(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
@@ -624,38 +629,50 @@ class TestDistributionABC:
 
     def test_mean_requires_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
         from probpipe.core.distribution import _mc_expectation
+        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
+
             @property
             def event_shape(self):
                 return (1,)
+
             def _sample(self, key, sample_shape=()):
-                return jnp.zeros(sample_shape + (1,))
+                return jnp.zeros((*sample_shape, 1))
+
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+                return _mc_expectation(
+                    self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+                )
+
         d = MinimalDist(name="minimal")
         with pytest.raises(TypeError, match="does not support mean"):
             mean(d)
 
     def test_variance_requires_supports_variance(self):
         """variance op raises TypeError for distributions without SupportsVariance."""
-        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
         from probpipe.core.distribution import _mc_expectation
+        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class MinimalDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
+
             @property
             def event_shape(self):
                 return (1,)
+
             def _sample(self, key, sample_shape=()):
-                return jnp.zeros(sample_shape + (1,))
+                return jnp.zeros((*sample_shape, 1))
+
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+                return _mc_expectation(
+                    self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+                )
+
         d = MinimalDist(name="minimal")
         with pytest.raises(TypeError, match="does not support variance"):
             variance(d)
@@ -702,9 +719,7 @@ class TestTFPDistribution:
         np.testing.assert_allclose(mean(gaussian), loc, atol=1e-6)
 
     def test_variance_delegates(self, gaussian, cov_matrix):
-        np.testing.assert_allclose(
-            variance(gaussian), jnp.diag(cov_matrix), atol=1e-5
-        )
+        np.testing.assert_allclose(variance(gaussian), jnp.diag(cov_matrix), atol=1e-5)
 
 
 # ---------------------------------------------------------------------------
@@ -745,11 +760,12 @@ class TestDistributionCoverageGaps:
 
     def test_auto_template_from_name_and_event_shape(self):
         """``NumericRecordDistribution`` auto-builds a single-field
-        ``RecordTemplate`` from ``name`` + ``event_shape``, so every
+        ``EventTemplate`` from ``name`` + ``event_shape``, so every
         concrete subclass has a non-None template without per-subclass
         boilerplate. ``dtypes`` is canonical (subclass must override);
         ``dtype`` derives from it.
         """
+
         class Scalar(NumericRecordDistribution):
             @property
             def event_shape(self):
@@ -757,11 +773,11 @@ class TestDistributionCoverageGaps:
 
             @property
             def dtypes(self):
-                return {name: jnp.float32 for name in self.record_template.fields}
+                return {name: jnp.float32 for name in self.event_template.fields}
 
         s = Scalar(name="s")
-        assert s.record_template is not None
-        assert s.record_template.fields == ("s",)
+        assert s.event_template is not None
+        assert s.event_template.fields == ("s",)
         assert s.dtypes == {"s": jnp.float32}
         # ``dtype`` derives from ``dtypes`` (unique value → that dtype).
         assert s.dtype == jnp.float32
@@ -772,18 +788,20 @@ class TestDistributionCoverageGaps:
         than returning a silent default-float for every field (which
         would lie for integer-valued distributions like ``Bernoulli``).
         """
+
         class Scalar(NumericRecordDistribution):
             @property
             def event_shape(self):
                 return ()
 
         s = Scalar(name="s")
-        with pytest.raises(NotImplementedError, match="Scalar.dtypes"):
+        with pytest.raises(NotImplementedError, match=r"Scalar.dtypes"):
             _ = s.dtypes
 
     def test_dtype_uniform_with_template(self):
         """NumericRecordDistribution.dtype is the common dtype when all fields match."""
         from probpipe import Normal
+
         n = Normal(loc=0.0, scale=1.0, name="x")
         assert n.dtype == n._tfp_dist.dtype
 

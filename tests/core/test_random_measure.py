@@ -131,7 +131,9 @@ class _DiracRandomMeasure(
 
     def _mean(self):
         return _make_mixture_marginal(
-            self._components, weights=self._w, name=f"{self.name}_expected",
+            self._components,
+            weights=self._w,
+            name=f"{self.name}_expected",
         )
 
     def _random_log_prob(self):
@@ -251,9 +253,7 @@ class TestMean:
         ``mean(_)`` collapses that to its array-valued mean.
         """
         locs = [0.0, 2.0, 5.0]
-        comps = [
-            Normal(loc=loc, scale=1.0, name=f"n{i}") for i, loc in enumerate(locs)
-        ]
+        comps = [Normal(loc=loc, scale=1.0, name=f"n{i}") for i, loc in enumerate(locs)]
         weights = jnp.array([0.2, 0.3, 0.5])
         rm = _DiracRandomMeasure(comps, weights=weights)
         m = mean(mean(rm))

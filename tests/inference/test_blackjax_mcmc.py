@@ -79,8 +79,13 @@ class TestBlackJAXNuts:
 
     def test_runs_end_to_end(self, small_model):
         posterior = condition_on(
-            small_model, jnp.zeros((4,)), method="blackjax_nuts",
-            num_results=200, num_warmup=200, num_chains=2, random_seed=0,
+            small_model,
+            jnp.zeros((4,)),
+            method="blackjax_nuts",
+            num_results=200,
+            num_warmup=200,
+            num_chains=2,
+            random_seed=0,
         )
         m = mean(posterior)
         assert m["a"].shape == ()
@@ -89,8 +94,13 @@ class TestBlackJAXNuts:
     def test_collapses_to_prior_under_identity_likelihood(self, small_model):
         # With an identity likelihood, the posterior is the prior.
         posterior = condition_on(
-            small_model, jnp.zeros((4,)), method="blackjax_nuts",
-            num_results=400, num_warmup=400, num_chains=2, random_seed=0,
+            small_model,
+            jnp.zeros((4,)),
+            method="blackjax_nuts",
+            num_results=400,
+            num_warmup=400,
+            num_chains=2,
+            random_seed=0,
         )
         m = mean(posterior)
         np.testing.assert_allclose(float(m["a"].squeeze()), 1.0, atol=0.15)
@@ -111,8 +121,13 @@ class TestBlackJAXNuts:
         y = jnp.asarray([1.0, 2.0, 3.0])
 
         posterior = condition_on(
-            model, y, method="blackjax_nuts",
-            num_results=2000, num_warmup=1000, num_chains=2, random_seed=0,
+            model,
+            y,
+            method="blackjax_nuts",
+            num_results=2000,
+            num_warmup=1000,
+            num_chains=2,
+            random_seed=0,
         )
 
         # Analytic posterior: N(1.5, 0.25). MC std error on the posterior
@@ -138,8 +153,13 @@ class TestBlackJAXNuts:
         overwrite it).
         """
         posterior = condition_on(
-            small_model, jnp.zeros((4,)), method="blackjax_nuts",
-            num_results=50, num_warmup=0, step_size=0.05, random_seed=0,
+            small_model,
+            jnp.zeros((4,)),
+            method="blackjax_nuts",
+            num_results=50,
+            num_warmup=0,
+            step_size=0.05,
+            random_seed=0,
         )
         m = mean(posterior)
         assert jnp.isfinite(m["a"]).all()
@@ -155,9 +175,15 @@ class TestBlackJAXHmc:
 
     def test_runs_end_to_end(self, small_model):
         posterior = condition_on(
-            small_model, jnp.zeros((4,)), method="blackjax_hmc",
-            num_results=200, num_warmup=200, num_chains=1,
-            step_size=0.05, num_integration_steps=10, random_seed=0,
+            small_model,
+            jnp.zeros((4,)),
+            method="blackjax_hmc",
+            num_results=200,
+            num_warmup=200,
+            num_chains=1,
+            step_size=0.05,
+            num_integration_steps=10,
+            random_seed=0,
         )
         m = mean(posterior)
         assert m["a"].shape == ()
@@ -184,9 +210,15 @@ class TestBlackJAXHmc:
         y = jnp.asarray([1.0, 2.0, 3.0])
 
         posterior = condition_on(
-            model, y, method="blackjax_hmc",
-            num_results=4000, num_warmup=2000, num_chains=2,
-            step_size=0.1, num_integration_steps=5, random_seed=0,
+            model,
+            y,
+            method="blackjax_hmc",
+            num_results=4000,
+            num_warmup=2000,
+            num_chains=2,
+            step_size=0.1,
+            num_integration_steps=5,
+            random_seed=0,
         )
 
         post_mean = float(mean(posterior)["mu"].squeeze())
@@ -206,13 +238,17 @@ class TestBlackJAXHmc:
         prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
         posterior = condition_on(
-            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
-            num_results=1000, num_warmup=500, num_chains=2,
-            step_size=0.1, num_integration_steps=10, random_seed=0,
+            model,
+            jnp.asarray([1.0, 2.0, 3.0]),
+            method="blackjax_hmc",
+            num_results=1000,
+            num_warmup=500,
+            num_chains=2,
+            step_size=0.1,
+            num_integration_steps=10,
+            random_seed=0,
         )
-        steps = np.asarray(
-            posterior.inference_data["sample_stats"]["num_integration_steps"]
-        )
+        steps = np.asarray(posterior.inference_data["sample_stats"]["num_integration_steps"])
         # Randomized, not a single fixed L.
         assert np.unique(steps).size >= 5
         # Mean trajectory length tracks the configured value.
@@ -233,9 +269,15 @@ class TestBlackJAXHmc:
         prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
         posterior = condition_on(
-            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
-            num_results=4000, num_warmup=2000, num_chains=2,
-            step_size=0.1, num_integration_steps=10, random_seed=0,
+            model,
+            jnp.asarray([1.0, 2.0, 3.0]),
+            method="blackjax_hmc",
+            num_results=4000,
+            num_warmup=2000,
+            num_chains=2,
+            step_size=0.1,
+            num_integration_steps=10,
+            random_seed=0,
         )
         post_mean = float(mean(posterior)["mu"].squeeze())
         post_var = float(variance(posterior)["mu"].squeeze())
@@ -271,18 +313,22 @@ class TestBlackJAXHmc:
         prior = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"))
         model = SimpleModel(prior, _GaussianMeanLikelihood(), name="g")
         posterior = condition_on(
-            model, jnp.asarray([1.0, 2.0, 3.0]), method="blackjax_hmc",
-            num_results=100, num_warmup=0, num_chains=1,
-            step_size=0.1, num_integration_steps=10, random_seed=0,
+            model,
+            jnp.asarray([1.0, 2.0, 3.0]),
+            method="blackjax_hmc",
+            num_results=100,
+            num_warmup=0,
+            num_chains=1,
+            step_size=0.1,
+            num_integration_steps=10,
+            random_seed=0,
         )
         draws = np.asarray(posterior.draws()["mu"]).reshape(-1)
         assert draws.shape[0] == 100
         assert np.all(np.isfinite(draws))
         # Trajectory length is still randomized (and floored) on the
         # zero-warmup path.
-        steps = np.asarray(
-            posterior.inference_data["sample_stats"]["num_integration_steps"]
-        )
+        steps = np.asarray(posterior.inference_data["sample_stats"]["num_integration_steps"])
         assert steps.min() >= 1
         assert np.unique(steps).size >= 5
 
@@ -299,16 +345,23 @@ class TestSampleStats:
     def test_sample_stats_keys_shapes_and_ranges(self, small_model):
         num_chains, num_results = 2, 200
         posterior = condition_on(
-            small_model, jnp.zeros((4,)), method="blackjax_nuts",
-            num_results=num_results, num_warmup=200,
-            num_chains=num_chains, random_seed=0,
+            small_model,
+            jnp.zeros((4,)),
+            method="blackjax_nuts",
+            num_results=num_results,
+            num_warmup=200,
+            num_chains=num_chains,
+            random_seed=0,
         )
         ds = posterior.inference_data["sample_stats"]
 
         # NUTS plumbs these four info fields plus the injected step_size.
         expected = {
-            "step_size", "acceptance_rate", "is_divergent",
-            "num_integration_steps", "energy",
+            "step_size",
+            "acceptance_rate",
+            "is_divergent",
+            "num_integration_steps",
+            "energy",
         }
         assert expected.issubset(set(ds.data_vars))
 
@@ -337,8 +390,13 @@ class TestSampleStats:
     def test_posterior_has_one_chain_dim_per_chain(self, small_model):
         num_chains = 2
         posterior = condition_on(
-            small_model, jnp.zeros((4,)), method="blackjax_nuts",
-            num_results=100, num_warmup=100, num_chains=num_chains, random_seed=0,
+            small_model,
+            jnp.zeros((4,)),
+            method="blackjax_nuts",
+            num_results=100,
+            num_warmup=100,
+            num_chains=num_chains,
+            random_seed=0,
         )
         post_grp = posterior.inference_data["posterior"]
         assert post_grp.sizes["chain"] == num_chains

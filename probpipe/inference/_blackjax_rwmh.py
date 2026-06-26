@@ -40,7 +40,7 @@ from ..custom_types import Array, ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import (
     build_mcmc_datatree,
-    extract_record_template,
+    extract_event_template,
     get_init_state,
     get_prior,
     is_jax_traceable,
@@ -52,12 +52,13 @@ from ._registry import InferenceMethod
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["rwmh", "BlackJAXRWMHMethod"]
+__all__ = ["BlackJAXRWMHMethod", "rwmh"]
 
 
 # ---------------------------------------------------------------------------
 # Adaptive warmup
 # ---------------------------------------------------------------------------
+
 
 # Roberts-Gelman-Gilks 1997 asymptotic optimal scaling for RWMH on a
 # d-dimensional target: ``proposal_cov = (2.38^2 / d) * Sigma_target``.
@@ -126,7 +127,7 @@ def _window_sizes(num_warmup: int, n_windows: int, ratio: float = 2.0) -> list[i
     n = min(int(n_windows), max_windows)
     if n <= 1:
         return [num_warmup]
-    weights = np.asarray([ratio ** i for i in range(n)], dtype=float)
+    weights = np.asarray([ratio**i for i in range(n)], dtype=float)
     weights = weights / weights.sum()
     sizes = np.maximum(1, np.round(weights * num_warmup).astype(int))
     sizes[-1] += num_warmup - int(sizes.sum())
@@ -186,7 +187,9 @@ def _adaptive_warmup_fast(
         k, sub = jax.random.split(k)
         keys = jax.random.split(sub, w_size)
         (rw_state, welf_state), positions = jax.lax.scan(
-            step, (rw_state, welf_state), keys,
+            step,
+            (rw_state, welf_state),
+            keys,
         )
         window_positions.append(positions)
 
@@ -321,7 +324,11 @@ def _fixed_sigma_warmup(
         return init_state, None
     sample_fn = _sample_chain_fast if traceable else _sample_chain_eager
     warmup_positions, _ = sample_fn(
-        target_log_prob_fn, init_state, sigma, num_warmup, key,
+        target_log_prob_fn,
+        init_state,
+        sigma,
+        num_warmup,
+        key,
     )
     return warmup_positions[-1], warmup_positions
 
@@ -352,13 +359,20 @@ def _run_one_chain(
         # branch uses rather than running adaptive warmup.
         sigma = proposal_sigma_override
         init_position, warmup_positions = _fixed_sigma_warmup(
-            target_log_prob_fn, init_state, sigma, num_warmup, warmup_key,
+            target_log_prob_fn,
+            init_state,
+            sigma,
+            num_warmup,
+            warmup_key,
             traceable=traceable,
         )
     elif adapt and num_warmup > 0:
         warmup_fn = _adaptive_warmup_fast if traceable else _adaptive_warmup_eager
         rw_state, cov, warmup_positions = warmup_fn(
-            target_log_prob_fn, init_state, warmup_key, num_warmup,
+            target_log_prob_fn,
+            init_state,
+            warmup_key,
+            num_warmup,
             n_windows=n_windows,
         )
         sigma = _production_sigma(cov, d)
@@ -366,13 +380,21 @@ def _run_one_chain(
     else:
         sigma = jnp.eye(d) * step_size
         init_position, warmup_positions = _fixed_sigma_warmup(
-            target_log_prob_fn, init_state, sigma, num_warmup, warmup_key,
+            target_log_prob_fn,
+            init_state,
+            sigma,
+            num_warmup,
+            warmup_key,
             traceable=traceable,
         )
 
     sample_fn = _sample_chain_fast if traceable else _sample_chain_eager
     chain, sample_stats = sample_fn(
-        target_log_prob_fn, init_position, sigma, num_results, sample_key,
+        target_log_prob_fn,
+        init_position,
+        sigma,
+        num_results,
+        sample_key,
     )
     return chain, warmup_positions, sample_stats
 
@@ -401,15 +423,21 @@ def _run_blackjax_rwmh(
     chain_keys = jax.random.split(key, num_chains)
 
     if traceable:
+
         def run_one(chain_key):
             return _run_one_chain(
-                target_log_prob_fn, init_state, chain_key,
-                num_results=num_results, num_warmup=num_warmup,
-                adapt=adapt, step_size=step_size,
+                target_log_prob_fn,
+                init_state,
+                chain_key,
+                num_results=num_results,
+                num_warmup=num_warmup,
+                adapt=adapt,
+                step_size=step_size,
                 proposal_sigma_override=proposal_sigma_override,
                 n_windows=n_windows,
                 traceable=True,
             )
+
         chains_arr, warmups_arr, stats_arr = parallel_chain_map(run_one, chain_keys)
         chains = [chains_arr[c] for c in range(num_chains)]
         warmups = (
@@ -417,9 +445,7 @@ def _run_blackjax_rwmh(
             if warmups_arr is not None and warmups_arr.shape[0] == num_chains
             else None
         )
-        sample_stats = {
-            k: np.asarray(v) for k, v in stats_arr.items()
-        }
+        sample_stats = {k: np.asarray(v) for k, v in stats_arr.items()}
     else:
         chains_l: list[Array] = []
         warmups_l: list[Array] = []
@@ -427,9 +453,13 @@ def _run_blackjax_rwmh(
         is_acc_l: list[np.ndarray] = []
         for chain_key in chain_keys:
             ch, wm, st = _run_one_chain(
-                target_log_prob_fn, init_state, chain_key,
-                num_results=num_results, num_warmup=num_warmup,
-                adapt=adapt, step_size=step_size,
+                target_log_prob_fn,
+                init_state,
+                chain_key,
+                num_results=num_results,
+                num_warmup=num_warmup,
+                adapt=adapt,
+                step_size=step_size,
                 proposal_sigma_override=proposal_sigma_override,
                 n_windows=n_windows,
                 traceable=False,
@@ -552,9 +582,11 @@ def rwmh(
         )
 
     if log_prob_fn is not None and data is not None:
+
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params) + log_prob_fn(params, data)
     else:
+
         def target_log_prob(params):
             return dist._unnormalized_log_prob(params)
 
@@ -584,12 +616,19 @@ def rwmh(
     )
 
     auxiliary = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
-    record_template = extract_record_template(dist)
+    event_template = extract_event_template(dist)
     return make_posterior(
-        chains, parents=(dist,), algorithm="blackjax_rwmh",
-        auxiliary=auxiliary, record_template=record_template,
-        num_results=num_results, num_warmup=num_warmup, num_chains=num_chains,
-        step_size=step_size, accept_rate=accept_rate, adapt=adapt,
+        chains,
+        parents=(dist,),
+        algorithm="blackjax_rwmh",
+        auxiliary=auxiliary,
+        event_template=event_template,
+        num_results=num_results,
+        num_warmup=num_warmup,
+        num_chains=num_chains,
+        step_size=step_size,
+        accept_rate=accept_rate,
+        adapt=adapt,
         n_windows=n_windows,
     )
 
@@ -623,12 +662,14 @@ class BlackJAXRWMHMethod(InferenceMethod):
         prior = get_prior(dist)
         if not isinstance(prior, SupportsUnnormalizedLogProb):
             return MethodInfo(
-                feasible=False, method_name=self.name,
+                feasible=False,
+                method_name=self.name,
                 description="Requires SupportsUnnormalizedLogProb",
             )
         if observed is not None and isinstance(observed, dict):
             return MethodInfo(
-                feasible=False, method_name=self.name,
+                feasible=False,
+                method_name=self.name,
                 description="Does not support dict-based conditioning",
             )
         return MethodInfo(feasible=True, method_name=self.name)
@@ -638,7 +679,9 @@ class BlackJAXRWMHMethod(InferenceMethod):
         log_prob_fn = None
         if is_simple_model(dist):
             lik = dist._likelihood
-            log_prob_fn = lambda params, d: lik.log_likelihood(params=params, data=d)
+
+            def log_prob_fn(params, d):
+                return lik.log_likelihood(params=params, data=d)
 
         random_seed = kwargs.get("random_seed", 0)
         init = kwargs.get("init")
@@ -646,7 +689,8 @@ class BlackJAXRWMHMethod(InferenceMethod):
             init = get_init_state(dist, None, random_seed=random_seed)
 
         return rwmh(
-            prior, observed,
+            prior,
+            observed,
             log_prob_fn=log_prob_fn,
             num_results=kwargs.get("num_results", 1000),
             num_warmup=kwargs.get("num_warmup", 500),

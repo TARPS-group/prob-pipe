@@ -18,16 +18,17 @@ from .custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = [
     "Weights",
+    "weighted_choice",
+    "weighted_covariance",
     "weighted_mean",
     "weighted_variance",
-    "weighted_covariance",
-    "weighted_choice",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Pure utility functions (internal workhorses)
 # ---------------------------------------------------------------------------
+
 
 def _validate_to_log_weights(
     n: int,
@@ -59,10 +60,7 @@ def _validate_to_log_weights(
     if weights is not None:
         weights = _as_float_array(weights)
         if weights.shape != (n,):
-            raise ValueError(
-                f"weights shape {weights.shape} does not match "
-                f"number of items {n}."
-            )
+            raise ValueError(f"weights shape {weights.shape} does not match number of items {n}.")
         if jnp.any(weights < 0):
             raise ValueError("weights must be non-negative.")
         total = jnp.sum(weights)
@@ -74,16 +72,13 @@ def _validate_to_log_weights(
         log_weights = _as_float_array(log_weights)
         if log_weights.shape != (n,):
             raise ValueError(
-                f"log_weights shape {log_weights.shape} does not match "
-                f"number of items {n}."
+                f"log_weights shape {log_weights.shape} does not match number of items {n}."
             )
         if jnp.any(jnp.isnan(log_weights)):
             raise ValueError("log_weights must not contain NaN.")
         total_log_weight = jax.scipy.special.logsumexp(log_weights)
         if not jnp.isfinite(total_log_weight):
-            raise ValueError(
-                "log_weights must define a positive finite total weight."
-            )
+            raise ValueError("log_weights must define a positive finite total weight.")
         return log_weights, False
 
     return None, True
@@ -150,7 +145,7 @@ def weighted_variance(
     if mean is None:
         mean = weighted_mean(weights, values)
     diff = values - mean
-    return weighted_mean(weights, diff ** 2)
+    return weighted_mean(weights, diff**2)
 
 
 def weighted_covariance(
@@ -219,7 +214,11 @@ def weighted_choice(
         indices = jax.random.randint(key, shape=shape, minval=0, maxval=n)
     else:
         indices = jax.random.choice(
-            key, n, shape=shape, p=weights, replace=True,
+            key,
+            n,
+            shape=shape,
+            p=weights,
+            replace=True,
         )
 
     if squeeze:
@@ -230,6 +229,7 @@ def weighted_choice(
 # ---------------------------------------------------------------------------
 # Weights class
 # ---------------------------------------------------------------------------
+
 
 class Weights:
     """Normalized probability weights over *n* items.
@@ -330,7 +330,7 @@ class Weights:
     that ``-inf`` values may be present.
     """
 
-    __slots__ = ("_n", "_log_weights", "_is_uniform", "_cache")
+    __slots__ = ("_cache", "_is_uniform", "_log_weights", "_n")
 
     def __init__(
         self,
@@ -343,22 +343,16 @@ class Weights:
         source = None
         if isinstance(weights, Weights):
             if log_weights is not None:
-                raise ValueError(
-                    "Provide either weights or log_weights, not both."
-                )
+                raise ValueError("Provide either weights or log_weights, not both.")
             source = weights
         elif isinstance(log_weights, Weights):
             if weights is not None:
-                raise ValueError(
-                    "Provide either weights or log_weights, not both."
-                )
+                raise ValueError("Provide either weights or log_weights, not both.")
             source = log_weights
 
         if source is not None:
             if n is not None and source._n != n:
-                raise ValueError(
-                    f"Weights length {source._n} does not match n={n}."
-                )
+                raise ValueError(f"Weights length {source._n} does not match n={n}.")
             self._n = source._n
             self._log_weights = source._log_weights
             self._is_uniform = source._is_uniform
@@ -379,13 +373,12 @@ class Weights:
                     raise ValueError("log_weights must be a non-empty 1-D array.")
                 n = log_weights.shape[0]
             else:
-                raise ValueError(
-                    "At least one of n, weights, or log_weights must be "
-                    "provided."
-                )
+                raise ValueError("At least one of n, weights, or log_weights must be provided.")
 
         self._log_weights, self._is_uniform = _validate_to_log_weights(
-            n, weights, log_weights=log_weights,
+            n,
+            weights,
+            log_weights=log_weights,
         )
         self._n = n
 
@@ -520,25 +513,31 @@ class Weights:
     def mean(self, values: Array) -> Array:
         """Compute weighted mean: ``sum_i w_i * values[i]``."""
         return weighted_mean(
-            None if self._is_uniform else self.normalized, values,
+            None if self._is_uniform else self.normalized,
+            values,
         )
 
     def variance(self, values: Array, mean: Array | None = None) -> Array:
         """Compute weighted variance over the leading axis."""
         return weighted_variance(
-            None if self._is_uniform else self.normalized, values, mean=mean,
+            None if self._is_uniform else self.normalized,
+            values,
+            mean=mean,
         )
 
     def covariance(self, values: Array, mean: Array | None = None) -> Array:
         """Compute weighted covariance matrix over the leading axis."""
         return weighted_covariance(
-            None if self._is_uniform else self.normalized, values, mean=mean,
+            None if self._is_uniform else self.normalized,
+            values,
+            mean=mean,
         )
 
     def choice(self, key: PRNGKey, *, shape: tuple[int, ...] = ()) -> Array:
         """Draw weighted random indices from ``0..n-1``."""
         return weighted_choice(
-            key, self._n,
+            key,
+            self._n,
             weights=None if self._is_uniform else self.normalized,
             shape=shape,
         )
@@ -601,4 +600,3 @@ jax.tree_util.register_pytree_node(
     lambda w: w.tree_flatten(),
     lambda aux, children: Weights.tree_unflatten(aux, children),
 )
-

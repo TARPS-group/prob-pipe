@@ -11,10 +11,7 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core.distribution import Distribution
-from ..core.record import NumericRecordTemplate
-from ..custom_types import Array
-from ..inference._approximate_distribution import ApproximateDistribution
+from ..core.event_template import NumericEventTemplate
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)
@@ -30,6 +27,7 @@ def _to_numpy(value: Any) -> Any:
     values that don't expose ``__array__`` (e.g. plain Python ints).
     """
     import numpy as _np
+
     if hasattr(value, "__array__"):
         return _np.asarray(value)
     return value
@@ -72,8 +70,7 @@ class PyMCModel(ProbabilisticModel):
             import pymc  # noqa: F401
         except ImportError as e:
             raise ImportError(
-                "pymc is required for PyMCModel. "
-                "Install it with: pip install pymc"
+                "pymc is required for PyMCModel. Install it with: pip install pymc"
             ) from e
 
         self._model_fn = model_fn
@@ -88,9 +85,7 @@ class PyMCModel(ProbabilisticModel):
 
         sig = inspect.signature(model_fn)
         self._observed_names = tuple(
-            name
-            for name, p in sig.parameters.items()
-            if p.default is None
+            name for name, p in sig.parameters.items() if p.default is None
         )
 
         # Build the model once without data to discover free parameters.
@@ -98,15 +93,15 @@ class PyMCModel(ProbabilisticModel):
         self._unconditioned_model = model_fn()
         observed_set = set(self._observed_names)
         self._param_names = tuple(
-            rv.name
-            for rv in self._unconditioned_model.free_RVs
-            if rv.name not in observed_set
+            rv.name for rv in self._unconditioned_model.free_RVs if rv.name not in observed_set
         )
 
     # -- Distribution interface ---------------------------------------------
 
     def _param_rvs(
-        self, model: Any, names: tuple[str, ...] | list[str],
+        self,
+        model: Any,
+        names: tuple[str, ...] | list[str],
     ) -> Iterator[tuple[str, Any]]:
         """Yield ``(name, rv)`` for each name in *names*, looked up in
         *model*'s free RVs, in the given order.
@@ -176,18 +171,20 @@ class PyMCModel(ProbabilisticModel):
     def event_shape(self) -> tuple[int, ...]:
         """Total number of scalar free parameters (observed excluded).
 
-        Derived from :attr:`record_template`; raises on a non-concrete
+        Derived from :attr:`event_template`; raises on a non-concrete
         free-RV shape, as the template does.
         """
-        return (self.record_template.flat_size,)
+        return (self.event_template.vector_size,)
 
-    def _record_template_for(
-        self, model: Any, names: tuple[str, ...] | list[str],
-    ) -> NumericRecordTemplate:
+    def _event_template_for(
+        self,
+        model: Any,
+        names: tuple[str, ...] | list[str],
+    ) -> NumericEventTemplate:
         """Parameter template over *names*, read from a PyMC *model* build.
 
         Inference passes the data-conditioned build and the names from
-        :meth:`_conditioned_param_names`; the :attr:`record_template`
+        :meth:`_conditioned_param_names`; the :attr:`event_template`
         property passes the no-data build and ``_param_names``. Scalar
         PyMC RVs become fields with event shape ``()``; shape-:math:`k`
         RVs become fields with event shape ``(k,)``.
@@ -201,7 +198,7 @@ class PyMCModel(ProbabilisticModel):
 
         Returns
         -------
-        NumericRecordTemplate
+        NumericEventTemplate
             One field per name, carrying its event shape.
 
         Raises
@@ -222,19 +219,20 @@ class PyMCModel(ProbabilisticModel):
                     f"`pm.Normal({name!r}, 0, 1, shape=k)`)."
                 )
             fields[name] = tuple(int(s) for s in raw_shape)
-        return NumericRecordTemplate(**fields)
+        return NumericEventTemplate(**fields)
 
     @property
-    def record_template(self) -> NumericRecordTemplate:
+    def event_template(self) -> NumericEventTemplate:
         """Declared parameter template from the no-data build (canonical
         parameters, observed variables excluded).
 
         Data-dependent shapes, and any observed variable left free under
         partial conditioning, are resolved at inference time via
-        :meth:`_record_template_for`; this property reflects neither.
+        :meth:`_event_template_for`; this property reflects neither.
         """
-        return self._record_template_for(
-            self._unconditioned_model, self._param_names,
+        return self._event_template_for(
+            self._unconditioned_model,
+            self._param_names,
         )
 
     # -- Named components interface ------------------------------------------
@@ -309,12 +307,15 @@ class PyMCModel(ProbabilisticModel):
             return self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
         # Local import to avoid a modeling→core cycle at module load.
         from ..core.record import Record
+
         if isinstance(data, Record):
-            return self._model_fn(**{
-                name: _to_numpy(data[name])
-                for name in self._observed_names
-                if name in data.fields
-            })
+            return self._model_fn(
+                **{
+                    name: _to_numpy(data[name])
+                    for name in self._observed_names
+                    if name in data.fields
+                }
+            )
         return self._model_fn(**{self._observed_names[0]: _to_numpy(data)})
 
     def __repr__(self) -> str:

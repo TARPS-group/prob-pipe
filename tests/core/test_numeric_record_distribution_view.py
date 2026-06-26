@@ -3,7 +3,7 @@
 Constructed via
 :meth:`FlatNumericRecordDistribution.as_record_distribution`, the view
 lifts a flat distribution to a Record-keyed structure under a
-user-supplied :class:`NumericRecordTemplate`. Tests mirror the
+user-supplied :class:`NumericEventTemplate`. Tests mirror the
 existing :class:`FlattenedDistributionView` test patterns (its inverse).
 """
 
@@ -16,14 +16,14 @@ import pytest
 
 from probpipe import (
     Dirichlet,
+    EventTemplate,
     FlatNumericRecordDistribution,
     MultivariateNormal,
     Normal,
+    NumericEventTemplate,
     NumericRecord,
     NumericRecordArray,
-    NumericRecordTemplate,
     ProductDistribution,
-    RecordTemplate,
     cov,
     expectation,
     log_prob,
@@ -55,7 +55,7 @@ def mvn4():
 @pytest.fixture
 def split_template():
     """Template that fragments a 4-vector into intercept (scalar) + slope (3-vec)."""
-    return NumericRecordTemplate(intercept=(), slope=(3,))
+    return NumericEventTemplate(intercept=(), slope=(3,))
 
 
 # -- Construction / structure --------------------------------------------------
@@ -66,9 +66,9 @@ class TestConstruction:
         rec = mvn4.as_record_distribution(template=split_template)
         assert isinstance(rec, NumericRecordDistributionView)
 
-    def test_record_template_carried_through(self, mvn4, split_template):
+    def test_event_template_carried_through(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
-        assert rec.record_template is split_template
+        assert rec.event_template is split_template
 
     def test_event_shapes_match_template(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
@@ -76,7 +76,7 @@ class TestConstruction:
 
     def test_event_shape_single_field(self, mvn4):
         """Single-field template: event_shape returns that field's shape."""
-        single = NumericRecordTemplate(theta=(4,))
+        single = NumericEventTemplate(theta=(4,))
         rec = mvn4.as_record_distribution(template=single)
         assert rec.event_shape == (4,)
 
@@ -127,16 +127,16 @@ class TestSampling:
         assert draws["slope"].shape == (5, 3)
 
     def test_sample_roundtrip_with_flat(self, mvn4, split_template):
-        """Same seed: lifted-view sample equals NumericRecord.unflatten(flat_sample)."""
+        """Same seed: lifted-view sample equals split_template.from_vector(flat_sample)."""
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(7)
         rec_draw = rec._sample(key)
         flat_draw = mvn4._sample(key)
-        ref = NumericRecord.unflatten(flat_draw, template=split_template)
-        np.testing.assert_allclose(jnp.asarray(rec_draw["intercept"]),
-                                   jnp.asarray(ref["intercept"]))
-        np.testing.assert_allclose(jnp.asarray(rec_draw["slope"]),
-                                   jnp.asarray(ref["slope"]))
+        ref = split_template.from_vector(flat_draw)
+        np.testing.assert_allclose(
+            jnp.asarray(rec_draw["intercept"]), jnp.asarray(ref["intercept"])
+        )
+        np.testing.assert_allclose(jnp.asarray(rec_draw["slope"]), jnp.asarray(ref["slope"]))
 
     def test_chain_flatten_then_lift_on_product(self):
         """``ProductDistribution.as_flat_distribution().as_record_distribution(...)``
@@ -150,8 +150,8 @@ class TestSampling:
             b=Normal(loc=-2.0, scale=2.0, name="b"),
         )
         flat = joint.as_flat_distribution()
-        rec = flat.as_record_distribution(template=joint.record_template)
-        assert rec.record_template is joint.record_template
+        rec = flat.as_record_distribution(template=joint.event_template)
+        assert rec.event_template is joint.event_template
 
         # Capability passthrough: FlattenedDistributionView has Sampling + LogProb only.
         assert isinstance(rec, SupportsSampling)
@@ -174,7 +174,7 @@ class TestLogProb:
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(3)
         flat_x = mvn4._sample(key)
-        rec_x = NumericRecord.unflatten(flat_x, template=split_template)
+        rec_x = split_template.from_vector(flat_x)
 
         lp_rec = float(log_prob(rec, rec_x))
         lp_flat = float(log_prob(mvn4, flat_x))
@@ -185,9 +185,7 @@ class TestLogProb:
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(5)
         flat_xs = mvn4._sample(key, sample_shape=(10,))
-        rec_xs = NumericRecordArray.unflatten(
-            flat_xs, template=split_template, batch_shape=(10,),
-        )
+        rec_xs = split_template.from_vector(flat_xs)
         lp_rec = jnp.asarray(log_prob(rec, rec_xs))
         lp_flat = jnp.asarray(log_prob(mvn4, flat_xs))
         np.testing.assert_allclose(lp_rec, lp_flat, rtol=1e-5)
@@ -201,15 +199,13 @@ class TestMoments:
         rec = mvn4.as_record_distribution(template=split_template)
         m = mean(rec)
         np.testing.assert_allclose(jnp.asarray(m["intercept"]), 1.0, rtol=1e-5)
-        np.testing.assert_allclose(jnp.asarray(m["slope"]),
-                                   jnp.array([-1.0, 2.0, 0.5]), rtol=1e-5)
+        np.testing.assert_allclose(jnp.asarray(m["slope"]), jnp.array([-1.0, 2.0, 0.5]), rtol=1e-5)
 
     def test_variance_unflattens(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
         v = variance(rec)
         np.testing.assert_allclose(jnp.asarray(v["intercept"]), 0.5, rtol=1e-5)
-        np.testing.assert_allclose(jnp.asarray(v["slope"]),
-                                   jnp.array([1.0, 1.5, 2.0]), rtol=1e-5)
+        np.testing.assert_allclose(jnp.asarray(v["slope"]), jnp.array([1.0, 1.5, 2.0]), rtol=1e-5)
 
     def test_cov_stays_flat(self, mvn4, split_template):
         """cov(rec) is the same (event_size, event_size) matrix as cov(source)."""
@@ -232,14 +228,17 @@ class TestMoments:
             return r["intercept"] ** 2 + jnp.sum(r["slope"] ** 2)
 
         est = expectation(
-            rec, f, key=jax.random.PRNGKey(0),
-            num_evaluations=5000, return_dist=False,
+            rec,
+            f,
+            key=jax.random.PRNGKey(0),
+            num_evaluations=5000,
+            return_dist=False,
         )
         # E[X^2] = loc^2 + var per coordinate. 5k samples puts MC SE
         # around ~0.15 for these parameters; atol=0.2 stays meaningful.
         loc = jnp.array([1.0, -1.0, 2.0, 0.5])
         var = jnp.array([0.5, 1.0, 1.5, 2.0])
-        analytic = float(jnp.sum(loc ** 2 + var))
+        analytic = float(jnp.sum(loc**2 + var))
         np.testing.assert_allclose(float(jnp.asarray(est)), analytic, atol=0.2)
 
 
@@ -257,15 +256,15 @@ class TestErrors:
         assert isinstance(rec, SupportsCovariance)
         assert isinstance(rec, SupportsExpectation)
 
-    def test_type_error_on_base_record_template(self, mvn4):
-        """Passing a base RecordTemplate (allows None leaves) is rejected."""
-        bad = RecordTemplate(intercept=(), label=None)
-        with pytest.raises(TypeError, match="NumericRecordTemplate"):
+    def test_type_error_on_base_event_template(self, mvn4):
+        """Passing a base EventTemplate (allows None leaves) is rejected."""
+        bad = EventTemplate(intercept=(), label=None)
+        with pytest.raises(TypeError, match="NumericEventTemplate"):
             mvn4.as_record_distribution(template=bad)
 
     def test_value_error_on_size_mismatch(self, mvn4):
-        bad = NumericRecordTemplate(a=(), b=(7,))  # flat_size=8 vs source flat_size=4
-        with pytest.raises(ValueError, match="flat_size mismatch"):
+        bad = NumericEventTemplate(a=(), b=(7,))  # vector_size=8 vs source vector_size=4
+        with pytest.raises(ValueError, match="vector_size mismatch"):
             mvn4.as_record_distribution(template=bad)
 
     def test_type_error_on_non_flat_source(self, split_template):
@@ -280,9 +279,9 @@ class TestErrors:
         # Match both the type name and the migration hint so a future
         # shortening of either part trips the test.
         with pytest.raises(TypeError, match="FlatNumericRecordDistribution"):
-            n.as_record_distribution(template=NumericRecordTemplate(x=(1,)))
+            n.as_record_distribution(template=NumericEventTemplate(x=(1,)))
         with pytest.raises(TypeError, match="as_flat_distribution"):
-            n.as_record_distribution(template=NumericRecordTemplate(x=(1,)))
+            n.as_record_distribution(template=NumericEventTemplate(x=(1,)))
 
     def test_method_inherited_through_numeric_record_distribution(self):
         """``ProductDistribution`` inherits from
@@ -298,7 +297,7 @@ class TestErrors:
         )
         assert hasattr(joint, "as_record_distribution")
         with pytest.raises(TypeError, match="FlatNumericRecordDistribution"):
-            joint.as_record_distribution(template=joint.record_template)
+            joint.as_record_distribution(template=joint.event_template)
 
 
 # -- FlatNumericRecordDistribution membership ----------------------------------
@@ -314,12 +313,12 @@ class TestFlatContract:
     def test_multivariate_normal_is_flat(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="x")
         assert isinstance(mvn, FlatNumericRecordDistribution)
-        assert mvn.flat_size == 3
+        assert mvn.vector_size == 3
 
     def test_dirichlet_is_flat(self):
         d = Dirichlet(concentration=jnp.ones(4), name="p")
         assert isinstance(d, FlatNumericRecordDistribution)
-        assert d.flat_size == 4
+        assert d.vector_size == 4
 
     def test_flattened_view_is_flat(self):
         """``as_flat_distribution()`` produces a ``FlatNumericRecordDistribution``
@@ -328,18 +327,18 @@ class TestFlatContract:
         """
         flat_scalar = Normal(loc=0.0, scale=1.0, name="x").as_flat_distribution()
         assert isinstance(flat_scalar, FlatNumericRecordDistribution)
-        assert flat_scalar.flat_size == 1
+        assert flat_scalar.vector_size == 1
 
         flat_joint = ProductDistribution(
             a=Normal(loc=0.0, scale=1.0, name="a"),
             b=Normal(loc=0.0, scale=1.0, name="b"),
         ).as_flat_distribution()
         assert isinstance(flat_joint, FlatNumericRecordDistribution)
-        assert flat_joint.flat_size == 2
+        assert flat_joint.vector_size == 2
 
-    def test_flat_size_raises_on_non_1d_event_shape(self):
+    def test_vector_size_raises_on_non_1d_event_shape(self):
         """A misdeclared subclass with rank-≥2 event_shape surfaces on
-        ``flat_size`` access rather than silently truncating to the
+        ``vector_size`` access rather than silently truncating to the
         first dim.
         """
         from probpipe.core._numeric_record_distribution import (
@@ -349,7 +348,7 @@ class TestFlatContract:
         class _BadFlat(_FlatNRD):
             def __init__(self):
                 self._name = "bad"
-                self._record_template = NumericRecordTemplate(bad=(2, 3))
+                self._event_template = NumericEventTemplate(bad=(2, 3))
 
             @property
             def event_shape(self):
@@ -357,7 +356,7 @@ class TestFlatContract:
 
         bad = _BadFlat()
         with pytest.raises(TypeError, match="event_shape"):
-            _ = bad.flat_size
+            _ = bad.vector_size
 
 
 # -- Cross-class smoke: lifting from Dirichlet (a non-MVN FlatNRD) -------------
@@ -373,11 +372,9 @@ class TestLiftFromOtherFlatParametrics:
 
     def test_dirichlet_as_record_distribution_preserves_simplex(self):
         d = Dirichlet(concentration=jnp.array([1.0, 2.0, 3.0]), name="p")
-        rec = d.as_record_distribution(template=NumericRecordTemplate(probs=(3,)))
+        rec = d.as_record_distribution(template=NumericEventTemplate(probs=(3,)))
         assert isinstance(rec, NumericRecordDistributionView)
 
         draw = sample(rec, key=jax.random.PRNGKey(0))
         # Simplex invariant must survive the lift.
         np.testing.assert_allclose(float(jnp.sum(draw["probs"])), 1.0, rtol=1e-5)
-
-

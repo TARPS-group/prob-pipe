@@ -93,8 +93,7 @@ def map_task(
     # columns, so Ray via Prefect relies on this rectangular kwargs shape.
     keys = request.call_value_list[0].keys()
     kwargs_by_param = {
-        key: [call_values[key] for call_values in request.call_value_list]
-        for key in keys
+        key: [call_values[key] for call_values in request.call_value_list] for key in keys
     }
     futures = run_func.map(**kwargs_by_param)
     return [future.result() for future in futures]
@@ -141,13 +140,9 @@ def _validate_max_workers(max_workers: int | None) -> int | None:
         return None
 
     if not isinstance(max_workers, int):
-        raise TypeError(
-            f"max_workers must be None or a positive int; got {max_workers!r}"
-        )
+        raise TypeError(f"max_workers must be None or a positive int; got {max_workers!r}")
     if max_workers < 1:
-        raise ValueError(
-            f"max_workers must be None or a positive int; got {max_workers!r}"
-        )
+        raise ValueError(f"max_workers must be None or a positive int; got {max_workers!r}")
     return max_workers
 
 

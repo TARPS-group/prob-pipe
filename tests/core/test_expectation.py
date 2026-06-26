@@ -5,31 +5,31 @@ import jax.numpy as jnp
 import jax.scipy.special as jsp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
 import probpipe.core.distribution as dist_mod
 from probpipe import (
-    NumericRecord,
-    NumericRecordDistribution,
-    RecordEmpiricalDistribution,
-    EmpiricalDistribution,
-    BootstrapDistribution,
-    Normal,
-    Gamma,
-    Beta,
-    Exponential,
     Bernoulli,
-    Categorical,
+    Beta,
     Binomial,
-    from_distribution,
+    BootstrapDistribution,
+    Categorical,
+    EmpiricalDistribution,
+    Exponential,
+    Gamma,
+    Normal,
+    NumericRecord,
+    RecordEmpiricalDistribution,
     TransformedDistribution,
-    DEFAULT_NUM_EVALUATIONS,
+    expectation,
+    from_distribution,
+    mean,
+    sample,
     set_default_num_evaluations,
     set_return_approx_dist,
+    variance,
 )
-import tensorflow_probability.substrates.jax.bijectors as tfb
-from probpipe import expectation, log_prob, mean, sample, variance
 from probpipe.core.protocols import SupportsExpectation, compute_expectation
-
 
 # ---------------------------------------------------------------------------
 # BootstrapDistribution tests
@@ -79,7 +79,6 @@ class TestBootstrapDistribution:
         bd = BootstrapDistribution(evals)
         assert bd.event_shape == (3,)
         assert mean(bd).shape == (3,)
-
 
 
 # ---------------------------------------------------------------------------
@@ -148,8 +147,8 @@ class TestExpectationSampleBased:
         loc, scale = 2.0, 1.5
         d = Normal(loc=loc, scale=scale, name="x")
         key = jax.random.PRNGKey(1)
-        result = expectation(d, lambda x: x ** 2, key=key, num_evaluations=10_000, return_dist=False)
-        expected = loc ** 2 + scale ** 2
+        result = expectation(d, lambda x: x**2, key=key, num_evaluations=10_000, return_dist=False)
+        expected = loc**2 + scale**2
         # Second moment has higher variance than first moment (kurtosis effect)
         np.testing.assert_allclose(float(result), expected, atol=0.15)
 
@@ -158,9 +157,9 @@ class TestExpectationSampleBased:
         d = Normal(loc=loc, scale=scale, name="x")
         key1, key2 = jax.random.split(jax.random.PRNGKey(2))
         ex = expectation(d, lambda x: x, key=key1, num_evaluations=10_000, return_dist=False)
-        ex2 = expectation(d, lambda x: x ** 2, key=key2, num_evaluations=10_000, return_dist=False)
+        ex2 = expectation(d, lambda x: x**2, key=key2, num_evaluations=10_000, return_dist=False)
         var_est = float(ex2) - float(ex) ** 2
-        np.testing.assert_allclose(var_est, scale ** 2, atol=0.15)
+        np.testing.assert_allclose(var_est, scale**2, atol=0.15)
 
     def test_gamma_mean(self):
         conc, rate = 3.0, 2.0
@@ -173,7 +172,9 @@ class TestExpectationSampleBased:
         conc, rate = 3.0, 2.0
         d = Gamma(concentration=conc, rate=rate, name="x")
         key = jax.random.PRNGKey(4)
-        result = expectation(d, lambda x: jnp.log(x), key=key, num_evaluations=20_000, return_dist=False)
+        result = expectation(
+            d, lambda x: jnp.log(x), key=key, num_evaluations=20_000, return_dist=False
+        )
         expected = float(jsp.digamma(conc)) - float(jnp.log(rate))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
@@ -188,7 +189,9 @@ class TestExpectationSampleBased:
         a, b = 2.0, 5.0
         d = Beta(alpha=a, beta=b, name="x")
         key = jax.random.PRNGKey(6)
-        result = expectation(d, lambda x: jnp.log(x), key=key, num_evaluations=20_000, return_dist=False)
+        result = expectation(
+            d, lambda x: jnp.log(x), key=key, num_evaluations=20_000, return_dist=False
+        )
         expected = float(jsp.digamma(a)) - float(jsp.digamma(a + b))
         np.testing.assert_allclose(float(result), expected, atol=0.05)
 
@@ -196,8 +199,8 @@ class TestExpectationSampleBased:
         rate = 3.0
         d = Exponential(rate=rate, name="x")
         key = jax.random.PRNGKey(7)
-        result = expectation(d, lambda x: x ** 2, key=key, num_evaluations=10_000, return_dist=False)
-        np.testing.assert_allclose(float(result), 2.0 / rate ** 2, atol=0.03)
+        result = expectation(d, lambda x: x**2, key=key, num_evaluations=10_000, return_dist=False)
+        np.testing.assert_allclose(float(result), 2.0 / rate**2, atol=0.03)
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +209,6 @@ class TestExpectationSampleBased:
 
 
 class TestExpectationExact:
-
     def test_bernoulli_identity(self):
         p = 0.7
         d = Bernoulli(probs=p, name="x")
@@ -229,7 +231,7 @@ class TestExpectationExact:
     def test_categorical_custom_function(self):
         probs = [0.25, 0.5, 0.25]
         d = Categorical(probs=probs, name="x")
-        result = expectation(d, lambda x: x ** 2)
+        result = expectation(d, lambda x: x**2)
         expected = 0 * 0.25 + 1 * 0.5 + 4 * 0.25
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
@@ -242,7 +244,7 @@ class TestExpectationExact:
     def test_binomial_second_moment(self):
         n, p = 10, 0.3
         d = Binomial(total_count=n, probs=p, name="x")
-        result = expectation(d, lambda x: x ** 2)
+        result = expectation(d, lambda x: x**2)
         expected = n * p * (1 - p) + (n * p) ** 2
         np.testing.assert_allclose(float(result), expected, atol=1e-3)
 
@@ -253,7 +255,6 @@ class TestExpectationExact:
 
 
 class TestExpectationEmpirical:
-
     def test_uniform_mean(self):
         samples = jnp.array([1.0, 2.0, 3.0, 4.0])
         d = EmpiricalDistribution(samples, name="x")
@@ -271,7 +272,7 @@ class TestExpectationEmpirical:
         samples = jnp.array([1.0, 2.0, 3.0])
         weights = jnp.array([0.2, 0.5, 0.3])
         d = EmpiricalDistribution(samples, weights=weights, name="x")
-        result = expectation(d, lambda x: x ** 2)
+        result = expectation(d, lambda x: x**2)
         expected = 0.2 * 1.0 + 0.5 * 4.0 + 0.3 * 9.0
         np.testing.assert_allclose(float(result), expected, atol=1e-5)
 
@@ -302,7 +303,6 @@ class TestExpectationEmpirical:
 
 
 class TestBootstrapErrorTracking:
-
     def test_variance_decreases_with_n(self):
         """More evaluations → smaller MC error variance."""
         d = Normal(loc=0.0, scale=1.0, name="x")
@@ -356,7 +356,6 @@ class TestMCFallbackMethods:
 
 
 class TestIsApproximate:
-
     def test_tfp_distribution_exact(self):
         assert not Normal(loc=0.0, scale=1.0, name="x").is_approximate
         assert not Gamma(concentration=1.0, rate=1.0, name="x").is_approximate
@@ -402,7 +401,6 @@ class TestIsApproximate:
 
 
 class TestGlobalDefaults:
-
     def test_set_default_num_evaluations(self):
         old = dist_mod.DEFAULT_NUM_EVALUATIONS
         try:
@@ -461,7 +459,7 @@ class _MCNormalDist(SupportsExpectation):
 
     @compute_expectation
     def _second_moment(self):
-        return lambda x: x ** 2
+        return lambda x: x**2
 
 
 class TestComputeExpectationDecorator:

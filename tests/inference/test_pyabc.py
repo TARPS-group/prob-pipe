@@ -59,7 +59,7 @@ def _product(*names: str):
 
 def _means(post) -> dict[str, np.ndarray]:
     m = mean(post)
-    return {f: np.asarray(m[f]).reshape(-1) for f in post.record_template.fields}
+    return {f: np.asarray(m[f]).reshape(-1) for f in post.event_template.fields}
 
 
 class TestPyABCCheck:
@@ -176,7 +176,7 @@ class TestPyABCWeightsAndDraws:
         post = condition_on(_model(_product("a", "b")), jnp.array([2.0, -1.0]),
                             method="pyabc_smcabc", summary_fn=summary_fn,
                             n_particles=80, max_populations=3, random_seed=0)
-        assert set(post.record_template.fields) == {"a", "b"}
+        assert set(post.event_template.fields) == {"a", "b"}
 
     def test_custom_distance_fn_is_used(self):
         """A user-supplied distance_fn over the {"y": vector} sumstats replaces
@@ -202,7 +202,7 @@ class TestPyABCDiagnostics:
         post = condition_on(_model(_product("theta")), jnp.array([2.0]),
                             method="pyabc_smcabc", n_particles=100,
                             max_populations=4, random_seed=0)
-        diag = post.auxiliary["smc_diagnostics"]
+        diag = post.arviz_data["smc_diagnostics"]
         eps = np.asarray(diag["epsilon"].values)
         rate = np.asarray(diag["acceptance_rate"].values)
         assert 1 <= eps.shape[0] <= 4

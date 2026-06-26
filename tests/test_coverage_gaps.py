@@ -21,22 +21,20 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
-    RecordEmpiricalDistribution,
-    NumericRecord,
     BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
+    NumericRecord,
+    RecordEmpiricalDistribution,
     TransformedDistribution,
     cov,
     expectation,
-    log_prob,
     mean,
     prob,
     sample,
     variance,
 )
 from probpipe.distributions.multivariate import MultivariateNormal
-
 
 # ---------------------------------------------------------------------------
 # BootstrapDistribution
@@ -336,9 +334,9 @@ class TestCovarianceRequiresProtocol:
     def test_cov_raises_without_supports_covariance(self):
         """A distribution with SupportsExpectation but not SupportsCovariance
         should raise TypeError from the cov op."""
-        from probpipe.core.distribution import _mc_expectation
-        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
         from probpipe import NumericRecordDistribution, cov
+        from probpipe.core.distribution import _mc_expectation
+        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class NoCovDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
@@ -349,11 +347,14 @@ class TestCovarianceRequiresProtocol:
                 return (2,)
 
             def _sample(self, key, sample_shape=()):
-                return jax.random.normal(key, sample_shape + (2,))
+                return jax.random.normal(key, (*sample_shape, 2))
 
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
                 return _mc_expectation(
-                    self, f, key=key, num_evaluations=num_evaluations,
+                    self,
+                    f,
+                    key=key,
+                    num_evaluations=num_evaluations,
                     return_dist=return_dist,
                 )
 
@@ -371,7 +372,7 @@ class TestUnnormalizedProbDefault:
     """Cover the _unnormalized_prob default (exp of _unnormalized_log_prob)."""
 
     def test_unnormalized_prob_default(self):
-        from probpipe import unnormalized_prob, unnormalized_log_prob
+        from probpipe import unnormalized_log_prob, unnormalized_prob
 
         d = Normal(loc=0.0, scale=1.0, name="x")
         x = jnp.array(1.0)

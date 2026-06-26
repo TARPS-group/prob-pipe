@@ -23,7 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._record_array import RecordArray
-from ..core.record import RecordTemplate
+from ..core.event_template import EventTemplate
 
 __all__ = ["Design", "FullFactorialDesign"]
 
@@ -50,7 +50,9 @@ def _is_numeric_sequence(seq: Any) -> bool:
 
 
 def _seq_to_column(
-    values: Sequence, *, indices,
+    values: Sequence,
+    *,
+    indices,
 ) -> tuple[Any, tuple[int, ...] | None]:
     """Materialise ``values[indices]`` as a column array.
 
@@ -153,9 +155,7 @@ class FullFactorialDesign(Design):
 
     def __init__(self, **marginals: Sequence) -> None:
         if not marginals:
-            raise ValueError(
-                "FullFactorialDesign requires at least one marginal"
-            )
+            raise ValueError("FullFactorialDesign requires at least one marginal")
         names = list(marginals)
         lists = [list(marginals[n]) for n in names]
         sizes = [len(v) for v in lists]
@@ -170,25 +170,26 @@ class FullFactorialDesign(Design):
         # lexicographic row-major traversal over the marginals in
         # insertion order.
         grids = np.meshgrid(
-            *(np.arange(s) for s in sizes), indexing="ij",
+            *(np.arange(s) for s in sizes),
+            indexing="ij",
         )
-        flat_indices = {
-            name: grid.reshape(-1) for name, grid in zip(names, grids)
-        }
+        flat_indices = {name: grid.reshape(-1) for name, grid in zip(names, grids)}
 
         fields: dict[str, Any] = {}
         template_spec: dict[str, Any] = {}
         for name, values in zip(names, lists):
             col, leaf_shape = _seq_to_column(
-                values, indices=flat_indices[name],
+                values,
+                indices=flat_indices[name],
             )
             fields[name] = col
             template_spec[name] = leaf_shape
 
         RecordArray.__init__(
-            self, fields,
+            self,
+            fields,
             batch_shape=(n_total,),
-            template=RecordTemplate(template_spec),
+            template=EventTemplate(template_spec),
             name=f"FullFactorialDesign({','.join(names)})",
         )
         object.__setattr__(self, "_marginals", dict(marginals))

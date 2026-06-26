@@ -68,7 +68,9 @@
 "area:diagnostics":
   - changed-files:
       - any-glob-to-any-file:
+          - "probpipe/diagnostics/**"
           - "probpipe/validation/**"
+          - "tests/diagnostics/**"
           - "tests/validation/**"
 
 "area:provenance":

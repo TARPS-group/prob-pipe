@@ -1,6 +1,6 @@
 """BlackJAX-backed stochastic-gradient MCMC methods.
 
-Two :class:`~probpipe.core._registry.Method` subclasses registered with
+Two :class:`~probpipe.core._registry.UnaryDispatchMethod` subclasses registered with
 :data:`~probpipe.inference.inference_method_registry`:
 
 * ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics
@@ -34,15 +34,15 @@ import blackjax
 import jax
 import jax.numpy as jnp
 
-from ..core._registry import MethodInfo
 from ..core._random_measures import RandomMeasure
+from ..core._registry import MethodInfo
 from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
+from ._inference_utils import as_prng_key, get_init_state, is_simple_model
 from ._minibatch import MinibatchedDistribution
 from ._registry import InferenceMethod
-from ._inference_utils import as_prng_key, get_init_state, is_simple_model
 
-__all__ = ["BlackJAXSGLDMethod", "BlackJAXSGHMCMethod"]
+__all__ = ["BlackJAXSGHMCMethod", "BlackJAXSGLDMethod"]
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +97,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         # Filter at the registry-level by Distribution; the SimpleModel +
         # ConditionallyIndependentLikelihood constraint is enforced in check().
         from ..core._distribution_base import Distribution
+
         return (Distribution,)
 
     @property
@@ -111,15 +112,14 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
 
         if not is_simple_model(dist):
             return MethodInfo(
-                feasible=False, method_name=self.name,
-                description=(
-                    f"{self.name} requires a SimpleModel; got "
-                    f"{type(dist).__name__}."
-                ),
+                feasible=False,
+                method_name=self.name,
+                description=(f"{self.name} requires a SimpleModel; got {type(dist).__name__}."),
             )
         if not isinstance(dist.likelihood, ConditionallyIndependentLikelihood):
             return MethodInfo(
-                feasible=False, method_name=self.name,
+                feasible=False,
+                method_name=self.name,
                 description=(
                     f"{self.name} requires model.likelihood to satisfy "
                     f"ConditionallyIndependentLikelihood; got "
@@ -128,7 +128,8 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
             )
         if "batch_size" not in kwargs:
             return MethodInfo(
-                feasible=False, method_name=self.name,
+                feasible=False,
+                method_name=self.name,
                 description=(
                     f"{self.name} requires an explicit batch_size= kwarg. "
                     f"There is no canonical default for a stochastic sampler."
@@ -151,7 +152,9 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         # grads. ``dist`` is a SimpleModel (validated by ``check()``);
         # unpack its prior + CIL likelihood for the random measure.
         measure = MinibatchedDistribution(
-            dist.prior, dist.likelihood, observed,
+            dist.prior,
+            dist.likelihood,
+            observed,
             batch_size=batch_size,
             with_replacement=with_replacement,
         )
@@ -163,25 +166,36 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         # Initial position from prior or user-supplied init.
         prior = dist.prior
         init = get_init_state(
-            dist, kwargs.get("init"), random_seed=random_seed,
+            dist,
+            kwargs.get("init"),
+            random_seed=random_seed,
         )
         state = algorithm.init(init)
 
         # Iterate. The kernel itself jits within run_loop's step closure.
         positions = _run_sgmcmc_loop(
-            algorithm, state, as_prng_key(random_seed),
-            step_size, num_warmup, num_results,
+            algorithm,
+            state,
+            as_prng_key(random_seed),
+            step_size,
+            num_warmup,
+            num_results,
         )
 
         # ``check()`` rejects any non-SimpleModel target, and a
         # SimpleModel prior is always a RecordDistribution, so
-        # ``record_template`` is guaranteed here.
+        # ``event_template`` is guaranteed here.
         chain = jnp.stack(positions, axis=0)
-        record_template = prior.record_template
+        event_template = prior.event_template
         return make_posterior(
-            [chain], parents=(prior,), algorithm=self._method_name,
-            auxiliary=None, record_template=record_template,
-            num_results=num_results, num_warmup=num_warmup, num_chains=1,
+            [chain],
+            parents=(prior,),
+            algorithm=self._method_name,
+            auxiliary=None,
+            event_template=event_template,
+            num_results=num_results,
+            num_warmup=num_warmup,
+            num_chains=1,
         )
 
     # -- subclass hook -------------------------------------------------------
@@ -275,5 +289,6 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
         return blackjax.sghmc(
             grad_estimator,
             num_integration_steps=num_integration_steps,
-            alpha=alpha, beta=beta,
+            alpha=alpha,
+            beta=beta,
         )

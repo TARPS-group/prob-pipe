@@ -7,20 +7,19 @@ import pytest
 import scipy.stats
 
 from probpipe import (
-    Normal,
-    MultivariateNormal,
-    RecordEmpiricalDistribution,
-    EmpiricalDistribution,
     BootstrapDistribution,
+    MultivariateNormal,
+    Normal,
     ProductDistribution,
+    RecordEmpiricalDistribution,
     SequentialJointDistribution,
 )
 from probpipe.core import ops
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def normal():
@@ -46,6 +45,7 @@ def joint():
 # ---------------------------------------------------------------------------
 # sample
 # ---------------------------------------------------------------------------
+
 
 class TestSample:
     def test_sample_scalar(self, normal):
@@ -88,6 +88,7 @@ class TestSample:
 # log_prob
 # ---------------------------------------------------------------------------
 
+
 class TestLogProb:
     def test_log_prob_scalar(self, normal):
         lp = ops.log_prob(normal, jnp.array(2.0))
@@ -107,6 +108,7 @@ class TestLogProb:
 # prob
 # ---------------------------------------------------------------------------
 
+
 class TestProb:
     def test_prob_matches_scipy(self, normal):
         """prob(Normal, x) must match scipy.stats.norm.pdf — independent baseline."""
@@ -119,6 +121,7 @@ class TestProb:
 # ---------------------------------------------------------------------------
 # unnormalized_log_prob
 # ---------------------------------------------------------------------------
+
 
 class TestUnnormalizedLogProb:
     def test_equals_log_prob_for_normalized(self, normal):
@@ -137,6 +140,7 @@ class TestUnnormalizedLogProb:
 # ---------------------------------------------------------------------------
 # mean
 # ---------------------------------------------------------------------------
+
 
 class TestMean:
     def test_exact_mean_normal(self, normal):
@@ -158,19 +162,24 @@ class TestMean:
 
     def test_raises_without_supports_mean(self):
         """mean op raises TypeError for distributions without SupportsMean."""
-        from probpipe.core.protocols import SupportsSampling, SupportsExpectation
-        from probpipe.core.distribution import _mc_expectation, NumericRecordDistribution
+        from probpipe.core.distribution import NumericRecordDistribution, _mc_expectation
+        from probpipe.core.protocols import SupportsExpectation, SupportsSampling
 
         class NoMeanDist(NumericRecordDistribution, SupportsSampling, SupportsExpectation):
             _sampling_cost = "low"
             _preferred_orchestration = None
+
             @property
             def event_shape(self):
                 return ()
+
             def _sample(self, key, sample_shape=()):
                 return jax.random.normal(key, sample_shape)
+
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
-                return _mc_expectation(self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist)
+                return _mc_expectation(
+                    self, f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
+                )
 
         with pytest.raises(TypeError, match="does not support mean"):
             ops.mean(NoMeanDist(name="test"))
@@ -179,6 +188,7 @@ class TestMean:
 # ---------------------------------------------------------------------------
 # variance
 # ---------------------------------------------------------------------------
+
 
 class TestVariance:
     def test_exact_variance_normal(self, normal):
@@ -194,6 +204,7 @@ class TestVariance:
 # cov
 # ---------------------------------------------------------------------------
 
+
 class TestCov:
     def test_exact_cov_empirical(self, empirical):
         c = jnp.asarray(ops.cov(empirical))
@@ -205,10 +216,12 @@ class TestCov:
 # expectation
 # ---------------------------------------------------------------------------
 
+
 class TestExpectation:
     def test_expectation_identity(self, normal):
         result = ops.expectation(
-            normal, lambda x: x,
+            normal,
+            lambda x: x,
             key=jax.random.PRNGKey(0),
             num_evaluations=5000,
             return_dist=False,
@@ -217,7 +230,8 @@ class TestExpectation:
 
     def test_expectation_returns_bootstrap(self, normal):
         result = ops.expectation(
-            normal, lambda x: x,
+            normal,
+            lambda x: x,
             key=jax.random.PRNGKey(0),
             num_evaluations=500,
             return_dist=True,
@@ -228,6 +242,7 @@ class TestExpectation:
 # ---------------------------------------------------------------------------
 # condition_on
 # ---------------------------------------------------------------------------
+
 
 class TestConditionOn:
     def test_condition_product(self, joint):
@@ -258,16 +273,16 @@ class TestConditionOn:
 # WorkflowFunction routing
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowFunctionRouting:
     """Verify public ops are WorkflowFunction instances."""
 
     def test_ops_are_workflow_functions(self):
         from probpipe.core.node import WorkflowFunction
+
         for name in ops.__all__:
             fn = getattr(ops, name)
-            assert isinstance(fn, WorkflowFunction), (
-                f"ops.{name} is not a WorkflowFunction"
-            )
+            assert isinstance(fn, WorkflowFunction), f"ops.{name} is not a WorkflowFunction"
 
     def test_public_ops_are_callable(self):
         for name in ops.__all__:
@@ -294,23 +309,28 @@ class TestWorkflowFunctionRouting:
 # Top-level imports work
 # ---------------------------------------------------------------------------
 
+
 class TestTopLevelImports:
     """Verify ops are importable from probpipe top level."""
 
     def test_import_sample(self):
         from probpipe import sample as s
+
         assert callable(s)
 
     def test_import_mean(self):
         from probpipe import mean as m
+
         assert callable(m)
 
     def test_import_log_prob(self):
         from probpipe import log_prob as lp
+
         assert callable(lp)
 
     def test_import_condition_on(self):
         from probpipe import condition_on as co
+
         assert callable(co)
 
 
@@ -318,11 +338,13 @@ class TestTopLevelImports:
 # _split_data_kwargs
 # ---------------------------------------------------------------------------
 
+
 class TestSplitDataKwargs:
     """Unit tests for the _split_data_kwargs helper."""
 
     def test_empty_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
+
         dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
         data, inference = _split_data_kwargs(dist, {})
         assert data == {}
@@ -330,27 +352,33 @@ class TestSplitDataKwargs:
 
     def test_all_data_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
+
         dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
         data, inference = _split_data_kwargs(
-            dist, {"x": jnp.array(1.0), "y": jnp.array(2.0)},
+            dist,
+            {"x": jnp.array(1.0), "y": jnp.array(2.0)},
         )
         assert set(data.keys()) == {"x", "y"}
         assert inference == {}
 
     def test_all_inference_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
+
         dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"))
         data, inference = _split_data_kwargs(
-            dist, {"num_results": 100, "random_seed": 42},
+            dist,
+            {"num_results": 100, "random_seed": 42},
         )
         assert data == {}
         assert set(inference.keys()) == {"num_results", "random_seed"}
 
     def test_mixed_kwargs(self):
         from probpipe.core.ops import _split_data_kwargs
+
         dist = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
         data, inference = _split_data_kwargs(
-            dist, {"x": jnp.array(1.0), "num_results": 100},
+            dist,
+            {"x": jnp.array(1.0), "num_results": 100},
         )
         assert set(data.keys()) == {"x"}
         assert set(inference.keys()) == {"num_results"}
@@ -358,9 +386,11 @@ class TestSplitDataKwargs:
     def test_no_fields(self):
         """Distribution without fields → all kwargs are inference."""
         from probpipe.core.ops import _split_data_kwargs
+
         dist = Normal(0.0, 1.0, name="x")
         data, inference = _split_data_kwargs(
-            dist, {"num_results": 100},
+            dist,
+            {"num_results": 100},
         )
         assert data == {}
         assert set(inference.keys()) == {"num_results"}
@@ -370,9 +400,8 @@ class TestSplitDataKwargs:
         raise with the correct casing rather than silently routing it to
         inference params (issue #228)."""
         from probpipe.core.ops import _split_data_kwargs
-        dist = ProductDistribution(
-            X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y")
-        )
+
+        dist = ProductDistribution(X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y"))
         with pytest.raises(TypeError, match="did you mean X"):
             _split_data_kwargs(dist, {"x": jnp.array(1.0)})
 
@@ -380,11 +409,11 @@ class TestSplitDataKwargs:
         """An unknown kwarg that is *not* a case-variant of any field is a
         genuine inference parameter — no false positive."""
         from probpipe.core.ops import _split_data_kwargs
-        dist = ProductDistribution(
-            X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y")
-        )
+
+        dist = ProductDistribution(X=Normal(0.0, 1.0, name="X"), y=Normal(0.0, 1.0, name="y"))
         data, inference = _split_data_kwargs(
-            dist, {"X": jnp.array(1.0), "num_results": 100},
+            dist,
+            {"X": jnp.array(1.0), "num_results": 100},
         )
         assert set(data.keys()) == {"X"}
         assert set(inference.keys()) == {"num_results"}

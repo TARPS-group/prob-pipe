@@ -7,25 +7,25 @@ from __future__ import annotations
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from ._tfp_base import TFPDistribution
 from .._dtype import _as_float_array, _promote_floats
-from ..core.distribution import FlatNumericRecordDistribution
 from ..core.constraints import (
     Constraint,
-    real,
-    positive_definite,
-    simplex,
     non_negative_integer,
+    positive_definite,
+    real,
+    simplex,
     sphere,
 )
+from ..core.distribution import FlatNumericRecordDistribution
 from ..custom_types import Array, ArrayLike
+from ._tfp_base import TFPDistribution
 
 __all__ = [
-    "MultivariateNormal",
     "Dirichlet",
     "Multinomial",
-    "Wishart",
+    "MultivariateNormal",
     "VonMisesFisher",
+    "Wishart",
 ]
 
 
@@ -74,16 +74,12 @@ class MultivariateNormal(TFPDistribution, FlatNumericRecordDistribution):
 
         if cov is not None:
             if cov.shape != (loc.shape[0], loc.shape[0]):
-                raise ValueError(
-                    f"cov shape {cov.shape} does not match loc length {loc.shape[0]}."
-                )
+                raise ValueError(f"cov shape {cov.shape} does not match loc length {loc.shape[0]}.")
             scale_tril = jnp.linalg.cholesky(cov)
 
         self._loc = loc
         self._scale_tril = scale_tril
-        self._tfp_dist = tfd.MultivariateNormalTriL(
-            loc=loc, scale_tril=scale_tril
-        )
+        self._tfp_dist = tfd.MultivariateNormalTriL(loc=loc, scale_tril=scale_tril)
         super().__init__(name=name)
 
     # -- convenient accessors -----------------------------------------------
@@ -198,16 +194,12 @@ class Multinomial(TFPDistribution, FlatNumericRecordDistribution):
             _, (total_count, probs) = _promote_floats(total_count, probs)
             self._probs = probs
             self._logits = None
-            self._tfp_dist = tfd.Multinomial(
-                total_count=total_count, probs=probs
-            )
+            self._tfp_dist = tfd.Multinomial(total_count=total_count, probs=probs)
         else:
             _, (total_count, logits) = _promote_floats(total_count, logits)
             self._logits = logits
             self._probs = None
-            self._tfp_dist = tfd.Multinomial(
-                total_count=total_count, logits=logits
-            )
+            self._tfp_dist = tfd.Multinomial(total_count=total_count, logits=logits)
 
         self._total_count = total_count
         super().__init__(name=name)
@@ -265,9 +257,7 @@ class Wishart(TFPDistribution):
         name: str,
     ):
         if scale_tril is not None and scale is not None:
-            raise ValueError(
-                "Provide exactly one of scale_tril or scale, not both."
-            )
+            raise ValueError("Provide exactly one of scale_tril or scale, not both.")
         if scale_tril is None and scale is None:
             raise ValueError("One of scale_tril or scale must be provided.")
 
@@ -334,9 +324,7 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
         *,
         name: str,
     ):
-        _, (mean_direction, concentration) = _promote_floats(
-            mean_direction, concentration
-        )
+        _, (mean_direction, concentration) = _promote_floats(mean_direction, concentration)
 
         self._mean_direction = mean_direction
         self._concentration = concentration
@@ -364,4 +352,3 @@ class VonMisesFisher(TFPDistribution, FlatNumericRecordDistribution):
     @property
     def support(self) -> Constraint:
         return sphere
-

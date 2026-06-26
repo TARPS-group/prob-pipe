@@ -7,43 +7,59 @@ empirical distributions, and the inference method registry for
 """
 
 from __future__ import annotations
-from ._approximate_distribution import ApproximateDistribution
-from ._registry import (
-    InferenceMethod,
-    inference_method_registry,
+
+from ..core._registry import (
+    BaseDispatchMethod,
+    BaseDispatchRegistry,
+    BinaryDispatchMethod,
+    BinaryDispatchRegistry,
+    MethodInfo,
+    UnaryDispatchMethod,
+    UnaryDispatchRegistry,
 )
-from ..core._registry import Method, MethodInfo, MethodRegistry
-from ._blackjax_rwmh import rwmh
-from ._blackjax_ess import elliptical_slice
-from ._nutpie import condition_on_nutpie
-from ._minibatch import MinibatchedDistribution
+from ._approximate_distribution import ApproximateDistribution
+from ._bayesflow_likelihoods import (
+    BayesFlowLikelihood,
+    BayesFlowRatio,
+    learn_amortized_likelihood,
+    learn_amortized_ratio,
+)
+
 # Amortized SBI (optional ``[bayesflow]`` extra). keras/bayesflow load lazily on
 # first call, so these eager imports stay cheap; the trained artifacts dispatch
 # via ``SupportsConditioning`` (NPE) or plug into ``SimpleModel`` as
 # ``Likelihood`` components (NLE/NRE) -- no inference-registry methods needed.
 from ._bayesflow_posteriors import BayesFlowModel, learn_amortized_posterior
-from ._bayesflow_likelihoods import (
-    BayesFlowLikelihood, BayesFlowRatio,
-    learn_amortized_likelihood, learn_amortized_ratio,
+from ._blackjax_ess import elliptical_slice
+from ._blackjax_rwmh import rwmh
+from ._minibatch import MinibatchedDistribution
+from ._nutpie import condition_on_nutpie
+from ._registry import (
+    InferenceMethod,
+    inference_method_registry,
 )
 
 __all__ = [
     "ApproximateDistribution",
-    "Method",
-    "MethodInfo",
-    "MethodRegistry",
-    "InferenceMethod",
-    "inference_method_registry",
-    "rwmh",
-    "elliptical_slice",
-    "condition_on_nutpie",
-    "MinibatchedDistribution",
-    "learn_amortized_posterior",
-    "BayesFlowModel",
-    "learn_amortized_likelihood",
-    "learn_amortized_ratio",
+    "BaseDispatchMethod",
+    "BaseDispatchRegistry",
     "BayesFlowLikelihood",
+    "BayesFlowModel",
     "BayesFlowRatio",
+    "BinaryDispatchMethod",
+    "BinaryDispatchRegistry",
+    "InferenceMethod",
+    "MethodInfo",
+    "MinibatchedDistribution",
+    "UnaryDispatchMethod",
+    "UnaryDispatchRegistry",
+    "condition_on_nutpie",
+    "elliptical_slice",
+    "inference_method_registry",
+    "learn_amortized_likelihood",
+    "learn_amortized_posterior",
+    "learn_amortized_ratio",
+    "rwmh",
 ]
 
 
@@ -53,27 +69,27 @@ __all__ = [
 
 # TFP-backed MCMC — registered at priority 0 (opt-in only); BlackJAX
 # methods below win auto-dispatch.
-from ._tfp_mcmc import TFPNutsMethod, TFPHmcMethod
+from ._tfp_mcmc import TFPHmcMethod, TFPNutsMethod
 
 inference_method_registry.register(TFPNutsMethod())
 inference_method_registry.register(TFPHmcMethod())
 
 # BlackJAX MCMC (gradient-based) — auto-dispatch default for any
 # JAX-traceable ``SupportsLogProb`` target.
-from ._blackjax_mcmc import BlackJAXNutsMethod, BlackJAXHmcMethod
+from ._blackjax_mcmc import BlackJAXHmcMethod, BlackJAXNutsMethod
 
 inference_method_registry.register(BlackJAXNutsMethod())
 inference_method_registry.register(BlackJAXHmcMethod())
 
 # BlackJAX gradient-free MCMC: RWMH (catch-all) and ESS (Gaussian-prior).
-from ._blackjax_rwmh import BlackJAXRWMHMethod
 from ._blackjax_ess import BlackJAXESSMethod
+from ._blackjax_rwmh import BlackJAXRWMHMethod
 
 inference_method_registry.register(BlackJAXRWMHMethod())
 inference_method_registry.register(BlackJAXESSMethod())
 
 # BlackJAX SGMCMC
-from ._blackjax_sgmcmc import BlackJAXSGLDMethod, BlackJAXSGHMCMethod
+from ._blackjax_sgmcmc import BlackJAXSGHMCMethod, BlackJAXSGLDMethod
 
 inference_method_registry.register(BlackJAXSGLDMethod())
 inference_method_registry.register(BlackJAXSGHMCMethod())
@@ -82,18 +98,21 @@ inference_method_registry.register(BlackJAXSGHMCMethod())
 
 try:
     from ._nutpie import NutpieNutsMethod
+
     inference_method_registry.register(NutpieNutsMethod())
 except ImportError:
     pass
 
 try:
     from ._cmdstan_method import CmdStanNutsMethod
+
     inference_method_registry.register(CmdStanNutsMethod())
 except ImportError:
     pass
 
 try:
-    from ._pymc_method import PyMCNutsMethod, PyMCADVIMethod
+    from ._pymc_method import PyMCADVIMethod, PyMCNutsMethod
+
     inference_method_registry.register(PyMCNutsMethod())
     inference_method_registry.register(PyMCADVIMethod())
 except ImportError:
