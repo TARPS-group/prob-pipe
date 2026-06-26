@@ -291,6 +291,93 @@ class TestPyABCDefaults:
             )
         assert isinstance(captured["sampler"], SingleCoreSampler)
 
+    def test_eps_and_transitions_are_forwarded(self, monkeypatch):
+        """A custom epsilon strategy and transition kernel override the defaults
+        via ABCSMC; omitted, eps falls back to ``QuantileEpsilon``."""
+        import pyabc
+
+        captured = {}
+
+        class _Stop(Exception):
+            pass
+
+        def spy(*args, **kwargs):
+            captured.update(eps=kwargs.get("eps"), transitions=kwargs.get("transitions"))
+            raise _Stop
+
+        monkeypatch.setattr(pyabc, "ABCSMC", spy)
+        my_eps = pyabc.MedianEpsilon()
+        my_transitions = pyabc.MultivariateNormalTransition()
+        with pytest.raises(_Stop):
+            condition_on(
+                _model(_product("theta")),
+                jnp.array([2.0]),
+                method="pyabc_smcabc",
+                eps=my_eps,
+                transitions=my_transitions,
+                n_particles=10,
+                max_populations=1,
+                random_seed=0,
+            )
+        assert captured["eps"] is my_eps
+        assert captured["transitions"] is my_transitions
+
+    def test_default_eps_is_quantile(self, monkeypatch):
+        """Without an explicit ``eps``, the default schedule is QuantileEpsilon."""
+        import pyabc
+
+        captured = {}
+
+        class _Stop(Exception):
+            pass
+
+        def spy(*args, **kwargs):
+            captured["eps"] = kwargs.get("eps")
+            raise _Stop
+
+        monkeypatch.setattr(pyabc, "ABCSMC", spy)
+        with pytest.raises(_Stop):
+            condition_on(
+                _model(_product("theta")),
+                jnp.array([2.0]),
+                method="pyabc_smcabc",
+                n_particles=10,
+                max_populations=1,
+                random_seed=0,
+            )
+        assert isinstance(captured["eps"], pyabc.QuantileEpsilon)
+
+    def test_run_stopping_criteria_are_forwarded(self, monkeypatch):
+        """Caller-supplied stopping criteria reach ``ABCSMC.run`` alongside
+        ``max_nr_populations``; omitted ones are not forwarded."""
+        import pyabc
+
+        captured = {}
+
+        class _Stop(Exception):
+            pass
+
+        def spy_run(self, *args, **kwargs):
+            captured.update(kwargs)
+            raise _Stop
+
+        monkeypatch.setattr(pyabc.ABCSMC, "run", spy_run)
+        with pytest.raises(_Stop):
+            condition_on(
+                _model(_product("theta")),
+                jnp.array([2.0]),
+                method="pyabc_smcabc",
+                n_particles=10,
+                max_populations=2,
+                minimum_epsilon=0.5,
+                max_total_nr_simulations=1000,
+                random_seed=0,
+            )
+        assert captured["max_nr_populations"] == 2
+        assert captured["minimum_epsilon"] == 0.5
+        assert captured["max_total_nr_simulations"] == 1000
+        assert "min_acceptance_rate" not in captured  # omitted -> pyabc default
+
 
 class TestPyABCDistributionBacking:
     def test_pdf_is_the_joint_prior_density(self):

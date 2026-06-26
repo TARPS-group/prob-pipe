@@ -175,7 +175,20 @@ class PyABCSMCMethod(InferenceMethod):
         max_populations : int, default 4
             Number of SMC generations.
         eps_alpha : float, default 0.5
-            ``QuantileEpsilon`` alpha (acceptance-quantile schedule).
+            ``QuantileEpsilon`` alpha for the default epsilon schedule; ignored
+            if ``eps`` is given.
+        eps : pyabc epsilon, optional
+            Epsilon (acceptance-threshold) strategy. Defaults to
+            ``QuantileEpsilon(alpha=eps_alpha)``; pass any pyabc epsilon (e.g.
+            ``MedianEpsilon``, ``ListEpsilon``, ``AcceptanceRateScheduler``) to
+            override.
+        transitions : pyabc transition, optional
+            Perturbation kernel. Defaults to pyabc's own (a multivariate-normal
+            transition); pass a custom one to override.
+        minimum_epsilon, min_acceptance_rate, max_total_nr_simulations, max_walltime : optional
+            Additional stopping criteria forwarded to ``ABCSMC.run`` alongside
+            ``max_populations`` (whichever is hit first stops the run); pyabc's
+            defaults apply when omitted.
         random_seed : int, default 0
             Seeds the JAX keys threaded into the prior and simulator and pyabc's
             own (numpy-global) proposal RNG, so repeated calls are reproducible.
@@ -184,7 +197,10 @@ class PyABCSMCMethod(InferenceMethod):
             observed data before the distance.
         distance_fn : callable, optional
             ``(x, x0) -> float`` over the ``{"y": vector}`` sumstat dicts;
-            defaults to Euclidean.
+            defaults to Euclidean. Note: summary statistics are passed as a
+            single flat vector under the ``"y"`` key, so pyabc's multi-statistic
+            adaptive/weighted distances are not used; supply a custom
+            ``summary_fn``/``distance_fn`` pair for bespoke weighting.
         sampler : pyabc sampler, optional
             Defaults to ``SingleCoreSampler``. pyabc's multicore samplers
             ``fork()``, which can deadlock alongside JAX's threads (the same
@@ -210,6 +226,10 @@ class PyABCSMCMethod(InferenceMethod):
         summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
         distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
         sampler = kwargs.get("sampler") or SingleCoreSampler()
+        eps = kwargs.get("eps")
+        if eps is None:
+            eps = pyabc.QuantileEpsilon(alpha=eps_alpha)
+        transitions = kwargs.get("transitions")
 
         prior_key, sim_key0 = jax.random.split(jax.random.PRNGKey(random_seed))
         pyabc_prior = PyABCDistribution(prior, prior_key)
@@ -235,15 +255,28 @@ class PyABCSMCMethod(InferenceMethod):
             distance_fn,
             population_size=n_particles,
             sampler=sampler,
-            eps=pyabc.QuantileEpsilon(alpha=eps_alpha),
+            eps=eps,
+            transitions=transitions,
         )
+        # Forward any caller-supplied stopping criteria to run(); pyabc's own
+        # defaults apply for those omitted.
+        run_kwargs = {
+            k: kwargs[k]
+            for k in (
+                "minimum_epsilon",
+                "min_acceptance_rate",
+                "max_total_nr_simulations",
+                "max_walltime",
+            )
+            if k in kwargs
+        }
         # pyabc draws its perturbations from numpy's global RNG; seed it for a
         # reproducible run and restore the caller's state afterwards.
         np_state = np.random.get_state()
         np.random.seed(random_seed)
         try:
             abc.new("sqlite://", x0)  # in-memory history; nothing written to disk
-            history = abc.run(max_nr_populations=max_populations)
+            history = abc.run(max_nr_populations=max_populations, **run_kwargs)
         finally:
             np.random.set_state(np_state)
 
