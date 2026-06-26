@@ -322,8 +322,8 @@ class RecordArray(Record):
         if template is None:
             template = EventTemplate.infer_from(records[0])
         if any(isinstance(c, EventTemplate) for c in template.children.values()):
-            # Stacking into a nested batch is part of the *Batch redesign; raise a
-            # catchable error (callers fall back to a clearer message).
+            # Stacking into a nested batch is not yet supported; raise a catchable
+            # error (callers fall back to a clearer message).
             raise TypeError("RecordArray.stack does not yet support nested templates.")
         fields: dict[str, Any] = {}
         for name in template.children:
