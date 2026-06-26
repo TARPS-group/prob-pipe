@@ -44,7 +44,7 @@ def _field_event_shape(template: EventTemplate, name: str) -> tuple[int, ...]:
     :class:`EventTemplate`, whose own shape surface is leaf-level
     (:attr:`~probpipe.NumericEventTemplate.leaf_shapes`).
     """
-    spec = template[name]
+    spec = template.children[name]
     return spec.shape if isinstance(spec, ArraySpec) else ()
 
 
@@ -193,15 +193,17 @@ class _RecordDistributionView(Distribution):
         # ``parent.event_template`` is contractually non-``None``
         # (metaclass-enforced on every ``RecordDistribution`` instance).
         template = parent.event_template
-        if key not in template:
-            raise KeyError(f"No field {key!r} in event_template (available: {template.fields})")
+        if key not in template.children:
+            raise KeyError(
+                f"No field {key!r} in event_template (available: {tuple(template.children)})"
+            )
         # Bypass Distribution.__init__ validation (view name comes from
         # the field key, not a user-supplied argument).
         self._name = key
         self._parent = parent
         self._key = key
         self._key_path = (key,)
-        self._template_field = template[key]
+        self._template_field = template.children[key]
 
     # -- Parent identity (mirrors ``_RecordArrayView``) --------------------
 
