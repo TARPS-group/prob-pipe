@@ -18,7 +18,7 @@ import numpy as np
 
 from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
-from .event_template import _PATH_SEP, ArraySpec, EventTemplate
+from .event_template import ArraySpec, EventTemplate
 from .record import Record
 
 __all__ = [
@@ -45,10 +45,14 @@ class RecordArray(Record):
     - ``.source`` / ``.with_source`` / ``.name`` are inherited from
       Record (stored on the ``_name`` / ``_source`` slots declared on
       Record).
-    - ``replace`` / ``merge`` / ``without`` / ``map`` / ``map_with_keys``
-      are overridden here because the base constructor signature
-      doesn't carry ``batch_shape`` / ``template``; RecordArray versions
-      preserve those.
+    - The leaf-keyed *field-navigation* surface (``at_path`` / ``children`` /
+      ``is_field``) is inherited from ``_NamedTree`` and works the same as on a
+      single ``Record``; string ``[]`` is likewise leaf-only (use ``at_path`` for
+      a sub-batch). The batch-axis operators (``len`` / iteration / integer ``[]``
+      and the meaning of ``keys`` / ``values`` / ``items`` / ``in``) keep their
+      current top-level batch behavior — their reconciliation, and the immutable
+      edits ``replace`` / ``merge`` / ``without`` (which raise here), belong to
+      the ``*Array`` → ``*Batch`` redesign.
 
     Parameters
     ----------
@@ -164,30 +168,31 @@ class RecordArray(Record):
 
     # -- Field access -------------------------------------------------------
 
-    def __getitem__(self, key: str | int) -> Any:
-        """Index a field by name, or extract one element by integer batch index.
+    def __getitem__(self, key: str | tuple[str, ...] | int) -> Any:
+        """Index a batched **field** by key, or one element by integer batch index.
 
-        A string ``key`` selects a field; slash-delimited paths descend into
-        nested record fields (``arr["outer/a"]``, per the path convention). An
-        integer ``key`` returns the element at that flat batch index as a
-        (possibly nested) ``Record``. A missing field -- or a path that descends
-        into a leaf -- raises ``KeyError``; a non-str/int key raises ``TypeError``.
+        Indexing is dual along two orthogonal axes:
+
+        - a **string / tuple key** selects a field along the *field axis*
+          (``arr["x"]`` / ``arr["outer/a"]`` → the batched leaf array). Like a
+          single ``Record``, this is leaf-only: a partial path that stops at a
+          subtree raises ``KeyError`` — reach a sub-batch with :meth:`at_path`.
+        - an **integer** selects one element along the *batch axis*
+          (``arr[i]`` → a single, possibly nested ``Record``).
+
+        A missing key, or a path that descends through a leaf, raises ``KeyError``;
+        a non-str/tuple/int key raises ``TypeError``.
         """
-        if isinstance(key, str):
-            if _PATH_SEP in key:
-                head, _, rest = key.partition(_PATH_SEP)
-                if head not in self._fields:
-                    raise KeyError(key)
-                try:
-                    return self._fields[head][rest]
-                except (KeyError, TypeError) as e:
-                    raise KeyError(key) from e
-            if key not in self._fields:
-                raise KeyError(key)
-            return self._fields[key]
+        if isinstance(key, (str, tuple)):
+            node = self.at_path(key)
+            if isinstance(node, self._node_type()):
+                raise KeyError(
+                    f"{key!r} is a subtree, not a field; use at_path() to navigate to it"
+                )
+            return node
         if isinstance(key, (int, np.integer)):
             return self._get_record(int(key))
-        raise TypeError(f"key must be str or int, got {type(key).__name__}")
+        raise TypeError(f"key must be str, tuple, or int, got {type(key).__name__}")
 
     def view(self, field: str) -> _RecordArrayView:
         """Return a single-field view carrying parent identity.
@@ -237,10 +242,11 @@ class RecordArray(Record):
         return name in self._fields
 
     def __len__(self) -> int:
-        # Field count, not batch size — matches ``Record.__len__`` so
-        # ``len(ra)`` and ``len(record)`` mean the same thing across the
-        # Record family. For the flat batch count, use
-        # ``prod(ra.batch_shape)``.
+        # Transitional: still the top-level field count (the batch-axis
+        # operators -- len / iteration / integer [] -- are reconciled in the
+        # *Array -> *Batch redesign, where len(batch) becomes batch_shape[0]).
+        # This no longer matches a single Record's len (now the *leaf* count);
+        # for the flat batch count use ``prod(ra.batch_shape)``.
         return len(self._fields)
 
     def __iter__(self) -> Iterator[str]:
