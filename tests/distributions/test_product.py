@@ -1205,7 +1205,7 @@ class TestNestedProductDistribution:
         assert "physics" in s
         assert isinstance(s.at_path("physics"), Record)
         assert "mass" in s.at_path("physics")
-        assert "force" not in s["physics"]
+        assert "force" not in s.at_path("physics")
         assert "observation" in s
         assert s["physics/mass"].shape == (5,)
         assert s["observation"].shape == (5,)
