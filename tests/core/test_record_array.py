@@ -386,7 +386,9 @@ class TestNumericRecordArrayNested:
         tpl = self._nested_tpl()
         nra = tpl.from_vector(jnp.arange(24.0).reshape(2, 4, 3))
         elem = nra[5]  # flat index into the (2, 4) batch
-        np.testing.assert_allclose(elem["outer/a"], np.asarray(nra.at_path("outer")["a"]).reshape(-1)[5])
+        np.testing.assert_allclose(
+            elem["outer/a"], np.asarray(nra.at_path("outer")["a"]).reshape(-1)[5]
+        )
 
 
 # ---------------------------------------------------------------------------

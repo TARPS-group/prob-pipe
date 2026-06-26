@@ -490,7 +490,7 @@ class NumericRecordArray(RecordArray):
         into nested records). The inverse, :meth:`EventTemplate.from_vector`,
         reconstructs the batch.
 
-        Distinct from :meth:`~Record.to_leaf_list` (which keeps each batched leaf
+        Distinct from ``list(record.values())`` (which keeps each batched leaf
         whole); ``to_vector`` ravels and concatenates each element's event
         dimensions into a dense matrix.
         """

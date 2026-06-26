@@ -328,7 +328,7 @@ class TestNumericAPIOnRecord:
         # to_leaf_list is the general (any-leaf) ProbPipe leaf traversal on
         # Record; the JAX-pytree flatten/unflatten are NOT Record methods.
         v = Record(a=1.0, label="x")
-        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
+        assert v.event_template.from_field_values(list(v.values())) == v
         assert not hasattr(Record, "flatten")
         assert not hasattr(Record, "unflatten")
 
@@ -345,16 +345,16 @@ class TestLeafList:
 
     def test_to_leaf_list_keeps_leaves_whole_in_canonical_order(self):
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe")
-        leaves = v.to_leaf_list()
+        leaves = list(v.values())
         assert leaves[0].shape == (2,)  # kept whole, not raveled
         assert leaves[1] == "horseshoe"  # opaque leaf preserved as-is
-        assert list(v.leaf_paths) == ["x", "label"]  # canonical order
+        assert list(v.keys()) == ["x", "label"]  # canonical order
 
     def test_container_leaf_is_one_whole_leaf(self):
         # A tuple field is ONE opaque leaf at template granularity; JAX's
         # pytree view descends into it (documented divergence).
         v = Record(x=jnp.zeros(2), pair=(jnp.array(1.0), jnp.array(2.0)))
-        leaves = v.to_leaf_list()
+        leaves = list(v.values())
         assert len(leaves) == 2  # x, pair (whole)
         assert isinstance(leaves[1], tuple)
         assert len(jax.tree_util.tree_leaves(v)) == 3  # JAX descends the tuple
@@ -362,13 +362,13 @@ class TestLeafList:
     def test_roundtrip_with_opaque_leaf(self):
         # Opaque (non-numeric) leaves round-trip — unlike to_vector.
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe", count=3)
-        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
+        assert v.event_template.from_field_values(list(v.values())) == v
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord
 
         v = NumericRecord(a=jnp.array([1.0, 2.0, 3.0]), b=NumericRecord(c=jnp.array(5.0)))
-        rebuilt = v.event_template.from_leaf_list(v.to_leaf_list())
+        rebuilt = v.event_template.from_field_values(list(v.values()))
         assert rebuilt == v
         assert isinstance(rebuilt, NumericRecord)
         assert isinstance(rebuilt.at_path("b"), NumericRecord)
@@ -379,12 +379,12 @@ class TestLeafList:
             theta=Record(loc=jnp.array([0.0, 1.0]), label="prior"),
             tag="run-7",
         )
-        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
+        assert v.event_template.from_field_values(list(v.values())) == v
 
     def test_wrong_leaf_count_raises(self):
         v = Record(a=1.0, b=2.0)
         with pytest.raises(ValueError, match="expected 2"):
-            v.event_template.from_leaf_list([1.0])
+            v.event_template.from_field_values([1.0])
 
     def test_jax_pytree_roundtrip_still_works(self):
         # Record stays a registered pytree; the JAX path round-trips via
@@ -404,19 +404,19 @@ class TestLeafPathsAgreement:
 
     def test_flat(self):
         v = Record(a=1.0, b=jnp.zeros(3), c="x")
-        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
+        assert list(v.keys()) == list(v.event_template.keys())
 
     def test_nested_in_family(self):
         v = Record(theta=Record(loc=jnp.zeros(2), s=jnp.ones(3)), top=jnp.array(1.0))
-        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
-        assert list(v.leaf_paths) == ["theta/loc", "theta/s", "top"]
+        assert list(v.keys()) == list(v.event_template.keys())
+        assert list(v.keys()) == ["theta/loc", "theta/s", "top"]
 
     def test_cross_type_value_is_one_opaque_leaf(self):
         # An EventTemplate stored as a Record field value is an opaque leaf,
         # NOT an internal node: leaf_paths must not descend into it.
         v = Record(weird=EventTemplate(a=(2,)), x=jnp.array([1.0, 2.0]))
-        assert list(v.leaf_paths) == ["weird", "x"]
-        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
+        assert list(v.keys()) == ["weird", "x"]
+        assert list(v.keys()) == list(v.event_template.keys())
 
 
 # ---------------------------------------------------------------------------
