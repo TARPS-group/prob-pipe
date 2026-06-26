@@ -51,8 +51,11 @@ class RecordArray(Record):
       a sub-batch). The batch-axis operators (``len`` / iteration / integer ``[]``
       and the meaning of ``keys`` / ``values`` / ``items`` / ``in``) keep their
       current top-level batch behavior — their reconciliation, and the immutable
-      edits ``replace`` / ``merge`` / ``without`` (which raise here), are deferred
-      to a future phase of the batch type's development.
+      edits ``replace`` / ``merge`` / ``without`` (which raise here), are not yet
+      defined and will be settled when the batch axis is generalized. One
+      consequence of this split is that ``in`` (top-level) and ``[]`` (leaf-only)
+      can disagree: ``"outer" in arr`` is ``True`` for a top-level field that is an
+      interior node, yet ``arr["outer"]`` raises — reach it with ``at_path``.
 
     Parameters
     ----------
@@ -243,10 +246,10 @@ class RecordArray(Record):
 
     def __len__(self) -> int:
         # Transitional: still the top-level field count. The batch-axis operators
-        # (len / iteration / integer []) are reconciled in a later phase, where
-        # len(batch) becomes batch_shape[0]. This no longer matches a single
-        # Record's len (now the *leaf* count); for the flat batch count use
-        # ``prod(ra.batch_shape)``.
+        # (len / iteration / integer []) will be reconciled when the batch axis is
+        # generalized, at which point len(batch) becomes batch_shape[0]. This no
+        # longer matches a single Record's len (now the *leaf* count); for the flat
+        # batch count use ``prod(ra.batch_shape)``.
         return len(self._tree)
 
     def __iter__(self) -> Iterator[str]:
