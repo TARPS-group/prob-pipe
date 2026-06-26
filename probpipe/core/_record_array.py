@@ -51,8 +51,8 @@ class RecordArray(Record):
       a sub-batch). The batch-axis operators (``len`` / iteration / integer ``[]``
       and the meaning of ``keys`` / ``values`` / ``items`` / ``in``) keep their
       current top-level batch behavior — their reconciliation, and the immutable
-      edits ``replace`` / ``merge`` / ``without`` (which raise here), belong to
-      the ``*Array`` → ``*Batch`` redesign.
+      edits ``replace`` / ``merge`` / ``without`` (which raise here), are deferred
+      to a future phase of the batch type's development.
 
     Parameters
     ----------
@@ -242,11 +242,11 @@ class RecordArray(Record):
         return name in self._fields
 
     def __len__(self) -> int:
-        # Transitional: still the top-level field count (the batch-axis
-        # operators -- len / iteration / integer [] -- are reconciled in the
-        # *Array -> *Batch redesign, where len(batch) becomes batch_shape[0]).
-        # This no longer matches a single Record's len (now the *leaf* count);
-        # for the flat batch count use ``prod(ra.batch_shape)``.
+        # Transitional: still the top-level field count. The batch-axis operators
+        # (len / iteration / integer []) are reconciled in a later phase, where
+        # len(batch) becomes batch_shape[0]. This no longer matches a single
+        # Record's len (now the *leaf* count); for the flat batch count use
+        # ``prod(ra.batch_shape)``.
         return len(self._fields)
 
     def __iter__(self) -> Iterator[str]:
@@ -331,21 +331,20 @@ class RecordArray(Record):
     #
     # ``replace`` / ``merge`` / ``without`` are defined on ``_NamedTree`` for the
     # single value/spec collections and thread the template through single-value
-    # construction. On a batch their semantics (which axis, how the batch shape
-    # composes) belong to the ``*Array`` → ``*Batch`` redesign, so they are not
-    # supported here yet.
+    # construction. On a batch their semantics (which axis they act on, how the
+    # batch shape composes) are not yet defined, so they are unsupported here.
 
     def replace(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError(
-            "replace() on a RecordArray is deferred to the *Batch redesign; "
-            "operate on the underlying fields directly for now."
+            "replace() is not supported on a batched record; edit the underlying "
+            "field arrays directly."
         )
 
     def merge(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError("merge() on a RecordArray is deferred to the *Batch redesign.")
+        raise NotImplementedError("merge() is not supported on a batched record.")
 
     def without(self, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError("without() on a RecordArray is deferred to the *Batch redesign.")
+        raise NotImplementedError("without() is not supported on a batched record.")
 
     # -- Equality / hash ----------------------------------------------------
 

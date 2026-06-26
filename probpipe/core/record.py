@@ -280,21 +280,38 @@ class Record(_NamedTree):
         # subtree stores its authoritative schema rather than re-inferring one.
         field_map: dict[str, _FieldValue] = {}
         for field_name, value in nested.items():
-            if isinstance(value, _PathSubtree):
-                sub_template: EventTemplate | None = None
-                if event_template is not None:
-                    candidate = event_template.children.get(field_name)
-                    if candidate is None:
-                        raise ValueError(
-                            f"event_template has no field {field_name!r} at the top level"
-                        )
-                    if isinstance(candidate, EventTemplate):
-                        sub_template = candidate
-                    # else: a leaf spec where the value nests — left for
-                    # _validate_event_template to report with the full path.
-                field_map[field_name] = type(self)(value, event_template=sub_template)
-            else:
-                field_map[field_name] = value
+            # The matching template slice, used only to thread a schema into a
+            # subtree child. It is left None when there is no template, or when the
+            # slot is absent / a leaf spec — any such structural mismatch is
+            # reported later by _validate_event_template with the full /-path (so
+            # its clearer, path-named message is not pre-empted here).
+            sub_template: EventTemplate | None = None
+            if event_template is not None:
+                candidate = event_template.children.get(field_name)
+                if isinstance(candidate, EventTemplate):
+                    sub_template = candidate
+            try:
+                if isinstance(value, _PathSubtree):
+                    # Nesting from path keys: materialise the subtree, carrying its slice.
+                    field_map[field_name] = type(self)(value, event_template=sub_template)
+                elif (
+                    sub_template is not None
+                    and isinstance(value, Record)
+                    and value.event_template != sub_template
+                ):
+                    # A pre-built nested Record value: re-template it with the
+                    # authoritative slice so the subtree's schema isn't a lossy
+                    # re-inference (keeps record.at_path(p).event_template ==
+                    # record.event_template.at_path(p)).
+                    field_map[field_name] = type(value)(
+                        dict(value._fields), event_template=sub_template
+                    )
+                else:
+                    field_map[field_name] = value
+            except ValueError as exc:
+                # Re-raise a child's structural-validation error with the parent
+                # field as a path prefix, so the message names the full /-path.
+                raise ValueError(f"at {field_name!r}: {exc}") from None
         object.__setattr__(self, "_fields", field_map)
         if name is None:
             name = "record(" + ",".join(field_map.keys()) + ")"
@@ -436,38 +453,38 @@ class Record(_NamedTree):
     # -- Selection ----------------------------------------------------------
 
     def select(self, *fields: str, **mapping: str) -> dict[str, _FieldValue]:
-        """Select fields as a dict, for splatting into function calls.
+        """Select fields into a plain ``dict``, for splatting into function calls.
 
-        Positional args use the field name as the key (identity mapping).
-        Keyword args remap: ``select(x="field_name")`` → ``{"x": self.field_name}``.
+        Positional arguments use the field path as the key (identity mapping);
+        keyword arguments remap (``select(x="r")`` → ``{"x": self["r"]}``). Paths
+        are path-aware: a key reaches a leaf value and a partial path reaches a
+        subtree (via :meth:`at_path`). Returns a value-only ``dict``; it is not a
+        ``Record`` and carries no schema.
 
         Usage::
 
             predict(**params.select("r", "K"), x=x_grid)
             predict(**params.select(growth_rate="r"), x=x_grid)
+
+        Raises
+        ------
+        KeyError
+            If a requested path is not present.
         """
         result: dict[str, _FieldValue] = {}
         for f in fields:
-            if f not in self._fields:
-                raise KeyError(f"No field {f!r} in Record")
-            result[f] = self[f]
-        for arg_name, field_name in mapping.items():
-            if field_name not in self._fields:
-                raise KeyError(f"No field {field_name!r} in Record")
-            result[arg_name] = self[field_name]
+            result[f] = self.at_path(f)
+        for arg_name, field_path in mapping.items():
+            result[arg_name] = self.at_path(field_path)
         return result
 
     def select_all(self) -> dict[str, _FieldValue]:
-        """Return every field as a dict, for splatting into function calls.
+        """Return every top-level field as a ``dict``, for splatting into a call.
 
-        Sugar for ``select(*self.fields)``. Subclasses whose
-        ``__getitem__`` returns a view (``RecordArray`` →
-        ``_RecordArrayView``, ``RecordDistribution`` →
-        ``_RecordDistributionView``) inherit this method and return
-        per-field views — so ``f(**ra.select_all())`` triggers the
-        parent-identity zip sweep in ``WorkflowFunction``, and
-        ``f(**dist.select_all())`` similarly preserves cross-field
-        correlation.
+        Sugar for ``select(*self.fields)`` (the one-level names). On the batch and
+        distribution subclasses, whose ``__getitem__`` returns a per-field view,
+        the dict holds those views, so the result can be splatted back into a
+        workflow function field-by-field.
         """
         return self.select(*self.fields)
 

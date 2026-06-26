@@ -1056,8 +1056,8 @@ class EventTemplate(_NamedTree):
     def from_field_values(self, values: Iterable[Any]) -> Any:
         """Reconstruct a value from an ordered sequence of field values.
 
-        *values* supplies one object per field, in canonical order (the order of
-        :meth:`keys`); the names and tree shape are taken from this template, so
+        *values* supplies one object per leaf field, in canonical leaf order (the
+        order of :meth:`keys`); the names and tree shape are taken from this template, so
         the result mirrors it — a nested template builds a nested
         :class:`~probpipe.Record`, a :class:`NumericEventTemplate` builds a
         :class:`~probpipe.NumericRecord`. The result carries this template as its
