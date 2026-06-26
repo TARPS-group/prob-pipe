@@ -124,6 +124,7 @@ class PyABCSMCMethod(InferenceMethod):
     def supported_types(self) -> tuple[type, ...]:
         # lazy: avoid an inference->modeling import cycle
         from ..modeling._simple_generative import SimpleGenerativeModel
+
         return (SimpleGenerativeModel,)
 
     @property
@@ -136,9 +137,11 @@ class PyABCSMCMethod(InferenceMethod):
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         # lazy: avoid an inference->modeling import cycle
         from ..modeling._simple_generative import SimpleGenerativeModel
+
         if not isinstance(dist, SimpleGenerativeModel):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="Requires SimpleGenerativeModel")
+            return MethodInfo(
+                feasible=False, method_name=self.name, description="Requires SimpleGenerativeModel"
+            )
         prior = dist["parameters"]
         # Feasible means the prior can flatten, sample, *and* score jointly.
         # Build the backing distribution, then score one in-support draw — this
@@ -150,8 +153,11 @@ class PyABCSMCMethod(InferenceMethod):
         except Exception as e:
             return MethodInfo(feasible=False, method_name=self.name, description=str(e))
         if not np.isfinite(density):
-            return MethodInfo(feasible=False, method_name=self.name,
-                              description="prior has no usable joint density")
+            return MethodInfo(
+                feasible=False,
+                method_name=self.name,
+                description="prior has no usable joint density",
+            )
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
@@ -224,8 +230,11 @@ class PyABCSMCMethod(InferenceMethod):
         # — correct but wasteful). Follow-up (#238): perturb in unconstrained
         # space via the prior's constraint bijectors.
         abc = pyabc.ABCSMC(
-            model_fn, pyabc_prior, distance_fn,
-            population_size=n_particles, sampler=sampler,
+            model_fn,
+            pyabc_prior,
+            distance_fn,
+            population_size=n_particles,
+            sampler=sampler,
             eps=pyabc.QuantileEpsilon(alpha=eps_alpha),
         )
         # pyabc draws its perturbations from numpy's global RNG; seed it for a
@@ -246,8 +255,14 @@ class PyABCSMCMethod(InferenceMethod):
         # Lift the flat columns back to name-keyed Records via the prior's layout.
         template = prior.event_template
         return make_posterior(
-            [jnp.asarray(flat)], parents=(dist,), algorithm="pyabc_smcabc",
-            weights=jnp.asarray(weights / weights.sum()), event_template=template,
-            field_order=list(prior.event_shapes), auxiliary=_smc_diagnostics(history),
-            n_particles=n_particles, max_populations=max_populations, eps_alpha=eps_alpha,
+            [jnp.asarray(flat)],
+            parents=(dist,),
+            algorithm="pyabc_smcabc",
+            weights=jnp.asarray(weights / weights.sum()),
+            event_template=template,
+            field_order=list(prior.event_shapes),
+            auxiliary=_smc_diagnostics(history),
+            n_particles=n_particles,
+            max_populations=max_populations,
+            eps_alpha=eps_alpha,
         )
