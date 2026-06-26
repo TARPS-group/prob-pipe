@@ -595,7 +595,14 @@ def _add_log_likelihood(
     # Build field metadata from one reference draw for flat↔Record conversion
     # ------------------------------------------------------------------
     ref_draws = posterior.draws(chain=0)
-    fields = ref_draws.fields
+    # Leaf fields keyed by full /-path (handles a nested posterior; flat is
+    # unchanged). _field_meta is the canonical leaf order for flat<->Record.
+    # Duck-typed draws without an event_template fall back to top-level .fields.
+    fields = (
+        tuple(ref_draws.event_template.keys())
+        if hasattr(ref_draws, "event_template")
+        else tuple(ref_draws.fields)
+    )
     _field_meta = [(f, jnp.asarray(ref_draws[f][0]).shape) for f in fields]
 
     def _flat_to_record(flat: Any, field_meta: list) -> Record:
@@ -607,7 +614,9 @@ def _add_log_likelihood(
             val = flat[idx : idx + size]
             out[fname] = val.reshape(shape) if shape else val[0]
             idx += size
-        return Record(**out)
+        # Positional (path-keyed) construction so /-paths rebuild the nesting;
+        # keyword construction would reject a key containing "/".
+        return Record(out)
 
     def _draws_to_flat(draws_c: Any) -> Any:
         """Stack all fields into a (n_draws, n_params) array."""
