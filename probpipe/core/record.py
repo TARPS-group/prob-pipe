@@ -107,7 +107,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from .event_template import _PATH_SEP, EventTemplate, _check_no_path_sep, _NamedTree
+from .event_template import (
+    _PATH_SEP,
+    EventTemplate,
+    _check_no_path_sep,
+    _NamedTree,
+    _PathSubtree,
+    _unflatten_paths,
+)
 from .provenance import Provenance
 
 if TYPE_CHECKING:
@@ -261,12 +268,33 @@ class Record(_NamedTree):
         if _fields is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
-            fields = _fields
-        if not fields:
+            nested = _unflatten_paths(_fields)
+        else:
+            for field_name in fields:
+                _check_no_path_sep(field_name)
+            nested = dict(fields)
+        if not nested:
             raise ValueError("Record requires at least one named field")
-        for field_name in fields:
-            _check_no_path_sep(field_name)
-        field_map = dict(fields)
+        # Materialise structural subtrees (from path keys) into child records,
+        # carrying the matching slice of a supplied event_template down so every
+        # subtree stores its authoritative schema rather than re-inferring one.
+        field_map: dict[str, _FieldValue] = {}
+        for field_name, value in nested.items():
+            if isinstance(value, _PathSubtree):
+                sub_template: EventTemplate | None = None
+                if event_template is not None:
+                    candidate = event_template.children.get(field_name)
+                    if candidate is None:
+                        raise ValueError(
+                            f"event_template has no field {field_name!r} at the top level"
+                        )
+                    if isinstance(candidate, EventTemplate):
+                        sub_template = candidate
+                    # else: a leaf spec where the value nests — left for
+                    # _validate_event_template to report with the full path.
+                field_map[field_name] = type(self)(value, event_template=sub_template)
+            else:
+                field_map[field_name] = value
         object.__setattr__(self, "_fields", field_map)
         if name is None:
             name = "record(" + ",".join(field_map.keys()) + ")"
