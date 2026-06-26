@@ -124,7 +124,11 @@ class TestSubtreeTemplateInvariant:
         child = Record({"force": 1.0, "mass": 2.0})  # bare-shape inferred template
         r = Record(physics=child, obs=3.0, event_template=tpl)
         self._check(r)
-        assert r.at_path("physics").event_template.at_path("force").dtype == jnp.dtype("float64")
+        # The authoritative dtype must be carried onto the pre-built child. Compare
+        # via str(): `dtype == jnp.dtype("float64")` is True even for a None dtype
+        # (numpy treats None as the default float), which would mask a lost dtype.
+        force_dtype = r.at_path("physics").event_template.at_path("force").dtype
+        assert force_dtype is not None and str(force_dtype) == "float64"
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +214,15 @@ class TestEditTemplateThreading:
         r2 = r.replace({"obs": 5.0})
         # physics/force untouched -> dtype preserved; obs re-inferred.
         assert r2.event_template.at_path("physics/force").dtype == jnp.dtype("float32")
+
+    def test_replace_preserves_field_order(self):
+        # A replaced subtree (or leaf) must stay in its position, not jump to the
+        # end — canonical order is part of the template's identity.
+        t = EventTemplate(p=EventTemplate(x=(), y=()), q=())
+        assert tuple(t.replace({"p": EventTemplate(z=())}).keys()) == ("p/z", "q")
+        r = Record(p=Record(x=1.0, y=2.0), q=3.0)
+        assert tuple(r.replace({"p": Record(z=9.0)}).keys()) == ("p/z", "q")
+        assert tuple(r.replace({"q": 7.0}).keys()) == ("p/x", "p/y", "q")
 
     def test_merge_field_versus_prefix_clash_raises(self):
         with pytest.raises(ValueError):

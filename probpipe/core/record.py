@@ -54,7 +54,7 @@ Usage::
     data = Record(counts=np.array([2, 1, 3, 0, 5]), label="horseshoe")
 
     params["r"]            # jnp.array(1.8)
-    params.fields          # ('r', 'K', 'phi')  — insertion order
+    tuple(params.keys())   # ('r', 'K', 'phi')  — field keys, insertion order
     params.event_template  # NumericEventTemplate(r=(), K=(), phi=())
     params.to_vector()     # jnp.array([1.8, 70., 10.])
 
@@ -179,16 +179,19 @@ class Record(_NamedTree):
     using the same *field* / *leaf* / *path* vocabulary as :class:`EventTemplate`
     (shared via the structural protocol both implement):
 
-    * **Index** by top-level field name (``record["x"]``), or by ``/``-path /
-      name-tuple to reach a nested field (``record["a/b"]`` == ``record["a",
-      "b"]``); the stored value (or sub-``Record``) is returned. Descending past
-      a non-``Record`` leaf raises :class:`KeyError`.
-    * **Membership** (``in``) accepts the same names and paths
-      (``"a/b" in record``).
-    * **Iterate** to get the top-level field names; :meth:`keys` / :meth:`values`
-      / :meth:`items` follow the ``dict`` protocol. :attr:`fields` lists the
-      top-level names; :meth:`~EventTemplate.keys` lists every leaf's path
-      in canonical leaf order.
+    * **Index** by field **key** — the full ``/``-path to a leaf (``record["x"]``
+      for a flat field, ``record["a/b"]`` == ``record["a", "b"]`` for a nested
+      one); the stored leaf value is returned. Indexing is **leaf-only**: a
+      partial path that stops at a sub-``Record`` raises :class:`KeyError` (reach
+      a subtree with :meth:`at_path`), as does descending past a non-``Record``
+      leaf.
+    * **Membership** (``in``) is leaf-only too — ``"a/b" in record`` is ``True``
+      iff ``a/b`` is a field; a partial path (``"a"``) is *not* a member.
+    * **Iterate** / :meth:`keys` / :meth:`values` / :meth:`items` / ``len`` range
+      over the **fields** (the leaves), keyed by full path, in canonical leaf
+      order — ``[]`` / ``in`` / iteration all agree, like an ordinary ``dict``.
+      The one-level ``name -> child`` view is :attr:`children`. (:attr:`fields`
+      is a temporary alias of ``tuple(self.children)``, pending removal.)
     * **Splat** fields into a call with :meth:`select` (a chosen / renamed
       subset) or :meth:`select_all` (all of them).
     * **Update immutably**: :meth:`replace`, :meth:`merge`, and :meth:`without`
@@ -297,12 +300,17 @@ class Record(_NamedTree):
                 elif (
                     sub_template is not None
                     and isinstance(value, Record)
-                    and value.event_template != sub_template
+                    and not hasattr(value, "batch_shape")
                 ):
-                    # A pre-built nested Record value: re-template it with the
-                    # authoritative slice so the subtree's schema isn't a lossy
-                    # re-inference (keeps record.at_path(p).event_template ==
-                    # record.event_template.at_path(p)).
+                    # A pre-built nested (single) Record value: re-template it with
+                    # the authoritative slice so the subtree's schema is the
+                    # supplied one, not a lossy re-inference — keeps
+                    # record.at_path(p).event_template ==
+                    # record.event_template.at_path(p). Done unconditionally (not
+                    # gated on ``value.event_template != sub_template``) because
+                    # spec equality can be blind to dtype differences. A batched
+                    # child (``RecordArray``) is left as-is; its construction
+                    # signature differs and batched nesting is deferred.
                     field_map[field_name] = type(value)(
                         dict(value._tree), event_template=sub_template
                     )
@@ -478,12 +486,12 @@ class Record(_NamedTree):
     def select_all(self) -> dict[str, _FieldValue]:
         """Return every top-level field as a ``dict``, for splatting into a call.
 
-        Sugar for ``select(*self.fields)`` (the one-level names). On the batch and
-        distribution subclasses, whose ``__getitem__`` returns a per-field view,
-        the dict holds those views, so the result can be splatted back into a
-        workflow function field-by-field.
+        Sugar for ``select`` over the one-level names (``self.children``). On the
+        batch and distribution subclasses, whose ``__getitem__`` returns a
+        per-field view, the dict holds those views, so the result can be splatted
+        back into a workflow function field-by-field.
         """
-        return self.select(*self.fields)
+        return self.select(*self.children)
 
     # -- Immutable updates --------------------------------------------------
     #

@@ -545,13 +545,21 @@ class _NamedTree:
         flat = dict(self._walk_leaves())
         for path, new_value in resolved.items():
             norm = self._norm_path(path)
-            if not self.is_leaf(path):
-                flat = {
-                    key: leaf
-                    for key, leaf in flat.items()
-                    if not (key == norm or key.startswith(f"{norm}{_PATH_SEP}"))
-                }
-            flat[norm] = new_value
+            # Replace the field (a leaf) or whole subtree at ``norm`` *in place*,
+            # preserving its position — drop the old leaf(s) at/under ``norm`` and
+            # put ``new_value`` where the first of them was. (Canonical order is
+            # part of the template's identity, so a replaced subtree must not jump
+            # to the end.)
+            rebuilt: dict[str, Any] = {}
+            placed = False
+            for key, leaf in flat.items():
+                if key == norm or key.startswith(f"{norm}{_PATH_SEP}"):
+                    if not placed:
+                        rebuilt[norm] = new_value
+                        placed = True
+                else:
+                    rebuilt[key] = leaf
+            flat = rebuilt
         spec_updates = {self._norm_path(p): self._spec_of(v) for p, v in resolved.items()}
         return self._reconstruct_after_edit(flat, lambda tpl: tpl.replace(spec_updates))
 
@@ -766,23 +774,27 @@ class EventTemplate(_NamedTree):
     -----------
     Used precisely throughout this class:
 
-    - **field** — a *top-level* entry of the template: a ``name -> spec`` pair,
-      where the spec is either a leaf or a nested ``EventTemplate``.
-      :attr:`fields` lists these names in insertion order; it does **not**
-      descend into nested sub-templates.
+    - **field** — one named object in the collection (here, a leaf spec),
+      addressed by its full ``/``-delimited **key** (path from the root, e.g.
+      ``"physics/mass"``; a single name for a flat template). The mapping
+      protocol (:meth:`keys` / :meth:`values` / :meth:`items` / iteration /
+      ``len`` / ``in`` / ``[]``) ranges over the fields, keyed by path.
     - **leaf** — a *terminal* node: an :class:`ArraySpec` / :class:`OpaqueSpec`
       / :class:`DistributionSpec` / :class:`FunctionSpec`. A nested
-      ``EventTemplate`` is an *internal node*, not a leaf.
-    - **path** — the ``/``-delimited sequence of field names from the root to a
-      node (e.g. ``"physics/mass"``); a top-level field is a single-segment
-      path. The same path strings index a template or the value it describes
-      (``template["physics/mass"]`` / ``record["physics/mass"]``) — the
-      structural-access protocol (indexing, membership, iteration,
-      :meth:`keys`) is shared with :class:`~probpipe.Record`.
+      ``EventTemplate`` is an *internal node*, not a leaf; the fields are the
+      leaves.
+    - **key vs. path** — a **key** addresses a field (a leaf); a **path** may
+      also address an interior node. The mapping operators (``[]`` / ``in`` /
+      iteration) are leaf-keyed, so a partial path is *not* a member and
+      ``template["physics"]`` (a subtree) raises ``KeyError`` — reach a subtree
+      with :meth:`at_path`, and use :attr:`children` for the one-level view. The
+      same path strings index a template or the value it describes
+      (``template["physics/mass"]`` / ``record["physics/mass"]``); this
+      collection protocol is shared with :class:`~probpipe.Record`.
     - **canonical leaf order** — the order in which leaves are traversed:
       depth-first, following each level's insertion order. This is the single
-      ordering every leaf-wise operation uses. :meth:`keys` is its
-      canonical definition — it returns the path to every leaf in this order;
+      ordering every leaf-wise operation uses. :meth:`keys` is its canonical
+      definition — it returns the key (path) of every leaf in this order;
       :meth:`to_vector` / :meth:`from_vector` lay out and read leaves in it, and
       :attr:`~NumericEventTemplate.leaf_shapes` is keyed by it.
 
