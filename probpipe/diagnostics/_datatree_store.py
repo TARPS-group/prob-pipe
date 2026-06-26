@@ -159,7 +159,15 @@ def to_named_posterior_dataset(
 
     data_vars: dict[str, xr.DataArray] = {}
 
-    for field in posterior.fields:
+    # One variable per leaf field, keyed by its full /-path. Real posteriors
+    # expose leaf paths via event_template (handles nesting); duck-typed objects
+    # fall back to top-level .fields (equal for a flat template).
+    keys = (
+        list(posterior.event_template.keys())
+        if hasattr(posterior, "event_template")
+        else list(posterior.fields)
+    )
+    for field in keys:
         stacked = np.stack(
             [np.asarray(posterior.draws(chain=i)[field]) for i in range(posterior.num_chains)],
             axis=0,

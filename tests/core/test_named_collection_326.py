@@ -302,3 +302,15 @@ class TestBatchFieldNav:
         for op in (lambda: nra.replace(m=jnp.zeros(5)), nra.merge, nra.without):
             with pytest.raises(NotImplementedError):
                 op() if op is not nra.merge and op is not nra.without else op(nra)
+
+    def test_stack_nested_records_raises_clearly(self):
+        # Stacking nested records into a batch needs nested-batch construction
+        # (deferred); it fails with a clear TypeError, not a cryptic KeyError.
+        from probpipe.core._record_array import NumericRecordArray
+
+        recs = [
+            NumericRecord(physics=NumericRecord(force=jnp.zeros(()), mass=jnp.zeros(())), obs=1.0)
+            for _ in range(3)
+        ]
+        with pytest.raises(TypeError, match="nested"):
+            NumericRecordArray.stack(recs)

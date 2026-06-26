@@ -71,7 +71,16 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     if hasattr(posterior, "draws"):
         raw = posterior.draws()
         if hasattr(raw, "fields"):
-            return {f: np.asarray(raw[f]) for f in raw.fields}
+            # One variable per leaf field, keyed by its full /-path. Real
+            # Record/RecordArray draws expose the leaf paths via event_template
+            # (handles nested templates); duck-typed objects fall back to the
+            # top-level .fields. For a flat template the two coincide.
+            keys = (
+                list(raw.event_template.keys())
+                if hasattr(raw, "event_template")
+                else list(raw.fields)
+            )
+            return {k: np.asarray(raw[k]) for k in keys}
         if isinstance(raw, dict):
             return {k: np.asarray(v) for k, v in raw.items()}
 
@@ -79,7 +88,12 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     if hasattr(posterior, "samples"):
         samples = posterior.samples
         if hasattr(samples, "fields"):
-            return {f: np.asarray(samples[f]) for f in samples.fields}
+            keys = (
+                list(samples.event_template.keys())
+                if hasattr(samples, "event_template")
+                else list(samples.fields)
+            )
+            return {k: np.asarray(samples[k]) for k in keys}
         return {"x": np.asarray(samples)}
 
     raise TypeError(

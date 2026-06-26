@@ -321,8 +321,12 @@ class RecordArray(Record):
             raise ValueError("Cannot stack empty list of Records")
         if template is None:
             template = EventTemplate.infer_from(records[0])
+        if any(isinstance(c, EventTemplate) for c in template.children.values()):
+            # Stacking into a nested batch is part of the *Batch redesign; raise a
+            # catchable error (callers fall back to a clearer message).
+            raise TypeError("RecordArray.stack does not yet support nested templates.")
         fields: dict[str, Any] = {}
-        for name in template.fields:
+        for name in template.children:
             field_vals = [r[name] for r in records]
             fields[name] = jnp.stack(field_vals, axis=0)
         return cls(fields, batch_shape=(len(records),), template=template)
