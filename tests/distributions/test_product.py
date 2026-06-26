@@ -303,7 +303,9 @@ class TestNestedSampleFlatten:
     def test_unbatched_nested_field_stays_record(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(0))
         assert isinstance(s, Record) and not isinstance(s, RecordArray)
-        assert isinstance(s.at_path("outer"), Record) and not isinstance(s.at_path("outer"), RecordArray)
+        assert isinstance(s.at_path("outer"), Record) and not isinstance(
+            s.at_path("outer"), RecordArray
+        )
 
     def test_batched_nested_flatten_roundtrip(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))

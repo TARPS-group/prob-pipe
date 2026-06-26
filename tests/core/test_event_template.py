@@ -202,29 +202,29 @@ class TestLeafPaths:
     def test_flat_equals_fields(self):
         # For a flat template (every field a leaf), leaf_paths == fields.
         tpl = EventTemplate(x=(), y=(3,))
-        assert tpl.leaf_paths == ("x", "y") == tpl.fields
+        assert tuple(tpl.keys()) == ("x", "y") == tpl.fields
 
     def test_includes_opaque_leaves(self):
         # leaf_paths enumerates every leaf, numeric or opaque.
         tpl = EventTemplate(label=None, x=())
-        assert tpl.leaf_paths == ("label", "x")
+        assert tuple(tpl.keys()) == ("label", "x")
 
     def test_nested_depth_first_insertion_order(self):
         # A nested field expands into one path per nested leaf; fields stays
         # top-level only.
         inner = EventTemplate(a=(), b=(2,))
         outer = EventTemplate(inner=inner, z=(3,))
-        assert outer.leaf_paths == ("inner/a", "inner/b", "z")
+        assert tuple(outer.keys()) == ("inner/a", "inner/b", "z")
         assert outer.fields == ("inner", "z")
 
     def test_depth2(self):
         tpl = EventTemplate(outer=EventTemplate(deep=EventTemplate(g=(), h=()), a=()), m=())
-        assert tpl.leaf_paths == ("outer/deep/g", "outer/deep/h", "outer/a", "m")
+        assert tuple(tpl.keys()) == ("outer/deep/g", "outer/deep/h", "outer/a", "m")
 
     def test_keys_match_leaf_shapes_in_order(self):
         # leaf_shapes (numeric template) is keyed by leaf_paths, same order.
         tpl = EventTemplate(outer=EventTemplate(a=(2,), b=()), m=())
-        assert tuple(tpl.leaf_shapes) == tpl.leaf_paths
+        assert tuple(tpl.leaf_shapes) == tuple(tpl.keys())
 
     def test_order_matches_flatten_and_to_vector(self):
         # The canonical leaf order is the order flatten() / to_vector() use.
@@ -233,7 +233,7 @@ class TestLeafPaths:
             nested=NumericRecord(a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
         )
         tpl = EventTemplate.infer_from(v)
-        assert tpl.leaf_paths == ("x", "nested/a", "nested/b")
+        assert tuple(tpl.keys()) == ("x", "nested/a", "nested/b")
         # to_vector concatenates leaves in leaf_paths order: x(2) | a(1) | b(2).
         np.testing.assert_allclose(tpl.to_vector(v), [1.0, 2.0, 3.0, 4.0, 5.0])
 

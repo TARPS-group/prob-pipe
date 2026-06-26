@@ -26,7 +26,7 @@ Tree structure
 Field names are required and unique within a node; ``/`` is reserved as the path
 separator, so every leaf has a unique ``/``-delimited string path. The
 **canonical leaf order** is depth-first in insertion order;
-:attr:`EventTemplate.leaf_paths` enumerates the leaf paths in that order.
+:meth:`EventTemplate.keys` enumerates the leaf paths in that order.
 ``EventTemplate`` itself is **not** a registered JAX pytree node (its leaf specs
 are atomic); it is the *schema* of the value pytrees it describes, not a pytree.
 
@@ -188,9 +188,9 @@ class _NamedTree:
         every other value is a leaf. Each named-tree family **narrows** this to
         itself (``Record`` → ``Record``, ``EventTemplate`` → ``EventTemplate``)
         so a tree never descends into a value of the *other* family. This keeps
-        :attr:`leaf_paths` consistent with each type's own contract — in
-        particular, a ``Record``'s ``leaf_paths`` always equals its
-        ``event_template``'s ``leaf_paths``.
+        :meth:`keys` consistent with each type's own contract — in
+        particular, a ``Record``'s ``keys()`` always equals its
+        ``event_template``'s ``keys()``.
         """
         return _NamedTree
 
@@ -247,22 +247,16 @@ class _NamedTree:
         """Whether *path* resolves to a field (a leaf) — alias of :meth:`is_leaf`."""
         return self.is_leaf(*path)
 
-    # -- Transitional aliases (canonical API is ``children`` / ``keys()``) --
-    #
-    # ``fields`` (top-level names) and ``leaf_paths`` (the canonical key order)
-    # are retained as thin tuple aliases so the migration off them can proceed
-    # incrementally; new code should use ``tuple(obj.children)`` and
-    # ``tuple(obj.keys())`` respectively.
-
     @property
     def fields(self) -> tuple[str, ...]:
-        """Top-level field names, in insertion order (alias of ``tuple(self.children)``)."""
-        return tuple(self._tree.keys())
+        """Top-level field names, in insertion order — ``tuple(self.children)``.
 
-    @property
-    def leaf_paths(self) -> tuple[str, ...]:
-        """The field keys as a tuple (alias of ``tuple(self.keys())``)."""
-        return tuple(self.keys())
+        Temporary, retained during the migration to the collection vocabulary;
+        new code should use :attr:`children` (one-level mapping) or :meth:`keys`
+        (leaf keys). It is scheduled for removal once that vocabulary is carried
+        onto the distribution layer, and should not be relied on in new code.
+        """
+        return tuple(self._tree.keys())
 
     # -- Collection-of-objects surface --------------------------------------
     #
@@ -271,8 +265,8 @@ class _NamedTree:
     # below present that view: ``at_path`` navigates the whole tree (to a leaf or
     # an interior subtree), ``children`` is the one-level view, and the leaf walk
     # / rebuild primitives back the field-wise operations. They read the storage
-    # tree through the ``_field_map`` / ``_node_type`` hooks, so a subclass need
-    # not re-implement them.
+    # tree (``self._tree``) and the ``_node_type`` hook, so a subclass need not
+    # re-implement them.
 
     @staticmethod
     def _split_path(path: tuple[Any, ...]) -> tuple[str, ...]:
@@ -784,10 +778,10 @@ class EventTemplate(_NamedTree):
       path. The same path strings index a template or the value it describes
       (``template["physics/mass"]`` / ``record["physics/mass"]``) — the
       structural-access protocol (indexing, membership, iteration,
-      :attr:`leaf_paths`) is shared with :class:`~probpipe.Record`.
+      :meth:`keys`) is shared with :class:`~probpipe.Record`.
     - **canonical leaf order** — the order in which leaves are traversed:
       depth-first, following each level's insertion order. This is the single
-      ordering every leaf-wise operation uses. :attr:`leaf_paths` is its
+      ordering every leaf-wise operation uses. :meth:`keys` is its
       canonical definition — it returns the path to every leaf in this order;
       :meth:`to_vector` / :meth:`from_vector` lay out and read leaves in it, and
       :attr:`~NumericEventTemplate.leaf_shapes` is keyed by it.
@@ -803,7 +797,7 @@ class EventTemplate(_NamedTree):
     ``EventTemplate`` mirrors a nested ``Record`` (both internal nodes), and each
     leaf spec mirrors one field value. When every leaf is an array (the
     :class:`NumericEventTemplate` / :class:`~probpipe.NumericRecord` case),
-    ``jax.tree_util.tree_leaves(v)`` returns the leaves in :attr:`leaf_paths`
+    ``jax.tree_util.tree_leaves(v)`` returns the leaves in :meth:`keys`
     order. The one place the template's leaves and JAX's diverge is an
     :class:`OpaqueSpec` leaf whose value is *itself* a JAX container (a ``tuple``
     / ``list`` / ``dict``): the template counts it as a single leaf while JAX
@@ -836,7 +830,7 @@ class EventTemplate(_NamedTree):
     vectorization. Leaves are stored as frozen, hashable spec objects, so a
     template is itself hashable (usable as a jit / treedef cache key).
     ``__getitem__`` returns the stored spec (or nested template); the
-    enumeration of leaves is :attr:`leaf_paths`, and per-leaf array shapes (on a
+    enumeration of leaves is :meth:`keys`, and per-leaf array shapes (on a
     numeric template) live on :attr:`~NumericEventTemplate.leaf_shapes`.
 
     Calling ``EventTemplate(...)`` directly auto-promotes to a
@@ -910,7 +904,7 @@ class EventTemplate(_NamedTree):
 
     # -- Field access (structural protocol shared with ``Record``) ----------
     #
-    # ``fields`` / ``leaf_paths`` / ``__getitem__`` (name / ``/``-path / tuple) /
+    # ``fields`` / ``keys()`` / ``__getitem__`` (name / ``/``-path / tuple) /
     # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
     # ``__len__`` come from :class:`_NamedTree`. A leaf here is a leaf spec
     # (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec` /
@@ -963,7 +957,7 @@ class EventTemplate(_NamedTree):
         ``EventTemplate(a=EventTemplate(b=(), c=()))`` has leaves ``a/b`` and
         ``a/c`` and is multi-field, whereas ``EventTemplate(a=EventTemplate(b=()))``
         describes the single leaf ``a/b`` and is not. Equivalent to
-        ``len(self.leaf_paths) > 1``.
+        ``len(self) > 1``.
 
         Returns
         -------
@@ -971,7 +965,7 @@ class EventTemplate(_NamedTree):
             ``True`` iff the template has more than one leaf; ``False`` iff it
             describes exactly one leaf.
         """
-        return len(self.leaf_paths) > 1
+        return len(self) > 1
 
     def numeric_subset(self) -> NumericEventTemplate:
         """Project to the :class:`ArraySpec`-leaf sub-template.
@@ -1032,24 +1026,6 @@ class EventTemplate(_NamedTree):
 
     # -- Leaf-list (de)serialization (general; leaves kept whole) -----------
 
-    def to_leaf_list(self, value: Any) -> list[Any]:
-        """Flatten *value* to its leaves, in canonical leaf order.
-
-        Returns *value*'s leaves — each kept *whole* (any type), one per
-        :attr:`leaf_paths` entry — at this template's granularity: a
-        container-valued opaque field (a ``tuple`` / ``list`` / ``dict``) is a
-        single leaf, **not** descended into. Pairs with :attr:`leaf_paths`
-        (``dict(zip(self.leaf_paths, leaves))`` is the keyed view); inverse of
-        :meth:`from_leaf_list`.
-
-        This is the general (any-leaf-type) counterpart of
-        :meth:`~NumericEventTemplate.to_vector`, which goes further and ravels +
-        concatenates the (numeric) leaves into a flat array. It is distinct from
-        ``jax.tree_util.tree_flatten``, whose finer view descends into a
-        container leaf (see :class:`~probpipe.Record`).
-        """
-        return [value[path] for path in self.leaf_paths]
-
     def from_field_values(self, values: Iterable[Any]) -> Any:
         """Reconstruct a value from an ordered sequence of field values.
 
@@ -1072,7 +1048,7 @@ class EventTemplate(_NamedTree):
             If the number of *values* is not the number of fields (``len(self)``).
         """
         values = list(values)
-        n_leaves = len(self.leaf_paths)
+        n_leaves = len(self)
         if len(values) != n_leaves:
             raise ValueError(
                 f"{type(self).__name__}.from_field_values: got {len(values)} values, "
@@ -1092,10 +1068,6 @@ class EventTemplate(_NamedTree):
             return cls(fields, event_template=template)
 
         return _build(self)
-
-    def from_leaf_list(self, leaves: Iterable[Any]) -> Any:
-        """Deprecated alias of :meth:`from_field_values` (retained transitionally)."""
-        return self.from_field_values(leaves)
 
     # -- Equality and hashing -----------------------------------------------
 
@@ -1253,14 +1225,14 @@ class NumericEventTemplate(EventTemplate):
 
     @property
     def leaf_shapes(self) -> dict[str, tuple[int, ...]]:
-        """Per-leaf array shapes, keyed by :attr:`leaf_paths` (canonical leaf order).
+        """Per-leaf array shapes, keyed by :meth:`keys` (canonical leaf order).
 
         Maps each leaf's ``/``-delimited path to its array ``shape``. Defined
         only on :class:`NumericEventTemplate` — where every leaf is an
         :class:`ArraySpec` and therefore *has* a shape — because a shape is an
         array notion; on a general (mixed) :class:`EventTemplate` the leaves are
         a heterogeneous sum with no uniform shape, so the structural view there
-        is :attr:`leaf_paths`. A nested sub-template contributes one entry per
+        is :meth:`keys`. A nested sub-template contributes one entry per
         nested leaf.
         """
         result: dict[str, tuple[int, ...]] = {}
@@ -1305,9 +1277,9 @@ class NumericEventTemplate(EventTemplate):
         :class:`~probpipe.NumericRecord` serializes to shape ``(vector_size,)``;
         a batched :class:`~probpipe.NumericRecordArray` with ``batch_shape == B``
         serializes to ``(*B, vector_size)``. Leaves are raveled and concatenated
-        in this template's canonical leaf order (:attr:`~EventTemplate.leaf_paths`).
+        in this template's canonical leaf order (:meth:`~EventTemplate.keys`).
 
-        This differs from :meth:`to_leaf_list` (which keeps each leaf whole, any
+        This differs from ``list(record.values())`` (which keeps each leaf whole, any
         type): ``to_vector`` is numeric-only and ravels the leaves into a single
         dense vector.
 
@@ -1343,7 +1315,8 @@ class NumericEventTemplate(EventTemplate):
                 f"to_vector expects a NumericRecord (single) or "
                 f"NumericRecordArray (batched), got {type(value).__name__}."
             )
-        leaves = self.to_leaf_list(value)
+        # The value's leaves in canonical leaf order (each kept whole).
+        leaves = [value[key] for key in self.keys()]
         return jnp.concatenate([jnp.reshape(leaf, (*batch_shape, -1)) for leaf in leaves], axis=-1)
 
     def from_vector(self, vec: ArrayLike) -> NumericRecord | NumericRecordArray:
@@ -1357,7 +1330,7 @@ class NumericEventTemplate(EventTemplate):
         ``(*batch_shape, vector_size)`` rebuilds a
         :class:`~probpipe.NumericRecordArray` with that ``batch_shape``.
 
-        This differs from :meth:`from_leaf_list` (which rebuilds from whole
+        This differs from :meth:`from_field_values` (which rebuilds from whole
         leaves, any type): ``from_vector`` is numeric-only and rebuilds from a
         dense vector alone, using this template's leaf shapes.
 

@@ -187,7 +187,7 @@ class Record(_NamedTree):
       (``"a/b" in record``).
     * **Iterate** to get the top-level field names; :meth:`keys` / :meth:`values`
       / :meth:`items` follow the ``dict`` protocol. :attr:`fields` lists the
-      top-level names; :attr:`~EventTemplate.leaf_paths` lists every leaf's path
+      top-level names; :meth:`~EventTemplate.keys` lists every leaf's path
       in canonical leaf order.
     * **Splat** fields into a call with :meth:`select` (a chosen / renamed
       subset) or :meth:`select_all` (all of them).
@@ -200,8 +200,8 @@ class Record(_NamedTree):
       :attr:`event_template` — so equal records always hash equal, while
       unequal records (including ones differing only in their template) may
       collide.
-    * **Flatten** to the leaf list with :meth:`to_leaf_list` (canonical order,
-      each leaf whole) and rebuild via :meth:`EventTemplate.from_leaf_list`;
+    * **Flatten** to the leaf list with ``list(record.values())`` (canonical order,
+      each leaf whole) and rebuild via :meth:`EventTemplate.from_field_values`;
       :meth:`~probpipe.NumericRecord.to_vector` is the numeric flat-array form.
 
     Parameters
@@ -239,8 +239,8 @@ class Record(_NamedTree):
     **JAX pytree.** A ``Record`` is a registered pytree: nested ``Record``\\s are
     internal nodes and each field value is a child. Its :attr:`event_template` is
     the **source of truth** for what counts as a leaf, and ProbPipe's traversal
-    honours that granularity — :attr:`~EventTemplate.leaf_paths`,
-    :meth:`to_leaf_list`, :meth:`map`, ``record[path]``, and
+    honours that granularity — :meth:`~EventTemplate.keys`,
+    ``list(record.values())``, :meth:`map`, ``record[path]``, and
     :meth:`~probpipe.NumericRecord.to_vector` all treat a container-valued field
     (a ``tuple`` / ``list`` / ``dict``) as a *single* opaque leaf. The
     **JAX-pytree view is finer**: ``jax.tree_util.tree_flatten`` / ``tree_leaves``
@@ -437,7 +437,7 @@ class Record(_NamedTree):
 
     # -- Field access (structural protocol shared with ``EventTemplate``) ---
     #
-    # ``fields`` / ``leaf_paths`` / ``__getitem__`` (name / ``/``-path / tuple) /
+    # ``fields`` / ``keys()`` / ``__getitem__`` (name / ``/``-path / tuple) /
     # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
     # ``__len__`` come from :class:`_NamedTree`. A leaf here is a stored
     # (non-``Record``) value; an internal node is a nested ``Record``.
@@ -495,17 +495,14 @@ class Record(_NamedTree):
     # -- Backend conversion -------------------------------------------------
 
     def to_dict(self) -> dict[str, Any]:
-        """Return a dict of stored values (recursive for nested Record).
+        """Return a nested ``dict`` of stored values (leaves verbatim, no coercion).
 
-        Leaves are returned verbatim; no coercion to numpy or JAX.
+        Temporary: this is the same nested-tree export as :meth:`to_nested_dict`
+        (the canonical name). It is retained during the migration and scheduled
+        for removal; new code should call :meth:`to_nested_dict`. (The flat,
+        path-keyed view is the builtin ``dict(record)``.)
         """
-        result: dict[str, Any] = {}
-        for name, val in self._tree.items():
-            if isinstance(val, Record):
-                result[name] = val.to_dict()
-            else:
-                result[name] = val
-        return result
+        return self.to_nested_dict()
 
     def to_numpy(self) -> dict[str, Any]:
         """Return a dict of numpy arrays (recursive for nested Record).
@@ -588,24 +585,8 @@ class Record(_NamedTree):
     # function to each field value and rebuild the same structure, re-inferring
     # the result's per-leaf specs). See ``_NamedTree.map``.
 
-    # -- Leaf-list (de)serialization ----------------------------------------
-
-    def to_leaf_list(self) -> list[Any]:
-        """This record's leaves, in canonical leaf order.
-
-        Convenience for :meth:`EventTemplate.to_leaf_list` against this record's
-        :attr:`event_template` (the source of truth for what counts as a leaf):
-        a container-valued opaque field is returned as one whole leaf, not
-        descended into. Reconstruct with
-        ``record.event_template.from_leaf_list(record.to_leaf_list())``.
-
-        Distinct from ``jax.tree_util.tree_flatten`` (the finer JAX view, which
-        descends into a container leaf) and from
-        :meth:`~probpipe.NumericRecord.to_vector` (numeric-only; ravels and
-        concatenates the leaves into a flat array). See the *Notes* on this
-        class for the JAX-pytree contract.
-        """
-        return self.event_template.to_leaf_list(self)
+    # A record's leaves in canonical order are ``list(record.values())``;
+    # reconstruct via ``record.event_template.from_field_values(...)``.
 
     # -- Repr ---------------------------------------------------------------
 
