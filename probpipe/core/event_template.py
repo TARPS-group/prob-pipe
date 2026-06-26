@@ -47,6 +47,7 @@ from __future__ import annotations
 from collections.abc import Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from math import prod
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -201,6 +202,166 @@ class _NamedTree:
             else:
                 paths.append(name)
         return tuple(paths)
+
+    # -- Collection-of-objects surface --------------------------------------
+    #
+    # A collection is a named, ordered set of *fields* whose objects live at the
+    # leaves of the storage tree, each addressed by its full path. The methods
+    # below present that view: ``at_path`` navigates the whole tree (to a leaf or
+    # an interior subtree), ``children`` is the one-level view, and the leaf walk
+    # / rebuild primitives back the field-wise operations. They read the storage
+    # tree through the ``_field_map`` / ``_node_type`` hooks, so a subclass need
+    # not re-implement them.
+
+    @staticmethod
+    def _split_path(path: tuple[Any, ...]) -> tuple[str, ...]:
+        """Normalise a path argument to a tuple of single-name segments.
+
+        Accepts the forms used across the surface: a ``/``-delimited string
+        (``"a/b"``), separate string segments (``"a", "b"``), or a single tuple
+        of names (``("a", "b")``). Every segment must be a string; a non-string
+        segment raises ``TypeError``.
+        """
+        if len(path) == 1 and isinstance(path[0], tuple):
+            parts: tuple[Any, ...] = path[0]
+        else:
+            parts = path
+        segments: list[str] = []
+        for part in parts:
+            if not isinstance(part, str):
+                raise TypeError(f"path segments must be strings, got {type(part).__name__}")
+            segments.extend(part.split(_PATH_SEP) if _PATH_SEP in part else [part])
+        return tuple(segments)
+
+    def at_path(self, *path: Any) -> Any:
+        """Return the object at *path* — a field object, or an interior subtree.
+
+        *path* addresses a position in the storage tree and may be written as a
+        ``/``-delimited string, separate string segments, or a single tuple of
+        names — these are equivalent::
+
+            obj.at_path("physics/mass")
+            obj.at_path("physics", "mass")
+            obj.at_path(("physics", "mass"))
+
+        A *key* (a path that ends at a leaf) returns the field object — a value
+        for a :class:`~probpipe.Record`, a leaf spec for an ``EventTemplate``. A
+        *partial path* (one that stops at an interior node) returns the subtree
+        rooted there, a collection of the same class.
+
+        This is the one operator that reaches interior nodes; the mapping
+        operators (``[]`` / ``in`` / iteration) range only over fields.
+
+        Raises
+        ------
+        KeyError
+            If the path reaches nothing, or tries to descend through a leaf.
+        TypeError
+            If a path segment is not a string.
+        """
+        segments = self._split_path(path)
+        node: Any = self
+        node_type = self._node_type()
+        for i, name in enumerate(segments):
+            if i > 0 and not isinstance(node, node_type):
+                raise KeyError(
+                    f"path {_PATH_SEP.join(segments)!r} descends through non-tree "
+                    f"leaf {type(node).__name__} at {_PATH_SEP.join(segments[:i])!r}"
+                )
+            field_map = node._field_map()
+            if name not in field_map:
+                raise KeyError(_PATH_SEP.join(segments))
+            node = field_map[name]
+        return node
+
+    @property
+    def children(self) -> Mapping[str, Any]:
+        """Read-only one-level view of this node — ``local_name -> child``.
+
+        Each value is an immediate child: a field object (leaf) or a subtree (a
+        nested collection of the same class). Insertion-ordered. This is the
+        labelled top-level view; the top-level names are ``tuple(obj.children)``.
+        Unlike the leaf-keyed field view, ``children.values()`` includes
+        subtrees.
+        """
+        return MappingProxyType(dict(self._field_map()))
+
+    def is_leaf(self, *path: Any) -> bool:
+        """Whether *path* resolves to a field (a leaf), not an interior subtree.
+
+        Returns ``True`` only when *path* is navigable **and** ends at a leaf.
+        Accepts the same path forms as :meth:`at_path`.
+        """
+        try:
+            node = self.at_path(*path)
+        except (KeyError, TypeError):
+            return False
+        return not isinstance(node, self._node_type())
+
+    def to_nested_dict(self) -> dict[str, Any]:
+        """Return a nested ``dict`` mirroring the storage tree.
+
+        Each interior node becomes a nested ``dict``; each leaf maps to its
+        field object (a value for a :class:`~probpipe.Record`, a spec for an
+        ``EventTemplate``). This is the tree-shaped export, distinct from the
+        flat ``dict(obj)`` view that is keyed by full path.
+        """
+        node_type = self._node_type()
+        result: dict[str, Any] = {}
+        for name, child in self._field_map().items():
+            result[name] = child.to_nested_dict() if isinstance(child, node_type) else child
+        return result
+
+    def _walk_leaves(self) -> Iterator[tuple[str, Any]]:
+        """Yield ``(path, leaf_object)`` for every field, in canonical order.
+
+        Canonical order is the depth-first, insertion-order traversal (§ the
+        class docstring). This is the single traversal that the field-wise
+        operations (the field mapping, ``map``, vector serialization, equality)
+        are expressed on.
+        """
+        node_type = self._node_type()
+        for name, child in self._field_map().items():
+            if isinstance(child, node_type):
+                for sub_path, leaf in child._walk_leaves():
+                    yield f"{name}{_PATH_SEP}{sub_path}", leaf
+            else:
+                yield name, child
+
+    def _rebuild_from_leaves(self, values: Iterable[Any]) -> Any:
+        """Build a new collection of the same nested shape, with new leaf objects.
+
+        *values* supplies the field objects in canonical order (one per leaf,
+        the order of :meth:`_walk_leaves`); the structure (names and nesting) is
+        taken from ``self``. Each interior node is rebuilt by constructing a new
+        same-class collection, so a :class:`~probpipe.Record` re-infers its leaf
+        specs and an ``EventTemplate`` re-normalises and re-promotes.
+
+        Raises
+        ------
+        ValueError
+            If *values* does not supply exactly one object per leaf.
+        """
+        it = iter(values)
+        node_type = self._node_type()
+        sentinel = object()
+
+        def build(node: Any) -> Any:
+            new_children: dict[str, Any] = {}
+            for name, child in node._field_map().items():
+                if isinstance(child, node_type):
+                    new_children[name] = build(child)
+                else:
+                    nxt = next(it, sentinel)
+                    if nxt is sentinel:
+                        raise ValueError("_rebuild_from_leaves got fewer values than leaves")
+                    new_children[name] = nxt
+            return type(node)(new_children)
+
+        result = build(self)
+        if next(it, sentinel) is not sentinel:
+            raise ValueError("_rebuild_from_leaves got more values than leaves")
+        return result
 
 
 @dataclass(frozen=True)
