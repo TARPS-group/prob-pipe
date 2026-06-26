@@ -96,7 +96,7 @@ class TestViewConstruction:
     def test_view_aliases_underlying_column(self, numeric_ra):
         v = numeric_ra.view("x")
         # No copy — the underlying array is the parent's field entry.
-        assert v._fields["x"] is numeric_ra._fields["x"]
+        assert v._tree["x"] is numeric_ra._tree["x"]
 
     def test_view_unknown_field_raises(self, numeric_ra):
         with pytest.raises(KeyError):

@@ -168,17 +168,17 @@ class _NamedTree:
     just a name). Reaching an interior node is done with :meth:`at_path`; the
     one-level ``name -> child`` view is :attr:`children`.
 
-    A subclass supplies two hooks: :meth:`_field_map` (its ordered, one-level
-    ``name -> child`` mapping) and :meth:`_node_type` (the type whose instances
-    count as interior nodes). A child is an interior node iff it is an instance
-    of that type; everything else is a leaf.
+    A subclass holds its ordered one-level ``name -> child`` mapping in the
+    ``_tree`` attribute (the mixin reads it directly) and supplies one hook,
+    :meth:`_node_type` (the type whose instances count as interior nodes). A
+    child is an interior node iff it is an instance of that type; everything else
+    is a leaf.
     """
 
     __slots__ = ()
 
-    def _field_map(self) -> Mapping[str, Any]:
-        """The ordered ``field name -> field value`` mapping for this node (hook)."""
-        raise NotImplementedError
+    # The storage tree: a subclass holds its ordered one-level ``name -> child``
+    # mapping in ``self._tree`` (the mixin reads it directly).
 
     @classmethod
     def _node_type(cls) -> type:
@@ -257,7 +257,7 @@ class _NamedTree:
     @property
     def fields(self) -> tuple[str, ...]:
         """Top-level field names, in insertion order (alias of ``tuple(self.children)``)."""
-        return tuple(self._field_map().keys())
+        return tuple(self._tree.keys())
 
     @property
     def leaf_paths(self) -> tuple[str, ...]:
@@ -329,7 +329,7 @@ class _NamedTree:
                     f"path {_PATH_SEP.join(segments)!r} descends through non-tree "
                     f"leaf {type(node).__name__} at {_PATH_SEP.join(segments[:i])!r}"
                 )
-            field_map = node._field_map()
+            field_map = node._tree
             if name not in field_map:
                 raise KeyError(_PATH_SEP.join(segments))
             node = field_map[name]
@@ -345,7 +345,7 @@ class _NamedTree:
         Unlike the leaf-keyed field view, ``children.values()`` includes
         subtrees.
         """
-        return MappingProxyType(dict(self._field_map()))
+        return MappingProxyType(dict(self._tree))
 
     def is_leaf(self, *path: Any) -> bool:
         """Whether *path* resolves to a field (a leaf), not an interior subtree.
@@ -369,7 +369,7 @@ class _NamedTree:
         """
         node_type = self._node_type()
         result: dict[str, Any] = {}
-        for name, child in self._field_map().items():
+        for name, child in self._tree.items():
             result[name] = child.to_nested_dict() if isinstance(child, node_type) else child
         return result
 
@@ -382,7 +382,7 @@ class _NamedTree:
         are expressed on.
         """
         node_type = self._node_type()
-        for name, child in self._field_map().items():
+        for name, child in self._tree.items():
             if isinstance(child, node_type):
                 for sub_path, leaf in child._walk_leaves():
                     yield f"{name}{_PATH_SEP}{sub_path}", leaf
@@ -409,7 +409,7 @@ class _NamedTree:
 
         def build(node: Any, prefix: str) -> Any:
             new_children: dict[str, Any] = {}
-            for name, child in node._field_map().items():
+            for name, child in node._tree.items():
                 path = f"{prefix}{name}"
                 if isinstance(child, node_type):
                     new_children[name] = build(child, f"{path}{_PATH_SEP}")
@@ -848,7 +848,7 @@ class EventTemplate(_NamedTree):
     not a meaningful quantity once opaque leaves are present.
     """
 
-    __slots__ = ("_specs",)
+    __slots__ = ("_tree",)
 
     def __new__(
         cls,
@@ -891,7 +891,7 @@ class EventTemplate(_NamedTree):
                 except TypeError as exc:
                     raise TypeError(f"Field {name!r}: {exc}") from None
         self._post_validate(specs)
-        object.__setattr__(self, "_specs", specs)
+        object.__setattr__(self, "_tree", specs)
 
     def _post_validate(self, field_specs: dict[str, _FieldSpec]) -> None:
         """Subclass hook for stricter spec validation. No-op on the base."""
@@ -906,7 +906,7 @@ class EventTemplate(_NamedTree):
         raise AttributeError("EventTemplate is immutable")
 
     def __reduce__(self):
-        return (_unpickle_event_template, (dict(self._specs),))
+        return (_unpickle_event_template, (dict(self._tree),))
 
     # -- Field access (structural protocol shared with ``Record``) ----------
     #
@@ -915,9 +915,6 @@ class EventTemplate(_NamedTree):
     # ``__len__`` come from :class:`_NamedTree`. A leaf here is a leaf spec
     # (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec` /
     # :class:`FunctionSpec`); an internal node is a nested ``EventTemplate``.
-
-    def _field_map(self) -> Mapping[str, _FieldSpec]:
-        return self._specs
 
     @classmethod
     def _node_type(cls) -> type:
@@ -945,7 +942,7 @@ class EventTemplate(_NamedTree):
         bool
             ``True`` iff every reachable leaf is an :class:`ArraySpec`.
         """
-        for spec in self._specs.values():
+        for spec in self._tree.values():
             if isinstance(spec, ArraySpec):
                 continue
             if isinstance(spec, EventTemplate):
@@ -1004,7 +1001,7 @@ class EventTemplate(_NamedTree):
             message names the dropped (non-numeric) fields.
         """
         specs: dict[str, _FieldSpec] = {}
-        for name, spec in self._specs.items():
+        for name, spec in self._tree.items():
             if isinstance(spec, ArraySpec):
                 specs[name] = spec
             elif isinstance(spec, EventTemplate):
@@ -1021,7 +1018,7 @@ class EventTemplate(_NamedTree):
         if not specs:
             dropped = tuple(
                 name
-                for name, spec in self._specs.items()
+                for name, spec in self._tree.items()
                 if not (
                     isinstance(spec, ArraySpec)
                     or (isinstance(spec, EventTemplate) and spec.is_numeric)
@@ -1089,7 +1086,7 @@ class EventTemplate(_NamedTree):
 
             fields = {
                 name: (_build(spec) if isinstance(spec, EventTemplate) else next(leaf_iter))
-                for name, spec in template._field_map().items()
+                for name, spec in template._tree.items()
             }
             cls = NumericRecord if isinstance(template, NumericEventTemplate) else Record
             return cls(fields, event_template=template)
@@ -1109,13 +1106,13 @@ class EventTemplate(_NamedTree):
         # order-sensitive ``__hash__`` (insertion order is part of the
         # template's identity). dict.__eq__ alone would ignore order,
         # breaking the eq/hash contract.
-        return tuple(self._specs.items()) == tuple(other._specs.items())
+        return tuple(self._tree.items()) == tuple(other._tree.items())
 
     def __hash__(self) -> int:
         # All field specs (leaf specs and nested templates) are hashable, so
         # the order-sensitive item tuple hashes directly. Insertion order is
         # part of the template's identity.
-        return hash(tuple(self._specs.items()))
+        return hash(tuple(self._tree.items()))
 
     # -- Factory methods ----------------------------------------------------
 
@@ -1182,7 +1179,7 @@ class EventTemplate(_NamedTree):
 
     def __repr__(self) -> str:
         parts = []
-        for name, spec in self._specs.items():
+        for name, spec in self._tree.items():
             if isinstance(spec, EventTemplate):
                 parts.append(f"{name}={spec!r}")
             elif isinstance(spec, ArraySpec) and spec.dtype is None and spec.support is None:
@@ -1267,7 +1264,7 @@ class NumericEventTemplate(EventTemplate):
         nested leaf.
         """
         result: dict[str, tuple[int, ...]] = {}
-        for name, spec in self._specs.items():
+        for name, spec in self._tree.items():
             if isinstance(spec, NumericEventTemplate):
                 for sub_name, sub_shape in spec.leaf_shapes.items():
                     result[f"{name}{_PATH_SEP}{sub_name}"] = sub_shape
@@ -1279,7 +1276,7 @@ class NumericEventTemplate(EventTemplate):
     def _compute_vector_size(self) -> int:
         """Total scalar count across all numeric leaves."""
         total = 0
-        for spec in self._specs.values():
+        for spec in self._tree.values():
             if isinstance(spec, NumericEventTemplate):
                 total += spec.vector_size
             else:
@@ -1402,7 +1399,7 @@ class NumericEventTemplate(EventTemplate):
 
         def _collect(template: NumericEventTemplate) -> None:
             nonlocal offset
-            for spec in template._specs.values():
+            for spec in template._tree.values():
                 if isinstance(spec, NumericEventTemplate):
                     _collect(spec)
                 else:
