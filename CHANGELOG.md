@@ -20,6 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   RBF), `ksd` (IMQ kernel Stein discrepancy), and the `score_posterior`
   aggregator.
 
+- **`probpipe.validation` calibration checks.** `simulation_based_calibration`
+  (Talts et al. 2018) drives an inference method over many `(θ★, data,
+  posterior)` replications and tests whether the rank of the truth among the
+  posterior draws is uniform — returning an `SBCResult` with per-parameter rank
+  histograms and a KS-to-uniform p-value. `interval_coverage` checks whether
+  central credible intervals contain the truth at their nominal rate. Both run a
+  backend-agnostic loop over `condition_on`.
+
 - **`quantile` op and `SupportsQuantile` protocol.** `quantile(dist, q)` returns
   per-field quantile(s) at probability level(s) `q`, parallel to
   `mean`/`variance`/`cov`. `RecordEmpiricalDistribution` implements it
