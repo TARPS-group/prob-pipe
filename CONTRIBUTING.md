@@ -604,7 +604,7 @@ Built-in methods:
 | 75 | `blackjax_elliptical_slice` | BlackJAX | `SimpleModel` + Gaussian prior + JAX-traceable likelihood |
 | 55 | `blackjax_rwmh` | BlackJAX | Any `SupportsLogProb` (eager fallback for non-traceable targets) |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
-| 6 | `pyabc_smcabc` | pyabc | `SimpleGenerativeModel` + TFP-backed product prior (requires the `[pyabc]` extra) |
+| 6 | `pyabc_smcabc` | pyabc | `SimpleGenerativeModel` with a flattenable prior (requires the `[pyabc]` extra) |
 | 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
 | 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |

@@ -8,9 +8,9 @@ inference backends the documentation uses, so that
 pip install probpipe
 ```
 
-runs every example and tutorial out of the box — PyMC, nutpie, and BayesFlow on
-Python 3.12–3.13 (on 3.14 the BayesFlow neural-SBI backend is omitted until
-upstream lifts its `<3.14` cap).
+runs every example and tutorial out of the box — PyMC, nutpie, pyabc, and
+BayesFlow (BayesFlow on Python 3.12–3.13 only; on 3.14 its neural-SBI backend is
+omitted until upstream lifts the `<3.14` cap).
 
 It ships **no code** — the importable `probpipe` package lives in
 `probpipe-core`. For a minimal install, depend on `probpipe-core` directly and

@@ -2,134 +2,157 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pyabc
+from pyabc.sampler import SingleCoreSampler
 
-from ..core._registry import MethodInfo
+from ..core.ops import log_prob, sample
 from ..core.record import RecordTemplate
+from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
-from ._registry import InferenceMethod
+from ._registry import InferenceMethod, MethodInfo
 
-# Key for the simulated/observed vector in pyabc's summary-statistic dict.
+if TYPE_CHECKING:
+    from xarray import DataTree
+
+    from .. import NumericRecordDistribution
+
+# Key under which the simulated/observed vector lives in pyabc's sumstat dict.
 _DATA_KEY = "y"
 
-
-def _ensure_pyabc() -> Any:
-    """Import pyabc or raise a helpful error pointing at the extra."""
-    try:
-        import pyabc
-    except ImportError as e:  # pragma: no cover - exercised only without the extra
-        raise ImportError(
-            "pyabc_smcabc requires the optional pyabc backend: "
-            "pip install 'probpipe[pyabc]'"
-        ) from e
-    return pyabc
+# pyabc passes summary statistics as ``{_DATA_KEY: vector}`` dicts.
+_SumStat = Mapping[str, Any]
+_SummaryFn = Callable[[np.ndarray], np.ndarray]
+_DistanceFn = Callable[[_SumStat, _SumStat], float]
 
 
-def _marginal_to_pyabc_rv(leaf: Any, pyabc: Any) -> Any:
-    """Wrap a ProbPipe marginal as a ``pyabc.RV`` backed by the distribution
-    itself — ``sample`` for ``rvs``, ``prob`` for ``pdf`` — with no scipy
-    round-trip. ``cdf`` is unused by SMC-ABC.
+def _flat_key(i: int) -> str:
+    """pyabc parameter name for flat position ``i`` of the parameter vector."""
+    return f"p{i}"
+
+
+class PyABCDistribution(pyabc.Distribution):
+    """A pyabc prior that samples and scores a ProbPipe prior jointly over its
+    *flattened* parameter vector.
+
+    Sampling (:meth:`rvs`) and density (:meth:`pdf`) go through
+    ``prior.as_flat_distribution()``, so correlated and multivariate priors are
+    supported. The object is a dict-like, picklable ``pyabc.Distribution`` keyed
+    by flat ``pN`` names, which give pyabc the parameter names and the flat
+    columns its perturbation kernel operates on.
     """
-    from probpipe import prob, sample
 
-    class _ProbPipeRV(pyabc.RV):
-        def __init__(self, dist: Any):
-            self._dist = dist
-            self.distribution = None  # what RV.__getattr__ proxies to
-            self.name = getattr(dist, "name", "rv")
-            self.args, self.kwargs = (), {}
+    def __init__(self, prior: NumericRecordDistribution, key: PRNGKey):
+        """Wrap *prior* as a joint pyabc prior over its flat parameter vector.
 
-        def rvs(self, *args: Any, **kwargs: Any) -> float:
-            key = jax.random.PRNGKey(int(np.random.randint(0, 2**31 - 1)))
-            return float(np.asarray(sample(self._dist, key=key)))
+        ``key`` is the JAX key threaded through :meth:`rvs` (split per draw). The
+        per-position ``pN`` keys give pyabc the parameter names
+        (``get_parameter_names``) and the flat columns its perturbation kernel
+        operates on; sampling and scoring go through the joint flat view.
+        """
+        self._prior = prior
+        self._flat = prior.as_flat_distribution()
+        self._key = key
+        self._d = self._flat.flat_size
+        super().__init__(**{_flat_key(i): pyabc.RV("uniform", 0, 1) for i in range(self._d)})
 
-        def pdf(self, x: Any, *args: Any, **kwargs: Any) -> float:
-            return float(np.asarray(prob(self._dist, x)))
+    def rvs(self, *args: Any, **kwargs: Any) -> pyabc.Parameter:
+        """One joint draw from the prior, as a flat-keyed pyabc ``Parameter``."""
+        self._key, sub = jax.random.split(self._key)
+        vec = np.asarray(sample(self._flat, key=sub)).ravel()
+        return pyabc.Parameter(**{_flat_key(i): float(vec[i]) for i in range(self._d)})
 
-        def pmf(self, x: Any, *args: Any, **kwargs: Any) -> float:
-            return self.pdf(x)
-
-        def cdf(self, x: Any, *args: Any, **kwargs: Any) -> float:
-            raise NotImplementedError("ProbPipeRV has no cdf (unused by SMC-ABC).")
-
-        def copy(self) -> Any:
-            return _ProbPipeRV(self._dist)
-
-    return _ProbPipeRV(leaf)
-
-
-def _build_pyabc_prior(prior: Any, pyabc: Any) -> tuple[Any, list[str]]:
-    """Build a ``pyabc.Distribution`` and the component name order from a prior.
-
-    Raises ``TypeError`` if *prior* is not a product of independent scalar
-    marginals — so :meth:`PyABCSMCMethod.check` can probe feasibility by calling
-    this and catching the failure.
-    """
-    components = getattr(prior, "components", None)
-    if components is None:
-        raise TypeError(
-            "pyabc backend requires a ProductDistribution-style prior with "
-            "independent named components."
-        )
-    names = list(prior.keys())
-    rvs: dict[str, Any] = {}
-    for name in names:
-        comp = components[name]
-        if isinstance(comp, dict):
-            raise TypeError(
-                f"pyabc backend requires flat scalar marginals; component "
-                f"{name!r} is a nested product."
-            )
-        rvs[name] = _marginal_to_pyabc_rv(comp, pyabc)
-    return pyabc.Distribution(**rvs), names
+    def pdf(self, x: Mapping[str, float]) -> float:
+        """Joint prior density at *x*, the flat parameter vector reassembled
+        from its ``pN`` keys and scored through the flat view's ``log_prob``."""
+        vec = jnp.asarray([x[_flat_key(i)] for i in range(self._d)])
+        return float(np.exp(np.asarray(log_prob(self._flat, vec))))
 
 
-def _summarize(data: Any, summary_fn: Any) -> np.ndarray:
+def _euclidean_distance(x: _SumStat, x0: _SumStat) -> float:
+    """Euclidean distance between the simulated and observed summary vectors."""
+    return float(np.linalg.norm(np.asarray(x[_DATA_KEY]) - np.asarray(x0[_DATA_KEY])))
+
+
+def _summarize(data: Any, summary_fn: _SummaryFn | None) -> np.ndarray:
     """Apply ``summary_fn`` (if any) and flatten to a 1-D vector."""
     if summary_fn is not None:
         data = summary_fn(data)
     return np.asarray(data, dtype=float).ravel()
 
 
-def _euclidean_distance(x: dict, x0: dict) -> float:
-    return float(np.sqrt(np.sum((x[_DATA_KEY] - x0[_DATA_KEY]) ** 2)))
+def _smc_diagnostics(history: Any) -> DataTree:
+    """Per-generation SMC-ABC convergence trajectory as an ArviZ ``DataTree``.
+
+    Builds a ``smc_diagnostics`` group indexed by generation, holding the
+    epsilon (acceptance-threshold) schedule, the sample attempts, the accepted
+    particles, and the acceptance rate; ``total_nr_simulations`` is a scalar
+    attribute. Recovered from ``dist.auxiliary`` after a run.
+    """
+    import xarray as xr
+
+    populations = history.get_all_populations()
+    populations = populations[populations["t"] >= 0]  # drop the prior pre-sample row
+    samples = populations["samples"].to_numpy()
+    particles = populations["particles"].to_numpy()
+    diagnostics = xr.Dataset(
+        {
+            "epsilon": ("generation", populations["epsilon"].to_numpy()),
+            "samples": ("generation", samples),
+            "particles": ("generation", particles),
+            "acceptance_rate": ("generation", particles / samples),
+        },
+        coords={"generation": populations["t"].to_numpy()},
+        attrs={"total_nr_simulations": int(history.total_nr_simulations)},
+    )
+    auxiliary = xr.DataTree()
+    auxiliary["smc_diagnostics"] = xr.DataTree(dataset=diagnostics)
+    return auxiliary
 
 
 class PyABCSMCMethod(InferenceMethod):
-    """pyabc SMC-ABC for SimpleGenerativeModel."""
+    """pyabc SMC-ABC for :class:`~probpipe.modeling.SimpleGenerativeModel`."""
 
     @property
     def name(self) -> str:
         return "pyabc_smcabc"
 
     def supported_types(self) -> tuple[type, ...]:
+        # lazy: avoid an inference->modeling import cycle
         from ..modeling._simple_generative import SimpleGenerativeModel
         return (SimpleGenerativeModel,)
 
     @property
     def priority(self) -> int:
         # Inexact (ABC quality is bounded by the summary statistics and the
-        # acceptance tolerance); registered at 6 as the auto-dispatch pick for
-        # a pure SimpleGenerativeModel.
+        # acceptance tolerance), so it sits in the low-priority auto-dispatch
+        # band for a pure SimpleGenerativeModel.
         return 6
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
+        # lazy: avoid an inference->modeling import cycle
         from ..modeling._simple_generative import SimpleGenerativeModel
-
         if not isinstance(dist, SimpleGenerativeModel):
             return MethodInfo(feasible=False, method_name=self.name,
                               description="Requires SimpleGenerativeModel")
-        # Build the prior to probe what execute() actually needs, so check() and
-        # execute() can't disagree (a feasible check then a crash). pyabc is
-        # importable here: registration is gated on it.
+        prior = dist["parameters"]
+        # Feasible means the prior can flatten, sample, *and* score jointly.
+        # Build the backing distribution, then score one in-support draw — this
+        # exercises log_prob, so a sampleable-but-density-less prior is caught
+        # here rather than crashing later in pyabc's weight computation.
         try:
-            _build_pyabc_prior(dist["parameters"], _ensure_pyabc())
-        except (TypeError, NotImplementedError) as e:
+            pyabc_prior = PyABCDistribution(prior, jax.random.PRNGKey(0))
+            density = pyabc_prior.pdf(pyabc_prior.rvs())
+        except Exception as e:
             return MethodInfo(feasible=False, method_name=self.name, description=str(e))
+        if not np.isfinite(density):
+            return MethodInfo(feasible=False, method_name=self.name,
+                              description="prior has no usable joint density")
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
@@ -138,8 +161,8 @@ class PyABCSMCMethod(InferenceMethod):
         Parameters
         ----------
         dist : SimpleGenerativeModel
-            Prior (a product of independent scalar marginals) plus a
-            ``GenerativeLikelihood`` simulator.
+            Prior (any distribution that flattens to a parameter vector and
+            carries a joint density) plus a ``GenerativeLikelihood`` simulator.
         observed : array-like
             Observed data; flattened (after ``summary_fn``) to the target vector.
         n_particles : int, default 100
@@ -149,9 +172,8 @@ class PyABCSMCMethod(InferenceMethod):
         eps_alpha : float, default 0.5
             ``QuantileEpsilon`` alpha (acceptance-quantile schedule).
         random_seed : int, default 0
-            Seeds both the simulator RNG and pyabc's proposal RNG (numpy global
-            state is snapshotted and restored around the run), so repeated calls
-            are reproducible.
+            Seeds the JAX keys threaded into the prior and simulator and pyabc's
+            own (numpy-global) proposal RNG, so repeated calls are reproducible.
         summary_fn : callable, optional
             ``(batch, dim) -> (batch, summary_dim)`` applied to simulated and
             observed data before the distance.
@@ -168,41 +190,46 @@ class PyABCSMCMethod(InferenceMethod):
         -------
         ApproximateDistribution
             The final population's particles, keyed by parameter name, carrying
-            their (non-resampled) SMC importance weights.
+            their (non-resampled) SMC importance weights. The per-generation
+            convergence trajectory (epsilon schedule, sample / particle counts,
+            acceptance rate) is attached as a ``smc_diagnostics`` group on
+            ``auxiliary``.
         """
-        pyabc = _ensure_pyabc()
-        from pyabc.sampler import SingleCoreSampler
-
         prior = dist["parameters"]
         simulator = dist["data"]
-        pyabc_prior, names = _build_pyabc_prior(prior, pyabc)
 
         n_particles = int(kwargs.get("n_particles", 100))
         max_populations = int(kwargs.get("max_populations", 4))
         eps_alpha = float(kwargs.get("eps_alpha", 0.5))
         random_seed = int(kwargs.get("random_seed", 0))
-        summary_fn = kwargs.get("summary_fn")
-        distance_fn = kwargs.get("distance_fn") or _euclidean_distance
+        summary_fn: _SummaryFn | None = kwargs.get("summary_fn")
+        distance_fn: _DistanceFn = kwargs.get("distance_fn") or _euclidean_distance
         sampler = kwargs.get("sampler") or SingleCoreSampler()
+
+        prior_key, sim_key0 = jax.random.split(jax.random.PRNGKey(random_seed))
+        pyabc_prior = PyABCDistribution(prior, prior_key)
+        d = pyabc_prior._d
 
         x0 = {_DATA_KEY: _summarize(jnp.atleast_1d(jnp.asarray(observed))[None, :], summary_fn)}
 
-        # Per-call RNG seeding the stochastic simulator; pyabc's own proposal RNG
-        # is seeded via the numpy global state below.
-        rng = np.random.default_rng(random_seed)
+        sim_key = [sim_key0]  # threaded per simulator call (no numpy reseed)
 
-        def model_fn(parameters: dict) -> dict:
-            vec = jnp.asarray([float(parameters[n]) for n in names])
-            key = jax.random.PRNGKey(int(rng.integers(0, 2**31 - 1)))
-            raw = jnp.atleast_2d(simulator.generate_data(vec, 1, key=key)[0])
+        def model_fn(parameters: Mapping[str, float]) -> _SumStat:
+            vec = jnp.asarray([float(parameters[_flat_key(i)]) for i in range(d)])
+            sim_key[0], sub = jax.random.split(sim_key[0])
+            raw = jnp.atleast_2d(simulator.generate_data(vec, 1, key=sub)[0])
             return {_DATA_KEY: _summarize(raw, summary_fn)}
 
+        # Known limitation: pyabc perturbs in the prior's *constrained* space, so
+        # for bounded parameters it can propose out-of-support points (density 0
+        # — correct but wasteful). Follow-up (#238): perturb in unconstrained
+        # space via the prior's constraint bijectors.
         abc = pyabc.ABCSMC(
             model_fn, pyabc_prior, distance_fn,
             population_size=n_particles, sampler=sampler,
             eps=pyabc.QuantileEpsilon(alpha=eps_alpha),
         )
-        # pyabc draws proposals from numpy's global RNG; seed it for a
+        # pyabc draws its perturbations from numpy's global RNG; seed it for a
         # reproducible run and restore the caller's state afterwards.
         np_state = np.random.get_state()
         np.random.seed(random_seed)
@@ -212,18 +239,16 @@ class PyABCSMCMethod(InferenceMethod):
         finally:
             np.random.set_state(np_state)
 
-        # SMC-ABC returns importance-weighted particles; keep the weights rather
-        # than resampling. Reorder columns to the prior's flat event order.
+        # Final population: flat columns p0..p{d-1}, with SMC importance weights.
         df, weights = history.get_distribution(m=0, t=history.max_t)
-        particles = jnp.asarray(df.reindex(columns=names).to_numpy(dtype=float))
+        flat = df.reindex(columns=[_flat_key(i) for i in range(d)]).to_numpy(dtype=float)
         weights = np.asarray(weights, dtype=float)
 
-        # Name the columns by component so draws()/mean() return Records keyed by
-        # parameter name (the prior's marginals are scalar).
-        template = RecordTemplate(**{n: tuple(prior.components[n].event_shape) for n in names})
-
+        # Lift the flat columns back to name-keyed Records via the prior's layout.
+        template = RecordTemplate(**dict(prior.event_shapes))
         return make_posterior(
-            [particles], parents=(prior,), algorithm="pyabc_smcabc",
+            [jnp.asarray(flat)], parents=(dist,), algorithm="pyabc_smcabc",
             weights=jnp.asarray(weights / weights.sum()), record_template=template,
+            field_order=list(prior.event_shapes), auxiliary=_smc_diagnostics(history),
             n_particles=n_particles, max_populations=max_populations, eps_alpha=eps_alpha,
         )

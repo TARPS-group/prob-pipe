@@ -1,10 +1,11 @@
 """Tests for the pyabc SMC-ABC inference backend.
 
-Covers registration + feasibility ``check`` (including the priors that must be
-rejected rather than crash auto-dispatch), ``condition_on`` auto-dispatch,
+Covers registration + feasibility ``check``, ``condition_on`` auto-dispatch,
 posterior recovery (mean *and* spread, across seeds) against a known analytic
-conjugate posterior, importance-weight preservation, reproducibility, the
-``SingleCoreSampler`` default, and the TFP/ProbPipe -> ``pyabc.RV`` mapping.
+conjugate posterior — including a correlated/multivariate prior, which the
+flattened-joint design supports — plus importance-weight preservation,
+reproducibility, the ``SingleCoreSampler`` default, and the
+``PyABCDistribution`` backing.
 """
 
 from __future__ import annotations
@@ -18,20 +19,15 @@ pytest.importorskip("pyabc")  # requires the [pyabc] extra; skipped otherwise
 
 import probpipe.distributions.continuous as C
 from probpipe import (
-    Beta,
+    MultivariateNormal,
     Normal,
     ProductDistribution,
-    Uniform,
     condition_on,
+    log_prob,
     mean,
 )
 from probpipe.inference import inference_method_registry
-from probpipe.inference._pyabc import (
-    PyABCSMCMethod,
-    _build_pyabc_prior,
-    _ensure_pyabc,
-    _marginal_to_pyabc_rv,
-)
+from probpipe.inference._pyabc import PyABCDistribution, PyABCSMCMethod
 from probpipe.modeling import GenerativeLikelihood, Likelihood
 from probpipe.modeling._simple_generative import SimpleGenerativeModel
 
@@ -42,8 +38,7 @@ _SIGMA = 0.2
 class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
     """Conjugate model (any dim): ``theta ~ N(0, tau^2 I)`` with ``tau = 3``,
     ``y = theta + sigma * noise`` (``sigma = 0.2``). For a single observation the
-    posterior is analytic: ``N(tau^2/(tau^2+sigma^2) * y, tau^2 sigma^2/(tau^2+sigma^2))``
-    — i.e. mean ~= y and std ~= 0.20 for the 1-D fixture below."""
+    posterior mean ~= y and std ~= 0.20."""
 
     def log_likelihood(self, params, data):
         return jnp.array(0.0)
@@ -54,14 +49,17 @@ class _ConjugateGaussianLikelihood(Likelihood, GenerativeLikelihood):
         return t[None, :] + _SIGMA * jax.random.normal(key, (num_observations, t.shape[-1]))
 
 
-def _model(*names: str) -> SimpleGenerativeModel:
-    prior = ProductDistribution(*[Normal(loc=0.0, scale=3.0, name=n) for n in names])
+def _model(prior) -> SimpleGenerativeModel:
     return SimpleGenerativeModel(prior, _ConjugateGaussianLikelihood())
 
 
-def _means(post) -> dict[str, float]:
+def _product(*names: str):
+    return ProductDistribution(*[Normal(loc=0.0, scale=3.0, name=n) for n in names])
+
+
+def _means(post) -> dict[str, np.ndarray]:
     m = mean(post)
-    return {f: float(np.asarray(m[f]).reshape(-1)[0]) for f in post.record_template.fields}
+    return {f: np.asarray(m[f]).reshape(-1) for f in post.record_template.fields}
 
 
 class TestPyABCCheck:
@@ -72,76 +70,101 @@ class TestPyABCCheck:
         info = PyABCSMCMethod().check(Normal(loc=0.0, scale=1.0, name="x"), jnp.array([0.0]))
         assert not info.feasible
 
-    def test_rejects_bare_marginal_prior(self):
-        """A SimpleGenerativeModel whose prior is a bare marginal (no
-        ``.components``) must report infeasible — not pass check() and then crash
-        inside execute(), since pyabc is the sole auto-dispatch pick."""
-        model = SimpleGenerativeModel(
-            Normal(loc=0.0, scale=1.0, name="theta"), _ConjugateGaussianLikelihood()
-        )
-        assert not PyABCSMCMethod().check(model, jnp.array([0.0])).feasible
-
-    def test_accepts_any_sampleable_marginal(self):
-        """No fixed family list: a marginal backed directly by a ProbPipe
-        distribution — e.g. StudentT, which has no scipy-converter mapping — is
-        feasible. It only needs sampling and a density."""
-        model = SimpleGenerativeModel(
-            ProductDistribution(C.StudentT(df=5.0, loc=0.0, scale=3.0, name="theta")),
-            _ConjugateGaussianLikelihood(),
-        )
+    def test_accepts_bare_marginal(self):
+        """A bare (non-product) marginal flattens to a length-1 vector, so it's
+        feasible — check() and execute() agree (no feasible-then-crash)."""
+        model = _model(Normal(loc=0.0, scale=3.0, name="theta"))
         assert PyABCSMCMethod().check(model, jnp.array([2.0])).feasible
+
+    def test_accepts_multivariate_prior(self):
+        """A correlated/multivariate prior is feasible — the joint design isn't
+        restricted to products of independent scalar marginals."""
+        model = _model(MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0, name="m"))
+        assert PyABCSMCMethod().check(model, jnp.array([2.0, -1.0])).feasible
+
+    def test_rejects_prior_without_usable_density(self, monkeypatch):
+        """check() scores one in-support draw, so a prior that samples/flattens
+        but has no usable joint density is infeasible — not a feasible check
+        followed by a crash in pyabc's weight computation."""
+        from probpipe.inference import _pyabc
+
+        monkeypatch.setattr(_pyabc.PyABCDistribution, "pdf", lambda self, x: float("nan"))
+        model = _model(_product("theta"))
+        assert not PyABCSMCMethod().check(model, jnp.array([2.0])).feasible
 
 
 class TestPyABCRecovery:
-    # Measured across seeds 0-3 (n_particles=300, max_populations=6): weighted
-    # mean in [1.98, 2.02] and per-draw std in [0.15, 0.17], vs the analytic
-    # conjugate posterior (mean 1.99, std 0.20). The bands below are loose around
-    # those, and well clear of the 3.0 prior std / a degenerate point mass.
+    # Measured across seeds (n_particles=300, max_populations=6): weighted mean
+    # within ~0.05 of truth, per-draw std ~0.15, vs the analytic conjugate
+    # posterior (mean ~= y, std ~= 0.20). Bands below are loose around those.
     @pytest.mark.parametrize("seed", [0, 1])
     def test_recovery_1d_mean_and_spread(self, seed):
-        post = condition_on(_model("theta"), jnp.array([2.0]), method="pyabc_smcabc",
-                            n_particles=300, max_populations=6, random_seed=seed)
-        assert _means(post)["theta"] == pytest.approx(2.0, abs=0.15)
+        post = condition_on(_model(_product("theta")), jnp.array([2.0]),
+                            method="pyabc_smcabc", n_particles=300,
+                            max_populations=6, random_seed=seed)
+        assert _means(post)["theta"][0] == pytest.approx(2.0, abs=0.15)
         std = float(np.asarray(post.draws()["theta"]).std())
         assert 0.08 < std < 0.30
 
     def test_recovery_2d(self):
-        truth = jnp.array([1.5, -1.0])
-        post = condition_on(_model("a", "b"), truth, method="pyabc_smcabc",
-                            n_particles=300, max_populations=6, random_seed=0)
+        post = condition_on(_model(_product("a", "b")), jnp.array([1.5, -1.0]),
+                            method="pyabc_smcabc", n_particles=300,
+                            max_populations=6, random_seed=0)
         means = _means(post)
-        assert means["a"] == pytest.approx(1.5, abs=0.5)
-        assert means["b"] == pytest.approx(-1.0, abs=0.5)
+        assert means["a"][0] == pytest.approx(1.5, abs=0.5)
+        assert means["b"][0] == pytest.approx(-1.0, abs=0.5)
+
+    def test_recovery_multivariate(self):
+        """Recovery with a multivariate prior — draws come back as the named
+        vector-valued component."""
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2) * 9.0, name="m")
+        post = condition_on(_model(prior), jnp.array([1.5, -1.0]),
+                            method="pyabc_smcabc", n_particles=300,
+                            max_populations=6, random_seed=0)
+        m = _means(post)["m"]
+        assert np.asarray(post.draws()["m"]).shape == (post.num_atoms, 2)
+        np.testing.assert_allclose(m, [1.5, -1.0], atol=0.6)
 
     def test_auto_dispatch(self):
-        post = condition_on(_model("theta"), jnp.array([2.0]),
+        post = condition_on(_model(_product("theta")), jnp.array([2.0]),
                             n_particles=200, max_populations=4, random_seed=0)
         assert post.algorithm == "pyabc_smcabc"
-        assert _means(post)["theta"] == pytest.approx(2.0, abs=0.2)
+        assert _means(post)["theta"][0] == pytest.approx(2.0, abs=0.2)
 
 
 class TestPyABCWeightsAndDraws:
     def test_posterior_weights_are_non_uniform(self):
         """SMC-ABC's importance weights are kept, not resampled to a uniform
         chain — so the weighted mean actually means something."""
-        post = condition_on(_model("theta"), jnp.array([2.0]), method="pyabc_smcabc",
-                            n_particles=200, max_populations=4, random_seed=0)
-        assert post.weights is not None
+        post = condition_on(_model(_product("theta")), jnp.array([2.0]),
+                            method="pyabc_smcabc", n_particles=200,
+                            max_populations=4, random_seed=0)
         w = np.asarray(post.weights)
-        assert not np.allclose(w, w.mean())  # genuine importance weights, not equal
+        assert not np.allclose(w, w.mean())
         assert post.num_atoms == 200
+
+    def test_weighted_mean_differs_from_unweighted(self):
+        """The kept weights actually change the estimate: the weighted
+        posterior mean is not the equal-weight mean of the raw particles."""
+        post = condition_on(_model(_product("theta")), jnp.array([2.0]),
+                            method="pyabc_smcabc", n_particles=200,
+                            max_populations=4, random_seed=0)
+        draws = np.asarray(post.draws()["theta"]).reshape(-1)
+        weighted = float(np.asarray(mean(post)["theta"]).reshape(-1)[0])
+        assert weighted != pytest.approx(float(draws.mean()), abs=1e-6)
 
     def test_reproducible_across_calls(self):
         kw = dict(method="pyabc_smcabc", n_particles=100, max_populations=3, random_seed=0)
-        a = condition_on(_model("theta"), jnp.array([2.0]), **kw)
-        b = condition_on(_model("theta"), jnp.array([2.0]), **kw)
+        a = condition_on(_model(_product("theta")), jnp.array([2.0]), **kw)
+        b = condition_on(_model(_product("theta")), jnp.array([2.0]), **kw)
         np.testing.assert_array_equal(
             np.asarray(a.draws()["theta"]), np.asarray(b.draws()["theta"])
         )
 
     def test_draws_are_name_keyed(self):
-        post = condition_on(_model("theta"), jnp.array([2.0]), method="pyabc_smcabc",
-                            n_particles=80, max_populations=3, random_seed=0)
+        post = condition_on(_model(_product("theta")), jnp.array([2.0]),
+                            method="pyabc_smcabc", n_particles=80,
+                            max_populations=3, random_seed=0)
         draws = post.draws()
         assert "theta" in draws.fields
         assert np.asarray(draws["theta"]).shape == (post.num_atoms,)
@@ -150,10 +173,42 @@ class TestPyABCWeightsAndDraws:
         def summary_fn(y):
             return jnp.mean(jnp.atleast_2d(y), axis=-1, keepdims=True)
 
-        post = condition_on(_model("a", "b"), jnp.array([2.0, -1.0]),
+        post = condition_on(_model(_product("a", "b")), jnp.array([2.0, -1.0]),
                             method="pyabc_smcabc", summary_fn=summary_fn,
                             n_particles=80, max_populations=3, random_seed=0)
         assert set(post.record_template.fields) == {"a", "b"}
+
+    def test_custom_distance_fn_is_used(self):
+        """A user-supplied distance_fn over the {"y": vector} sumstats replaces
+        the Euclidean default — it is actually called and still recovers."""
+        calls = {"n": 0}
+
+        def distance_fn(x, x0):
+            calls["n"] += 1
+            return float(np.linalg.norm(np.asarray(x["y"]) - np.asarray(x0["y"])))
+
+        post = condition_on(_model(_product("theta")), jnp.array([2.0]),
+                            method="pyabc_smcabc", distance_fn=distance_fn,
+                            n_particles=80, max_populations=3, random_seed=0)
+        assert calls["n"] > 0
+        assert _means(post)["theta"][0] == pytest.approx(2.0, abs=0.3)
+
+
+class TestPyABCDiagnostics:
+    def test_history_exposed_as_auxiliary(self):
+        """The SMC-ABC convergence trajectory is attached as auxiliary
+        diagnostics: one row per generation, a non-increasing epsilon schedule,
+        acceptance rates in (0, 1], and the total simulation count."""
+        post = condition_on(_model(_product("theta")), jnp.array([2.0]),
+                            method="pyabc_smcabc", n_particles=100,
+                            max_populations=4, random_seed=0)
+        diag = post.auxiliary["smc_diagnostics"]
+        eps = np.asarray(diag["epsilon"].values)
+        rate = np.asarray(diag["acceptance_rate"].values)
+        assert 1 <= eps.shape[0] <= 4
+        assert np.all(np.diff(eps) <= 1e-8)  # epsilon schedule is non-increasing
+        assert np.all((rate > 0) & (rate <= 1.0))
+        assert diag.dataset.attrs["total_nr_simulations"] > 0
 
 
 class TestPyABCDefaults:
@@ -174,45 +229,41 @@ class TestPyABCDefaults:
 
         monkeypatch.setattr(pyabc, "ABCSMC", spy)
         with pytest.raises(_Stop):
-            condition_on(_model("theta"), jnp.array([2.0]), method="pyabc_smcabc",
-                         n_particles=10, max_populations=1, random_seed=0)
+            condition_on(_model(_product("theta")), jnp.array([2.0]),
+                         method="pyabc_smcabc", n_particles=10,
+                         max_populations=1, random_seed=0)
         assert isinstance(captured["sampler"], SingleCoreSampler)
 
 
-class TestPyABCPriorAdapter:
-    def test_marginal_rv_is_backed_by_the_distribution(self):
-        """The pyabc RV wraps the ProbPipe marginal directly (no scipy): its
-        density is the marginal's ``prob`` and its samples have the marginal's
-        moments."""
-        from probpipe import prob
+class TestPyABCDistributionBacking:
+    def test_pdf_is_the_joint_prior_density(self):
+        prior = _product("a", "b")
+        pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
+        assert len(pd.get_parameter_names()) == 2
+        flat = jnp.array([0.5, -0.3])
+        expected = float(np.exp(np.asarray(log_prob(prior.as_flat_distribution(), flat))))
+        assert pd.pdf({"p0": 0.5, "p1": -0.3}) == pytest.approx(expected, rel=1e-5)
 
-        pyabc = _ensure_pyabc()
-        marginal = Normal(loc=1.0, scale=2.0, name="n")
-        rv = _marginal_to_pyabc_rv(marginal, pyabc)
-        assert rv.pdf(0.5) == pytest.approx(float(np.asarray(prob(marginal, 0.5))), rel=1e-5)
-        np.random.seed(0)
-        draws = np.array([rv.rvs() for _ in range(4000)])
-        assert draws.mean() == pytest.approx(1.0, abs=0.12)
-        assert draws.std() == pytest.approx(2.0, abs=0.15)
+    def test_pdf_uses_the_correlated_joint_density(self):
+        """With off-diagonal covariance the density is genuinely joint — a
+        product of marginals would give a different number."""
+        cov = jnp.array([[2.0, 1.2], [1.2, 1.5]])
+        prior = MultivariateNormal(loc=jnp.array([0.5, -0.5]), cov=cov, name="m")
+        pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
+        flat = jnp.array([0.3, -0.2])
+        expected = float(np.exp(np.asarray(log_prob(prior.as_flat_distribution(), flat))))
+        assert pd.pdf({"p0": 0.3, "p1": -0.2}) == pytest.approx(expected, rel=1e-5)
 
-    def test_marginal_rv_interface(self):
-        """pmf falls back to pdf; cdf is unsupported (unused by SMC-ABC); copy
-        returns an equivalent RV."""
-        rv = _marginal_to_pyabc_rv(Normal(loc=0.0, scale=1.0, name="n"), _ensure_pyabc())
-        assert rv.pmf(0.0) == rv.pdf(0.0)
-        with pytest.raises(NotImplementedError):
-            rv.cdf(0.0)
-        assert isinstance(rv.copy(), type(rv))
+    def test_rvs_samples_from_the_prior(self):
+        prior = _product("a", "b")  # both N(0, 3)
+        pd = PyABCDistribution(prior, jax.random.PRNGKey(0))
+        draws = np.array([[pd.rvs()[f"p{i}"] for i in range(2)] for _ in range(3000)])
+        assert draws.shape == (3000, 2)
+        np.testing.assert_allclose(draws.mean(axis=0), [0.0, 0.0], atol=0.2)
+        np.testing.assert_allclose(draws.std(axis=0), [3.0, 3.0], atol=0.3)
 
-    def test_build_prior_orders_by_component(self):
-        prior = ProductDistribution(
-            Uniform(low=0.0, high=1.0, name="u"),
-            Normal(loc=0.0, scale=1.0, name="n"),
-            Beta(2.0, 3.0, name="b"),
-        )
-        _, names = _build_pyabc_prior(prior, _ensure_pyabc())
-        assert names == ["u", "n", "b"]
-
-    def test_build_prior_rejects_non_product(self):
-        with pytest.raises(TypeError, match="ProductDistribution"):
-            _build_pyabc_prior(Normal(loc=0.0, scale=1.0, name="x"), _ensure_pyabc())
+    def test_supports_non_converter_family(self):
+        """Any sampleable marginal with a density works (no fixed family list):
+        StudentT, which has no scipy-converter mapping, is feasible."""
+        model = _model(ProductDistribution(C.StudentT(df=5.0, loc=0.0, scale=3.0, name="t")))
+        assert PyABCSMCMethod().check(model, jnp.array([2.0])).feasible

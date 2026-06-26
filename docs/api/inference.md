@@ -51,7 +51,7 @@ when choosing a number for a new method are documented under
 | `blackjax_elliptical_slice` | 75 | `SimpleModel` + Gaussian prior + JAX-traceable likelihood | BlackJAX |
 | `blackjax_rwmh` | 55 | `SupportsLogProb` (eager fallback for non-traceable targets) | BlackJAX |
 | `blackjax_sgld` | 45 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX |
-| `pyabc_smcabc` | 6 | `SimpleGenerativeModel` + TFP-backed prior | pyabc |
+| `pyabc_smcabc` | 6 | `SimpleGenerativeModel` with a flattenable prior | pyabc |
 | `blackjax_hmc` | 0 | `SupportsLogProb` + JAX-traceable | BlackJAX (opt-in only) |
 | `blackjax_sghmc` | 0 | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` | BlackJAX (opt-in only) |
 | `pymc_advi` | 0 | `PyMCModel` + pymc | PyMC (opt-in only) |
