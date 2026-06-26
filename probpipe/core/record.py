@@ -254,7 +254,7 @@ class Record(_NamedTree):
     names), so a ``tree_unflatten``'d or unpickled record re-derives them.
     """
 
-    __slots__ = ("_event_template", "_fields", "_name", "_source")
+    __slots__ = ("_event_template", "_name", "_source", "_tree")
 
     def __init__(
         self,
@@ -304,7 +304,7 @@ class Record(_NamedTree):
                     # re-inference (keeps record.at_path(p).event_template ==
                     # record.event_template.at_path(p)).
                     field_map[field_name] = type(value)(
-                        dict(value._fields), event_template=sub_template
+                        dict(value._tree), event_template=sub_template
                     )
                 else:
                     field_map[field_name] = value
@@ -312,7 +312,7 @@ class Record(_NamedTree):
                 # Re-raise a child's structural-validation error with the parent
                 # field as a path prefix, so the message names the full /-path.
                 raise ValueError(f"at {field_name!r}: {exc}") from None
-        object.__setattr__(self, "_fields", field_map)
+        object.__setattr__(self, "_tree", field_map)
         if name is None:
             name = "record(" + ",".join(field_map.keys()) + ")"
         object.__setattr__(self, "_name", name)
@@ -336,7 +336,7 @@ class Record(_NamedTree):
         """
 
         def _check(record: Record, template: EventTemplate, prefix: str) -> None:
-            rec_fields = set(record._fields)
+            rec_fields = set(record._tree)
             tpl_fields = set(template.fields)
             if rec_fields != tpl_fields:
                 where = prefix.rstrip(_PATH_SEP) or "the top level"
@@ -344,7 +344,7 @@ class Record(_NamedTree):
                     f"event_template fields {sorted(tpl_fields)} do not match record "
                     f"fields {sorted(rec_fields)} at {where}"
                 )
-            for name, value in record._fields.items():
+            for name, value in record._tree.items():
                 spec = template.children[name]
                 path = f"{prefix}{name}"
                 value_is_node = isinstance(value, Record)
@@ -433,7 +433,7 @@ class Record(_NamedTree):
         raise AttributeError("Record is immutable")
 
     def __reduce__(self):
-        return (_unpickle_record, (dict(self._fields), self._name, self._source))
+        return (_unpickle_record, (dict(self._tree), self._name, self._source))
 
     # -- Field access (structural protocol shared with ``EventTemplate``) ---
     #
@@ -442,9 +442,6 @@ class Record(_NamedTree):
     # ``__len__`` come from :class:`_NamedTree`. A leaf here is a stored
     # (non-``Record``) value; an internal node is a nested ``Record``.
     # ``record[name]`` / ``record["a/b"]`` return the value at that field / path.
-
-    def _field_map(self) -> dict[str, _FieldValue]:
-        return self._fields
 
     @classmethod
     def _node_type(cls) -> type:
@@ -503,7 +500,7 @@ class Record(_NamedTree):
         Leaves are returned verbatim; no coercion to numpy or JAX.
         """
         result: dict[str, Any] = {}
-        for name, val in self._fields.items():
+        for name, val in self._tree.items():
             if isinstance(val, Record):
                 result[name] = val.to_dict()
             else:
@@ -520,7 +517,7 @@ class Record(_NamedTree):
         if you need a metadata-preserving round-trip.
         """
         result: dict[str, Any] = {}
-        for name, val in self._fields.items():
+        for name, val in self._tree.items():
             if isinstance(val, Record):
                 result[name] = val.to_numpy()
             elif hasattr(val, "shape") or isinstance(val, (int, float, complex)):
@@ -558,7 +555,7 @@ class Record(_NamedTree):
         return NumericRecord(
             {
                 name: val.to_numeric() if isinstance(val, Record) else val
-                for name, val in self._fields.items()
+                for name, val in self._tree.items()
             }
         )
 
@@ -614,7 +611,7 @@ class Record(_NamedTree):
 
     def __repr__(self) -> str:
         parts = []
-        for name, val in self._fields.items():
+        for name, val in self._tree.items():
             if isinstance(val, Record):
                 parts.append(f"{name}={val!r}")
             elif hasattr(val, "shape") and val.shape != ():
@@ -630,13 +627,13 @@ class Record(_NamedTree):
     # ``result(args)``. Multi-field records raise — unwrapping one of many
     # fields would be ambiguous.
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-        if len(self._fields) != 1:
+        if len(self._tree) != 1:
             raise TypeError(
-                f"{type(self).__name__} with {len(self._fields)} fields is not "
+                f"{type(self).__name__} with {len(self._tree)} fields is not "
                 f"callable; access a specific field with record['field_name'] "
                 f"first."
             )
-        only = next(iter(self._fields.values()))
+        only = next(iter(self._tree.values()))
         if not callable(only):
             raise TypeError(
                 f"{type(self).__name__} single field is not callable (got {type(only).__name__})."
@@ -675,8 +672,8 @@ class Record(_NamedTree):
             return False
         if self.event_template != other.event_template:
             return False
-        for name, a in self._fields.items():
-            b = other._fields[name]
+        for name, a in self._tree.items():
+            b = other._tree[name]
             if isinstance(a, Record) and isinstance(b, Record):
                 if a != b:
                     return False
@@ -700,7 +697,7 @@ class Record(_NamedTree):
         # array wrapping hash alike (they compare equal under ``__eq__``);
         # opaque leaves fall back to ``type(val)``.
         parts: list[Any] = [type(self).__name__]
-        for name, val in self._fields.items():
+        for name, val in self._tree.items():
             if isinstance(val, Record):
                 parts.append((name, hash(val)))
                 continue
@@ -773,7 +770,7 @@ def _record_flatten(v: Record) -> tuple[list, tuple[str, ...]]:
     become pytree leaves themselves, and any leaf-wise transformation
     applied by JAX must accept them.
     """
-    children = list(v._fields.values())
+    children = list(v._tree.values())
     return children, v.fields
 
 

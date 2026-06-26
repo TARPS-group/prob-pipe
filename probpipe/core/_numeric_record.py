@@ -141,7 +141,7 @@ class NumericRecord(Record):
         super().__init__(validated, name=name, event_template=event_template)
         # Cache vector_size — leaves are immutable arrays after construction.
         total = 0
-        for val in self._fields.values():
+        for val in self._tree.values():
             if isinstance(val, NumericRecord):
                 total += val.vector_size
             else:
@@ -254,7 +254,7 @@ class NumericRecord(Record):
         """
         fields: dict[str, Any] = {}
         aux = self._aux or {}
-        for field_name, val in self._fields.items():
+        for field_name, val in self._tree.items():
             if isinstance(val, NumericRecord):
                 fields[field_name] = val.to_native()
                 continue
@@ -289,17 +289,17 @@ class NumericRecord(Record):
     # ---------------------------------------------------------------------
 
     def __reduce__(self):
-        return (_unpickle_numeric_record, (dict(self._fields), self._name, self._source))
+        return (_unpickle_numeric_record, (dict(self._tree), self._name, self._source))
 
     def _single_numeric_leaf(self):
         """Return the sole numeric leaf, or raise ``TypeError``."""
-        if len(self._fields) != 1:
+        if len(self._tree) != 1:
             raise TypeError(
-                f"NumericRecord with {len(self._fields)} fields is not "
+                f"NumericRecord with {len(self._tree)} fields is not "
                 f"scalar-like; access a specific field with "
                 f"record['field_name'] first."
             )
-        only = next(iter(self._fields.values()))
+        only = next(iter(self._tree.values()))
         if isinstance(only, NumericRecord):
             raise TypeError(
                 "NumericRecord with a nested NumericRecord field is not "
