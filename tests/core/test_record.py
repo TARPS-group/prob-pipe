@@ -75,8 +75,8 @@ class TestConstruction:
     def test_nested(self):
         inner = Record(x=1.0, y=2.0)
         outer = Record(params=inner, z=3.0)
-        assert isinstance(outer["params"], Record)
-        assert outer["params"]["x"] == 1.0
+        assert isinstance(outer.at_path("params"), Record)
+        assert outer["params/x"] == 1.0
 
     def test_from_dict(self):
         v = Record.from_dict({"a": 1.0, "b": 2.0})
@@ -360,7 +360,7 @@ class TestLeafList:
         rebuilt = v.event_template.from_leaf_list(v.to_leaf_list())
         assert rebuilt == v
         assert isinstance(rebuilt, NumericRecord)
-        assert isinstance(rebuilt["b"], NumericRecord)
+        assert isinstance(rebuilt.at_path("b"), NumericRecord)
 
     def test_mixed_nested_record_roundtrip(self):
         # A nested mixed record with both numeric and opaque leaves.
@@ -437,8 +437,8 @@ class TestPyTree:
         v = Record(params=Record(r=1.0, K=2.0), z=3.0)
         v2 = jax.tree.map(lambda x: x + 10, v)
         assert isinstance(v2, Record)
-        assert isinstance(v2["params"], Record)
-        assert v2["params"]["r"] == 11.0
+        assert isinstance(v2.at_path("params"), Record)
+        assert v2["params/r"] == 11.0
         assert v2["z"] == 13.0
 
     def test_jit(self):
@@ -551,13 +551,13 @@ class TestConversion:
         outer = Record(inner=Record(a=1.0), z=2.0)
         nr = outer.to_numeric()
         assert isinstance(nr, NumericRecord)
-        assert isinstance(nr["inner"], NumericRecord)
+        assert isinstance(nr.at_path("inner"), NumericRecord)
         assert nr["inner", "a"] == 1.0
         # Deterministic: a second conversion yields the same structure.
         nr2 = outer.to_numeric()
         assert nr.fields == nr2.fields
         for field in nr.fields:
-            assert type(nr[field]) is type(nr2[field])
+            assert type(nr.at_path(field)) is type(nr2.at_path(field))
 
 
 # ---------------------------------------------------------------------------
@@ -625,7 +625,7 @@ class TestLeafOps:
     def test_map_nested(self):
         v = Record(inner=Record(x=2.0), y=3.0)
         v2 = v.map(lambda x: x + 1)
-        assert v2["inner"]["x"] == 3.0
+        assert v2["inner/x"] == 3.0
         assert v2["y"] == 4.0
 
     def test_map_with_names(self):

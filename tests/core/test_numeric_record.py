@@ -25,7 +25,7 @@ class TestConstruction:
     def test_nested(self):
         inner = NumericRecord(x=1.0, y=2.0)
         outer = NumericRecord(params=inner, z=3.0)
-        assert isinstance(outer["params"], NumericRecord)
+        assert isinstance(outer.at_path("params"), NumericRecord)
 
     def test_non_numeric_raises(self):
         with pytest.raises(TypeError, match="numeric"):
@@ -199,9 +199,9 @@ class TestToVectorFromVector:
         outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
         nr = outer_tpl.from_vector(flat)
-        assert isinstance(nr["params"], NumericRecord)
-        np.testing.assert_allclose(nr["params"]["x"], 0.0)
-        np.testing.assert_allclose(nr["params"]["y"], [1.0, 2.0])
+        assert isinstance(nr.at_path("params"), NumericRecord)
+        np.testing.assert_allclose(nr["params/x"], 0.0)
+        np.testing.assert_allclose(nr["params/y"], [1.0, 2.0])
         np.testing.assert_allclose(nr["z"], [3.0, 4.0, 5.0])
 
     def test_vector_size(self):
@@ -226,7 +226,7 @@ class TestToNumeric:
         outer = Record(params=inner, z=3.0)
         nr = outer.to_numeric()
         assert isinstance(nr, NumericRecord)
-        assert isinstance(nr["params"], NumericRecord)
+        assert isinstance(nr.at_path("params"), NumericRecord)
 
 
 # ---------------------------------------------------------------------------

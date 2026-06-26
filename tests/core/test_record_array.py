@@ -339,8 +339,8 @@ class TestNumericRecordArrayNested:
         # Integer-indexing descends the plain-Record nested field (the Record
         # branch of _get_record), returning a nested record element.
         elem = nra[2]
-        np.testing.assert_allclose(elem["outer"]["a"], inner["a"][2])
-        np.testing.assert_allclose(elem["outer"]["b"], inner["b"][2])
+        np.testing.assert_allclose(elem["outer/a"], inner["a"][2])
+        np.testing.assert_allclose(elem["outer/b"], inner["b"][2])
 
     def test_flatten_nested_depth2_roundtrip(self):
         tpl = EventTemplate(outer=EventTemplate(deep=EventTemplate(g=(), h=()), a=()), m=())
@@ -379,14 +379,14 @@ class TestNumericRecordArrayNested:
         nra = tpl.from_vector(jnp.arange(15.0).reshape(5, 3))
         elem = nra[2]
         assert isinstance(elem, Record)
-        np.testing.assert_allclose(elem["outer"]["a"], nra["outer"]["a"][2])
+        np.testing.assert_allclose(elem["outer/a"], nra["outer"]["a"][2])
         np.testing.assert_allclose(elem.to_vector(), nra.to_vector()[2])
 
     def test_getitem_int_nested_multidim_batch(self):
         tpl = self._nested_tpl()
         nra = tpl.from_vector(jnp.arange(24.0).reshape(2, 4, 3))
         elem = nra[5]  # flat index into the (2, 4) batch
-        np.testing.assert_allclose(elem["outer"]["a"], np.asarray(nra["outer"]["a"]).reshape(-1)[5])
+        np.testing.assert_allclose(elem["outer/a"], np.asarray(nra["outer"]["a"]).reshape(-1)[5])
 
 
 # ---------------------------------------------------------------------------

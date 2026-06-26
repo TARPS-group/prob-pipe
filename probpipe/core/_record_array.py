@@ -228,7 +228,7 @@ class RecordArray(Record):
                 # nested field (the pre-canonical shape) is promoted; a non-numeric
                 # parent keeps the child's own type.
                 cls = NumericRecord if isinstance(self, NumericRecordArray) else type(val)
-                return cls({k: _elem(val[k]) for k in val.fields})
+                return cls({k: _elem(child) for k, child in val.children.items()})
             return val[nd_index]
 
         return self._record_cls({name: _elem(self._fields[name]) for name in self._fields})
@@ -411,7 +411,7 @@ class NumericRecordArray(RecordArray):
         """
         out: OrderedDict[str, Any] = OrderedDict()
         for name, raw in store.items():
-            spec = template[name]
+            spec = template.children[name]
             # Nested structure: skip numeric validation, let the nested
             # type enforce its own invariant.
             if isinstance(spec, EventTemplate):

@@ -328,7 +328,7 @@ class Record(_NamedTree):
                     f"fields {sorted(rec_fields)} at {where}"
                 )
             for name, value in record._fields.items():
-                spec = template[name]
+                spec = template.children[name]
                 path = f"{prefix}{name}"
                 value_is_node = isinstance(value, Record)
                 spec_is_node = isinstance(spec, EventTemplate)

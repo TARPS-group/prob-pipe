@@ -151,20 +151,27 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class _NamedTree:
-    """Shared structural-access protocol for ProbPipe's named trees.
+    """Shared collection-of-objects protocol for ProbPipe's named trees.
 
     Both :class:`EventTemplate` (a tree of specs) and
-    :class:`~probpipe.Record` (a tree of values) are insertion-ordered maps of
-    **fields** — top-level ``name -> value`` entries. A field's **value** is
-    either a terminal **leaf** or a nested tree of the same kind (an **internal
-    node**), addressed by a ``/``-delimited **path**. This mixin gives both the
-    same way to name, address, enumerate, and iterate that structure;
-    subclasses differ only in what their field values are (specs vs. data).
+    :class:`~probpipe.Record` (a tree of values) are a named, ordered collection
+    of **fields**. Each field is one object — a *leaf* — addressed by its full
+    ``/``-delimited **key** (its path from the root, e.g. ``"physics/mass"``);
+    fields may be grouped under interior nodes (nested collections of the same
+    kind), but the collection *is* its leaves. The two classes differ only in
+    what a field object is: a data value for a ``Record``, a leaf spec for an
+    ``EventTemplate``.
 
-    A subclass supplies two hooks: :meth:`_field_map` (its ordered
-    ``name -> value`` mapping) and :meth:`_node_type` (the type whose instances
-    count as internal nodes). A field value is an internal node iff it is an
-    instance of that type; everything else is a leaf.
+    The **mapping protocol** ranges over the fields, keyed by path:
+    ``keys`` / ``values`` / ``items`` / iteration / ``len`` / ``in`` / ``[]`` all
+    agree, exactly as for an ordinary ``dict`` (for a flat collection a key is
+    just a name). Reaching an interior node is done with :meth:`at_path`; the
+    one-level ``name -> child`` view is :attr:`children`.
+
+    A subclass supplies two hooks: :meth:`_field_map` (its ordered, one-level
+    ``name -> child`` mapping) and :meth:`_node_type` (the type whose instances
+    count as interior nodes). A child is an interior node iff it is an instance
+    of that type; everything else is a leaf.
     """
 
     __slots__ = ()
@@ -187,84 +194,75 @@ class _NamedTree:
         """
         return _NamedTree
 
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Top-level field names, in insertion order (does not descend)."""
-        return tuple(self._field_map().keys())
+    # -- Mapping protocol (leaf-keyed) --------------------------------------
+    #
+    # The mapping operators range over the collection's **fields** — the leaf
+    # objects, each addressed by its full ``/``-path (a *key*). ``len`` /
+    # iteration / ``keys`` / ``values`` / ``items`` / ``in`` / ``[]`` all agree,
+    # exactly as for an ordinary ``dict``. Reaching an interior node is the job
+    # of :meth:`at_path`; the one-level view is :attr:`children`. For a flat
+    # collection a key is just a name, so this matches a plain top-level mapping.
 
     def __len__(self) -> int:
-        return len(self._field_map())
+        return sum(1 for _ in self._walk_leaves())
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self._field_map())
+        return (path for path, _ in self._walk_leaves())
 
     def keys(self) -> Iterator[str]:
-        """Iterate top-level field names."""
-        return iter(self._field_map())
+        """Iterate the field keys (``/``-paths to the leaves), in canonical order."""
+        return (path for path, _ in self._walk_leaves())
 
     def values(self) -> Iterator[Any]:
-        """Iterate top-level field values (one per field)."""
-        return iter(self._field_map().values())
+        """Iterate the field objects (one per leaf), in canonical order."""
+        return (leaf for _, leaf in self._walk_leaves())
 
     def items(self) -> Iterator[tuple[str, Any]]:
-        """Iterate ``(name, value)`` pairs for the top-level fields."""
-        return iter(self._field_map().items())
+        """Iterate ``(key, field_object)`` pairs, in canonical order."""
+        return self._walk_leaves()
 
     def __getitem__(self, key: str | tuple[str, ...]) -> Any:
-        """Return the field value at *key* — a field name, ``/``-path, or tuple path.
+        """Return the field object at *key* — leaf access only.
 
-        A plain name selects a top-level field; a ``/``-delimited string (or a
-        tuple of names) descends through internal nodes (``tree["a/b"]`` ==
-        ``tree["a", "b"]``). Raises ``KeyError`` for a missing field or a path
-        that descends through a leaf, and ``TypeError`` for a non-str/tuple key.
+        *key* is a field key: a ``/``-delimited string or a tuple of names
+        (``obj["a/b"]`` == ``obj["a", "b"]``). It must address a leaf; a missing
+        key, or a partial path that stops at a subtree, raises ``KeyError`` (use
+        :meth:`at_path` to reach a subtree). A non-str/tuple key raises
+        ``TypeError``.
         """
-        if isinstance(key, str):
-            if _PATH_SEP in key:
-                return self[tuple(key.split(_PATH_SEP))]
-            field_map = self._field_map()
-            if key not in field_map:
-                raise KeyError(key)
-            return field_map[key]
-        if isinstance(key, tuple):
-            node: Any = self
-            node_type = self._node_type()
-            for i, name in enumerate(key):
-                if i > 0 and not isinstance(node, node_type):
-                    raise KeyError(
-                        f"path {_PATH_SEP.join(key)!r} descends through non-tree "
-                        f"leaf {type(node).__name__} at {_PATH_SEP.join(key[:i])!r}"
-                    )
-                node = node[name]
-            return node
-        raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
+        if not isinstance(key, (str, tuple)):
+            raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
+        node = self.at_path(key)
+        if isinstance(node, self._node_type()):
+            raise KeyError(f"{key!r} is a subtree, not a field; use at_path() to navigate to it")
+        return node
 
     def __contains__(self, key: object) -> bool:
-        """Membership by field name or ``/``-path (missing paths are ``False``)."""
-        if isinstance(key, str) and _PATH_SEP not in key:
-            return key in self._field_map()
-        try:
-            self[key]  # type: ignore[index]
-        except (KeyError, TypeError, IndexError):
+        """Whether *key* is a field key (a leaf). Partial paths are not members."""
+        if not isinstance(key, (str, tuple)):
             return False
-        return True
+        return self.is_leaf(key)
+
+    def is_field(self, *path: Any) -> bool:
+        """Whether *path* resolves to a field (a leaf) — alias of :meth:`is_leaf`."""
+        return self.is_leaf(*path)
+
+    # -- Transitional aliases (canonical API is ``children`` / ``keys()``) --
+    #
+    # ``fields`` (top-level names) and ``leaf_paths`` (the canonical key order)
+    # are retained as thin tuple aliases so the migration off them can proceed
+    # incrementally; new code should use ``tuple(obj.children)`` and
+    # ``tuple(obj.keys())`` respectively.
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        """Top-level field names, in insertion order (alias of ``tuple(self.children)``)."""
+        return tuple(self._field_map().keys())
 
     @property
     def leaf_paths(self) -> tuple[str, ...]:
-        """``/``-path to every leaf, in canonical leaf order.
-
-        Canonical leaf order is the depth-first, insertion-order traversal:
-        each internal node expands into one path per nested leaf; a flat tree's
-        ``leaf_paths`` equals its :attr:`fields`. This is the single ordering
-        every leaf-wise operation uses.
-        """
-        paths: list[str] = []
-        node_type = self._node_type()
-        for name, value in self._field_map().items():
-            if isinstance(value, node_type):
-                paths.extend(f"{name}{_PATH_SEP}{sub}" for sub in value.leaf_paths)
-            else:
-                paths.append(name)
-        return tuple(paths)
+        """The field keys as a tuple (alias of ``tuple(self.keys())``)."""
+        return tuple(self.keys())
 
     # -- Collection-of-objects surface --------------------------------------
     #
@@ -1289,8 +1287,7 @@ def _value_treedef(
 
     def _build(tpl: NumericEventTemplate) -> NumericRecord:
         fields: dict[str, Any] = {}
-        for name in tpl.fields:
-            spec = tpl[name]
+        for name, spec in tpl.children.items():
             if isinstance(spec, NumericEventTemplate):
                 fields[name] = _build(spec)
             else:

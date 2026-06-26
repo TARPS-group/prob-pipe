@@ -90,7 +90,7 @@ def _column_permutation(
         )
     sizes: dict[str, int] = {}
     for field_name in event_template.fields:
-        spec = event_template[field_name]
+        spec = event_template.children[field_name]
         if isinstance(spec, OpaqueSpec):
             raise ValueError(
                 f"ApproximateDistribution requires a numeric template; "
@@ -227,7 +227,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             # ``_spec_size`` message.
             sizes: list[int] = []
             for field_name in event_template.fields:
-                spec = event_template[field_name]
+                spec = event_template.children[field_name]
                 if isinstance(spec, OpaqueSpec):
                     raise ValueError(
                         f"ApproximateDistribution requires a numeric "
@@ -245,7 +245,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             offset = 0
             fields: dict[str, Array] = {}
             for field_name, size in zip(event_template.fields, sizes):
-                spec = event_template[field_name]
+                spec = event_template.children[field_name]
                 chunk = flat[..., offset : offset + size]
                 if isinstance(spec, EventTemplate):
                     # Nested: keep flat-per-top-level-field. Shape is
