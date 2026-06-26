@@ -87,6 +87,69 @@ def _check_no_path_sep(name: str) -> None:
         )
 
 
+class _PathSubtree(dict):
+    """Marker for a nested mapping produced by path-key unflattening.
+
+    A plain ``dict`` *value* is opaque leaf data and is never treated as
+    structure; a ``_PathSubtree`` is the structural nesting that ``/``-delimited
+    keys denote, so a constructor materialises it into a child collection while
+    leaving plain-``dict`` values alone.
+    """
+
+
+def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
+    """Explode a path-keyed mapping into a nested ordered mapping.
+
+    Each key is a field key that may be *path-shaped* — a ``/``-delimited string
+    denotes nesting (``{"a/b": x}`` becomes ``{"a": {"b": x}}``). Keys are read
+    in order; the result preserves the **first-appearance order** of each
+    distinct leading segment (recursively), which is the canonical field order.
+    Structural nesting is tagged with :class:`_PathSubtree` so a constructor can
+    tell it apart from a plain-``dict`` leaf value.
+
+    Raises
+    ------
+    TypeError
+        If a key is not a string.
+    ValueError
+        If a key is empty or has an empty segment (``""``, ``"a/"``, ``"/a"``,
+        ``"a//b"``), or if one leading segment is used **both** as a complete key
+        and as the prefix of a longer key (the field-versus-prefix collision).
+    """
+    groups: dict[str, Any] = {}
+    is_prefix: dict[str, bool] = {}
+    for key, value in source.items():
+        if not isinstance(key, str):
+            raise TypeError(f"field key must be a string, got {type(key).__name__}")
+        if not key:
+            raise ValueError("field key must be a non-empty string")
+        segments = key.split(_PATH_SEP)
+        if any(seg == "" for seg in segments):
+            raise ValueError(
+                f"malformed path key {key!r}: empty path segment "
+                f"(no leading/trailing/doubled {_PATH_SEP!r})"
+            )
+        head, rest = segments[0], _PATH_SEP.join(segments[1:])
+        if rest:
+            if head in groups and not is_prefix[head]:
+                raise ValueError(f"name {head!r} is used both as a field and as a path prefix")
+            is_prefix[head] = True
+            groups.setdefault(head, {})[rest] = value
+        else:
+            if head in groups:
+                raise ValueError(
+                    f"name {head!r} is used both as a field and as a path prefix"
+                    if is_prefix.get(head)
+                    else f"duplicate field key {head!r}"
+                )
+            groups[head] = value
+            is_prefix[head] = False
+    result: dict[str, Any] = {}
+    for head, val in groups.items():
+        result[head] = _PathSubtree(_unflatten_paths(val)) if is_prefix[head] else val
+    return result
+
+
 class _NamedTree:
     """Shared structural-access protocol for ProbPipe's named trees.
 
@@ -363,6 +426,49 @@ class _NamedTree:
             raise ValueError("_rebuild_from_leaves got more values than leaves")
         return result
 
+    @classmethod
+    def from_nested_dict(cls, data: Mapping[str, Any], *, event_template: Any | None = None) -> Any:
+        """Build a collection from a **nested** ``dict`` — the inverse of :meth:`to_nested_dict`.
+
+        Each nested ``dict`` level becomes a subtree and every other value a leaf.
+        This is the opt-in way to read a nested ``dict`` as structure; the bare
+        constructor instead treats a ``dict`` value as an opaque leaf.
+
+        When *event_template* is given (``Record`` only), the template — not the
+        Python type — decides structure at each position: a ``dict`` sitting where
+        the template has an interior node is recursed into, while a ``dict`` where
+        the template has a leaf spec is kept verbatim as opaque data. The template
+        is then carried down exactly as in normal construction.
+
+        Parameters
+        ----------
+        data
+            A nested mapping of field names to values (or sub-mappings).
+        event_template
+            Optional schema deciding leaf-vs-structure and carried onto the result.
+
+        Returns
+        -------
+        A new collection of this class.
+        """
+        flat: dict[str, Any] = {}
+
+        def walk(sub: Mapping[str, Any], prefix: str) -> None:
+            for name, val in sub.items():
+                path = f"{prefix}{_PATH_SEP}{name}" if prefix else name
+                structural = isinstance(val, Mapping)
+                if structural and event_template is not None:
+                    structural = not event_template.is_leaf(path)
+                if structural:
+                    walk(val, path)
+                else:
+                    flat[path] = val
+
+        walk(data, "")
+        if event_template is not None:
+            return cls(flat, event_template=event_template)
+        return cls(flat)
+
 
 @dataclass(frozen=True)
 class ArraySpec:
@@ -451,7 +557,14 @@ def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
 
 
 def _is_numeric_spec(spec: Any) -> bool:
-    """A numeric leaf: an :class:`ArraySpec` or a (nested) :class:`NumericEventTemplate`."""
+    """A numeric leaf: an :class:`ArraySpec` or a (nested) :class:`NumericEventTemplate`.
+
+    A ``_PathSubtree`` (structural nesting from path-key unflattening, not yet
+    materialised) counts as numeric iff all of its own values are — so
+    auto-promotion sees through nesting introduced by ``/``-keys.
+    """
+    if isinstance(spec, _PathSubtree):
+        return _all_numeric(spec.values())
     return isinstance(spec, (ArraySpec, NumericEventTemplate))
 
 
@@ -615,22 +728,25 @@ class EventTemplate(_NamedTree):
         /,
         **field_specs: _FieldSpecInput,
     ):
-        source: Mapping[str, _FieldSpecInput]
         if _field_specs is not None:
             if field_specs:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
-            source = _field_specs
+            nested = _unflatten_paths(_field_specs)
         else:
-            source = field_specs
-        if not source:
+            for name in field_specs:
+                _check_no_path_sep(name)
+            nested = dict(field_specs)
+        if not nested:
             raise ValueError(f"{type(self).__name__} requires at least one field")
         specs: dict[str, _FieldSpec] = {}
-        for name, spec in source.items():
-            _check_no_path_sep(name)
-            try:
-                specs[name] = _to_spec(spec)
-            except TypeError as exc:
-                raise TypeError(f"Field {name!r}: {exc}") from None
+        for name, spec in nested.items():
+            if isinstance(spec, _PathSubtree):
+                specs[name] = EventTemplate(spec)
+            else:
+                try:
+                    specs[name] = _to_spec(spec)
+                except TypeError as exc:
+                    raise TypeError(f"Field {name!r}: {exc}") from None
         self._post_validate(specs)
         object.__setattr__(self, "_specs", specs)
 
