@@ -45,7 +45,7 @@ class RecordArray(Record):
     - ``.source`` / ``.with_source`` / ``.name`` are inherited from
       Record (stored on the ``_name`` / ``_source`` slots declared on
       Record).
-    - ``replace`` / ``merge`` / ``without`` / ``map`` / ``map_with_names``
+    - ``replace`` / ``merge`` / ``without`` / ``map`` / ``map_with_keys``
       are overridden here because the base constructor signature
       doesn't carry ``batch_shape`` / ``template``; RecordArray versions
       preserve those.

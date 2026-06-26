@@ -44,7 +44,7 @@ conversion to a flat 1-D array representation via
 
 from __future__ import annotations
 
-from collections.abc import Hashable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from math import prod
 from types import MappingProxyType
@@ -407,22 +407,68 @@ class _NamedTree:
         node_type = self._node_type()
         sentinel = object()
 
-        def build(node: Any) -> Any:
+        def build(node: Any, prefix: str) -> Any:
             new_children: dict[str, Any] = {}
             for name, child in node._field_map().items():
+                path = f"{prefix}{name}"
                 if isinstance(child, node_type):
-                    new_children[name] = build(child)
+                    new_children[name] = build(child, f"{path}{_PATH_SEP}")
                 else:
                     nxt = next(it, sentinel)
                     if nxt is sentinel:
                         raise ValueError("_rebuild_from_leaves got fewer values than leaves")
+                    if isinstance(nxt, node_type):
+                        raise ValueError(
+                            f"cannot place a {node_type.__name__} at field {path!r}: "
+                            f"that would introduce nesting and change the structure"
+                        )
                     new_children[name] = nxt
             return type(node)(new_children)
 
-        result = build(self)
+        result = build(self, "")
         if next(it, sentinel) is not sentinel:
             raise ValueError("_rebuild_from_leaves got more values than leaves")
         return result
+
+    def map(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+        """Apply *f* to every field object, returning a same-shape collection.
+
+        Returns a new collection of the **same class and the same structure**
+        (identical names and nesting) whose fields are ``f``'s outputs. *f* is
+        called as ``f(field_object, *args, **kwargs)`` for each field in canonical
+        order (§2): the field object is a data value for a
+        :class:`~probpipe.Record`, a leaf spec for an ``EventTemplate``. Any extra
+        *args* / *kwargs* are forwarded to *f* unchanged and are **constant across
+        fields** (not varied per field).
+
+        The structure is preserved exactly. *f* must return a leaf object, not an
+        instance of the node type (a ``Record`` for ``Record.map``, an
+        ``EventTemplate`` for ``EventTemplate.map``); such a return would introduce
+        nesting and raises ``ValueError`` naming the field. A plain ``dict`` return
+        is an opaque leaf (no re-nesting). For a ``Record`` the result is
+        ``type(self)`` with each leaf's spec re-inferred from its new value (so a
+        ``NumericRecord`` requires numeric results); for an ``EventTemplate`` each
+        output is normalised to a spec and numeric auto-promotion re-applies.
+
+        Raises
+        ------
+        ValueError
+            If *f* returns a node-type instance at any field.
+        """
+        return self._rebuild_from_leaves(
+            f(leaf, *args, **kwargs) for _, leaf in self._walk_leaves()
+        )
+
+    def map_with_keys(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+        """Like :meth:`map`, but *f* also receives each field's key (path).
+
+        *f* is called as ``f(key, field_object, *args, **kwargs)``, where *key* is
+        the field's full ``/``-path (§2). Everything else — structure preservation,
+        the node-type-return guard, per-class result handling — matches :meth:`map`.
+        """
+        return self._rebuild_from_leaves(
+            f(key, leaf, *args, **kwargs) for key, leaf in self._walk_leaves()
+        )
 
     @classmethod
     def from_nested_dict(cls, data: Mapping[str, Any], *, event_template: Any | None = None) -> Any:

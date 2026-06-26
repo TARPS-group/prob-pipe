@@ -99,7 +99,7 @@ preserve it.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -384,7 +384,7 @@ class Record(_NamedTree):
 
         Mirrors ``Distribution.with_source`` — `_source` is set once and
         subsequent calls raise. Semantic transformations (``replace``,
-        ``merge``, ``without``, ``map``, ``map_with_names``) return a
+        ``merge``, ``without``, ``map``, ``map_with_keys``) return a
         *new* Record with an empty source; the caller attaches fresh
         provenance there if desired.
 
@@ -600,48 +600,10 @@ class Record(_NamedTree):
         return cls(d)
 
     # -- Leaf-wise operations -----------------------------------------------
-
-    def map(self, fn: Callable[[Any], Any]) -> Record:
-        """Apply *fn* to each leaf, returning a new Record.
-
-        Nested ``Record`` objects are traversed and rebuilt with the same
-        class; a container-valued opaque leaf is passed to *fn* whole (the
-        traversal visits leaves at the :attr:`event_template`'s granularity, in
-        canonical :attr:`~EventTemplate.leaf_paths` order). ``fn`` sees leaves
-        as stored (no coercion).
-
-        The result's :attr:`event_template` is **re-inferred** from the mapped
-        leaves, not carried over from this record: *fn* may change a leaf's
-        shape / dtype / type, so the original template need not describe the
-        output. A consequence is that non-inferable spec detail (an
-        ``ArraySpec``'s ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``,
-        a ``DistributionSpec`` / ``FunctionSpec``) is dropped — so even
-        ``r.map(lambda x: x)`` is not guaranteed to compare equal to ``r`` when
-        ``r``'s template carried such detail.
-        """
-        fields: dict[str, Any] = {}
-        for name, val in self._fields.items():
-            if isinstance(val, Record):
-                fields[name] = val.map(fn)
-            else:
-                fields[name] = fn(val)
-        return type(self)(fields)
-
-    def map_with_names(self, fn: Callable[[str, Any], Any]) -> Record:
-        """Apply *fn(name, value)* to each leaf, returning a new Record.
-
-        Same traversal and template re-inference as :meth:`map` (the result's
-        :attr:`event_template` is inferred from the mapped leaves, dropping
-        non-inferable spec detail). *name* is the leaf's local field name, not
-        its full ``/``-path.
-        """
-        fields: dict[str, Any] = {}
-        for name, val in self._fields.items():
-            if isinstance(val, Record):
-                fields[name] = val.map_with_names(fn)
-            else:
-                fields[name] = fn(name, val)
-        return type(self)(fields)
+    #
+    # ``map`` / ``map_with_keys`` are inherited from ``_NamedTree`` (they apply a
+    # function to each field value and rebuild the same structure, re-inferring
+    # the result's per-leaf specs). See ``_NamedTree.map``.
 
     # -- Leaf-list (de)serialization ----------------------------------------
 

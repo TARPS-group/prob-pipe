@@ -628,11 +628,27 @@ class TestLeafOps:
         assert v2["inner/x"] == 3.0
         assert v2["y"] == 4.0
 
-    def test_map_with_names(self):
+    def test_map_with_keys(self):
         v = Record(a=1.0, b=2.0)
-        names_seen = []
-        v.map_with_names(lambda n, x: names_seen.append(n) or x)
-        assert names_seen == ["a", "b"]
+        keys_seen = []
+        v.map_with_keys(lambda k, x: keys_seen.append(k) or x)
+        assert keys_seen == ["a", "b"]
+
+    def test_map_with_keys_passes_full_path(self):
+        v = Record(inner=Record(x=2.0), y=3.0)
+        keys_seen = []
+        v.map_with_keys(lambda k, x: keys_seen.append(k) or x)
+        assert keys_seen == ["inner/x", "y"]
+
+    def test_map_forwards_args(self):
+        v = Record(a=1.0, b=2.0)
+        v2 = v.map(lambda x, bump: x + bump, bump=10.0)
+        assert v2["a"] == 11.0 and v2["b"] == 12.0
+
+    def test_map_rejects_node_return(self):
+        v = Record(a=1.0)
+        with pytest.raises(ValueError, match="introduce nesting"):
+            v.map(lambda x: Record(z=x))
 
 
 # ---------------------------------------------------------------------------
