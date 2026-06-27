@@ -82,7 +82,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen --extra dev --extra nutpie --extra pymc
+        run: uv sync --frozen --extra dev --extra nutpie --extra pymc --extra pyabc
 
       - name: Pyright (advisory — does not gate merges)
         continue-on-error: true
@@ -232,7 +232,7 @@ jobs:
         # genuinely run those versions. (setup-uv's python-version input was
         # silently ignored on @v3, which let every leg fall back to the system
         # 3.12.) [pymc] is included so pymc 6 is exercised on all matrix legs.
-        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc
+        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc --extra pyabc
 
       - name: Run tests (changed files only)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
@@ -462,7 +462,7 @@ jobs:
   notebooks:
     # Execute the docs notebooks to keep the reference set honest against the
     # current codebase. Two parallel legs: `user_guide` (lean — dev+nutpie) and
-    # `tutorials` (the SBI backends — bayesflow+pymc). Splitting roughly halves
+    # `tutorials` (the SBI backends — bayesflow+pymc+pyabc). Splitting roughly halves
     # the wall-clock vs one serial pass (~8 min each, on par with the test
     # matrix) and spares the User Guide the ~200 MB pymc/bayesflow install.
     # User Guide notebooks do not import those backends in code. Separate from
@@ -478,7 +478,7 @@ jobs:
             extras: --extra dev --extra nutpie
           - group: tutorials
             dir: docs/tutorials
-            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc
+            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc --extra pyabc
     runs-on: ubuntu-latest
     env:
       KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
@@ -571,7 +571,7 @@ jobs:
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
         # Per-leg extras (matrix.extras): the User Guide leg needs only
-        # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc.
+        # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc+pyabc.
         run: uv sync --frozen --python 3.12 ${{ matrix.extras }}
 
       - name: Execute affected notebooks

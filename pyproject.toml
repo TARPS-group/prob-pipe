@@ -45,6 +45,9 @@ nutpie = ["nutpie>=0.12"]
 # BayesFlow 2.x requires Python <3.14 and numpy>=2.2.6, so this extra is
 # Python 3.12-3.13 only; bare core stays 3.14-capable.
 bayesflow = ["bayesflow>=2.0,<3"]
+# Likelihood-free SMC-ABC backend (pure-Python, JAX-agnostic). Registered only
+# when installed (see probpipe/inference/__init__.py).
+pyabc = ["pyabc>=0.12"]
 dev = [
   "probpipe-core[prefect,viz,docs]",
   "pytest>=7",

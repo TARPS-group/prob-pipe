@@ -211,6 +211,31 @@ class TestApproximateDistribution:
         assert "num_draws=50" in r
         assert "test" in r
 
+    def test_make_posterior_forwards_weights(self):
+        """make_posterior(weights=) flows through to the posterior so a
+        weighted backend (e.g. SMC-ABC) keeps its importance weights and
+        the weighted mean reflects them."""
+        # Two particles at 0 and 10; weighting the second 0.8 pulls the
+        # mean from the unweighted 5 to 0.2*0 + 0.8*10 = 8.
+        chain = jnp.array([[0.0], [10.0]])
+        prior = Normal(loc=0.0, scale=1.0, name="theta")
+        post = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            weights=jnp.array([0.2, 0.8]),
+        )
+        assert post.weights is not None
+        np.testing.assert_allclose(np.asarray(mean(post)["posterior"]).ravel(), [8.0], atol=1e-6)
+
+    def test_make_posterior_weights_default_unweighted(self):
+        """Without weights=, make_posterior yields an equal-weight posterior
+        (the weighted-mean change is opt-in, not a default behaviour shift)."""
+        chain = jnp.array([[0.0], [10.0]])
+        prior = Normal(loc=0.0, scale=1.0, name="theta")
+        post = make_posterior([chain], parents=(prior,), algorithm="test")
+        np.testing.assert_allclose(np.asarray(mean(post)["posterior"]).ravel(), [5.0], atol=1e-6)
+
 
 class TestApproximateDistributionValuesTemplate:
     """draws() returns named Record when an event_template is provided."""

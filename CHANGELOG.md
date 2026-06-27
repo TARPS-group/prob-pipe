@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **pyabc SMC-ABC inference backend (#238).** A `pyabc_smcabc` method
+  (priority 6) for `SimpleGenerativeModel`: it derives a joint pyabc prior from
+  the prior's flattened parameter vector (so correlated and multivariate priors
+  work, not just products of independent marginals), runs SMC-ABC against the
+  observed data, and returns importance-weighted particles keyed by parameter
+  name. Auto-dispatches via `condition_on` for a pure generative model. Ships as
+  the `[pyabc]` extra (bundled by the `probpipe` metapackage); `make_posterior`
+  gains a `weights=` argument so weighted particles flow through to the
+  `ApproximateDistribution` without resampling.
+
 - **`probpipe.validation` posterior-vs-reference comparison metrics.** A
   dependency-light scoring layer for validating inference methods against a
   trusted reference: `Reference` (a container for analytic / long-NUTS /
@@ -123,8 +133,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
   every inference backend is an optional extra), and a new code-less `probpipe`
   metapackage (`packaging/probpipe/`) pins `probpipe-core` and bundles the
-  backends the docs exercise — PyMC, nutpie, and BayesFlow (marker-guarded
-  `python_version < "3.14"`) — so `pip install probpipe` runs every example and
+  backends the docs exercise — PyMC, nutpie, pyabc, and BayesFlow (the last
+  marker-guarded `python_version < "3.14"`) — so `pip install probpipe` runs every example and
   tutorial (on Python 3.12–3.13; 3.14 omits BayesFlow until upstream lifts its
   cap). The `probpipe` **import** name is unchanged in both. Extras not
   already bundled (`prefect`, `viz`, `stan`) are re-exported on the metapackage,
@@ -132,8 +142,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pip install "probpipe-core[<extra>]"`. The package `authors` metadata is set
   to the ProbPipe Development Team, with the full contributor list in `AUTHORS`.
   Existing from-source installs should reinstall to pick up the renamed
-  distribution. (The `pyabc` SMC-ABC backend joins `probpipe` once it lands; CI
-  to build and publish both distributions follows in a separate PR.)
+  distribution. (CI to build and publish both distributions follows in a
+  separate PR.)
 
 - **Nested `ProductDistribution` support in the record layer (#262).**
   `RecordArray` accepts slash-delimited paths in string indexing

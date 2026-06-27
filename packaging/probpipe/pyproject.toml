@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "probpipe"
 version = "0.1.0"   # kept in lockstep with probpipe-core (the == pin below)
-description = "Probabilistic data-processing pipelines, with the PyMC, nutpie, and BayesFlow inference backends included"
+description = "Probabilistic data-processing pipelines, with the PyMC, nutpie, pyabc, and BayesFlow inference backends included"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
@@ -22,13 +22,11 @@ dependencies = [
   # their version constraints stay single-sourced in the root pyproject (no
   # drift). The set is the docs' import closure plus deliberate picks: PyMC and
   # BayesFlow are required to *run* the tutorials (unguarded imports), nutpie is
-  # the fast NUTS backend. `pyabc` joins once its SMC-ABC backend lands — it is
-  # only used in a guarded, self-skipping notebook section, so the docs run
-  # without it today.
+  # the fast NUTS backend, and pyabc powers the SMC-ABC tutorial section.
   #
   # Exact `==` pin: one repo builds two coordinated dists (the jax/jaxlib model);
   # a CI version-sync guard (follow-up) keeps it equal to probpipe-core's version.
-  "probpipe-core[pymc,nutpie]==0.1.0",
+  "probpipe-core[pymc,nutpie,pyabc]==0.1.0",
   # BayesFlow caps Python <3.14 while core spans 3.12-3.14, so it is marker-guarded:
   # `pip install probpipe` still resolves on 3.14, just without neural SBI there.
   "probpipe-core[bayesflow]==0.1.0; python_version < '3.14'",

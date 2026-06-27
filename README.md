@@ -152,10 +152,10 @@ ProbPipe ships as two distributions that share the same `probpipe` import name:
 
 | Install | What you get |
 |---|---|
-| `pip install probpipe` | **Recommended.** The minimal core plus the inference backends the docs use — PyMC, nutpie, and BayesFlow — so every example and tutorial runs out of the box (Python 3.12–3.13; see the 3.14 note below). |
+| `pip install probpipe` | **Recommended.** The minimal core plus the inference backends the docs use — PyMC, nutpie, pyabc, and BayesFlow — so every example and tutorial runs out of the box (Python 3.12–3.13; see the 3.14 note below). |
 | `pip install probpipe-core` | **Minimal.** The JAX base only (JAX, BlackJAX, TFP, ArviZ); add backends as extras, e.g. `pip install "probpipe-core[pymc]"`. |
 
-`probpipe` already bundles PyMC, nutpie, and BayesFlow. Any remaining optional extra can be added on top with either name — `pip install "probpipe[prefect]"` (also `[viz]`, `[stan]`) — and `probpipe-core` users add any backend the same way, e.g. `pip install "probpipe-core[pymc]"`. On **Python 3.14** `probpipe` omits BayesFlow (its neural-SBI backend caps `<3.14`), so the neural-SBI sections of the *Flexible inference* tutorial are unavailable there until upstream lifts the cap; everything else runs.
+`probpipe` already bundles PyMC, nutpie, pyabc, and BayesFlow. Any remaining optional extra can be added on top with either name — `pip install "probpipe[prefect]"` (also `[viz]`, `[stan]`) — and `probpipe-core` users add any backend the same way, e.g. `pip install "probpipe-core[pymc]"`. On **Python 3.14** `probpipe` omits BayesFlow (its neural-SBI backend caps `<3.14`), so the neural-SBI sections of the *Flexible inference* tutorial are unavailable there until upstream lifts the cap; everything else runs.
 
 > Publishing to PyPI is pending; for now install from source as shown above (the repository root builds `probpipe-core` — add the extras you need).
 
