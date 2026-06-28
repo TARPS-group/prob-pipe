@@ -1,45 +1,57 @@
 """EventTemplate — ProbPipe's structural schema.
 
 An :class:`EventTemplate` describes the **structure** of a value, independent of
-the data itself. The structure is a **named tree** — an insertion-ordered map of
-named fields — and it is exactly the shape of a :class:`~probpipe.Record`: an
-``EventTemplate`` is the *schema* of a ``Record`` (or of one event / sample of a
-:class:`~probpipe.core._distribution_base.Distribution`).
+the data itself. In particular, an event template describes the structure of a 
+Python object that takes the form of a named tree: a nested object with unique
+string key paths to each leaf. We refer to the leaves of the tree as *fields*.
+Thus, an event template can be thought of as the schema for a set of ordered
+named fields, where the fields are allowed to be stored in an object with nested 
+structure.
 
-It is **not** a description of an arbitrary JAX PyTree. The only internal node is
-a nested ``EventTemplate`` (named); positional containers (``tuple`` / ``list``)
-and bare ``dict``\\ s are never structure. A Python container you do not model as
-a nested template is a single opaque leaf (an :class:`OpaqueSpec`).
-
-Tree structure
---------------
-- **internal node** — *only* a nested ``EventTemplate`` (named, insertion-ordered).
-- **leaf** — one of a fixed set of "spec" objects:
-
-| Leaf spec | What the leaf describes |
-|---|---|
-| :class:`ArraySpec` | a numeric array (event ``shape``, optional dtype / support) |
-| :class:`DistributionSpec` | a ``Distribution`` (carries the draw's sub-template) |
-| :class:`FunctionSpec` | a callable (carries input / output sub-templates) |
-| :class:`OpaqueSpec` | any other object — no structure assumed |
+An event template is designed to be quite general, able to describe the
+structure of a single array or a complicated nested object storing arbitrary 
+Python objects. The restriction is that there must be a sequence of strings
+forming a unique path to each field. This follows ProbPipe's convention of 
+working with *names* in most cases to avoid ambiguity. The event template for
+a single object with no nested structure corresponds to a trivial tree with
+only a root node. This node is still required to have a name (though ProbPipe
+constructors will often auto-generate the name in cases where it would be 
+inconvenient for users to do so; see, for example, TFPDistribution TODO).
 
 Field names are required and unique within a node; ``/`` is reserved as the path
-separator, so every leaf has a unique ``/``-delimited string path. The
-**canonical leaf order** is depth-first in insertion order;
-:meth:`EventTemplate.keys` enumerates the leaf paths in that order.
-``EventTemplate`` itself is **not** a registered JAX pytree node (its leaf specs
-are atomic); it is the *schema* of the value pytrees it describes, not a pytree.
+separator, so every leaf has a unique ``/``-delimited string path 
+(e.g., "a/b/c"). The canonical leaf order is depth-first in insertion order.
 
-Numeric vs. mixed
+In order to define the structure of trees consistently, :class:`EventTemplate`
+clearly defines which objects are considered leaves and which are considered
+internal nodes in the tree. The rule is intentionally restrictive for clarity:
+- **non-leaf node**: an ``EventTemplate``.
+- **leaf node (field)**: one of a fixed set of "field spec" objects.
+
+A field spec is an object that says: "the object at this path is a leaf of the
+tree, and it has this structure.". The specs for certain field types may
+contain lots of useful structure (e.g., shape and dtype for arrays), while 
+others may expose no structure at all (e.g., an opaque Python object).
+The full set of spec objects are as follows:
+- :class:`ArraySpec`: describes a numeric array (shape, optional dtype/support)
+- :class:`DistributionSpec`: describes a ``Distribution``. Carries a sub-template
+  describing the structure of one sample from the distribution.
+- :class:`FunctionSpec`: describes a callable. Carries two sub-templates,
+  describing the structure of the inputs and outputs of the function.
+- :class:`OpaqueSpec`: fallback for any other object (no structure exposed).
+
+Numeric vs. Mixed
 -----------------
 
-:class:`NumericEventTemplate` is the specialization in which all leaves are
-``ArraySpec``\\ s. It describes a value that is a PyTree of arrays. This
-sub-class exposes :attr:`~NumericEventTemplate.vector_size` and supports
-conversion to a flat 1-D array representation via
-:meth:`EventTemplate.to_vector`, and back to the structured representation via
-:meth:`EventTemplate.from_vector`. ``EventTemplate(...)`` auto-promotes to
-``NumericEventTemplate`` when every leaf is numeric.
+:class:`NumericEventTemplate` is the specialization in which all fields are
+``ArraySpec``\\ s. In JAX terminology, it describes a value that is a PyTree 
+of arrays. This sub-class exposes :attr:`~NumericEventTemplate.vector_size`,
+which is the number of scalar array elements making up the whole value.
+:meth:`NumericEventTemplate.to_vector` converts a concrete value of this 
+form to a canonical 1-D array representation, with shape `(vector_size,)`.
+:meth:`NumericEventTemplate.from_vector` converts back to the structured
+representation. ``EventTemplate(...)`` auto-promotes to
+``NumericEventTemplate`` when every field is numeric.
 """
 
 from __future__ import annotations
@@ -151,34 +163,34 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
 
 
 class _NamedTree:
-    """Shared collection-of-objects protocol for ProbPipe's named trees.
+    """Mixin for named, ordered collection of fields with nested structure.
 
-    Both :class:`EventTemplate` (a tree of specs) and
-    :class:`~probpipe.Record` (a tree of values) are a named, ordered collection
-    of **fields**. Each field is one object — a *leaf* — addressed by its full
-    ``/``-delimited **key** (its path from the root, e.g. ``"physics/mass"``);
-    fields may be grouped under interior nodes (nested collections of the same
-    kind), but the collection *is* its leaves. The two classes differ only in
-    what a field object is: a data value for a ``Record``, a leaf spec for an
-    ``EventTemplate``.
+    A mixin for functionality that enables an object to be treated as a named,
+    ordered collection of fields, where the fields may be stored in a nested,
+    tree-like structure. In other words, the fields are the leaves of the tree.
+    This allows the object to be treated as a standard Python dictionary, with 
+    the keys corresponding to the unique string paths identifying each field.
+    The key paths reserve ``/`` as the field path separator. Therefore, 
+    `x["a/b/c"]` selects a field, ``len(x)`` gives the number of fields, 
+    `"a/b/c" in x` checks a field exists, 
+    ``x.keys()``/``x.values()``/``x.items()`` give the set of key 
+    paths/field values/path-value tuples. Iterating over the object iterates
+    over the keys in insertion order, following the convention of a Python
+    dictionary. 
 
-    The **mapping protocol** ranges over the fields, keyed by path:
-    ``keys`` / ``values`` / ``items`` / iteration / ``len`` / ``in`` / ``[]`` all
-    agree, exactly as for an ordinary ``dict`` (for a flat collection a key is
-    just a name). Reaching an interior node is done with :meth:`at_path`; the
-    one-level ``name -> child`` view is :attr:`children`.
-
-    A subclass holds its ordered one-level ``name -> child`` mapping in the
-    ``_tree`` attribute (the mixin reads it directly) and supplies one hook,
-    :meth:`_node_type` (the type whose instances count as interior nodes). A
-    child is an interior node iff it is an instance of that type; everything else
-    is a leaf.
+    While this API allows the object to be treated as a flat dictionary, the
+    object is in general allowed to have nested structure. :class:`_NamedTree`
+    differentiates between leaves and non-leaf nodes by defining the latter
+    as an object of the class defined by :meth:`_node_type`; a
+    child is an interior node iff it is an instance of that type. All other
+     objects are treated as leaves. All nodes (including leaves) can be 
+     accessed via :meth:`at_path`. In particular, 
+    `x.at_path("a/b/c")` will return either a field, a sub-tree, or raise
+    an error if the path does not exist. The attribute :attr:`children`
+    gives local access to the immediate children of the node.
     """
 
     __slots__ = ()
-
-    # The storage tree: a subclass holds its ordered one-level ``name -> child``
-    # mapping in ``self._tree`` (the mixin reads it directly).
 
     @classmethod
     def _node_type(cls) -> type:
@@ -195,13 +207,6 @@ class _NamedTree:
         return _NamedTree
 
     # -- Mapping protocol (leaf-keyed) --------------------------------------
-    #
-    # The mapping operators range over the collection's **fields** — the leaf
-    # objects, each addressed by its full ``/``-path (a *key*). ``len`` /
-    # iteration / ``keys`` / ``values`` / ``items`` / ``in`` / ``[]`` all agree,
-    # exactly as for an ordinary ``dict``. Reaching an interior node is the job
-    # of :meth:`at_path`; the one-level view is :attr:`children`. For a flat
-    # collection a key is just a name, so this matches a plain top-level mapping.
 
     def __len__(self) -> int:
         return sum(1 for _ in self._walk_leaves())
