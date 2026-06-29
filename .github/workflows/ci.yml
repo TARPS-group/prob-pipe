@@ -429,7 +429,7 @@ jobs:
         # under its own ~/.bridgestan/<version>/ subdir, so a stale restore can't
         # mismatch.
         if: steps.stan_check.outputs.skip != 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.bridgestan
           key: bridgestan-${{ runner.os }}-${{ hashFiles('uv.lock') }}
