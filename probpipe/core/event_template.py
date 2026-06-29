@@ -15,8 +15,8 @@ forming a unique path to each field. This follows ProbPipe's convention of
 working with *names* in most cases to avoid ambiguity. The event template for
 a single object with no nested structure corresponds to a trivial tree with
 only a root node. This node is still required to have a name (though ProbPipe
-constructors will often auto-generate the name in cases where it would be
-inconvenient for users to do so; see, for example, TFPDistribution TODO).
+constructors will often auto-generate one when it would be inconvenient for the
+user to supply it).
 
 Field names are required and unique within a node; ``/`` is reserved as the path
 separator, so every leaf has a unique ``/``-delimited string path
@@ -200,16 +200,15 @@ class _NamedTree:
         """The type whose instances are internal nodes of this tree (hook).
 
         A field value is an internal node iff it is an instance of this type;
-        every other value is a leaf. Each named-tree family **narrows** this to
-        itself (``Record`` → ``Record``, ``EventTemplate`` → ``EventTemplate``)
-        so a tree never descends into a value of the *other* family. This keeps
-        :meth:`keys` consistent with each type's own contract — in
-        particular, a ``Record``'s ``keys()`` always equals its
-        ``event_template``'s ``keys()``.
+        every other value is a leaf. Each concrete family **narrows** this to
+        itself, so a tree descends only into nodes of its own family and never
+        into a value of another. Subclasses must override this (and supply the
+        ``_tree`` storage attribute); the base returns ``_NamedTree`` only as a
+        safe default.
         """
         return _NamedTree
 
-    # -- Mapping protocol (leaf-keyed) --------------------------------------
+    # -- Mapping API (leaf-keyed) -------------------------------------------
 
     def __len__(self) -> int:
         return sum(1 for _ in self._walk_leaves())
@@ -218,8 +217,12 @@ class _NamedTree:
         return (path for path, _ in self._walk_leaves())
 
     def keys(self) -> Iterator[str]:
-        """Iterate the field keys (``/``-paths to the leaves), in canonical order."""
-        return (path for path in self)  # TODO: check
+        """Iterate the field keys (``/``-paths to the leaves), in canonical order.
+
+        Mirrors :meth:`__iter__` (the field keys *are* what the collection
+        iterates), exposed under the mapping name.
+        """
+        return iter(self)
 
     def values(self) -> Iterator[Any]:
         """Iterate the field objects (one per leaf), in canonical order."""
@@ -251,10 +254,6 @@ class _NamedTree:
             return False
         return self.is_leaf(key)
 
-    def is_field(self, *path: Any) -> bool:
-        """Whether *path* resolves to a field (a leaf) — alias of :meth:`is_leaf`."""
-        return self.is_leaf(*path)
-
     @property
     def fields(self) -> tuple[str, ...]:
         """Top-level field names, in insertion order — ``tuple(self.children)``.
@@ -266,27 +265,7 @@ class _NamedTree:
         """
         return tuple(self._tree.keys())
 
-    # -- Tree functionality --------------------------------------
-
-    @staticmethod
-    def _split_path(path: tuple[Any, ...]) -> tuple[str, ...]:
-        """Normalise a path argument to a tuple of single-name segments.
-
-        Accepts the forms used across the surface: a ``/``-delimited string
-        (``"a/b"``), separate string segments (``"a", "b"``), or a single tuple
-        of names (``("a", "b")``). Every segment must be a string; a non-string
-        segment raises ``TypeError``.
-        """
-        if len(path) == 1 and isinstance(path[0], tuple):
-            parts: tuple[Any, ...] = path[0]
-        else:
-            parts = path
-        segments: list[str] = []
-        for part in parts:
-            if not isinstance(part, str):
-                raise TypeError(f"path segments must be strings, got {type(part).__name__}")
-            segments.extend(part.split(_PATH_SEP) if _PATH_SEP in part else [part])
-        return tuple(segments)
+    # -- Tree structure -----------------------------------------------------
 
     def at_path(self, *path: Any) -> Any:
         """Return the object at *path* — a field object, or an interior subtree.
@@ -352,19 +331,24 @@ class _NamedTree:
             return False
         return not isinstance(node, self._node_type())
 
+    def is_field(self, *path: Any) -> bool:
+        """Whether *path* resolves to a field (a leaf) — alias of :meth:`is_leaf`."""
+        return self.is_leaf(*path)
+
     def to_nested_dict(self) -> dict[str, Any]:
         """Return a nested ``dict`` mirroring the storage tree.
 
         Each interior node becomes a nested ``dict``; each leaf maps to its
-        field object (a value for a :class:`~probpipe.Record`, a spec for an
-        ``EventTemplate``). This is the tree-shaped export, distinct from the
-        flat ``dict(obj)`` view that is keyed by full path.
+        field object. This is the tree-shaped export, distinct from the flat
+        ``dict(obj)`` view that is keyed by full path.
         """
         node_type = self._node_type()
         result: dict[str, Any] = {}
         for name, child in self._tree.items():
             result[name] = child.to_nested_dict() if isinstance(child, node_type) else child
         return result
+
+    # -- Leaf traversal primitives ------------------------------------------
 
     def _walk_leaves(self) -> Iterator[tuple[str, Any]]:
         """Yield ``(path, leaf_object)`` for every field, in canonical order.
@@ -388,8 +372,8 @@ class _NamedTree:
         *values* supplies the field objects in canonical order (one per leaf,
         the order of :meth:`_walk_leaves`); the structure (names and nesting) is
         taken from ``self``. Each interior node is rebuilt by constructing a new
-        same-class collection, so a :class:`~probpipe.Record` re-infers its leaf
-        specs and an ``EventTemplate`` re-normalises and re-promotes.
+        same-class collection, so whatever normalisation that constructor applies
+        to its leaves is re-applied here.
 
         Raises
         ------
@@ -423,6 +407,8 @@ class _NamedTree:
             raise ValueError("_rebuild_from_leaves got more values than leaves")
         return result
 
+    # -- Structural transforms ----------------------------------------------
+
     def map(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
         """Apply *f* to every field object, returning a same-shape collection.
 
@@ -433,16 +419,11 @@ class _NamedTree:
         **constant across fields** (not varied per field).
 
         The structure is preserved exactly. *f* must return a leaf object, not an
-        instance of the node type (the class returned by `_node_type()`); such a
-        return would introduce nesting and raises ``ValueError`` naming the field.
-        A plain ``dict`` return is an opaque leaf (no re-nesting).
-
-        TODO: move this info to the notes sections of Record and EventTemplate, respectively.
-              Only a generic description from _NamedTree's perspective should be defined here.
-        For a ``Record``
-        the result is ``type(self)`` with each leaf's spec re-inferred from its new value (so a
-        ``NumericRecord`` requires numeric results); for an ``EventTemplate`` each
-        output is normalised to a spec and numeric auto-promotion re-applies.
+        instance of the node type (the class returned by :meth:`_node_type`); such
+        a return would introduce nesting and raises ``ValueError`` naming the
+        field. Each output is placed back through the subclass's own construction,
+        so whatever normalisation that constructor applies to a leaf applies here
+        too (see the concrete class's docstring).
 
         Raises
         ------
@@ -464,13 +445,8 @@ class _NamedTree:
             f(key, leaf, *args, **kwargs) for key, leaf in self._walk_leaves()
         )
 
-    # -- Immutable edits -----------------------------------------
-
-    # TODO: this and other utility methods like _split_path should be grouped together
-    def _norm_path(self, path: Any) -> str:
-        """Normalise a path argument to its canonical ``/``-string form."""
-        return _PATH_SEP.join(self._split_path((path,)))
-
+    # -- Structural edits ---------------------------------------------------
+    #
     # The leaf-map computations below are pure structure: they read the storage
     # tree and return a new flat ``path -> object`` mapping, with no knowledge of
     # leaf specs or an authoritative template. ``without`` / ``merge`` / ``replace``
@@ -511,7 +487,7 @@ class _NamedTree:
         return {**left, **right}
 
     def merge(self, other: Any) -> Any:
-        """Return the union of two collections (deep, path-aware).
+        """Return the union of two collections, merged by leaf key (deep).
 
         The merge is by field key: ``{"a/x": ...}`` and ``{"a/y": ...}`` combine
         under a shared ``a``. A field key present in both, or a field-versus-prefix
@@ -569,6 +545,8 @@ class _NamedTree:
             return self
         return type(self)(self._leaves_replaced(resolved))
 
+    # -- Construction from a nested mapping ---------------------------------
+
     @staticmethod
     def _explode_nested(
         data: Mapping[str, Any],
@@ -615,6 +593,32 @@ class _NamedTree:
         A new collection of this class.
         """
         return cls(cls._explode_nested(data))
+
+    # -- Internal utilities -------------------------------------------------
+
+    @staticmethod
+    def _split_path(path: tuple[Any, ...]) -> tuple[str, ...]:
+        """Normalise a path argument to a tuple of single-name segments.
+
+        Accepts the forms used across the surface: a ``/``-delimited string
+        (``"a/b"``), separate string segments (``"a", "b"``), or a single tuple
+        of names (``("a", "b")``). Every segment must be a string; a non-string
+        segment raises ``TypeError``.
+        """
+        if len(path) == 1 and isinstance(path[0], tuple):
+            parts: tuple[Any, ...] = path[0]
+        else:
+            parts = path
+        segments: list[str] = []
+        for part in parts:
+            if not isinstance(part, str):
+                raise TypeError(f"path segments must be strings, got {type(part).__name__}")
+            segments.extend(part.split(_PATH_SEP) if _PATH_SEP in part else [part])
+        return tuple(segments)
+
+    def _norm_path(self, path: Any) -> str:
+        """Normalise a path argument to its canonical ``/``-string form."""
+        return _PATH_SEP.join(self._split_path((path,)))
 
 
 @dataclass(frozen=True)
@@ -916,13 +920,12 @@ class EventTemplate(_NamedTree):
     def __reduce__(self):
         return (_unpickle_event_template, (dict(self._tree),))
 
-    # -- Field access (structural protocol shared with ``Record``) ----------
+    # -- Tree structure -----------------------------------------------------
     #
-    # ``fields`` / ``keys()`` / ``__getitem__`` (name / ``/``-path / tuple) /
-    # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
-    # ``__len__`` come from :class:`_NamedTree`. A leaf here is a leaf spec
-    # (:class:`ArraySpec` / :class:`OpaqueSpec` / :class:`DistributionSpec` /
-    # :class:`FunctionSpec`); an internal node is a nested ``EventTemplate``.
+    # The mapping / navigation surface is inherited from :class:`_NamedTree`. A
+    # leaf here is a leaf spec (:class:`ArraySpec` / :class:`OpaqueSpec` /
+    # :class:`DistributionSpec` / :class:`FunctionSpec`); an internal node is a
+    # nested ``EventTemplate``.
 
     @classmethod
     def _node_type(cls) -> type:

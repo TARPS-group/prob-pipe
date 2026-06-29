@@ -443,13 +443,11 @@ class Record(_NamedTree):
     def __reduce__(self):
         return (_unpickle_record, (dict(self._tree), self._name, self._source))
 
-    # -- Field access (structural protocol shared with ``EventTemplate``) ---
+    # -- Tree structure -----------------------------------------------------
     #
-    # ``fields`` / ``keys()`` / ``__getitem__`` (name / ``/``-path / tuple) /
-    # ``__contains__`` / ``__iter__`` / ``keys`` / ``values`` / ``items`` /
-    # ``__len__`` come from :class:`_NamedTree`. A leaf here is a stored
-    # (non-``Record``) value; an internal node is a nested ``Record``.
-    # ``record[name]`` / ``record["a/b"]`` return the value at that field / path.
+    # The mapping / navigation surface is inherited from :class:`_NamedTree`. A
+    # leaf here is a stored (non-``Record``) value; an internal node is a nested
+    # ``Record``.
 
     @classmethod
     def _node_type(cls) -> type:
@@ -461,10 +459,10 @@ class Record(_NamedTree):
         """Select fields into a plain ``dict``, for splatting into function calls.
 
         Positional arguments use the field path as the key (identity mapping);
-        keyword arguments remap (``select(x="r")`` → ``{"x": self["r"]}``). Paths
-        are path-aware: a key reaches a leaf value and a partial path reaches a
-        subtree (via :meth:`at_path`). Returns a value-only ``dict``; it is not a
-        ``Record`` and carries no schema.
+        keyword arguments remap (``select(x="r")`` → ``{"x": self["r"]}``). Each
+        argument is resolved with :meth:`at_path`, so a key reaches a leaf value
+        and a partial path reaches a subtree. Returns a value-only ``dict``; it is
+        not a ``Record`` and carries no schema.
 
         Usage::
 
