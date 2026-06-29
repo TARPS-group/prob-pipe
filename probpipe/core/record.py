@@ -495,10 +495,54 @@ class Record(_NamedTree):
 
     # -- Immutable updates --------------------------------------------------
     #
-    # ``replace`` / ``merge`` / ``without`` are inherited from ``_NamedTree``:
-    # path-aware structural edits that thread ``event_template`` (untouched fields
-    # keep their authoritative specs; only replaced/added fields are re-inferred)
-    # and preserve ``type(self)``. See ``_NamedTree``.
+    # ``without`` / ``merge`` / ``replace`` are the structural edits from
+    # ``_NamedTree``, overridden here to thread the authoritative
+    # ``event_template`` through the edit (untouched fields keep their specs;
+    # only replaced / added fields are re-inferred). They reuse the base's pure
+    # leaf-map helpers and return ``type(self)``.
+
+    def without(self, *paths: str) -> Record:
+        """Return a new Record without the fields/subtrees at *paths*.
+
+        The structural contract is :meth:`_NamedTree.without`; here the surviving
+        fields keep their authoritative specs by editing ``event_template`` the
+        same way.
+        """
+        return type(self)(
+            self._leaves_without(paths),
+            event_template=self.event_template.without(*paths),
+        )
+
+    def merge(self, other: Record) -> Record:
+        """Return the union of this Record and *other* (see :meth:`_NamedTree.merge`).
+
+        Both records' authoritative specs are preserved by merging their
+        ``event_template``\\ s.
+        """
+        return type(self)(
+            self._leaves_merged(other),
+            event_template=self.event_template.merge(other.event_template),
+        )
+
+    def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Record:
+        """Return a new Record with the values at the given paths replaced.
+
+        The structural contract is :meth:`_NamedTree.replace`; here untouched
+        fields keep their authoritative specs and each replaced field takes its
+        new value's inferred spec (via the threaded ``event_template``).
+        """
+        resolved = self._resolve_replace_updates(_updates, updates)
+        if not resolved:
+            return self
+        flat = self._leaves_replaced(resolved)
+        spec_updates = {self._norm_path(p): self._spec_of(v) for p, v in resolved.items()}
+        return type(self)(flat, event_template=self.event_template.replace(spec_updates))
+
+    def _spec_of(self, value: _FieldValue) -> Any:
+        """The leaf spec describing a new field *value*, for template threading."""
+        if isinstance(value, Record):
+            return value.event_template
+        return EventTemplate.infer_from({"_leaf_": value}).children["_leaf_"]
 
     # -- Backend conversion -------------------------------------------------
 
@@ -586,6 +630,23 @@ class Record(_NamedTree):
     def from_dict(cls, d: dict[str, ArrayLike | Record]) -> Record:
         """Construct Record from a dict of arrays."""
         return cls(d)
+
+    @classmethod
+    def from_nested_dict(
+        cls, data: Mapping[str, Any], *, event_template: EventTemplate | None = None
+    ) -> Record:
+        """Build a Record from a **nested** ``dict`` (see :meth:`_NamedTree.from_nested_dict`).
+
+        With *event_template* given, the template — not the Python type — decides
+        structure at each position: a ``dict`` where the template has an interior
+        node is recursed into, while a ``dict`` where the template has a leaf spec
+        is kept verbatim as opaque data. The template is then carried onto the
+        result exactly as in normal construction.
+        """
+        if event_template is None:
+            return super().from_nested_dict(data)
+        flat = cls._explode_nested(data, recurse_into=lambda path: not event_template.is_leaf(path))
+        return cls(flat, event_template=event_template)
 
     # -- Leaf-wise operations -----------------------------------------------
     #
