@@ -230,8 +230,8 @@ def execute_sweep_rows_jax(
         array_value = values[name]
         n_batch = len(array_value.batch_shape)
         vmap_input[name] = {
-            field: array_value[field].reshape((n_total, *array_value[field].shape[n_batch:]))
-            for field in array_value.fields
+            leaf: array_value[leaf].reshape((n_total, *array_value[leaf].shape[n_batch:]))
+            for leaf in array_value.event_template
         }
     return jax.vmap(single_call)(vmap_input)
 

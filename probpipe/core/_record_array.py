@@ -18,7 +18,7 @@ import numpy as np
 
 from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
-from .event_template import _PATH_SEP, ArraySpec, EventTemplate
+from .event_template import ArraySpec, EventTemplate
 from .record import Record
 
 __all__ = [
@@ -45,10 +45,17 @@ class RecordArray(Record):
     - ``.source`` / ``.with_source`` / ``.name`` are inherited from
       Record (stored on the ``_name`` / ``_source`` slots declared on
       Record).
-    - ``replace`` / ``merge`` / ``without`` / ``map`` / ``map_with_names``
-      are overridden here because the base constructor signature
-      doesn't carry ``batch_shape`` / ``template``; RecordArray versions
-      preserve those.
+    - The leaf-keyed *field-navigation* surface (``at_path`` / ``children`` /
+      ``is_field``) is inherited from ``_NamedTree`` and works the same as on a
+      single ``Record``; string ``[]`` is likewise leaf-only (use ``at_path`` for
+      a sub-batch). The batch-axis operators (``len`` / iteration / integer ``[]``
+      and the meaning of ``keys`` / ``values`` / ``items`` / ``in``) keep their
+      current top-level batch behavior — their reconciliation, and the immutable
+      edits ``replace`` / ``merge`` / ``without`` (which raise here), are not yet
+      defined and will be settled when the batch axis is generalized. One
+      consequence of this split is that ``in`` (top-level) and ``[]`` (leaf-only)
+      can disagree: ``"outer" in arr`` is ``True`` for a top-level field that is an
+      interior node, yet ``arr["outer"]`` raises — reach it with ``at_path``.
 
     Parameters
     ----------
@@ -105,7 +112,7 @@ class RecordArray(Record):
         # reflects the class name, not the "record(...)" default.
         if name is None:
             name = f"{type(self).__name__.lower()}({','.join(store.keys())})"
-        object.__setattr__(self, "_fields", store)
+        object.__setattr__(self, "_tree", store)
         object.__setattr__(self, "_name", name)
         object.__setattr__(self, "_source", None)
         object.__setattr__(self, "_batch_shape", batch_shape)
@@ -135,7 +142,7 @@ class RecordArray(Record):
     def __reduce__(self):
         return (
             _unpickle_record_array,
-            (dict(self._fields), self._batch_shape, self._template, self._name, self._source),
+            (dict(self._tree), self._batch_shape, self._template, self._name, self._source),
         )
 
     # -- Properties ---------------------------------------------------------
@@ -164,30 +171,31 @@ class RecordArray(Record):
 
     # -- Field access -------------------------------------------------------
 
-    def __getitem__(self, key: str | int) -> Any:
-        """Index a field by name, or extract one element by integer batch index.
+    def __getitem__(self, key: str | tuple[str, ...] | int) -> Any:
+        """Index a batched **field** by key, or one element by integer batch index.
 
-        A string ``key`` selects a field; slash-delimited paths descend into
-        nested record fields (``arr["outer/a"]``, per the path convention). An
-        integer ``key`` returns the element at that flat batch index as a
-        (possibly nested) ``Record``. A missing field -- or a path that descends
-        into a leaf -- raises ``KeyError``; a non-str/int key raises ``TypeError``.
+        Indexing is dual along two orthogonal axes:
+
+        - a **string / tuple key** selects a field along the *field axis*
+          (``arr["x"]`` / ``arr["outer/a"]`` → the batched leaf array). Like a
+          single ``Record``, this is leaf-only: a partial path that stops at a
+          subtree raises ``KeyError`` — reach a sub-batch with :meth:`at_path`.
+        - an **integer** selects one element along the *batch axis*
+          (``arr[i]`` → a single, possibly nested ``Record``).
+
+        A missing key, or a path that descends through a leaf, raises ``KeyError``;
+        a non-str/tuple/int key raises ``TypeError``.
         """
-        if isinstance(key, str):
-            if _PATH_SEP in key:
-                head, _, rest = key.partition(_PATH_SEP)
-                if head not in self._fields:
-                    raise KeyError(key)
-                try:
-                    return self._fields[head][rest]
-                except (KeyError, TypeError) as e:
-                    raise KeyError(key) from e
-            if key not in self._fields:
-                raise KeyError(key)
-            return self._fields[key]
+        if isinstance(key, (str, tuple)):
+            node = self.at_path(key)
+            if isinstance(node, self._node_type()):
+                raise KeyError(
+                    f"{key!r} is a subtree, not a field; use at_path() to navigate to it"
+                )
+            return node
         if isinstance(key, (int, np.integer)):
             return self._get_record(int(key))
-        raise TypeError(f"key must be str or int, got {type(key).__name__}")
+        raise TypeError(f"key must be str, tuple, or int, got {type(key).__name__}")
 
     def view(self, field: str) -> _RecordArrayView:
         """Return a single-field view carrying parent identity.
@@ -228,37 +236,38 @@ class RecordArray(Record):
                 # nested field (the pre-canonical shape) is promoted; a non-numeric
                 # parent keeps the child's own type.
                 cls = NumericRecord if isinstance(self, NumericRecordArray) else type(val)
-                return cls({k: _elem(val[k]) for k in val.fields})
+                return cls({k: _elem(child) for k, child in val.children.items()})
             return val[nd_index]
 
-        return self._record_cls({name: _elem(self._fields[name]) for name in self._fields})
+        return self._record_cls({name: _elem(self._tree[name]) for name in self._tree})
 
     def __contains__(self, name: str) -> bool:
-        return name in self._fields
+        return name in self._tree
 
     def __len__(self) -> int:
-        # Field count, not batch size — matches ``Record.__len__`` so
-        # ``len(ra)`` and ``len(record)`` mean the same thing across the
-        # Record family. For the flat batch count, use
-        # ``prod(ra.batch_shape)``.
-        return len(self._fields)
+        # Transitional: still the top-level field count. The batch-axis operators
+        # (len / iteration / integer []) will be reconciled when the batch axis is
+        # generalized, at which point len(batch) becomes batch_shape[0]. This no
+        # longer matches a single Record's len (now the *leaf* count); for the flat
+        # batch count use ``prod(ra.batch_shape)``.
+        return len(self._tree)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self._fields)
+        return iter(self._tree)
 
     def keys(self) -> Iterator[str]:
         """Iterate over field names."""
-        return iter(self._fields)
+        return iter(self._tree)
 
     def values(self) -> Iterator[Any]:
         """Iterate over field values (batched)."""
-        for name in self._fields:
-            yield self._fields[name]
+        for name in self._tree:
+            yield self._tree[name]
 
     def items(self) -> Iterator[tuple[str, Any]]:
         """Iterate over (name, batched_value) pairs."""
-        for name in self._fields:
-            yield name, self._fields[name]
+        for name in self._tree:
+            yield name, self._tree[name]
 
     # -- Selection (override to return views) ------------------------------
 
@@ -278,11 +287,11 @@ class RecordArray(Record):
         """
         result: dict[str, Any] = {}
         for f in fields:
-            if f not in self._fields:
+            if f not in self._tree:
                 raise KeyError(f"No field {f!r} in {type(self).__name__}")
             result[f] = self.view(f)
         for arg_name, field_name in mapping.items():
-            if field_name not in self._fields:
+            if field_name not in self._tree:
                 raise KeyError(f"No field {field_name!r} in {type(self).__name__}")
             result[arg_name] = self.view(field_name)
         return result
@@ -315,11 +324,34 @@ class RecordArray(Record):
             raise ValueError("Cannot stack empty list of Records")
         if template is None:
             template = EventTemplate.infer_from(records[0])
+        if any(isinstance(c, EventTemplate) for c in template.children.values()):
+            # Stacking into a nested batch is not yet supported; raise a catchable
+            # error (callers fall back to a clearer message).
+            raise TypeError("RecordArray.stack does not yet support nested templates.")
         fields: dict[str, Any] = {}
-        for name in template.fields:
+        for name in template.children:
             field_vals = [r[name] for r in records]
             fields[name] = jnp.stack(field_vals, axis=0)
         return cls(fields, batch_shape=(len(records),), template=template)
+
+    # -- Immutable edits (deferred for the batch types) ---------------------
+    #
+    # ``replace`` / ``merge`` / ``without`` are defined on ``_NamedTree`` for the
+    # single value/spec collections and thread the template through single-value
+    # construction. On a batch their semantics (which axis they act on, how the
+    # batch shape composes) are not yet defined, so they are unsupported here.
+
+    def replace(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError(
+            "replace() is not supported on a batched record; edit the underlying "
+            "field arrays directly."
+        )
+
+    def merge(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError("merge() is not supported on a batched record.")
+
+    def without(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError("without() is not supported on a batched record.")
 
     # -- Equality / hash ----------------------------------------------------
 
@@ -336,8 +368,8 @@ class RecordArray(Record):
             return False
         if self._template != other._template:
             return False
-        for name, a in self._fields.items():
-            b = other._fields[name]
+        for name, a in self._tree.items():
+            b = other._tree[name]
             try:
                 if not bool(jnp.array_equal(a, b)):
                     return False
@@ -360,8 +392,8 @@ class RecordArray(Record):
 
     def __repr__(self) -> str:
         field_parts = []
-        for name in self._fields:
-            val = self._fields[name]
+        for name in self._tree:
+            val = self._tree[name]
             if hasattr(val, "shape"):
                 field_parts.append(f"{name}=array(shape={val.shape})")
             else:
@@ -411,7 +443,7 @@ class NumericRecordArray(RecordArray):
         """
         out: OrderedDict[str, Any] = OrderedDict()
         for name, raw in store.items():
-            spec = template[name]
+            spec = template.children[name]
             # Nested structure: skip numeric validation, let the nested
             # type enforce its own invariant.
             if isinstance(spec, EventTemplate):
@@ -445,7 +477,7 @@ class NumericRecordArray(RecordArray):
     def __reduce__(self):
         return (
             _unpickle_numeric_record_array,
-            (dict(self._fields), self._batch_shape, self._template, self._name, self._source),
+            (dict(self._tree), self._batch_shape, self._template, self._name, self._source),
         )
 
     # -- 1-D vector conversion ----------------------------------------------
@@ -461,7 +493,7 @@ class NumericRecordArray(RecordArray):
         into nested records). The inverse, :meth:`EventTemplate.from_vector`,
         reconstructs the batch.
 
-        Distinct from :meth:`~Record.to_leaf_list` (which keeps each batched leaf
+        Distinct from ``list(record.values())`` (which keeps each batched leaf
         whole); ``to_vector`` ravels and concatenates each element's event
         dimensions into a dense matrix.
         """
@@ -476,7 +508,7 @@ class NumericRecordArray(RecordArray):
     ) -> NumericRecordArray | Any:
         """Apply a reduction function over a batch axis."""
         new_batch = self._batch_shape[:axis] + self._batch_shape[axis + 1 :]
-        fields = {name: fn(self._fields[name], axis) for name in self._fields}
+        fields = {name: fn(self._tree[name], axis) for name in self._tree}
         if not new_batch:
             return NumericRecord(fields)
         return NumericRecordArray(fields, batch_shape=new_batch, template=self._template)
@@ -509,13 +541,13 @@ class NumericRecordArray(RecordArray):
 
     def _single_numeric_leaf(self):
         """Return the sole numeric leaf array, or raise ``TypeError``."""
-        if len(self._fields) != 1:
+        if len(self._tree) != 1:
             raise TypeError(
-                f"NumericRecordArray with {len(self._fields)} fields is "
+                f"NumericRecordArray with {len(self._tree)} fields is "
                 f"not array-like; access a specific field with "
                 f"array['field_name'] first."
             )
-        only = next(iter(self._fields.values()))
+        only = next(iter(self._tree.values()))
         if isinstance(only, (Record, RecordArray)):
             raise TypeError(
                 "NumericRecordArray with a nested Record field is not "
@@ -596,16 +628,16 @@ class _RecordArrayView(RecordArray):
     __slots__ = ("_field", "_parent")
 
     def __init__(self, parent: RecordArray, field: str):
-        if field not in parent._fields:
+        if field not in parent._tree:
             raise KeyError(
                 f"field {field!r} not in parent {type(parent).__name__}(fields={parent.fields})"
             )
         leaf_spec = parent.template[field]
-        store = OrderedDict([(field, parent._fields[field])])
+        store = OrderedDict([(field, parent._tree[field])])
         template = EventTemplate({field: leaf_spec})
         # Populate RecordArray state directly — data was validated at
         # the parent's construction.
-        object.__setattr__(self, "_fields", store)
+        object.__setattr__(self, "_tree", store)
         object.__setattr__(self, "_template", template)
         object.__setattr__(self, "_batch_shape", parent._batch_shape)
         object.__setattr__(self, "_name", f"{parent._name}[{field!r}]")
@@ -632,23 +664,23 @@ class _RecordArrayView(RecordArray):
 
     @property
     def shape(self) -> tuple[int, ...]:
-        return tuple(getattr(self._fields[self._field], "shape", ()))
+        return tuple(getattr(self._tree[self._field], "shape", ()))
 
     @property
     def dtype(self) -> jnp.dtype | None:
-        return getattr(self._fields[self._field], "dtype", None)
+        return getattr(self._tree[self._field], "dtype", None)
 
     @property
     def ndim(self) -> int:
-        return int(getattr(self._fields[self._field], "ndim", 0))
+        return int(getattr(self._tree[self._field], "ndim", 0))
 
     def __array__(self, dtype=None, copy=None):
-        leaf = self._fields[self._field]
+        leaf = self._tree[self._field]
         arr = np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
         return arr.copy() if copy else arr
 
     def __jax_array__(self):
-        return jnp.asarray(self._fields[self._field])
+        return jnp.asarray(self._tree[self._field])
 
     # ``view[i]`` indexes the underlying column; ``view[name]`` is
     # idempotent (same field) or raises.
@@ -657,16 +689,16 @@ class _RecordArrayView(RecordArray):
             if key == self._field:
                 return self
             raise KeyError(key)
-        return self._fields[self._field][key]
+        return self._tree[self._field][key]
 
     def __len__(self) -> int:
         # Row count, matching the column-like intuition. (``RecordArray``
         # itself returns the field count.)
-        leaf = self._fields[self._field]
+        leaf = self._tree[self._field]
         return int(leaf.shape[0]) if getattr(leaf, "shape", ()) else 0
 
     def __iter__(self):
-        return iter(self._fields[self._field])
+        return iter(self._tree[self._field])
 
     def __repr__(self) -> str:
         return (
@@ -707,7 +739,7 @@ def _record_array_flatten(
     ra: RecordArray,
 ) -> tuple[list, tuple[tuple[str, ...], tuple[int, ...], EventTemplate]]:
     """Flatten RecordArray for JAX pytree."""
-    children = [ra._fields[name] for name in ra._fields]
+    children = [ra._tree[name] for name in ra._tree]
     aux = (ra.fields, ra._batch_shape, ra._template)
     return children, aux
 

@@ -194,11 +194,14 @@ or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
-`Record`, `EventTemplate`, `RecordArray`, and every Record-based
-distribution iterate fields in **insertion order** — the order
-keyword arguments were passed to the constructor (or the order of
-the input dict). Code must not rely on an alphabetical or sorted
-order; the constructor preserves what the caller wrote.
+The mapping protocol on `Record`, `EventTemplate`, and every
+Record-based distribution (`keys` / `values` / `items` / `__iter__` /
+`__len__` / `__contains__` / `__getitem__`) is **leaf-keyed**: it
+enumerates every leaf by its full `/`-path, never interior nodes. The
+order is **canonical first-appearance order** — the order each field
+was first introduced (keyword-argument or input-dict order at
+construction). Code must not rely on an alphabetical or sorted order;
+the constructor preserves what the caller wrote.
 
 The `/` character is reserved as a nested-path separator. Field
 names may not contain `/` (raises `ValueError` at construction).
@@ -210,12 +213,22 @@ record["params/intercept"]   # same as record["params", "intercept"]
 "params/intercept" in record # same as record["params", "intercept"] not raising
 ```
 
-`EventTemplate.leaf_paths` lists every leaf's path using the same `/`
-separator, so those paths round-trip with `Record.__getitem__`.
+Because `[]` reaches only leaves, navigate to a leaf **or** an interior
+subtree with `at_path` instead — `record.at_path("params")` returns the
+sub-Record, whereas `record["params"]` raises when `params` is not a
+leaf. `keys()` lists every leaf's path using the same `/` separator, so
+those paths round-trip with `__getitem__`.
+
+`RecordArray` / `NumericRecordArray` are a documented exception: their
+mapping surface (`keys` / `len` / `in`) is still **top-level** (first
+level of field names) pending the batch-axis rework, so `"outer" in
+arr` can be `True` while `arr["outer"]` raises if `outer` is an interior
+node. Treat this as temporary.
 
 When adding new Record-based containers, follow these conventions:
-preserve insertion order, reject `/` in field names, and accept the
-slash-delimited form in any string-keyed lookup.
+preserve first-appearance order, reject `/` in field names, key the
+mapping by leaf path, and accept the slash-delimited form in any
+string-keyed lookup.
 
 ### 1.11 Distribution iteration
 

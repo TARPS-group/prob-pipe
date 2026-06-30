@@ -68,8 +68,8 @@ class TestConstruction:
     def test_nested(self):
         inner = EventTemplate(force=(), mass=())
         outer = EventTemplate(physics=inner, obs=())
-        assert isinstance(outer["physics"], EventTemplate)
-        assert outer["physics"]["force"] == ArraySpec(())
+        assert isinstance(outer.at_path("physics"), EventTemplate)
+        assert outer["physics/force"] == ArraySpec(())
 
     def test_invalid_spec_raises(self):
         with pytest.raises(TypeError, match="spec must be"):
@@ -130,31 +130,34 @@ class TestNamedTreeSurfaceOnEventTemplate:
     def test_tuple_indexing_matches_slash_path(self, nested):
         assert nested["theta", "loc"] == nested["theta/loc"]
 
-    def test_partial_path_returns_subtree(self, nested):
-        assert nested["theta"] == EventTemplate(loc=(2,), scale=())
+    def test_partial_path_navigates_to_subtree(self, nested):
+        # A partial path reaches a subtree via at_path; [] is leaf-only.
+        assert nested.at_path("theta") == EventTemplate(loc=(2,), scale=())
+        with pytest.raises(KeyError):
+            nested["theta"]
 
-    def test_path_membership(self, nested):
-        # Current (top-level) protocol: a top-level field name is a member, and
-        # a valid leaf path is a member; a path through a missing field is not.
-        # (The leaf-only membership rule is the deferred #326 redesign.)
-        assert "theta" in nested
+    def test_path_membership_is_leaf_only(self, nested):
+        # Leaf-keyed membership: a key (leaf path) is a member; a partial path is
+        # navigable but not a member.
         assert "theta/loc" in nested
         assert "sigma" in nested
+        assert "theta" not in nested  # subtree, not a field
         assert "theta/missing" not in nested
         assert "nonexistent" not in nested
+        # children is the one-level view that does include subtrees
+        assert "theta" in nested.children
 
-    def test_iteration_and_len_over_top_level(self, nested):
-        # __iter__ / keys / __len__ are the current (top-level) protocol;
-        # leaf_paths is the canonical leaf enumeration.
-        assert tuple(nested) == ("theta", "sigma")
-        assert tuple(nested.keys()) == ("theta", "sigma")
-        assert len(nested) == 2
-        assert list(nested.leaf_paths) == ["theta/loc", "theta/scale", "sigma"]
+    def test_iteration_and_len_over_leaf_fields(self, nested):
+        # __iter__ / keys / __len__ range over leaf fields, keyed by path.
+        assert tuple(nested) == ("theta/loc", "theta/scale", "sigma")
+        assert tuple(nested.keys()) == ("theta/loc", "theta/scale", "sigma")
+        assert len(nested) == 3
+        # children gives the one-level (top-level) names
+        assert tuple(nested.children) == ("theta", "sigma")
 
     def test_values_and_items(self, nested):
         values = list(nested.values())
-        assert values[0] == EventTemplate(loc=(2,), scale=())
-        assert values[1] == ArraySpec((3,))
+        assert values == [ArraySpec((2,)), ArraySpec(()), ArraySpec((3,))]
         assert list(nested.items()) == list(zip(nested.keys(), values))
 
 
@@ -199,29 +202,29 @@ class TestLeafPaths:
     def test_flat_equals_fields(self):
         # For a flat template (every field a leaf), leaf_paths == fields.
         tpl = EventTemplate(x=(), y=(3,))
-        assert tpl.leaf_paths == ("x", "y") == tpl.fields
+        assert tuple(tpl.keys()) == ("x", "y") == tpl.fields
 
     def test_includes_opaque_leaves(self):
         # leaf_paths enumerates every leaf, numeric or opaque.
         tpl = EventTemplate(label=None, x=())
-        assert tpl.leaf_paths == ("label", "x")
+        assert tuple(tpl.keys()) == ("label", "x")
 
     def test_nested_depth_first_insertion_order(self):
         # A nested field expands into one path per nested leaf; fields stays
         # top-level only.
         inner = EventTemplate(a=(), b=(2,))
         outer = EventTemplate(inner=inner, z=(3,))
-        assert outer.leaf_paths == ("inner/a", "inner/b", "z")
+        assert tuple(outer.keys()) == ("inner/a", "inner/b", "z")
         assert outer.fields == ("inner", "z")
 
     def test_depth2(self):
         tpl = EventTemplate(outer=EventTemplate(deep=EventTemplate(g=(), h=()), a=()), m=())
-        assert tpl.leaf_paths == ("outer/deep/g", "outer/deep/h", "outer/a", "m")
+        assert tuple(tpl.keys()) == ("outer/deep/g", "outer/deep/h", "outer/a", "m")
 
     def test_keys_match_leaf_shapes_in_order(self):
         # leaf_shapes (numeric template) is keyed by leaf_paths, same order.
         tpl = EventTemplate(outer=EventTemplate(a=(2,), b=()), m=())
-        assert tuple(tpl.leaf_shapes) == tpl.leaf_paths
+        assert tuple(tpl.leaf_shapes) == tuple(tpl.keys())
 
     def test_order_matches_flatten_and_to_vector(self):
         # The canonical leaf order is the order flatten() / to_vector() use.
@@ -230,7 +233,7 @@ class TestLeafPaths:
             nested=NumericRecord(a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
         )
         tpl = EventTemplate.infer_from(v)
-        assert tpl.leaf_paths == ("x", "nested/a", "nested/b")
+        assert tuple(tpl.keys()) == ("x", "nested/a", "nested/b")
         # to_vector concatenates leaves in leaf_paths order: x(2) | a(1) | b(2).
         np.testing.assert_allclose(tpl.to_vector(v), [1.0, 2.0, 3.0, 4.0, 5.0])
 
@@ -364,11 +367,11 @@ class TestInferFrom:
         tpl = EventTemplate.infer_from(
             {"a": 1.0, "x": jnp.zeros(3), "params": Record(m=jnp.zeros(2))}
         )
-        assert tpl.fields == ("a", "x", "params")
+        assert tuple(tpl.children) == ("a", "x", "params")
         assert tpl["a"] == ArraySpec(())
         assert tpl["x"] == ArraySpec((3,))
-        assert isinstance(tpl["params"], EventTemplate)
-        assert tpl["params"]["m"] == ArraySpec((2,))
+        assert isinstance(tpl.at_path("params"), EventTemplate)
+        assert tpl["params/m"] == ArraySpec((2,))
 
     def test_empty_mapping_raises(self):
         with pytest.raises(ValueError, match="at least one field"):
@@ -384,9 +387,9 @@ class TestInferFrom:
         inner = Record(x=1.0, y=jnp.zeros(3))
         outer = Record(params=inner, z=2.0)
         tpl = EventTemplate.infer_from(outer)
-        assert isinstance(tpl["params"], EventTemplate)
-        assert tpl["params"]["x"] == ArraySpec(())
-        assert tpl["params"]["y"] == ArraySpec((3,))
+        assert isinstance(tpl.at_path("params"), EventTemplate)
+        assert tpl["params/x"] == ArraySpec(())
+        assert tpl["params/y"] == ArraySpec((3,))
         assert tpl["z"] == ArraySpec(())
 
     def test_roundtrip_vector_size(self):
@@ -564,7 +567,7 @@ class TestConstructionSpecs:
     def test_nested_template_preserved(self):
         inner = EventTemplate(a=(), b=(3,))
         tpl = EventTemplate(sub=inner, z=())
-        assert tpl["sub"] is inner
+        assert tpl.at_path("sub") is inner
 
     def test_explicit_array_spec_accepted(self):
         spec = ArraySpec((2,), dtype="float32")
@@ -732,8 +735,8 @@ class TestNumericSubset:
         tpl = EventTemplate(x=(), nested=EventTemplate(a=(), label=None, b=(3,)))
         sub = tpl.numeric_subset()
         assert sub.fields == ("x", "nested")
-        assert isinstance(sub["nested"], NumericEventTemplate)
-        assert sub["nested"].fields == ("a", "b")
+        assert isinstance(sub.at_path("nested"), NumericEventTemplate)
+        assert tuple(sub.at_path("nested").children) == ("a", "b")
 
     def test_prunes_emptied_nested(self):
         tpl = EventTemplate(x=(), nested=EventTemplate(label=None, tag=None))
@@ -881,7 +884,7 @@ class TestFromVectorRoundTripBatched:
         v = tpl.from_vector(flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (2, 3)
-        assert isinstance(v["nested"], NumericRecordArray)
+        assert isinstance(v.at_path("nested"), NumericRecordArray)
         assert v["nested/b"].shape == (2, 3, 2)
         # NOTE: assert via the vector round-trip, not ``from_vector(...) == v``.
         # RecordArray.__eq__ is currently broken for a nested *Array field (it

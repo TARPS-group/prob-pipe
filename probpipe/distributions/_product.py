@@ -283,7 +283,7 @@ class ProductDistribution(
             if isinstance(comp, dict):
                 # Pass the sub-template so a batched nested draw is a nested
                 # record-array (canonical, flattenable), not a plain Record.
-                sub_template = self.event_template[name] if sample_shape else None
+                sub_template = self.event_template.children[name] if sample_shape else None
                 fields[name] = _sample_nested(
                     comp, subkey, sample_shape, template=sub_template, numeric=numeric
                 )

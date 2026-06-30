@@ -75,8 +75,8 @@ class TestConstruction:
     def test_nested(self):
         inner = Record(x=1.0, y=2.0)
         outer = Record(params=inner, z=3.0)
-        assert isinstance(outer["params"], Record)
-        assert outer["params"]["x"] == 1.0
+        assert isinstance(outer.at_path("params"), Record)
+        assert outer["params/x"] == 1.0
 
     def test_from_dict(self):
         v = Record.from_dict({"a": 1.0, "b": 2.0})
@@ -187,8 +187,14 @@ class TestImmutability:
 
     def test_replace_nonexistent_raises(self):
         v = Record(a=1.0)
-        with pytest.raises(KeyError, match="non-existent"):
+        with pytest.raises(KeyError):
             v.replace(z=5.0)
+
+    def test_replace_nested_path(self):
+        v = Record(physics=Record(force=1.0, mass=2.0), obs=3.0)
+        v2 = v.replace({"physics/mass": 9.0})
+        assert v2["physics/mass"] == 9.0
+        assert v2["physics/force"] == 1.0  # untouched
 
     def test_merge(self):
         v1 = Record(a=1.0)
@@ -207,11 +213,16 @@ class TestImmutability:
         v2 = v.without("b")
         assert v2.fields == ("a", "c")
 
-    def test_without_nonexistent_key(self):
-        """Removing a key that doesn't exist silently keeps all fields."""
+    def test_without_nonexistent_key_raises(self):
+        """Removing a key that doesn't exist raises KeyError (leaf-keyed contract)."""
         v = Record(a=1.0, b=2.0)
-        v2 = v.without("z")
-        assert v2.fields == ("a", "b")
+        with pytest.raises(KeyError):
+            v.without("z")
+
+    def test_without_nested_path(self):
+        v = Record(physics=Record(force=1.0, mass=2.0), obs=3.0)
+        assert tuple(v.without("physics/mass").keys()) == ("physics/force", "obs")
+        assert tuple(v.without("physics").keys()) == ("obs",)
 
     def test_without_all_raises(self):
         v = Record(a=1.0)
@@ -317,7 +328,7 @@ class TestNumericAPIOnRecord:
         # to_leaf_list is the general (any-leaf) ProbPipe leaf traversal on
         # Record; the JAX-pytree flatten/unflatten are NOT Record methods.
         v = Record(a=1.0, label="x")
-        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
+        assert v.event_template.from_field_values(list(v.values())) == v
         assert not hasattr(Record, "flatten")
         assert not hasattr(Record, "unflatten")
 
@@ -334,16 +345,16 @@ class TestLeafList:
 
     def test_to_leaf_list_keeps_leaves_whole_in_canonical_order(self):
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe")
-        leaves = v.to_leaf_list()
+        leaves = list(v.values())
         assert leaves[0].shape == (2,)  # kept whole, not raveled
         assert leaves[1] == "horseshoe"  # opaque leaf preserved as-is
-        assert list(v.leaf_paths) == ["x", "label"]  # canonical order
+        assert list(v.keys()) == ["x", "label"]  # canonical order
 
     def test_container_leaf_is_one_whole_leaf(self):
         # A tuple field is ONE opaque leaf at template granularity; JAX's
         # pytree view descends into it (documented divergence).
         v = Record(x=jnp.zeros(2), pair=(jnp.array(1.0), jnp.array(2.0)))
-        leaves = v.to_leaf_list()
+        leaves = list(v.values())
         assert len(leaves) == 2  # x, pair (whole)
         assert isinstance(leaves[1], tuple)
         assert len(jax.tree_util.tree_leaves(v)) == 3  # JAX descends the tuple
@@ -351,16 +362,16 @@ class TestLeafList:
     def test_roundtrip_with_opaque_leaf(self):
         # Opaque (non-numeric) leaves round-trip — unlike to_vector.
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe", count=3)
-        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
+        assert v.event_template.from_field_values(list(v.values())) == v
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord
 
         v = NumericRecord(a=jnp.array([1.0, 2.0, 3.0]), b=NumericRecord(c=jnp.array(5.0)))
-        rebuilt = v.event_template.from_leaf_list(v.to_leaf_list())
+        rebuilt = v.event_template.from_field_values(list(v.values()))
         assert rebuilt == v
         assert isinstance(rebuilt, NumericRecord)
-        assert isinstance(rebuilt["b"], NumericRecord)
+        assert isinstance(rebuilt.at_path("b"), NumericRecord)
 
     def test_mixed_nested_record_roundtrip(self):
         # A nested mixed record with both numeric and opaque leaves.
@@ -368,12 +379,12 @@ class TestLeafList:
             theta=Record(loc=jnp.array([0.0, 1.0]), label="prior"),
             tag="run-7",
         )
-        assert v.event_template.from_leaf_list(v.to_leaf_list()) == v
+        assert v.event_template.from_field_values(list(v.values())) == v
 
     def test_wrong_leaf_count_raises(self):
         v = Record(a=1.0, b=2.0)
         with pytest.raises(ValueError, match="expected 2"):
-            v.event_template.from_leaf_list([1.0])
+            v.event_template.from_field_values([1.0])
 
     def test_jax_pytree_roundtrip_still_works(self):
         # Record stays a registered pytree; the JAX path round-trips via
@@ -393,19 +404,19 @@ class TestLeafPathsAgreement:
 
     def test_flat(self):
         v = Record(a=1.0, b=jnp.zeros(3), c="x")
-        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
+        assert list(v.keys()) == list(v.event_template.keys())
 
     def test_nested_in_family(self):
         v = Record(theta=Record(loc=jnp.zeros(2), s=jnp.ones(3)), top=jnp.array(1.0))
-        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
-        assert list(v.leaf_paths) == ["theta/loc", "theta/s", "top"]
+        assert list(v.keys()) == list(v.event_template.keys())
+        assert list(v.keys()) == ["theta/loc", "theta/s", "top"]
 
     def test_cross_type_value_is_one_opaque_leaf(self):
         # An EventTemplate stored as a Record field value is an opaque leaf,
         # NOT an internal node: leaf_paths must not descend into it.
         v = Record(weird=EventTemplate(a=(2,)), x=jnp.array([1.0, 2.0]))
-        assert list(v.leaf_paths) == ["weird", "x"]
-        assert list(v.leaf_paths) == list(v.event_template.leaf_paths)
+        assert list(v.keys()) == ["weird", "x"]
+        assert list(v.keys()) == list(v.event_template.keys())
 
 
 # ---------------------------------------------------------------------------
@@ -437,8 +448,8 @@ class TestPyTree:
         v = Record(params=Record(r=1.0, K=2.0), z=3.0)
         v2 = jax.tree.map(lambda x: x + 10, v)
         assert isinstance(v2, Record)
-        assert isinstance(v2["params"], Record)
-        assert v2["params"]["r"] == 11.0
+        assert isinstance(v2.at_path("params"), Record)
+        assert v2["params/r"] == 11.0
         assert v2["z"] == 13.0
 
     def test_jit(self):
@@ -551,13 +562,13 @@ class TestConversion:
         outer = Record(inner=Record(a=1.0), z=2.0)
         nr = outer.to_numeric()
         assert isinstance(nr, NumericRecord)
-        assert isinstance(nr["inner"], NumericRecord)
+        assert isinstance(nr.at_path("inner"), NumericRecord)
         assert nr["inner", "a"] == 1.0
         # Deterministic: a second conversion yields the same structure.
         nr2 = outer.to_numeric()
         assert nr.fields == nr2.fields
         for field in nr.fields:
-            assert type(nr[field]) is type(nr2[field])
+            assert type(nr.at_path(field)) is type(nr2.at_path(field))
 
 
 # ---------------------------------------------------------------------------
@@ -625,14 +636,30 @@ class TestLeafOps:
     def test_map_nested(self):
         v = Record(inner=Record(x=2.0), y=3.0)
         v2 = v.map(lambda x: x + 1)
-        assert v2["inner"]["x"] == 3.0
+        assert v2["inner/x"] == 3.0
         assert v2["y"] == 4.0
 
-    def test_map_with_names(self):
+    def test_map_with_keys(self):
         v = Record(a=1.0, b=2.0)
-        names_seen = []
-        v.map_with_names(lambda n, x: names_seen.append(n) or x)
-        assert names_seen == ["a", "b"]
+        keys_seen = []
+        v.map_with_keys(lambda k, x: keys_seen.append(k) or x)
+        assert keys_seen == ["a", "b"]
+
+    def test_map_with_keys_passes_full_path(self):
+        v = Record(inner=Record(x=2.0), y=3.0)
+        keys_seen = []
+        v.map_with_keys(lambda k, x: keys_seen.append(k) or x)
+        assert keys_seen == ["inner/x", "y"]
+
+    def test_map_forwards_args(self):
+        v = Record(a=1.0, b=2.0)
+        v2 = v.map(lambda x, bump: x + bump, bump=10.0)
+        assert v2["a"] == 11.0 and v2["b"] == 12.0
+
+    def test_map_rejects_node_return(self):
+        v = Record(a=1.0)
+        with pytest.raises(ValueError, match="introduce nesting"):
+            v.map(lambda x: Record(z=x))
 
 
 # ---------------------------------------------------------------------------

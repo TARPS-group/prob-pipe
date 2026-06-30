@@ -185,7 +185,7 @@ class TestXarrayRoundTrip:
         # may not satisfy the NumericRecord invariant). The inner gets
         # the same treatment recursively.
         assert isinstance(back, Record)
-        inner = back["inner"]
+        inner = back.at_path("inner")
         assert isinstance(inner, Record)
         assert inner["temps"].dims == ("t",)
         np.testing.assert_array_equal(
