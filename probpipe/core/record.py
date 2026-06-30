@@ -643,7 +643,7 @@ class Record(_NamedTree):
         """
         if event_template is None:
             return super().from_nested_dict(data)
-        flat = cls._explode_nested(data, recurse_into=lambda path: not event_template.is_leaf(path))
+        flat = cls._flatten_paths(data, recurse_into=lambda path: not event_template.is_leaf(path))
         return cls(flat, event_template=event_template)
 
     # -- Leaf-wise operations -----------------------------------------------
