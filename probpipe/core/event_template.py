@@ -176,15 +176,16 @@ class _NamedTree:
     ``x.keys()``/``x.values()``/``x.items()`` give the set of key
     paths/field values/path-value tuples. Iterating over the object iterates
     over the keys in insertion order, following the convention of a Python
-    dictionary.
+    dictionary. Field selection using tuples is equivalent, so that
+    `x["a/b/c"] == x["a", "b", "c"]`.
 
     While this API allows the object to be treated as a flat dictionary, the
     object is in general allowed to have nested structure. :class:`_NamedTree`
     differentiates between leaves and non-leaf nodes by defining the latter
     as an object of the class defined by :meth:`_node_type`; a
-    child is an interior node iff it is an instance of that type. All other
-     objects are treated as leaves. All nodes (including leaves) can be
-     accessed via :meth:`at_path`. In particular,
+    child is an interior node if an only if it is an instance of that type.
+    All other objects are treated as leaves. All nodes (including leaves) can
+    be accessed via :meth:`at_path`. In particular,
     `x.at_path("a/b/c")` will return either a field, a sub-tree, or raise
     an error if the path does not exist. The attribute :attr:`children`
     gives local access to the immediate children of the node.
@@ -548,7 +549,7 @@ class _NamedTree:
     # -- Construction from a nested mapping ---------------------------------
 
     @staticmethod
-    def _explode_nested(
+    def _flatten_paths(
         data: Mapping[str, Any],
         recurse_into: Callable[[str], bool] | None = None,
     ) -> dict[str, Any]:
@@ -592,7 +593,7 @@ class _NamedTree:
         -------
         A new collection of this class.
         """
-        return cls(cls._explode_nested(data))
+        return cls(cls._flatten_paths(data))
 
     # -- Internal utilities -------------------------------------------------
 
