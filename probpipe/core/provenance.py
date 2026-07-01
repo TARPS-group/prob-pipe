@@ -159,15 +159,23 @@ class Provenance:
         if mode is ProvenanceMode.OFF:
             return None
         keep = mode is ProvenanceMode.FULL
-        refs = tuple(
-            ParentInfo(
+
+        from ._fingerprint import fingerprint as _fingerprint
+
+        def _make_parent(p: Any) -> ParentInfo:
+            try:
+                fp: str | None = _fingerprint(p)
+            except Exception:
+                fp = None
+            return ParentInfo(
                 type_name=type(p).__name__,
                 name=getattr(p, "name", None),
                 source=getattr(p, "source", None),
+                fingerprint=fp,
                 obj=p if keep else None,
             )
-            for p in parents
-        )
+
+        refs = tuple(_make_parent(p) for p in parents)
         return cls(operation, parents=refs, metadata=metadata or {})
 
 
