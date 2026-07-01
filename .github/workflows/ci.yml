@@ -167,8 +167,8 @@ jobs:
             # provenance.py also runs tests/core/. Replaces the former inline
             # heredoc (issue #266).
 
-            # Split CHANGED into test files (include directly) and source
-            # files (expand via import graph before mapping to test folders).
+            # Split CHANGED into test files (included directly) and source
+            # files (resolved to their covering pytest targets below).
             CHANGED_SOURCE=""
             TEST_TARGETS=""
             for f in $CHANGED; do
@@ -179,28 +179,21 @@ jobs:
               fi
             done
 
-            # Expand source files transitively and map each to its test folder.
-            # Subpackage modules (probpipe/core/node.py) map to tests/core/.
-            # Root-level modules (probpipe/_utils.py) map to test files at
-            # tests/ root only (not descending into subfolders).
+            # Map source changes to their covering pytest targets via the shared,
+            # unit-tested resolver (scripts/ci/import_graph.py; tests in tests/ci/).
+            # It transitively expands over the import graph, then maps each
+            # affected module: subpackage modules (probpipe/core/node.py) ->
+            # tests/core/; root-level modules (probpipe/_utils.py) -> the root
+            # tests/test_*.py files; and the inference subpackage by filename
+            # convention (_foo.py -> tests/inference/test_foo.py; the __init__
+            # registration facade -> the registry integration tests) so a single
+            # method change runs only its own test file plus those, not the whole
+            # tests/inference/ folder (see #333).
             if [ -n "$CHANGED_SOURCE" ]; then
-              EXPANDED=$(python3 scripts/ci/import_graph.py expand $CHANGED_SOURCE)
-              echo "Expanded source files (via import graph):"
-              echo "$EXPANDED"
-              HAS_ROOT_CHANGE=false
-              for f in $EXPANDED; do
-                rel="${f#probpipe/}"
-                if echo "$rel" | grep -q '/'; then
-                  subpkg=$(echo "$rel" | cut -d'/' -f1)
-                  [ -d "tests/$subpkg" ] && TEST_TARGETS="$TEST_TARGETS tests/$subpkg"
-                else
-                  HAS_ROOT_CHANGE=true
-                fi
-              done
-              if [ "$HAS_ROOT_CHANGE" = "true" ]; then
-                ROOT_FILES=$(find tests -maxdepth 1 -name "test_*.py" | tr '\n' ' ')
-                TEST_TARGETS="$TEST_TARGETS $ROOT_FILES"
-              fi
+              MAPPED=$(python3 scripts/ci/import_graph.py test-targets $CHANGED_SOURCE)
+              echo "Source changes mapped to pytest targets:"
+              echo "$MAPPED"
+              TEST_TARGETS="$TEST_TARGETS $MAPPED"
             fi
 
             # Deduplicate (works for both file paths and directory paths)

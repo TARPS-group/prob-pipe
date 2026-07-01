@@ -242,6 +242,79 @@ def _cmd_expand(args: argparse.Namespace) -> int:
     return 0
 
 
+#: Inference test files that exercise registration/dispatch across all methods.
+#: A method module is pulled into the affected set alongside ``inference/__init__``
+#: (the registration facade imports every method), so mapping that __init__ edge
+#: to these integration tests -- rather than the whole folder -- is what lets a
+#: single method change run only its own test file plus these.
+_INFERENCE_INTEGRATION_TESTS = (
+    "tests/inference/test_inference.py",
+    "tests/inference/test_inference_registry.py",
+)
+
+
+def _inference_test_targets(module_file: str) -> set[str]:
+    """Map one affected ``probpipe/inference/*.py`` file to its pytest target(s).
+
+    Filename convention ``_<name>.py -> tests/inference/test_<name>.py`` for the
+    per-method modules; the ``__init__`` registration facade maps to the
+    registry/dispatch integration tests (:data:`_INFERENCE_INTEGRATION_TESTS`);
+    anything without a matching test file (shared core such as ``_registry.py``,
+    cross-cutting helpers) falls back to the whole ``tests/inference/`` folder.
+    """
+    name = Path(module_file).name
+    if name == "__init__.py":
+        hits = {t for t in _INFERENCE_INTEGRATION_TESTS if Path(t).exists()}
+        return hits or {"tests/inference"}
+    stem = name[:-3].lstrip("_")  # _blackjax_sgmcmc.py -> blackjax_sgmcmc
+    candidate = f"tests/inference/test_{stem}.py"
+    return {candidate} if Path(candidate).exists() else {"tests/inference"}
+
+
+def resolve_test_targets(changed_files: Iterable[str]) -> list[str]:
+    """Map changed source files to the pytest targets that cover them.
+
+    Source files are transitively expanded over the reverse import graph
+    (``skip_init=False``, as the test job requires), then each affected module
+    is mapped to a target: a root-level ``probpipe/X.py`` selects the root
+    ``tests/test_*.py`` files; ``probpipe/inference/...`` uses the
+    filename-convention granularity of :func:`_inference_test_targets`; any
+    other ``probpipe/<subpkg>/...`` selects the ``tests/<subpkg>/`` folder. A
+    folder target supersedes individual file targets beneath it. Returns a
+    sorted list.
+    """
+    rdeps = reverse_dependency_map()
+    changed_sources = [f for f in changed_files if f.startswith(PACKAGE)]
+    targets: set[str] = set()
+    root_change = False
+    for module in affected_modules(changed_sources, rdeps, skip_init=False):
+        path = module_to_file(module)
+        if not path:
+            continue
+        rel = path[len(PACKAGE) + 1 :]  # strip leading "probpipe/"
+        if "/" not in rel:
+            root_change = True  # root-level module -> root tests/test_*.py
+            continue
+        subpkg, mod = rel.split("/", 1)
+        if subpkg == "inference":
+            targets |= _inference_test_targets(mod)
+        elif Path(f"tests/{subpkg}").is_dir():
+            targets.add(f"tests/{subpkg}")
+    if root_change:
+        targets |= {str(p) for p in Path("tests").glob("test_*.py")}
+    # A folder target supersedes the individual files beneath it (else pytest
+    # would collect the same file twice).
+    folders = {t for t in targets if not t.endswith(".py")}
+    targets = {t for t in targets if not any(t.startswith(f"{d}/") for d in folders)}
+    return sorted(targets)
+
+
+def _cmd_test_targets(args: argparse.Namespace) -> int:
+    for target in resolve_test_targets(args.files):
+        print(target)
+    return 0
+
+
 def _cmd_notebooks(args: argparse.Namespace) -> int:
     nb_dir = args.nb_dir
     changed = args.files
@@ -276,6 +349,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     p_expand.add_argument("files", nargs="*", help="changed file paths")
     p_expand.set_defaults(func=_cmd_expand)
+
+    p_targets = sub.add_parser(
+        "test-targets",
+        help="print the pytest targets covering the changed source files",
+    )
+    p_targets.add_argument("files", nargs="*", help="changed file paths")
+    p_targets.set_defaults(func=_cmd_test_targets)
 
     p_nb = sub.add_parser(
         "notebooks",
