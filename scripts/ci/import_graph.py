@@ -15,9 +15,14 @@ and answers two questions:
 
 CLI
 ---
+``python3 scripts/ci/import_graph.py test-targets <changed_files...>``
+    Print the pytest targets (files and/or folders) covering the changed source
+    files, one per line. Consumed by the ``test`` job.
+
 ``python3 scripts/ci/import_graph.py expand <changed_files...>``
     Print the source file of every probpipe module transitively affected by the
-    changed files, one per line. Consumed by the ``test`` job.
+    changed files, one per line. An inspection helper; the ``test`` job maps
+    those affected modules to pytest targets via ``test-targets``.
 
 ``python3 scripts/ci/import_graph.py notebooks <nb_dir> <changed_files...>``
     Print the notebooks under ``<nb_dir>`` affected by the changed files, one
@@ -253,20 +258,27 @@ _INFERENCE_INTEGRATION_TESTS = (
 )
 
 
-def _inference_test_targets(module_file: str) -> set[str]:
-    """Map one affected ``probpipe/inference/*.py`` file to its pytest target(s).
+def _inference_test_targets(rel_path: str) -> set[str]:
+    """Map one affected ``probpipe/inference/`` module to its pytest target(s).
 
-    Filename convention ``_<name>.py -> tests/inference/test_<name>.py`` for the
-    per-method modules; the ``__init__`` registration facade maps to the
-    registry/dispatch integration tests (:data:`_INFERENCE_INTEGRATION_TESTS`);
-    anything without a matching test file (shared core such as ``_registry.py``,
-    cross-cutting helpers) falls back to the whole ``tests/inference/`` folder.
+    *rel_path* is the module's path relative to ``probpipe/inference/`` (e.g.
+    ``_pyabc.py`` or ``__init__.py``), as split out by :func:`resolve_test_targets`.
+
+    * ``__init__.py`` -- the registration facade -- maps to the registry/dispatch
+      integration tests (:data:`_INFERENCE_INTEGRATION_TESTS`).
+    * A flat per-method module ``_<name>.py`` maps to
+      ``tests/inference/test_<name>.py`` by filename convention.
+    * Anything else -- a module with no matching ``test_<name>.py`` (shared core
+      such as ``_registry.py``), or a nested subpackage module (``sub/_foo.py``,
+      which has no flat filename convention) -- falls back to the whole
+      ``tests/inference/`` folder.
     """
-    name = Path(module_file).name
-    if name == "__init__.py":
+    if rel_path == "__init__.py":
         hits = {t for t in _INFERENCE_INTEGRATION_TESTS if Path(t).exists()}
         return hits or {"tests/inference"}
-    stem = name[:-3].lstrip("_")  # _blackjax_sgmcmc.py -> blackjax_sgmcmc
+    if "/" in rel_path:  # nested subpackage module: no flat test_<name>.py convention
+        return {"tests/inference"}
+    stem = rel_path[:-3].lstrip("_")  # _blackjax_sgmcmc.py -> blackjax_sgmcmc
     candidate = f"tests/inference/test_{stem}.py"
     return {candidate} if Path(candidate).exists() else {"tests/inference"}
 

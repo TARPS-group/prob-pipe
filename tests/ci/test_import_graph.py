@@ -247,3 +247,53 @@ class TestResolveTestTargets:
         assert "tests/inference/test_pyabc.py" in printed
         assert "tests/inference/test_inference_registry.py" in printed
         assert "tests/inference" not in printed  # not the whole folder
+
+    def test_root_module_maps_to_root_tests(self, fake_pkg):
+        """A root-level ``probpipe/X.py`` change selects the root ``tests/test_*.py``
+        files, never a subpackage folder."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/_utils.py": "v = 1\n",
+                "tests/test_utils.py": "",
+                "tests/test_coverage_gaps.py": "",
+                "tests/core/test_thing.py": "",  # subpackage test — must NOT be selected
+            }
+        )
+        assert set(resolve_test_targets(["probpipe/_utils.py"])) == {
+            "tests/test_utils.py",
+            "tests/test_coverage_gaps.py",
+        }
+
+    def test_reexported_leaf_reaches_root_tests(self, fake_pkg):
+        """A subpackage module re-exported through ``probpipe/__init__.py`` reaches
+        the top-level __init__ (skip_init=False), pulling in the root
+        ``tests/test_*.py`` alongside its own subpackage folder — the
+        regression-suite trigger (e.g. test_coverage_gaps.py) the test job relies on."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "from .core.thing import Thing\n",
+                "probpipe/core/__init__.py": "",
+                "probpipe/core/thing.py": "class Thing:\n    pass\n",
+                "tests/core/test_thing.py": "",
+                "tests/test_coverage_gaps.py": "",
+            }
+        )
+        assert set(resolve_test_targets(["probpipe/core/thing.py"])) == {
+            "tests/core",
+            "tests/test_coverage_gaps.py",
+        }
+
+    def test_nested_inference_module_falls_back_to_folder(self, fake_pkg):
+        """A nested inference subpackage module has no flat ``test_<name>.py``
+        convention, so it maps to the whole folder rather than a basename guess."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/inference/__init__.py": "",
+                "probpipe/inference/sub/__init__.py": "",
+                "probpipe/inference/sub/_foo.py": "v = 1\n",
+                "tests/inference/test_foo.py": "",  # basename match — must NOT be selected
+            }
+        )
+        assert set(resolve_test_targets(["probpipe/inference/sub/_foo.py"])) == {"tests/inference"}
