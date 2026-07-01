@@ -1,0 +1,488 @@
+# Part III — Core Abstractions
+
+Part III introduces the probability abstractions themselves, the objects a user constructs and operates on, each built on the infrastructure of Part II and introduced in dependency order. Its final two sections cover the registries that act across these abstractions: cross-type conversion and constraint reparameterization.
+
+## III.0 — Overview: the abstraction map
+
+Each abstraction is introduced in the order below, depending only on those above it and on the infrastructure of Part II:
+
+| §      | Layer                       | Abstraction                                                                                           | Role                                                                                                            |
+| ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| III.1  | Schema                      | `EventTemplate`                                                                                       | A `_NamedTree` of type-specs — the type-level structure of one value. Pure structure; no data.                  |
+| III.2  | Values                      | `Record` / `NumericRecord`                                                                            | A `_NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
+| III.3  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
+| III.4  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type; carries an `event_template` for its draws.                           |
+| III.5  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
+| III.6  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value; a sibling of `Distribution`.   |
+| III.7  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or kernels): `N` separate laws, distinct from one joint distribution.                 |
+| III.8  | (Conditional) Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions; the factor / field access interfaces.                       |
+| III.9  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts; the result kind is derived from the operands.                                        |
+| III.10 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
+| III.11 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
+| III.12 | Registries | constraint reparameterization (`bijector_for`) | Mapping a `Constraint` to a bijector for unconstrained inference. |
+
+## III.1 — `EventTemplate`
+
+### Contract
+
+An `EventTemplate` is a `_NamedTree` that defines the *shape of one event* (a draw, a stored datum, ...). Hence, each leaf specifies the type of value it holds, which we call a **value spec**, drawn from a closed but extensible sum: 
+
+```python
+# additional leaf types are introduced with the corresponding abstraction. 
+ValueSpec = ArraySpec | OpaqueSpec | FunctionSpec
+
+ArraySpec(shape: tuple[int, ...], dtype: DType, support: Constraint)   # a numeric array leaf
+OpaqueSpec(meta: Hashable)                                             # a non-array Python object
+FunctionSpec(input_template: EventTemplate, output_template: EventTemplate)              # a leaf holding a callable
+```
+
+When every leaf is an `ArraySpec` (recursively), the template *is* a `NumericEventTemplate` — the all-array specialization (construction auto-promotes). Beyond the inherited `_NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
+
+```python
+class EventTemplate(_NamedTree[ValueSpec]):
+    def __init__(self, **fields: ValueSpec | EventTemplate) -> None: ...
+
+    @classmethod
+    def infer_from(cls, value: Any) -> EventTemplate: ...   # best-effort, lossy
+    @property
+    def is_numeric(self) -> bool: ...
+    def numeric_subset(self) -> NumericEventTemplate: ...    # project to ArraySpec leaves
+```
+
+`NumericEventTemplate` further provides a flat (vectorized) layout of the leaves:
+
+```python
+class NumericEventTemplate(EventTemplate):
+    @property
+    def leaf_shapes(self) -> dict[str, tuple[int, ...]]: ...   # per-field array shapes, canonical order
+    @property
+    def vector_size(self) -> int: ...                          # total flat dimension
+```
+
+### Rationale
+
+As the *type layer*, an `EventTemplate` is the explicit structure that travels with a value and with the producers and consumers of values, threaded forward rather than reconstructed from raw data at each step (`D5 – Explicit, carried structure`). It separates the structure of one event from the orthogonal axes of *multiplicity* and *identity*, keeping those distinctions explicit (`D1 – Mathematical fidelity`).
+
+### Open points
+
+- *Validation scope.* Whether construction performs structural validation only, with opt-in deep (shape/dtype) checks, is open.
+
+---
+
+## III.2 — `Record` and `NumericRecord`
+
+### Contract
+
+A `Record` is a `_NamedTree` whose leaves are *values*, bound to an authoritative `EventTemplate` it conforms to. It is the data-level counterpart of the event template, so `EventTemplate` is to  `Record`  as `type`  is to `value`. Records provide a uniform representation for all types of values, including the data a function consumes and the draws a distribution produces. It carries a name, provenance, and annotations through the identity/metadata layer. `NumericRecord` is the specialization in which every leaf is a numeric array and hence carries a `NumericEventTemplate`.
+
+A `Record`'s structure is exactly its template's: `record.keys() == record.event_template.keys()`, and the value at every path conforms to the spec at that path. This holds through nesting — a subtree is itself a `Record` carrying the matching template slice, so `record.at_path(p).event_template == record.event_template.at_path(p)`. The template is stored and authoritative — `record.event_template` returns it directly, never re-inferring. Two records are equal when they share a class, an `event_template`, and field-by-field equal data, so an identity transform that rebuilds the same data compares equal.
+
+Beyond what it inherits — the collection interface from `_NamedTree` (with `L` a value) and the identity/metadata interface from `Tracked` + `Annotated` — a `Record` adds template binding, the numeric narrowing, and value-side reconstruction:
+
+```python
+class Record(_NamedTree[Any], Tracked, Annotated):     # a _NamedTree of values; also Tracked + Annotated
+    def __init__(self, name: str, fields: Mapping[str, Any] | None = None, /, *,
+                 event_template: EventTemplate | None = None,
+                 **kw_fields: Any) -> None: ...
+    #   name is the required first argument (semantic identity); a nested sub-record's name is its field key.
+    #   Binds to event_template if given (structural validation), else infers it once via EventTemplate.infer_from.
+
+    @property
+    def event_template(self) -> EventTemplate: ...      # stored, authoritative — never re-inferred
+    def to_numeric(self) -> NumericRecord: ...          # requires every leaf to be an array
+
+    @classmethod
+    def from_field_values(cls, name: str, template: EventTemplate, values: Sequence[Any]) -> Record: ...
+    #   reconstruct from values in the template's canonical order; ValueError on count/shape mismatch
+```
+
+When every leaf is a numeric array, a `Record` *is* a `NumericRecord` — a pytree of arrays (its children the field values, its `event_template` static metadata) with the `Record` interface on top, bound to a `NumericEventTemplate`. It adds the flat-vector bridge, reading its layout (`leaf_shapes`, `vector_size`, canonical order) from the template:
+
+```python
+class NumericRecord(Record):
+    def to_vector(self) -> Array: ...                    # leaves -> flat vector, in the template's canonical order
+    @classmethod
+    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecord: ...   # the inverse
+```
+
+Because a `NumericRecord` is a bare array pytree, it passes through `grad` / `vmap` / `jit` unchanged to help support end-to-end differentiability.
+
+### Rationale
+
+A `Record` is the *values* half of `C1 – Uniform interface to distributions and values`: a distribution's draw is a `Record` (or a `RecordBatch` for many), and a function over named values consumes one. It is where `D5 – Explicit, carried structure` becomes concrete — a `Record` *carries* its template as authoritative structure, threaded forward from whoever produced it, rather than having it re-inferred from raw arrays downstream. Inheriting the `_NamedTree` interface, a value's parts are reached by meaningful name (`C5 – Naming for unambiguous meaning`) and navigation yields views, not copies (`D7 – Single source of truth`); this section adds only what binding to a template and holding data require.
+
+### Open points
+
+- *Single-value coercion.* How a single-field `Record` presents as a bare scalar/array (coercion via `float` / `jnp.asarray`, a `.shape` shim, or a dedicated single-value wrapper) is unresolved.
+
+## III.3 — `RecordBatch` and `NumericRecordBatch`
+
+### Contract
+
+A `RecordBatch` is a batch of records — a `Batch` whose elements are `Record`s, all conforming to one shared `EventTemplate`. It is the batched value a workflow produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `Tracked` but not `Annotated`, and it is a *collection* of records — not itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
+
+```python
+class RecordBatch(Batch[Record]): # Tracked
+    @property
+    def event_template(self) -> EventTemplate: ... # the structure shared by every element
+
+    # batch axis: batch_shape / batch_size / __len__ / __iter__ range over the batch
+    def __getitem__(self, key: int | slice | str | tuple[str, ...]) -> Record | RecordBatch | Array: ...
+    #   int / slice -> an element Record or a sub-batch                     (a view)
+    #   field path  -> that field's column, or a sub-RecordBatch if nested  (a view)
+```
+
+Both forms return views. What a `RecordBatch` omits is the field-keyed `Mapping` *protocol* — `keys()` / `values()` / `children` — so `len` / `iter` are unambiguously the batch; the field structure is read from `event_template`.
+
+When every element is a `NumericRecord` (each field a column of arrays), the batch is a `NumericRecordBatch`: a pytree of arrays whose leading dimensions are the `batch_shape`, bound to one shared `NumericEventTemplate`. Being a bare array pytree it passes through `vmap` / `grad` / `jit`, and it offers the batched flat-vector bridge inference works in, a `(*batch_shape, vector_size)` array of stacked per-element vectors (a posterior's draws, a sweep's inputs):
+
+```python
+class NumericRecordBatch(RecordBatch):
+    def to_vector(self) -> Array: ...        # -> shape (*batch_shape, vector_size): one flat vector per element
+    @classmethod
+    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecordBatch: ...   # leading axes are the batch_shape
+```
+
+### Rationale
+
+A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side: a batch of `N` records is a *collection* of `N` distinct records, never the same as a single record with `N` fields — which is why it claims only the batch axis, never the leaf-keyed `Mapping` contract, reading its elements' field structure from the shared `event_template`.
+
+## III.4 — `Distribution`
+
+### Contract
+
+A `Distribution[T]` is a probability measure over values of type `T` — a single random law.  The type `T` is the natural raw form of a draw — an `Array` for a scalar law, a `Record` for a multi-field one — which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements. Hence, operational support is decoupled from the class. The draw a *user* sees, described by `event_template`, is always a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. 
+
+A `NumericDistribution` is a `Distribution` whose draws are numeric. Hence, it carries a `NumericEventTemplate` and so can make use of the flat-vector machinery. 
+
+```python
+class Distribution[T](Tracked, Annotated):
+    def __init__(self, name: str, event_template: EventTemplate) -> None: ...  # name + the schema it carries — both required, fixed once
+
+    @property
+    def event_template(self) -> EventTemplate: ...             # the carried schema of a (Record) draw — set at construction, read-only
+    @property
+    def event_shape(self) -> tuple[int, ...]: ...              # defined only when a draw is a single array
+    
+class NumericDistribution(Distribution): ...   # marker only — numeric draws; carries a NumericEventTemplate
+```
+
+**The distribution value specification.** The `DistributionSpec(event_template)` class extends the value spec to include a `Distribution` as a valid value (with the given `event_template`). Hence, it is possible to define random measures (distributions over distributions). 
+
+```python
+DistributionSpec(event_template: EventTemplate)   # a leaf whose value is a Distribution with the given event_template
+```
+### Rationale
+
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and — when it is array-backed — differentiable end-to-end (`D6 – Differentiability where possible`). 
+### Notes
+
+- *Field views.* Where a draw has fields, `d["x"]` returns a view of that field's marginal, correlation-preserving when sibling views are co-sampled, available on any such distribution regardless of how it was constructed.
+
+## III.5 — Distribution capabilities
+### Contract 
+
+Each operation on a distribution is a **capability**: a distribution implements an underscore method (`_sample`, `_log_prob`, `_mean`, …) on the raw type `T` for each operation it supports, and the matching user-facing op (`sample`, `log_prob`, `mean`, …) wraps the result at the boundary when appropriate. 
+
+```python
+# Each operation is a capability: a @runtime_checkable Protocol a distribution implements iff it supports the op.
+# Implementer methods (_x) work on the raw type T; the matching user op wraps the result at the boundary.
+@runtime_checkable
+class SupportsSampling[T](Protocol):
+    def _sample(self, key: Key, sample_shape: tuple[int, ...] = ()) -> T: ...
+    #   one draw for sample_shape=(); a non-empty shape prepends batch axes
+
+@runtime_checkable
+class SupportsUnnormalizedLogProb[T](Protocol):
+    def _unnormalized_log_prob(self, value: T) -> Array: ...   # log-density up to an additive constant
+
+@runtime_checkable
+class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
+    def _log_prob(self, value: T) -> Array: ...                # the *normalized* log-density (refines the above)
+
+@runtime_checkable
+class SupportsMean[T](Protocol):
+    def _mean(self) -> T: ...                                  # the mean — event-typed (a value shaped like a draw)
+
+@runtime_checkable
+class SupportsVariance[T](Protocol):
+    def _variance(self) -> T: ...                              # per-coordinate variance — also event-typed
+
+@runtime_checkable
+class SupportsCov(Protocol):
+    def _cov(self) -> LinOp: ...                               # full covariance: a (d, d) operator over the FLAT numeric event — not event-typed
+
+@runtime_checkable
+class SupportsQuantile[T](Protocol):
+    def _quantile(self, q: ArrayLike) -> Array: ...            # Array[T]: one value per level in q (q in [0, 1]); per-coordinate for multivariate
+
+@runtime_checkable
+class SupportsExpectation[T](Protocol):
+    def _expectation(self, f: Callable[[T], Array]) -> Array: ...   # closed-form E[f(X)]; the op MC-estimates via _sample when absent
+
+@runtime_checkable
+class SupportsConditioning(Protocol):
+    def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution: ...   # the conditional law given fixed values
+```
+
+Here `Key` is a PRNG key, `ArrayLike` an array-or-scalar input, and `LinOp` a (possibly structured) covariance operator. Moments and quantiles require a numeric draw; `_cov` in particular ranges over the *flattened* numeric draw. 
+### Rationale
+
+Making each operation a *capability* (a structural protocol) rather than a base-class method follows `D3 – Capability-based operations` — a distribution is defined by what it can *do*, not by where it sits in a hierarchy. Because support is structural (tested by `isinstance(dist, SupportsX)`, not subclassing), a distribution gains an operation just by implementing its method, and a wrapper (a view, a transform) exposes exactly the capabilities of whatever it wraps.
+
+## III.6 — `ConditionalDistribution`
+
+### Contract
+
+A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A kernel is not a `Distribution` and does not inherit from one: it has no marginal law, so `sample` / `log_prob` / `mean` do not apply to it unconditionally. Rather, the two are siblings sharing a capability vocabulary.
+
+A kernel carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`.
+
+Users never call a method on the kernel; they use the existing ops. `condition_on(K, s)` evaluates it (exact, no inference) to a `Distribution`; `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`. Conditioning on only a subset of given fields *curries* to a smaller kernel view while conditioning on a *distribution* over the given yields the predictive mixture `∫ K(s, ·) μ(ds)`.
+
+```python
+class ConditionalDistribution[S, T](Tracked, Annotated):
+    def __init__(self, name: str, given_template: EventTemplate, event_template: EventTemplate) -> None: ...  # name + both schemas (given before event, as in FunctionSpec); fields disjoint
+    @property
+    def given_template(self) -> EventTemplate: ...      # schema of the conditioning value S — set at construction
+    @property
+    def event_template(self) -> EventTemplate: ...      # schema of a produced draw T — set at construction
+    def _condition_on(self, given: S, /, **kwargs) -> Distribution[T]: ...   # THE required primitive: the law K(given, ·)
+
+@runtime_checkable
+class SupportsConditionalSampling[S, T](Protocol):
+    def _conditional_sample(self, given: S, key: Key, sample_shape: tuple[int, ...] = ()) -> T: ...
+@runtime_checkable
+class SupportsConditionalLogProb[S, T](Protocol):
+    def _conditional_log_prob(self, given: S, value: T) -> Array: ...
+@runtime_checkable
+class SupportsConditionalMean[S, T](Protocol):
+    def _conditional_mean(self, given: S) -> T: ...
+# … and likewise SupportsConditionalVariance (_conditional_variance(given) -> T),
+#   SupportsConditionalCovariance (_conditional_cov(given) -> LinOp),
+#   SupportsConditionalExpectation (_conditional_expectation(given, f, …) -> Array).
+```
+
+**The numeric special cases.** A kernel has *two* templates, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** (conditioning) side numeric; `Numeric` before `Distribution` marks the **event** side numeric, while `FullyNumeric*` denotes the cases where both given and event side are numeric. Each is a marker only, adding no operations of its own (mirroring `NumericDistribution`).
+
+```python
+class ConditionalNumericDistribution(ConditionalDistribution): ...   # event numeric: every K(s, ·) is a NumericDistribution
+class NumericConditionalDistribution(ConditionalDistribution): ...   # given numeric: the conditioning value is a numeric vector
+class FullyNumericConditionalDistribution(NumericConditionalDistribution, ConditionalNumericDistribution): ...   # both sides numeric
+```
+
+**The conditional distribution value specification.** The `ConditionalDistributionSpec(event_template)` class extends the value spec to include a `ConditionalDistribution` as a valid value, analogously to `DistributionSpec`:
+
+```python
+ConditionalDistributionSpec(given_template: EventTemplate, event_template: EventTemplate)   # a leaf whose value is a ConditionalDistribution with the specified given_template and event_template
+```
+
+### Rationale
+
+Applying a kernel to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A kernel's capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to kernels too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. As with `Distribution`, a concrete kernel family derives both templates from its parameters and passes them up; the base only requires they are fixed at construction (`D5 – Explicit, carried structure`/`D7 – Single source of truth`). The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone — reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks.
+
+## III.7 — `DistributionBatch` and `ConditionalDistributionBatch`
+
+### Contract
+
+A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one `event_template`, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate kernels sharing one `given_template` and one `event_template`. They are grouped because they are the identical multiplicity wrapper over the two distribution-like base types — the conditional one only carries the extra `given_template`.
+
+```python
+class DistributionBatch(Batch[Distribution]):  # Tracked
+    @property
+    def event_template(self) -> EventTemplate: ...   # the draw schema shared by every element
+    # batch axis: batch_shape / batch_size / __len__ / __iter__ range over the batch
+    def __getitem__(self, index: int | slice) -> Distribution | DistributionBatch: ...   # an element or a sub-batch (a view)
+
+class ConditionalDistributionBatch(Batch[ConditionalDistribution]):  # Tracked
+    @property
+    def given_template(self) -> EventTemplate: ...   # the conditioning schema shared by every element
+    @property
+    def event_template(self) -> EventTemplate: ...   # the produced-draw schema shared by every element
+    def __getitem__(self, index: int | slice) -> ConditionalDistribution | ConditionalDistributionBatch: ...   # (a view)
+```
+
+### Rationale
+
+This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space — exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a kernel produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `Tracked` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
+
+## III.8 — Factored distributions
+
+### Contract
+
+A *factored distribution* is a distribution **built from named sub-distributions**. Atop being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. Two classes carry it: `FactoredDistribution`, an unconditional joint, and `FactoredConditionalDistribution`, a joint that still conditions on exogenous fields. This section fixes what these objects *are* and how they are accessed. Building them is the role of the composition operator.
+
+**Field versus factor.** A **field** is a named part of a draw, that is, a path in the `event_template`. A **factor** is a constituent distribution the joint was built from. The two coincide only for an independent joint of single-field factors and differ in general. A correlated `MultivariateNormal` presented as `{intercept, slope}` is one factor with two fields. Conversely, the same draw `{x, y}` can arise from a single bivariate normal (no factors), from two independent factors (no edges), or from a chain p(y | x) · p(x) (two factors, one edge). The fields are identical but the factorization differs.
+
+**The factored classes.** A factored distribution carries an ordered list of factors, each a `Distribution` or a kernel. Its dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. That derived structure is the `SupportsFactors` capability, so a "joint" *is* a distribution that implements `SupportsFactors`. The factorization does not live in the `event_template`. The joint's `event_template` is the flat union of the fields its factors produce, while the factor list is the capability's own state. The two carrying classes are:
+- `FactoredDistribution`, an unconditional joint with all given fields internally satisfied. Its `log_prob` is the sum of the factors' conditional log-densities, and it samples ancestrally. An independent product is the no-edge case, so no separate product class is needed.
+- `FactoredConditionalDistribution`, a joint that still conditions on exogenous fields, such as a regression model before its covariates are supplied. It exposes only the conditional capabilities until those fields are bound, which curries it down to a `FactoredDistribution`.
+
+**The two access interfaces.** A joint exposes up to two clearly separated interfaces, never through the same operator.
+- The **field interface** is available on any distribution whose draw has fields. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. `marginal(d, "intercept")` returns that same marginal **detached** from the parent. Both are keyed by field path, and both work even on a structured distribution that has no factors.
+- The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or a kernel for a dependent edge. There need be no factor for a given field, and no field for a given factor.
+
+The three results, factor and marginal and view, coincide for an independent joint of single-field factors and diverge once dependence is present. Views are the forward, composition direction and preserve correlation. Factors are the backward, inference direction, since `condition_on` reads factors and never views. Marginals are the detached query.
+
+```python
+@runtime_checkable
+class SupportsFactors(Protocol):                   # the capability that makes a distribution a "joint"
+    @property
+    def factors(self) -> tuple[Distribution | ConditionalDistribution, ...]: ...   # ordered; the graph is derived, not stored
+
+class FactoredDistribution(Distribution, SupportsFactors): ...            # unconditional joint; independence is the no-edge case
+class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors): ...  # still conditions on exogenous fields
+
+# numeric markers, by which of the (given, event) templates is numeric. Numeric is positional,
+# as for the kernel markers: before Distribution marks the event numeric, before Conditional the given.
+class FactoredNumericDistribution(FactoredDistribution): ...                                # unconditional joint, event numeric
+class FactoredConditionalNumericDistribution(FactoredConditionalDistribution): ...          # conditional joint, event numeric
+class FactoredNumericConditionalDistribution(FactoredConditionalDistribution): ...          # conditional joint, given numeric
+class FactoredFullyNumericConditionalDistribution(
+        FactoredNumericConditionalDistribution, FactoredConditionalNumericDistribution): ... # conditional joint, both numeric
+
+# access is via three ops, each dispatched on a different capability:
+#   factor(d, name)     -> a stored factor (a kernel for an edge)   requires SupportsFactors (joints only)
+#   marginal(d, field)  -> the detached field marginal              any distribution whose draw has fields
+#   d[field]            -> a view: field marginal plus a parent ref  any distribution whose draw has fields
+```
+
+### Rationale
+
+Factorization is an *optional capability*, `SupportsFactors`, rather than a base class. This is `D2 – Generality first`: a joint is an ordinary distribution that gains factor access by carrying the capability, instead of sitting in a parallel class tower. Keeping the field interface (part of a draw) and the factor interface (part of the construction) separate serves `D1 – Mathematical fidelity`, since the two are genuinely different in the mathematics. Independence is likewise a property of the derived graph rather than a class, so dropping any dedicated product class loses no behavior: an edge-free joint still samples its factors in parallel and conditions exactly on a field. A joint's capabilities are its factors' capabilities, intersected. It supports an operation exactly when every factor does, so ancestral `sample` requires every factor to sample and a summed `log_prob` requires every factor to score.
+
+### Notes
+
+- *Sub-joint navigation yields a view.* `at_path(partial)` on a joint returns a view onto the parent, never a detached standalone distribution. An edge-free region is a self-contained sub-joint, and a region that cuts a dependence edge stays a view, so that co-sampling through the parent remains correct.
+- *Conditioning a joint.* One structural rule covers every case. Binding an exogenous field **curries**. Conditioning on an upstream or independent produced field is an **exact slice**. Conditioning on downstream data triggers **Bayesian inversion**, which only the factored classes can perform.
+
+## III.9 — Composition
+
+### Contract
+
+Composition builds a factored distribution from parts, written as an *expression*: a single binary operator `*` combines `Distribution`s and `ConditionalDistribution`s into one joint. The *kind* of the result is **derived** from the operands and never chosen by hand, and every result is itself a `Distribution` or a `ConditionalDistribution`. The operator is defined after the factored-distribution classes it returns. The base objects carry no composition logic. Each merely exposes `*` as a thin `__mul__` that delegates to the operator, which keeps the dependency one-directional.
+
+**The `*` operator.** `A * B` composes two operands into a joint. It is **conditional-first**: the left operand may condition on the right, so `lik * prior` reads as the density p(y | β) · p(β), while the reverse (a consumer before its producer) is an error. Characterize each operand by its **produced fields** `F` and its **unmet given fields** `G`, with `G = ∅` for a `Distribution` and `G` the given fields for a kernel. The composition is then fixed by the field sets alone:
+
+```
+bound  = G_A ∩ F_B            # dependency edges: left A conditions on a field that right B produces
+unmet  = (G_A − F_B) ∪ G_B    # residual exogenous givens — met by no factor
+require  F_A ∩ F_B = ∅         # each field is produced exactly once
+     and G_B ∩ F_A = ∅         # B must not consume a field A produces — else reorder (producer on the right)
+law:  p(F_A, F_B | unmet) = p_A(F_A | F_B) · p_B(F_B | G_B)      # reads left → right
+```
+
+The result has two mathematical degrees of freedom, *conditional?* (`unmet ≠ ∅`) and *dependent?* (`bound ≠ ∅`), but only the first is a **class** distinction:
+
+| `unmet` | result |
+|---|---|
+| `∅` | `FactoredDistribution` — a joint `Distribution` |
+| `≠ ∅` | `FactoredConditionalDistribution` — a joint `ConditionalDistribution`, its `given_template` exactly `unmet` |
+
+`*` returns the **most specific** class, recomputed from the *flattened* factor graph at each step. `A * B * C` builds one flat N-factor joint, with independent factors commuting and dependent ones kept in conditional-first order.
+
+**Naming the result.** A joint is *derived*, not created by the user, so `*` **auto-derives** its name deterministically from its factors and marks it `name_is_auto`. An auto-named operand is flattened into a larger joint, while an operand pinned with `with_name` is kept as a single named factor.
+
+```python
+# `*` is exposed on each base (Distribution, ConditionalDistribution) as __mul__, a thin delegator to the
+# operator defined here, after the joint classes (so it can name them as results):
+def __mul__(self, other: Distribution | ConditionalDistribution) -> FactoredDistribution | FactoredConditionalDistribution: ...
+#   conditional-first; the most-specific joint, re-derived from the flattened factor graph
+```
+
+### Rationale
+
+Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 – Generality first`, an independent product (`bound = ∅`) is just an edge-free joint, so *dependent?* is a runtime property of the derived graph and only *conditional?* names a class, giving two classes rather than four. The conditional-first order is already a valid topological listing, so composition is associative and acyclicity is automatic, with no separate graph inference.
+
+### Notes
+
+- *Operator coexistence.* `*` also denotes scalar scaling on some objects, such as a random function or a linear operator. The two coexist by operand-type dispatch: distribution and kernel operands compose, while scalar operands scale.
+- *The realigning `joint` form.* `joint(A, B, **align)` is `*` plus field-name realignment, for factors whose names do not line up. It renames, splits, or joins fields through the correlation-preserving views.
+
+## III.10 — The `Distribution` hierarchy
+
+### Contract
+
+With the base `Distribution`, the kernel `ConditionalDistribution`, and the factored distributions and their composition in place, the distribution *kinds* can be cataloged — every class named here is defined earlier; this section only organizes them. Two **independent** questions classify any distribution:
+1. **The type axis** — what does a draw look like, and is a factorization exposed? This fixes *which interfaces apply*.
+2. **The family axis** — how is the law realized? This fixes *which capabilities* the object implements, and how.
+
+The axes are orthogonal, so they combine freely: a `Normal` is *atomic* (type) and *parametric* (family); a posterior over `{μ, σ}` reconstructed from samples is *atomic-structured* and *empirical*; a joint's factors may themselves come from any family.
+
+**The type axis — atomic vs. joint.** The structural classification:
+
+| type | a draw is | factorization? | interface beyond the capabilities |
+|---|---|---|---|
+| **atomic, array-valued** | one `Array` (scalar or vector) | none | — (a single-field draw) |
+| **atomic, structured** | a multi-field `Record` | none | the *field* interface — `d["x"]`, `marginal` |
+| **joint** | a `Record` | `SupportsFactors` | the *field* interface **and** the *factor* interface — `factor` |
+
+The line between the last two is **factorization, not field count**: a multi-field empirical distribution or an amortized posterior has fields but no factors, so it is *atomic-structured*; only a distribution built from named sub-distributions is *joint*. Hence there is **no `RecordDistribution`** — draw structure lives in `event_template`, factor access in `SupportsFactors`.
+
+**The family axis — how the law is realized.** Each family is an ordinary `Distribution`, a `NumericDistribution` when its event is numeric, differing only in which capabilities it implements and how. This is refinement by capability, not a parallel class tower:
+- **Parametric (closed-form).** The standard families: continuous (`Normal`, `Gamma`, `Beta`, `Exponential`), discrete (`Bernoulli`, `Categorical`, `Poisson`), and multivariate (`MultivariateNormal`, `Dirichlet`). They are backed by a tensor library, with exact `sample` / `log_prob` / moments and a constrained-support `event_template`, and they make up the bulk of the atomic, array-valued row.
+- **Empirical.** A finite, possibly weighted, sample set: `sample` resamples, `log_prob` reads the (weighted) empirical measure, moments are sample estimates. Scalar or structured.
+- **Transformed (pushforward).** A base distribution pushed through a function, which is what lifting a function over a distribution-valued argument produces. An invertible map keeps an exact `log_prob` by change of variables, while a general map keeps `sample` and Monte-Carlo-estimates the rest.
+- **Mixture.** A convex combination of component distributions. It is also the form a dependent joint's detached `marginal` generally takes.
+- **Approximate.** A fitted stand-in for an intractable law (a variational posterior, a surrogate), exposing exactly the capabilities its fit supports.
+- **Random measure.** A distribution *over distributions*: a draw is itself a `Distribution` (a `DistributionSpec` leaf), and `mean` returns the marginalized law.
+
+**Kernels and batches stratify identically.** A `ConditionalDistribution` repeats both axes — atomic / structured / the `FactoredConditionalDistribution` joint, crossed with parametric / amortized / empirical / … — and a `DistributionBatch` is `N` of any of these. The catalog is one classification, reused across the conditional and multiplicity layers.
+
+### Rationale
+
+The hierarchy embodies `D2 – Generality first`: one base refined by *optional capabilities* (`SupportsFactors`, the numeric marker, each `SupportsX`) rather than a rigid class tower, so a new family slots in by implementing the capabilities it supports rather than by widening the base. The atomic-versus-joint split is a `D1 – Mathematical fidelity` distinction, since a joint genuinely offers its factors as distributions while an atomic-structured law does not, and it is carried by a capability rather than by the draw's type. Because composition is closed (`D4 – Closed system of objects under operations`), a joint re-enters the catalog as an ordinary `Distribution` for the next operation.
+
+## III.11 — Cross-type conversion
+
+### Contract
+
+A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*.
+
+A converter declares the source types it converts *from* and the target types it converts *to*, a cheap `check` that reports feasibility without converting, and the conversion itself. A conversion is rarely unique, so each carries a **fidelity**: `exact` for an equivalent representation, `moment-match` when only low-order moments are preserved, and `sample` for a Monte Carlo stand-in. The registry prefers higher fidelity, and a caller can name a converter or set a minimum fidelity.
+
+```python
+class ConversionMethod(Enum):
+    EXACT = "exact"                 # an equivalent representation
+    MOMENT_MATCH = "moment_match"   # preserves low-order moments only
+    SAMPLE = "sample"               # a Monte Carlo stand-in
+
+@dataclass(frozen=True)
+class ConversionInfo:               # the result of a converter's feasibility probe
+    feasible: bool
+    method: ConversionMethod | None = None
+
+class Converter(ABC):
+    def source_types(self) -> tuple[type, ...]: ...
+    def target_types(self) -> tuple[type, ...]: ...
+    def check(self, source, target_type: type) -> ConversionInfo: ...   # feasibility, without converting
+    def convert(self, source, target_type: type) -> Distribution: ...
+
+converter_registry: ConverterRegistry   # keyed on the (source, target) type pair
+```
+
+### Rationale
+
+Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment-match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`).
+
+## III.12 — Constraint reparameterization
+
+### Contract
+
+Gradient-based and Hamiltonian inference work in an unconstrained space, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a bijector that takes `ℝⁿ` onto that support. `bijector_for(constraint)` returns the canonical bijector, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
+
+```python
+def bijector_for(constraint: Constraint) -> Bijector: ...    # the canonical map ℝⁿ → support(constraint)
+def register_bijector(
+    key: type[Constraint] | Constraint,
+    factory: Callable[[Constraint], Bijector],
+) -> None: ...                                               # instance keys override type keys
+```
+
+### Rationale
+
+A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which serves `D6 – Differentiability where possible`. Keeping the map open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
+
+### Open points
+
+- *Round-trip fidelity.* The forward map (bijector to support) and this inverse map (support to bijector) are not strict inverses for every constraint, so a reparameterized support can drift to a coarser one. Whether to unify the two is unsettled.
