@@ -9,12 +9,12 @@ The infrastructure layers, in dependency order. Each is generic and type-agnosti
 
 | § | Layer | Abstraction | Role |
 |---|---|---|---|
-| II.1 | Structure | `_NamedTree` | The named, ordered tree addressed by path that every structured object is built on, owning the leaf-keyed mapping contract and navigation. |
+| II.1 | Structure | `NamedTree` | The named, ordered tree addressed by path that every structured object is built on, owning the leaf-keyed mapping contract and navigation. |
 | II.2 | Identity | `Tracked` / `Annotated` / `Provenance` | The name, lineage, and annotations an object carries beyond its mathematical content. |
 | II.3 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space. |
 | II.4 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved. The shared mechanism behind converters, inference selection, and bijector factories. |
 
-## II.1 — `_NamedTree`
+## II.1 — `NamedTree`
 
 ### Contract
 
@@ -25,10 +25,10 @@ Values in ProbPipe are represented as named, ordered trees.  ProbPipe uses the f
 - A **child** of a node is an entry directly under that node. 
 - The **canonical order** of a tree is a depth-first walk visiting children in insertion order. 
 
-Naming, addressing, traversal, and structure-preserving transforms are defined once in the `_NamedTree` class. Specially, a `_NamedTree` is a `Mapping` whose keys are exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, they are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. 
+Naming, addressing, traversal, and structure-preserving transforms are defined once in the `NamedTree` class. Specially, a `NamedTree` is a `Mapping` whose keys are exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, they are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. 
 
 ```python
-class _NamedTree[L]:
+class NamedTree[L]:
     # mapping interface — keyed by FIELD path
     def __getitem__(self, key: str | tuple[str, ...]) -> L: ...          # leaf only
     def __contains__(self, key: str | tuple[str, ...]) -> bool: ...      # leaf only
@@ -83,7 +83,7 @@ class Annotated:
     annotations: Mapping[str, Any] | None
 ```
 
-A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `_NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`.  The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves. 
+A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`.  The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves. 
 
 ```python
 class Tracked:                              # name + provenance

@@ -8,8 +8,8 @@ Each abstraction is introduced in the order below, depending only on those above
 
 | §      | Layer                       | Abstraction                                                                                           | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| III.1  | Schema                      | `EventTemplate`                                                                                       | A `_NamedTree` of type-specs — the type-level structure of one value. Pure structure; no data.                  |
-| III.2  | Values                      | `Record` / `NumericRecord`                                                                            | A `_NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
+| III.1  | Schema                      | `EventTemplate`                                                                                       | A `NamedTree` of type-specs — the type-level structure of one value. Pure structure; no data.                  |
+| III.2  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
 | III.3  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
 | III.4  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type; carries an `event_template` for its draws.                           |
 | III.5  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
@@ -25,7 +25,7 @@ Each abstraction is introduced in the order below, depending only on those above
 
 ### Contract
 
-An `EventTemplate` is a `_NamedTree` that defines the *shape of one event* (a draw, a stored datum, ...). Hence, each leaf specifies the type of value it holds, which we call a **value spec**, drawn from a closed but extensible sum: 
+An `EventTemplate` is a `NamedTree` that defines the *shape of one event* (a draw, a stored datum, ...). Hence, each leaf specifies the type of value it holds, which we call a **value spec**, drawn from a closed but extensible sum: 
 
 ```python
 # additional leaf types are introduced with the corresponding abstraction. 
@@ -36,10 +36,10 @@ OpaqueSpec(meta: Hashable)                                             # a non-a
 FunctionSpec(input_template: EventTemplate, output_template: EventTemplate)              # a leaf holding a callable
 ```
 
-When every leaf is an `ArraySpec` (recursively), the template *is* a `NumericEventTemplate` — the all-array specialization (construction auto-promotes). Beyond the inherited `_NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
+When every leaf is an `ArraySpec` (recursively), the template *is* a `NumericEventTemplate` — the all-array specialization (construction auto-promotes). Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
 
 ```python
-class EventTemplate(_NamedTree[ValueSpec]):
+class EventTemplate(NamedTree[ValueSpec]):
     def __init__(self, **fields: ValueSpec | EventTemplate) -> None: ...
 
     @classmethod
@@ -73,14 +73,14 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ### Contract
 
-A `Record` is a `_NamedTree` whose leaves are *values*, bound to an authoritative `EventTemplate` it conforms to. It is the data-level counterpart of the event template, so `EventTemplate` is to  `Record`  as `type`  is to `value`. Records provide a uniform representation for all types of values, including the data a function consumes and the draws a distribution produces. It carries a name, provenance, and annotations through the identity/metadata layer. `NumericRecord` is the specialization in which every leaf is a numeric array and hence carries a `NumericEventTemplate`.
+A `Record` is a `NamedTree` whose leaves are *values*, bound to an authoritative `EventTemplate` it conforms to. It is the data-level counterpart of the event template, so `EventTemplate` is to  `Record`  as `type`  is to `value`. Records provide a uniform representation for all types of values, including the data a function consumes and the draws a distribution produces. It carries a name, provenance, and annotations through the identity/metadata layer. `NumericRecord` is the specialization in which every leaf is a numeric array and hence carries a `NumericEventTemplate`.
 
 A `Record`'s structure is exactly its template's: `record.keys() == record.event_template.keys()`, and the value at every path conforms to the spec at that path. This holds through nesting — a subtree is itself a `Record` carrying the matching template slice, so `record.at_path(p).event_template == record.event_template.at_path(p)`. The template is stored and authoritative — `record.event_template` returns it directly, never re-inferring. Two records are equal when they share a class, an `event_template`, and field-by-field equal data, so an identity transform that rebuilds the same data compares equal.
 
-Beyond what it inherits — the collection interface from `_NamedTree` (with `L` a value) and the identity/metadata interface from `Tracked` + `Annotated` — a `Record` adds template binding, the numeric narrowing, and value-side reconstruction:
+Beyond what it inherits — the collection interface from `NamedTree` (with `L` a value) and the identity/metadata interface from `Tracked` + `Annotated` — a `Record` adds template binding, the numeric narrowing, and value-side reconstruction:
 
 ```python
-class Record(_NamedTree[Any], Tracked, Annotated):     # a _NamedTree of values; also Tracked + Annotated
+class Record(NamedTree[Any], Tracked, Annotated):     # a NamedTree of values; also Tracked + Annotated
     def __init__(self, name: str, fields: Mapping[str, Any] | None = None, /, *,
                  event_template: EventTemplate | None = None,
                  **kw_fields: Any) -> None: ...
@@ -109,7 +109,7 @@ Because a `NumericRecord` is a bare array pytree, it passes through `grad` / `vm
 
 ### Rationale
 
-A `Record` is the *values* half of `C1 – Uniform interface to distributions and values`: a distribution's draw is a `Record` (or a `RecordBatch` for many), and a function over named values consumes one. It is where `D5 – Explicit, carried structure` becomes concrete — a `Record` *carries* its template as authoritative structure, threaded forward from whoever produced it, rather than having it re-inferred from raw arrays downstream. Inheriting the `_NamedTree` interface, a value's parts are reached by meaningful name (`C5 – Naming for unambiguous meaning`) and navigation yields views, not copies (`D7 – Single source of truth`); this section adds only what binding to a template and holding data require.
+A `Record` is the *values* half of `C1 – Uniform interface to distributions and values`: a distribution's draw is a `Record` (or a `RecordBatch` for many), and a function over named values consumes one. It is where `D5 – Explicit, carried structure` becomes concrete — a `Record` *carries* its template as authoritative structure, threaded forward from whoever produced it, rather than having it re-inferred from raw arrays downstream. Inheriting the `NamedTree` interface, a value's parts are reached by meaningful name (`C5 – Naming for unambiguous meaning`) and navigation yields views, not copies (`D7 – Single source of truth`); this section adds only what binding to a template and holding data require.
 
 ### Open points
 
