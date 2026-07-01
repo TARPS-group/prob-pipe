@@ -8,12 +8,14 @@ package in a temp cwd and exercises the graph functions against it.
 from __future__ import annotations
 
 import json
+from typing import ClassVar
 
 import pytest
 from import_graph import (
     affected_modules,
     main,
     notebook_affected,
+    resolve_test_targets,
     reverse_dependency_map,
     symbol_definition_map,
 )
@@ -171,3 +173,127 @@ class TestCLI:
         assert main(["notebooks", str(nb_dir), "probpipe/leaf.py"]) == 0
         printed = capsys.readouterr().out.split()
         assert str(nb_dir / "demo.ipynb") in printed
+
+
+class TestResolveTestTargets:
+    """Source-change -> pytest-target mapping, incl. inference filename granularity."""
+
+    # A fake inference subpackage: the __init__ facade imports every method (so a
+    # method change pulls __init__ into the affected set); each method imports the
+    # shared _registry; probpipe/__init__ stays empty so a method change does NOT
+    # reach the root (mirrors the real tree, verified via `expand`).
+    _INFERENCE_TREE: ClassVar[dict[str, str]] = {
+        "probpipe/__init__.py": "",
+        # Name-imports (`from ._mod import X`), matching the real registration
+        # facade — these record a reverse edge to the *submodule*, so a method
+        # change pulls __init__ into the affected set. (`from . import _mod` would
+        # not, and would not mirror the real graph.)
+        "probpipe/inference/__init__.py": (
+            "from ._blackjax_sgmcmc import x\n"
+            "from ._pyabc import x\n"
+            "from ._pymc_method import x\n"
+            "from ._registry import reg\n"
+        ),
+        "probpipe/inference/_registry.py": "reg = 1\n",
+        "probpipe/inference/_blackjax_sgmcmc.py": "from ._registry import reg\n\nx = 1\n",
+        "probpipe/inference/_pyabc.py": "from ._registry import reg\n\nx = 1\n",
+        "probpipe/inference/_pymc_method.py": "from ._registry import reg\n\nx = 1\n",
+        "tests/inference/test_blackjax_sgmcmc.py": "",
+        "tests/inference/test_pyabc.py": "",
+        "tests/inference/test_inference.py": "",
+        "tests/inference/test_inference_registry.py": "",
+    }
+
+    def test_method_maps_to_own_test_plus_integration(self, fake_pkg):
+        """A single method change runs its own test + the registry integration
+        tests (from the __init__ edge), not the whole folder or sibling methods."""
+        fake_pkg(self._INFERENCE_TREE)
+        assert set(resolve_test_targets(["probpipe/inference/_blackjax_sgmcmc.py"])) == {
+            "tests/inference/test_blackjax_sgmcmc.py",
+            "tests/inference/test_inference.py",
+            "tests/inference/test_inference_registry.py",
+        }
+
+    def test_shared_core_maps_to_whole_folder(self, fake_pkg):
+        """A shared-core change (_registry) fans out to every method, so the
+        folder target supersedes the individual files."""
+        fake_pkg(self._INFERENCE_TREE)
+        assert set(resolve_test_targets(["probpipe/inference/_registry.py"])) == {"tests/inference"}
+
+    def test_module_without_matching_test_falls_back_to_folder(self, fake_pkg):
+        """An inference module with no test_<name>.py (here _pymc_method) falls
+        back to the whole folder rather than silently selecting nothing."""
+        fake_pkg(self._INFERENCE_TREE)
+        assert set(resolve_test_targets(["probpipe/inference/_pymc_method.py"])) == {
+            "tests/inference"
+        }
+
+    def test_other_subpackage_maps_to_its_folder(self, fake_pkg):
+        """Non-inference subpackages keep the folder-granular behavior."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/core/__init__.py": "",
+                "probpipe/core/thing.py": "v = 1\n",
+                "tests/core/test_thing.py": "",
+            }
+        )
+        assert set(resolve_test_targets(["probpipe/core/thing.py"])) == {"tests/core"}
+
+    def test_cli_prints_targets(self, fake_pkg, capsys):
+        fake_pkg(self._INFERENCE_TREE)
+        assert main(["test-targets", "probpipe/inference/_pyabc.py"]) == 0
+        printed = capsys.readouterr().out.split()
+        assert "tests/inference/test_pyabc.py" in printed
+        assert "tests/inference/test_inference_registry.py" in printed
+        assert "tests/inference" not in printed  # not the whole folder
+
+    def test_root_module_maps_to_root_tests(self, fake_pkg):
+        """A root-level ``probpipe/X.py`` change selects the root ``tests/test_*.py``
+        files, never a subpackage folder."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/_utils.py": "v = 1\n",
+                "tests/test_utils.py": "",
+                "tests/test_coverage_gaps.py": "",
+                "tests/core/test_thing.py": "",  # subpackage test — must NOT be selected
+            }
+        )
+        assert set(resolve_test_targets(["probpipe/_utils.py"])) == {
+            "tests/test_utils.py",
+            "tests/test_coverage_gaps.py",
+        }
+
+    def test_reexported_leaf_reaches_root_tests(self, fake_pkg):
+        """A subpackage module re-exported through ``probpipe/__init__.py`` reaches
+        the top-level __init__ (skip_init=False), pulling in the root
+        ``tests/test_*.py`` alongside its own subpackage folder — the
+        regression-suite trigger (e.g. test_coverage_gaps.py) the test job relies on."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "from .core.thing import Thing\n",
+                "probpipe/core/__init__.py": "",
+                "probpipe/core/thing.py": "class Thing:\n    pass\n",
+                "tests/core/test_thing.py": "",
+                "tests/test_coverage_gaps.py": "",
+            }
+        )
+        assert set(resolve_test_targets(["probpipe/core/thing.py"])) == {
+            "tests/core",
+            "tests/test_coverage_gaps.py",
+        }
+
+    def test_nested_inference_module_falls_back_to_folder(self, fake_pkg):
+        """A nested inference subpackage module has no flat ``test_<name>.py``
+        convention, so it maps to the whole folder rather than a basename guess."""
+        fake_pkg(
+            {
+                "probpipe/__init__.py": "",
+                "probpipe/inference/__init__.py": "",
+                "probpipe/inference/sub/__init__.py": "",
+                "probpipe/inference/sub/_foo.py": "v = 1\n",
+                "tests/inference/test_foo.py": "",  # basename match — must NOT be selected
+            }
+        )
+        assert set(resolve_test_targets(["probpipe/inference/sub/_foo.py"])) == {"tests/inference"}
