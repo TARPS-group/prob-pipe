@@ -60,6 +60,8 @@ class NamedTree[L]:
 
     @classmethod
     def _node_type(cls) -> type[Self]: ...                               # the family's own node type
+    @classmethod
+    def _leaf_type(cls) -> type | UnionType: ...                         # the family's declared leaf type; leaves are validated against it at construction
 ```
 
 ### Rationale
@@ -68,13 +70,14 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 ### Notes
 
 - *Same-family closure.* Every navigator and transform returns the same family, enforced by `_node_type()`.
+- *Leaf type versus node type.* The parameter `L` declares the leaf type, the only axis on which tree families differ: it is what `values()`, `[]`, and `map` traffic in. The node type is not a second parameter, since interior nodes are always instances of the family's own class, which is what `_node_type()` reports. The runtime partition therefore uses the node type alone: a field value is an interior node when it is an instance of `_node_type()`, and a leaf otherwise. Validation is the substrate's job rather than each family's: construction checks every leaf against the family's declared leaf type, reported by `_leaf_type()`, so a malformed tree fails at construction rather than at first navigation. A family whose leaves are arbitrary values declares `object`, making the check vacuous.
 - *Navigation yields views.* `children`, `at_path`, and `[]` return a subtree or leaf that is a *view* into the same underlying store, derived on demand rather than copied out.
 
 ## II.2 — Identity & metadata: `Tracked`, `Annotated`, `Provenance`
 
 ### Contract
 
-Identity & metadata is the cross-cutting layer that lets any object carry, alongside its mathematical content, three things: a **name** (what the object is called), a **provenance** (how it was produced), and free-form **annotations** (auxiliary information supplied by the user or an algorithm). The structure for identity and metadata is provided by two mixins: `Tracked` (name + provenance) and `Annotated` (annotations). All ProbPipe objects must be `Tracked`. We call any such object a **tracked term**: a value, distribution, kernel, or batch that carries a name and provenance, and the kind of object ProbPipe operations consume and produce.  
+Identity & metadata is the cross-cutting layer that lets any object carry, alongside its mathematical content, three things: a **name** (what the object is called), a **provenance** (how it was produced), and free-form **annotations** (auxiliary information supplied by the user or an algorithm). The structure for identity and metadata is provided by two mixins: `Tracked` (name + provenance) and `Annotated` (annotations). All ProbPipe objects must be `Tracked`. We call any such object a **tracked term**: a value, distribution, conditional distribution, or batch that carries a name and provenance, and the kind of object ProbPipe operations consume and produce.  
 
 Annotation metadata is a free-form mapping: 
 

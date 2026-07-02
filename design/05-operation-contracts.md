@@ -2,7 +2,7 @@
 
 Parts II–IV fixed the *infrastructure*, the *objects*, and the *workflow functions* that act on them. Part V fixes the **operations**. Every operation is a workflow function, so it inherits lifting, provenance, dispatch, and orchestration from the workflow-function layer. This part adds only what is specific to each operation: its signature, its argument and return types and shapes, the choice between an exact and a default algorithm, its error behavior, and how its result is wrapped and tracked. Every operation is also capability-dispatched, applying to any object that implements the matching capability, and closed, returning another **tracked term**.
 
-**Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for kernels, the `_conditional_*` family. Genuinely open operation-level decisions are flagged where they arise.
+**Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for conditional distributions, the `_conditional_*` family. Genuinely open operation-level decisions are flagged where they arise.
 
 ## V.0 — The operation model
 
@@ -11,7 +11,7 @@ Parts II–IV fixed the *infrastructure*, the *objects*, and the *workflow funct
 Every operation shares the following mechanics: 
 - **Capability dispatch.** An operation tests the relevant structural protocol with `isinstance(obj, SupportsX)` and calls the implementer method. An object that does not implement the capability raises a clear error. 
 - **Two levels.** The implementer's `_x` method acts on the raw value type `T`. The user-facing operation wraps the result at the boundary, attaches identity, metadata, and provenance, and broadcasts, all at no cost to the implementer.
-- **The wrap boundary.** A raw value becomes the `Record` its `event_template` describes. A bare array becomes a single-field `Record`, and a value that already carries identity passes through unchanged. A concrete family such as a `Normal` can therefore be written in plain arrays, and a user writes the family's natural constructor rather than supplying a template by hand. Kernels add the `given=` fused paths over their `_conditional_*` methods.
+- **The wrap boundary.** A raw value becomes the `Record` its `event_template` describes. A bare array becomes a single-field `Record`, and a value that already carries identity passes through unchanged. A concrete family such as a `Normal` can therefore be written in plain arrays, and a user writes the family's natural constructor rather than supplying a template by hand. A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
 - **Default algorithms.** An operation uses a closed form when the object provides one, and otherwise a sensible default such as Monte Carlo, with the sample count and PRNG key exposed as controls for users who need them.
 - **Output identity.** Every tracked term an operation mints is fully specified, never left implicit. Its `event_template` is carried or derived from the inputs, its `provenance` records the operation and its parent descriptors, and its `name` is auto-derived and marked `name_is_auto`. Free-form `annotations` do not auto-propagate, since lineage rides on `provenance` rather than on annotations.
 - **Tracking scope.** Results that are values or distributions are `Tracked`. Whether a bare numeric summary, such as a `log_prob` density, is itself wrapped is settled per operation.
@@ -44,17 +44,18 @@ The moment operations require a numeric event because a mean, variance, or covar
 
 ### Contract
 
-`sample(d, key, sample_shape=())` draws from a distribution.
+`sample(d, key, sample_shape=(), raw=False)` draws from a distribution.
 - With `sample_shape=()` it returns a single draw, wrapped as the `Record` the `event_template` describes. A scalar law returns a single-field `Record` keyed by the distribution's name, and a value that already carries identity passes through unchanged.
 - A non-empty `sample_shape` prepends batch axes and returns a `RecordBatch`, or a `NumericRecordBatch` when the draw is numeric, with those leading dimensions.
+- With `raw=True`, `sample` skips the wrap and returns the raw draw type `T`, with `sample_shape` axes prepended for a non-empty shape. A raw draw carries no name or provenance.
 - The PRNG `key` is explicit and supplied by the caller, so a draw is reproducible from its key.
 - The draw carries `provenance` recording `sample` and the distribution it came from.
 
-For a kernel, `sample(K, given=s, key=...)` is the fused conditional path, equal to `sample(condition_on(K, s), key=...)`.
+For a `ConditionalDistribution`, `sample(K, given=s, key=...)` is the fused conditional path, equal to `sample(condition_on(K, s), key=...)`.
 
 ### Rationale
 
-Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Wrapping even a scalar draw as a single-field `Record` lets `sample` return a tracked term of uniform shape whatever the distribution's raw type, serving `C1 – Uniform interface to distributions and values`.
+Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Wrapping even a scalar draw as a single-field `Record` lets `sample` return a tracked term of uniform shape whatever the distribution's raw type, serving `C1 – Uniform interface to distributions and values`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, and the bare value is one keyword away.
 
 ## V.3 — `log_prob` and `unnormalized_log_prob`
 
@@ -64,7 +65,7 @@ Threading an explicit PRNG `key` makes every draw reproducible from its inputs, 
 - `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
 - `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
 - A batch of values, or a `DistributionBatch`, maps elementwise to a batched array of densities.
-- For a kernel, `log_prob(K, y, given=s)` is the fused conditional path, equal to `log_prob(condition_on(K, s), y)`.
+- For a `ConditionalDistribution`, `log_prob(K, y, given=s)` is the fused conditional path, equal to `log_prob(condition_on(K, s), y)`.
 
 ### Rationale
 
@@ -78,8 +79,8 @@ Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (
 
 ### Contract
 
-`condition_on(d, given)` fixes some fields of a distribution or kernel and returns the resulting distribution. One structural rule, dispatched on what is being conditioned, covers every case.
-- **Exogenous given, so curry.** Binding a field that the object conditions on but does not produce returns a smaller kernel, or an ordinary `Distribution` once all given fields are bound. This is exact and involves no inference.
+`condition_on(d, given)` fixes some fields of a distribution or conditional distribution and returns the resulting distribution. One structural rule, dispatched on what is being conditioned, covers every case.
+- **Exogenous given, so curry.** Binding a field that the object conditions on but does not produce returns a smaller `ConditionalDistribution`, or an ordinary `Distribution` once all given fields are bound. This is exact and involves no inference.
 - **Upstream or independent produced field, so exact slice.** Conditioning on a produced field that no remaining factor depends on through an unconditioned path returns the exact conditional by slicing the factor graph, again with no inference.
 - **Downstream data, so Bayesian inversion.** Conditioning on a field that downstream factors depend on requires inference. It is delegated to an inference algorithm registered for the model, and only the factored classes can be inverted.
 

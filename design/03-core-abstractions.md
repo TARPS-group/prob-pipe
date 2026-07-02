@@ -14,7 +14,7 @@ Each abstraction is introduced in the order below, depending only on those above
 | III.4  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type; carries an `event_template` for its draws.                           |
 | III.5  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
 | III.6  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value; a sibling of `Distribution`.   |
-| III.7  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or kernels): `N` separate laws, distinct from one joint distribution.                 |
+| III.7  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or conditional distributions): `N` separate laws, distinct from one joint distribution.                 |
 | III.8  | (Conditional) Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions; the factor / field access interfaces.                       |
 | III.9  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts; the result kind is derived from the operands.                                        |
 | III.10 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
@@ -151,7 +151,7 @@ A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side:
 
 ### Contract
 
-A `Distribution[T]` is a probability measure over values of type `T` — a single random law.  The type `T` is the natural raw form of a draw — an `Array` for a scalar law, a `Record` for a multi-field one — which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements. Hence, operational support is decoupled from the class. The draw a *user* sees, described by `event_template`, is always a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. 
+A `Distribution[T]` is a probability measure over values of type `T` — a single random law.  The type `T` is the natural raw form of a draw — an `Array` for a scalar law, a `Record` for a multi-field one — which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements. Hence, operational support is decoupled from the class. The draw a *user* sees, described by `event_template`, is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. 
 
 A `NumericDistribution` is a `Distribution` whose draws are numeric. Hence, it carries a `NumericEventTemplate` and so can make use of the flat-vector machinery. 
 
@@ -167,7 +167,7 @@ class Distribution[T](Tracked, Annotated):
 class NumericDistribution(Distribution): ...   # marker only — numeric draws; carries a NumericEventTemplate
 ```
 
-**The distribution value specification.** The `DistributionSpec(event_template)` class extends the value spec to include a `Distribution` as a valid value (with the given `event_template`). Hence, it is possible to define random measures (distributions over distributions). 
+**The distribution value specification.** The `DistributionSpec(event_template)` class extends the value spec to include a `Distribution` as a valid value (with the given `event_template`). Hence, it is possible to define random measures (distributions over distributions). A draw from a random measure is therefore a `Record` whose leaf value is a `Distribution`, wrapped like any other draw. 
 
 ```python
 DistributionSpec(event_template: EventTemplate)   # a leaf whose value is a Distribution with the given event_template
@@ -177,7 +177,7 @@ DistributionSpec(event_template: EventTemplate)   # a leaf whose value is a Dist
 Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and — when it is array-backed — differentiable end-to-end (`D6 – Differentiability where possible`). 
 ### Notes
 
-- *Field views.* Where a draw has fields, `d["x"]` returns a view of that field's marginal, correlation-preserving when sibling views are co-sampled, available on any such distribution regardless of how it was constructed.
+- *Field views.* `d["x"]` returns a view of the marginal of field `x`. Sibling views co-sample from one parent draw, so correlation between them is preserved. Every distribution carries an `event_template` with at least one named field, so the field interface is available on every distribution, however it was constructed.
 
 ## III.5 — Distribution capabilities
 ### Contract 
@@ -234,11 +234,11 @@ Making each operation a *capability* (a structural protocol) rather than a base-
 
 ### Contract
 
-A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A kernel is not a `Distribution` and does not inherit from one: it has no marginal law, so `sample` / `log_prob` / `mean` do not apply to it unconditionally. Rather, the two are siblings sharing a capability vocabulary.
+A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `ConditionalDistribution` is not a `Distribution` and does not inherit from one: it has no marginal law, so `sample` / `log_prob` / `mean` do not apply to it unconditionally. Rather, the two are siblings sharing a capability vocabulary.
 
-A kernel carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`.
+A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`.
 
-Users never call a method on the kernel; they use the existing ops. `condition_on(K, s)` evaluates it (exact, no inference) to a `Distribution`; `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`. Conditioning on only a subset of given fields *curries* to a smaller kernel view while conditioning on a *distribution* over the given yields the predictive mixture `∫ K(s, ·) μ(ds)`.
+Users never call a method on the `ConditionalDistribution`; they use the existing ops. `condition_on(K, s)` evaluates it (exact, no inference) to a `Distribution`; `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`. Conditioning on only a subset of given fields *curries* to a smaller `ConditionalDistribution` view while conditioning on a *distribution* over the given yields the predictive mixture `∫ K(s, ·) μ(ds)`.
 
 ```python
 class ConditionalDistribution[S, T](Tracked, Annotated):
@@ -263,7 +263,7 @@ class SupportsConditionalMean[S, T](Protocol):
 #   SupportsConditionalExpectation (_conditional_expectation(given, f, …) -> Array).
 ```
 
-**The numeric special cases.** A kernel has *two* templates, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** (conditioning) side numeric; `Numeric` before `Distribution` marks the **event** side numeric, while `FullyNumeric*` denotes the cases where both given and event side are numeric. Each is a marker only, adding no operations of its own (mirroring `NumericDistribution`).
+**The numeric special cases.** A `ConditionalDistribution` has *two* templates, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** (conditioning) side numeric; `Numeric` before `Distribution` marks the **event** side numeric, while `FullyNumeric*` denotes the cases where both given and event side are numeric. Each is a marker only, adding no operations of its own (mirroring `NumericDistribution`).
 
 ```python
 class ConditionalNumericDistribution(ConditionalDistribution): ...   # event numeric: every K(s, ·) is a NumericDistribution
@@ -279,13 +279,13 @@ ConditionalDistributionSpec(given_template: EventTemplate, event_template: Event
 
 ### Rationale
 
-Applying a kernel to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A kernel's capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to kernels too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. As with `Distribution`, a concrete kernel family derives both templates from its parameters and passes them up; the base only requires they are fixed at construction (`D5 – Explicit, carried structure`/`D7 – Single source of truth`). The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone — reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks.
+Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. As with `Distribution`, a concrete `ConditionalDistribution` family derives both templates from its parameters and passes them up; the base only requires they are fixed at construction (`D5 – Explicit, carried structure`/`D7 – Single source of truth`). The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone — reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks.
 
 ## III.7 — `DistributionBatch` and `ConditionalDistributionBatch`
 
 ### Contract
 
-A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one `event_template`, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate kernels sharing one `given_template` and one `event_template`. They are grouped because they are the identical multiplicity wrapper over the two distribution-like base types — the conditional one only carries the extra `given_template`.
+A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one `event_template`, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate conditional distributions sharing one `given_template` and one `event_template`. They are grouped because they are the identical multiplicity wrapper over the two distribution-like base types — the conditional one only carries the extra `given_template`.
 
 ```python
 class DistributionBatch(Batch[Distribution]):  # Tracked
@@ -304,7 +304,7 @@ class ConditionalDistributionBatch(Batch[ConditionalDistribution]):  # Tracked
 
 ### Rationale
 
-This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space — exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a kernel produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `Tracked` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
+This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space — exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a `ConditionalDistribution` produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `Tracked` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
 
 ## III.8 — Factored distributions
 
@@ -314,13 +314,13 @@ A *factored distribution* is a distribution **built from named sub-distributions
 
 **Field versus factor.** A **field** is a named part of a draw, that is, a path in the `event_template`. A **factor** is a constituent distribution the joint was built from. The two coincide only for an independent joint of single-field factors and differ in general. A correlated `MultivariateNormal` presented as `{intercept, slope}` is one factor with two fields. Conversely, the same draw `{x, y}` can arise from a single bivariate normal (no factors), from two independent factors (no edges), or from a chain p(y | x) · p(x) (two factors, one edge). The fields are identical but the factorization differs.
 
-**The factored classes.** A factored distribution carries an ordered list of factors, each a `Distribution` or a kernel. Its dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. That derived structure is the `SupportsFactors` capability, so a "joint" *is* a distribution that implements `SupportsFactors`. The factorization does not live in the `event_template`. The joint's `event_template` is the flat union of the fields its factors produce, while the factor list is the capability's own state. The two carrying classes are:
+**The factored classes.** A factored distribution carries an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. Its dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. That derived structure is the `SupportsFactors` capability, so a "joint" *is* a distribution that implements `SupportsFactors`. The factorization does not live in the `event_template`. The joint's `event_template` is the flat union of the fields its factors produce, while the factor list is the capability's own state. The two carrying classes are:
 - `FactoredDistribution`, an unconditional joint with all given fields internally satisfied. Its `log_prob` is the sum of the factors' conditional log-densities, and it samples ancestrally. An independent product is the no-edge case, so no separate product class is needed.
 - `FactoredConditionalDistribution`, a joint that still conditions on exogenous fields, such as a regression model before its covariates are supplied. It exposes only the conditional capabilities until those fields are bound, which curries it down to a `FactoredDistribution`.
 
 **The two access interfaces.** A joint exposes up to two clearly separated interfaces, never through the same operator.
-- The **field interface** is available on any distribution whose draw has fields. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. `marginal(d, "intercept")` returns that same marginal **detached** from the parent. Both are keyed by field path, and both work even on a structured distribution that has no factors.
-- The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or a kernel for a dependent edge. There need be no factor for a given field, and no field for a given factor.
+- The **field interface** is available on every distribution. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. `marginal(d, "intercept")` returns that same marginal **detached** from the parent. Both are keyed by field path, and both work even on a structured distribution that has no factors.
+- The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or, for a dependent edge, a `ConditionalDistribution`. There need be no factor for a given field, and no field for a given factor.
 
 The three results, factor and marginal and view, coincide for an independent joint of single-field factors and diverge once dependence is present. Views are the forward, composition direction and preserve correlation. Factors are the backward, inference direction, since `condition_on` reads factors and never views. Marginals are the detached query.
 
@@ -334,7 +334,7 @@ class FactoredDistribution(Distribution, SupportsFactors): ...            # unco
 class FactoredConditionalDistribution(ConditionalDistribution, SupportsFactors): ...  # still conditions on exogenous fields
 
 # numeric markers, by which of the (given, event) templates is numeric. Numeric is positional,
-# as for the kernel markers: before Distribution marks the event numeric, before Conditional the given.
+# as for the ConditionalDistribution markers: before Distribution marks the event numeric, before Conditional the given.
 class FactoredNumericDistribution(FactoredDistribution): ...                                # unconditional joint, event numeric
 class FactoredConditionalNumericDistribution(FactoredConditionalDistribution): ...          # conditional joint, event numeric
 class FactoredNumericConditionalDistribution(FactoredConditionalDistribution): ...          # conditional joint, given numeric
@@ -342,9 +342,9 @@ class FactoredFullyNumericConditionalDistribution(
         FactoredNumericConditionalDistribution, FactoredConditionalNumericDistribution): ... # conditional joint, both numeric
 
 # access is via three ops, each dispatched on a different capability:
-#   factor(d, name)     -> a stored factor (a kernel for an edge)   requires SupportsFactors (joints only)
-#   marginal(d, field)  -> the detached field marginal              any distribution whose draw has fields
-#   d[field]            -> a view: field marginal plus a parent ref  any distribution whose draw has fields
+#   factor(d, name)     -> a stored factor (a ConditionalDistribution for an edge)   requires SupportsFactors (joints only)
+#   marginal(d, field)  -> the detached field marginal              any distribution
+#   d[field]            -> a view: field marginal plus a parent ref  any distribution
 ```
 
 ### Rationale
@@ -353,7 +353,7 @@ Factorization is an *optional capability*, `SupportsFactors`, rather than a base
 
 ### Notes
 
-- *Sub-joint navigation yields a view.* `at_path(partial)` on a joint returns a view onto the parent, never a detached standalone distribution. An edge-free region is a self-contained sub-joint, and a region that cuts a dependence edge stays a view, so that co-sampling through the parent remains correct.
+- *Group views.* The field interface also accepts an interior path, which names a group of fields rather than a single field. For example, when the `event_template` nests `coeffs/intercept` and `coeffs/slope` under `coeffs`, `d["coeffs"]` returns the marginal over the whole group. Like a single-field view, it is a view onto the parent joint, never a detached distribution, so co-sampling through the parent preserves correlation across the group boundary.
 - *Conditioning a joint.* One structural rule covers every case. Binding an exogenous field **curries**. Conditioning on an upstream or independent produced field is an **exact slice**. Conditioning on downstream data triggers **Bayesian inversion**, which only the factored classes can perform.
 
 ## III.9 — Composition
@@ -362,7 +362,7 @@ Factorization is an *optional capability*, `SupportsFactors`, rather than a base
 
 Composition builds a factored distribution from parts, written as an *expression*: a single binary operator `*` combines `Distribution`s and `ConditionalDistribution`s into one joint. The *kind* of the result is **derived** from the operands and never chosen by hand, and every result is itself a `Distribution` or a `ConditionalDistribution`. The operator is defined after the factored-distribution classes it returns. The base objects carry no composition logic. Each merely exposes `*` as a thin `__mul__` that delegates to the operator, which keeps the dependency one-directional.
 
-**The `*` operator.** `A * B` composes two operands into a joint. It is **conditional-first**: the left operand may condition on the right, so `lik * prior` reads as the density p(y | β) · p(β), while the reverse (a consumer before its producer) is an error. Characterize each operand by its **produced fields** `F` and its **unmet given fields** `G`, with `G = ∅` for a `Distribution` and `G` the given fields for a kernel. The composition is then fixed by the field sets alone:
+**The `*` operator.** `A * B` composes two operands into a joint. It is **conditional-first**: the left operand may condition on the right, so `lik * prior` reads as the density p(y | β) · p(β), while the reverse (a consumer before its producer) is an error. Characterize each operand by its **produced fields** `F` and its **unmet given fields** `G`, with `G = ∅` for a `Distribution` and `G` the given fields for a `ConditionalDistribution`. The composition is then fixed by the field sets alone:
 
 ```
 bound  = G_A ∩ F_B            # dependency edges: left A conditions on a field that right B produces
@@ -396,14 +396,14 @@ Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 –
 
 ### Notes
 
-- *Operator coexistence.* `*` also denotes scalar scaling on some objects, such as a random function or a linear operator. The two coexist by operand-type dispatch: distribution and kernel operands compose, while scalar operands scale.
+- *Operator coexistence.* `*` also denotes scalar scaling on some objects, such as a random function or a linear operator. The two coexist by operand-type dispatch: `Distribution` and `ConditionalDistribution` operands compose, while scalar operands scale.
 - *The realigning `joint` form.* `joint(A, B, **align)` is `*` plus field-name realignment, for factors whose names do not line up. It renames, splits, or joins fields through the correlation-preserving views.
 
 ## III.10 — The `Distribution` hierarchy
 
 ### Contract
 
-With the base `Distribution`, the kernel `ConditionalDistribution`, and the factored distributions and their composition in place, the distribution *kinds* can be cataloged — every class named here is defined earlier; this section only organizes them. Two **independent** questions classify any distribution:
+With the base `Distribution`, the `ConditionalDistribution`, and the factored distributions and their composition in place, the distribution *kinds* can be cataloged — every class named here is defined earlier; this section only organizes them. Two **independent** questions classify any distribution:
 1. **The type axis** — what does a draw look like, and is a factorization exposed? This fixes *which interfaces apply*.
 2. **The family axis** — how is the law realized? This fixes *which capabilities* the object implements, and how.
 
@@ -427,7 +427,7 @@ The line between the last two is **factorization, not field count**: a multi-fie
 - **Approximate.** A fitted stand-in for an intractable law (a variational posterior, a surrogate), exposing exactly the capabilities its fit supports.
 - **Random measure.** A distribution *over distributions*: a draw is itself a `Distribution` (a `DistributionSpec` leaf), and `mean` returns the marginalized law.
 
-**Kernels and batches stratify identically.** A `ConditionalDistribution` repeats both axes — atomic / structured / the `FactoredConditionalDistribution` joint, crossed with parametric / amortized / empirical / … — and a `DistributionBatch` is `N` of any of these. The catalog is one classification, reused across the conditional and multiplicity layers.
+**Conditional distributions and batches stratify identically.** A `ConditionalDistribution` repeats both axes — atomic / structured / the `FactoredConditionalDistribution` joint, crossed with parametric / amortized / empirical / … — and a `DistributionBatch` is `N` of any of these. The catalog is one classification, reused across the conditional and multiplicity layers.
 
 ### Rationale
 
