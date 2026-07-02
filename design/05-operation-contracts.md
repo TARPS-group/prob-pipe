@@ -1,6 +1,6 @@
 # Part V — Operation Contracts
 
-Parts II–IV fixed the *infrastructure*, the *objects*, and the *workflow functions* that act on them. Part V fixes the **operations**. Every operation is a workflow function, so it inherits lifting, provenance, dispatch, and orchestration from the workflow-function layer. This part adds only what is specific to each operation: its signature, its argument and return types and shapes, the choice between an exact and a default algorithm, its error behavior, and how its result is wrapped and tracked. Every operation is also capability-dispatched, applying to any object that implements the matching capability, and closed, returning another **tracked term**.
+Parts II–IV fixed the *infrastructure*, the *objects*, and the *workflow functions* that act on them. Part V fixes the **operations**. Every operation is a workflow function, so it inherits lifting, provenance, dispatch, and orchestration from the workflow-function layer. This part adds only what is specific to each operation: its signature, its argument and return types and shapes, the choice between an exact and a default algorithm, its error behavior, and how its result is wrapped and tracked. Every operation is also capability-dispatched, so it applies to any object that implements the matching capability, and closed, so it returns another **tracked term**.
 
 **Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for conditional distributions, the `_conditional_*` family. Genuinely open operation-level decisions are flagged where they arise.
 
@@ -86,13 +86,13 @@ Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (
 
 Conditioning on a *distribution* over the given, rather than on a value, returns the predictive mixture `∫ K(s, ·) μ(ds)`, exposed through the `predictive` convenience operation. The result carries `provenance` recording the operation and the conditioning fields.
 
-**The inference-method registry.** Bayesian inversion is dispatched through the **inference-method registry**, a `UnaryDispatchRegistry` keyed on the model's type whose methods are inference algorithms such as MCMC or variational families. Each method registers under a unique `name`, declares the models it applies to, and probes feasibility before it runs. `condition_on(..., method="tfp_nuts")` selects a specific algorithm; otherwise the registry picks the best applicable one.
+**The inference-method registry.** Bayesian inversion is dispatched through the **inference-method registry**, a `UnaryDispatchRegistry` keyed on the model's type whose methods are inference algorithms such as MCMC or variational families. Each method registers under a unique `name`, declares the models it applies to, and probes feasibility before it runs. `condition_on(..., method="tfp_nuts")` selects a specific algorithm, and otherwise the registry picks the best applicable one.
 
 **Prioritization.** Methods are ranked by an integer `priority` that tiers them: above 50 is an **exact** method, 1 to 50 an **inexact** one, and 0 is **opt-in-only**, skipped by auto-selection and reachable only by name. A newly registered method is opt-in-only until a contributor classifies it, so adding an algorithm never silently changes what runs. A deployment re-ranks methods at runtime with `set_priorities`, which warns when a method crosses into or out of opt-in-only.
 
 ### Rationale
 
-A single operation covers binding, slicing, and inversion because all three are the same mathematical act of conditioning, differing only in whether the conditioned field is exogenous, upstream, or downstream in the factor graph. Collapsing them into one operation keeps the user interface small (`C1 – Uniform interface to distributions and values`), while the derived graph decides the algorithm (`C3 – Computational detail hidden by default, available on demand`).
+A single operation covers binding, slicing, and inversion because all three are the same mathematical act of conditioning, and they differ only in whether the conditioned field is exogenous, upstream, or downstream in the factor graph. Collapsing them into one operation keeps the user interface small (`C1 – Uniform interface to distributions and values`), while the derived graph decides the algorithm (`C3 – Computational detail hidden by default, available on demand`).
 
 ### Open points
 
@@ -102,9 +102,9 @@ A single operation covers binding, slicing, and inversion because all three are 
 
 ### Contract
 
-`A * B` is the composition operator, exposed on `Distribution` and `ConditionalDistribution` as `__mul__`. Its algebra was fixed earlier: the operand typing, the conditional-first order, the field-set rules for `bound` and `unmet`, the most-specific result class, and associativity through flattening. This section pins down the operation's surface, the result's name, and the realigning `joint` form.
+`A * B` is the composition operator, exposed on `Distribution` and `ConditionalDistribution` as `__mul__`. Its algebra was fixed earlier: the operand typing, the conditional-first order, the field-set rules for `bound` and `unmet`, the most-specific result class, and associativity through flattening. This section pins down the operation's interface, the result's name, and the realigning `joint` form.
 
-`A * B` returns the most-specific joint, a `FactoredDistribution` or, when givens remain unmet, a `FactoredConditionalDistribution`, recomputed from the flattened factor graph. The result is a **tracked term**: its `provenance` records `*` and the operand factors, and its `name` is auto-derived as below.
+`A * B` returns the most-specific joint recomputed from the flattened factor graph: a `FactoredDistribution`, or a `FactoredConditionalDistribution` when givens remain unmet. The result is a **tracked term**: its `provenance` records `*` and the operand factors, and its `name` is auto-derived as below.
 
 **Auto-derived names.** A joint is derived, not constructed by hand, so `*` derives its `name` deterministically from its factors. The factors are listed in **canonical order** (the conditional-first topological order of the flattened factor graph, with mutually independent factors ordered by the canonical order of the fields they produce), and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` name one joint identically. The derived name is marked `name_is_auto`.
 

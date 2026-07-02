@@ -2,7 +2,6 @@
 
 Part II introduces the infrastructure the rest of the library is built on: generic, type-agnostic machinery, one piece at a time, in dependency order.
 
-
 ## II.0 — Overview: the infrastructure
 
 The infrastructure layers, in dependency order. Each is generic and type-agnostic, defined once and reused throughout the library:
@@ -30,18 +29,18 @@ Naming, addressing, traversal, and structure-preserving transforms are defined o
 ```python
 class NamedTree[L]:
     # mapping interface — keyed by FIELD path
-    def __getitem__(self, key: str | tuple[str, ...]) -> L: ...          # leaf only
-    def __contains__(self, key: str | tuple[str, ...]) -> bool: ...      # leaf only
-    def __iter__(self) -> Iterator[str]: ...                             # field paths
-    def __len__(self) -> int: ...                                        # field count
-    def keys(self) -> Iterable[str]: ...                                 # field paths, canonical order
+    def __getitem__(self, key: str | tuple[str, ...]) -> L: ...
+    def __contains__(self, key: str | tuple[str, ...]) -> bool: ...
+    def __iter__(self) -> Iterator[str]: ...  # field paths
+    def __len__(self) -> int: ...             # field count
+    def keys(self) -> Iterable[str]: ...      # field paths, canonical order
     def values(self) -> Iterable[L]: ...
     def items(self) -> Iterable[tuple[str, L]]: ...
 
     # tree navigation — ranges over ALL paths
-    def at_path(self, *path: str) -> L | Self: ...                       # at_path("a", "b") == at_path("a/b")
+    def at_path(self, *path: str) -> L | Self: ...    # at_path("a", "b") == at_path("a/b")
     @property
-    def children(self) -> Mapping[str, L | Self]: ...                    # one level
+    def children(self) -> Mapping[str, L | Self]: ...
     def is_field(self, path: str | tuple[str, ...]) -> bool: ...
     @property
     def is_multi_field(self) -> bool: ...
@@ -59,9 +58,9 @@ class NamedTree[L]:
     def from_nested_dict(cls, d: Mapping[str, Any]) -> Self: ...
 
     @classmethod
-    def _node_type(cls) -> type[Self]: ...                               # the family's own node type
+    def _node_type(cls) -> type[Self]: ...         # the family's own node type
     @classmethod
-    def _leaf_type(cls) -> type | UnionType: ...                         # the family's declared leaf type; leaves are validated against it at construction
+    def _leaf_type(cls) -> type | UnionType: ...   # the family's declared leaf type
 ```
 
 ### Rationale
@@ -89,84 +88,99 @@ class Annotated:
 A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`.  The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves. 
 
 ```python
-class Tracked:                              # name + provenance
-    name:         str                       # semantic identity — user-given or auto-derived
-    name_is_auto: bool                      # True if an op minted the name (regenerable); False once user-given
-    provenance:   Provenance | None         # how it was produced — write-once
-    def with_name(self, name: str) -> Self: ...            # functional: a new object, user-given name (name_is_auto -> False)
-    def with_provenance(self, p: Provenance) -> Self: ...   # set once
+class Tracked:
+    name:         str
+    name_is_auto: bool
+    provenance:   Provenance | None              # write-once via with_provenance(...)
+    def with_name(self, name: str) -> Self: ...  # shallow copy with name_is_auto = False
+    def with_provenance(self, p: Provenance) -> Self: ...
 
 class Provenance:
-    operation: str                          # the operation that produced the object
-    parents:   tuple[ParentInfo, ...]       # descriptors of the inputs — not live object references
+    operation: str                       # the operation that produced the object
+    parents:   tuple[ParentInfo, ...]    # descriptors of the inputs
 
-class ParentInfo:                           # a lightweight stand-in for a parent object
+class ParentInfo:
     type_name:   str
     name:        str
-    fingerprint: str                        # stable content digest (cache / identity checks)
-    obj:         Any | None                 # optional reference to original parent
+    fingerprint: str          # stable content hash
+    parent:      Any | None   # optional reference to original parent
 ```
 
 ### Rationale
 
-`Tracked` serves the two principles that reach beyond the mathematics: `C5 – Naming for unambiguous meaning` (an object and its parts are legible) and `C6 – Traceable and reproducible workflows` (provenance is the recorded lineage that lets a result be audited and re-derived). The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes. 
+`Tracked` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes. 
 
 ## II.3 — `Batch`
 
 ### Contract
 
-A `Batch` is the generic multiplicity axis: an indexed collection of `N` *separate* objects of a common element type, arranged in an nd `batch_shape`. It is itself a value and hence `Tracked` (but not `Annotated` unless applications for it arise). A concrete batch implementation must specify how to store the elements. 
+A `Batch` is the generic `Tracked` nd array of shape `batch_shape` that holds objects of a common element type. It could also be `Annotated` if applications for it arise. A concrete batch implementation must specify how to store the elements. Since a batch is a *collection* of its elements, `len` / `iter` / `batch_shape` / `batch_size` operate only on the batch axes. The `batch_*` names are kept deliberately rather than a numpy-style `.shape` / `size`, which could ambiguously cover both the batch axes and the per-element content. A concrete batch implementation adds whatever its element type affords in that element's own section — including, where useful, indexing into the elements' fields, since `[]` dispatches unambiguously on the key type.
 
 ```python
-class Batch[E](Tracked):                            # an indexed collection of N separate objects of type E
+class Batch[E](Tracked):
     @property
-    def batch_shape(self) -> tuple[int, ...]: ...   # nd-shape of the collection — excludes per-element content
+    def batch_shape(self) -> tuple[int, ...]: ...
     @property
-    def batch_size(self) -> int: ...                # prod(batch_shape): total element count
-    def __len__(self) -> int: ...                   # leading-axis size, batch_shape[0]
-    def __iter__(self) -> Iterator[E | Self]: ...   # over the leading batch axis
-    def __getitem__(self, index: Any) -> E | Self: ...  # index/slice the batch axes -> a view: an element or a sub-batch
+    def batch_size(self) -> int: ...                    # total element count, prod(batch_shape)
+    def __len__(self) -> int: ...                       # leading-axis size, batch_shape[0]
+    def __iter__(self) -> Iterator[E | Self]: ...       # over the leading batch axis
+    def __getitem__(self, index: Any) -> E | Self: ...  # returns a view of either an element or a sub-batch
 ```
 
-Since a batch is a *collection* of its elements, `len` / `iter` / `batch_shape` / `batch_size` operate only on the batch axes. The `batch_*` names are kept deliberately rather than a numpy-style `.shape` / `size`, which could ambiguously cover both the batch axes and the per-element content. A concrete batch implementation adds whatever its element type affords in that element's own section — including, where useful, indexing into the elements' fields, since `[]` dispatches unambiguously on the key type.
 ### Rationale
 
-`Batch` is necessary for `D1 – Mathematical fidelity`: *how many objects there are* stays separate from *what one object contains*. A batch of `N` objects is a collection of `N` distinct things, keeping multiplicity and structure separate. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`), and when those elements are array-backed the mapping should be vectorized and differentiable (`D6 – Differentiability where possible`). Indexing or iterating yields a *view*, not a copy — the batch stays the single authoritative store, and an element or sub-batch is derived on demand (`D7 – Single source of truth`).
+`Batch` is necessary to satisfy `D1 – Mathematical fidelity` by ensuring how many objects there are stays separate from what one object contains. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). When those elements are array-backed the mapping should be vectorized and differentiable (`D6 – Differentiability where possible`). To satisfy `D7 – Single source of truth`, indexing or iterating yields a *view*.
 
 ## II.4 — Dispatch and registries
 
 ### Contract
 
-Some operations have several interchangeable implementations, and which one applies depends on the *types* of the objects involved rather than on a single object's own class. A **dispatch registry** holds those implementations as named methods and selects one for a given call.
+Some operations have many possible implementations, and which one applies depends on the *types* of the objects involved rather than on an object's own class. A **dispatch registry** holds those implementations as named methods and selects one for a given call.
 
-Each **method** declares a unique `name`, the types it applies to (`supported_types`, a fast `issubclass` pre-filter), a cheap `check` that probes feasibility without doing the work, an `execute` that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. A caller can bypass auto-selection and name a method with `method="..."`. New methods join by registration, so an implementation is added without changing any call site.
+Each **method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration. 
 
 ```python
 class BaseDispatchMethod(ABC):
-    name: str                                    # unique within the registry
-    priority: int                                # orders auto-selection
-    def supported_types(self) -> ...: ...        # issubclass pre-filter; shape set by arity
-    def check(self, *args) -> MethodInfo: ...    # cheap feasibility probe
-    def execute(self, *args) -> Any: ...         # the actual computation
+    name: str
+    priority: int
+    def supported_types(self) -> ...: ...   # issubclass pre-filter; shape set by arity
+    def check(self, *args) -> MethodInfo: ...
+    def execute(self, *args) -> Any: ...
+
+class MethodInfo:              # a check() result
+    feasible:    bool
+    method_name: str
+    description: str
 
 class BaseDispatchRegistry[M: BaseDispatchMethod]:
     def register(self, method: M) -> None: ...
-    def execute(self, *args, method: str | None = None) -> Any: ...      # auto-select, or run the named method
+    def execute(self, *args, method: str | None = None) -> Any: ...   # auto-select, or run the named method
     def check(self, *args, method: str | None = None) -> MethodInfo: ...
-    def list_methods(self) -> list[str]: ...                             # names, in selection order
+    def list_methods(self) -> list[str]: ...                           # names, in selection order
 
 class UnaryDispatchRegistry[M](BaseDispatchRegistry[M]): ...    # keys on one argument's type
 class BinaryDispatchRegistry[M](BaseDispatchRegistry[M]): ...   # keys on the first two
 ```
 
-A single **catalog** makes every registry in the process discoverable. The global `registry_catalog` lists each registry, its methods with their priorities, and a one-line description, so a user can see which methods exist and how a given call will resolve. A registry joins the catalog by implementing `SupportsRegistryCataloging`, a protocol broad enough to admit registries that do not share the dispatch base.
+A single **catalog** makes every registry discoverable. The global `registry_catalog` lists each registry, its methods with their priorities, and a one-line description, so a user can see which methods exist and how a given call will resolve. A registry joins the catalog by implementing `SupportsRegistryCataloging`, a protocol broad enough to admit registries that do not share the dispatch base.
 
 ```python
+class CatalogEntry:
+    name:        str                        # unique within the catalog
+    kind:        str                        # e.g., "dispatch", "factory", "converter"
+    description: str                        # one line
+    methods:     Mapping[str, int | None]   # method name -> priority (None if not applicable)
+
 @runtime_checkable
 class SupportsRegistryCataloging(Protocol):
-    def catalog_entry(self) -> CatalogEntry: ...   # the registry's name and kind, and its methods with priorities
+    def catalog_entry(self) -> CatalogEntry: ...
 
-registry_catalog: RegistryCatalog                  # global; lists every registry and resolves describe(name)
+class RegistryCatalog:
+    def register(self, registry: SupportsRegistryCataloging) -> None: ...   # empty or duplicate names raise
+    def list(self) -> tuple[CatalogEntry, ...]: ...
+    def describe(self, name: str) -> str: ...                               # a readable summary of one registry
+
+registry_catalog: RegistryCatalog   # the global instance
 ```
 
 ### Rationale
