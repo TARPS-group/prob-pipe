@@ -9,17 +9,18 @@ Each abstraction is introduced in the order below, depending only on those above
 | §      | Layer                       | Abstraction                                                                                           | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | III.1  | Schema                      | `EventTemplate`                                                                                       | A `NamedTree` of type-specs — the type-level structure of one value. Pure structure, no data.                  |
-| III.2  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
-| III.3  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
-| III.4  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an `event_template` for its draws.                           |
-| III.5  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
-| III.6  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
-| III.7  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or conditional distributions): `N` separate laws, distinct from one joint distribution.                 |
-| III.8  | (Conditional) Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions, with the factor and field access interfaces.                       |
-| III.9  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts, with the result kind derived from the operands.                                        |
-| III.10 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
-| III.11 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
-| III.12 | Registries | constraint reparameterization (`bijector_for`) | Mapping a `Constraint` to a bijector for unconstrained inference. |
+| III.2  | Values                      | `FunctionBatch` / `OpaqueBatch`                                                                                       | Batches of function-valued and opaque values, giving every value spec a batch form.                             |
+| III.3  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
+| III.4  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
+| III.5  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an `event_template` for its draws.                           |
+| III.6  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
+| III.7  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
+| III.8  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or conditional distributions): `N` separate laws, distinct from one joint distribution.                 |
+| III.9  | (Conditional) Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions, with the factor and field access interfaces.                       |
+| III.10  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts, with the result kind derived from the operands.                                        |
+| III.11 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
+| III.12 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
+| III.13 | Registries | constraint reparameterization (`bijector_for`) | Mapping a `Constraint` to a bijector for unconstrained inference. |
 
 ## III.1 — `EventTemplate`
 
@@ -69,7 +70,27 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ---
 
-## III.2 — `Record` and `NumericRecord`
+## III.2 — `FunctionBatch` and `OpaqueBatch`
+
+### Contract
+
+Every value spec has a **batch form**: the shape `N` values of that spec take when stacked along batch axes. An `ArraySpec` value batches natively, as an array with the batch axes leading, so no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface. A value spec introduced later brings its batch form with it.
+
+```python
+class FunctionBatch(Batch[Callable]):
+    @property
+    def spec(self) -> FunctionSpec: ...   # the spec every element satisfies
+
+class OpaqueBatch(Batch[Any]):
+    @property
+    def spec(self) -> OpaqueSpec: ...
+```
+
+### Rationale
+
+The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws never meets a value it cannot stack.
+
+## III.3 — `Record` and `NumericRecord`
 
 ### Contract
 
@@ -115,7 +136,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 - *Single-value coercion.* How a single-field `Record` presents is unresolved. For example, in the array case, it could present as a bare scalar/array (coercion via `float` / `jnp.asarray`, a `.shape` shim, or a dedicated single-value wrapper). Or, in the function case, it could support `__call__`. 
 
-## III.3 — `RecordBatch` and `NumericRecordBatch`
+## III.4 — `RecordBatch` and `NumericRecordBatch`
 
 ### Contract
 
@@ -146,7 +167,7 @@ class NumericRecordBatch(RecordBatch):
 
 A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side: a batch of `N` records is a *collection* of `N` distinct records, never the same as a single record with `N` fields. This is why it claims only the batch axis and never the leaf-keyed `Mapping` contract.
 
-## III.4 — `Distribution`
+## III.5 — `Distribution`
 
 ### Contract
 
@@ -180,7 +201,7 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 - *Field views.* `d["x"]` returns a view of the marginal of field `x`. Sibling views co-sample from one parent draw, so correlation between them is preserved. Every distribution carries an `event_template` with at least one named field, so the field interface is available on every distribution, however it was constructed.
 
-## III.5 — Distribution capabilities
+## III.6 — Distribution capabilities
 
 ### Contract
 
@@ -206,7 +227,7 @@ class SupportsMean[T](Protocol):
 
 @runtime_checkable
 class SupportsVariance[T](Protocol):
-    def _variance(self) -> T: ...   # per-coordinate, event-typed
+    def _variance(self) -> T: ...   # event-typed, like _mean
 
 @runtime_checkable
 class SupportsCov(Protocol):
@@ -225,13 +246,13 @@ class SupportsConditioning(Protocol):
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution: ...   # the conditional law given fixed values
 ```
 
-Here `Key` is a PRNG key, `ArrayLike` an array-or-scalar input, and `LinOp` a (possibly structured) covariance operator. Moments and quantiles require a numeric draw, and `_cov` in particular ranges over the *flattened* numeric draw.
+Here `Key` is a PRNG key, `ArrayLike` an array-or-scalar input, and `LinOp` a (possibly structured) covariance operator. `_cov` and `_quantile` require a numeric draw, with `_cov` ranging over the *flattened* draw, while `_mean` and `_variance` are event-typed and open to any event type that supports them.
 
 ### Rationale
 
 Making each operation a *capability* rather than a base-class method follows `D3 – Capability-based operations`. Because support is structural (tested by `isinstance(dist, SupportsX)`, not subclassing), a distribution gains an operation just by implementing its method, and a wrapper (a view, a transform) exposes exactly the capabilities of whatever it wraps.
 
-## III.6 — `ConditionalDistribution`
+## III.7 — `ConditionalDistribution`
 
 ### Contract
 
@@ -284,7 +305,7 @@ ConditionalDistributionSpec(given_template: EventTemplate, event_template: Event
 
 Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. As with `Distribution`, a concrete `ConditionalDistribution` family derives both templates from its parameters and passes them up, and the base only requires they are fixed at construction (`D5 – Explicit, carried structure`, `D7 – Single source of truth`). The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks.
 
-## III.7 — `DistributionBatch` and `ConditionalDistributionBatch`
+## III.8 — `DistributionBatch` and `ConditionalDistributionBatch`
 
 ### Contract
 
@@ -308,7 +329,7 @@ class ConditionalDistributionBatch(Batch[ConditionalDistribution]):
 
 This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space, exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a `ConditionalDistribution` produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `Tracked` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
 
-## III.8 — Factored distributions
+## III.9 — Factored distributions
 
 ### Contract
 
@@ -358,7 +379,7 @@ Factorization is an *optional capability*, `SupportsFactors`, rather than a base
 - *Group views.* The field interface also accepts an interior path, which names a group of fields rather than a single field. For example, when the `event_template` nests `coeffs/intercept` and `coeffs/slope` under `coeffs`, `d["coeffs"]` returns the marginal over the whole group. Like a single-field view, it is a view onto the parent joint, never a detached distribution, so co-sampling through the parent preserves correlation across the group boundary.
 - *Conditioning a joint.* One structural rule covers every case. Binding an exogenous field **curries**. Conditioning on an upstream or independent produced field is an **exact slice**. Conditioning on downstream data triggers **Bayesian inversion**, which only the factored classes can perform.
 
-## III.9 — Composition
+## III.10 — Composition
 
 ### Contract
 
@@ -398,7 +419,7 @@ Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 –
 - *Operator coexistence.* `*` also denotes scalar scaling on some objects, such as a random function or a linear operator. The two coexist by operand-type dispatch: `Distribution` and `ConditionalDistribution` operands compose, while scalar operands scale.
 - *The realigning `joint` form.* `joint(A, B, **align)` is `*` plus field-name realignment, for factors whose names do not line up. It renames, splits, or joins fields through the correlation-preserving views.
 
-## III.10 — The `Distribution` hierarchy
+## III.11 — The `Distribution` hierarchy
 
 ### Contract
 
@@ -424,6 +445,7 @@ The line between the last two is **factorization, not field count**: a multi-fie
 - **Transformed (pushforward).** A base distribution pushed through a function, which is what lifting a function over a distribution-valued argument produces. An invertible map keeps an exact `log_prob` by change of variables, while a general map keeps `sample` and Monte-Carlo-estimates the rest.
 - **Mixture.** A convex combination of component distributions. It is also the form a dependent joint's detached `marginal` generally takes.
 - **Approximate.** A fitted stand-in for an intractable law (a variational posterior, a surrogate), exposing exactly the capabilities its fit supports.
+- **Random function.** A distribution over functions, whose event is a `FunctionSpec` leaf: a draw is a callable, and `mean` returns the mean function. A Gaussian process is the canonical case.
 - **Random measure.** A distribution *over distributions*: a draw is itself a `Distribution` (a `DistributionSpec` leaf), and `mean` returns the marginalized law.
 
 **Conditional distributions and batches stratify identically.** A `ConditionalDistribution` repeats both axes (atomic / structured / the `FactoredConditionalDistribution` joint, crossed with parametric / amortized / empirical / …), and a `DistributionBatch` is `N` of any of these. The catalog is one classification, reused across the conditional and multiplicity layers.
@@ -432,7 +454,7 @@ The line between the last two is **factorization, not field count**: a multi-fie
 
 The hierarchy embodies `D2 – Generality first`: one base refined by *optional capabilities* (`SupportsFactors`, the numeric marker, each `SupportsX`) rather than a rigid class tower, so a new family slots in by implementing the capabilities it supports rather than by widening the base. The atomic-versus-joint split is a `D1 – Mathematical fidelity` distinction, since a joint genuinely offers its factors as distributions while an atomic-structured law does not, and it is carried by a capability rather than by the draw's type. Because composition is closed (`D4 – Closed system of objects under operations`), a joint re-enters the catalog as an ordinary `Distribution` for the next operation.
 
-## III.11 — Cross-type conversion
+## III.12 — Cross-type conversion
 
 ### Contract
 
@@ -470,7 +492,7 @@ converter_registry: ConverterRegistry   # the global instance, keyed on the (sou
 
 Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment-match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`).
 
-## III.12 — Constraint reparameterization
+## III.13 — Constraint reparameterization
 
 ### Contract
 

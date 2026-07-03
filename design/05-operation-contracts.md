@@ -11,7 +11,7 @@ Parts II–IV fixed the *infrastructure*, the *objects*, and the *workflow funct
 Every operation shares the following mechanics: 
 - **Capability dispatch.** An operation tests the relevant structural protocol with `isinstance(obj, SupportsX)` and calls the implementer method. An object that does not implement the capability raises a clear error. 
 - **Two levels.** The implementer's `_x` method acts on the raw value type `T`. The user-facing operation wraps the result at the boundary, attaches identity, metadata, and provenance, and broadcasts, all at no cost to the implementer.
-- **The wrap boundary.** A raw value becomes the `Record` its `event_template` describes. A bare array becomes a single-field `Record`, and a value that already carries identity passes through unchanged. A concrete family such as a `Normal` can therefore be written in plain arrays, and a user writes the family's natural constructor rather than supplying a template by hand. A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
+- **The wrap boundary.** A raw value becomes the `Record` its `event_template` describes, and the wrap is unconditional: a bare array becomes a single-field `Record`, a raw value that is already a `Record` is not wrapped again, and any other raw type, including the `Distribution` a random measure yields, becomes the `Record`'s leaf value. A concrete family such as a `Normal` can therefore be written in plain arrays, and a user writes the family's natural constructor rather than supplying a template by hand. A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
 - **Default algorithms.** An operation uses a closed form when the object provides one, and otherwise a sensible default such as Monte Carlo, with the sample count and PRNG key exposed as controls for users who need them.
 - **Output identity.** Every tracked term an operation mints is fully specified, never left implicit. Its `event_template` is carried or derived from the inputs, its `provenance` records the operation and its parent descriptors, and its `name` is auto-derived and marked `name_is_auto`. Free-form `annotations` do not auto-propagate, since lineage rides on `provenance` rather than on annotations.
 - **Tracking scope.** Results that are values or distributions are `Tracked`. Whether a bare numeric summary, such as a `log_prob` density, is itself wrapped is settled per operation.
@@ -24,17 +24,17 @@ The operation model is where the core principles become mechanical. Capability d
 
 ### Contract
 
-The moment operations summarize a distribution by a deterministic value. They require a numeric draw, so they apply to a `NumericDistribution` or to a field projected to one.
-- `mean(d)` and `variance(d)` return an event-typed value, that is, a value shaped like a draw, holding the per-coordinate mean or variance.
-- `cov(d)` returns a covariance operator over the *flattened* numeric draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates.
-- `quantile(d, q)` takes an array of levels `q ∈ [0, 1]` and returns one value per level, `Array[T]`, computed per coordinate for a multivariate draw.
-- `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`.
+The moment operations summarize a distribution by a deterministic value.
+- `mean(d)` and `variance(d)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance.
+- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates.
+- `quantile(d, q)` requires a numeric draw. It takes an array of levels `q ∈ [0, 1]` and returns one value per level, computed per coordinate for a multivariate draw.
+- `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts.
 
-Each operation uses a closed form when the distribution implements the matching capability (`SupportsMean`, `SupportsVariance`, `SupportsCov`, `SupportsQuantile`, `SupportsExpectation`). Otherwise it falls back to a Monte Carlo estimate drawn through `_sample`, with the sample count and PRNG key exposed as controls. A moment requested of a distribution that supports neither a closed form nor sampling raises a capability error.
+Each operation uses a closed form when the distribution implements the matching capability (`SupportsMean`, `SupportsVariance`, `SupportsCov`, `SupportsQuantile`, `SupportsExpectation`), whatever the event type. Otherwise it falls back to a Monte Carlo estimate drawn through `_sample`, with the sample count and PRNG key exposed as controls. The fallback averages draws, so for `mean` and `variance` it requires a numeric event, while for `expectation` it averages the array outputs of `f` and so applies to any event type that samples. A moment requested of a distribution that supports neither path raises a capability error.
 
 ### Rationale
 
-The moment operations require a numeric event because a mean, variance, or covariance is defined coordinate-wise over numbers, not over an arbitrary structured value (`D1 – Mathematical fidelity`). `cov` returns a flat operator rather than an event-typed value because it couples coordinates that the event's field structure keeps separate. The closed-form-or-Monte-Carlo split realizes `C3 – Computational detail hidden by default, available on demand`: a distribution that can give an exact moment does, and one that can only sample still answers, approximately.
+A mean is defined whenever draws can be averaged: coordinate-wise for arrays, pointwise for functions, and set-wise for measures, where `A ↦ E[ξ(A)]` is again a measure. An event-typed variance additionally requires the second moment to be a value of the event type. That holds for arrays and functions, but fails for a general random measure: to be a measure, `A ↦ Var(ξ(A))` would have to be additive, which holds only when disjoint regions are uncorrelated (a completely random measure) and never for a random probability measure, whose fixed total mass forces negative correlation. A random measure's second-moment structure is instead a covariance over pairs of sets, the analog of `cov` rather than of `variance`. Gating `mean` and `variance` by capability rather than by a numeric event is `D1 – Mathematical fidelity`, and `cov` and `quantile` remain numeric-only, since a flat covariance operator and ordered quantile levels have no meaning for a non-numeric draw. `cov` returns a flat operator rather than an event-typed value because it couples coordinates that the event's field structure keeps separate. The closed-form-or-Monte-Carlo split realizes `C3 – Computational detail hidden by default, available on demand`: a distribution that can give an exact moment does, and one that can only sample still answers, approximately.
 
 ### Open points
 
@@ -45,9 +45,9 @@ The moment operations require a numeric event because a mean, variance, or covar
 ### Contract
 
 `sample(d, key, sample_shape=(), raw=False)` draws from a distribution.
-- With `sample_shape=()` it returns a single draw, wrapped as the `Record` the `event_template` describes. A scalar law returns a single-field `Record` keyed by the distribution's name, and a value that already carries identity passes through unchanged.
+- With `sample_shape=()` it returns a single draw, wrapped as the `Record` the `event_template` describes. A scalar law returns a single-field `Record` keyed by the distribution's name. The wrap is unconditional: even a draw whose raw type carries identity, such as the `Distribution` a random measure yields, is returned as a `Record` with that draw as its leaf value.
 - A non-empty `sample_shape` prepends batch axes and returns a `RecordBatch`, or a `NumericRecordBatch` when the draw is numeric, with those leading dimensions.
-- With `raw=True`, `sample` skips the wrap and returns the raw draw type `T`, with `sample_shape` axes prepended for a non-empty shape. A raw draw carries no name or provenance.
+- With `raw=True`, `sample` skips the wrap. For `sample_shape=()` it returns the bare draw type `T`, carrying no name or provenance, whatever the event type. For a non-empty `sample_shape` it returns `T`'s batch form: an array with the `sample_shape` axes leading for a numeric draw, and an element batch otherwise (a `DistributionBatch` for a distribution-valued draw, and a `FunctionBatch` or `OpaqueBatch` for function-valued or opaque draws).
 - The PRNG `key` is explicit and supplied by the caller, so a draw is reproducible from its key.
 - The draw carries `provenance` recording `sample` and the distribution it came from.
 
@@ -79,10 +79,16 @@ Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (
 
 ### Contract
 
-`condition_on(d, given)` fixes some fields of a distribution or conditional distribution and returns the resulting distribution. One structural rule, dispatched on what is being conditioned, covers every case.
+`condition_on(d, given)` fixes some fields of a distribution or conditional distribution and returns the resulting distribution.
+
+**The `given` argument.** `given` is field-keyed: a `Record`, or a mapping from field paths to values, with each value conforming to the spec at its path. Each key must name either a *given* field (a path in the `given_template`) or a *produced* field (a path in the `event_template`), and any other key is an error. Conditioning is stated entirely in terms of fields, and factors never appear in the call: the derived factor graph is read only to decide which case below applies and to carry it out.
+
+**Dispatch.** The operation dispatches on the conditioning capability: a `ConditionalDistribution` always implements it (`_condition_on` is its required primitive), a `Distribution` implements it optionally (`SupportsConditioning`), and the factored classes implement it with one structural rule, dispatched on where each conditioned field sits in the factor graph.
 - **Exogenous given, so curry.** Binding a field that the object conditions on but does not produce returns a smaller `ConditionalDistribution`, or an ordinary `Distribution` once all given fields are bound. This is exact and involves no inference.
 - **Upstream or independent produced field, so exact slice.** Conditioning on a produced field that no remaining factor depends on through an unconditioned path returns the exact conditional by slicing the factor graph, again with no inference.
 - **Downstream data, so Bayesian inversion.** Conditioning on a field that downstream factors depend on requires inference. It is delegated to an inference algorithm registered for the model, and only the factored classes can be inverted.
+
+When `given` names several fields, the cases combine: the exact bindings (curry and slice) are applied first, and inversion runs on what remains. Conditioning on a produced field does not require the given fields to be bound first. The result stays conditional on the unmet givens, with the produced-field conditioning applied within each slice of the given, so the result curries like any other `ConditionalDistribution` and the two orders agree: conditioning on a produced field and then binding the given yields the same distribution as binding the given first. When that produced-field conditioning requires inversion, the resulting `ConditionalDistribution` may realize the inference lazily, once its given is bound, or through a method that supports amortization.
 
 Conditioning on a *distribution* over the given, rather than on a value, returns the predictive mixture `∫ K(s, ·) μ(ds)`, exposed through the `predictive` convenience operation. The result carries `provenance` recording the operation and the conditioning fields.
 
