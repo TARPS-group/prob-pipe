@@ -544,6 +544,8 @@ converters/   (imports core/, distributions/, custom_types)
      ↑
 modeling/     (imports core/, inference/, converters/, custom_types)
 inference/    (imports core/, custom_types)
+validation/   (imports core/, inference/, custom_types)
+diagnostics/  (imports core/, inference/, validation/, custom_types)
 ```
 
 ### Rules
@@ -561,6 +563,11 @@ inference/    (imports core/, custom_types)
 6. **`inference/`** must never import from `modeling/` or `converters/`.
 7. **`modeling/`** may import from `inference/` (for MCMC result types)
    and from `converters/` (for auto-conversion in conditioning).
+8. **`validation/`** may import from `core/`, `inference/`, and
+   `custom_types`.
+9. **`diagnostics/`** may import from `core/`, `inference/`, `validation/`,
+   and `custom_types`; it must not become a dependency of those packages except
+   for the documented lazy accessor edge below.
 
 > **Exceptions** (intentional reverse edges):
 >
@@ -569,6 +576,8 @@ inference/    (imports core/, custom_types)
 > - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
 >   distribution classes in `_blackjax_ess`, `bijector_for` constraint
 >   reparameterization in `_bayesflow_posteriors`)
+> - `core/` → `diagnostics.views` (lazy import inside
+>   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
 >
 > These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.

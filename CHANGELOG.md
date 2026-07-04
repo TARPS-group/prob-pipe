@@ -19,6 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   gains a `weights=` argument so weighted particles flow through to the
   `ApproximateDistribution` without resampling.
 
+- **`probpipe.diagnostics` posterior diagnostics subsystem.** Adds in-place
+  mutator operations `add_rhat`, `add_ess`, `add_mcse`,
+  `add_mcmc_diagnostics`, `add_ppc`, and `add_loo`; structured
+  `posterior.diagnostics` views (`DiagnosticsView`, `MCMCView`, `PPCView`, and
+  `LOOView`); and ArviZ-compatible interop through `posterior.arviz_data`.
+
 - **`probpipe.validation` posterior-vs-reference comparison metrics.** A
   dependency-light scoring layer for validating inference methods against a
   trusted reference: `Reference` (a container for analytic / long-NUTS /
