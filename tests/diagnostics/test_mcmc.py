@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import numpy as np
 import pytest
 
 import probpipe.diagnostics._mcmc as mcmc
 from probpipe.core.record import Record
-from probpipe.diagnostics._datatree_store import (
-    _mcmc_has_field,
-    to_named_posterior_dataset,
-)
+from probpipe.diagnostics._datatree_store import _mcmc_has_field
 from probpipe.diagnostics._mcmc import (
     _check_arviz,
     _emit_record_warnings,
@@ -24,6 +23,9 @@ from probpipe.diagnostics._mcmc import (
 )
 from probpipe.diagnostics._view_base import NotComputed
 from probpipe.diagnostics._views import DiagnosticsView
+
+if TYPE_CHECKING:
+    import xarray as xr
 
 # conftest.py provides: posterior, posterior_single_chain, posterior_3params
 
@@ -84,6 +86,24 @@ def _arviz_stats_module():
     return azs
 
 
+def _independent_arviz_posterior(posterior: Any) -> xr.Dataset:
+    import arviz as az
+
+    return az.from_dict(
+        {
+            "posterior": {
+                field: np.stack(
+                    [
+                        np.asarray(posterior.draws(chain=i)[field])
+                        for i in range(posterior.num_chains)
+                    ]
+                )
+                for field in posterior.fields
+            }
+        }
+    ).posterior
+
+
 # ---------------------------------------------------------------------------
 # add_rhat
 # ---------------------------------------------------------------------------
@@ -133,7 +153,7 @@ class TestAddRhat:
 
     def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
         posterior = _ScalarVectorPosterior()
-        ds = to_named_posterior_dataset(posterior)
+        ds = _independent_arviz_posterior(posterior)
         expected = _arviz_stats_module().rhat(ds, method="rank")
 
         add_rhat(posterior)
@@ -274,7 +294,7 @@ class TestAddEss:
 
     def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
         posterior = _ScalarVectorPosterior()
-        ds = to_named_posterior_dataset(posterior)
+        ds = _independent_arviz_posterior(posterior)
         azs = _arviz_stats_module()
         expected_bulk = azs.ess(ds, method="bulk")
         expected_tail = azs.ess(ds, method="tail")
@@ -322,7 +342,7 @@ class TestAddMcse:
 
     def test_matches_direct_arviz_for_scalar_and_vector_parameters(self):
         posterior = _ScalarVectorPosterior()
-        ds = to_named_posterior_dataset(posterior)
+        ds = _independent_arviz_posterior(posterior)
         azs = _arviz_stats_module()
         expected_mean = azs.mcse(ds, method="mean")
         expected_sd = azs.mcse(ds, method="sd")
