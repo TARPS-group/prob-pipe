@@ -1,11 +1,11 @@
 """NumericRecord — the numeric, all-array :class:`Record`.
 
 A :class:`NumericRecord` is a :class:`~probpipe.Record` in which every field is a
-numeric ``jax.Array``. It is the specialization of ``Record`` that gives access 
-to all of the standard, efficient array-based computation offered by JAX 
-(e.g., batched operations, JIT compilation, and automatic differentiation). A 
-plain ``Record`` may hold arbitrary Python objects; a ``NumericRecord`` narrows 
-that to numbers, and in return gains array-native features a general record 
+numeric ``jax.Array``. It is the specialization of ``Record`` that gives access
+to all of the standard, efficient array-based computation offered by JAX
+(e.g., batched operations, JIT compilation, and automatic differentiation). A
+plain ``Record`` may hold arbitrary Python objects; a ``NumericRecord`` narrows
+that to numbers, and in return gains array-native features a general record
 cannot offer.
 
 What the numeric restriction buys
@@ -16,7 +16,7 @@ view of the tree coincides with ProbPipe's — unlike a general ``Record``, wher
 the two can differ. It also has a flat one-dimensional vector form
 (:meth:`~NumericRecord.to_vector` and its structural inverse
 :meth:`NumericEventTemplate.from_vector`), providing compatibility with inference
-algorithms that assume parameters are represented as 1-D arrays. A 
+algorithms that assume parameters are represented as 1-D arrays. A
 ``NumericRecord`` stores a :class:`NumericEventTemplate` describing its structure.
 
 Backends and round-tripping
@@ -125,7 +125,7 @@ class NumericRecord(Record):
     dense 1-D array. :meth:`to_vector` ravels and concatenates the leaves, in
     canonical leaf order (depth-first, insertion order), into a vector of length
     :attr:`vector_size`; :meth:`NumericEventTemplate.from_vector` rebuilds the
-    record from such a vector. Note that this is different from 
+    record from such a vector. Note that this is different from
     ``list(record.values())``, which returns the ordered list of fields and is
     supported by any ``Record``. :meth:`to_vector`, supported only by the numeric
     specialization, goes a step farther by raveling the fields into a single
@@ -133,7 +133,7 @@ class NumericRecord(Record):
 
     Single-field records as scalars
     --------------------------------
-    A ``NumericRecord`` with exactly one field behaves like a thin wrapper around 
+    A ``NumericRecord`` with exactly one field behaves like a thin wrapper around
     that field's value: ``float(r)``, ``int(r)``, ``bool(r)``, ``np.asarray(r)``,
     ``jnp.asarray(r)``, and the ``r.shape`` / ``r.dtype`` / ``r.ndim`` attributes
     all forward to the sole leaf. This lets a workflow function that returns a
