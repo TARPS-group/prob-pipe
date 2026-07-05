@@ -2,7 +2,7 @@
 
 Parts II–IV fixed the *infrastructure*, the *objects*, and the *workflow functions* that act on them. Part V fixes the **operations**. Every operation is a workflow function, so it inherits lifting, provenance, dispatch, and orchestration from the workflow-function layer. This part adds only what is specific to each operation: its signature, its argument and return types and shapes, the choice between an exact and a default algorithm, its error behavior, and how its result is wrapped and tracked. Every operation is also capability-dispatched, so it applies to any object that implements the matching capability, and closed, so it returns another **tracked term**.
 
-**Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for conditional distributions, the `_conditional_*` family. Genuinely open operation-level decisions are flagged where they arise.
+**Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for conditional distributions, the `_conditional_*` family.
 
 ## V.0 — The operation model
 
@@ -12,6 +12,7 @@ Every operation shares the following mechanics:
 - **Capability dispatch.** An operation tests the relevant structural protocol with `isinstance(obj, SupportsX)` and calls the implementer method. An object that does not implement the capability raises a clear error. 
 - **Two levels.** The implementer's `_x` method acts on the raw value type `T`. The user-facing operation wraps the result at the boundary, attaches identity, metadata, and provenance, and broadcasts, all at no cost to the implementer.
 - **The wrap boundary.** A raw value becomes the `Record` its `event_template` describes, and the wrap is unconditional: a bare array becomes a single-field `Record`, a raw value that is already a `Record` is not wrapped again, and any other raw type, including the `Distribution` a random measure yields, becomes the `Record`'s leaf value. A concrete family such as a `Normal` can therefore be written in plain arrays, and a user writes the family's natural constructor rather than supplying a template by hand. A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
+- **The `raw` opt-out.** Any operation whose result is event-typed accepts `raw=True` and returns the raw event type `T` unwrapped, carrying no name or provenance. The wrapped, tracked result is always the default.
 - **Default algorithms.** An operation uses a closed form when the object provides one, and otherwise a sensible default such as Monte Carlo, with the sample count and PRNG key exposed as controls for users who need them.
 - **Output identity.** Every tracked term an operation mints is fully specified, never left implicit. Its `event_template` is carried or derived from the inputs, its `provenance` records the operation and its parent descriptors, and its `name` is auto-derived and marked `name_is_auto`. Free-form `annotations` do not auto-propagate, since lineage rides on `provenance` rather than on annotations.
 - **Tracking scope.** Results that are values or distributions are `Tracked`. Whether a bare numeric summary, such as a `log_prob` density, is itself wrapped is settled per operation.
@@ -25,20 +26,16 @@ The operation model is where the core principles become mechanical. Capability d
 ### Contract
 
 The moment operations summarize a distribution by a deterministic value.
-- `mean(d)` and `variance(d)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance.
+- `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is a `Record` whose event template matches the distribution's, or the raw event-typed value `T` with `raw=True`. 
 - `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates.
-- `quantile(d, q)` requires a numeric draw. It takes an array of levels `q ∈ [0, 1]` and returns one value per level, computed per coordinate for a multivariate draw.
-- `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts.
+- `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. If a single level is provided it returns a `Record`; for multiple levels, it returns a `RecordBatch`. 
+- `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. It returns a `Record`. 
 
-Each operation uses a closed form when the distribution implements the matching capability (`SupportsMean`, `SupportsVariance`, `SupportsCov`, `SupportsQuantile`, `SupportsExpectation`), whatever the event type. Otherwise it falls back to a Monte Carlo estimate drawn through `_sample`, with the sample count and PRNG key exposed as controls. The fallback averages draws, so for `mean` and `variance` it requires a numeric event, while for `expectation` it averages the array outputs of `f` and so applies to any event type that samples. A moment requested of a distribution that supports neither path raises a capability error.
+Each operation uses a closed form when the distribution implements the matching capability (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`, `SupportsQuantile`, `SupportsExpectation`), whatever the event type. Otherwise, if it implements `SupportsSampling`, it falls back to a Monte Carlo estimate, with the sample count and PRNG key specified by the user. The fallback averages draws, so for `mean` and `variance` it requires a numeric event, while for `expectation` it averages the array outputs of `f` and so applies to any event type that samples. A moment requested of a distribution that supports neither path raises a capability error.
 
 ### Rationale
 
 A mean is defined whenever draws can be averaged: coordinate-wise for arrays, pointwise for functions, and set-wise for measures, where `A ↦ E[ξ(A)]` is again a measure. An event-typed variance additionally requires the second moment to be a value of the event type. That holds for arrays and functions, but fails for a general random measure: to be a measure, `A ↦ Var(ξ(A))` would have to be additive, which holds only when disjoint regions are uncorrelated (a completely random measure) and never for a random probability measure, whose fixed total mass forces negative correlation. A random measure's second-moment structure is instead a covariance over pairs of sets, the analog of `cov` rather than of `variance`. Gating `mean` and `variance` by capability rather than by a numeric event is `D1 – Mathematical fidelity`, and `cov` and `quantile` remain numeric-only, since a flat covariance operator and ordered quantile levels have no meaning for a non-numeric draw. `cov` returns a flat operator rather than an event-typed value because it couples coordinates that the event's field structure keeps separate. The closed-form-or-Monte-Carlo split realizes `C3 – Computational detail hidden by default, available on demand`: a distribution that can give an exact moment does, and one that can only sample still answers, approximately.
-
-### Open points
-
-- *Tracking of moment results.* A `mean` or `variance` is event-typed and could be returned as a `Tracked` value carrying the draw's `event_template`, whereas a `cov` is a flat operator and a `quantile` indexes levels. Whether each is wrapped or returned bare is settled here and applied uniformly.
 
 ## V.2 — `sample`
 
@@ -51,11 +48,11 @@ A mean is defined whenever draws can be averaged: coordinate-wise for arrays, po
 - The PRNG `key` is explicit and supplied by the caller, so a draw is reproducible from its key.
 - The draw carries `provenance` recording `sample` and the distribution it came from.
 
-For a `ConditionalDistribution`, `sample(K, given=s, key=...)` is the fused conditional path, equal to `sample(condition_on(K, s), key=...)`.
+For a `ConditionalDistribution`, `sample(K, given=s, key=...)` is the fused conditional path that's equivalent to `sample(condition_on(K, s), key=...)`. 
 
 ### Rationale
 
-Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Wrapping even a scalar draw as a single-field `Record` lets `sample` return a tracked term of uniform shape whatever the distribution's raw type, serving `C1 – Uniform interface to distributions and values`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, and the bare value is one keyword away.
+Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Wrapping even a scalar draw as a single-field `Record` lets `sample` return a tracked term of uniform shape whatever the distribution's raw type, serving `C1 – Uniform interface to distributions and values`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it. 
 
 ## V.3 — `log_prob` and `unnormalized_log_prob`
 
@@ -65,7 +62,7 @@ Threading an explicit PRNG `key` makes every draw reproducible from its inputs, 
 - `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
 - `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
 - A batch of values, or a `DistributionBatch`, maps elementwise to a batched array of densities.
-- For a `ConditionalDistribution`, `log_prob(K, y, given=s)` is the fused conditional path, equal to `log_prob(condition_on(K, s), y)`.
+- For a `ConditionalDistribution`, `log_prob(K, y, given=s)` is the fused conditional path that's equivalent to `log_prob(condition_on(K, s), y)`.
 
 ### Rationale
 
@@ -100,31 +97,21 @@ Conditioning on a *distribution* over the given, rather than on a value, returns
 
 A single operation covers binding, slicing, and inversion because all three are the same mathematical act of conditioning, and they differ only in whether the conditioned field is exogenous, upstream, or downstream in the factor graph. Collapsing them into one operation keeps the user interface small (`C1 – Uniform interface to distributions and values`), while the derived graph decides the algorithm (`C3 – Computational detail hidden by default, available on demand`).
 
-### Open points
-
-- *Default inference methods.* Which algorithms ship registered, and their default priorities, is still being settled.
-
-## V.5 — Composition: `*` and `joint`
+## V.5 — `joint`
 
 ### Contract
 
-`A * B` is the composition operator, exposed on `Distribution` and `ConditionalDistribution` as `__mul__`. Its algebra was fixed earlier: the operand typing, the conditional-first order, the field-set rules for `bound` and `unmet`, the most-specific result class, and associativity through flattening. This section pins down the operation's interface, the result's name, and the realigning `joint` form.
+Recall that the composition operator `A * B`, exposed on `Distribution` and `ConditionalDistribution` as `__mul__` constructs the joint (conditional) distribution of `A` and `B`. It returns either a `FactoredDistribution` or, when some givens remain, a `FactoredConditionalDistribution`. Its `provenance` records `*` as the operation and the operand factors, and its `name` is auto-derived, as described next. 
 
-`A * B` returns the most-specific joint recomputed from the flattened factor graph: a `FactoredDistribution`, or a `FactoredConditionalDistribution` when givens remain unmet. The result is a **tracked term**: its `provenance` records `*` and the operand factors, and its `name` is auto-derived as below.
-
-**Auto-derived names.** A joint is derived, not constructed by hand, so `*` derives its `name` deterministically from its factors. The factors are listed in **canonical order** (the conditional-first topological order of the flattened factor graph, with mutually independent factors ordered by the canonical order of the fields they produce), and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` name one joint identically. The derived name is marked `name_is_auto`.
+**Auto-derived names.** A joint is derived, not constructed by hand, so `*` derives its `name` deterministically from its factors. The factors are listed in **canonical order** (the conditional-first topological order of the flattened factor graph, with mutually independent factors ordered by the canonical order of the fields they produce), and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` produce the same joint distribution. The derived name is marked `name_is_auto`.
 
 Re-composition reads `name_is_auto`. An auto-named operand is **flattened**: its factors enter the new joint directly, its old name is discarded, and a fresh name is derived from the full factor list. An operand whose name the user has pinned with `with_name` is **not** flattened. It enters as a single factor under that name, and that name appears as one token in the parent's derived name. So `(lik * prior).with_name("posterior")` both labels the joint and, in any later composition, keeps it as the single factor `posterior`.
 
-**The realigning `joint` form.** `*` requires a producer's field names to match the names its consumer conditions on. When they do not, `joint(*operands, **align)` realigns fields first and then composes exactly as `*`. Each realignment **renames** a field, **splits** one field into several, or **joins** several into one, applied through the correlation-preserving field views so that dependence is transported rather than broken. For example, a likelihood that conditions on `slope` can be combined with a prior where the slope is called `beta` with `joint(lik, prior, slope="beta")`. After realignment the result is exactly a `*` composition: the same most-specific class, the same tracking, and a name derived from the realigned factors.
+**The realigning `joint` form.** A limitation of `*` is that it requires a producer's field names to match the names its consumer conditions on. This motivates the `joint(A, B, **align)` op, which realigns fields first and then composes exactly as `*`, so it is equivalent to `A * B.with_names(**align)`. For example, a likelihood that conditions on `slope` can be combined with a prior where the slope is called `beta` with `joint(lik, prior, beta="slope")`.
 
 ### Rationale
 
-Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Deriving the name deterministically keeps a joint legible without forcing the user to label every intermediate (`C5 – Naming for unambiguous meaning`), while `with_name` lets the user impose grouping where it carries intent. Realigning through the views rather than by copying fields is what lets `joint` connect mismatched factors while preserving their joint law (`C4 – Function lifting via pushforward`).
-
-### Open points
-
-- *The `align` encoding.* The exact keyword form by which `joint` expresses a rename, a split, and a join (a single `**align` mapping versus distinct arguments) is unsettled.
+Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Deriving the name deterministically keeps a joint's meaning clear without forcing the user to label every intermediate output (`C5 – Naming for unambiguous meaning`), while `with_name` lets the user impose grouping where it carries intent. Realigning through the views rather than by copying fields is what lets `joint` connect mismatched factors while preserving their joint law (`C4 – Function lifting via pushforward`).
 
 ## V.6 — `marginal` and `factor`
 

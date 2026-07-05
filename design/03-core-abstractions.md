@@ -26,15 +26,24 @@ Each abstraction is introduced in the order below, depending only on those above
 
 ### Contract
 
-An `EventTemplate` is a `NamedTree` that defines the *shape of one event* (a draw, a stored datum, ...). Hence, each leaf specifies the type of value it holds, which we call a **value spec**, drawn from a closed but extensible sum: 
+An `EventTemplate` is a `NamedTree` that defines the *shape of one event* (a draw, a stored datum, ...). Hence, each leaf specifies the type of value it holds as a `ValueSpec` which must provide an `is_valid` method to check if a value satisfies that spec. 
 
 ```python
-# additional leaf types are introduced with the corresponding abstraction. 
-ValueSpec = ArraySpec | OpaqueSpec | FunctionSpec
+class ValueSpec(ABC):
+    @abstractmethod
+    def is_valid(self, value: Any) -> bool: ...
 
-ArraySpec(shape: tuple[int, ...], dtype: DType, support: Constraint)         # a numeric array leaf
-OpaqueSpec(meta: Hashable)                                                   # a non-array Python object
-FunctionSpec(input_template: EventTemplate, output_template: EventTemplate)  # a leaf holding a callable
+class ArraySpec(ValueSpec):  # a numeric array leaf
+    shape: tuple[int, ...]
+    dtype: DType
+    support: Constraint
+
+class OpaqueSpec(ValueSpec):  # a non-array Python object
+    meta: Hashable
+
+class FunctionSpec(ValueSpec):  # a leaf holding a callable
+    input_template: EventTemplate
+    output_template: EventTemplate
 ```
 
 When every leaf is an `ArraySpec` then all values are numeric and construction auto-promotes to a `NumericEventTemplate`. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
@@ -74,7 +83,7 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ### Contract
 
-Every value spec has a **batch form**: the shape `N` values of that spec take when stacked along batch axes. An `ArraySpec` value batches natively, as an array with the batch axes leading, so no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface. A value spec introduced later brings its batch form with it.
+Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface. 
 
 ```python
 class FunctionBatch(Batch[Callable]):
@@ -88,7 +97,7 @@ class OpaqueBatch(Batch[Any]):
 
 ### Rationale
 
-The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws never meets a value it cannot stack.
+The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them. 
 
 ## III.3 — `Record` and `NumericRecord`
 
@@ -96,7 +105,10 @@ The batch forms close the multiplicity axis over the value specs: `N` function d
 
 A `Record` is a  `NamedTree` that is `Tracked` and `Annotated` with leaves that are *values*. Its structure conforms to an authoritative `EventTemplate`. Records provide a uniform representation for all types of values, including the data a function consumes and the draws a distribution produces. `NumericRecord` is the specialization in which every leaf is a numeric array and hence carries a `NumericEventTemplate`.
 
-Since the structure of `Record` matches that of its template, it must hold that `record.keys() == record.event_template.keys()`, the value at every path conforms to the spec at that path, and `record.at_path(p).event_template == record.event_template.at_path(p)` for any valid path `p`. 
+Since the structure of `Record` matches that of its template, the following invariants must hold:
+1. *matching keys:* `record.keys() == record.event_template.keys()`.
+2. *valid values:* for any valid key `p`, `record.event_template[p].is_valid(record[p])`.
+3. *matching sub-templates:* for any valid non-key path `p`, `record.at_path(p).event_template == record.event_template.at_path(p)`. 
 
 Two records are equal when they share a class, an `event_template`, and field-by-field equal data. Because the template is carried rather than re-inferred, an identity transform that threads it through compares equal to its input. A transform that instead rebuilds the template by inference matches only when that inference recovers the original, for instance when the original template was itself produced by `infer_from`.
 
@@ -230,7 +242,7 @@ class SupportsVariance[T](Protocol):
     def _variance(self) -> T: ...   # event-typed, like _mean
 
 @runtime_checkable
-class SupportsCov(Protocol):
+class SupportsCovariance(Protocol):
     def _cov(self) -> LinOp: ...    # a (d, d) operator over the flat numeric event
 
 @runtime_checkable
@@ -333,19 +345,10 @@ This is `D1 – Mathematical fidelity` on the distribution layer: a `Distributio
 
 ### Contract
 
-A *factored distribution* is a distribution **built from named sub-distributions**. Beyond being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. Two classes carry it: `FactoredDistribution`, an unconditional joint, and `FactoredConditionalDistribution`, a joint that still conditions on exogenous fields. This section fixes what these objects *are* and how they are accessed. Building them is the role of the composition operator.
+A *factored distribution* is a distribution **built from named sub-distributions**. Beyond being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. The `FactoredDistribution` and `FactoredConditionalDistribution` classes generically implement `SupportsFactors` for distributions and conditional distributions. As another example, the `FactoredMultivariateGaussian` is a factored distribution in which the factors are jointly Gaussian, so conditioning and marginalization are exact. 
 
-**Field versus factor.** A **field** is a named part of a draw, that is, a path in the `event_template`. A **factor** is a constituent distribution the joint was built from. The two coincide only for an independent joint of single-field factors and differ in general. A correlated `MultivariateNormal` presented as `{intercept, slope}` is one factor with two fields. Conversely, the same draw `{x, y}` can arise from a single bivariate normal (no factors), from two independent factors (no edges), or from a chain p(y | x) · p(x) (two factors, one edge). The fields are identical but the factorization differs.
-
-**The factored classes.** A factored distribution carries an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. Its dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. That derived structure is the `SupportsFactors` capability, so a "joint" *is* a distribution that implements `SupportsFactors`. The factorization does not live in the `event_template`. The joint's `event_template` is the flat union of the fields its factors produce, while the factor list is the capability's own state. The two carrying classes are:
-- `FactoredDistribution`, an unconditional joint with all given fields internally satisfied. Its `log_prob` is the sum of the factors' conditional log-densities, and it samples ancestrally. An independent product is the no-edge case, so no separate product class is needed.
-- `FactoredConditionalDistribution`, a joint that still conditions on exogenous fields, such as a regression model before its covariates are supplied. It exposes only the conditional capabilities until those fields are bound, which curries it down to a `FactoredDistribution`.
-
-**The two access interfaces.** A joint exposes up to two clearly separated interfaces, never through the same operator.
-- The **field interface** is available on every distribution. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. `marginal(d, "intercept")` returns that same marginal **detached** from the parent. Both are keyed by field path, and both work even on a structured distribution that has no factors.
-- The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or, for a dependent edge, a `ConditionalDistribution`. There need be no factor for a given field, and no field for a given factor.
-
-The three results (factor, marginal, and view) coincide for an independent joint of single-field factors and diverge once dependence is present. Views are the forward, composition direction and preserve correlation. Factors are the backward, inference direction, since `condition_on` reads factors and never views. Marginals are the detached query.
+The generic factored (conditional) distributions `FactoredDistribution` and `FactoredConditionalDistribution`  carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint distribution's `event_template` is the flat union of the fields its factors produce. 
+In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically, based on what their factors support. For example, if all factors implement `SupportsLogProb` then so does the factored distribution. As with other generic distributions, there are also numeric specializations. 
 
 ```python
 @runtime_checkable
@@ -363,12 +366,9 @@ class FactoredConditionalNumericDistribution(FactoredConditionalDistribution): .
 class FactoredNumericConditionalDistribution(FactoredConditionalDistribution): ...          # conditional joint, given numeric
 class FactoredFullyNumericConditionalDistribution(
         FactoredNumericConditionalDistribution, FactoredConditionalNumericDistribution): ... # conditional joint, both numeric
-
-# access is via three ops, each dispatched on a different capability:
-#   factor(d, name)    -> a stored factor; requires SupportsFactors
-#   marginal(d, field) -> the detached field marginal; any distribution
-#   d[field]           -> a view, the field marginal plus a parent ref; any distribution
 ```
+
+**Field versus factor.** A **field** is a named part of a draw, that is, a path in the `event_template`. A **factor** is a constituent distribution the joint was built from. The two coincide only for an independent joint of single-field factors and differ in general. A correlated `MultivariateNormal` presented as `{intercept, slope}` is one factor with two fields. Conversely, the same draw `{x, y}` can arise from a single bivariate normal (no factors), from two independent factors (no edges), or from a chain p(y | x) · p(x) (two factors, one edge). The fields are identical but the factorization differs.
 
 ### Rationale
 
@@ -376,8 +376,10 @@ Factorization is an *optional capability*, `SupportsFactors`, rather than a base
 
 ### Notes
 
-- *Group views.* The field interface also accepts an interior path, which names a group of fields rather than a single field. For example, when the `event_template` nests `coeffs/intercept` and `coeffs/slope` under `coeffs`, `d["coeffs"]` returns the marginal over the whole group. Like a single-field view, it is a view onto the parent joint, never a detached distribution, so co-sampling through the parent preserves correlation across the group boundary.
-- *Conditioning a joint.* One structural rule covers every case. Binding an exogenous field **curries**. Conditioning on an upstream or independent produced field is an **exact slice**. Conditioning on downstream data triggers **Bayesian inversion**, which only the factored classes can perform.
+- A joint exposes up to two clearly separated interfaces, never through the same operator.
+    - The **field interface** is available on every distribution. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast.
+    - The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or, for a dependent edge, a `ConditionalDistribution`. There need be no factor for a given field, and no field for a given factor.
+- *Group views.* The field interface also accepts an interior path, which names a group of fields rather than a single field. For example, when the `event_template` nests `coeffs/intercept` and `coeffs/slope` under `coeffs`, `d["coeffs"]` returns the marginal over the whole group. Like a single-field view, it is a view onto the parent joint, not a detached distribution, so co-sampling through the parent preserves correlation.
 
 ## III.10 — Composition
 

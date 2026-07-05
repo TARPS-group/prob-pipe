@@ -24,7 +24,7 @@ Values in ProbPipe are represented as named, ordered trees.  ProbPipe uses the f
 - A **child** of a node is an entry directly under that node. 
 - The **canonical order** of a tree is a depth-first walk visiting children in insertion order. 
 
-Naming, addressing, traversal, and structure-preserving transforms are defined once in the `NamedTree` class. Specially, a `NamedTree` is a `Mapping` whose keys are exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, they are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. 
+Naming, addressing, traversal, and structure-preserving transforms are defined once in the `NamedTree` class. Specially, a `NamedTree` is a `Mapping` whose keys are exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, they are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. Sibling names are distinct, so every path identifies at most one node. Distinct subtrees may reuse a name, as in `a/c` and `b/c`, and a bare name is then ambiguous on its own. 
 
 ```python
 class NamedTree[L]:
@@ -46,6 +46,8 @@ class NamedTree[L]:
     def is_multi_field(self) -> bool: ...
 
     # structure-preserving transforms — return the same family
+    def with_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
+    # rename nodes, old -> new; keys are paths, or bare names when unambiguous
     def map(self, f: Callable[[L], L], /, *args, **kwargs) -> Self: ...
     def map_with_keys(self, f: Callable[[str, L], L], /, *args, **kwargs) -> Self: ...
     def replace(self, path: str | tuple[str, ...], leaf: L | Self) -> Self: ...
@@ -71,6 +73,7 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 - *Same-family closure.* Every navigator and transform returns the same family, enforced by `_node_type()`.
 - *Leaf type versus node type.* The parameter `L` declares the leaf type, the only axis on which tree families differ: it is what `values()`, `[]`, and `map` traffic in. The node type is not a second parameter, since interior nodes are always instances of the family's own class, which is what `_node_type()` reports. The runtime partition therefore uses the node type alone: a field value is an interior node when it is an instance of `_node_type()`, and a leaf otherwise. Validation is the substrate's job rather than each family's: construction checks every leaf against the family's declared leaf type, reported by `_leaf_type()`, so a malformed tree fails at construction rather than at first navigation. A family whose leaves are arbitrary values declares `object`, making the check vacuous.
 - *Navigation yields views.* `children`, `at_path`, and `[]` return a subtree or leaf that is a *view* into the same underlying store, derived on demand rather than copied out.
+- *Bare-name reference.* `with_names` renames by `old="new"` pairs, where a key may be a bare name instead of a full path: a bare name resolves to the unique node so named and raises when the tree contains it more than once. Keyword pairs therefore cover the common case, while the positional mapping form addresses any path, as in `with_names({"group1/mu": "loc"})`. The `Mapping` interface itself is untouched, with `[]` and `keys()` keyed by full path.
 
 ## II.2 — Identity & metadata: `Tracked`, `Annotated`, `Provenance`
 
@@ -85,7 +88,7 @@ class Annotated:
     annotations: Mapping[str, Any] | None
 ```
 
-A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`.  The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves. 
+A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`. `with_name` renames the object itself, unlike `NamedTree.with_names`, which renames the fields within it. The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves. 
 
 ```python
 class Tracked:
@@ -137,50 +140,79 @@ class Batch[E](Tracked):
 
 Some operations have many possible implementations, and which one applies depends on the *types* of the objects involved rather than on an object's own class. A **dispatch registry** holds those implementations as named methods and selects one for a given call.
 
-Each **method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration. 
+Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration. 
 
 ```python
 class BaseDispatchMethod(ABC):
     name: str
-    priority: int
-    def supported_types(self) -> ...: ...   # issubclass pre-filter; shape set by arity
-    def check(self, *args) -> MethodInfo: ...
-    def execute(self, *args) -> Any: ...
+    priority: int   # defaults to opt-in-only (0)
 
-class MethodInfo:              # a check() result
+    @abstractmethod
+    def check(self, *args, **kwargs) -> MethodInfo: ...
+    @abstractmethod
+    def execute(self, *args, **kwargs) -> Any: ...
+
+class UnaryDispatchMethod(BaseDispatchMethod):    # still abstract
+    @abstractmethod
+    def supported_types(self) -> tuple[type, ...]: ...
+class BinaryDispatchMethod(BaseDispatchMethod):   # still abstract
+    @abstractmethod
+    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (left, right) types
+
+class MethodInfo:
     feasible:    bool
     method_name: str
     description: str
 
-class BaseDispatchRegistry[M: BaseDispatchMethod]:
+class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
+    # the public interface is concrete; arity subclasses supply key extraction and matching
     def register(self, method: M) -> None: ...
     def execute(self, *args, method: str | None = None) -> Any: ...   # auto-select, or run the named method
     def check(self, *args, method: str | None = None) -> MethodInfo: ...
     def list_methods(self) -> list[str]: ...                           # names, in selection order
 
-class UnaryDispatchRegistry[M](BaseDispatchRegistry[M]): ...    # keys on one argument's type
-class BinaryDispatchRegistry[M](BaseDispatchRegistry[M]): ...   # keys on the first two
+class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ...    # keys on one argument's type
+class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
 
-A single **catalog** makes every registry discoverable. The global `registry_catalog` lists each registry, its methods with their priorities, and a one-line description, so a user can see which methods exist and how a given call will resolve. A registry joins the catalog by implementing `SupportsRegistryCataloging`, a protocol broad enough to admit registries that do not share the dispatch base.
+A single **catalog** makes every registry discoverable. It provides a list of registries, their methods with their priorities, and a one-line description, so a user can see which methods exist and how a given call will resolve. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`. 
 
 ```python
-class CatalogEntry:
-    name:        str                        # unique within the catalog
-    kind:        str                        # e.g., "dispatch", "factory", "converter"
-    description: str                        # one line
-    methods:     Mapping[str, int | None]   # method name -> priority (None if not applicable)
+@dataclass(frozen=True)
+class MethodSummary:
+    name: str
+    priority: int | None
+    supported_types: tuple[Any, ...] = ()
+    description: str = ""
+    module_path: str = ""
+    @property
+    def is_opt_in_only(self) -> bool: ...
+
+@dataclass(frozen=True)
+class RegistryInfo:            # the catalog's per-registry record
+    name: str                  # unique within the catalog
+    description: str           # one line
+    kind: str                  # e.g., "dispatch", "factory", "converter"
+    method_count: int
 
 @runtime_checkable
 class SupportsRegistryCataloging(Protocol):
-    def catalog_entry(self) -> CatalogEntry: ...
+    name: str
+    description: str
+    kind: str
+    def method_summaries(self) -> list[MethodSummary]: ...
+    def describe_method(self, name: str) -> MethodSummary: ...
 
 class RegistryCatalog:
     def register(self, registry: SupportsRegistryCataloging) -> None: ...   # empty or duplicate names raise
-    def list(self) -> tuple[CatalogEntry, ...]: ...
+    def names(self) -> list[str]: ...
+    def list(self) -> list[RegistryInfo]: ...
+    def __getitem__(self, name: str) -> SupportsRegistryCataloging: ...     # get the registry
+    def __contains__(self, name: object) -> bool: ...                       # check if a registry exists
     def describe(self, name: str) -> str: ...                               # a readable summary of one registry
+    def register_method(self, registry_name: str, method: Any) -> None: ...
 
-registry_catalog: RegistryCatalog   # the global instance
+registry_catalog = RegistryCatalog()  # the global instance
 ```
 
 ### Rationale
