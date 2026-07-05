@@ -12,7 +12,7 @@ Each abstraction is introduced in the order below, depending only on those above
 | III.2  | Values                      | `FunctionBatch` / `OpaqueBatch`                                                                                       | Batches of function-valued and opaque values, giving every value spec a batch form.                             |
 | III.3  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
 | III.4  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
-| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map on flat numeric vectors, and the carrier of covariances.                          |
+| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map typed by numeric event templates, and the carrier of covariances.                          |
 | III.6  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an `event_template` for its draws.                           |
 | III.7  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
 | III.8  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
@@ -186,21 +186,28 @@ A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side:
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` on flat numeric vectors, and it is `Tracked`. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces, and it is `Tracked`. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors. A `LinOp` built from a bare matrix defaults to single-field templates, by the same convention that presents a scalar draw as a single-field `Record`. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
 ```python
 class LinOp(Tracked, ABC):
     @property
     @abstractmethod
-    def shape(self) -> tuple[int, int]: ...
+    def shape(self) -> tuple[int, int]: ...    # (output_template.vector_size, input_template.vector_size)
     @property
     @abstractmethod
     def dtype(self) -> DType: ...
+    @property
+    @abstractmethod
+    def input_template(self) -> NumericEventTemplate: ...
+    @property
+    @abstractmethod
+    def output_template(self) -> NumericEventTemplate: ...
     @abstractmethod
     def to_dense(self) -> Array: ...
 
-    def matvec(self, x: Array) -> Array: ...   # A x; rmatvec applies the transpose
-    def matmat(self, X: Array) -> Array: ...   # A X on a matrix; rmatmat likewise
+    def matvec(self, x: Array | NumericRecord) -> Array | NumericRecord: ...
+    # A x; a NumericRecord flattens through input_template, and the result matches the argument's form
+    def matmat(self, X: Array) -> Array: ...   # A X on a matrix; rmatvec / rmatmat apply the transpose
 
     # square-only queries
     def solve(self, b: Array) -> Array: ...
@@ -214,13 +221,13 @@ class LinOp(Tracked, ABC):
     def with_flag(self, flag: str) -> Self: ... # functional; construction otherwise fixes the flags
 ```
 
-**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type.
+**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type. The algebra checks and propagates the templates: `A @ B` requires `B`'s output template to equal `A`'s input template and carries `(B.input_template, A.output_template)`, `A + B` requires both pairs to match, and `A.T` swaps them.
 
 **Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant.
 
 ### Rationale
 
-Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators keep every query differentiable (`D6 – Differentiability where possible`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`).
+Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators keep every query differentiable (`D6 – Differentiability where possible`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
 
 ### Open points
 
@@ -404,7 +411,7 @@ This is `D1 – Mathematical fidelity` on the distribution layer: a `Distributio
 A *factored distribution* is a distribution **built from named sub-distributions**. Beyond being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. The `FactoredDistribution` and `FactoredConditionalDistribution` classes generically implement `SupportsFactors` for distributions and conditional distributions. As another example, the `FactoredMultivariateGaussian` is a factored distribution in which the factors are jointly Gaussian, so conditioning and marginalization are exact. 
 
 The generic factored (conditional) distributions `FactoredDistribution` and `FactoredConditionalDistribution`  carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint distribution's `event_template` is the flat union of the fields its factors produce. 
-In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically, based on what their factors support. For example, if all factors implement `SupportsLogProb` then so does the factored distribution. The factored classes also implement `SupportsMarginals` by reading the derived graph. As with other generic distributions, there are also numeric specializations. 
+In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically, based on what their factors support. For example, if all factors implement `SupportsLogProb` then so does the factored distribution. As with other generic distributions, there are also numeric specializations. 
 
 ```python
 @runtime_checkable
@@ -429,6 +436,8 @@ class FactoredFullyNumericConditionalDistribution(
 **The two access interfaces.** A joint exposes up to two clearly separated interfaces, never through the same operator.
 - The **field interface** is available on every distribution that can sample. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. A view's detached law, and any capability beyond sampling, comes from the parent's `SupportsMarginals`, and `marginal(d, "intercept")` returns that same marginal **detached** from the parent.
 - The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or, for a dependent edge, a `ConditionalDistribution`. There need be no factor for a given field, and no field for a given factor.
+
+**Marginals of a joint.** Whether a marginal is exactly available depends on the factors' own marginal support and on where the target sits in the dependence graph, so the factored classes resolve `_marginal` per path rather than wholesale. The graph reduction is always exact: the target's ancestor closure yields a sub-joint of whole factors, and everything outside it integrates out for free. What remains is integrating the extra ancestor fields back out, which is exact in three cases: there are none (the target is ancestrally closed, as for a root factor or an edge-free group), the reduction lies within a single factor and delegates to that factor's own `SupportsMarginals`, or the affected factors admit closed-form integration, as when they are jointly Gaussian. On any other path `_marginal` raises, and the `marginal` operation falls back to its Monte Carlo route.
 
 ### Rationale
 

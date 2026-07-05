@@ -27,7 +27,7 @@ The operation model is where the core principles become mechanical. Capability d
 
 The moment operations summarize a distribution by a deterministic value.
 - `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is a `Record` whose event template matches the distribution's, or the raw event-typed value `T` with `raw=True`. 
-- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates.
+- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates. Its input and output templates are both the distribution's `NumericEventTemplate`, so it applies directly to draws.
 - `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. If a single level is provided it returns a `Record`; for multiple levels, it returns a `RecordBatch`. 
 - `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. It returns a `Record`. 
 
@@ -119,7 +119,7 @@ Composition is written as an expression so that a model is *built* rather than d
 
 Two operations read the parts of a structured or factored distribution. (The third access form, the `d[field]` **view**, is not an operation: it returns a correlation-preserving reference into its parent rather than a standalone object, and its contract is fixed with the factored distributions.)
 
-- `marginal(d, field)` returns the **detached** marginal of a field or field group, a standalone `Distribution` with no reference back to `d`. It dispatches on `SupportsMarginals`. When that capability is absent it falls back to a Monte Carlo approximation through `_sample`, projecting draws onto the field and returning an empirical marginal, and it raises a capability error when the distribution cannot sample either.
+- `marginal(d, field)` returns the **detached** marginal of a field or field group, a standalone `Distribution` with no reference back to `d`. It dispatches on `SupportsMarginals`. When the capability is absent, or the path has no exact route within it, it falls back to a Monte Carlo approximation through `_sample`, projecting draws onto the field and returning an empirical marginal, and it raises a capability error when the distribution cannot sample either.
 - `factor(d, name)` returns a building-block **factor** of a joint, keyed by factor name, either a `Distribution` or a `ConditionalDistribution` for a dependent edge. It requires `SupportsFactors`, raising a capability error on a distribution that exposes no factors.
 
 Both return a **tracked term** whose `provenance` records the access and its source distribution.
