@@ -11,79 +11,20 @@ the concrete value.
 A canonical value wrapper
 -------------------------
 ``Record``s are one of the building blocks of unified, reproducible
-probabilistic pipelines in ProbPipe. TODO: left off here
-
+probabilistic pipelines in ProbPipe. They are used to wrap concrete values,
+attaching metadata (name, provenance, annotations) and structural information
+(an :class:`EventTemplate`). The typical pattern is for 
+:class:`WorkflowFunction`s to work with native types; ``Record``come into 
+play at the boundaries, wrapping the inputs and outputs of these functions.
+For example, by default the return value of the `sample` operator is wrapped
+as a record. 
 
 The ``Record`` family
 ---------------------
-
-
-
-A ``Record`` binds three things:
-
-* **data** — named fields, stored verbatim: ``record[name]`` returns exactly the
-  object that was passed in (a ``jax`` / ``numpy`` array, a Python scalar, a
-  string, an ``xarray`` / ``pandas`` object, a nested ``Record``, ...).
-* **structure** — an authoritative :attr:`~Record.event_template` (an
-  :class:`EventTemplate`, the schema living in
-  :mod:`probpipe.core.event_template`), fixed at construction.
-* **identity** — a :attr:`~Record.name` and write-once provenance
-  (:attr:`~Record.source`).
-
-Fields iterate in **insertion order**, and ``/`` is reserved as the nested-path
-separator (``record["outer/inner"]``), so it is rejected in field names.
-
-The Record family
------------------
-
-| Class | Purpose |
-|---|---|
-| :class:`Record` | single value; fields may be any type (arrays, scalars, strings, nested ``Record``s). |
-| :class:`~probpipe.NumericRecord` (subclass) | single value, every leaf coerced to ``jax.Array``; adds 1-D ``to_vector``. |
-| :class:`~probpipe.RecordArray` | a batch of ``Record``s sharing one ``EventTemplate``; each field is shaped ``(*batch_shape, *leaf_shape)``. |
-| :class:`~probpipe.NumericRecordArray` (subclass) | a batch of ``NumericRecord``s; adds 1-D ``to_vector`` and across-batch reductions (``mean`` / ``var``). |
-
-The structural schema itself — :class:`EventTemplate` /
-:class:`~probpipe.NumericEventTemplate` and the leaf specs — lives in
-:mod:`probpipe.core.event_template`; reach for it directly when you need to
-describe structure *without* an example value.
-
-**When to reach for which**
-
-* :class:`Record` — heterogeneous fields, or when you want to keep the original
-  backend objects intact (it coerces nothing).
-* :class:`~probpipe.NumericRecord` — every leaf numeric: gives a uniform
-  ``jax.Array`` type and a flat 1-D vector (``to_vector`` /
-  :meth:`~probpipe.NumericEventTemplate.from_vector`).
-* :class:`~probpipe.RecordArray` / :class:`~probpipe.NumericRecordArray` —
-  collections (e.g. posterior draws): integer indexing materialises one element,
-  string indexing returns the batched field.
-
-Usage::
-
-    from probpipe import Record, NumericRecord
-
-    params = NumericRecord(r=1.8, K=70.0, phi=10.0)
-    data = Record(counts=np.array([2, 1, 3, 0, 5]), label="horseshoe")
-
-    params["r"]            # jnp.array(1.8)
-    tuple(params.keys())   # ('r', 'K', 'phi')  — field keys, insertion order
-    params.event_template  # NumericEventTemplate(r=(), K=(), phi=())
-    params.to_vector()     # jnp.array([1.8, 70., 10.])
-
-    data["counts"]         # np.array([2, 1, 3, 0, 5])  — stored verbatim
-    data["label"]          # "horseshoe"
-
-Converting to / from JAX-native form
-------------------------------------
-
-ProbPipe's native array form is the ``jax.Array``. :meth:`Record.to_numeric`
-converts any ``Record`` to a :class:`NumericRecord` (every leaf a ``jax.Array``);
-:meth:`NumericRecord.to_native` reverses it, restoring backend-specific metadata
-(``xarray`` dims / coords / attrs, ``pandas`` index / columns / dtypes) captured
-via the registry in :mod:`probpipe.core._array_backend`. Direct
-``NumericRecord(...)`` construction consults the same registry, so the two paths
-are identical.
+- :class:`Record`: represents a single value, which may contain multiple fields.
+- :class:`~probpipe.NumericRecord`: a subclass in which all fields are JAX arrays.
+- :class:`~probpipe.RecordArray`: batch of ``Record``s sharing one ``EventTemplate``.
+- :class:`~probpipe.NumericRecordArray`: batch of ``NumericRecord``s sharing one ``EventTemplate``.
 
 Notes
 -----
@@ -94,20 +35,6 @@ for optimized performance in statistical inference algorithms like MCMC. Such
 algorithms rely on standard array-based computing frameworks. ``Record``'s role
 appears at the boundaries: wrapping the inputs and outputs of expensive compute
 nodes, enabling the construction of unified probabilistic workflows.
-
-**No coercion (plain ``Record``).** Leaves are stored as-is, so ``jax.tree.map``
-and ``jnp`` operations see exactly the types you provided. A Python ``list`` /
-``tuple`` leaf has no ``.shape`` / ``.dtype`` and is therefore treated as opaque
-(even if it holds numbers) — wrap it in ``np.asarray`` / ``jnp.asarray`` for a
-numeric leaf, or use :class:`NumericRecord`, which coerces every leaf to a
-``jax.Array`` at construction.
-
-**Identity and structure across pytree round-trips.** :attr:`~Record.name`,
-:attr:`~Record.source`, and :attr:`~Record.event_template` are runtime metadata,
-not part of the JAX pytree aux (which holds only the field names). A value
-rebuilt by ``tree_unflatten`` — or unpickled — gets a default name, no
-provenance, and a freshly inferred template; re-attach identity if you need to
-preserve it.
 """
 
 from __future__ import annotations
