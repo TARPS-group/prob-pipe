@@ -2,13 +2,39 @@
 
 This document consolidates the design intent spread across the active design threads that reconfigure the core value, distribution, and collection abstractions. Its purpose is coordination: to surface the principles those threads share, to make overlapping concerns explicit, and to limit re-litigation by fixing what is settled at the level of *principles*. It is meant to stand on its own and to be the reference from which more granular documentation is later derived.
 
+### Mathematical scope
+
+ProbPipe is built around five kinds of mathematical objects and the operations that connect them. Every operation returns another ProbPipe object, so the system is closed under all of them.
+
+| Object | Mathematics | ProbPipe |
+|---|---|---|
+| value | a point `x` in a structured space `X` | `Record` |
+| probability measure | `μ ∈ P(X)` | `Distribution` |
+| probability kernel | `K : S → P(T)` | `ConditionalDistribution` |
+| function | `f : X → Y` | workflow function |
+| linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp` |
+
+Each object also has an indexed-collection form (a batch), and every operation lifts to batches elementwise.
+
+| Operation | Mathematics |
+|---|---|
+| evaluation | `f(x)`, `K(s, ·)`, `Ax` |
+| sampling | `x ~ μ` |
+| density evaluation | `(dμ/dν)(x)` |
+| expectation and moments | `E_μ[f(X)]`; mean, variance, covariance, quantiles |
+| pushforward | `f_#μ`, the law of `f(X)` for `X ~ μ` |
+| composition | `p(x \| y) · p(y)`, `f ∘ g`, `A B` |
+| conditioning | `μ(· \| x_B = b)`, from exact currying to Bayesian inversion |
+| marginalization | `π_B# μ`, the law of a named part |
+| prediction | `μK = ∫ K(s, ·) μ(ds)` |
+
 ### Contents 
 
 The document has five parts plus one more planned:
 
 - **[Part I — Design Principles](01-design-principles.md)** — the high-level commitments that drive every downstream design decision. They are deliberately stated without reference to any specific class, type, or API.
 - **[Part II — Infrastructure](02-infrastructure.md)** — the generic, type-agnostic machinery the rest of the library is built on: the named-tree abstraction, identity, provenance, metadata, batching, and the dispatch registries.
-- **[Part III — Core Abstractions](03-core-abstractions.md)** — the probability domain in dependency order: schemas, values, distributions, conditional distributions, composition, and the hierarchy of distribution kinds, each with a precise contract that must align with the design principles.
+- **[Part III — Core Abstractions](03-core-abstractions.md)** — the probability domain in dependency order: schemas, values, linear operators, distributions, conditional distributions, composition, and the hierarchy of distribution kinds, each with a precise contract that must align with the design principles.
 - **[Part IV — Workflow Functions](04-workflow-functions.md)** — how an ordinary function is lifted into ProbPipe: broadcasting over distributions, dispatch, orchestration, and provenance. This is the substrate the operations build on.
 - **[Part V — Operation Contracts](05-operation-contracts.md)** — precise contracts for the core operations: moments, sampling, density evaluation, conditioning, composition, and batched operations.
 - **Part VI — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow. 

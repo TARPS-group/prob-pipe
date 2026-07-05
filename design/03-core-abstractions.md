@@ -12,15 +12,16 @@ Each abstraction is introduced in the order below, depending only on those above
 | III.2  | Values                      | `FunctionBatch` / `OpaqueBatch`                                                                                       | Batches of function-valued and opaque values, giving every value spec a batch form.                             |
 | III.3  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
 | III.4  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
-| III.5  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an `event_template` for its draws.                           |
-| III.6  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
-| III.7  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
-| III.8  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or conditional distributions): `N` separate laws, distinct from one joint distribution.                 |
-| III.9  | (Conditional) Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions, with the factor and field access interfaces.                       |
-| III.10  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts, with the result kind derived from the operands.                                        |
-| III.11 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
-| III.12 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
-| III.13 | Registries | constraint reparameterization (`bijector_for`) | Mapping a `Constraint` to a bijector for unconstrained inference. |
+| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map on flat numeric vectors, and the carrier of covariances.                          |
+| III.6  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an `event_template` for its draws.                           |
+| III.7  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
+| III.8  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
+| III.9  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or conditional distributions): `N` separate laws, distinct from one joint distribution.                 |
+| III.10  | (Conditional) Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions, with the factor and field access interfaces.                       |
+| III.11  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts, with the result kind derived from the operands.                                        |
+| III.12 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
+| III.13 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
+| III.14 | Registries | constraint reparameterization (`bijector_for`) | Mapping a `Constraint` to a bijector for unconstrained inference. |
 
 ## III.1 — `EventTemplate`
 
@@ -45,6 +46,8 @@ class FunctionSpec(ValueSpec):  # a leaf holding a callable
     input_template: EventTemplate
     output_template: EventTemplate
 ```
+
+A `FunctionSpec` accepts a bare `ValueSpec` on either side and wraps it in a single-field template, so `FunctionSpec(ArraySpec(...), ArraySpec(...))` types a scalar function by the same convention that presents a scalar draw as a single-field value.
 
 When every leaf is an `ArraySpec` then all values are numeric and construction auto-promotes to a `NumericEventTemplate`. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
 
@@ -179,11 +182,56 @@ class NumericRecordBatch(RecordBatch):
 
 A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side: a batch of `N` records is a *collection* of `N` distinct records, never the same as a single record with `N` fields. This is why it claims only the batch axis and never the leaf-keyed `Mapping` contract.
 
-## III.5 — `Distribution`
+## III.5 — `LinOp`
 
 ### Contract
 
-A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. 
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` on flat numeric vectors, and it is `Tracked`. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
+
+```python
+class LinOp(Tracked, ABC):
+    @property
+    @abstractmethod
+    def shape(self) -> tuple[int, int]: ...
+    @property
+    @abstractmethod
+    def dtype(self) -> DType: ...
+    @abstractmethod
+    def to_dense(self) -> Array: ...
+
+    def matvec(self, x: Array) -> Array: ...   # A x; rmatvec applies the transpose
+    def matmat(self, X: Array) -> Array: ...   # A X on a matrix; rmatmat likewise
+
+    # square-only queries
+    def solve(self, b: Array) -> Array: ...
+    def cholesky(self) -> LinOp: ...           # a triangular factor L with A = L Lᵀ
+    def diag(self) -> Array: ...
+    def logdet(self) -> float: ...
+    def trace(self) -> float: ...
+
+    @property
+    def flags(self) -> frozenset[str]: ...      # structure metadata, e.g. "symmetric", "positive_definite"
+    def with_flag(self, flag: str) -> Self: ... # functional; construction otherwise fixes the flags
+```
+
+**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type.
+
+**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant.
+
+### Rationale
+
+Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators keep every query differentiable (`D6 – Differentiability where possible`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`).
+
+### Open points
+
+- *Structure-exploiting solves.* Exploiting structure in both operands of `A⁻¹B`, possibly through a dedicated `SolveLinOp`, is open.
+- *Flag semantics.* Whether flags only describe structure or also steer which implementation a query selects is open.
+
+## III.6 — `Distribution`
+
+### Contract
+
+A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_names`, which returns the same law under new field names. 
 
 A `NumericDistribution` is a `Distribution` whose draws are numeric, so it carries a `NumericEventTemplate` and can use the flat-vector machinery. 
 
@@ -195,6 +243,9 @@ class Distribution[T](Tracked, Annotated):
     def event_template(self) -> EventTemplate: ...   # fixed at construction
     @property
     def event_shape(self) -> tuple[int, ...]: ...    # defined only when a draw is a single array
+
+    def with_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
+    # rename event fields; keys resolve as for NamedTree.with_names, and the law is unchanged
 
 class NumericDistribution(Distribution): ...   # marker: numeric draws, carries a NumericEventTemplate
 ```
@@ -213,7 +264,7 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 - *Field views.* `d["x"]` returns a view of the marginal of field `x`. Sibling views co-sample from one parent draw, so correlation between them is preserved. Every distribution carries an `event_template` with at least one named field, so the field interface is available on every distribution, however it was constructed.
 
-## III.6 — Distribution capabilities
+## III.7 — Distribution capabilities
 
 ### Contract
 
@@ -256,21 +307,25 @@ class SupportsExpectation[T](Protocol):
 @runtime_checkable
 class SupportsConditioning(Protocol):
     def _condition_on(self, given: Any, /, **kwargs: Any) -> Distribution: ...   # the conditional law given fixed values
+
+@runtime_checkable
+class SupportsMarginals(Protocol):
+    def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...   # the detached marginal of a field or field group
 ```
 
-Here `Key` is a PRNG key, `ArrayLike` an array-or-scalar input, and `LinOp` a (possibly structured) covariance operator. `_cov` and `_quantile` require a numeric draw, with `_cov` ranging over the *flattened* draw, while `_mean` and `_variance` are event-typed and open to any event type that supports them.
+Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_cov` and `_quantile` require a numeric draw, with `_cov` ranging over the *flattened* draw, while `_mean` and `_variance` are event-typed and open to any event type that supports them.
 
 ### Rationale
 
 Making each operation a *capability* rather than a base-class method follows `D3 – Capability-based operations`. Because support is structural (tested by `isinstance(dist, SupportsX)`, not subclassing), a distribution gains an operation just by implementing its method, and a wrapper (a view, a transform) exposes exactly the capabilities of whatever it wraps.
 
-## III.7 — `ConditionalDistribution`
+## III.8 — `ConditionalDistribution`
 
 ### Contract
 
 A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `ConditionalDistribution` is not a `Distribution` and does not inherit from one: it has no marginal law, so `sample` / `log_prob` / `mean` do not apply to it unconditionally. Rather, the two are siblings sharing a capability vocabulary.
 
-A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`.
+A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. `with_names` renames fields across both templates, returning the same kernel under new field names.
 
 Users never call a method on the `ConditionalDistribution`. Instead, they use the existing ops: `condition_on(K, s)` evaluates it (exact, no inference) to a `Distribution`, and `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`. Conditioning on only a subset of given fields *curries* to a smaller `ConditionalDistribution` view, while conditioning on a *distribution* over the given yields the predictive mixture `∫ K(s, ·) μ(ds)`.
 
@@ -295,7 +350,8 @@ class SupportsConditionalMean[S, T](Protocol):
     def _conditional_mean(self, given: S) -> T: ...
 # … and likewise SupportsConditionalVariance (_conditional_variance(given) -> T),
 #   SupportsConditionalCovariance (_conditional_cov(given) -> LinOp),
-#   SupportsConditionalExpectation (_conditional_expectation(given, f, …) -> Array).
+#   SupportsConditionalExpectation (_conditional_expectation(given, f, …) -> Array),
+#   SupportsConditionalMarginals (_conditional_marginal(given, path) -> Distribution).
 ```
 
 **The numeric special cases.** A `ConditionalDistribution` has *two* templates, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** side numeric, `Numeric` before `Distribution` marks the **event** side numeric, and `FullyNumeric*` marks both. Each is a marker only, adding no operations of its own (mirroring `NumericDistribution`).
@@ -317,7 +373,7 @@ ConditionalDistributionSpec(given_template: EventTemplate, event_template: Event
 
 Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. As with `Distribution`, a concrete `ConditionalDistribution` family derives both templates from its parameters and passes them up, and the base only requires they are fixed at construction (`D5 – Explicit, carried structure`, `D7 – Single source of truth`). The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks.
 
-## III.8 — `DistributionBatch` and `ConditionalDistributionBatch`
+## III.9 — `DistributionBatch` and `ConditionalDistributionBatch`
 
 ### Contract
 
@@ -341,14 +397,14 @@ class ConditionalDistributionBatch(Batch[ConditionalDistribution]):
 
 This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space, exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a `ConditionalDistribution` produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `Tracked` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
 
-## III.9 — Factored distributions
+## III.10 — Factored distributions
 
 ### Contract
 
 A *factored distribution* is a distribution **built from named sub-distributions**. Beyond being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. The `FactoredDistribution` and `FactoredConditionalDistribution` classes generically implement `SupportsFactors` for distributions and conditional distributions. As another example, the `FactoredMultivariateGaussian` is a factored distribution in which the factors are jointly Gaussian, so conditioning and marginalization are exact. 
 
 The generic factored (conditional) distributions `FactoredDistribution` and `FactoredConditionalDistribution`  carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint distribution's `event_template` is the flat union of the fields its factors produce. 
-In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically, based on what their factors support. For example, if all factors implement `SupportsLogProb` then so does the factored distribution. As with other generic distributions, there are also numeric specializations. 
+In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically, based on what their factors support. For example, if all factors implement `SupportsLogProb` then so does the factored distribution. The factored classes also implement `SupportsMarginals` by reading the derived graph. As with other generic distributions, there are also numeric specializations. 
 
 ```python
 @runtime_checkable
@@ -370,18 +426,19 @@ class FactoredFullyNumericConditionalDistribution(
 
 **Field versus factor.** A **field** is a named part of a draw, that is, a path in the `event_template`. A **factor** is a constituent distribution the joint was built from. The two coincide only for an independent joint of single-field factors and differ in general. A correlated `MultivariateNormal` presented as `{intercept, slope}` is one factor with two fields. Conversely, the same draw `{x, y}` can arise from a single bivariate normal (no factors), from two independent factors (no edges), or from a chain p(y | x) · p(x) (two factors, one edge). The fields are identical but the factorization differs.
 
+**The two access interfaces.** A joint exposes up to two clearly separated interfaces, never through the same operator.
+- The **field interface** is available on every distribution that can sample. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. A view's detached law, and any capability beyond sampling, comes from the parent's `SupportsMarginals`, and `marginal(d, "intercept")` returns that same marginal **detached** from the parent.
+- The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or, for a dependent edge, a `ConditionalDistribution`. There need be no factor for a given field, and no field for a given factor.
+
 ### Rationale
 
 Factorization is an *optional capability*, `SupportsFactors`, rather than a base class. This is `D2 – Generality first`: a joint is an ordinary distribution that gains factor access by carrying the capability, instead of sitting in a parallel class tower. Keeping the field interface (part of a draw) and the factor interface (part of the construction) separate serves `D1 – Mathematical fidelity`, since the two are genuinely different in the mathematics. Independence is likewise a property of the derived graph rather than a class, so dropping any dedicated product class loses no behavior: an edge-free joint still samples its factors in parallel and conditions exactly on a field. A joint's capabilities are the intersection of its factors' capabilities: it supports an operation exactly when every factor does, so ancestral `sample` requires every factor to sample and a summed `log_prob` requires every factor to score.
 
 ### Notes
 
-- A joint exposes up to two clearly separated interfaces, never through the same operator.
-    - The **field interface** is available on every distribution. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast.
-    - The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or, for a dependent edge, a `ConditionalDistribution`. There need be no factor for a given field, and no field for a given factor.
 - *Group views.* The field interface also accepts an interior path, which names a group of fields rather than a single field. For example, when the `event_template` nests `coeffs/intercept` and `coeffs/slope` under `coeffs`, `d["coeffs"]` returns the marginal over the whole group. Like a single-field view, it is a view onto the parent joint, not a detached distribution, so co-sampling through the parent preserves correlation.
 
-## III.10 — Composition
+## III.11 — Composition
 
 ### Contract
 
@@ -419,9 +476,9 @@ Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 –
 ### Notes
 
 - *Operator coexistence.* `*` also denotes scalar scaling on some objects, such as a random function or a linear operator. The two coexist by operand-type dispatch: `Distribution` and `ConditionalDistribution` operands compose, while scalar operands scale.
-- *The realigning `joint` form.* `joint(A, B, **align)` is `*` plus field-name realignment, for factors whose names do not line up. It renames, splits, or joins fields through the correlation-preserving views.
+- *The realigning `joint` form.* `joint(A, B, **align)` is `*` plus field renaming, for factors whose names do not line up: it is `A * B.with_names(**align)`.
 
-## III.11 — The `Distribution` hierarchy
+## III.12 — The `Distribution` hierarchy
 
 ### Contract
 
@@ -442,8 +499,8 @@ The axes are orthogonal, so they combine freely: a `Normal` is *atomic* (type) a
 The line between the last two is **factorization, not field count**: a multi-field empirical distribution or an amortized posterior has fields but no factors, so it is *atomic-structured*, and only a distribution built from named sub-distributions is *joint*. Hence there is **no `RecordDistribution`**: draw structure lives in `event_template` and factor access in `SupportsFactors`.
 
 **The family axis — how the law is realized.** Each family is an ordinary `Distribution` (a `NumericDistribution` when its event is numeric), differing only in which capabilities it implements and how. This is refinement by capability, not a parallel class tower:
-- **Parametric (closed-form).** The standard families: continuous (`Normal`, `Gamma`, `Beta`, `Exponential`), discrete (`Bernoulli`, `Categorical`, `Poisson`), and multivariate (`MultivariateNormal`, `Dirichlet`). They are backed by a tensor library, with exact `sample` / `log_prob` / moments and a constrained-support `event_template`, and they make up the bulk of the atomic, array-valued row.
-- **Empirical.** A finite, possibly weighted, sample set: `sample` resamples, `log_prob` reads the (weighted) empirical measure, moments are sample estimates. Scalar or structured.
+- **Parametric (closed-form).** The standard families: continuous (`Normal`, `Gamma`, `Beta`, `Exponential`), discrete (`Bernoulli`, `Categorical`, `Poisson`), and multivariate (`MultivariateNormal`, `Dirichlet`). They are backed by a tensor library, with exact `sample` / `log_prob` / moments and a constrained-support `event_template`, and they make up the bulk of the atomic, array-valued row. The multivariate families implement `SupportsMarginals` exactly.
+- **Empirical.** A finite, possibly weighted, sample set: `sample` resamples, `log_prob` reads the (weighted) empirical measure, moments are sample estimates, and marginals are again empirical. Scalar or structured.
 - **Transformed (pushforward).** A base distribution pushed through a function, which is what lifting a function over a distribution-valued argument produces. An invertible map keeps an exact `log_prob` by change of variables, while a general map keeps `sample` and Monte-Carlo-estimates the rest.
 - **Mixture.** A convex combination of component distributions. It is also the form a dependent joint's detached `marginal` generally takes.
 - **Approximate.** A fitted stand-in for an intractable law (a variational posterior, a surrogate), exposing exactly the capabilities its fit supports.
@@ -456,7 +513,7 @@ The line between the last two is **factorization, not field count**: a multi-fie
 
 The hierarchy embodies `D2 – Generality first`: one base refined by *optional capabilities* (`SupportsFactors`, the numeric marker, each `SupportsX`) rather than a rigid class tower, so a new family slots in by implementing the capabilities it supports rather than by widening the base. The atomic-versus-joint split is a `D1 – Mathematical fidelity` distinction, since a joint genuinely offers its factors as distributions while an atomic-structured law does not, and it is carried by a capability rather than by the draw's type. Because composition is closed (`D4 – Closed system of objects under operations`), a joint re-enters the catalog as an ordinary `Distribution` for the next operation.
 
-## III.12 — Cross-type conversion
+## III.13 — Cross-type conversion
 
 ### Contract
 
@@ -494,7 +551,7 @@ converter_registry: ConverterRegistry   # the global instance, keyed on the (sou
 
 Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment-match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`).
 
-## III.13 — Constraint reparameterization
+## III.14 — Constraint reparameterization
 
 ### Contract
 

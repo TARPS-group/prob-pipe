@@ -111,7 +111,7 @@ Re-composition reads `name_is_auto`. An auto-named operand is **flattened**: its
 
 ### Rationale
 
-Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Deriving the name deterministically keeps a joint's meaning clear without forcing the user to label every intermediate output (`C5 – Naming for unambiguous meaning`), while `with_name` lets the user impose grouping where it carries intent. Realigning through the views rather than by copying fields is what lets `joint` connect mismatched factors while preserving their joint law (`C4 – Function lifting via pushforward`).
+Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Deriving the name deterministically keeps a joint's meaning clear without forcing the user to label every intermediate output (`C5 – Naming for unambiguous meaning`), while `with_name` lets the user impose grouping where it carries intent. Realignment is an exact rename: `with_names` returns the same law under new field names, so `joint` connects mismatched factors without altering their joint law (`D1 – Mathematical fidelity`).
 
 ## V.6 — `marginal` and `factor`
 
@@ -119,14 +119,14 @@ Composition is written as an expression so that a model is *built* rather than d
 
 Two operations read the parts of a structured or factored distribution. (The third access form, the `d[field]` **view**, is not an operation: it returns a correlation-preserving reference into its parent rather than a standalone object, and its contract is fixed with the factored distributions.)
 
-- `marginal(d, field)` returns the **detached** marginal of a field, a standalone `Distribution` over that field's value with no reference back to `d`. It applies to any distribution whose draw has that field. For a dependent joint the marginal is generally a mixture, a random measure, or intractable, so `marginal` uses whatever capability that form provides and raises a capability error when none applies.
+- `marginal(d, field)` returns the **detached** marginal of a field or field group, a standalone `Distribution` with no reference back to `d`. It dispatches on `SupportsMarginals`. When that capability is absent it falls back to a Monte Carlo approximation through `_sample`, projecting draws onto the field and returning an empirical marginal, and it raises a capability error when the distribution cannot sample either.
 - `factor(d, name)` returns a building-block **factor** of a joint, keyed by factor name, either a `Distribution` or a `ConditionalDistribution` for a dependent edge. It requires `SupportsFactors`, raising a capability error on a distribution that exposes no factors.
 
 Both return a **tracked term** whose `provenance` records the access and its source distribution.
 
 ### Rationale
 
-`marginal` and `factor` are the two query directions of the field and factor interfaces fixed with the factored distributions: `marginal` reads a field's law detached from its joint, and `factor` reads a construction block. Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Gating `factor` on `SupportsFactors` keeps factor access honest, since only a distribution actually built from named parts can answer it (`D3 – Capability-based operations`).
+`marginal` and `factor` are the two query directions of the field and factor interfaces fixed with the factored distributions: `marginal` reads a field's law detached from its joint, and `factor` reads a construction block. Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` keeps factor access honest, since only a distribution actually built from named parts can answer it (`D3 – Capability-based operations`).
 
 ## V.7 — Batched operations
 
