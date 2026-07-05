@@ -1,26 +1,33 @@
-"""NumericRecord — Record subclass where every leaf is a ``jax.Array``.
+"""NumericRecord — the numeric, all-array :class:`Record`.
 
-Adds ``to_vector`` / ``vector_size`` for the numeric 1-D serialisation
-(the inverse, ``from_vector``, lives on :class:`NumericEventTemplate`); the
-general ``list(record.values())`` (leaves kept whole) is inherited from
-:class:`Record`. Construction validates that every leaf is a numeric value (numeric
-array, numeric scalar, or nested ``NumericRecord``) and coerces each
-to ``jnp.ndarray`` so the post-construction invariant is "every leaf
-is a ``jax.Array``" (or a nested ``NumericRecord``).
+A :class:`NumericRecord` is a :class:`~probpipe.Record` in which every field is a
+numeric ``jax.Array``. It is the specialization of ``Record`` that gives access 
+to all of the standard, efficient array-based computation offered by JAX 
+(e.g., batched operations, JIT compilation, and automatic differentiation). A 
+plain ``Record`` may hold arbitrary Python objects; a ``NumericRecord`` narrows 
+that to numbers, and in return gains array-native features a general record 
+cannot offer.
 
-Per-field metadata that ``jnp.asarray`` would drop — ``xarray`` dims /
-coords / attrs, ``pandas`` index / columns / dtypes — is captured via
-the registry in :mod:`probpipe.core._array_backend` and stored on the
-new instance. :meth:`NumericRecord.to_native` reverses the conversion,
-restoring each leaf to its original backend type. Direct
-``NumericRecord(**fields)`` and ``Record(**fields).to_numeric()``
-follow the same code path and produce identical results.
+What the numeric restriction buys
+---------------------------------
+Because every leaf is a JAX array, a ``NumericRecord`` is an ordinary JAX PyTree
+of arrays. It passes through ``jit`` / ``vmap`` / ``grad`` unchanged, and JAX's
+view of the tree coincides with ProbPipe's — unlike a general ``Record``, where
+the two can differ. It also has a flat one-dimensional vector form
+(:meth:`~NumericRecord.to_vector` and its structural inverse
+:meth:`NumericEventTemplate.from_vector`), providing compatibility with inference
+algorithms that assume parameters are represented as 1-D arrays. A 
+``NumericRecord`` stores a :class:`NumericEventTemplate` describing its structure.
 
-Bool handling
--------------
-Python ``bool`` and arrays with ``bool`` dtype are treated as numeric
-leaves (consistent with JAX / NumPy, where ``bool`` is a valid array
-dtype that participates in arithmetic as ``0`` / ``1``).
+Backends and round-tripping
+---------------------------
+A ``NumericRecord`` accepts numeric leaves from several array backends (``jax``,
+``numpy``, ``xarray``, ``pandas``) and coerces each to a ``jax.Array`` at
+construction. Metadata those backends carry that a bare array cannot — an
+``xarray`` array's dimensions, coordinates, and attributes, or a ``pandas``
+object's index, columns, and dtypes — is captured and stored so that
+:meth:`~NumericRecord.to_native` can later restore each leaf to its original
+backend type.
 """
 
 from __future__ import annotations
@@ -79,41 +86,102 @@ def _is_numeric_leaf(val: Any) -> bool:
 
 
 class NumericRecord(Record):
-    """``Record`` where every leaf is a ``jax.Array``.
+    """A :class:`Record` whose fields are all arrays.
 
-    Adds :meth:`to_vector` / :attr:`vector_size` for serialising the
-    record to its flat 1-D vector (the inverse, ``from_vector``, lives on
-    :class:`NumericEventTemplate`); the general ``list(record.values())``
-    (leaves kept whole) is inherited from :class:`Record`. Construction
-    validates that every leaf is a numeric value (or a nested
-    :class:`NumericRecord`) and coerces scalar / numpy / xarray /
-    pandas leaves to ``jnp.ndarray`` so downstream code sees a uniform
-    JAX array type. Backend-specific metadata (xarray dims / coords /
-    attrs, pandas index / columns / dtypes) is captured via the aux
-    registry in :mod:`probpipe.core._array_backend` and stored on the
-    instance; :meth:`to_native` reverses the conversion.
+    A ``NumericRecord`` is the numeric specialization of :class:`Record`. It
+    holds the same named, ordered, possibly-nested collection of fields, but
+    constrains every field to be a numeric array. It inherits the full
+    :class:`Record` interface — the leaf-keyed mapping, the tree navigation, the
+    metadata (name, provenance, annotations), and the equality and hashing rules
+    — and adds the array-only features described below.
+
+    The numeric-leaf invariant
+    --------------------------
+    After construction, every leaf is a ``jax.Array`` and every interior node is
+    a nested ``NumericRecord``. A leaf may be given as a numeric array from any
+    supported backend (``jax.numpy``, ``numpy``, ``xarray.DataArray``, or a
+    ``pandas.Series`` / ``DataFrame`` with a numeric dtype) or as a numeric
+    Python scalar (``int``, ``float``, ``complex``, or ``bool``); each is coerced
+    to a ``jax.Array`` so downstream code always sees a single, uniform array
+    type. A ``bool`` value, or an array of ``bool`` dtype, counts as numeric —
+    matching JAX and NumPy, where booleans are a valid array dtype. Any leaf that
+    is not numeric, such as a string or an opaque Python object, raises
+    ``TypeError`` at construction, naming the offending field.
+
+    Backend metadata and ``to_native``
+    ----------------------------------
+    Coercing a field to a bare ``jax.Array`` discards any metadata its original
+    backend carried — an ``xarray`` array's dimensions, coordinates, and
+    attributes, or a ``pandas`` object's index, columns, and dtypes. That
+    metadata is captured at construction, stored on the record keyed by field,
+    and readable through :attr:`aux`. :meth:`to_native` reverses the conversion,
+    restoring each field to its original backend type. Because restored ``xarray``
+    or ``pandas`` leaves are no longer ``jax.Array``\\ s, :meth:`to_native`
+    returns a plain :class:`Record` rather than a ``NumericRecord``.
+
+    The flat vector form
+    --------------------
+    Because every leaf is numeric, the whole value can be flattened into a single
+    dense 1-D array. :meth:`to_vector` ravels and concatenates the leaves, in
+    canonical leaf order (depth-first, insertion order), into a vector of length
+    :attr:`vector_size`; :meth:`NumericEventTemplate.from_vector` rebuilds the
+    record from such a vector. Note that this is different from 
+    ``list(record.values())``, which returns the ordered list of fields and is
+    supported by any ``Record``. :meth:`to_vector`, supported only by the numeric
+    specialization, goes a step farther by raveling the fields into a single
+    1-D array.
+
+    Single-field records as scalars
+    --------------------------------
+    A ``NumericRecord`` with exactly one field behaves like a thin wrapper around 
+    that field's value: ``float(r)``, ``int(r)``, ``bool(r)``, ``np.asarray(r)``,
+    ``jnp.asarray(r)``, and the ``r.shape`` / ``r.dtype`` / ``r.ndim`` attributes
+    all forward to the sole leaf. This lets a workflow function that returns a
+    single-field record be used in ordinary numeric expressions without
+    unwrapping the field by hand. A record with more than one field, or whose one
+    field is itself a nested record, raises ``TypeError`` from these conversions,
+    since unwrapping one field of several would be ambiguous; access a specific
+    field explicitly in that case.
 
     Parameters
     ----------
+    _fields : Mapping, optional
+        Fields as a positional mapping — an alternative to keyword ``**fields``
+        (passing both raises). As on :class:`Record`, use it when a field name
+        would collide with the ``name`` / ``event_template`` keywords.
     **fields
-        Named values. Every leaf must be a numeric array (``jax.numpy``,
-        ``numpy``, ``xarray.DataArray``, ``pandas.Series`` /
-        ``DataFrame`` with numeric dtype), a numeric Python scalar
-        (``int``, ``float``, ``complex``, ``bool``), or a nested
-        ``NumericRecord``. Non-numeric values raise ``TypeError`` at
-        construction time.
+        Named numeric values: a numeric array (``jax`` / ``numpy`` / ``xarray`` /
+        ``pandas`` with a numeric dtype), a numeric Python scalar, or a nested
+        ``NumericRecord``. At least one field is required.
+    name : str, optional
+        Human-readable label for introspection / provenance. Defaults to a label
+        derived from the field names.
+    event_template : NumericEventTemplate, optional
+        The value's authoritative schema. When omitted it is inferred from the
+        field data at construction; when supplied it is validated against the
+        fields and stored. Either way it is fixed for the life of the record.
+
+    Raises
+    ------
+    TypeError
+        If any leaf is not a numeric array, a numeric scalar, or a nested
+        ``NumericRecord``.
+    ValueError
+        If no fields are given, a field name contains ``/``, or both ``_fields``
+        and keyword fields are passed (inherited from :class:`Record`).
 
     Notes
     -----
-    ``NumericRecord(**fields)`` and ``Record(**fields).to_numeric()``
-    are semantically identical — both consult the aux registry to
-    capture metadata, both coerce leaves via ``jnp.asarray``, both
-    raise ``TypeError`` on non-coercible leaves.
+    Constructing ``NumericRecord(**fields)`` and calling
+    ``Record(**fields).to_numeric()`` follow the same validation and coercion
+    path and produce identical results.
 
-    Validation and coercion happen *before* the underlying ``Record`` is
-    constructed, so ``_fields`` is populated exactly once and remains
-    immutable from the moment ``__init__`` returns — consistent with the
-    ``__slots__`` + ``__setattr__`` guard on the base class.
+    Unlike a general :class:`Record`, whose JAX PyTree structure can be finer
+    than its ProbPipe structure, a ``NumericRecord`` is a plain PyTree of arrays:
+    the two views coincide, and it passes through ``jit`` / ``vmap`` / ``grad``
+    unchanged. As on :class:`Record`, :attr:`name`, :attr:`source`, and
+    :attr:`event_template` are runtime metadata and are not serialized into the
+    PyTree aux.
     """
 
     __slots__ = ("_aux", "_vector_size")

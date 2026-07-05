@@ -12,11 +12,12 @@ An event template is designed to be quite general, able to describe the
 structure of a single array or a complicated nested object storing arbitrary
 Python objects. The restriction is that there must be a sequence of strings
 forming a unique path to each field. This follows ProbPipe's convention of
-working with *names* in most cases to avoid ambiguity. The event template for
-a single object with no nested structure corresponds to a trivial tree with
-only a root node. This node is still required to have a name (though ProbPipe
-constructors will often auto-generate one when it would be inconvenient for the
-user to supply it).
+working with *names* in most cases to avoid ambiguity. Even the event template
+for a single object with no nested structure describes a *named* field: the tree
+is a root node with a single named leaf. That field name is still required,
+though ProbPipe's higher-level constructors will often supply one automatically
+when it would be inconvenient for the user to (for example, a scalar draw is
+named after the distribution that produced it).
 
 Field names are required and unique within a node; ``/`` is reserved as the path
 separator, so every leaf has a unique ``/``-delimited string path
@@ -43,15 +44,11 @@ The full set of spec objects are as follows:
 Numeric vs. Mixed
 -----------------
 
-:class:`NumericEventTemplate` is the specialization in which all fields are
-``ArraySpec``\\ s. In JAX terminology, it describes a value that is a PyTree
-of arrays. This sub-class exposes :attr:`~NumericEventTemplate.vector_size`,
-which is the number of scalar array elements making up the whole value.
-:meth:`NumericEventTemplate.to_vector` converts a concrete value of this
-form to a canonical 1-D array representation, with shape `(vector_size,)`.
-:meth:`NumericEventTemplate.from_vector` converts back to the structured
-representation. ``EventTemplate(...)`` auto-promotes to
-``NumericEventTemplate`` when every field is numeric.
+When every field is an ``ArraySpec`` the template is all-numeric, and
+``EventTemplate(...)`` auto-promotes to :class:`NumericEventTemplate` — the
+specialization describing a value that is a PyTree of arrays. That subclass
+adds the flat-vector layout (``vector_size`` / ``to_vector`` / ``from_vector``);
+see its docstring for details.
 """
 
 from __future__ import annotations

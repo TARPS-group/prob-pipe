@@ -10,14 +10,14 @@ the concrete value.
 
 A canonical value wrapper
 -------------------------
-``Record``s are one of the building blocks of unified, reproducible
+``Record``\\ s are one of the building blocks of unified, reproducible
 probabilistic pipelines in ProbPipe. They are used to wrap concrete values,
 attaching metadata (name, provenance, annotations) and structural information
-(an :class:`EventTemplate`). The typical pattern is for 
-:class:`WorkflowFunction`s to work with native types; ``Record``come into 
-play at the boundaries, wrapping the inputs and outputs of these functions.
-For example, by default the return value of the `sample` operator is wrapped
-as a record. 
+(an :class:`EventTemplate`). The typical pattern is for
+:class:`WorkflowFunction`\\ s to work with native types; ``Record``\\ s come
+into play at the boundaries, wrapping the inputs and outputs of these functions.
+For example, by default the return value of the ``sample`` operator is wrapped
+as a record.
 
 The ``Record`` family
 ---------------------
@@ -28,13 +28,11 @@ The ``Record`` family
 
 Notes
 -----
-**Performance considerations.** ``Record``s are value wrappers that carry around
-additional information (e.g. structure, provenance) that is useful in probabilistic
-workflows (e.g. for consistency, validation, debugging, etc.). They are not designed
-for optimized performance in statistical inference algorithms like MCMC. Such
-algorithms rely on standard array-based computing frameworks. ``Record``'s role
-appears at the boundaries: wrapping the inputs and outputs of expensive compute
-nodes, enabling the construction of unified probabilistic workflows.
+**Performance considerations.** ``Record``\\ s carry extra information (structure,
+provenance) that supports consistency, validation, and debugging but is not meant
+for the hot loops of inference algorithms like MCMC, which rely on plain
+array-based frameworks. As noted above, a ``Record``'s role is at the boundaries
+of expensive compute nodes rather than inside them.
 """
 
 from __future__ import annotations
@@ -180,10 +178,27 @@ class Record(_NamedTree):
     --------------------
     Two records are equal when they share a concrete class (both ``Record``, or
     both ``NumericRecord``), have equal :attr:`event_template`\\ s, and are
-    field-by-field equal. So an identity transform that rebuilds the same data
-    compares equal to the original::
+    field-by-field equal. Because equality includes the template, whether an
+    identity transform round-trips to an equal record depends on how it treats
+    the template. A transform that **threads the template through** — ``replace``
+    / ``merge`` / ``without``, or reconstruction via
+    :meth:`EventTemplate.from_field_values` — preserves it exactly and compares
+    equal. A transform that instead **re-infers** the template — ``map`` /
+    ``map_with_keys``, which rebuild the result and re-infer its specs — compares
+    equal only when inference recovers the original template, for instance when
+    that template was itself inferred (the record was built without an explicit
+    ``event_template``). Inference is lossy: :meth:`EventTemplate.infer_from`
+    cannot recover an ``ArraySpec``'s ``dtype`` / ``support``, an
+    ``OpaqueSpec``'s ``meta``, etc., so an identity ``map`` of a record carrying
+    a richer explicit template does *not* compare equal::
 
-        r.map(lambda x: x) == r   # True
+        r.map(lambda x: x) == r   # True only if r's template is inference-recoverable
+
+    Hashing is **structural**: a record's hash combines its class, its field
+    names, and each field's shape and dtype (nested records hash recursively; an
+    opaque leaf falls back to its type). It fingerprints the record's structure
+    rather than its data, so records that share a structure fall in the same
+    hash bucket.
 
     Parameters
     ----------
@@ -661,10 +676,13 @@ class Record(_NamedTree):
         ``==``). Self-identity short-circuits to ``True`` so a record equals
         itself even when a leaf contains ``NaN``.
 
-        Because a template absent at construction is *inferred from the data*,
-        two records built from equal data without explicit templates always have
-        equal templates — the template check only ever distinguishes records that
-        were given structurally different explicit schemas.
+        Whether two records with equal data compare equal therefore turns on
+        their templates. Built from equal data *without* an explicit template,
+        both infer the same template and compare equal; but a record given a
+        richer explicit template compares equal to a re-inferred rebuild of
+        itself (e.g. via :meth:`map`) only when inference recovers that template,
+        since :meth:`EventTemplate.infer_from` is lossy (it cannot recover an
+        ``ArraySpec``'s ``dtype`` / ``support``, etc.).
 
         :meth:`__hash__` is consistent with this: it hashes the per-field
         shape / dtype structure, so equal records (equal data ⟹ equal shapes)
