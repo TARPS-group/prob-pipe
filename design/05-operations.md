@@ -113,7 +113,34 @@ Re-composition reads `name_is_auto`. An auto-named operand is **flattened**: its
 
 Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Deriving the name deterministically keeps a joint's meaning clear without forcing the user to label every intermediate output (`C5 – Naming for unambiguous meaning`), while `with_name` lets the user impose grouping where it carries intent. Realignment is an exact rename: `with_names` returns the same law under new field names, so `joint` connects mismatched factors without altering their joint law (`D1 – Mathematical fidelity`).
 
-## V.6 — `marginal` and `factor`
+## V.6 — `pushforward`
+
+### Contract
+
+`pushforward(f, d)` returns the law of `f(X)` for `X ~ d`. The map `f` may be a plain or workflow function, a `Bijector`, or a `LinOp`, and `d`'s `event_template` must conform to the map's input, with the result carrying the map's output template. For a `LinOp`, `A @ d` is operator sugar for `pushforward(A, d)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and pushes a distribution forward.
+
+**The pushforward registry.** The operation is dispatched through a `BinaryDispatchRegistry` keyed on the map's and the distribution's types, whose methods are **pushforward rules**. Auto-selection tries the rules in priority order:
+- **Closed-form rules** return an exact parametric result. The flagship is linear-Gaussian: `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
+- **Change of variables** applies when the map is an invertible `Bijector`, returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
+- **The sampling fallback** is the workflow-function lift: draws are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls.
+
+The result records which rule produced it, mirroring the converter registry's recorded fidelity, and `method="..."` forces a rule by name. New rules join by registration, so an exact pushforward for a new pair of types is added without touching the operation.
+
+**Linear maps push moments exactly.** Whatever rule realizes `A @ d`, the result's `mean` and `cov` delegate exactly whenever `d` supports them, since `E[A X] = A E[X]` and `Cov(A X) = A Cov(X) Aᵀ`. An approximate linear pushforward therefore still reports exact first and second moments.
+
+Applied to a `ConditionalDistribution`, the pushforward acts on the event side, giving the kernel `s ↦ f_# K(s, ·)` with the same given template.
+
+The result is a tracked term: its `provenance` records `pushforward`, the map, and the source distribution, and its `name` is auto-derived.
+
+### Rationale
+
+`pushforward` is `C4 – Function lifting via pushforward` in operation form: replacing a function's argument by a distribution over it is well-defined, and this operation returns that law directly. Dispatching over pairs of map and distribution types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form gets it automatically and every other pair still answers by sampling. Recording the producing rule keeps the approximation honest (`D1 – Mathematical fidelity`), registration grows the exact set without changing call sites (`D2 – Generality first`), and the result is a distribution that composes further (`D4 – Closed system of objects under operations`).
+
+### Open points
+
+- *A first-class transport map.* The maps `pushforward` accepts (functions, bijectors, and linear operators) are separate kinds dispatched by type. Whether they should be unified under a first-class transport-map base, carrying evaluation and pushforward as one interface, is left open.
+
+## V.7 — `marginal` and `factor`
 
 ### Contract
 
@@ -128,7 +155,7 @@ Both return a **tracked term** whose `provenance` records the access and its sou
 
 `marginal` and `factor` are the two query directions of the field and factor interfaces fixed with the factored distributions: `marginal` reads a field's law detached from its joint, and `factor` reads a construction block. Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` keeps factor access honest, since only a distribution actually built from named parts can answer it (`D3 – Capability-based operations`).
 
-## V.7 — Batched operations
+## V.8 — Batched operations
 
 ### Contract
 
