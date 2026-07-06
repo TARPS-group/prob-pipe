@@ -41,6 +41,9 @@ class TestPathKeyedConstruction:
             {"a/b": 1.0, "a": 5.0},  # complete-then-prefix, leaf value
             {"a/b": 1.0, "a": {"b": 2.0}},  # complete-then-prefix, dict value
             {"a/b": 1.0, "a": Record(b=2.0)},  # complete-then-prefix, Record value
+            # prefix-then-complete takes a different _unflatten_paths branch
+            {"a": 5.0, "a/b": 1.0},
+            {"a": Record(b=2.0), "a/b": 1.0},
         ],
     )
     def test_field_versus_prefix_collision(self, bad):
@@ -91,7 +94,7 @@ class TestConditionalRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Subtree-template consistency invariant (the headline #326 guarantee)
+# Subtree-template consistency invariant
 # ---------------------------------------------------------------------------
 
 
@@ -116,7 +119,8 @@ class TestSubtreeTemplateInvariant:
         assert r.event_template.at_path("physics/force").dtype == jnp.dtype("float32")
 
     def test_supplied_template_via_prebuilt_child(self):
-        # Regression: a pre-built child Record must be re-templated with the slice.
+        # A pre-built child Record whose own template differs from the supplied
+        # slice must adopt the slice's specs.
         tpl = EventTemplate(
             physics=EventTemplate(force=ArraySpec((), dtype=jnp.dtype("float64")), mass=()),
             obs=(),
@@ -129,6 +133,16 @@ class TestSubtreeTemplateInvariant:
         # (numpy treats None as the default float), which would mask a lost dtype.
         force_dtype = r.at_path("physics").event_template.at_path("force").dtype
         assert force_dtype is not None and str(force_dtype) == "float64"
+
+    def test_prebuilt_child_with_identical_template_is_reused(self):
+        # When the supplied slice IS the child's own template object, the child
+        # is stored verbatim — preserving its identity and metadata (name,
+        # backend aux) instead of being rebuilt.
+        child = NumericRecord(force=1.0, mass=2.0, name="phys-child")
+        tpl = EventTemplate(physics=child.event_template, obs=())
+        r = Record(physics=child, obs=3.0, event_template=tpl)
+        assert r.at_path("physics") is child
+        assert r.at_path("physics").name == "phys-child"
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +246,56 @@ class TestEditTemplateThreading:
         m = Record({"g/x": 1.0}).merge(Record({"g/y": 2.0}))
         assert tuple(m.keys()) == ("g/x", "g/y")
 
+    def test_deep_merge_regroups_into_earlier_subtree(self):
+        # A later key sharing an earlier subtree's name regroups INTO that
+        # subtree (first-appearance order), ahead of later top-level names.
+        m = Record({"g/x": 1.0, "h/y": 2.0}).merge(Record({"g/z": 3.0}))
+        assert tuple(m.keys()) == ("g/x", "g/z", "h/y")
+
+    def test_replace_to_opaque_demotes_numeric_template(self):
+        # An all-numeric Record's template auto-promotes; replacing a field
+        # with a non-numeric value must re-decide the promotion, not raise.
+        r = Record(x=1.0, y=2.0)
+        assert isinstance(r.event_template, NumericEventTemplate)
+        r2 = r.replace(x="hello")
+        assert r2["x"] == "hello"
+        assert not isinstance(r2.event_template, NumericEventTemplate)
+        # ... and merging a mixed record into a numeric one likewise demotes.
+        m = r.merge(Record(label="fox"))
+        assert not isinstance(m.event_template, NumericEventTemplate)
+        # The template's own edits re-decide in both directions.
+        t = EventTemplate(x=(), y=(3,))
+        t2 = t.replace(x=OpaqueSpec())
+        assert type(t2) is EventTemplate
+        assert isinstance(t2.replace(x=ArraySpec(())), NumericEventTemplate)
+
+    def test_edits_reuse_untouched_children_verbatim(self):
+        # An untouched nested child survives an edit as the SAME object —
+        # class, name, and metadata preserved (never demoted to the outer
+        # record's class).
+        child = NumericRecord(x=1.0, y=2.0, name="phys-child")
+        r = Record(phys=child, obs="tag")
+        for edited in (r.without("obs"), r.replace(obs="new"), r.merge(Record(extra=5.0))):
+            assert edited.at_path("phys") is child
+            assert isinstance(edited.at_path("phys"), NumericRecord)
+        # A nested edit rebuilds only the touched child, recursively — and the
+        # result keeps the child's class and stays in template lock-step.
+        r2 = r.replace({"phys/x": 9.0})
+        assert isinstance(r2.at_path("phys"), NumericRecord)
+        assert float(r2["phys/x"]) == 9.0
+        assert r2.at_path("phys").event_template == r2.event_template.at_path("phys")
+
+    def test_replace_overlapping_paths_raise(self):
+        r = Record({"physics/force": 1.0, "physics/mass": 2.0, "obs": 3.0})
+        for updates in (
+            {"physics": 9.0, "physics/mass": 5.0},  # ancestor listed first
+            {"physics/mass": 5.0, "physics": 9.0},  # descendant listed first
+        ):
+            with pytest.raises(ValueError, match="overlap"):
+                r.replace(updates)
+        with pytest.raises(ValueError, match="overlap"):
+            r.event_template.replace({"physics": ArraySpec((2,)), "physics/mass": ArraySpec((5,))})
+
 
 # ---------------------------------------------------------------------------
 # EventTemplate edits / map operate on specs directly
@@ -261,7 +325,7 @@ class TestEventTemplateOps:
 
 
 # ---------------------------------------------------------------------------
-# Boundary rules on a single Record (the shared §3.0 contract)
+# Boundary rules on a single Record (the shared collection contract)
 # ---------------------------------------------------------------------------
 
 
@@ -291,6 +355,36 @@ class TestBoundaryRules:
         assert r.is_field("physics") is False
         assert r.is_field("physics/force") == ("physics/force" in r)
 
+    def test_map_preserves_class_and_reinfers_template(self):
+        # map on a NumericRecord returns a NumericRecord, nested children
+        # included; the result's template reflects the mapped leaf shapes.
+        nr = NumericRecord(physics=NumericRecord(force=jnp.zeros(3), mass=1.0), obs=2.0)
+        doubled = nr.map(lambda x: 2 * x)
+        assert isinstance(doubled, NumericRecord)
+        assert isinstance(doubled.at_path("physics"), NumericRecord)
+        np.testing.assert_allclose(doubled["physics/force"], jnp.zeros(3))
+        # Shape-changing map re-infers the template to the new shapes.
+        summed = nr.map(jnp.sum)
+        assert summed.event_template.at_path("physics/force").shape == ()
+
+    def test_nested_pickle_round_trip(self, r):
+        import pickle
+
+        nr = NumericRecord(physics=NumericRecord(force=jnp.zeros(2), mass=1.0), obs=3.0)
+        assert pickle.loads(pickle.dumps(nr)) == nr
+        assert pickle.loads(pickle.dumps(r)) == r
+
+    def test_path_keyed_numeric_construction_preserves_backend_aux(self):
+        # Backend metadata on a nested leaf survives path-keyed construction:
+        # aux is captured by the nested record that owns the leaf, so
+        # to_native() restores the original type at its /-path.
+        xr = pytest.importorskip("xarray")
+        da = xr.DataArray(jnp.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
+        nr = NumericRecord({"a/b": da, "c": 3.0})
+        restored = nr.to_native().at_path("a/b")
+        assert isinstance(restored, xr.DataArray)
+        assert restored.dims == ("t",)
+
 
 # ---------------------------------------------------------------------------
 # Batch field-navigation surface (RecordArray): string [] is leaf-only
@@ -310,11 +404,57 @@ class TestBatchFieldNav:
         sub = nra.at_path("outer")
         np.testing.assert_allclose(nra["outer/a"], sub["a"])
 
+    def test_batch_children_and_is_field(self):
+        nra = self._nested_array()
+        assert tuple(nra.children) == ("outer", "m")
+        assert nra.is_field("outer/a") is True
+        assert nra.is_field("outer") is False
+
+    def test_batch_mapping_surface_is_top_level_transitionally(self):
+        # Pins the documented transitional split (STYLE_GUIDE 1.10): keys /
+        # len / in on a batch are TOP-LEVEL while string [] is leaf-only, so
+        # membership and indexing deliberately disagree on a nested batch
+        # until the batch-axis rework.
+        nra = self._nested_array()
+        assert list(nra.keys()) == ["outer", "m"]
+        assert len(nra) == 2  # top-level field count, not the 3 leaves
+        assert "outer" in nra  # top-level membership...
+        with pytest.raises(KeyError):
+            nra["outer"]  # ...even though [] rejects the interior node
+        assert "outer/a" not in nra  # leaf path is not a member...
+        np.testing.assert_allclose(nra["outer/a"], nra.at_path("outer")["a"])  # ...but indexes
+
+    def test_view_and_select_all_on_nested_batch(self):
+        # A top-level field that is an interior node can still be viewed /
+        # splatted (view resolves it via template.children, not leaf-only []).
+        nra = self._nested_array()
+        v = nra.view("outer")
+        assert v.field == "outer"
+        selected = nra.select_all()
+        assert set(selected) == {"outer", "m"}
+
+    def test_nested_batch_round_trips_compare_equal(self):
+        import pickle
+
+        nra = self._nested_array()
+        tpl = nra.template
+        assert tpl.from_vector(nra.to_vector()) == nra
+        assert pickle.loads(pickle.dumps(nra)) == nra
+
     def test_edits_unsupported_on_batch(self):
         nra = self._nested_array()
-        for op in (lambda: nra.replace(m=jnp.zeros(5)), nra.merge, nra.without):
-            with pytest.raises(NotImplementedError):
-                op() if op is not nra.merge and op is not nra.without else op(nra)
+        with pytest.raises(NotImplementedError):
+            nra.replace(m=jnp.zeros(5))
+        with pytest.raises(NotImplementedError):
+            nra.merge(nra)
+        with pytest.raises(NotImplementedError):
+            nra.without("m")
+        with pytest.raises(NotImplementedError):
+            nra.map(lambda x: x)
+        with pytest.raises(NotImplementedError):
+            nra.map_with_keys(lambda k, x: x)
+        with pytest.raises(NotImplementedError):
+            type(nra).from_nested_dict({"a": jnp.zeros(3)})
 
     def test_stack_nested_records_raises_clearly(self):
         # Stacking nested records into a batch needs nested-batch construction

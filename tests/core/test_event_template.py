@@ -194,23 +194,23 @@ class TestLeafShapes:
 
 
 # ---------------------------------------------------------------------------
-# leaf_paths (canonical leaf order — the single source of truth)
+# keys() (canonical leaf order — the single source of truth)
 # ---------------------------------------------------------------------------
 
 
-class TestLeafPaths:
+class TestKeys:
     def test_flat_equals_fields(self):
-        # For a flat template (every field a leaf), leaf_paths == fields.
+        # For a flat template (every field a leaf), keys() == fields.
         tpl = EventTemplate(x=(), y=(3,))
         assert tuple(tpl.keys()) == ("x", "y") == tpl.fields
 
     def test_includes_opaque_leaves(self):
-        # leaf_paths enumerates every leaf, numeric or opaque.
+        # keys() enumerates every leaf, numeric or opaque.
         tpl = EventTemplate(label=None, x=())
         assert tuple(tpl.keys()) == ("label", "x")
 
     def test_nested_depth_first_insertion_order(self):
-        # A nested field expands into one path per nested leaf; fields stays
+        # A nested field expands into one key per nested leaf; fields stays
         # top-level only.
         inner = EventTemplate(a=(), b=(2,))
         outer = EventTemplate(inner=inner, z=(3,))
@@ -222,7 +222,7 @@ class TestLeafPaths:
         assert tuple(tpl.keys()) == ("outer/deep/g", "outer/deep/h", "outer/a", "m")
 
     def test_keys_match_leaf_shapes_in_order(self):
-        # leaf_shapes (numeric template) is keyed by leaf_paths, same order.
+        # leaf_shapes (numeric template) is keyed by keys(), same order.
         tpl = EventTemplate(outer=EventTemplate(a=(2,), b=()), m=())
         assert tuple(tpl.leaf_shapes) == tuple(tpl.keys())
 
@@ -234,7 +234,7 @@ class TestLeafPaths:
         )
         tpl = EventTemplate.infer_from(v)
         assert tuple(tpl.keys()) == ("x", "nested/a", "nested/b")
-        # to_vector concatenates leaves in leaf_paths order: x(2) | a(1) | b(2).
+        # to_vector concatenates leaves in keys() order: x(2) | a(1) | b(2).
         np.testing.assert_allclose(tpl.to_vector(v), [1.0, 2.0, 3.0, 4.0, 5.0])
 
 

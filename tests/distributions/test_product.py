@@ -307,6 +307,25 @@ class TestNestedSampleFlatten:
             s.at_path("outer"), RecordArray
         )
 
+    def test_batched_depth_two_nested_sampling(self):
+        # A depth-2 nesting exercises the interior-subtree lookup inside
+        # _sample_nested (template.children, since template [] is leaf-only);
+        # only leaf components sit below depth 1 in the fixtures above.
+        from probpipe.core._record_array import NumericRecordArray
+
+        deep = ProductDistribution(
+            name="deep",
+            grp={
+                "sub": {"force": Normal(loc=0.0, scale=1.0, name="force")},
+                "mass": Normal(loc=1.0, scale=0.5, name="mass"),
+            },
+            noise=Normal(loc=0.0, scale=1.0, name="noise"),
+        )
+        s = sample(deep, key=jax.random.PRNGKey(0), sample_shape=(4,))
+        assert isinstance(s, NumericRecordArray)
+        assert tuple(s.template.keys()) == ("grp/sub/force", "grp/mass", "noise")
+        assert s["grp/sub/force"].shape == (4,)
+
     def test_batched_nested_flatten_roundtrip(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
         leaves = list(nested.event_template.leaf_shapes)

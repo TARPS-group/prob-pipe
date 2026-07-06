@@ -187,7 +187,7 @@ class TestImmutability:
 
     def test_replace_nonexistent_raises(self):
         v = Record(a=1.0)
-        with pytest.raises(KeyError):
+        with pytest.raises(KeyError, match="z"):
             v.replace(z=5.0)
 
     def test_replace_nested_path(self):
@@ -311,10 +311,11 @@ class TestNumericAPIOnRecord:
 
     ``to_vector`` / ``vector_size`` require numeric leaves, so they belong
     only on ``NumericRecord``; if someone re-adds one to ``Record``, this
-    fails. The general ``to_leaf_list`` (leaves kept whole, any type) DOES live
-    on ``Record`` — asserted present here so the two vocabularies don't drift.
-    The JAX-pytree ``flatten`` / ``unflatten`` are *not* Record methods (use
-    ``jax.tree_util`` directly). Implementation-detail attributes like
+    fails. The general decomposition (``values()`` export +
+    ``from_field_values`` reconstruction; leaves kept whole, any type) DOES
+    live on ``Record`` — asserted present here so the two vocabularies don't
+    drift. The JAX-pytree ``flatten`` / ``unflatten`` are *not* Record methods
+    (use ``jax.tree_util`` directly). Implementation-detail attributes like
     ``_resolved`` / ``_coords`` are intentionally not checked here.
     """
 
@@ -324,26 +325,27 @@ class TestNumericAPIOnRecord:
             assert not hasattr(v, attr), f"Record should not expose {attr!r}"
         assert not hasattr(Record, "zip")
 
-    def test_leaf_list_present_flatten_absent(self):
-        # to_leaf_list is the general (any-leaf) ProbPipe leaf traversal on
-        # Record; the JAX-pytree flatten/unflatten are NOT Record methods.
+    def test_general_decomposition_present_flatten_absent(self):
+        # values() / from_field_values is the general (any-leaf) ProbPipe leaf
+        # traversal on Record; the JAX-pytree flatten/unflatten are NOT Record
+        # methods.
         v = Record(a=1.0, label="x")
         assert v.event_template.from_field_values(list(v.values())) == v
         assert not hasattr(Record, "flatten")
         assert not hasattr(Record, "unflatten")
 
 
-class TestLeafList:
-    """``to_leaf_list`` / ``from_leaf_list`` are the general (any-leaf-type)
+class TestGeneralDecomposition:
+    """``values()`` / ``from_field_values`` are the general (any-leaf-type)
     leaf (de)composition at the *template's* granularity: each leaf is kept
-    whole (never raveled), visited in canonical ``leaf_paths`` order. They are
+    whole (never raveled), visited in canonical ``keys()`` order. They are
     distinct from the numeric ``to_vector`` / ``from_vector`` (which ravel and
     concatenate numeric leaves) and from JAX's finer pytree view (which
     descends into container-valued opaque leaves — see
     ``test_container_leaf_is_one_whole_leaf``).
     """
 
-    def test_to_leaf_list_keeps_leaves_whole_in_canonical_order(self):
+    def test_values_keeps_leaves_whole_in_canonical_order(self):
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe")
         leaves = list(v.values())
         assert leaves[0].shape == (2,)  # kept whole, not raveled
@@ -394,12 +396,12 @@ class TestLeafList:
         assert jax.tree_util.tree_unflatten(treedef, leaves) == v
 
 
-class TestLeafPathsAgreement:
-    """A Record's own ``leaf_paths`` must always equal its
-    ``event_template``'s ``leaf_paths`` — both define "what is a leaf" and the
-    ``event_template`` is the source of truth. In particular, a cross-type
-    nested value (an ``EventTemplate`` stored as a ``Record`` field value) is
-    one opaque leaf, not an internal node to descend into.
+class TestKeysAgreement:
+    """A Record's own ``keys()`` must always equal its ``event_template``'s
+    ``keys()`` — both define "what is a leaf" and the ``event_template`` is the
+    source of truth. In particular, a cross-type nested value (an
+    ``EventTemplate`` stored as a ``Record`` field value) is one opaque leaf,
+    not an internal node to descend into.
     """
 
     def test_flat(self):
@@ -413,7 +415,7 @@ class TestLeafPathsAgreement:
 
     def test_cross_type_value_is_one_opaque_leaf(self):
         # An EventTemplate stored as a Record field value is an opaque leaf,
-        # NOT an internal node: leaf_paths must not descend into it.
+        # NOT an internal node: keys() must not descend into it.
         v = Record(weird=EventTemplate(a=(2,)), x=jnp.array([1.0, 2.0]))
         assert list(v.keys()) == ["weird", "x"]
         assert list(v.keys()) == list(v.event_template.keys())
