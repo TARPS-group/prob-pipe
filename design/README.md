@@ -22,7 +22,7 @@ Each object also has an indexed-collection form (a batch), and every operation l
 | sampling | `x ~ μ` |
 | density evaluation | `(dμ/dν)(x)` |
 | expectation and moments | `E[f(X)]` for `X ~ μ`; mean, variance, covariance, quantiles |
-| pushforward | `f_#μ`, the law of `f(X)` for `X ~ μ` |
+| pushforward | `f♯μ`, the law of `f(X)` for `X ~ μ` |
 | composition | `p(x \| y) · p(y)`, `f ∘ g`, `A B` |
 | conditioning | `μ(· \| y = b)` for a field `y`, from exact currying to Bayesian inversion |
 | marginalization | the law of a named field of `X ~ μ` |

@@ -120,15 +120,15 @@ Composition is written as an expression so that a model is *built* rather than d
 `pushforward(f, d)` returns the law of `f(X)` for `X ~ d`. The map `f` may be a plain or workflow function, a `Bijector`, or a `LinOp`, and `d`'s `event_template` must conform to the map's input, with the result carrying the map's output template. For a `LinOp`, `A @ d` is operator sugar for `pushforward(A, d)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and pushes a distribution forward.
 
 **The pushforward registry.** The operation is dispatched through a `BinaryDispatchRegistry` keyed on the map's and the distribution's types, whose methods are **pushforward rules**. Auto-selection tries the rules in priority order:
-- **Closed-form rules** return an exact parametric result. The flagship is linear-Gaussian: `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
+- **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
 - **Change of variables** applies when the map is an invertible `Bijector`, returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
-- **The sampling fallback** is the workflow-function lift: draws are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls.
+- **The sampling fallback** always applies: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls. This is the same mechanism that lifts a workflow function over a distribution-valued argument.
 
 The result records which rule produced it, mirroring the converter registry's recorded fidelity, and `method="..."` forces a rule by name. New rules join by registration, so an exact pushforward for a new pair of types is added without touching the operation.
 
 **Linear maps push moments exactly.** Whatever rule realizes `A @ d`, the result's `mean` and `cov` delegate exactly whenever `d` supports them, since `E[A X] = A E[X]` and `Cov(A X) = A Cov(X) Aᵀ`. An approximate linear pushforward therefore still reports exact first and second moments.
 
-Applied to a `ConditionalDistribution`, the pushforward acts on the event side, giving the kernel `s ↦ f_# K(s, ·)` with the same given template.
+Applied to a `ConditionalDistribution`, the pushforward acts on the event side, giving the kernel `s ↦ f♯K(s, ·)` with the same given template.
 
 The result is a tracked term: its `provenance` records `pushforward`, the map, and the source distribution, and its `name` is auto-derived.
 
