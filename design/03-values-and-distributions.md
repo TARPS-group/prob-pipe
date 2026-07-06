@@ -1,12 +1,12 @@
-# Part III — Core Abstractions
+# Part III — Values and Distributions
 
-Part III introduces the probability abstractions themselves: the objects a user constructs and operates on, each built on the infrastructure of Part II and introduced in dependency order. Its final two sections cover the registries that act across these abstractions: cross-type conversion and constraint reparameterization.
+Part III introduces the value and distribution objects a user constructs and operates on, and the machinery specific to them. Each is built on the shared abstractions of Part II and introduced in dependency order. The final two sections cover the registries that act across these objects: cross-type conversion and constraint reparameterization.
 
-## III.0 — Overview: the abstraction map
+## III.0 — Overview: the layer map
 
-Each abstraction is introduced in the order below, depending only on those above it and on the infrastructure of Part II:
+The sections build in the order below, each depending only on those above it and on the shared abstractions of Part II:
 
-| §      | Layer                       | Abstraction                                                                                           | Role                                                                                                            |
+| §      | Layer                       | Contents                                                                                              | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | III.1  | Schema                      | `EventTemplate`                                                                                       | A `NamedTree` of type-specs — the type-level structure of one value. Pure structure, no data.                  |
 | III.2  | Values                      | `FunctionBatch` / `OpaqueBatch`                                                                                       | Batches of function-valued and opaque values, giving every value spec a batch form.                             |

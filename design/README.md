@@ -33,10 +33,10 @@ Each object also has an indexed-collection form (a batch), and every operation l
 The document has five parts plus one more planned:
 
 - **[Part I — Design Principles](01-design-principles.md)** — the high-level commitments that drive every downstream design decision. They are deliberately stated without reference to any specific class, type, or API.
-- **[Part II — Infrastructure](02-infrastructure.md)** — the generic, type-agnostic machinery the rest of the library is built on: the named-tree abstraction, identity, provenance, metadata, batching, and the dispatch registries.
-- **[Part III — Core Abstractions](03-core-abstractions.md)** — the probability domain in dependency order: schemas, values, linear operators, distributions, conditional distributions, composition, and the hierarchy of distribution kinds, each with a precise contract that must align with the design principles.
+- **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic machinery the rest of the library is built on: the named-tree abstraction, identity, provenance, metadata, batching, and the dispatch registries.
+- **[Part III — Values and Distributions](03-values-and-distributions.md)** — the probability domain in dependency order: schemas, values, linear operators, distributions, conditional distributions, composition, and the hierarchy of distribution kinds, each with a precise contract that must align with the design principles.
 - **[Part IV — Workflow Functions](04-workflow-functions.md)** — how an ordinary function is lifted into ProbPipe: broadcasting over distributions, dispatch, orchestration, and provenance. This is the layer the operations build on.
-- **[Part V — Operation Contracts](05-operation-contracts.md)** — precise contracts for the core operations: moments, sampling, density evaluation, conditioning, composition, and batched operations.
+- **[Part V — Operations](05-operations.md)** — precise contracts for the core operations: moments, sampling, density evaluation, conditioning, composition, and batched operations.
 - **Part VI — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow. 
 
 ### Conventions

@@ -1,10 +1,10 @@
-# Part II — Infrastructure
+# Part II — Shared Abstractions
 
-Part II introduces the infrastructure the rest of the library is built on: generic, type-agnostic machinery, one piece at a time, in dependency order.
+Part II introduces the shared abstractions the rest of the library is built on: generic, type-agnostic machinery, one piece at a time, in dependency order.
 
-## II.0 — Overview: the infrastructure
+## II.0 — Overview: the shared abstractions
 
-The infrastructure layers, in dependency order. Each is generic and type-agnostic, defined once and reused throughout the library:
+The shared abstractions, in dependency order. Each is generic and type-agnostic, defined once and reused throughout the library:
 
 | § | Layer | Abstraction | Role |
 |---|---|---|---|

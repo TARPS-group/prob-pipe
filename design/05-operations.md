@@ -1,6 +1,6 @@
-# Part V — Operation Contracts
+# Part V — Operations
 
-Parts II–IV fixed the *infrastructure*, the *objects*, and the *workflow functions* that act on them. Part V fixes the **operations**. Every operation is a workflow function, so it inherits lifting, provenance, dispatch, and orchestration from the workflow-function layer. This part adds only what is specific to each operation: its signature, its argument and return types and shapes, the choice between an exact and a default algorithm, its error behavior, and how its result is wrapped and tracked. Every operation is also capability-dispatched, so it applies to any object that implements the matching capability, and closed, so it returns another **tracked term**.
+Parts II–IV fixed the *shared abstractions*, the *values and distributions*, and the *workflow functions* that act on them. Part V fixes the **operations**. Every operation is a workflow function, so it inherits lifting, provenance, dispatch, and orchestration from the workflow-function layer. This part adds only what is specific to each operation: its signature, its argument and return types and shapes, the choice between an exact and a default algorithm, its error behavior, and how its result is wrapped and tracked. Every operation is also capability-dispatched, so it applies to any object that implements the matching capability, and closed, so it returns another **tracked term**.
 
 **Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for conditional distributions, the `_conditional_*` family.
 
