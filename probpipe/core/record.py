@@ -12,7 +12,7 @@ A canonical value wrapper
 -------------------------
 ``Record``\\ s are one of the building blocks of unified, reproducible
 probabilistic pipelines in ProbPipe. They are used to wrap concrete values,
-attaching metadata (name, provenance, annotations) and structural information
+attaching metadata (name, provenance) and structural information
 (an :class:`EventTemplate`). The typical pattern is for
 :class:`WorkflowFunction`\\ s to work with native types; ``Record``\\ s come
 into play at the boundaries, wrapping the inputs and outputs of these functions.
@@ -140,11 +140,12 @@ class Record(_NamedTree):
         Record(vec=jnp.zeros(3), label="fox").event_template
         # EventTemplate(vec=(3,), label=None)   — array -> ArraySpec, str -> OpaqueSpec
 
-    Metadata: name, provenance, and annotations
-    -------------------------------------------
-    A record is ``Tracked``, meaning it has a ``name`` and ``provenance``. It is
-    also ``Annotated``, so that it can carry along additional metadata as
-    necessary.
+    Metadata: name and provenance
+    -----------------------------
+    A record carries a human-readable :attr:`name` and, optionally, a
+    :attr:`source` — the :class:`~probpipe.core.provenance.Provenance`
+    describing how it was created, attached write-once via
+    :meth:`with_source`.
 
     Construction and validation
     ---------------------------
@@ -285,11 +286,24 @@ class Record(_NamedTree):
                 elif (
                     sub_template is not None
                     and isinstance(value, Record)
+                    # A batched child (RecordArray) carries its own template and
+                    # is stored verbatim; ``batch_shape`` is duck-typed because
+                    # importing RecordArray here would be circular.
                     and not hasattr(value, "batch_shape")
                 ):
-                    field_map[field_name] = type(value)(
-                        dict(value._tree), event_template=sub_template
-                    )
+                    if value.event_template is sub_template:
+                        # The child already carries this exact template object
+                        # (e.g. built by ``from_field_values`` or threaded from
+                        # the producing generator) — reuse it verbatim, keeping
+                        # its name / source / backend aux. Identity, not ``==``:
+                        # ``ArraySpec`` equality treats an unset dtype as equal
+                        # to a concrete one (see #337), so ``==`` could wrongly
+                        # skip adopting a richer supplied spec.
+                        field_map[field_name] = value
+                    else:
+                        field_map[field_name] = type(value)(
+                            dict(value._tree), event_template=sub_template
+                        )
                 else:
                     field_map[field_name] = value
             except ValueError as error:
@@ -469,47 +483,143 @@ class Record(_NamedTree):
     # -- Immutable updates --------------------------------------------------
     #
     # ``without`` / ``merge`` / ``replace`` are the structural edits from
-    # ``_NamedTree``, overridden here to thread the authoritative
-    # ``event_template`` through the edit (untouched fields keep their specs;
-    # only replaced / added fields are re-inferred). They reuse the base's pure
-    # leaf-map helpers and return ``type(self)``.
+    # ``_NamedTree``, overridden here as recursive child surgery: untouched
+    # children — leaf values and whole subtrees — are reused **verbatim**,
+    # preserving their concrete class (a nested ``NumericRecord`` stays
+    # numeric) and their metadata (name, provenance, backend aux); only the
+    # children a path actually touches are rebuilt, recursively. The
+    # authoritative ``event_template`` is assembled from the surviving
+    # children's own templates, so the subtree lock-step invariant holds by
+    # construction (and the constructor's identity check stores the reused
+    # children without copying).
+
+    def _child_spec(self, name: str, child: Any) -> Any:
+        """The template entry describing an untouched child, identity-preserved."""
+        if isinstance(child, Record):
+            return child.event_template
+        return self.event_template.children[name]
 
     def without(self, *paths: str) -> Record:
         """Return a new Record without the fields/subtrees at *paths*.
 
-        The structural contract is :meth:`_NamedTree.without`; here the surviving
-        fields keep their authoritative specs by editing ``event_template`` the
-        same way.
+        The structural contract is :meth:`_NamedTree.without`. Surviving fields
+        keep their order and their authoritative specs; an untouched child is
+        reused verbatim (class and metadata preserved), and a subtree a path
+        reaches into is edited recursively. Dropping every leaf under a child
+        prunes that child entirely.
         """
-        return type(self)(
-            self._leaves_without(paths),
-            event_template=self.event_template.without(*paths),
-        )
+        norms = [self._norm_path(p) for p in paths]
+        for p in norms:
+            self.at_path(p)  # KeyError if the path does not exist
+        full_drops = {p for p in norms if _PATH_SEP not in p}
+        sub_drops: dict[str, list[str]] = {}
+        for p in norms:
+            head, sep, rest = p.partition(_PATH_SEP)
+            if sep:
+                sub_drops.setdefault(head, []).append(rest)
+
+        new_children: dict[str, Any] = {}
+        specs: dict[str, Any] = {}
+        for name, child in self._tree.items():
+            if name in full_drops:
+                continue
+            drops = sub_drops.get(name)
+            if drops is None:
+                new_children[name] = child
+                specs[name] = self._child_spec(name, child)
+                continue
+            # ``at_path`` above guarantees ``child`` is an interior Record here.
+            remaining = [
+                k
+                for k in child
+                if not any(k == d or k.startswith(f"{d}{_PATH_SEP}") for d in drops)
+            ]
+            if not remaining:
+                continue  # every leaf dropped -> prune the child entirely
+            edited = child.without(*drops)
+            new_children[name] = edited
+            specs[name] = edited.event_template
+        if not new_children:
+            raise ValueError("Cannot remove all fields from a collection")
+        return type(self)(new_children, event_template=EventTemplate(specs))
 
     def merge(self, other: Record) -> Record:
         """Return the union of this Record and *other* (see :meth:`_NamedTree.merge`).
 
-        Both records' authoritative specs are preserved by merging their
-        ``event_template``\\ s.
+        The merge is by field key, so subtrees sharing a top-level name merge
+        recursively; a child present on one side only is reused verbatim (class
+        and metadata preserved). Both records' authoritative specs are carried
+        into the merged ``event_template``.
         """
-        return type(self)(
-            self._leaves_merged(other),
-            event_template=self.event_template.merge(other.event_template),
-        )
+        self._leaves_merged(other)  # validates: overlapping field keys raise
+        new_children: dict[str, Any] = {}
+        specs: dict[str, Any] = {}
+        for name, child in self._tree.items():
+            other_child = other._tree.get(name)
+            if other_child is None:
+                new_children[name] = child
+                specs[name] = self._child_spec(name, child)
+            elif isinstance(child, Record) and isinstance(other_child, Record):
+                merged = child.merge(other_child)
+                new_children[name] = merged
+                specs[name] = merged.event_template
+            else:
+                # One side holds a leaf where the other holds a subtree.
+                raise ValueError(f"name {name!r} is used both as a field and as a path prefix")
+        for name, child in other._tree.items():
+            if name in self._tree:
+                continue
+            new_children[name] = child
+            specs[name] = other._child_spec(name, child)
+        return type(self)(new_children, event_template=EventTemplate(specs))
 
     def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Record:
         """Return a new Record with the values at the given paths replaced.
 
-        The structural contract is :meth:`_NamedTree.replace`; here untouched
-        fields keep their authoritative specs and each replaced field takes its
-        new value's inferred spec (via the threaded ``event_template``).
+        The structural contract is :meth:`_NamedTree.replace`: every path must
+        already exist, and a partial path replaces a whole subtree. Untouched
+        fields keep their authoritative specs (untouched children are reused
+        verbatim — class and metadata preserved); a replaced field takes its
+        new value's inferred spec; a nested update edits the nested child
+        recursively. Overlapping update paths (one an ancestor of another)
+        raise ``ValueError``.
         """
         resolved = self._resolve_replace_updates(_updates, updates)
         if not resolved:
             return self
-        flat = self._leaves_replaced(resolved)
-        spec_updates = {self._norm_path(p): self._spec_of(v) for p, v in resolved.items()}
-        return type(self)(flat, event_template=self.event_template.replace(spec_updates))
+        norms = {self._norm_path(p): v for p, v in resolved.items()}
+        for p in norms:
+            self.at_path(p)  # KeyError if the path does not exist
+        full_updates = {p: v for p, v in norms.items() if _PATH_SEP not in p}
+        sub_updates: dict[str, dict[str, Any]] = {}
+        for p, v in norms.items():
+            head, sep, rest = p.partition(_PATH_SEP)
+            if sep:
+                sub_updates.setdefault(head, {})[rest] = v
+        overlap = sorted(set(full_updates) & set(sub_updates))
+        if overlap:
+            raise ValueError(
+                f"replace() update paths overlap: {overlap[0]!r} and a path "
+                f"beneath it address the same subtree; replace the enclosing "
+                f"path once instead"
+            )
+
+        new_children: dict[str, Any] = {}
+        specs: dict[str, Any] = {}
+        for name, child in self._tree.items():
+            if name in full_updates:
+                value = full_updates[name]
+                new_children[name] = value
+                specs[name] = self._spec_of(value)
+            elif name in sub_updates:
+                # ``at_path`` above guarantees ``child`` is an interior Record.
+                edited = child.replace(sub_updates[name])
+                new_children[name] = edited
+                specs[name] = edited.event_template
+            else:
+                new_children[name] = child
+                specs[name] = self._child_spec(name, child)
+        return type(self)(new_children, event_template=EventTemplate(specs))
 
     def _spec_of(self, value: _FieldValue) -> Any:
         """The leaf spec describing a new field *value*, for template threading."""
@@ -618,7 +728,7 @@ class Record(_NamedTree):
         """
         if event_template is None:
             return super().from_nested_dict(data)
-        flat = cls._flatten_paths(data, recurse_into=lambda path: not event_template.is_leaf(path))
+        flat = cls._flatten_paths(data, recurse_into=lambda path: not event_template.is_field(path))
         return cls(flat, event_template=event_template)
 
     # -- Leaf-wise operations -----------------------------------------------
@@ -694,7 +804,7 @@ class Record(_NamedTree):
             return True
         if type(self) is not type(other):
             return NotImplemented
-        if self.fields != other.fields:
+        if tuple(self._tree) != tuple(other._tree):
             return False
         if self.event_template != other.event_template:
             return False
@@ -797,7 +907,7 @@ def _record_flatten(v: Record) -> tuple[list, tuple[str, ...]]:
     applied by JAX must accept them.
     """
     children = list(v._tree.values())
-    return children, v.fields
+    return children, tuple(v._tree)
 
 
 def _record_unflatten(aux: tuple[str, ...], children: list) -> Record:

@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
+from ._utils import _leaf_keys
 from ._view_base import NotComputed
 
 if TYPE_CHECKING:
@@ -154,20 +155,21 @@ def to_named_posterior_dataset(
 
     Scalar parameters have dims ``(chain, draw)``. Vector or array-valued
     parameters preserve their event axes after ``draw``.
+
+    Notes
+    -----
+    A *nested* posterior contributes one variable per leaf, named by the
+    leaf's full ``/``-path (flat posteriors keep their plain field names).
+    ``InferenceData.to_netcdf()`` rejects ``/`` in variable names, so rename
+    path-named variables before persisting a nested posterior to netCDF.
     """
     import xarray as xr
 
     data_vars: dict[str, xr.DataArray] = {}
 
-    # One variable per leaf field, keyed by its full /-path. Real posteriors
-    # expose leaf paths via event_template (handles nesting); duck-typed objects
-    # fall back to top-level .fields (equal for a flat template).
-    keys = (
-        list(posterior.event_template.keys())
-        if hasattr(posterior, "event_template")
-        else list(posterior.fields)
-    )
-    for field in keys:
+    # One variable per leaf field, keyed by its full /-path (see ``_leaf_keys``
+    # for the nested-vs-duck-typed rule).
+    for field in _leaf_keys(posterior):
         stacked = np.stack(
             [np.asarray(posterior.draws(chain=i)[field]) for i in range(posterior.num_chains)],
             axis=0,

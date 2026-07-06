@@ -41,7 +41,7 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import aux_for
-from .event_template import EventTemplate
+from .event_template import EventTemplate, _check_no_path_sep, _PathSubtree, _unflatten_paths
 from .record import Record, _record_flatten
 
 __all__ = ["_NUMERIC_DTYPE_KINDS", "NumericRecord", "_is_numeric_leaf"]
@@ -92,8 +92,8 @@ class NumericRecord(Record):
     holds the same named, ordered, possibly-nested collection of fields, but
     constrains every field to be a numeric array. It inherits the full
     :class:`Record` interface — the leaf-keyed mapping, the tree navigation, the
-    metadata (name, provenance, annotations), and the equality and hashing rules
-    — and adds the array-only features described below.
+    metadata (:attr:`~Record.name`, :attr:`~Record.source`), and the equality
+    and hashing rules — and adds the array-only features described below.
 
     The numeric-leaf invariant
     --------------------------
@@ -202,9 +202,26 @@ class NumericRecord(Record):
         if _fields is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
-            raw_fields = _fields
+            raw_inputs = _unflatten_paths(_fields)
         else:
-            raw_fields = fields
+            for field_name in fields:
+                _check_no_path_sep(field_name)
+            raw_inputs = dict(fields)
+        # Materialise structural nesting (path-keyed construction) into nested
+        # NumericRecords *before* leaf validation, so the numeric check and the
+        # backend-aux capture happen on the nested record that owns each leaf —
+        # keying aux by a "/"-path the storage tree cannot see would orphan it.
+        raw_fields: dict[str, Any] = {}
+        for field_name, value in raw_inputs.items():
+            if isinstance(value, _PathSubtree):
+                sub_template: EventTemplate | None = None
+                if event_template is not None:
+                    child = event_template.children.get(field_name)
+                    if isinstance(child, EventTemplate):
+                        sub_template = child
+                raw_fields[field_name] = type(self)(value, event_template=sub_template)
+            else:
+                raw_fields[field_name] = value
         validated, aux = self._validate_and_coerce(raw_fields)
         super().__init__(validated, name=name, event_template=event_template)
         # Cache vector_size — leaves are immutable arrays after construction.
@@ -275,13 +292,13 @@ class NumericRecord(Record):
         """Serialize to the dense 1-D vector of shape ``(vector_size,)``.
 
         Instance-level convenience for the numeric 1-D serialization whose
-        structural definition lives on :meth:`EventTemplate.to_vector`: delegates
-        to this record's authoritative :attr:`~Record.event_template`
+        structural definition lives on :meth:`NumericEventTemplate.to_vector`:
+        delegates to this record's authoritative :attr:`~Record.event_template`
         (``nr.to_vector() == nr.event_template.to_vector(nr)``). Leaves are
         visited in canonical leaf order (insertion order, depth-first into nested
         records) and raveled before concatenation. The inverse,
-        :meth:`EventTemplate.from_vector`, reconstructs the record from such a
-        vector.
+        :meth:`NumericEventTemplate.from_vector`, reconstructs the record from
+        such a vector.
 
         This is distinct from ``list(record.values())``, which keeps each leaf
         whole (any type); ``to_vector`` ravels and concatenates the numeric

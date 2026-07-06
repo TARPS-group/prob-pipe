@@ -64,10 +64,11 @@ class _RecordMarginal(RecordEmpiricalDistribution):
     ):
         # RecordArray is structurally a Record with batched leaves;
         # peel off the rows axis so the merged constructor sees one
-        # row per batch index.
+        # row per batch index. Leaf-keyed (template.keys()) so a nested
+        # batch peels correctly; path-keyed construction rebuilds nesting.
         if isinstance(samples, RecordArray):
             template = samples.template
-            samples = Record({f: samples[f] for f in samples.fields})
+            samples = Record({k: samples[k] for k in template})
         else:
             template = None
         # Default field name for bare-array outputs (the WF marginal
@@ -335,9 +336,11 @@ def _make_marginal(
     if (
         isinstance(output_samples, Record)
         and not isinstance(output_samples, RecordArray)
-        and output_samples.fields
+        and len(output_samples)
     ):
-        resolved = [output_samples[f] for f in output_samples.fields]
+        # Leaf values (values() descends into nested Records), so a nested
+        # sample inspects its arrays rather than tripping on an interior node.
+        resolved = list(output_samples.values())
         if all(hasattr(v, "ndim") and v.ndim > 0 for v in resolved):
             n = resolved[0].shape[0]
             if all(v.shape[0] == n for v in resolved):
@@ -473,6 +476,13 @@ def _make_stack(
         # collapse the inner batch axis).
         if outs and all(isinstance(o, RecordArray) for o in outs):
             first = outs[0]
+            if any(isinstance(c, EventTemplate) for c in first.template.children.values()):
+                # Rebuilding per-subtree batch children is not yet supported;
+                # mirror the nested-record guards in ``_make_stack`` below.
+                raise NotImplementedError(
+                    "Stacking nested batched records from a broadcast is not yet "
+                    "supported; return flat (top-level) record fields."
+                )
             if all(ra.batch_shape == first.batch_shape for ra in outs):
                 fields = {
                     fname: jnp.stack([ra[fname] for ra in outs], axis=0) for fname in first.fields

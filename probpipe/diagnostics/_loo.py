@@ -38,7 +38,7 @@ import xarray as xr
 from ..core.distribution import Distribution
 from ..core.record import Record
 from ._datatree import _add_group
-from ._utils import _json_dumps_safe, _record_get, _safe_float
+from ._utils import _json_dumps_safe, _leaf_keys, _record_get, _safe_float
 
 __all__ = ["add_loo"]
 
@@ -595,15 +595,10 @@ def _add_log_likelihood(
     # Build field metadata from one reference draw for flat↔Record conversion
     # ------------------------------------------------------------------
     ref_draws = posterior.draws(chain=0)
-    # Leaf fields keyed by full /-path (handles a nested posterior; flat is
-    # unchanged). _field_meta is the canonical leaf order for flat<->Record.
-    # Duck-typed draws without an event_template fall back to top-level .fields.
-    fields = (
-        tuple(ref_draws.event_template.keys())
-        if hasattr(ref_draws, "event_template")
-        else tuple(ref_draws.fields)
-    )
-    _field_meta = [(f, jnp.asarray(ref_draws[f][0]).shape) for f in fields]
+    # Leaf fields keyed by full /-path (see ``_leaf_keys`` for the
+    # nested-vs-duck-typed rule). _field_meta is the canonical leaf order for
+    # the flat<->Record conversion.
+    _field_meta = [(f, jnp.asarray(ref_draws[f][0]).shape) for f in _leaf_keys(ref_draws)]
 
     def _flat_to_record(flat: Any, field_meta: list) -> Record:
         """Reconstruct a named Record from a flat parameter array."""

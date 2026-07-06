@@ -30,7 +30,7 @@ internal nodes in the tree. The rule is intentionally restrictive for clarity:
 - **leaf node (field)**: one of a fixed set of "field spec" objects.
 
 A field spec is an object that says: "the object at this path is a leaf of the
-tree, and it has this structure.". The specs for certain field types may
+tree, and it has this structure". The specs for certain field types may
 contain lots of useful structure (e.g., shape and dtype for arrays), while
 others may expose no structure at all (e.g., an opaque Python object).
 The full set of spec objects are as follows:
@@ -180,7 +180,7 @@ class _NamedTree:
     object is in general allowed to have nested structure. :class:`_NamedTree`
     differentiates between leaves and non-leaf nodes by defining the latter
     as an object of the class defined by :meth:`_node_type`; a
-    child is an interior node if an only if it is an instance of that type.
+    child is an interior node if and only if it is an instance of that type.
     All other objects are treated as leaves. All nodes (including leaves) can
     be accessed via :meth:`at_path`. In particular,
     `x.at_path("a/b/c")` will return either a field, a sub-tree, or raise
@@ -206,6 +206,22 @@ class _NamedTree:
         """
         return _NamedTree
 
+    @classmethod
+    def _rebuild_class(cls) -> type:
+        """The class the structural rebuilds construct through (hook).
+
+        ``without`` / ``merge`` / ``replace`` / ``map`` build their results by
+        calling this class. The default is ``cls`` itself, so a family whose
+        concrete class is chosen *explicitly* (``Record`` vs ``NumericRecord``)
+        keeps it through an edit. A family whose base constructor **selects**
+        the concrete class (auto-promotion) overrides this with that base
+        class, so an edit re-decides the promotion instead of forcing the
+        result into the original subclass — e.g. replacing an array spec with
+        an opaque one turns a ``NumericEventTemplate`` into a mixed
+        ``EventTemplate``, and removing the last opaque spec promotes.
+        """
+        return cls
+
     # -- Mapping API (leaf-keyed) -------------------------------------------
 
     def __len__(self) -> int:
@@ -214,21 +230,21 @@ class _NamedTree:
     def __iter__(self) -> Iterator[str]:
         return (path for path, _ in self._walk_leaves())
 
-    def keys(self) -> Iterator[str]:
-        """Iterate the field keys (``/``-paths to the leaves), in canonical order.
+    def keys(self) -> tuple[str, ...]:
+        """The field keys (``/``-paths to the leaves), in canonical order.
 
-        Mirrors :meth:`__iter__` (the field keys *are* what the collection
-        iterates), exposed under the mapping name.
+        Returns a reusable (materialised) tuple, matching the dict-like
+        contract; iteration over the collection yields the same keys.
         """
-        return iter(self)
+        return tuple(path for path, _ in self._walk_leaves())
 
-    def values(self) -> Iterator[Any]:
-        """Iterate the field objects (one per leaf), in canonical order."""
-        return (leaf for _, leaf in self._walk_leaves())
+    def values(self) -> tuple[Any, ...]:
+        """The field objects (one per leaf), in canonical order (materialised)."""
+        return tuple(leaf for _, leaf in self._walk_leaves())
 
-    def items(self) -> Iterator[tuple[str, Any]]:
-        """Iterate ``(key, field_object)`` pairs, in canonical order."""
-        return self._walk_leaves()
+    def items(self) -> tuple[tuple[str, Any], ...]:
+        """``(key, field_object)`` pairs, in canonical order (materialised)."""
+        return tuple(self._walk_leaves())
 
     def __getitem__(self, key: str | tuple[str, ...]) -> Any:
         """Return the field object at *key* — leaf access only.
@@ -250,7 +266,7 @@ class _NamedTree:
         """Whether *key* is a field key (a leaf). Partial paths are not members."""
         if not isinstance(key, (str, tuple)):
             return False
-        return self.is_leaf(key)
+        return self.is_field(key)
 
     @property
     def fields(self) -> tuple[str, ...]:
@@ -315,9 +331,11 @@ class _NamedTree:
         Unlike the leaf-keyed field view, ``children.values()`` includes
         subtrees.
         """
-        return MappingProxyType(dict(self._tree))
+        # Instances are immutable after construction, so the proxy can wrap
+        # the storage dict directly (no per-access copy).
+        return MappingProxyType(self._tree)
 
-    def is_leaf(self, *path: Any) -> bool:
+    def is_field(self, *path: Any) -> bool:
         """Whether *path* resolves to a field (a leaf), not an interior subtree.
 
         Returns ``True`` only when *path* is navigable **and** ends at a leaf.
@@ -328,10 +346,6 @@ class _NamedTree:
         except (KeyError, TypeError):
             return False
         return not isinstance(node, self._node_type())
-
-    def is_field(self, *path: Any) -> bool:
-        """Whether *path* resolves to a field (a leaf) — alias of :meth:`is_leaf`."""
-        return self.is_leaf(*path)
 
     def to_nested_dict(self) -> dict[str, Any]:
         """Return a nested ``dict`` mirroring the storage tree.
@@ -398,7 +412,7 @@ class _NamedTree:
                             f"that would introduce nesting and change the structure"
                         )
                     new_children[name] = nxt
-            return type(node)(new_children)
+            return node._rebuild_class()(new_children)
 
         result = build(self, "")
         if next(it, sentinel) is not sentinel:
@@ -410,8 +424,12 @@ class _NamedTree:
     def map(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
         """Apply *f* to every field object, returning a same-shape collection.
 
-        Returns a new collection of the **same class and the same structure**
-        (identical names and nesting) whose fields are ``f``'s outputs. *f* is
+        Returns a new collection of the **same structure** (identical names and
+        nesting) whose fields are ``f``'s outputs, rebuilt through the class's
+        constructor via :meth:`_rebuild_class` — for the value types this is the
+        same class; a base ``EventTemplate`` may auto-promote to (or demote
+        from) :class:`NumericEventTemplate` when the mapped specs change
+        numericness. *f* is
         called as ``f(field_object, *args, **kwargs)`` for each field in canonical
         order. Any extra *args* / *kwargs* are forwarded to *f* unchanged and are
         **constant across fields** (not varied per field).
@@ -473,7 +491,7 @@ class _NamedTree:
         subtree). A missing path raises ``KeyError``; removing every field raises
         ``ValueError``. Surviving fields keep their order and their specs.
         """
-        return type(self)(self._leaves_without(paths))
+        return self._rebuild_class()(self._leaves_without(paths))
 
     def _leaves_merged(self, other: Any) -> dict[str, Any]:
         """Flat leaf-map unioning ``self``'s then *other*'s leaves, keyed by path."""
@@ -492,7 +510,7 @@ class _NamedTree:
         clash between them, raises ``ValueError``. ``self``'s fields come first,
         then ``other``'s.
         """
-        return type(self)(self._leaves_merged(other))
+        return self._rebuild_class()(self._leaves_merged(other))
 
     @staticmethod
     def _resolve_replace_updates(
@@ -511,9 +529,26 @@ class _NamedTree:
         Each old leaf (or whole subtree) at a path is dropped and *new_value* put
         where the first of those leaves was, so a replaced subtree keeps its
         position (canonical order is part of the collection's identity).
+
+        Raises
+        ------
+        KeyError
+            If a path does not exist.
+        ValueError
+            If one update path is an ancestor of another — applying the
+            ancestor first would silently swallow the descendant's update, so
+            overlapping paths are rejected outright.
         """
         for path in resolved:
             self.at_path(path)  # KeyError if the path does not exist
+        norms = [self._norm_path(p) for p in resolved]
+        for i, a in enumerate(norms):
+            for b in norms[i + 1 :]:
+                if a == b or a.startswith(f"{b}{_PATH_SEP}") or b.startswith(f"{a}{_PATH_SEP}"):
+                    raise ValueError(
+                        f"replace() update paths overlap: {a!r} and {b!r} address "
+                        f"the same subtree; replace the enclosing path once instead"
+                    )
         flat = dict(self._walk_leaves())
         for path, new_value in resolved.items():
             norm = self._norm_path(path)
@@ -541,7 +576,7 @@ class _NamedTree:
         resolved = self._resolve_replace_updates(_updates, updates)
         if not resolved:
             return self
-        return type(self)(self._leaves_replaced(resolved))
+        return self._rebuild_class()(self._leaves_replaced(resolved))
 
     # -- Construction from a nested mapping ---------------------------------
 
@@ -845,9 +880,10 @@ class EventTemplate(_NamedTree):
     leaves and describes the expected structure for type-checking and
     vectorization. Leaves are stored as frozen, hashable spec objects, so a
     template is itself hashable (usable as a jit / treedef cache key).
-    ``__getitem__`` returns the stored spec (or nested template); the
-    enumeration of leaves is :meth:`keys`, and per-leaf array shapes (on a
-    numeric template) live on :attr:`~NumericEventTemplate.leaf_shapes`.
+    ``__getitem__`` returns the stored leaf spec (and raises on an interior
+    node — see *Terminology*); the enumeration of leaves is :meth:`keys`, and
+    per-leaf array shapes (on a numeric template) live on
+    :attr:`~NumericEventTemplate.leaf_shapes`.
 
     Calling ``EventTemplate(...)`` directly auto-promotes to a
     :class:`NumericEventTemplate` when every spec is numeric (and every nested
@@ -927,6 +963,16 @@ class EventTemplate(_NamedTree):
 
     @classmethod
     def _node_type(cls) -> type:
+        return EventTemplate
+
+    @classmethod
+    def _rebuild_class(cls) -> type:
+        # Structural edits rebuild through the base class so ``__new__``
+        # re-decides the numeric auto-promotion from the edited specs: an
+        # all-numeric result promotes to ``NumericEventTemplate`` and a mixed
+        # one stays (or becomes) a plain ``EventTemplate`` — replacing an array
+        # spec with an opaque one must not be rejected by the original
+        # subclass's validation.
         return EventTemplate
 
     # -- Numeric queries & projection ---------------------------------------
@@ -1193,8 +1239,8 @@ class NumericEventTemplate(EventTemplate):
     :attr:`vector_size` and :attr:`leaf_shapes` meaningful:
     ``vector_size`` is the length of the per-element 1-D vector — the total
     number of scalar elements across every numeric leaf — and
-    :meth:`~EventTemplate.from_vector` requires a template of this class so
-    that every field can be reconstructed from a slice of that vector. A
+    :meth:`~NumericEventTemplate.from_vector` requires a template of this class
+    so that every field can be reconstructed from a slice of that vector. A
     *batch* of such values is a matrix of shape ``(*batch_shape, vector_size)``,
     not a single vector.
 
@@ -1276,9 +1322,10 @@ class NumericEventTemplate(EventTemplate):
         """Length of the per-element 1-D vector (``to_vector`` / ``from_vector``).
 
         The total number of scalar elements across all numeric leaves — the
-        trailing-axis length of :meth:`~EventTemplate.to_vector`'s output. A
-        single value serializes to shape ``(vector_size,)``; a batch serializes
-        to a matrix ``(*batch_shape, vector_size)``, not a single vector.
+        trailing-axis length of :meth:`~NumericEventTemplate.to_vector`'s
+        output. A single value serializes to shape ``(vector_size,)``; a batch
+        serializes to a matrix ``(*batch_shape, vector_size)``, not a single
+        vector.
         """
         return self._vector_size
 

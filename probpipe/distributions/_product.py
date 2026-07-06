@@ -536,7 +536,9 @@ def _sample_nested(components: dict, key, sample_shape, template=None, numeric=F
     for subkey, name in zip(keys, names):
         comp = components[name]
         if isinstance(comp, dict):
-            sub_template = template[name] if template is not None else None
+            # ``children`` (not ``[]``): the sub-template is an interior node,
+            # and template ``[]`` is leaf-only.
+            sub_template = template.children[name] if template is not None else None
             fields[name] = _sample_nested(
                 comp, subkey, sample_shape, template=sub_template, numeric=numeric
             )
