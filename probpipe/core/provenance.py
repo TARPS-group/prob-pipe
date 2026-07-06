@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ._record_array import RecordArray
@@ -50,8 +53,10 @@ class ParentInfo:
         holds an unhashable ``metadata`` dict) but included in equality so
         that two descriptors for the same ancestor compare equal.
     fingerprint : str or None
-        Optional stable content hash of the parent's inputs.  Intended for
-        a future workflow-result caching layer; currently always ``None``.
+        Stable 16-character hex digest of the parent's content, populated
+        by :meth:`Provenance.create`.  ``None`` only when fingerprinting
+        raises an unexpected error.  Intended as the foundation for a future
+        Prefect ``cache_key_fn``.
     obj : ProvenanceNode or None
         The live parent object.  Set in FULL mode; ``None`` in LIGHTWEIGHT
         so the parent's data can be garbage-collected.  Excluded from
@@ -163,9 +168,16 @@ class Provenance:
         from ._fingerprint import fingerprint as _fingerprint
 
         def _make_parent(p: Any) -> ParentInfo:
+            fp: str | None
             try:
-                fp: str | None = _fingerprint(p)
-            except Exception:
+                fp = _fingerprint(p)
+            except Exception as exc:
+                logger.warning(
+                    "fingerprint() failed for %s %r: %s",
+                    type(p).__name__,
+                    getattr(p, "name", None),
+                    exc,
+                )
                 fp = None
             return ParentInfo(
                 type_name=type(p).__name__,

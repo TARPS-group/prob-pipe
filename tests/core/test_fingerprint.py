@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
+import textwrap
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -34,23 +38,37 @@ class TestReturnFormat:
 
 class TestPrimitives:
     def test_int_stable(self):
-        assert fingerprint(42) == fingerprint(42)
+        # Two separately-constructed equal values must produce the same digest.
+        assert fingerprint(int("42")) == fingerprint(int("42"))
 
     def test_different_ints_differ(self):
         assert fingerprint(1) != fingerprint(2)
 
+    def test_big_int_does_not_crash(self):
+        # Integers outside the signed-64-bit range must not raise.
+        assert isinstance(fingerprint(2**100), str)
+        assert isinstance(fingerprint([1, 2**100]), str)
+
     def test_float_stable(self):
-        assert fingerprint(3.14) == fingerprint(3.14)
+        assert fingerprint(float("3.14")) == fingerprint(float("3.14"))
 
     def test_different_floats_differ(self):
         assert fingerprint(1.0) != fingerprint(2.0)
 
+    def test_nan_and_inf_do_not_crash(self):
+        assert isinstance(fingerprint(float("nan")), str)
+        assert isinstance(fingerprint(float("inf")), str)
+        assert isinstance(fingerprint(float("-inf")), str)
+
     def test_bool_stable(self):
-        assert fingerprint(True) == fingerprint(True)
+        assert fingerprint(bool(1)) == fingerprint(bool(1))
 
     def test_bool_differs_from_int(self):
-        # True == 1 in Python but they should hash differently as types differ
+        # True == 1 in Python but they must hash differently — different types.
         assert fingerprint(True) != fingerprint(1)
+
+    def test_false_differs_from_zero(self):
+        assert fingerprint(False) != fingerprint(0)
 
     def test_string_stable(self):
         assert fingerprint("hello") == fingerprint("hello")
@@ -59,10 +77,38 @@ class TestPrimitives:
         assert fingerprint("a") != fingerprint("b")
 
     def test_none_stable(self):
-        assert fingerprint(None) == fingerprint(None)
+        assert fingerprint(type(None)()) == fingerprint(type(None)())
 
     def test_none_differs_from_zero(self):
         assert fingerprint(None) != fingerprint(0)
+
+    def test_empty_list_stable(self):
+        assert fingerprint([]) == fingerprint([])
+
+    def test_empty_dict_stable(self):
+        assert fingerprint({}) == fingerprint({})
+
+    def test_list_stable(self):
+        assert fingerprint([1, 2, 3]) == fingerprint([1, 2, 3])
+
+    def test_tuple_stable(self):
+        assert fingerprint((1, 2)) == fingerprint((1, 2))
+
+    def test_list_differs_from_tuple(self):
+        assert fingerprint([1, 2]) != fingerprint((1, 2))
+
+    def test_dict_stable(self):
+        assert fingerprint({"a": 1, "b": 2}) == fingerprint({"a": 1, "b": 2})
+
+    def test_dict_different_values_differ(self):
+        assert fingerprint({"a": 1}) != fingerprint({"a": 2})
+
+    def test_unknown_type_does_not_crash(self):
+        class _Opaque:
+            def __repr__(self):
+                return "opaque"
+
+        assert isinstance(fingerprint(_Opaque()), str)
 
 
 # ===========================================================================
@@ -97,23 +143,36 @@ class TestArrayHashing:
         b = np.array([1.0, 2.0])
         assert fingerprint(a) == fingerprint(b)
 
-    def test_numpy_different_from_jax(self):
-        # Different types → different hash prefix
-        a = np.array([1.0, 2.0])
-        b = jnp.array([1.0, 2.0])
-        # They may or may not differ (numpy/jax both go through np.asarray);
-        # what matters is that each is stable individually.
-        assert fingerprint(a) == fingerprint(a)
-        assert fingerprint(b) == fingerprint(b)
-
     def test_scalar_array_stable(self):
         a = jnp.array(5.0)
         b = jnp.array(5.0)
         assert fingerprint(a) == fingerprint(b)
 
+    def test_max_array_bytes_none_hashes_fully(self):
+        # With no cap, two arrays that differ only in their last element must
+        # produce different digests even when they are large.
+        a = np.zeros(1000)
+        b = np.zeros(1000)
+        b[-1] = 1.0
+        assert fingerprint(a, max_array_bytes=None) != fingerprint(b, max_array_bytes=None)
+
 
 # ===========================================================================
-# 4. Record hashing
+# 4. Depth guard
+# ===========================================================================
+
+
+class TestDepthGuard:
+    def test_deeply_nested_list_does_not_crash(self):
+        # Build a list nested 40 levels deep — beyond the depth=32 guard.
+        obj: list = []
+        for _ in range(40):
+            obj = [obj]
+        assert isinstance(fingerprint(obj), str)
+
+
+# ===========================================================================
+# 5. Record hashing
 # ===========================================================================
 
 
@@ -150,7 +209,7 @@ class TestRecordHashing:
 
 
 # ===========================================================================
-# 5. Distribution hashing
+# 6. Distribution hashing
 # ===========================================================================
 
 
@@ -197,9 +256,37 @@ class TestDistributionHashing:
         e2 = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 9.0]), name="post")
         assert fingerprint(e1) != fingerprint(e2)
 
+    def test_empirical_non_uniform_weights_differ(self):
+        """IS/SMC reweighting must produce a different fingerprint."""
+        from probpipe import RecordEmpiricalDistribution
+
+        samples = jnp.array([1.0, 2.0, 3.0])
+        uniform = RecordEmpiricalDistribution(samples, name="post")
+        reweighted = RecordEmpiricalDistribution(
+            samples, weights=jnp.array([0.7, 0.2, 0.1]), name="post"
+        )
+        assert fingerprint(uniform) != fingerprint(reweighted)
+
+    def test_kde_distribution_stable(self):
+        """KDE (composite TFP distribution) must be stable."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        pts = jnp.array([0.0, 1.0, 2.0])
+        k1 = KDEDistribution(pts, name="kde")
+        k2 = KDEDistribution(pts, name="kde")
+        assert fingerprint(k1) == fingerprint(k2)
+
+    def test_kde_different_points_differ(self):
+        """Two KDE distributions with different data must have different fingerprints."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        k1 = KDEDistribution(jnp.array([0.0, 1.0, 2.0]), name="kde")
+        k2 = KDEDistribution(jnp.array([0.0, 1.0, 99.0]), name="kde")
+        assert fingerprint(k1) != fingerprint(k2)
+
 
 # ===========================================================================
-# 6. WorkflowFunction hashing
+# 7. WorkflowFunction hashing
 # ===========================================================================
 
 
@@ -222,9 +309,7 @@ class TestWorkflowFunctionHashing:
         def multiply(x: float, y: float) -> float:
             return x * y
 
-        wf_add = self._make_wf(add)
-        wf_mul = self._make_wf(multiply)
-        assert fingerprint(wf_add) != fingerprint(wf_mul)
+        assert fingerprint(self._make_wf(add)) != fingerprint(self._make_wf(multiply))
 
     def test_changed_constant_in_body_differs(self):
         def f_v1(x: float) -> float:
@@ -235,9 +320,32 @@ class TestWorkflowFunctionHashing:
 
         assert fingerprint(self._make_wf(f_v1)) != fingerprint(self._make_wf(f_v2))
 
+    def test_nested_lambda_stable_across_processes(self):
+        """A function with a nested lambda must produce the same digest in two
+        separate processes — the old repr(co_consts) path embedded memory
+        addresses and broke this guarantee."""
+        script = textwrap.dedent("""
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            from probpipe.core._fingerprint import fingerprint
+            from probpipe.core.node import WorkflowFunction
+
+            def f(x: float) -> float:
+                transform = lambda v: v * 2.0  # noqa: E731
+                return transform(x)
+
+            wf = WorkflowFunction(func=f, dispatch="sequential", n_broadcast_samples=10, seed=42)
+            print(fingerprint(wf))
+        """)
+        site = str(next(p for p in sys.path if "site-packages" in p))
+        run = lambda: subprocess.check_output(  # noqa: E731
+            [sys.executable, "-c", script, site], text=True
+        ).strip()
+        assert run() == run()
+
 
 # ===========================================================================
-# 7. Fingerprint populated on ParentInfo via Provenance.create()
+# 8. Fingerprint populated on ParentInfo via Provenance.create()
 # ===========================================================================
 
 
@@ -283,3 +391,29 @@ class TestFingerprintInProvenance:
             assert prov is None
         finally:
             probpipe.provenance_config.reset()
+
+    def test_fingerprint_error_logs_warning(self, monkeypatch, caplog):
+        """A fingerprint failure emits a warning and sets fingerprint=None."""
+        import logging
+
+        from probpipe.core import provenance as prov_mod
+
+        def _bad_fp(obj, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(prov_mod, "_fingerprint_func", _bad_fp, raising=False)
+
+        # Patch the lazy import inside create() to use our broken function.
+        import probpipe.core._fingerprint as fp_mod
+
+        monkeypatch.setattr(fp_mod, "fingerprint", _bad_fp)
+
+        n = Normal(loc=0.0, scale=1.0, name="prior")
+        with caplog.at_level(logging.WARNING, logger="probpipe.core.provenance"):
+            prov = Provenance.create("op", parents=[n])
+
+        assert prov is not None
+        assert prov.parents[0].fingerprint is None
+        assert any(
+            "fingerprint" in r.message.lower() or "boom" in r.message for r in caplog.records
+        )

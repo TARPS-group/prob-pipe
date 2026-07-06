@@ -107,7 +107,7 @@ The fingerprint covers the full content of the parent:
 | Parent type | What is hashed |
 |---|---|
 | TFP-backed distribution (`Normal`, `Gamma`, …) | class name + distribution name + all TFP constructor parameters |
-| `EmpiricalDistribution` | class name + name + sample arrays |
+| `EmpiricalDistribution` | class name + name + sample arrays + log-normalised weight array |
 | `Record` | field names + values, recursively |
 | `WorkflowFunction` | user function bytecode (not the Prefect wrapper closure) |
 | JAX / NumPy array | shape + dtype + raw bytes (large arrays are sampled) |
