@@ -134,7 +134,7 @@ Both return a **tracked term** whose `provenance` records the access and its sou
 
 Every operation lifts to a `Batch` by mapping over its elements, which is the workflow-function sweep applied to the operation itself.
 - `sample` and `log_prob` over a `DistributionBatch` return a `RecordBatch` and a batched array of densities, with the batch axes preserved.
-- A moment over a `DistributionBatch` returns a batch of the corresponding values.
+- A moment over a `DistributionBatch` returns a batch of the corresponding values, such as a `LinOpBatch` for `cov`.
 - When the elements are array-backed, the map is a single vectorized call rather than a Python loop, which is the batched-backend optimization.
 - An operation applied to a batch whose elements lack the required capability raises the same capability error a single element would.
 

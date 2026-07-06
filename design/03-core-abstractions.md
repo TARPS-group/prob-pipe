@@ -225,6 +225,8 @@ class LinOp(Tracked, ABC):
 
 **Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant.
 
+**The batch form.** `LinOpBatch` is the element batch over operators, a thin `Batch[LinOp]` whose elements share both templates. It is what a batched `cov` returns.
+
 ### Rationale
 
 Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators keep every query differentiable (`D6 – Differentiability where possible`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
