@@ -214,6 +214,14 @@ class TestResolveTestTargets:
             "tests/inference/test_inference_registry.py",
         }
 
+    def test_direct_init_change_maps_to_whole_folder(self, fake_pkg):
+        """A *direct* edit to the registration facade (probpipe/inference/__init__.py)
+        can make or break any method's registration -- including optional backends --
+        so it maps to the whole folder, unlike the transitive __init__ edge above
+        (a method change) which narrows to the integration tests."""
+        fake_pkg(self._INFERENCE_TREE)
+        assert set(resolve_test_targets(["probpipe/inference/__init__.py"])) == {"tests/inference"}
+
     def test_shared_core_maps_to_whole_folder(self, fake_pkg):
         """A shared-core change (_registry) fans out to every method, so the
         folder target supersedes the individual files."""

@@ -135,15 +135,18 @@ jobs:
           # this is what makes a lockfile-only dependency change actually
           # verified by CI rather than silently skipped. A change to this
           # workflow itself (ci.yml) also forces the suite so CI edits are
-          # self-tested. Also force the full suite on direct pushes to main
-          # (post-merge safety net — targeted tests are for PRs only).
+          # self-tested, as does a change to scripts/ci/import_graph.py — it
+          # decides which tests every other change runs, but is not itself a
+          # probpipe source, so it would otherwise select nothing. Also force
+          # the full suite on direct pushes to main (post-merge safety net —
+          # targeted tests are for PRs only).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL=true
           else
             RUN_ALL=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py|.github/workflows/ci.yml)
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|scripts/ci/import_graph.py|probpipe/__init__.py|.github/workflows/ci.yml)
                   RUN_ALL=true ;;
               esac
             done
@@ -499,15 +502,17 @@ jobs:
           # A dependency bump in pyproject.toml or uv.lock touches no notebook
           # or source file but can still break every notebook, so foundational
           # changes force the full notebook set (mirrors the test job's
-          # RUN_ALL); a change to ci.yml does too. Also force it on direct
-          # pushes to main (post-merge safety net).
+          # RUN_ALL); a change to ci.yml or the selection logic
+          # (scripts/ci/import_graph.py, which also drives notebook selection)
+          # does too. Also force it on direct pushes to main (post-merge safety
+          # net).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL_NB=true
           else
             RUN_ALL_NB=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|uv.lock|setup.cfg|setup.py|.github/workflows/ci.yml) RUN_ALL_NB=true ;;
+                pyproject.toml|uv.lock|setup.cfg|setup.py|scripts/ci/import_graph.py|.github/workflows/ci.yml) RUN_ALL_NB=true ;;
               esac
             done
           fi

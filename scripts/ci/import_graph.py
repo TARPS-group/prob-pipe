@@ -258,14 +258,21 @@ _INFERENCE_INTEGRATION_TESTS = (
 )
 
 
-def _inference_test_targets(rel_path: str) -> set[str]:
+def _inference_test_targets(rel_path: str, *, is_direct: bool) -> set[str]:
     """Map one affected ``probpipe/inference/`` module to its pytest target(s).
 
     *rel_path* is the module's path relative to ``probpipe/inference/`` (e.g.
-    ``_pyabc.py`` or ``__init__.py``), as split out by :func:`resolve_test_targets`.
+    ``_pyabc.py`` or ``__init__.py``); *is_direct* is whether the module was
+    itself a changed file (a seed) rather than pulled in transitively over the
+    import graph.
 
-    * ``__init__.py`` -- the registration facade -- maps to the registry/dispatch
-      integration tests (:data:`_INFERENCE_INTEGRATION_TESTS`).
+    * ``__init__.py`` -- the registration facade -- maps to the whole
+      ``tests/inference/`` folder when changed *directly* (editing the facade can
+      make or break any method's registration, including optional backends), but
+      only to the registry/dispatch integration tests
+      (:data:`_INFERENCE_INTEGRATION_TESTS`) when pulled in *transitively* as a
+      reverse-dependency of a method change -- which is what keeps a single method
+      change from fanning out to the whole folder.
     * A flat per-method module ``_<name>.py`` maps to
       ``tests/inference/test_<name>.py`` by filename convention.
     * Anything else -- a module with no matching ``test_<name>.py`` (shared core
@@ -274,6 +281,8 @@ def _inference_test_targets(rel_path: str) -> set[str]:
       ``tests/inference/`` folder.
     """
     if rel_path == "__init__.py":
+        if is_direct:
+            return {"tests/inference"}
         hits = {t for t in _INFERENCE_INTEGRATION_TESTS if Path(t).exists()}
         return hits or {"tests/inference"}
     if "/" in rel_path:  # nested subpackage module: no flat test_<name>.py convention
@@ -290,13 +299,15 @@ def resolve_test_targets(changed_files: Iterable[str]) -> list[str]:
     (``skip_init=False``, as the test job requires), then each affected module
     is mapped to a target: a root-level ``probpipe/X.py`` selects the root
     ``tests/test_*.py`` files; ``probpipe/inference/...`` uses the
-    filename-convention granularity of :func:`_inference_test_targets`; any
-    other ``probpipe/<subpkg>/...`` selects the ``tests/<subpkg>/`` folder. A
-    folder target supersedes individual file targets beneath it. Returns a
-    sorted list.
+    filename-convention granularity of :func:`_inference_test_targets` (which
+    also distinguishes a directly-changed vs a transitively-affected
+    ``__init__.py``); any other ``probpipe/<subpkg>/...`` selects the
+    ``tests/<subpkg>/`` folder. A folder target supersedes individual file
+    targets beneath it. Returns a sorted list.
     """
     rdeps = reverse_dependency_map()
     changed_sources = [f for f in changed_files if f.startswith(PACKAGE)]
+    seed_modules = {file_to_module(f) for f in changed_sources}
     targets: set[str] = set()
     root_change = False
     for module in affected_modules(changed_sources, rdeps, skip_init=False):
@@ -309,7 +320,7 @@ def resolve_test_targets(changed_files: Iterable[str]) -> list[str]:
             continue
         subpkg, mod = rel.split("/", 1)
         if subpkg == "inference":
-            targets |= _inference_test_targets(mod)
+            targets |= _inference_test_targets(mod, is_direct=module in seed_modules)
         elif Path(f"tests/{subpkg}").is_dir():
             targets.add(f"tests/{subpkg}")
     if root_change:
