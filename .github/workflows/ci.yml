@@ -43,8 +43,14 @@ jobs:
         run: |
           set -euo pipefail
           # Single source of truth for the pin lives in the pre-commit config.
+          # The rev regex tolerates an optional surrounding quote and leading
+          # `v` so a reformatted `rev: "v0.15.16"` still parses; `|| true`
+          # swallows a no-match grep exit (pipefail would otherwise abort the
+          # pipeline here) so the `test -n` below stays the single, clear
+          # "can't parse the pin" failure.
           ver=$(grep -A2 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
-                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*v?([0-9][0-9.]*).*/\1/p' | head -1)
+                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*["'\'']?v?([0-9][0-9.]*).*/\1/p' \
+                  | head -1 || true)
           test -n "$ver"   # fail loudly if the rev can't be parsed
           echo "ruff=$ver" >> "$GITHUB_OUTPUT"
           echo "Resolved ruff $ver from .pre-commit-config.yaml"
