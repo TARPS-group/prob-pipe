@@ -75,12 +75,12 @@ if it were user-guide reference text.
    - In particular, keep the plan's **vocabulary distinctions** intact even before the code that
      enforces them lands. *Example:* `to_vector`/`from_vector` (on `NumericEventTemplate`) are the
      **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
-     `is_numeric`); `to_leaf_list`/`from_leaf_list` (on `EventTemplate`) are the **general**
-     (de)composition — they keep each leaf whole (any type), visited at the **template's**
-     granularity in canonical `leaf_paths` order. Both treat a container-valued opaque leaf
-     (tuple/dict/namedtuple) as **one** leaf; JAX's `jax.tree_util.tree_flatten` is the finer pytree
-     view that descends into it (`Record` is a registered pytree, but `flatten`/`unflatten` are
-     **not** `Record` methods — use `jax.tree_util` directly). Do not describe these as
+     `is_numeric`). The **general** (de)composition keeps each leaf whole (any type): export with
+     `list(record.values())` and reconstruct with `EventTemplate.from_field_values`, visited at the
+     **template's** granularity in canonical `keys()` order. Both treat a container-valued opaque
+     leaf (tuple/dict/namedtuple) as **one** leaf; JAX's `jax.tree_util.tree_flatten` is the finer
+     pytree view that descends into it (`Record` is a registered pytree, but `flatten`/`unflatten`
+     are **not** `Record` methods — use `jax.tree_util` directly). Do not describe these as
      interchangeable.
 
 ## Major abstractions & where their contract lives

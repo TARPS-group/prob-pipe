@@ -194,10 +194,10 @@ or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
-The mapping protocol on `Record`, `EventTemplate`, and every
-Record-based distribution (`keys` / `values` / `items` / `__iter__` /
-`__len__` / `__contains__` / `__getitem__`) is **leaf-keyed**: it
-enumerates every leaf by its full `/`-path, never interior nodes. The
+The mapping protocol on `Record` and `EventTemplate` (`keys` / `values`
+/ `items` / `__iter__` / `__len__` / `__contains__` / `__getitem__`) is
+**leaf-keyed**: it enumerates every leaf by its full `/`-path, never
+interior nodes. The
 order is **canonical first-appearance order** — the order each field
 was first introduced (keyword-argument or input-dict order at
 construction). Code must not rely on an alphabetical or sorted order;
@@ -219,11 +219,18 @@ sub-Record, whereas `record["params"]` raises when `params` is not a
 leaf. `keys()` lists every leaf's path using the same `/` separator, so
 those paths round-trip with `__getitem__`.
 
-`RecordArray` / `NumericRecordArray` are a documented exception: their
-mapping surface (`keys` / `len` / `in`) is still **top-level** (first
-level of field names) pending the batch-axis rework, so `"outer" in
-arr` can be `True` while `arr["outer"]` raises if `outer` is an interior
-node. Treat this as temporary.
+Two surfaces are documented exceptions, each pending its own follow-up:
+
+- `RecordArray` / `NumericRecordArray`: the mapping surface (`keys` /
+  `len` / `in`) is still **top-level** (first level of field names)
+  pending the batch-axis rework, so `"outer" in arr` can be `True` while
+  `arr["outer"]` raises if `outer` is an interior node. String `[]` *is*
+  leaf-keyed. Treat this as temporary.
+- Record-based **distributions** (`RecordDistribution`,
+  `RecordEmpiricalDistribution`, …): their `fields` / `keys()` / `in` /
+  `[]` surface is still **top-level** pending the distribution
+  value-model work. Use `dist.event_template.keys()` for the leaf paths
+  of one draw.
 
 When adding new Record-based containers, follow these conventions:
 preserve first-appearance order, reject `/` in field names, key the
