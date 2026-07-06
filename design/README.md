@@ -14,18 +14,18 @@ ProbPipe is built around five kinds of mathematical objects and the operations t
 | function | `f : X → Y` | workflow function |
 | linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp` |
 
-Each object also has an indexed-collection form (a batch), and every operation lifts to batches elementwise.
+Each object also has an indexed-collection form (a batch), and every operation lifts to batches elementwise. Values, distributions, and conditional distributions additionally have **numeric** specializations (`NumericRecord`, `NumericDistribution`, …) covering the all-array case: they identify the event space with a flat vector space, where `LinOp` acts and differentiation applies.
 
 | Operation | Mathematics |
 |---|---|
 | evaluation | `f(x)`, `K(s, ·)`, `Ax` |
 | sampling | `x ~ μ` |
 | density evaluation | `(dμ/dν)(x)` |
-| expectation and moments | `E_μ[f(X)]`; mean, variance, covariance, quantiles |
-| pushforward | `f_#μ`, the law of `f(X)` for `X ~ μ` |
+| expectation and moments | `E[f(X)]` for `X ~ μ`; mean, variance, covariance, quantiles |
+| pushforward | the law of `f(X)` for `X ~ μ` |
 | composition | `p(x \| y) · p(y)`, `f ∘ g`, `A B` |
-| conditioning | `μ(· \| x_B = b)`, from exact currying to Bayesian inversion |
-| marginalization | `π_B# μ`, the law of a named part |
+| conditioning | `μ(· \| y = b)` for a field `y`, from exact currying to Bayesian inversion |
+| marginalization | the law of a named field of `X ~ μ` |
 | prediction | `μK = ∫ K(s, ·) μ(ds)` |
 
 ### Contents 
