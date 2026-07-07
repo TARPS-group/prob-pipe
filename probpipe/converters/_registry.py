@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, ClassVar
 
-from ..core._registry_catalog import MethodSummary, registry_catalog
+from ..core._registry_catalog import EntrySummary, registry_catalog
 
 
 class ConversionMethod(Enum):
@@ -91,8 +91,8 @@ class ConverterRegistry:
     The class carries the
     :class:`~probpipe.core._registry_catalog.SupportsRegistryCataloging`
     identity attributes (``name``, ``description``, ``kind``) as
-    class-level fields and implements :meth:`method_summaries` and
-    :meth:`describe_method` so the registry can be discovered via the
+    class-level fields and implements :meth:`entry_summaries` and
+    :meth:`describe_entry` so the registry can be discovered via the
     global :data:`registry_catalog` ("converters" key).  Dispatch
     mechanics are unchanged — this is a *non-conforming* registry from
     the dispatch perspective (the ``(source_type, target_type)`` shape
@@ -176,8 +176,8 @@ class ConverterRegistry:
 
     # -- catalog surface ----------------------------------------------------
 
-    def method_summaries(self) -> list[MethodSummary]:
-        """Return one :class:`MethodSummary` per registered converter.
+    def entry_summaries(self) -> list[EntrySummary]:
+        """Return one :class:`EntrySummary` per registered converter.
 
         Walks ``self._converters`` in priority-sorted order (the same
         order :meth:`check` uses).  ``supported_types`` is encoded as
@@ -186,7 +186,7 @@ class ConverterRegistry:
         contract.
         """
         return [
-            MethodSummary(
+            EntrySummary(
                 name=type(c).__name__,
                 priority=c.priority,
                 supported_types=(c.source_types(), c.target_types()),
@@ -198,8 +198,8 @@ class ConverterRegistry:
             for c in self._converters
         ]
 
-    def describe_method(self, name: str) -> MethodSummary:
-        """Return the :class:`MethodSummary` for the named converter.
+    def describe_entry(self, name: str) -> EntrySummary:
+        """Return the :class:`EntrySummary` for the named converter.
 
         *name* matches ``type(converter).__name__``.
 
@@ -208,10 +208,10 @@ class ConverterRegistry:
         KeyError
             If no registered converter has that class name.
         """
-        for s in self.method_summaries():
+        for s in self.entry_summaries():
             if s.name == name:
                 return s
-        available = ", ".join(sorted(s.name for s in self.method_summaries())) or "(none)"
+        available = ", ".join(sorted(s.name for s in self.entry_summaries())) or "(none)"
         raise KeyError(f"No converter named {name!r}. Available: {available}")
 
     # -- internals ----------------------------------------------------------

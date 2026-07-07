@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar
 
 if TYPE_CHECKING:
-    from ._registry_catalog import MethodSummary
+    from ._registry_catalog import EntrySummary
 
 __all__ = [
     "OPT_IN_ONLY_PRIORITY",
@@ -83,7 +83,7 @@ class BaseDispatchMethod(ABC):
 
     An optional ``description`` class attribute (default ``""``) lets a
     concrete method carry a one-line blurb that surfaces in
-    :class:`~probpipe.core._registry_catalog.MethodSummary` records used
+    :class:`~probpipe.core._registry_catalog.EntrySummary` records used
     by the registry catalog.
     """
 
@@ -239,7 +239,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
       method names.  This is the dispatch-side convenience that callers
       pass back as ``method="..."``; existing tutorial notebooks and
       tests depend on this shape.
-    - :meth:`method_summaries` returns ``list[MethodSummary]`` — the
+    - :meth:`entry_summaries` returns ``list[EntrySummary]`` — the
       rich introspection records the catalog renders in
       ``describe(name)``.  This is the surface satisfying
       :class:`~probpipe.core._registry_catalog.SupportsRegistryCataloging`.
@@ -399,13 +399,13 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 
         This is the dispatch-side convenience: each returned string is a
         valid value for ``method="..."`` in :meth:`check` / :meth:`execute`.
-        For richer per-method introspection (priority, supported types,
-        module path) use :meth:`method_summaries`.
+        For richer per-entry introspection (priority, supported types,
+        module path) use :meth:`entry_summaries`.
         """
         return [m.name for m in self._methods]
 
-    def method_summaries(self) -> list[MethodSummary]:
-        """Return one :class:`MethodSummary` per registered method.
+    def entry_summaries(self) -> list[EntrySummary]:
+        """Return one :class:`EntrySummary` per registered method.
 
         Walks the methods in priority order (matching
         :meth:`list_methods`).  Each summary carries the method's
@@ -419,7 +419,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         """
         # Local import: the catalog module imports from this module, so
         # keeping this import lazy prevents a load-order cycle.
-        from ._registry_catalog import MethodSummary
+        from ._registry_catalog import EntrySummary
 
         # ``supported_types`` is declared abstractly on
         # ``UnaryDispatchMethod`` and ``BinaryDispatchMethod`` rather
@@ -428,7 +428,7 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
         # of those two; the access is safe.  Suppress the static-check
         # complaint here rather than weakening the base class.
         return [
-            MethodSummary(
+            EntrySummary(
                 name=m.name,
                 priority=self._effective_priority(m),
                 supported_types=m.supported_types(),  # type: ignore[attr-defined]
@@ -438,8 +438,8 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             for m in self._methods
         ]
 
-    def describe_method(self, name: str) -> MethodSummary:
-        """Return the :class:`MethodSummary` for the named method.
+    def describe_entry(self, name: str) -> EntrySummary:
+        """Return the :class:`EntrySummary` for the named method.
 
         Raises
         ------
@@ -447,16 +447,16 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
             If *name* is not registered.  The error message lists the
             available names.
         """
-        from ._registry_catalog import MethodSummary
+        from ._registry_catalog import EntrySummary
 
         try:
             m = self._name_index[name]
         except KeyError:
             available = ", ".join(sorted(self._name_index)) or "(none)"
             raise KeyError(f"No method named {name!r}. Available: {available}") from None
-        # See ``method_summaries`` for the rationale behind the
+        # See ``entry_summaries`` for the rationale behind the
         # ``# type: ignore`` on the ``supported_types`` access.
-        return MethodSummary(
+        return EntrySummary(
             name=m.name,
             priority=self._effective_priority(m),
             supported_types=m.supported_types(),  # type: ignore[attr-defined]

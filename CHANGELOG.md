@@ -17,13 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exposes a uniform `describe(name)` / `list()` / `names()` surface, and
   prints a terminal-friendly table at the REPL and an HTML table in
   Jupyter.  Two new methods on `BaseDispatchRegistry` —
-  `method_summaries() -> list[MethodSummary]` and `describe_method(name)
-  -> MethodSummary` — carry the rich introspection the catalog uses;
+  `entry_summaries() -> list[EntrySummary]` and `describe_entry(name)
+  -> EntrySummary` — carry the rich introspection the catalog uses;
   `list_methods() -> list[str]` is unchanged.  Non-conforming registries
   (`ConverterRegistry` and the new bijector facade `bijector_registry`)
   satisfy the protocol via small adapter additions; their dispatch
   behaviour is unchanged.  Re-exported at the top level:
-  `probpipe.registry_catalog`, `probpipe.MethodSummary`,
+  `probpipe.registry_catalog`, `probpipe.EntrySummary`,
   `probpipe.RegistryInfo`, `probpipe.SupportsRegistryCataloging`.
 
 - **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking

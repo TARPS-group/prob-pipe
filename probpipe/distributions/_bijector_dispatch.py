@@ -49,7 +49,7 @@ from typing import ClassVar
 
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
-from ..core._registry_catalog import MethodSummary, registry_catalog
+from ..core._registry_catalog import EntrySummary, registry_catalog
 from ..core.constraints import (
     Constraint,
     _Boolean,
@@ -249,7 +249,7 @@ class _BijectorRegistryFacade:
     :data:`_CONSTRAINT_BIJECTOR_REGISTRY` dict; dispatch behaviour is
     unchanged.
 
-    ``priority`` on each :class:`~probpipe.core._registry_catalog.MethodSummary`
+    ``priority`` on each :class:`~probpipe.core._registry_catalog.EntrySummary`
     is ``None`` because the underlying registry has no priority concept.
     """
 
@@ -259,13 +259,13 @@ class _BijectorRegistryFacade:
     )
     kind: ClassVar[str] = "factory"
 
-    def method_summaries(self) -> list[MethodSummary]:
-        """Return one :class:`MethodSummary` per registered constraint key.
+    def entry_summaries(self) -> list[EntrySummary]:
+        """Return one :class:`EntrySummary` per registered constraint key.
 
         Entries are ordered by name for deterministic output.
         """
         summaries = [
-            MethodSummary(
+            EntrySummary(
                 name=_bijector_entry_name(key),
                 priority=None,
                 supported_types=(key,),
@@ -276,8 +276,8 @@ class _BijectorRegistryFacade:
         summaries.sort(key=lambda s: s.name)
         return summaries
 
-    def describe_method(self, name: str) -> MethodSummary:
-        """Return the :class:`MethodSummary` for the named constraint entry.
+    def describe_entry(self, name: str) -> EntrySummary:
+        """Return the :class:`EntrySummary` for the named constraint entry.
 
         Raises
         ------
@@ -285,10 +285,10 @@ class _BijectorRegistryFacade:
             If no registered entry has that name.  The error message
             lists the available names.
         """
-        for s in self.method_summaries():
+        for s in self.entry_summaries():
             if s.name == name:
                 return s
-        available = ", ".join(s.name for s in self.method_summaries()) or "(none)"
+        available = ", ".join(s.name for s in self.entry_summaries()) or "(none)"
         raise KeyError(f"No bijector entry named {name!r}. Available: {available}")
 
 

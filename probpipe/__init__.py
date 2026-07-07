@@ -41,7 +41,7 @@ from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import NumericRecordArray, RecordArray
 from probpipe.core._registry_catalog import (
-    MethodSummary,
+    EntrySummary,
     RegistryInfo,
     SupportsRegistryCataloging,
     registry_catalog,
@@ -228,6 +228,8 @@ __all__ = [
     "DistributionArray",
     "DistributionSpec",
     "EmpiricalDistribution",
+    # Registry catalog
+    "EntrySummary",
     "EventTemplate",
     "Exponential",
     "FlatNumericRecordDistribution",
@@ -252,8 +254,6 @@ __all__ = [
     "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
-    # Registry catalog
-    "MethodSummary",
     "MinibatchedDistribution",
     "Module",
     "Multinomial",

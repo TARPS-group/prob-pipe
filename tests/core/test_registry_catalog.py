@@ -3,15 +3,15 @@
 Covers:
 
 - :class:`RegistryCatalog` mechanics: register / lookup / duplicate /
-  describe / repr / method-indirection.
+  describe / repr.
 - The :class:`SupportsRegistryCataloging` protocol behaves under
   ``isinstance`` for compliant and non-compliant objects.
 - Back-compatibility of :class:`BaseDispatchRegistry` constructor — bare
   ``UnaryDispatchRegistry()`` keeps working and stays out of the catalog.
 - Global-catalog population on ``import probpipe``: the built-in
   registries (``inference``, ``converters``, ``bijectors``) are present
-  with the expected ``kind`` and non-zero method counts.
-- Adapters expose non-empty :meth:`method_summaries` for the
+  with the expected ``kind`` and non-zero entry counts.
+- Adapters expose non-empty :meth:`entry_summaries` for the
   converter / bijector facades.
 """
 
@@ -28,7 +28,7 @@ from probpipe.core._registry import (
     UnaryDispatchRegistry,
 )
 from probpipe.core._registry_catalog import (
-    MethodSummary,
+    EntrySummary,
     RegistryCatalog,
     RegistryInfo,
     SupportsRegistryCataloging,
@@ -48,52 +48,27 @@ class _StubRegistry:
         self.name = name
         self.description = description
         self.kind = kind
-        self._summaries: list[MethodSummary] = []
+        self._summaries: list[EntrySummary] = []
 
-    def method_summaries(self) -> list[MethodSummary]:
+    def entry_summaries(self) -> list[EntrySummary]:
         return list(self._summaries)
 
-    def describe_method(self, name: str) -> MethodSummary:
+    def describe_entry(self, name: str) -> EntrySummary:
         for s in self._summaries:
             if s.name == name:
                 return s
         raise KeyError(name)
 
-    def add(self, s: MethodSummary) -> None:
+    def add(self, s: EntrySummary) -> None:
         self._summaries.append(s)
-
-
-class _StubFakeMethod(UnaryDispatchMethod):
-    """Minimal :class:`UnaryDispatchMethod` for catalog-population tests."""
-
-    def __init__(self, name: str, priority: int) -> None:
-        self._name = name
-        self._priority = priority
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def priority(self) -> int:
-        return self._priority
-
-    def supported_types(self) -> tuple[type, ...]:
-        return (object,)
-
-    def check(self, *args: Any, **kw: Any) -> MethodInfo:
-        return MethodInfo(feasible=True, method_name=self._name)
-
-    def execute(self, *args: Any, **kw: Any) -> Any:
-        return self._name
 
 
 class _StubMethodWithDescription(UnaryDispatchMethod):
     """Stub method that carries a non-default :attr:`description`.
 
-    Used by :class:`TestDispatchRegistryMethodSummaries` to verify that
+    Used by :class:`TestDispatchRegistryEntrySummaries` to verify that
     the description class attribute on :class:`BaseDispatchMethod`
-    propagates through to :class:`MethodSummary` records.
+    propagates through to :class:`EntrySummary` records.
     """
 
     description = "stub method for catalog tests"
@@ -172,18 +147,18 @@ class TestQuery:
     def test_list_returns_registry_info(self) -> None:
         cat = RegistryCatalog()
         a = _StubRegistry("a", kind="dispatch", description="A")
-        a.add(MethodSummary(name="m1", priority=50))
-        a.add(MethodSummary(name="m2", priority=10))
+        a.add(EntrySummary(name="m1", priority=50))
+        a.add(EntrySummary(name="m2", priority=10))
         cat.register(a)
         infos = cat.list()
         assert len(infos) == 1
-        assert infos[0] == RegistryInfo(name="a", description="A", kind="dispatch", method_count=2)
+        assert infos[0] == RegistryInfo(name="a", description="A", kind="dispatch", entry_count=2)
 
     def test_describe_separates_opt_in(self) -> None:
         cat = RegistryCatalog()
         a = _StubRegistry("a", kind="dispatch", description="A")
-        a.add(MethodSummary(name="hot", priority=80))
-        a.add(MethodSummary(name="cold", priority=0))  # opt-in only
+        a.add(EntrySummary(name="hot", priority=80))
+        a.add(EntrySummary(name="cold", priority=0))  # opt-in only
         cat.register(a)
         out = cat.describe("a")
         # Both methods appear, but in different sections.
@@ -195,21 +170,21 @@ class TestQuery:
         assert out.index("hot") < out.index("Opt-in only")
         assert out.index("Opt-in only") < out.index("cold")
 
-    def test_describe_factory_uses_methods_label(self) -> None:
+    def test_describe_factory_uses_entries_label(self) -> None:
         cat = RegistryCatalog()
         f = _StubRegistry("f", kind="factory", description="F")
-        f.add(MethodSummary(name="one", priority=None))
-        f.add(MethodSummary(name="two", priority=None))
+        f.add(EntrySummary(name="one", priority=None))
+        f.add(EntrySummary(name="two", priority=None))
         cat.register(f)
         out = cat.describe("f")
-        assert "Methods:" in out
+        assert "Entries:" in out
         assert "Auto-dispatched (by priority)" not in out
 
     def test_describe_empty_registry(self) -> None:
         cat = RegistryCatalog()
         cat.register(_StubRegistry("empty"))
         out = cat.describe("empty")
-        assert "(no methods registered)" in out
+        assert "(no entries registered)" in out
 
 
 class TestRepr:
@@ -220,40 +195,23 @@ class TestRepr:
     def test_populated_repr(self) -> None:
         cat = RegistryCatalog()
         a = _StubRegistry("a", kind="dispatch", description="alpha")
-        a.add(MethodSummary(name="m1", priority=10))
+        a.add(EntrySummary(name="m1", priority=10))
         cat.register(a)
         text = repr(cat)
         assert "a" in text
         assert "dispatch" in text
-        assert "1 method" in text
+        assert "1 entry" in text
         assert "alpha" in text
 
     def test_html_repr(self) -> None:
         cat = RegistryCatalog()
         assert "empty" in cat._repr_html_()
         a = _StubRegistry("a", kind="dispatch")
-        a.add(MethodSummary(name="m1", priority=1))
+        a.add(EntrySummary(name="m1", priority=1))
         cat.register(a)
         html = cat._repr_html_()
         assert "<table>" in html
         assert "a" in html
-
-
-class TestRegisterMethodIndirection:
-    def test_register_method_forwards(self) -> None:
-        cat = RegistryCatalog()
-        # Use a real dispatch registry (with register_in_catalog=False so it
-        # doesn't double-register in the global catalog).
-        reg = UnaryDispatchRegistry(name="x", register_in_catalog=False)
-        cat.register(reg)
-        m = _StubFakeMethod("m1", priority=10)
-        cat.register_method("x", m)
-        assert reg.list_methods() == ["m1"]
-
-    def test_register_method_unknown_registry_raises(self) -> None:
-        cat = RegistryCatalog()
-        with pytest.raises(KeyError, match="No registry named 'missing'"):
-            cat.register_method("missing", _StubFakeMethod("m", 10))
 
 
 class TestErrorPaths:
@@ -275,7 +233,7 @@ class TestErrorPaths:
         cat = RegistryCatalog()
         a = _StubRegistry("a", kind="dispatch")
         a.add(
-            MethodSummary(
+            EntrySummary(
                 name="m1",
                 priority=50,
                 description="my-desc",
@@ -360,28 +318,28 @@ class TestBuiltinPopulation:
         assert "inference" in registry_catalog
         info = next(i for i in registry_catalog.list() if i.name == "inference")
         assert info.kind == "dispatch"
-        assert info.method_count > 0
+        assert info.entry_count > 0
 
     def test_converters_registry_present(self) -> None:
         assert "converters" in registry_catalog
         info = next(i for i in registry_catalog.list() if i.name == "converters")
         assert info.kind == "converter"
-        assert info.method_count > 0
+        assert info.entry_count > 0
 
     def test_bijectors_registry_present(self) -> None:
         assert "bijectors" in registry_catalog
         info = next(i for i in registry_catalog.list() if i.name == "bijectors")
         assert info.kind == "factory"
-        assert info.method_count > 0
+        assert info.entry_count > 0
 
     def test_inference_summaries_ordering_matches_list_methods(self) -> None:
-        """Catalog round-trip: the inference registry's method_summaries()
+        """Catalog round-trip: the inference registry's entry_summaries()
         ordering matches its (unchanged) list_methods() shape and order.
 
         Regression guard for the dual-API design: the names list and the
         summary list must stay in lock-step.
         """
-        sums = registry_catalog["inference"].method_summaries()
+        sums = registry_catalog["inference"].entry_summaries()
         names = inference_method_registry.list_methods()
         assert [s.name for s in sums] == names
 
@@ -399,13 +357,13 @@ class TestBuiltinPopulation:
 
 
 # ---------------------------------------------------------------------------
-# Adapter introspection — non-conforming registries expose method_summaries
+# Adapter introspection — non-conforming registries expose entry_summaries
 # ---------------------------------------------------------------------------
 
 
 class TestAdapterSurfaces:
-    def test_converters_method_summaries_non_empty(self) -> None:
-        summaries = registry_catalog["converters"].method_summaries()
+    def test_converters_entry_summaries_non_empty(self) -> None:
+        summaries = registry_catalog["converters"].entry_summaries()
         assert len(summaries) > 0
         # Each entry should carry both source and target type tuples.
         # ``target_types`` may legitimately be empty for converters whose
@@ -422,34 +380,34 @@ class TestAdapterSurfaces:
             len(s.supported_types[0]) > 0 and len(s.supported_types[1]) > 0 for s in summaries
         )
 
-    def test_converters_describe_method_known(self) -> None:
+    def test_converters_describe_entry_known(self) -> None:
         reg = registry_catalog["converters"]
-        names = [s.name for s in reg.method_summaries()]
+        names = [s.name for s in reg.entry_summaries()]
         assert names  # populated
-        s = reg.describe_method(names[0])
+        s = reg.describe_entry(names[0])
         assert s.name == names[0]
 
-    def test_converters_describe_method_unknown_raises(self) -> None:
+    def test_converters_describe_entry_unknown_raises(self) -> None:
         with pytest.raises(KeyError, match="No converter named"):
-            registry_catalog["converters"].describe_method("DoesNotExist")
+            registry_catalog["converters"].describe_entry("DoesNotExist")
 
-    def test_bijectors_method_summaries_non_empty(self) -> None:
-        summaries = registry_catalog["bijectors"].method_summaries()
+    def test_bijectors_entry_summaries_non_empty(self) -> None:
+        summaries = registry_catalog["bijectors"].entry_summaries()
         assert len(summaries) > 0
         # Factory-style → priority is None.
         for s in summaries:
             assert s.priority is None
 
-    def test_bijectors_describe_method_known(self) -> None:
+    def test_bijectors_describe_entry_known(self) -> None:
         reg = registry_catalog["bijectors"]
-        names = [s.name for s in reg.method_summaries()]
+        names = [s.name for s in reg.entry_summaries()]
         assert "Real" in names  # registered as part of the default bijector set
-        s = reg.describe_method("Real")
+        s = reg.describe_entry("Real")
         assert s.name == "Real"
 
-    def test_bijectors_describe_method_unknown_raises(self) -> None:
+    def test_bijectors_describe_entry_unknown_raises(self) -> None:
         with pytest.raises(KeyError, match="No bijector entry named"):
-            registry_catalog["bijectors"].describe_method("DoesNotExist")
+            registry_catalog["bijectors"].describe_entry("DoesNotExist")
 
     def test_converters_summaries_have_non_empty_description(self) -> None:
         # The ConverterRegistry adapter derives ``description`` from
@@ -458,17 +416,17 @@ class TestAdapterSurfaces:
         # description somewhere.  A regression that broke the
         # docstring-extraction code would silently produce all-empty
         # descriptions here.
-        sums = registry_catalog["converters"].method_summaries()
+        sums = registry_catalog["converters"].entry_summaries()
         assert any(s.description for s in sums)
 
     def test_bijectors_summaries_have_empty_descriptions(self) -> None:
         # Factory-style: each entry is just a (constraint key → factory)
         # pair, with no per-entry description metadata.
-        sums = registry_catalog["bijectors"].method_summaries()
+        sums = registry_catalog["bijectors"].entry_summaries()
         assert all(s.description == "" for s in sums)
 
     def test_bijectors_supported_types_is_one_tuple(self) -> None:
-        for s in registry_catalog["bijectors"].method_summaries():
+        for s in registry_catalog["bijectors"].entry_summaries():
             assert len(s.supported_types) == 1
 
     def test_bijector_facade_renders_instance_key_via_repr(self) -> None:
@@ -488,7 +446,7 @@ class TestAdapterSurfaces:
         saved = dict(_CONSTRAINT_BIJECTOR_REGISTRY)
         try:
             _CONSTRAINT_BIJECTOR_REGISTRY[instance_key] = lambda c: None
-            sums = _BijectorRegistryFacade().method_summaries()
+            sums = _BijectorRegistryFacade().entry_summaries()
             names = [s.name for s in sums]
             assert repr(instance_key) in names
         finally:
@@ -514,27 +472,27 @@ class TestProtocol:
         # ``object()`` has none of the required attributes.
         assert not isinstance(object(), SupportsRegistryCataloging)
 
-    def test_method_summary_is_opt_in_only(self) -> None:
-        assert MethodSummary(name="x", priority=0).is_opt_in_only is True
-        assert MethodSummary(name="x", priority=50).is_opt_in_only is False
+    def test_entry_summary_is_opt_in_only(self) -> None:
+        assert EntrySummary(name="x", priority=0).is_opt_in_only is True
+        assert EntrySummary(name="x", priority=50).is_opt_in_only is False
         # priority=None (factory-style) is NOT opt-in-only; opt-in is
         # priority==0 specifically (the dispatch sentinel).
-        assert MethodSummary(name="x", priority=None).is_opt_in_only is False
+        assert EntrySummary(name="x", priority=None).is_opt_in_only is False
 
 
 # ---------------------------------------------------------------------------
-# method_summaries / describe_method on a dispatch registry directly
+# entry_summaries / describe_entry on a dispatch registry directly
 # ---------------------------------------------------------------------------
 
 
-class TestDispatchRegistryMethodSummaries:
+class TestDispatchRegistryEntrySummaries:
     """Direct test of the two new methods on ``BaseDispatchRegistry``.
 
     The adapter tests above cover the *non-conforming* paths (converters
     and bijectors).  These tests exercise the *conforming* path through
-    a real ``UnaryDispatchRegistry`` so the ``MethodSummary`` field
+    a real ``UnaryDispatchRegistry`` so the ``EntrySummary`` field
     mapping, priority ordering, override reflection, and round-trip
-    against ``describe_method`` are all under direct test.
+    against ``describe_entry`` are all under direct test.
     """
 
     def _registry_with(
@@ -545,16 +503,16 @@ class TestDispatchRegistryMethodSummaries:
             reg.register(_StubMethodWithDescription(name, priority))
         return reg
 
-    def test_method_summaries_priority_order_matches_list_methods(self) -> None:
+    def test_entry_summaries_priority_order_matches_list_methods(self) -> None:
         reg = self._registry_with(("low", 10), ("hi", 90), ("mid", 50))
         # list_methods is the priority-ordered names list.
         assert reg.list_methods() == ["hi", "mid", "low"]
-        # method_summaries follows the same ordering.
-        assert [s.name for s in reg.method_summaries()] == ["hi", "mid", "low"]
+        # entry_summaries follows the same ordering.
+        assert [s.name for s in reg.entry_summaries()] == ["hi", "mid", "low"]
 
-    def test_method_summaries_fields_match_method(self) -> None:
+    def test_entry_summaries_fields_match_method(self) -> None:
         reg = self._registry_with(("only", 42))
-        [s] = reg.method_summaries()
+        [s] = reg.entry_summaries()
         assert s.name == "only"
         assert s.priority == 42
         assert s.supported_types == (object,)
@@ -562,15 +520,15 @@ class TestDispatchRegistryMethodSummaries:
         # ``module_path`` is the test module name.
         assert s.module_path == __name__
 
-    def test_method_summaries_reflect_set_priorities_override(self) -> None:
+    def test_entry_summaries_reflect_set_priorities_override(self) -> None:
         reg = self._registry_with(("a", 10), ("b", 90))
         # Before override: b > a.
-        assert [s.name for s in reg.method_summaries()] == ["b", "a"]
-        assert [s.priority for s in reg.method_summaries()] == [90, 10]
+        assert [s.name for s in reg.entry_summaries()] == ["b", "a"]
+        assert [s.priority for s in reg.entry_summaries()] == [90, 10]
         # Bump ``a`` above ``b``.
         reg.set_priorities(a=100)
-        assert [s.name for s in reg.method_summaries()] == ["a", "b"]
-        assert [s.priority for s in reg.method_summaries()] == [100, 90]
+        assert [s.name for s in reg.entry_summaries()] == ["a", "b"]
+        assert [s.priority for s in reg.entry_summaries()] == [100, 90]
 
     def test_default_description_yields_empty_string(self) -> None:
         # A method that doesn't override ``description`` inherits ``""``
@@ -595,25 +553,25 @@ class TestDispatchRegistryMethodSummaries:
 
         reg = UnaryDispatchRegistry(register_in_catalog=False)
         reg.register(_NoDesc())
-        [s] = reg.method_summaries()
+        [s] = reg.entry_summaries()
         assert s.description == ""
 
-    def test_describe_method_round_trips_summary(self) -> None:
+    def test_describe_entry_round_trips_summary(self) -> None:
         reg = self._registry_with(("x", 25))
-        [s_from_list] = reg.method_summaries()
-        s_from_describe = reg.describe_method("x")
+        [s_from_list] = reg.entry_summaries()
+        s_from_describe = reg.describe_entry("x")
         assert s_from_describe == s_from_list
 
-    def test_describe_method_unknown_raises_with_available(self) -> None:
+    def test_describe_entry_unknown_raises_with_available(self) -> None:
         reg = self._registry_with(("known", 10))
         with pytest.raises(KeyError, match="No method named 'missing'"):
-            reg.describe_method("missing")
+            reg.describe_entry("missing")
         # The error message lists what is available.
         try:
-            reg.describe_method("missing")
+            reg.describe_entry("missing")
         except KeyError as exc:
             assert "known" in str(exc)
 
-    def test_method_summaries_on_empty_registry(self) -> None:
+    def test_entry_summaries_on_empty_registry(self) -> None:
         reg = UnaryDispatchRegistry(register_in_catalog=False)
-        assert reg.method_summaries() == []
+        assert reg.entry_summaries() == []
