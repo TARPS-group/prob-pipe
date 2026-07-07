@@ -67,8 +67,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
   `type_name`, `name`, `source` (the parent's own `Provenance`, kept in all
   non-OFF modes so the ancestry DAG remains traversable), `fingerprint`
-  (reserved for a future caching layer), and `obj` (the live parent object,
-  set only in FULL mode).
+  (a 16-character stable content hash — see below), and `obj` (the live parent
+  object, set only in FULL mode).
+
+- **`ParentInfo.fingerprint` — stable content hashing for provenance parents.**
+  Every `ParentInfo` descriptor now carries a `fingerprint: str` — a
+  16-character hex digest (64-bit SHA-256 prefix) that stably identifies the
+  parent's content across processes.  The hash covers the full value: numeric
+  parameters for TFP-backed distributions, field-by-field content for Records,
+  and actual user-function bytecode for WorkflowFunctions (not the Prefect
+  wrapper closure, so changes to the function body are detected reliably).
+  Large arrays (> 1 MB) are sampled at evenly-spaced offsets rather than read
+  in full.  The fingerprint is visible in `to_dict()` output and is the
+  foundation for a future Prefect `cache_key_fn` that will enable cross-run
+  task caching and failure recovery.
 
 - **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
   reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and

@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from .config import ProvenanceMode, provenance_config
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ._record_array import RecordArray
@@ -11,8 +16,6 @@ if TYPE_CHECKING:
     from .record import Record
 
     ProvenanceNode = Distribution | Record | RecordArray
-
-from .config import ProvenanceMode, provenance_config
 
 __all__ = [
     "ParentInfo",
@@ -50,8 +53,12 @@ class ParentInfo:
         holds an unhashable ``metadata`` dict) but included in equality so
         that two descriptors for the same ancestor compare equal.
     fingerprint : str or None
-        Optional stable content hash of the parent's inputs.  Intended for
-        a future workflow-result caching layer; currently always ``None``.
+        Stable 16-character hex digest of the parent's content, populated
+        by :meth:`Provenance.create`.  ``None`` only when fingerprinting
+        raises an unexpected error.  Intended as the foundation for a future
+        Prefect ``cache_key_fn``.  Excluded from equality and hashing: descriptor
+        identity is structural (``type_name`` / ``name`` / ``source``), so a
+        content digest must not perturb ancestor-set dedup.
     obj : ProvenanceNode or None
         The live parent object.  Set in FULL mode; ``None`` in LIGHTWEIGHT
         so the parent's data can be garbage-collected.  Excluded from
@@ -61,7 +68,7 @@ class ParentInfo:
     type_name: str
     name: str | None
     source: Provenance | None = field(default=None, hash=False)
-    fingerprint: str | None = None
+    fingerprint: str | None = field(default=None, compare=False)
     obj: ProvenanceNode | None = field(default=None, compare=False)
 
 
@@ -159,15 +166,30 @@ class Provenance:
         if mode is ProvenanceMode.OFF:
             return None
         keep = mode is ProvenanceMode.FULL
-        refs = tuple(
-            ParentInfo(
+
+        from ._fingerprint import fingerprint as _fingerprint
+
+        def _make_parent(p: Any) -> ParentInfo:
+            fp: str | None
+            try:
+                fp = _fingerprint(p)
+            except Exception as exc:
+                logger.warning(
+                    "fingerprint() failed for %s %r: %s",
+                    type(p).__name__,
+                    getattr(p, "name", None),
+                    exc,
+                )
+                fp = None
+            return ParentInfo(
                 type_name=type(p).__name__,
                 name=getattr(p, "name", None),
                 source=getattr(p, "source", None),
+                fingerprint=fp,
                 obj=p if keep else None,
             )
-            for p in parents
-        )
+
+        refs = tuple(_make_parent(p) for p in parents)
         return cls(operation, parents=refs, metadata=metadata or {})
 
 
