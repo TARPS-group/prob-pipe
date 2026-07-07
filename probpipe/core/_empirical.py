@@ -576,7 +576,8 @@ class RecordEmpiricalDistribution(
         Raises
         ------
         AttributeError
-            If ``len(self.fields) > 1``.
+            If the stored value has more than one leaf field
+            (``len(self._record_data) > 1``).
         """
         if len(self._record_data) == 1:
             (key,) = self._record_data.keys()

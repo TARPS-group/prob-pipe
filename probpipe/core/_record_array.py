@@ -323,8 +323,15 @@ class RecordArray(Record):
         if template is None:
             template = EventTemplate.infer_from(records[0])
         if any(isinstance(c, EventTemplate) for c in template.children.values()):
-            # Stacking into a nested batch is not yet supported; raise a catchable
-            # error (callers fall back to a clearer message).
+            # Stacking into a nested batch is not yet supported. This raises
+            # ``TypeError`` — not the ``NotImplementedError`` used by the batch
+            # edit methods (``replace`` / ``merge`` / ``without`` / ``map``) and
+            # the broadcast nested-record guards — on purpose: the broadcast
+            # sweep calls ``stack`` inside ``except (TypeError, ValueError)``
+            # blocks (see ``_broadcast_distributions``) and converts the failure
+            # into a clearer message. A ``NotImplementedError`` would escape
+            # those handlers and surface raw. Keep it a ``TypeError`` until the
+            # *Batch rework makes nested stacking a first-class construction.
             raise TypeError("RecordArray.stack does not yet support nested templates.")
         fields: dict[str, Any] = {}
         for name in template.children:
