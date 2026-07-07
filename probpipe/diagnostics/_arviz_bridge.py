@@ -16,6 +16,10 @@ from typing import Any
 
 import numpy as np
 
+# Absolute (not relative) so this file stays loadable standalone — the
+# missing-xarray fallback test execs it outside the package.
+from probpipe.diagnostics._utils import _leaf_keys
+
 try:
     import xarray as xr
 except ImportError:
@@ -71,7 +75,9 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     if hasattr(posterior, "draws"):
         raw = posterior.draws()
         if hasattr(raw, "fields"):
-            return {f: np.asarray(raw[f]) for f in raw.fields}
+            # One variable per leaf field, keyed by its full /-path (see
+            # ``_leaf_keys`` for the nested-vs-duck-typed rule).
+            return {k: np.asarray(raw[k]) for k in _leaf_keys(raw)}
         if isinstance(raw, dict):
             return {k: np.asarray(v) for k, v in raw.items()}
 
@@ -79,7 +85,7 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     if hasattr(posterior, "samples"):
         samples = posterior.samples
         if hasattr(samples, "fields"):
-            return {f: np.asarray(samples[f]) for f in samples.fields}
+            return {k: np.asarray(samples[k]) for k in _leaf_keys(samples)}
         return {"x": np.asarray(samples)}
 
     raise TypeError(

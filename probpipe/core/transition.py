@@ -236,13 +236,12 @@ def with_resampling(
                 key = jax.random.PRNGKey(seed + call_count)
                 call_count += 1
                 indices = out_dist._w.choice(key, shape=(n,))
-                # Resample per-field (samples is a NumericRecord; index
-                # each field's stacked array along the sample axis).
+                # Resample per-leaf (samples is a NumericRecord; index each
+                # leaf's stacked array along the sample axis). Path-keyed
+                # construction rebuilds any nested structure.
                 from .record import Record
 
-                new_record = Record(
-                    {f: out_dist.samples[f][indices] for f in out_dist.samples.fields}
-                )
+                new_record = Record({k: v[indices] for k, v in out_dist.samples.items()})
                 resampled = EmpiricalDistribution(
                     new_record,
                     name=out_dist.name,

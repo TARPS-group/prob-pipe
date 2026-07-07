@@ -64,10 +64,11 @@ class _RecordMarginal(RecordEmpiricalDistribution):
     ):
         # RecordArray is structurally a Record with batched leaves;
         # peel off the rows axis so the merged constructor sees one
-        # row per batch index.
+        # row per batch index. Leaf-keyed (template.keys()) so a nested
+        # batch peels correctly; path-keyed construction rebuilds nesting.
         if isinstance(samples, RecordArray):
             template = samples.template
-            samples = Record({f: samples[f] for f in samples.fields})
+            samples = Record({k: samples[k] for k in template})
         else:
             template = None
         # Default field name for bare-array outputs (the WF marginal
@@ -335,9 +336,11 @@ def _make_marginal(
     if (
         isinstance(output_samples, Record)
         and not isinstance(output_samples, RecordArray)
-        and output_samples.fields
+        and len(output_samples)
     ):
-        resolved = [output_samples[f] for f in output_samples.fields]
+        # Leaf values (values() descends into nested Records), so a nested
+        # sample inspects its arrays rather than tripping on an interior node.
+        resolved = list(output_samples.values())
         if all(hasattr(v, "ndim") and v.ndim > 0 for v in resolved):
             n = resolved[0].shape[0]
             if all(v.shape[0] == n for v in resolved):
@@ -473,6 +476,13 @@ def _make_stack(
         # collapse the inner batch axis).
         if outs and all(isinstance(o, RecordArray) for o in outs):
             first = outs[0]
+            if any(isinstance(c, EventTemplate) for c in first.template.children.values()):
+                # Rebuilding per-subtree batch children is not yet supported;
+                # mirror the nested-record guards in ``_make_stack`` below.
+                raise NotImplementedError(
+                    "Stacking nested batched records from a broadcast is not yet "
+                    "supported; return flat (top-level) record fields."
+                )
             if all(ra.batch_shape == first.batch_shape for ra in outs):
                 fields = {
                     fname: jnp.stack([ra[fname] for ra in outs], axis=0) for fname in first.fields
@@ -508,7 +518,7 @@ def _make_stack(
                 n_cur = len(flat.batch_shape)
                 new_fields = {
                     fname: flat[fname].reshape(batch_shape + flat[fname].shape[n_cur:])
-                    for fname in flat.fields
+                    for fname in flat.children
                 }
                 return type(flat)(
                     new_fields,
@@ -518,10 +528,19 @@ def _make_stack(
             # Manual per-field assembly: numpy-array-like leaves stack
             # numerically, object-dtype leaves use np.asarray(..., dtype=object).
             first = outs[0]
-            if any(o.fields != first.fields for o in outs):
+            if any(isinstance(c, EventTemplate) for c in first.event_template.children.values()):
+                # Stacking nested-Record outputs requires building a nested batch,
+                # which the batch type does not yet construct; surface a clear
+                # error rather than a confusing leaf-only KeyError.
+                raise NotImplementedError(
+                    "Broadcasting a workflow output that is a nested Record into a "
+                    "batch is not yet supported; flatten the output to top-level "
+                    "fields, or sample without broadcasting."
+                )
+            if any(tuple(o.children) != tuple(first.children) for o in outs):
                 raise TypeError("_make_stack: Records in list have inconsistent fields.")
             fields: dict[str, Any] = {}
-            for fname in first.fields:
+            for fname in first.children:
                 values = [o[fname] for o in outs]
                 try:
                     stacked = jnp.stack(values, axis=0)
@@ -620,15 +639,22 @@ def _make_stack(
     if (
         isinstance(inner_outputs, Record)
         and not isinstance(inner_outputs, RecordArray)
-        and inner_outputs.fields
+        and inner_outputs.children
     ):
-        resolved = [inner_outputs[f] for f in inner_outputs.fields]
+        if any(
+            isinstance(c, EventTemplate) for c in inner_outputs.event_template.children.values()
+        ):
+            raise NotImplementedError(
+                "Broadcasting a workflow output that is a nested Record into a batch "
+                "is not yet supported; flatten the output to top-level fields."
+            )
+        resolved = [inner_outputs[f] for f in inner_outputs.children]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
             event_shapes = tuple(v.shape[1:] for v in resolved)
-            tpl = EventTemplate(**dict(zip(inner_outputs.fields, event_shapes)))
+            tpl = EventTemplate(**dict(zip(inner_outputs.children, event_shapes)))
             reshaped_fields = {
                 fname: v.reshape(batch_shape + v.shape[1:])
-                for fname, v in zip(inner_outputs.fields, resolved)
+                for fname, v in zip(inner_outputs.children, resolved)
             }
             try:
                 from ._record_array import NumericRecordArray

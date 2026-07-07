@@ -13,6 +13,7 @@ __all__ = [
     "_component_name",
     "_dataset_values",
     "_json_dumps_safe",
+    "_leaf_keys",
     "_record_get",
     "_resolve_generative_likelihood",
     "_safe_float",
@@ -21,6 +22,24 @@ __all__ = [
 import json
 
 import numpy as np
+
+
+def _leaf_keys(value: Any) -> list[str]:
+    """Leaf keys of a draws/samples container, one export variable per leaf.
+
+    A real ``Record`` / ``RecordArray`` (or a posterior wrapping one) exposes
+    the ``/``-path of every leaf via its ``event_template`` — the nested-aware
+    enumeration, and the single duck-typing rule the diagnostics exporters
+    share. Objects without a template (e.g. test doubles) fall back to the
+    top-level ``.fields``, which coincides for a flat structure.
+
+    Note the keys of a *nested* value contain ``/``, which
+    ``InferenceData.to_netcdf()`` rejects in variable names — rename such
+    variables before persisting to netCDF.
+    """
+    if hasattr(value, "event_template"):
+        return list(value.event_template.keys())
+    return list(value.fields)
 
 
 def _record_get(obj: Any, key: str, default: Any = None) -> Any:

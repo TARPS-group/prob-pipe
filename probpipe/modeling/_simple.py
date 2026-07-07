@@ -96,11 +96,10 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             overlap = set(prior_tpl.fields) & set(data_tpl.fields)
             if overlap:
                 raise ValueError(f"Parameter and data field names overlap: {overlap}")
-            merged: dict[str, Any] = {}
-            for f in prior_tpl.fields:
-                merged[f] = prior_tpl[f]
-            for f in data_tpl.fields:
-                merged[f] = data_tpl[f]
+            # Combine at the one-level (``children``) view so a nested prior/data
+            # subtree is carried over whole rather than indexed by a top-level
+            # subtree name (which leaf-keyed ``[]`` would reject).
+            merged: dict[str, Any] = {**dict(prior_tpl.children), **dict(data_tpl.children)}
             self._event_template: EventTemplate = EventTemplate(merged)
         else:
             self._event_template = prior_tpl

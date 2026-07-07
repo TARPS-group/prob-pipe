@@ -78,6 +78,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Leaf-keyed named-collection surface for `Record` / `EventTemplate` (#326,
+  breaking).** The mapping protocol (`keys`, `values`, `items`, `__iter__`,
+  `__len__`, `__contains__`, `__getitem__`) is now keyed by **leaves** — every
+  field's full `/`-path in canonical first-appearance order — instead of the top
+  level only. `record["x"]` therefore reaches a leaf and raises on an interior
+  node; navigate to a leaf **or** a subtree with `record.at_path("x")`, and use
+  `record.children` for the one-level view. **Removed** `EventTemplate.leaf_paths`
+  (use `keys()`), `to_leaf_list` (use `list(values())`), `from_leaf_list` (use
+  `from_field_values`), and `map_with_names` (use `map_with_keys`). `Record.fields`
+  and `Record.to_dict` survive as **temporary** aliases for `children` and
+  `to_nested_dict`. `RecordArray` / `NumericRecordArray` keep a top-level mapping
+  for now, pending the batch-axis rework.
+
 - **`EventTemplate` moved to its own module and `Record` now carries an
   authoritative `EventTemplate` (breaking changes to the value-model surface).**
   `EventTemplate` / `NumericEventTemplate` and the leaf specs now live in
@@ -93,9 +106,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Moved** `to_vector` / `from_vector` and `leaf_shapes` onto
     `NumericEventTemplate`; `from_vector`'s `non_numeric` argument is dropped.
     `numeric_leaf_shapes` is consolidated into `leaf_shapes`.
-  - **Added** `EventTemplate.to_leaf_list` / `from_leaf_list` and
-    `Record.to_leaf_list` — the general, template-granularity leaf
-    (de)composition (each leaf kept whole, in canonical `leaf_paths` order).
+  - **Added** leaf-keyed (de)composition: the mapping protocol
+    (`keys` / `values` / `items` / `__iter__`) enumerates every leaf by its
+    canonical `/`-path, and `EventTemplate.from_field_values` rebuilds a
+    value from a leaf list in that order. (See the leaf-keyed surface entry
+    below for the final shape.)
 
 - **User Guide notebooks moved from the former examples section.** The docs nav
   and grouped overview now list all 11 User Guide notebooks under
