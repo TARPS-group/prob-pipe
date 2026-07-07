@@ -523,9 +523,10 @@ The line between the last two is **factorization, not field count**: a multi-fie
 - **Empirical.** A finite, possibly weighted, sample set: `sample` resamples, `log_prob` reads the (weighted) empirical measure, moments are sample estimates, and marginals are again empirical. Scalar or structured.
 - **Transformed (pushforward).** A base distribution pushed through a function, which is what lifting a function over a distribution-valued argument produces. An invertible map keeps an exact `log_prob` by change of variables, while a general map keeps `sample` and Monte-Carlo-estimates the rest.
 - **Mixture.** A convex combination of component distributions. It is also the form a dependent joint's detached `marginal` generally takes.
-- **Approximate.** A fitted stand-in for an intractable law (a variational posterior, a surrogate), exposing exactly the capabilities its fit supports.
 - **Random function.** A distribution over functions, whose event is a `FunctionSpec` leaf: a draw is a callable, and `mean` returns the mean function. A Gaussian process is the canonical case.
 - **Random measure.** A distribution *over distributions*: a draw is itself a `Distribution` (a `DistributionSpec` leaf), and `mean` returns the marginalized law.
+
+Approximation is deliberately not a family. Any family can arise as the approximation of a target, so what makes a result approximate (the target, the method, and the fit) is recorded in `provenance` rather than reified in the type.
 
 **Conditional distributions and batches stratify identically.** A `ConditionalDistribution` repeats both axes (atomic / structured / the `FactoredConditionalDistribution` joint, crossed with parametric / amortized / empirical / …), and a `DistributionBatch` is `N` of any of these. The catalog is one classification, reused across the conditional and multiplicity layers.
 

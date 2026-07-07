@@ -12,7 +12,7 @@ Parts III and V fixed what a distribution *is* and what the operations do to one
 | VI.4  | pushforward results               | the map's output template              | no                                 | per rule: exact density, exact moments, or sampling | `pushforward`                                          |
 | VI.5  | the Gaussian algebra              | numeric                                | `FactoredMultivariateGaussian`: yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `pushforward` |
 | VI.6  | random functions, random measures | a `FunctionSpec` or `DistributionSpec` leaf | no                             | mean function / marginalized law, sampling          | constructor                                            |
-| VI.7  | approximate                       | usually numeric                        | no                                 | whatever the fit supports                           | `condition_on` (inference)                             |
+| VI.7  | inference-produced                | any                                    | as realized                        | whatever the realizing family supports              | `condition_on` (inference)                             |
 | VI.8  | conditional families              | (given, event) template pairs          | some                               | the conditional capabilities                        | constructor or composition                             |
 
 ## VI.1 — Parametric families
@@ -77,15 +77,15 @@ A `RandomFunction` is a distribution whose event is a `FunctionSpec` leaf: a dra
 
 Both families are ordinary distributions over nonstandard event types, which is exactly what capability gating exists for: each claims the moments its event type mathematically supports and no more (`D1 – Mathematical fidelity`, `D3 – Capability-based operations`). Returning the log-density's law as a random function keeps even the density interface closed over the catalog (`D4 – Closed system of objects under operations`).
 
-## VI.7 — Approximate and inference-produced
+## VI.7 — Inference-produced distributions
 
 ### Contract
 
-An `ApproximateDistribution` is a fitted stand-in for an intractable law: a variational posterior, an amortized posterior, or a surrogate. It exposes exactly the capabilities its fit supports. An amortized posterior samples fast and may score, a variational family scores and samples, and a rejection or ABC posterior is sample-only and presents as empirical. Every inference-produced distribution carries `provenance` recording the method and its inputs, so an approximate result never masquerades as an exact one.
+There is no approximate-distribution class, since any family can arise as an approximation. An inference result is an ordinary member of whichever family realizes it: a variational posterior is a parametric or bijector-transformed family, an MCMC or ABC posterior is empirical, and an amortized posterior is a learned conditional evaluated at the data. What the results share is not a type but a record: each carries `provenance` naming the method, the target, and the inputs, and each exposes exactly the capabilities its realizing family supports. Whether a result is exact or approximate, and relative to what, is read from that record.
 
 ### Rationale
 
-A fitted object that claims only what it can do is the capability principle applied to inference outputs (`D3 – Capability-based operations`, `D1 – Mathematical fidelity`), and carrying the method in `provenance` is what lets a workflow be audited after the fact (`C6 – Traceable and reproducible workflows`).
+Approximation is a relation between a result and its target, not a property of the law itself: a variational Gaussian's density is exact for the law it *is*, and approximate only relative to the posterior it stands in for. Reifying that relation as a class would encode a non-mathematical distinction (`D1 – Mathematical fidelity`), so the relation lives in `provenance` instead (`C6 – Traceable and reproducible workflows`), and honest capabilities come from the realizing family (`D3 – Capability-based operations`).
 
 ## VI.8 — Conditional families
 

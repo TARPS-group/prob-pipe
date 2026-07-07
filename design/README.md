@@ -37,7 +37,7 @@ The document has six parts plus one more planned:
 - **[Part III — Values and Distributions](03-values-and-distributions.md)** — the probability domain in dependency order: schemas, values, linear operators, distributions, conditional distributions, composition, and the hierarchy of distribution kinds, each with a precise contract that must align with the design principles.
 - **[Part IV — Workflow Functions](04-workflow-functions.md)** — how an ordinary function is lifted into ProbPipe: broadcasting over distributions, dispatch, orchestration, and provenance. This is the layer the operations build on.
 - **[Part V — Operations](05-operations.md)** — precise contracts for the core operations: moments, sampling, density evaluation, conditioning, composition, pushforward, and batched operations.
-- **[Part VI — The Distribution Catalog](06-distribution-catalog.md)** — the concrete families placed on the hierarchy's axes: parametric, empirical, mixtures, pushforward results, the Gaussian algebra, random functions and measures, approximate posteriors, and the conditional families, including GLM likelihoods.
+- **[Part VI — The Distribution Catalog](06-distribution-catalog.md)** — the concrete families placed on the hierarchy's axes: parametric, empirical, mixtures, pushforward results, the Gaussian algebra, random functions and measures, inference-produced distributions, and the conditional families, including GLM likelihoods.
 - **Part VII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow. 
 
 ### Conventions
