@@ -247,7 +247,18 @@ jobs:
         # would always fail here. The floor is enforced on the full-suite
         # run below; keep partial runs exempt with --cov-fail-under=0.
         run: |
-          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html
+          # A changed test file can be entirely skipped in this job's
+          # environment (e.g. a bayesflow/stan test when that extra isn't
+          # installed here — the dedicated extra job runs it). pytest then
+          # collects 0 tests and exits 5; treat that as a pass rather than
+          # failing the targeted run.
+          ec=0
+          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html || ec=$?
+          if [ "$ec" = 5 ]; then
+            echo "No tests collected (all skipped in this environment); treating as pass."
+            ec=0
+          fi
+          exit "$ec"
 
       - name: Run tests (full suite)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
