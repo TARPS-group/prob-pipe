@@ -6,6 +6,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from .config import ProvenanceMode, provenance_config
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
@@ -14,8 +16,6 @@ if TYPE_CHECKING:
     from .record import Record
 
     ProvenanceNode = Distribution | Record | RecordArray
-
-from .config import ProvenanceMode, provenance_config
 
 __all__ = [
     "ParentInfo",
