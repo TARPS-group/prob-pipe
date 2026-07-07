@@ -56,7 +56,9 @@ class ParentInfo:
         Stable 16-character hex digest of the parent's content, populated
         by :meth:`Provenance.create`.  ``None`` only when fingerprinting
         raises an unexpected error.  Intended as the foundation for a future
-        Prefect ``cache_key_fn``.
+        Prefect ``cache_key_fn``.  Excluded from equality and hashing: descriptor
+        identity is structural (``type_name`` / ``name`` / ``source``), so a
+        content digest must not perturb ancestor-set dedup.
     obj : ProvenanceNode or None
         The live parent object.  Set in FULL mode; ``None`` in LIGHTWEIGHT
         so the parent's data can be garbage-collected.  Excluded from
@@ -66,7 +68,7 @@ class ParentInfo:
     type_name: str
     name: str | None
     source: Provenance | None = field(default=None, hash=False)
-    fingerprint: str | None = None
+    fingerprint: str | None = field(default=None, compare=False)
     obj: ProvenanceNode | None = field(default=None, compare=False)
 
 

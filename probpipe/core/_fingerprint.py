@@ -8,12 +8,17 @@ same inputs.  Intended for provenance tracking (populating
 Supported types
 ---------------
 - ``jax.Array`` / ``numpy.ndarray`` — shape + dtype + bytes (up to
-  ``max_array_bytes``; sampled beyond that)
-- Python scalars (``int``, ``float``, ``bool``, ``str``, ``None``)
-- ``Record`` — field names + values, hashed recursively
-- ``Distribution`` — class name + distribution name + numeric parameters
-- ``WorkflowFunction`` — bytecode of the wrapped user function
-- Everything else — ``repr()`` truncated to 500 characters
+  ``max_array_bytes``; sampled, tail included, beyond that). Object-dtype
+  arrays are hashed element-wise (their raw bytes are per-process pointers).
+- Python scalars (``int``, ``float``, ``bool``, ``str``, ``None``) and numpy
+  scalars; ``float`` ``-0.0``/``0.0`` and all NaN payloads are canonicalized
+- ``set`` / ``frozenset`` — order-independent (element sub-digests, sorted)
+- ``Record`` — leaf paths + leaf values (leaf-keyed collection)
+- ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
+  hashes samples + weights; ``Weights`` are hashed by content
+- ``WorkflowFunction`` — user-function bytecode, referenced names, and
+  captured/default values
+- Everything else — ``repr()`` (may be process-dependent for opaque types)
 
 All imports of ProbPipe types are deferred to call time so this module can
 be imported early in the package without triggering circular-import issues.
@@ -37,21 +42,22 @@ a 3.13 one for the same source.
 from __future__ import annotations
 
 import hashlib
+import math
 import struct
 from typing import Any
 
-__all__ = ["fingerprint"]
-
+import jax as _jax
 import numpy as _np
 
-try:
-    import jax as _jax
+__all__ = ["fingerprint"]
 
-    _JAX_ARRAY_TYPE = _jax.Array
-except ImportError:
-    _JAX_ARRAY_TYPE = type(None)  # type: ignore[assignment,misc]
-
+# JAX is a hard dependency of probpipe, so ``jax.Array`` is always importable.
+_JAX_ARRAY_TYPE = _jax.Array
 _NP_ARRAY_TYPE = _np.ndarray
+
+# Canonical NaN payload — every NaN hashes identically regardless of the bit
+# pattern a computation happened to produce.
+_CANONICAL_NAN = struct.pack(">d", float("nan"))
 
 # Default cap: arrays up to 256 MB are hashed in full (zero-copy via
 # memoryview).  Arrays beyond this are sampled at evenly-spaced offsets so
@@ -106,6 +112,15 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
         _update_distribution(h, obj, depth, max_array_bytes)
     elif _is_workflow_function(obj):
         _update_workflow_function(h, obj, max_array_bytes)
+    elif _is_weights(obj):
+        _update_weights(h, obj, depth, max_array_bytes)
+    elif isinstance(obj, _np.generic):
+        # numpy scalars: np.int64 is NOT an int subclass, and np.float32's repr
+        # is numpy-version-dependent — hash by dtype + raw bytes, never repr.
+        h.update(b"npscalar:")
+        h.update(str(obj.dtype).encode())
+        h.update(b":")
+        h.update(obj.tobytes())
     elif isinstance(obj, bool):
         # bool before int — bool is a subclass of int
         h.update(b"bool:")
@@ -115,7 +130,12 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
         h.update(str(obj).encode())
     elif isinstance(obj, float):
         h.update(b"float:")
-        h.update(struct.pack(">d", obj))
+        if math.isnan(obj):
+            h.update(_CANONICAL_NAN)  # collapse all NaN payloads
+        elif obj == 0.0:
+            h.update(struct.pack(">d", 0.0))  # collapse -0.0 and 0.0
+        else:
+            h.update(struct.pack(">d", obj))
     elif isinstance(obj, str):
         h.update(b"str:")
         h.update(obj.encode())
@@ -127,6 +147,14 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
         h.update(struct.pack(">I", len(obj)))
         for item in obj:
             _update(h, item, depth + 1, max_array_bytes)
+    elif isinstance(obj, (set, frozenset)):
+        # Order-independent: hash each element to a sub-digest and combine the
+        # sorted digests, so the result never depends on set iteration order
+        # (which is PYTHONHASHSEED-randomized across processes).
+        h.update(b"set:")
+        h.update(struct.pack(">I", len(obj)))
+        for d in sorted(_subdigest(e, depth + 1, max_array_bytes) for e in obj):
+            h.update(d)
     elif isinstance(obj, dict):
         h.update(b"dict:")
         h.update(struct.pack(">I", len(obj)))
@@ -136,8 +164,20 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
     elif _is_tfp_object(obj):
         _update_tfp_object(h, obj, depth, max_array_bytes)
     else:
+        # Last resort. ``repr`` may embed a memory address for objects with the
+        # default ``__repr__`` (making the digest process-dependent); the
+        # branches above cover ProbPipe's content-bearing types, so this is
+        # reached only for genuinely opaque values. Hash the full repr — no
+        # truncation, which would collide objects sharing a 500-char prefix.
         h.update(b"repr:")
-        h.update(repr(obj)[:500].encode())
+        h.update(repr(obj).encode())
+
+
+def _subdigest(obj: Any, depth: int, max_array_bytes: int | None) -> bytes:
+    """Content digest of a single object, for order-independent combination."""
+    sub = hashlib.sha256()
+    _update(sub, obj, depth, max_array_bytes)
+    return sub.digest()
 
 
 # ---------------------------------------------------------------------------
@@ -152,27 +192,60 @@ def _update_array(h: hashlib._Hash, arr: Any, max_bytes: int | None) -> None:
     That is acceptable here — fingerprinting happens at provenance-creation
     time, not inside a JIT-compiled function.
     """
-    try:
-        buf = _np.ascontiguousarray(_np.asarray(arr))
-    except Exception:
-        h.update(b"array:unreadable")
+    # Shape + dtype up front — available even on a JAX tracer — so arrays of
+    # different structure never collide, including on the unreadable path below.
+    shape = getattr(arr, "shape", None)
+    dtype = getattr(arr, "dtype", None)
+    h.update(f"array:{shape}:{dtype}:".encode())
+
+    # Object-dtype arrays hold Python-object *pointers*; their raw buffer bytes
+    # are per-process addresses, so hash the elements by content instead.
+    if dtype is not None and getattr(dtype, "kind", None) == "O":
+        try:
+            flat = _np.asarray(arr).ravel()
+        except Exception:
+            h.update(b"unreadable")
+            return
+        h.update(b"O")
+        h.update(struct.pack(">Q", flat.size))
+        for el in flat:
+            _update(h, el, 1, max_bytes)
         return
 
-    h.update(f"array:{buf.shape}:{buf.dtype}:".encode())
-
-    if max_bytes is None or buf.nbytes <= max_bytes:
-        # Full hash, zero-copy: memoryview avoids an extra .tobytes() copy.
-        h.update(memoryview(buf).cast("B"))
-    else:
-        # Sample ~16 evenly-spaced windows directly from the contiguous
-        # buffer view — O(sample) slices, no full copy.
-        view = memoryview(buf).cast("B")
-        n = len(view)
-        window = max(1, max_bytes // 16)
-        step = max(1, n // 16)
-        for i in range(0, n, step):
-            h.update(view[i : i + window])
-        h.update(struct.pack(">Q", n))
+    nbytes = getattr(arr, "nbytes", None)
+    try:
+        if (
+            max_bytes is not None
+            and nbytes is not None
+            and nbytes > max_bytes
+            and dtype is not None
+        ):
+            # Above the cap: transfer and hash only evenly-spaced windows —
+            # sliced device-side so the whole array is never copied host-side —
+            # always including the final tail window, plus the total byte count.
+            # Lossy (arrays differing only outside the windows can collide) but
+            # it never silently ignores the tail.
+            flat = arr.reshape(-1)
+            total = int(flat.shape[0])
+            win = max(1, (max_bytes // 16) // max(1, dtype.itemsize))
+            tail = max(0, total - win)
+            # 16 evenly-spaced window starts spanning 0..tail *inclusive*, so the
+            # final window is anchored at the buffer end (tail) and the last
+            # element is always hashed.
+            starts = sorted({(i * tail) // 15 for i in range(16)})
+            h.update(struct.pack(">Q", int(nbytes)))
+            for off in starts:
+                window = _np.ascontiguousarray(_np.asarray(flat[off : off + win]))
+                h.update(memoryview(window).cast("B"))
+        else:
+            buf = _np.ascontiguousarray(_np.asarray(arr))
+            # Full hash, zero-copy: memoryview avoids an extra .tobytes() copy.
+            h.update(memoryview(buf).cast("B"))
+    except Exception:
+        # No concrete content (e.g. a JAX tracer under jit/vmap). Shape+dtype
+        # above still discriminate by structure; two same-shape tracers are
+        # indistinguishable at trace time — inherent, not a defect here.
+        h.update(b"unreadable")
 
 
 # ---------------------------------------------------------------------------
@@ -217,19 +290,25 @@ def _is_record(obj: Any) -> bool:
         from .record import Record
 
         return isinstance(obj, Record)
-    except Exception:
+    except ImportError:
         return False
 
 
 def _update_record(h: hashlib._Hash, record: Any, depth: int, max_array_bytes: int | None) -> None:
-    """Hash a Record field-by-field in insertion order."""
+    """Hash a Record by its leaf-keyed items (full ``/``-paths → leaf values).
+
+    ``Record`` is a leaf-keyed collection: ``items()`` yields every leaf by its
+    canonical ``/``-joined path, so this flat walk captures the full nested
+    structure without recursing — and without indexing interior sub-Records,
+    which raises under the leaf-keyed API.
+    """
     h.update(b"record:")
     h.update(type(record).__name__.encode())
     h.update(b":")
-    for field in record.fields:
-        h.update(field.encode())
+    for path, value in record.items():
+        h.update(path.encode())
         h.update(b"=")
-        _update(h, record[field], depth + 1, max_array_bytes)
+        _update(h, value, depth + 1, max_array_bytes)
         h.update(b";")
 
 
@@ -243,8 +322,41 @@ def _is_distribution(obj: Any) -> bool:
         from ._distribution_base import Distribution
 
         return isinstance(obj, Distribution)
-    except Exception:
+    except ImportError:
         return False
+
+
+def _is_empirical(obj: Any) -> bool:
+    try:
+        from ._empirical import EmpiricalDistribution
+
+        return isinstance(obj, EmpiricalDistribution)
+    except ImportError:
+        return False
+
+
+def _is_weights(obj: Any) -> bool:
+    try:
+        from .._weights import Weights
+
+        return isinstance(obj, Weights)
+    except ImportError:
+        return False
+
+
+def _update_weights(h: hashlib._Hash, w: Any, depth: int, max_array_bytes: int | None) -> None:
+    """Hash a ``Weights`` object by content: uniformity, count, and log-weights.
+
+    Hashed via the public API so a ``Weights`` reached through a distribution's
+    generic ``vars()`` fallback (e.g. a mixture or broadcast distribution) is
+    distinguished by its actual weights rather than by ``repr`` (which drops the
+    values, collapsing reweighted distributions to one digest).
+    """
+    h.update(b"weights:")
+    h.update(b"1" if w.is_uniform else b"0")
+    h.update(struct.pack(">Q", int(w.n)))
+    if not w.is_uniform:
+        _update(h, w.log_normalized, depth + 1, max_array_bytes)
 
 
 def _update_distribution(
@@ -266,7 +378,6 @@ def _update_distribution(
     h.update(b":")
 
     tfp_dist = getattr(dist, "_tfp_dist", None)
-    samples = getattr(dist, "_samples", None)
 
     if tfp_dist is not None:
         params = getattr(tfp_dist, "parameters", {}) or {}
@@ -279,19 +390,20 @@ def _update_distribution(
             h.update(b"=")
             _update(h, v, depth + 1, max_array_bytes)
             h.update(b";")
-    elif samples is not None:
-        # EmpiricalDistribution / RecordEmpiricalDistribution: hash the
-        # sample data and weight array explicitly so reweighted posteriors
-        # (IS/SMC) are distinguished from the original.
+    elif _is_empirical(dist):
+        # EmpiricalDistribution / RecordEmpiricalDistribution: hash the sample
+        # data and weights via the PUBLIC accessors. The Record-backed subclass
+        # stores no ``_samples`` attribute, so keying on it silently dropped
+        # into the generic fallback below and hashed weights by repr (losing the
+        # values); using ``.samples`` / ``.is_uniform`` / ``.log_weights``
+        # distinguishes reweighted posteriors (IS/SMC) from the original.
         h.update(b"samples=")
-        _update(h, samples, depth + 1, max_array_bytes)
-        w = getattr(dist, "_w", None)
-        log_w = getattr(w, "log_normalized", None)
-        h.update(b"log_weights=")
-        if log_w is not None:
-            _update(h, log_w, depth + 1, max_array_bytes)
-        else:
-            h.update(b"uniform")
+        _update(h, dist.samples, depth + 1, max_array_bytes)
+        h.update(b"uniform=")
+        h.update(b"1" if dist.is_uniform else b"0")
+        if not dist.is_uniform:
+            h.update(b"log_weights=")
+            _update(h, dist.log_weights, depth + 1, max_array_bytes)
     else:
         # Generic fallback for other non-TFP distributions.
         _SKIP = frozenset({"_name", "_source", "_auxiliary", "_sampling_cost"})
@@ -314,27 +426,40 @@ def _is_workflow_function(obj: Any) -> bool:
         from .node import WorkflowFunction
 
         return isinstance(obj, WorkflowFunction)
-    except Exception:
+    except ImportError:
         return False
 
 
-def _hash_code(h: hashlib._Hash, code: Any, max_array_bytes: int | None) -> None:
+def _hash_code(h: hashlib._Hash, code: Any, depth: int, max_array_bytes: int | None) -> None:
     """Recursively hash a code object without repr-ing nested code objects.
 
+    Hashes the executable bytecode (``co_code``) *and* the symbol names it
+    references by index — ``co_names`` (globals / attributes / methods),
+    ``co_varnames`` (locals / arguments) and ``co_freevars`` — so a body that
+    only changes *which* name it calls (``jnp.sin`` vs ``jnp.cos``, ``r.mean()``
+    vs ``r.sum()``) is detected; ``co_code`` alone is identical for those.
+
     ``repr(code.co_consts)`` embeds memory addresses for any nested ``def``,
-    ``lambda``, or generator — making the digest process-dependent.  Instead
-    we walk ``co_consts`` and recurse into nested code objects directly.
-    ``co_filename`` and ``co_firstlineno`` are intentionally excluded: they
-    are machine- and position-dependent and defeat cross-machine caching.
+    ``lambda``, or generator — making the digest process-dependent — so we walk
+    ``co_consts`` and recurse into nested code objects directly (threading
+    ``depth`` so the recursion guard bounds deeply nested closures).
+    ``co_filename`` and ``co_firstlineno`` are intentionally excluded: they are
+    machine- and position-dependent and defeat cross-machine caching.
     """
     import types
 
+    h.update(b"code:")
     h.update(code.co_code)
+    for names in (code.co_names, code.co_varnames, code.co_freevars):
+        h.update(struct.pack(">I", len(names)))
+        for n in names:
+            h.update(n.encode())
+            h.update(b",")
     for c in code.co_consts:
         if isinstance(c, types.CodeType):
-            _hash_code(h, c, max_array_bytes)
+            _hash_code(h, c, depth + 1, max_array_bytes)
         else:
-            _update(h, c, 0, max_array_bytes)
+            _update(h, c, depth + 1, max_array_bytes)
 
 
 def _update_workflow_function(h: hashlib._Hash, wf: Any, max_array_bytes: int | None) -> None:
@@ -355,4 +480,19 @@ def _update_workflow_function(h: hashlib._Hash, wf: Any, max_array_bytes: int | 
         h.update(repr(func)[:200].encode())
         return
 
-    _hash_code(h, code, max_array_bytes)
+    _hash_code(h, code, 0, max_array_bytes)
+    # Captured/closed-over state: two functions with identical bytecode but
+    # different defaults or closure values (e.g. ``make(1.0)`` vs ``make(2.0)``)
+    # must not collide.
+    h.update(b"defaults=")
+    _update(h, func.__defaults__, 1, max_array_bytes)
+    h.update(b"kwdefaults=")
+    _update(h, func.__kwdefaults__, 1, max_array_bytes)
+    h.update(b"closure=")
+    closure = func.__closure__
+    if closure is None:
+        h.update(b"none")
+    else:
+        h.update(struct.pack(">I", len(closure)))
+        for cell in closure:
+            _update(h, cell.cell_contents, 1, max_array_bytes)

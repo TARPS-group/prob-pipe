@@ -417,3 +417,149 @@ class TestFingerprintInProvenance:
         assert any(
             "fingerprint" in r.message.lower() or "boom" in r.message for r in caplog.records
         )
+
+
+# ===========================================================================
+# 9. Review-fix regressions — determinism, collisions, leaf-keyed records
+# ===========================================================================
+
+
+class TestWorkflowFunctionCapture:
+    """Bytecode alone is not enough: referenced names, closures, and defaults."""
+
+    def _wf(self, func):
+        return WorkflowFunction(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
+
+    def test_called_name_differs(self):
+        # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing
+        # only in co_names — a collision before the fix.
+        assert fingerprint(self._wf(lambda x: jnp.sin(x))) != fingerprint(
+            self._wf(lambda x: jnp.cos(x))
+        )
+
+    def test_closure_capture_differs(self):
+        def make(k):
+            def g(x):
+                return x + k
+
+            return g
+
+        assert fingerprint(self._wf(make(1.0))) != fingerprint(self._wf(make(2.0)))
+
+    def test_default_arg_differs(self):
+        def d1(x, k=1.0):
+            return x + k
+
+        def d2(x, k=2.0):
+            return x + k
+
+        assert fingerprint(self._wf(d1)) != fingerprint(self._wf(d2))
+
+
+class TestSetHashing:
+    def test_order_independent(self):
+        assert fingerprint({1, 2, 3}) == fingerprint({3, 1, 2})
+
+    def test_content_differs(self):
+        assert fingerprint({1, 2, 3}) != fingerprint({1, 2, 4})
+
+    def test_frozenset_order_independent(self):
+        assert fingerprint(frozenset({"a", "b"})) == fingerprint(frozenset({"b", "a"}))
+
+    def test_stable_across_processes(self):
+        """Set iteration order is PYTHONHASHSEED-randomized; the digest is not."""
+        import os
+
+        script = textwrap.dedent("""
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            from probpipe.core._fingerprint import fingerprint
+            print(fingerprint({"alpha", "beta", "gamma", "delta"}))
+        """)
+        site = str(next(p for p in sys.path if "site-packages" in p))
+
+        def run(seed):
+            env = {**os.environ, "PYTHONHASHSEED": seed}
+            return subprocess.check_output(
+                [sys.executable, "-c", script, site], text=True, env=env
+            ).strip()
+
+        assert run("1") == run("2")
+
+
+class TestNumpyScalarHashing:
+    def test_int64_stable_and_differs(self):
+        # np.int64 is not an int subclass — it hit the repr fallback before.
+        assert fingerprint(np.int64(5)) == fingerprint(np.int64(5))
+        assert fingerprint(np.int64(5)) != fingerprint(np.int64(6))
+
+    def test_float32_stable(self):
+        assert fingerprint(np.float32(1.5)) == fingerprint(np.float32(1.5))
+
+
+class TestFloatCanonicalization:
+    def test_negative_zero_equals_zero(self):
+        assert fingerprint(-0.0) == fingerprint(0.0)
+
+    def test_nan_payloads_collapse(self):
+        import struct
+
+        alt_nan = struct.unpack(">d", struct.pack(">Q", 0x7FF8000000000001))[0]
+        assert alt_nan != alt_nan  # a NaN with a non-canonical payload
+        assert fingerprint(float("nan")) == fingerprint(alt_nan)
+
+
+class TestNestedRecordHashing:
+    def test_nested_record_stable(self):
+        r1 = Record(outer=Record(a=1.0, b=2.0), m=3.0)
+        r2 = Record(outer=Record(a=1.0, b=2.0), m=3.0)
+        assert fingerprint(r1) == fingerprint(r2)
+
+    def test_nested_leaf_change_differs(self):
+        r1 = Record(outer=Record(a=1.0, b=2.0), m=3.0)
+        r2 = Record(outer=Record(a=1.0, b=9.0), m=3.0)
+        assert fingerprint(r1) != fingerprint(r2)
+
+
+class TestEmpiricalReweighting:
+    """The Record-backed empirical class stores no ``_samples`` — reweighted
+    posteriors must still be distinguished (was a silent collision)."""
+
+    def _emp(self, weights):
+        from probpipe.core._empirical import EmpiricalDistribution
+
+        s = jnp.array([1.0, 2.0, 3.0])
+        return EmpiricalDistribution(s, log_weights=jnp.log(jnp.array(weights)), name="p")
+
+    def test_reweighted_differs(self):
+        assert fingerprint(self._emp([0.7, 0.2, 0.1])) != fingerprint(self._emp([0.1, 0.2, 0.7]))
+
+    def test_same_weights_stable(self):
+        assert fingerprint(self._emp([0.7, 0.2, 0.1])) == fingerprint(self._emp([0.7, 0.2, 0.1]))
+
+
+class TestArrayEdgeCases:
+    def test_over_cap_tail_change_detected(self):
+        # Above the cap: a change in the LAST element must be seen — the old
+        # sampling never covered the buffer tail.
+        base = np.arange(100_000, dtype=np.float64)
+        changed = base.copy()
+        changed[-1] = -1.0
+        assert fingerprint(jnp.asarray(base), max_array_bytes=1000) != fingerprint(
+            jnp.asarray(changed), max_array_bytes=1000
+        )
+
+    def test_object_dtype_array_stable_by_content(self):
+        a = np.array(["x", "y", "z"], dtype=object)
+        b = np.array(["x", "y", "z"], dtype=object)
+        assert fingerprint(a) == fingerprint(b)
+
+
+class TestParentInfoIdentity:
+    def test_fingerprint_excluded_from_equality(self):
+        # Two descriptors for the same ancestor compare/hash equal regardless of
+        # the content digest, so a fingerprint can't perturb ancestor-set dedup.
+        a = ParentInfo(type_name="X", name="n", source=None, fingerprint="aaaaaaaaaaaaaaaa")
+        b = ParentInfo(type_name="X", name="n", source=None, fingerprint="bbbbbbbbbbbbbbbb")
+        assert a == b
+        assert hash(a) == hash(b)
