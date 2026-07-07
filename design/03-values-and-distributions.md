@@ -294,6 +294,15 @@ class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
     def _log_prob(self, value: T) -> Array: ...                # the *normalized* log-density (refines the above)
 
 @runtime_checkable
+class SupportsRandomUnnormalizedLogProb(Protocol):
+    def _random_unnormalized_log_prob(self) -> Distribution: ...
+    # for a random measure M: the law of x ↦ log D̃(x) with D ~ M, itself a random function
+
+@runtime_checkable
+class SupportsRandomLogProb(Protocol):
+    def _random_log_prob(self) -> Distribution: ...   # likewise, with the normalized log-density of a draw
+
+@runtime_checkable
 class SupportsMean[T](Protocol):
     def _mean(self) -> T: ...       # event-typed: a value shaped like a draw
 
@@ -322,7 +331,7 @@ class SupportsMarginals(Protocol):
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...   # the detached marginal of a field or field group
 ```
 
-Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_cov` and `_quantile` require a numeric draw, with `_cov` ranging over the *flattened* draw, while `_mean` and `_variance` are event-typed and open to any event type that supports them.
+Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_cov` and `_quantile` require a numeric draw, with `_cov` ranging over the *flattened* draw, while `_mean` and `_variance` are event-typed and open to any event type that supports them. For a random measure, a draw's log-density is itself random, so the `SupportsRandom*LogProb` capabilities take no value and return the law of the log-density function, the random function `x ↦ log D(x)` for `D ~ M`.
 
 ### Rationale
 
