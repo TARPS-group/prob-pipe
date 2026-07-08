@@ -86,7 +86,7 @@ All four are bona fide laws with honestly partial capabilities (`D1 – Mathemat
 
 ### Open points
 
-- *Bandwidth shape.* Whether `bandwidth` admits per-coordinate or matrix forms, with the kernel applied in the whitened space, is open.
+- *Bandwidth shape.* Whether `bandwidth` admits a matrix / linear operator, with the kernel applied in the whitened space, is open.
 
 ## VI.3 — Mixtures and predictives
 
@@ -151,7 +151,13 @@ Three families form a closed algebra built on `LinOp`. A `MultivariateNormal`, f
 
 The algebra is closed under the operations: composing Gaussian factors with linear-Gaussian conditional distributions yields a `FactoredMultivariateGaussian`, an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact.
 
-**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another, and a fitted Gaussian emulator is an inference-produced member. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction`, the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form pushforward rules.
+```python
+class FactoredMultivariateGaussian(FactoredNumericDistribution): ...
+# derived by `*` / `joint` when every factor is Gaussian or linear-Gaussian;
+# log_prob, moments, sampling, conditioning, and marginals are all exact
+```
+
+**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction`, the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form pushforward rules.
 
 ```python
 class GaussianRandomFunction(RandomFunction[Array, Array], ABC):
@@ -170,10 +176,6 @@ class GaussianProcess(GaussianRandomFunction):
 class LinearBasisFunction(GaussianRandomFunction):
     def __init__(self, name: str, basis: Callable[[Array], Array], weights: MultivariateNormal) -> None: ...
     # f(x) = basis(x)ᵀ w; the covariance kernel is basis(x)ᵀ Σ_w basis(x′)
-
-class FactoredMultivariateGaussian(FactoredNumericDistribution): ...
-# derived by `*` / `joint` when every factor is Gaussian or linear-Gaussian;
-# log_prob, moments, sampling, conditioning, and marginals are all exact
 ```
 
 ### Rationale
@@ -202,18 +204,34 @@ Approximation is a relation between a result and its target: a variational Gauss
 The conditional members of the catalog are `ConditionalDistribution`s, each fixed by its (given, event) template pair.
 
 - A **linear-Gaussian conditional distribution** is `s ↦ N(A @ s + b, Σ)` with `A` a `LinOp`. It is the conditional member of the Gaussian algebra: composed with a Gaussian prior it yields a `FactoredMultivariateGaussian`, and conditioning through it is exact.
-- A **GLM likelihood** is assembled from pieces the catalog already has: an affine map of the given through a `LinOp`, an inverse link that is a `Bijector`, and a parametric family taking the result as its parameter. `(X, β) ↦ Normal(X @ β, σ²)` is linear regression, `Bernoulli(logistic(X @ β))` is logistic regression, and `Poisson(exp(X @ β))` is Poisson regression. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
-- An **amortized likelihood** is a learned conditional density, exposing conditional sampling and scoring as trained, with the fit recorded in `provenance`.
+- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean)` returns the law of conditionally independent observations, one per entry of `mean`, with nuisance parameters such as a Gaussian scale or a negative-binomial dispersion configured on the family instance. The likelihood's given fields are `X` and `β`, its event is the response vector, and its law is `family.build(link⁻¹(X @ β))`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
 
 ```python
 class LinearGaussianConditional(ConditionalDistribution):
     def __init__(self, name: str, A: LinOp, b: Array, cov: LinOp) -> None: ...
     # s ↦ N(A @ s + b, cov); given and event templates derived from A's input and output templates
 
-def glm_likelihood(name: str, family: Callable[[Array], Distribution], link: Bijector) -> ConditionalDistribution: ...
-    # given fields X and β; the law of the response is family(link⁻¹(X @ β))
+class GLMFamily(ABC):                     # a mean-parameterized response family
+    canonical_link: Bijector
+    @abstractmethod
+    def build(self, name: str, mean: Array) -> Distribution: ...
+    # the law of len(mean) conditionally independent observations with the given means
+
+class GaussianFamily(GLMFamily):          # canonical link: identity
+    def __init__(self, scale: ArrayLike) -> None: ...
+class BernoulliFamily(GLMFamily): ...     # canonical link: logit
+class PoissonFamily(GLMFamily): ...       # canonical link: log
+
+def glm_likelihood(name: str, family: GLMFamily, link: Bijector | None = None,
+                   *, n_obs: int, n_features: int) -> ConditionalDistribution: ...
+    # given fields X (n_obs, n_features) and β (n_features,); the event is the response y (n_obs,),
+    # with law family.build(link⁻¹(X @ β)); link defaults to family.canonical_link
 ```
 
 ### Rationale
 
-Assembling conditional families from the catalog's own pieces is `D2 – Generality first`: a `LinOp`, a `Bijector`, and a parametric family compose into an entire model class with nothing new defined.
+Assembling conditional families from uniform pieces is `D2 – Generality first`: a mean-parameterized family, a link `Bijector`, and a linear predictor compose into an entire model class with nothing new defined.
+
+### Open points
+
+- *Dispersion as a given field.* A family's nuisance parameters are fixed on the instance; promoting one to a given field, so that a prior can be composed over it, is open.
