@@ -11,7 +11,7 @@ Parts III and V fixed what a distribution *is* and what the operations do to one
 | VI.3  | mixture                           | the components' shared event           | no                                 | what the components jointly support                 | `predictive`, dependent marginals, or constructor      |
 | VI.4  | pushforward results               | the map's output template              | no                                 | per rule: exact density, exact moments, or sampling | `pushforward`                                          |
 | VI.5  | random functions, random measures | a `FunctionSpec` or `DistributionSpec` leaf | no                             | mean function / marginalized law, sampling          | constructor                                            |
-| VI.6  | the Gaussian algebra              | numeric                                | `FactoredMultivariateGaussian`: yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `pushforward` |
+| VI.6  | the Gaussian algebra              | numeric                                | yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `pushforward` |
 | VI.7  | inference-produced                | any                                    | as realized                        | whatever the realizing family supports              | `condition_on` (inference)                             |
 | VI.8  | conditional families              | (given, event) template pairs          | some                               | the conditional capabilities                        | constructor or composition                             |
 
@@ -40,13 +40,13 @@ One adapter with thin family constructors keeps the backend a computational deta
 
 ### Contract
 
-An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact, the empirical distribution of the projected atoms. It implements neither log-prob capability, since an empirical measure has no density; `KDEDistribution` is the family to reach for when one is needed.
+An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
 
 Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap (an empirical source, resampled) and the parametric bootstrap (a fitted law, redrawn) in one interface, with `replicate_size` defaulting to the source's atom count when the source is empirical and required otherwise.
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in `T`'s batch form.
 - A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is a pushforward, `pushforward(stat, ...)`, of whichever form the statistic reads, a replicate dataset or a replicate measure.
 
-A `KDEDistribution` smooths the atoms with a kernel: its law is the weighted mixture of one kernel copy per atom, scaled by the bandwidth. `_sample` draws an atom by weight and then a draw from the kernel centered there, exact for the KDE law. `_log_prob` is the log of the weighted average of kernel densities, also exact, and its mean and variance are closed form when the kernel's are. Numeric events only.
+A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a standardized, mean-zero density `K` placed at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. The kernel's role is to be recentered and rescaled, which is what `SmoothingKernel` provides: standardized draws and the standardized log-density, with the placement done by the KDE. `_sample` draws an atom by weight and adds bandwidth-scaled kernel noise, exact for the KDE law. `_log_prob` is the log of the weighted average of the rescaled kernel densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only.
 
 ```python
 class EmpiricalDistribution[T](Distribution[T]):
@@ -61,15 +61,27 @@ class BootstrapDistribution(Distribution):   # a random measure: a draw is an Em
     def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None) -> None: ...
     # the empirical measure of one replicate
 
+class SmoothingKernel(ABC):                # a standardized, mean-zero density on ℝᵈ
+    @abstractmethod
+    def _sample(self, key: Key, shape: tuple[int, ...]) -> Array: ...   # standardized noise
+    @abstractmethod
+    def _log_density(self, u: Array) -> Array: ...                      # standardized log-density
+class GaussianKernel(SmoothingKernel): ...
+class EpanechnikovKernel(SmoothingKernel): ...
+
 class KDEDistribution(Distribution[Array]):
     def __init__(self, name: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike,
-                 weights: Array | None = None, kernel: Distribution | None = None) -> None: ...
-    # kernel defaults to a standard normal; the law is the bandwidth-scaled kernel mixture
+                 weights: Array | None = None, kernel: SmoothingKernel | None = None) -> None: ...
+    # kernel defaults to GaussianKernel; the law is Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)
 ```
 
 ### Rationale
 
 All four are bona fide laws with honestly partial capabilities (`D1 – Mathematical fidelity`), and the empirical family is the closure family for sampling-based operations (`D4 – Closed system of objects under operations`). Accepting any `SupportsSampling` source makes the parametric bootstrap the same object as the nonparametric one (`D2 – Generality first`).
+
+### Open points
+
+- *Bandwidth shape.* Whether `bandwidth` admits per-coordinate or matrix forms, with the kernel applied in the whitened space, is open.
 
 ## VI.3 — Mixtures and predictives
 
