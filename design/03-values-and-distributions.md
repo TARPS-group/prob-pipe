@@ -27,7 +27,7 @@ The sections build in the order below, each depending only on those above it and
 
 ### Contract
 
-An `EventTemplate` is a `NamedTree` that defines the *shape of one event* (a draw, a stored datum, ...). Hence, each leaf specifies the type of value it holds as a `ValueSpec` which must provide an `is_valid` method to check if a value satisfies that spec. 
+An `EventTemplate` is a `NamedTree` that defines the *shape of one event* (a draw, a stored datum, ...). Hence, each leaf specifies the type of value it holds as a `ValueSpec` which must provide an `is_valid` method to check if a value satisfies that spec.
 
 ```python
 class ValueSpec(ABC):
@@ -86,7 +86,7 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ### Contract
 
-Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface. 
+Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.
 
 ```python
 class FunctionBatch(Batch[Callable]):
@@ -100,7 +100,7 @@ class OpaqueBatch(Batch[Any]):
 
 ### Rationale
 
-The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them. 
+The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them.
 
 ## III.3 — `Record` and `NumericRecord`
 
@@ -111,7 +111,7 @@ A `Record` is a  `NamedTree` that is `Tracked` and `Annotated` with leaves that 
 Since the structure of `Record` matches that of its template, the following invariants must hold:
 1. *matching keys:* `record.keys() == record.event_template.keys()`.
 2. *valid values:* for any valid key `p`, `record.event_template[p].is_valid(record[p])`.
-3. *matching sub-templates:* for any valid non-key path `p`, `record.at_path(p).event_template == record.event_template.at_path(p)`. 
+3. *matching sub-templates:* for any valid non-key path `p`, `record.at_path(p).event_template == record.event_template.at_path(p)`.
 
 Two records are equal when they share a class, an `event_template`, and field-by-field equal data. Because the template is carried rather than re-inferred, an identity transform that threads it through compares equal to its input. A transform that instead rebuilds the template by inference matches only when that inference recovers the original, for instance when the original template was itself produced by `infer_from`.
 
@@ -134,7 +134,7 @@ class Record(NamedTree[Any], Tracked, Annotated):
     # reconstruct from values in the template's canonical order; ValueError on count/shape mismatch
 ```
 
-When every leaf is a numeric array, a `Record` is a `NumericRecord`, which is itself a pytree of arrays (its children the field values, its `event_template` static metadata). It adds flat vectorization, reading the necessary information (`leaf_shapes`, `vector_size`, and canonical order) from the template. Because a `NumericRecord` is a bare array pytree, it passes through `grad` / `vmap` / `jit` unchanged. 
+When every leaf is a numeric array, a `Record` is a `NumericRecord`, which is itself a pytree of arrays (its children the field values, its `event_template` static metadata). It adds flat vectorization, reading the necessary information (`leaf_shapes`, `vector_size`, and canonical order) from the template. Because a `NumericRecord` is a bare array pytree, it passes through `grad` / `vmap` / `jit` unchanged.
 
 ```python
 class NumericRecord(Record):
@@ -149,7 +149,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Open points
 
-- *Single-value coercion.* How a single-field `Record` presents is unresolved. For example, in the array case, it could present as a bare scalar/array (coercion via `float` / `jnp.asarray`, a `.shape` shim, or a dedicated single-value wrapper). Or, in the function case, it could support `__call__`. 
+- *Single-value coercion.* How a single-field `Record` presents is unresolved. For example, in the array case, it could present as a bare scalar/array (coercion via `float` / `jnp.asarray`, a `.shape` shim, or a dedicated single-value wrapper). Or, in the function case, it could support `__call__`.
 
 ## III.4 — `RecordBatch` and `NumericRecordBatch`
 
@@ -240,9 +240,9 @@ Operations mint linear operators, covariances above all, and every operation mus
 
 ### Contract
 
-A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_names`, which returns the same law under new field names. 
+A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_names`, which returns the same law under new field names.
 
-A `NumericDistribution` is a `Distribution` whose draws are numeric, so it carries a `NumericEventTemplate` and can use the flat-vector machinery. 
+A `NumericDistribution` is a `Distribution` whose draws are numeric, so it carries a `NumericEventTemplate` and can use the flat-vector machinery.
 
 ```python
 class Distribution[T](Tracked, Annotated):
@@ -259,7 +259,7 @@ class Distribution[T](Tracked, Annotated):
 class NumericDistribution(Distribution): ...   # marker: numeric draws, carries a NumericEventTemplate
 ```
 
-**The distribution value specification.** The `DistributionSpec(event_template)` class extends the value spec to include a `Distribution` as a valid value (with the given `event_template`). Hence, it is possible to define random measures (distributions over distributions). A draw from a random measure is therefore a `Record` whose leaf value is a `Distribution`, wrapped like any other draw. 
+**The distribution value specification.** The `DistributionSpec(event_template)` class extends the value spec to include a `Distribution` as a valid value (with the given `event_template`). Hence, it is possible to define random measures (distributions over distributions). A draw from a random measure is therefore a `Record` whose leaf value is a `Distribution`, wrapped like any other draw.
 
 ```python
 DistributionSpec(event_template: EventTemplate)
@@ -277,7 +277,7 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 ### Contract
 
-Each operation on a distribution is a **capability**: a distribution implements an underscore method (`_sample`, `_log_prob`, `_mean`, …) on the raw type `T` for each operation it supports, and the matching user-facing op (`sample`, `log_prob`, `mean`, …) wraps the result at the boundary when appropriate. 
+Each operation on a distribution is a **capability**: a distribution implements an underscore method (`_sample`, `_log_prob`, `_mean`, …) on the raw type `T` for each operation it supports, and the matching user-facing op (`sample`, `log_prob`, `mean`, …) wraps the result at the boundary when appropriate.
 
 ```python
 @runtime_checkable
@@ -419,10 +419,10 @@ This is `D1 – Mathematical fidelity` on the distribution layer: a `Distributio
 
 ### Contract
 
-A *factored distribution* is a distribution **built from named sub-distributions**. Beyond being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. The `FactoredDistribution` and `FactoredConditionalDistribution` classes generically implement `SupportsFactors` for distributions and conditional distributions. As another example, the `FactoredMultivariateGaussian` is a factored distribution in which the factors are jointly Gaussian, so conditioning and marginalization are exact. 
+A *factored distribution* is a distribution **built from named sub-distributions**. Beyond being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. The `FactoredDistribution` and `FactoredConditionalDistribution` classes generically implement `SupportsFactors` for distributions and conditional distributions. As another example, the `FactoredMultivariateGaussian` is a factored distribution in which the factors are jointly Gaussian, so conditioning and marginalization are exact.
 
-The generic factored (conditional) distributions `FactoredDistribution` and `FactoredConditionalDistribution`  carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint distribution's `event_template` is the flat union of the fields its factors produce. 
-In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically, based on what their factors support. For example, if all factors implement `SupportsLogProb` then so does the factored distribution. As with other generic distributions, there are also numeric specializations. 
+The generic factored (conditional) distributions `FactoredDistribution` and `FactoredConditionalDistribution`  carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint distribution's `event_template` is the flat union of the fields its factors produce.
+In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically, based on what their factors support. For example, if all factors implement `SupportsLogProb` then so does the factored distribution. As with other generic distributions, there are also numeric specializations.
 
 ```python
 @runtime_checkable

@@ -1,6 +1,6 @@
 # ProbPipe Consolidated Design Reference
 
-This document consolidates the design intent spread across the active design threads that reconfigure the core value, distribution, and collection abstractions. Its purpose is coordination: to surface the principles those threads share, to make overlapping concerns explicit, and to limit re-litigation by fixing what is settled at the level of *principles*. It is meant to stand on its own and to be the reference from which more granular documentation is later derived.
+This document consolidates the design intent spread across the active design threads that reconfigure the core value, distribution, and collection abstractions. Its purpose is coordination: to surface the principles those threads share, to make overlapping concerns explicit, and to limit re-litigation by fixing what is settled at the level of *principles*. It is meant to stand on its own and to be the reference from which more granular documentation is later derived. It describes the target state: where it disagrees with the current code, the design is ahead by intent, and the repository's contributor documentation describes the code as it stands until implementation catches up.
 
 ### Mathematical scope
 
@@ -28,7 +28,7 @@ Each object also has an indexed-collection form (a batch), and every operation l
 | marginalization | the law of a named field of `X ~ μ` |
 | prediction | `μK = ∫ K(s, ·) μ(ds)` |
 
-### Contents 
+### Contents
 
 The document has six parts plus one more planned:
 
@@ -38,13 +38,13 @@ The document has six parts plus one more planned:
 - **[Part IV — Workflow Functions](04-workflow-functions.md)** — how an ordinary function is lifted into ProbPipe: broadcasting over distributions, dispatch, orchestration, and provenance. This is the layer the operations build on.
 - **[Part V — Operations](05-operations.md)** — precise contracts for the core operations: moments, sampling, density evaluation, conditioning, composition, pushforward, and batched operations.
 - **[Part VI — The Distribution Catalog](06-distribution-catalog.md)** — the concrete families placed on the hierarchy's axes: parametric, empirical, mixtures, pushforward results, the Gaussian algebra, random functions and measures, inference-produced distributions, and the conditional families, including GLM likelihoods.
-- **Part VII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow. 
+- **Part VII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow.
 
 ### Conventions
 
-#### Structure 
+#### Structure
 
 Every section in Parts II through VI leads with a **Contract** subsection, which describes what the abstraction or operation is, and its precise public interface, in plain language and typing. Next, the **Rationale** subsection describes the reasoning for the design and how it aligns with the Part I design principles. **Notes** and **Open points** subsections appear only where necessary, and should be used sparingly.
 #### Formatting
 
-Class and method names are set in code font.  Design principles are cited only in the **Rationale** subsections, by identifier and short name, drawing on the *core principles* (the C-series) and *derived principles* (the D-series) of Part I. For example, the fourth core principle would be cited as `C4 – Function lifting via pushforward`. An abstraction is referred to by its class name rather than by the underlying mathematical concept, except in mathematical statements. For example, `ConditionalDistribution` is used throughout, with *kernel* reserved for mathematical statements such as its definition as a probability kernel `K : S → P(T)`. 
+Class and method names are set in code font.  Design principles are cited only in the **Rationale** subsections, by identifier and short name, drawing on the *core principles* (the C-series) and *derived principles* (the D-series) of Part I. For example, the fourth core principle would be cited as `C4 – Function lifting via pushforward`. An abstraction is referred to by its class name rather than by the underlying mathematical concept, except in mathematical statements. For example, `ConditionalDistribution` is used throughout, with *kernel* reserved for mathematical statements such as its definition as a probability kernel `K : S → P(T)`.

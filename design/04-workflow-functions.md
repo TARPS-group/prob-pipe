@@ -64,7 +64,7 @@ This is `C4 – Function lifting via pushforward` realized: replacing any argume
 
 A workflow function keeps two namespaces strictly apart:
 
-- **The wrapped function's arguments.** Every positional and keyword argument of a call binds to the wrapped function. 
+- **The wrapped function's arguments.** Every positional and keyword argument of a call binds to the wrapped function.
 - **ProbPipe controls.** The sample count, PRNG seed, and the `include_inputs` switch are set on the decorator (construction time) or, for a single call, through a `with_options` view:
 
 ```python

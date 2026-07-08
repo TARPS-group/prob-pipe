@@ -8,14 +8,14 @@ Parts II–IV fixed the *shared abstractions*, the *values and distributions*, a
 
 ### Contract
 
-Every operation shares the following mechanics: 
-- **Capability dispatch.** An operation tests the relevant structural protocol with `isinstance(obj, SupportsX)` and calls the implementer method. An object that does not implement the capability raises a clear error. 
+Every operation shares the following mechanics:
+- **Capability dispatch.** An operation tests the relevant structural protocol with `isinstance(obj, SupportsX)` and calls the implementer method. An object that does not implement the capability raises a clear error.
 - **Two levels.** The implementer's `_x` method acts on the raw value type `T`. The user-facing operation wraps the result at the boundary, attaches identity, metadata, and provenance, and broadcasts, all at no cost to the implementer.
 - **The wrap boundary.** A raw value becomes the `Record` its `event_template` describes, and the wrap is unconditional: a bare array becomes a single-field `Record`, a raw value that is already a `Record` is not wrapped again, and any other raw type, including the `Distribution` a random measure yields, becomes the `Record`'s leaf value. A concrete family such as a `Normal` can therefore be written in plain arrays, and a user writes the family's natural constructor rather than supplying a template by hand. A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
-- **The `raw` opt-out.** Any operation whose result is event-typed accepts `raw=True` and returns the raw event type `T` unwrapped, carrying no name or provenance. The wrapped, tracked result is always the default.
+- **The `raw` opt-out.** Every operation accepts `raw=True` and returns its result unwrapped, carrying no name or provenance: the raw event type `T` for an event-typed result, and the bare array for a numeric summary. The wrapped, tracked result is always the default.
 - **Default algorithms.** An operation uses a closed form when the object provides one, and otherwise a sensible default such as Monte Carlo, with the sample count and PRNG key exposed as controls for users who need them.
 - **Output identity.** Every tracked term an operation mints is fully specified, never left implicit. Its `event_template` is carried or derived from the inputs, its `provenance` records the operation and its parent descriptors, and its `name` is auto-derived and marked `name_is_auto`. Free-form `annotations` do not auto-propagate, since lineage rides on `provenance` rather than on annotations.
-- **Tracking scope.** Results that are values or distributions are `Tracked`. Whether a bare numeric summary, such as a `log_prob` density, is itself wrapped is settled per operation.
+- **Tracking scope.** Every result is tracked, including a numeric summary: a density returns as a single-field `Record` whose provenance records the operation, and the bare value is one `raw=True` away.
 
 ### Rationale
 
@@ -26,10 +26,10 @@ The operation model is where the core principles become mechanical. Capability d
 ### Contract
 
 The moment operations summarize a distribution by a deterministic value.
-- `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is a `Record` whose event template matches the distribution's, or the raw event-typed value `T` with `raw=True`. 
+- `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is a `Record` whose event template matches the distribution's, or the raw event-typed value `T` with `raw=True`.
 - `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates. Its input and output templates are both the distribution's `NumericEventTemplate`, so it applies directly to draws.
-- `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. If a single level is provided it returns a `Record`; for multiple levels, it returns a `RecordBatch`. 
-- `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. It returns a `Record`. 
+- `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. If a single level is provided it returns a `Record`; for multiple levels, it returns a `RecordBatch`.
+- `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. It returns a `Record`.
 
 Each operation uses a closed form when the distribution implements the matching capability (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`, `SupportsQuantile`, `SupportsExpectation`), whatever the event type. Otherwise, if it implements `SupportsSampling`, it falls back to a Monte Carlo estimate, with the sample count and PRNG key specified by the user. The fallback averages draws, so for `mean` and `variance` it requires a numeric event, while for `expectation` it averages the array outputs of `f` and so applies to any event type that samples. A moment requested of a distribution that supports neither path raises a capability error.
 
@@ -48,11 +48,11 @@ A mean is defined whenever draws can be averaged: coordinate-wise for arrays, po
 - The PRNG `key` is explicit and supplied by the caller, so a draw is reproducible from its key.
 - The draw carries `provenance` recording `sample` and the distribution it came from.
 
-For a `ConditionalDistribution`, `sample(K, given=s, key=...)` is the fused conditional path that's equivalent to `sample(condition_on(K, s), key=...)`. 
+For a `ConditionalDistribution`, `sample(K, given=s, key=...)` is the fused conditional path that's equivalent to `sample(condition_on(K, s), key=...)`.
 
 ### Rationale
 
-Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Wrapping even a scalar draw as a single-field `Record` lets `sample` return a tracked term of uniform shape whatever the distribution's raw type, serving `C1 – Uniform interface to distributions and values`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it. 
+Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Wrapping even a scalar draw as a single-field `Record` lets `sample` return a tracked term of uniform shape whatever the distribution's raw type, serving `C1 – Uniform interface to distributions and values`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it.
 
 ## V.3 — `log_prob` and `unnormalized_log_prob`
 
@@ -61,16 +61,13 @@ Threading an explicit PRNG `key` makes every draw reproducible from its inputs, 
 `log_prob(d, value)` returns the log-density of `value` under `d`. The value may be a `Record` matching the `event_template`, or a bare array for a scalar law.
 - `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
 - `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
-- A batch of values, or a `DistributionBatch`, maps elementwise to a batched array of densities.
+- The result is a tracked term: a single-field `Record` whose provenance records the operation, the distribution, and the scored value, with `raw=True` returning the bare array.
+- A batch of values, or a `DistributionBatch`, maps elementwise to the batched densities, a single-field `NumericRecordBatch`.
 - For a `ConditionalDistribution`, `log_prob(K, y, given=s)` is the fused conditional path that's equivalent to `log_prob(condition_on(K, s), y)`.
 
 ### Rationale
 
 Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (`D1 – Mathematical fidelity`): a distribution that knows its normalizing constant offers the true density, while one that does not still serves inference, which needs the density only up to a constant.
-
-### Open points
-
-- *Tracking of densities.* A density is a number rather than a value or distribution, so the default is a bare array. Whether a density is instead returned as a `Tracked` scalar is the per-operation instance of the tracking-scope question.
 
 ## V.4 — `condition_on` and `predictive`
 
@@ -101,7 +98,7 @@ A single operation covers binding, slicing, and inversion because all three are 
 
 ### Contract
 
-Recall that the composition operator `A * B`, exposed on `Distribution` and `ConditionalDistribution` as `__mul__` constructs the joint (conditional) distribution of `A` and `B`. It returns either a `FactoredDistribution` or, when some givens remain, a `FactoredConditionalDistribution`. Its `provenance` records `*` as the operation and the operand factors, and its `name` is auto-derived, as described next. 
+Recall that the composition operator `A * B`, exposed on `Distribution` and `ConditionalDistribution` as `__mul__` constructs the joint (conditional) distribution of `A` and `B`. It returns either a `FactoredDistribution` or, when some givens remain, a `FactoredConditionalDistribution`. Its `provenance` records `*` as the operation and the operand factors, and its `name` is auto-derived, as described next.
 
 **Auto-derived names.** A joint is derived, not constructed by hand, so `*` derives its `name` deterministically from its factors. The factors are listed in **canonical order** (the conditional-first topological order of the flattened factor graph, with mutually independent factors ordered by the canonical order of the fields they produce), and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` produce the same joint distribution. The derived name is marked `name_is_auto`.
 
@@ -160,7 +157,7 @@ Both return a **tracked term** whose `provenance` records the access and its sou
 ### Contract
 
 Every operation lifts to a `Batch` by mapping over its elements, which is the workflow-function sweep applied to the operation itself.
-- `sample` and `log_prob` over a `DistributionBatch` return a `RecordBatch` and a batched array of densities, with the batch axes preserved.
+- `sample` and `log_prob` over a `DistributionBatch` return a `RecordBatch` and the batched densities, with the batch axes preserved.
 - A moment over a `DistributionBatch` returns a batch of the corresponding values, such as a `LinOpBatch` for `cov`.
 - When the elements are array-backed, the map is a single vectorized call rather than a Python loop, which is the batched-backend optimization.
 - An operation applied to a batch whose elements lack the required capability raises the same capability error a single element would.

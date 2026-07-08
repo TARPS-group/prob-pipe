@@ -21,10 +21,10 @@ Values in ProbPipe are represented as named, ordered trees.  ProbPipe uses the f
 - A **field** is one named leaf — a single object in the collection.
 - A **path** is a `/`-joined sequence which can address either a field or an interior node.
 - A **key** is a path that specifically addresses a *field*. Every key is a path but a path for an interior node is not a key.
-- A **child** of a node is an entry directly under that node. 
-- The **canonical order** of a tree is a depth-first walk visiting children in insertion order. 
+- A **child** of a node is an entry directly under that node.
+- The **canonical order** of a tree is a depth-first walk visiting children in insertion order.
 
-Naming, addressing, traversal, and structure-preserving transforms are defined once in the `NamedTree` class. Specially, a `NamedTree` is a `Mapping` whose keys are exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, they are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. Sibling names are distinct, so every path identifies at most one node. Distinct subtrees may reuse a name, as in `a/c` and `b/c`, and a bare name is then ambiguous on its own. 
+Naming, addressing, traversal, and structure-preserving transforms are defined once in the `NamedTree` class. Specially, a `NamedTree` is a `Mapping` whose keys are exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, they are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. Sibling names are distinct, so every path identifies at most one node. Distinct subtrees may reuse a name, as in `a/c` and `b/c`, and a bare name is then ambiguous on its own.
 
 ```python
 class NamedTree[L]:
@@ -79,16 +79,16 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 
 ### Contract
 
-Identity & metadata is the cross-cutting layer that lets any object carry, alongside its mathematical content, three things: a **name** (what the object is called), a **provenance** (how it was produced), and free-form **annotations** (auxiliary information supplied by the user or an algorithm). The structure for identity and metadata is provided by two mixins: `Tracked` (name + provenance) and `Annotated` (annotations). All ProbPipe objects must be `Tracked`. We call any such object a **tracked term**: a value, distribution, conditional distribution, or batch that carries a name and provenance, and the kind of object ProbPipe operations consume and produce.  
+Identity & metadata is the cross-cutting layer that lets any object carry, alongside its mathematical content, three things: a **name** (what the object is called), a **provenance** (how it was produced), and free-form **annotations** (auxiliary information supplied by the user or an algorithm). The structure for identity and metadata is provided by two mixins: `Tracked` (name + provenance) and `Annotated` (annotations). All ProbPipe objects must be `Tracked`. We call any such object a **tracked term**: a value, distribution, conditional distribution, or batch that carries a name and provenance, and the kind of object ProbPipe operations consume and produce.
 
-Annotation metadata is a free-form mapping: 
+Annotation metadata is a free-form mapping:
 
 ```python
-class Annotated:                           
+class Annotated:
     annotations: Mapping[str, Any] | None
 ```
 
-A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`. `with_name` renames the object itself, unlike `NamedTree.with_names`, which renames the fields within it. The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves. 
+A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`. `with_name` renames the object itself, unlike `NamedTree.with_names`, which renames the fields within it. The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves.
 
 ```python
 class Tracked:
@@ -111,7 +111,7 @@ class ParentInfo:
 
 ### Rationale
 
-`Tracked` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes. 
+`Tracked` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
 
 ## II.3 — `Batch`
 
@@ -140,7 +140,7 @@ class Batch[E](Tracked):
 
 Some operations have many possible implementations, and which one applies depends on the *types* of the objects involved rather than on an object's own class. A **dispatch registry** holds those implementations as named methods and selects one for a given call.
 
-Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration. 
+Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration.
 
 ```python
 class BaseDispatchMethod(ABC):
@@ -175,7 +175,7 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ..
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
 
-A single **catalog** makes every registry discoverable. It provides a list of registries, their methods with their priorities, and a one-line description, so a user can see which methods exist and how a given call will resolve. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`. 
+A single **catalog** makes every registry discoverable. It provides a list of registries, their methods with their priorities, and a one-line description, so a user can see which methods exist and how a given call will resolve. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`.
 
 ```python
 @dataclass(frozen=True)
