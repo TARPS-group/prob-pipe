@@ -23,7 +23,7 @@ A single backend adapter, `TFPDistribution`, implements the capability set on ra
 
 ```python
 class TFPDistribution(Distribution[Array]):
-    def __init__(self, name: str, dist: tfd.Distribution) -> None: ...
+    def __init__(self, name: str, backend_dist: Any) -> None: ...   # the wrapped backend object
     # closed-form _sample, _log_prob, _mean, _variance, and _quantile;
     # _cov and _marginal where the family defines them
 
@@ -42,28 +42,34 @@ One adapter with thin family constructors keeps the backend a computational deta
 
 An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact, the empirical distribution of the projected atoms. It implements neither log-prob capability, since an empirical measure has no density; `KDEDistribution` is the family to reach for when one is needed.
 
-A `BootstrapDistribution` is the random measure of the bootstrap: a draw is itself an `EmpiricalDistribution`, the empirical measure of `replicate_size` atoms resampled with replacement from the base. The bootstrap distribution of a statistic is its pushforward, `pushforward(stat, b)`.
+Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap (an empirical source, resampled) and the parametric bootstrap (a fitted law, redrawn) in one interface, with `replicate_size` defaulting to the source's atom count when the source is empirical and required otherwise.
+- A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in `T`'s batch form.
+- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is a pushforward, `pushforward(stat, ...)`, of whichever form the statistic reads, a replicate dataset or a replicate measure.
 
 A `KDEDistribution` smooths the atoms with a kernel: its law is the weighted mixture of one kernel copy per atom, scaled by the bandwidth. `_sample` draws an atom by weight and then a draw from the kernel centered there, exact for the KDE law. `_log_prob` is the log of the weighted average of kernel densities, also exact, and its mean and variance are closed form when the kernel's are. Numeric events only.
 
 ```python
 class EmpiricalDistribution[T](Distribution[T]):
-    def __init__(self, name: str, atoms: Any, weights: Array | None = None) -> None: ...
+    def __init__(self, name: str, atoms: Batch | Array, weights: Array | None = None) -> None: ...
     # atoms are given in T's batch form; weights default to uniform
 
+class BootstrapReplicateDistribution(Distribution):
+    def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None) -> None: ...
+    # a draw is one replicate in T's batch form: replicate_size iid draws from source
+
 class BootstrapDistribution(Distribution):   # a random measure: a draw is an EmpiricalDistribution
-    def __init__(self, name: str, base: EmpiricalDistribution, replicate_size: int | None = None) -> None: ...
-    # replicate_size defaults to the base's atom count
+    def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None) -> None: ...
+    # the empirical measure of one replicate
 
 class KDEDistribution(Distribution[Array]):
-    def __init__(self, name: str, atoms: Array, bandwidth: ArrayLike,
+    def __init__(self, name: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike,
                  weights: Array | None = None, kernel: Distribution | None = None) -> None: ...
     # kernel defaults to a standard normal; the law is the bandwidth-scaled kernel mixture
 ```
 
 ### Rationale
 
-All three are bona fide laws with honestly partial capabilities (`D1 – Mathematical fidelity`), and the empirical family is the closure family for sampling-based operations (`D4 – Closed system of objects under operations`).
+All four are bona fide laws with honestly partial capabilities (`D1 – Mathematical fidelity`), and the empirical family is the closure family for sampling-based operations (`D4 – Closed system of objects under operations`). Accepting any `SupportsSampling` source makes the parametric bootstrap the same object as the nonparametric one (`D2 – Generality first`).
 
 ## VI.3 — Mixtures and predictives
 
@@ -98,6 +104,10 @@ class BijectorTransformedDistribution(Distribution[T]):
 
 Typing pushforward results as catalog families keeps the operation closed and its outputs operable (`D4 – Closed system of objects under operations`).
 
+### Open points
+
+- *Lazy sampling pushforwards.* The sampling rule materializes an `EmpiricalDistribution` with a fixed atom count. A lazy alternative that remains exactly samplable, drawing an input and applying the map on demand, would suit unbounded resampling such as bootstrap statistics; whether that is the sampling rule's result or an opt-in form is open.
+
 ## VI.5 — Random functions and random measures
 
 ### Contract
@@ -120,19 +130,23 @@ Both are ordinary distributions over nonstandard event types, claiming exactly t
 
 ### Contract
 
-Three families form a closed algebra built on `LinOp`. A `MultivariateNormal`, from the parametric families, is the atomic member, its covariance a `LinOp` carrying the distribution's templates on both sides. A `GaussianRandomFunction` is the random-function member: its `mean` is the mean function, its covariance is a kernel over pairs of inputs, and evaluation at any finite set of points is exact. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals.
+Three families form a closed algebra built on `LinOp`. A `MultivariateNormal`, from the parametric families, is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp`, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the abstract random-function member, covering any model with Gaussian predictions rather than Gaussian processes alone: a concrete subclass implements the predictive mean and marginal variance, and the joint predictive covariance when it supports joint evaluation. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and an exact conversion to `MultivariateNormal` over the flat event is registered with the converter registry.
 
 The algebra is closed under the operations: composing Gaussian factors with linear-Gaussian conditional distributions yields a `FactoredMultivariateGaussian`, an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact.
 
 ```python
-class GaussianRandomFunction(RandomFunction[Array, Array]):
-    def __init__(self, name: str, mean_fn: Callable[[Array], Array],
-                 cov_kernel: Callable[[Array, Array], Array]) -> None: ...
-    def __call__(self, x: Array) -> MultivariateNormal: ...   # exact at any finite set of points
+class GaussianRandomFunction(RandomFunction[Array, Array], ABC):
+    @abstractmethod
+    def predict_mean(self, X: Array) -> Array: ...        # X stacks n input points
+    @abstractmethod
+    def predict_variance(self, X: Array) -> Array: ...    # marginal variance at each point
+    def predict_covariance(self, X: Array) -> LinOp: ...  # joint covariance over the points, when supported
+    def __call__(self, X: Array) -> Normal | MultivariateNormal: ...
+    # the exact finite-dimensional law at the stacked points, joint when predict_covariance is available
 
-class FactoredMultivariateGaussian(FactoredDistribution):
-    def __init__(self, name: str, *factors: Distribution | ConditionalDistribution) -> None: ...
-    # every factor Gaussian or linear-Gaussian; conditioning and marginals are exact
+class FactoredMultivariateGaussian(FactoredNumericDistribution): ...
+# derived by `*` / `joint` when every factor is Gaussian or linear-Gaussian;
+# log_prob, moments, sampling, conditioning, and marginals are all exact
 ```
 
 ### Rationale
