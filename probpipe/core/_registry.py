@@ -17,7 +17,9 @@ Priority semantics:
   classifies it explicitly.
 
 See ``docs/api/extending.md`` for the tier criteria a contributor
-should use when choosing a priority for a new method.
+should use when choosing a priority for a new method, and
+``docs/contributor/dispatch-conventions.md`` for the narrative guide to
+the registry + catalog conventions.
 
 **Arity-typed subclasses.** :class:`UnaryDispatchRegistry` and
 :class:`BinaryDispatchRegistry` differ only in ``supported_types()``

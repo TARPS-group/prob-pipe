@@ -5,6 +5,12 @@ table below maps each kind of extension to the contract you implement
 against and the registry (if any) you register with. Each row links to
 the section on this page that covers it in detail.
 
+For the mental model behind the dispatch registries and the catalog —
+when to reach for a `UnaryDispatchRegistry` vs a `BinaryDispatchRegistry`,
+how to create a new registry, and how plugin registration works — see the
+[dispatch registries contributor guide](../contributor/dispatch-conventions.md).
+This page is the API reference it points back to.
+
 | To add a... | Implement | Register with |
 |---|---|---|
 | New distribution family | Subclass of [`Distribution`](#distribution-base-classes), `RecordDistribution`, `NumericRecordDistribution`, or `TFPDistribution` | (none — capability is detected by `isinstance` against the matching [protocol](#protocols)) |

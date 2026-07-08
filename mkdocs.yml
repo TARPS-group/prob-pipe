@@ -111,5 +111,7 @@ nav:
     - Provenance: api/provenance.md
     - Extending ProbPipe: api/extending.md
     - Internals: api/internals.md
+  - Contributor Guide:
+    - Dispatch registries and the catalog: contributor/dispatch-conventions.md
   - Cite: cite.md
   - Help: help.md
