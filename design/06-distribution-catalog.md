@@ -204,7 +204,7 @@ Approximation is a relation between a result and its target: a variational Gauss
 The conditional members of the catalog are `ConditionalDistribution`s, each fixed by its (given, event) template pair.
 
 - A **linear-Gaussian conditional distribution** is `s ↦ N(A @ s + b, Σ)` with `A` a `LinOp`. It is the conditional member of the Gaussian algebra: composed with a Gaussian prior it yields a `FactoredMultivariateGaussian`, and conditioning through it is exact.
-- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean)` returns the law of conditionally independent observations, one per entry of `mean`, with nuisance parameters such as a Gaussian scale or a negative-binomial dispersion configured on the family instance. The likelihood's given fields are `X` and `β`, its event is the response vector, and its law is `family.build(link⁻¹(X @ β))`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
+- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean, dispersion)` returns the law of conditionally independent observations, one per entry of `mean`, with `has_dispersion` declaring whether the family takes a dispersion parameter, such as a Gaussian scale. The likelihood's given fields are `X`, `β`, and the dispersion when the family has one, its event is the response vector, and its law is `family.build(link⁻¹(X @ β), dispersion)`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. `X` and the dispersion may instead be supplied to `glm_likelihood`, which fixes them at construction, exactly the exogenous curry of `condition_on` applied early. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
 
 ```python
 class LinearGaussianConditional(ConditionalDistribution):
@@ -213,25 +213,24 @@ class LinearGaussianConditional(ConditionalDistribution):
 
 class GLMFamily(ABC):                     # a mean-parameterized response family
     canonical_link: Bijector
+    has_dispersion: bool                  # whether build takes a dispersion, e.g. a Gaussian scale
     @abstractmethod
-    def build(self, name: str, mean: Array) -> Distribution: ...
+    def build(self, name: str, mean: Array, dispersion: ArrayLike | None = None) -> Distribution: ...
     # the law of len(mean) conditionally independent observations with the given means
 
-class GaussianFamily(GLMFamily):          # canonical link: identity
-    def __init__(self, scale: ArrayLike) -> None: ...
-class BernoulliFamily(GLMFamily): ...     # canonical link: logit
-class PoissonFamily(GLMFamily): ...       # canonical link: log
+class GaussianFamily(GLMFamily): ...      # canonical link: identity; dispersion: the scale
+class BernoulliFamily(GLMFamily): ...     # canonical link: logit; no dispersion
+class PoissonFamily(GLMFamily): ...       # canonical link: log; no dispersion
 
 def glm_likelihood(name: str, family: GLMFamily, link: Bijector | None = None,
-                   *, n_obs: int, n_features: int) -> ConditionalDistribution: ...
-    # given fields X (n_obs, n_features) and β (n_features,); the event is the response y (n_obs,),
-    # with law family.build(link⁻¹(X @ β)); link defaults to family.canonical_link
+                   *, n_obs: int | None = None, n_features: int | None = None,
+                   X: Array | None = None, dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
+    # the response y (n_obs,) has law family.build(link⁻¹(X @ β), dispersion), with link defaulting
+    # to family.canonical_link. X (n_obs, n_features), β (n_features,), and the dispersion (when the
+    # family has one) are given fields unless supplied here, which fixes them; the shapes are derived
+    # from X when it is supplied and required otherwise
 ```
 
 ### Rationale
 
 Assembling conditional families from uniform pieces is `D2 – Generality first`: a mean-parameterized family, a link `Bijector`, and a linear predictor compose into an entire model class with nothing new defined.
-
-### Open points
-
-- *Dispersion as a given field.* A family's nuisance parameters are fixed on the instance; promoting one to a given field, so that a prior can be composed over it, is open.
