@@ -44,6 +44,7 @@ __all__ = [
     "cov",
     "expectation",
     "from_distribution",
+    "kl_divergence",
     "log_prob",
     "mean",
     "prob",
@@ -506,3 +507,49 @@ def from_distribution(
     return converter_registry.convert(
         source, target_type, key=key, check_support=check_support, **kwargs
     )
+
+
+@workflow_function
+def kl_divergence(
+    p: Distribution,
+    q: Distribution,
+    *,
+    method: str | None = None,
+    **kwargs: Any,
+) -> Array:
+    """Kullback-Leibler divergence ``KL(p ‖ q)``.
+
+    Delegates to the ``"kl"`` binary dispatch registry, which auto-selects
+    the best feasible method by priority: a closed-form Normal formula, a
+    closed-form TFP formula when the pair is registered, or a Monte Carlo
+    estimate as a universal fallback.
+
+    As a :class:`~probpipe.core.node.WorkflowFunction`, this broadcasts
+    elementwise when *p* or *q* is a
+    :class:`~probpipe.core._distribution_array.DistributionArray`; the
+    registry only ever sees scalar distribution arguments.
+
+    Parameters
+    ----------
+    p : Distribution
+        The reference distribution — samples are drawn from *p* in the
+        Monte Carlo fallback.  Must support sampling and ``log_prob`` for
+        that fallback to be feasible.
+    q : Distribution
+        The comparison distribution.  Must support ``log_prob``.
+    method : str or None
+        If provided, force the named registry method (e.g.
+        ``"kl_mc"``) instead of the priority-ordered auto-selection.
+        Raises ``TypeError`` if the named method is not applicable.
+    **kwargs
+        Passed through to the selected method.  The Monte Carlo method
+        accepts ``n_samples`` (default ``10_000``) and ``random_seed``.
+
+    Returns
+    -------
+    Array
+        Non-negative scalar estimate of ``KL(p ‖ q)``.
+    """
+    from ..discrepancies._kl_registry import kl_registry
+
+    return kl_registry.execute(p, q, method=method, **kwargs)
