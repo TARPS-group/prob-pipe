@@ -462,7 +462,10 @@ def _index_sample(s: Any, i: int) -> Any:
     from .record import Record
 
     if isinstance(s, Record):
-        if len(s.fields) == 1:
-            return s[s.fields[0]][i]
-        return NumericRecord({f: s[f][i] for f in s.fields})
+        # Index each leaf field's batch row; rebuild by path key so a nested
+        # sample is reconstructed with its structure intact.
+        leaf_paths = tuple(s.event_template.keys())
+        if len(leaf_paths) == 1:
+            return s[leaf_paths[0]][i]
+        return NumericRecord({p: s[p][i] for p in leaf_paths})
     return s[i]

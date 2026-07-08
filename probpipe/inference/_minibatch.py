@@ -74,8 +74,8 @@ def _data_size(data: Any) -> int:
     if isinstance(data, RecordArray):
         return data.batch_shape[0]
     if isinstance(data, Record):
-        for f in data.fields:
-            leaf = data[f]
+        children = dict(data.children)
+        for f, leaf in children.items():
             if isinstance(leaf, Record):
                 raise ValueError(
                     f"MinibatchedDistribution requires a flat Record "
@@ -83,11 +83,11 @@ def _data_size(data: Any) -> int:
                     f"{f!r}; flatten the structure or use a "
                     f"RecordArray instead."
                 )
-        leading = {jnp.asarray(data[f]).shape[0] for f in data.fields}
+        leading = {jnp.asarray(leaf).shape[0] for leaf in children.values()}
         if len(leading) != 1:
             raise ValueError(
                 f"Record leaves have differing leading-axis lengths: "
-                f"{ {f: jnp.asarray(data[f]).shape[0] for f in data.fields} }. "
+                f"{ {f: jnp.asarray(leaf).shape[0] for f, leaf in children.items()} }. "
                 f"All leaves must share a common N for minibatching."
             )
         return leading.pop()
@@ -108,7 +108,7 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     """
     if isinstance(data, Record):
         # Covers Record and RecordArray (the latter via subclass).
-        return Record({f: jnp.asarray(data[f])[indices] for f in data.fields})
+        return Record({f: jnp.asarray(child)[indices] for f, child in data.children.items()})
     return jnp.asarray(data)[indices]
 
 

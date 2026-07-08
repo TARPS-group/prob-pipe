@@ -43,8 +43,14 @@ jobs:
         run: |
           set -euo pipefail
           # Single source of truth for the pin lives in the pre-commit config.
+          # The rev regex tolerates an optional surrounding quote and leading
+          # `v` so a reformatted `rev: "v0.15.16"` still parses; `|| true`
+          # swallows a no-match grep exit (pipefail would otherwise abort the
+          # pipeline here) so the `test -n` below stays the single, clear
+          # "can't parse the pin" failure.
           ver=$(grep -A2 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
-                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*v?([0-9][0-9.]*).*/\1/p' | head -1)
+                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*["'\'']?v?([0-9][0-9.]*).*/\1/p' \
+                  | head -1 || true)
           test -n "$ver"   # fail loudly if the rev can't be parsed
           echo "ruff=$ver" >> "$GITHUB_OUTPUT"
           echo "Resolved ruff $ver from .pre-commit-config.yaml"
@@ -237,7 +243,18 @@ jobs:
         # would always fail here. The floor is enforced on the full-suite
         # run below; keep partial runs exempt with --cov-fail-under=0.
         run: |
-          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html
+          # A changed test file can be entirely skipped in this job's
+          # environment (e.g. a bayesflow/stan test when that extra isn't
+          # installed here — the dedicated extra job runs it). pytest then
+          # collects 0 tests and exits 5; treat that as a pass rather than
+          # failing the targeted run.
+          ec=0
+          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html || ec=$?
+          if [ "$ec" = 5 ]; then
+            echo "No tests collected (all skipped in this environment); treating as pass."
+            ec=0
+          fi
+          exit "$ec"
 
       - name: Run tests (full suite)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'

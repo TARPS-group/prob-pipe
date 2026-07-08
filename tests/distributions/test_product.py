@@ -298,12 +298,33 @@ class TestNestedSampleFlatten:
 
         s = sample(nested, key=jax.random.PRNGKey(0), sample_shape=(6,))
         assert isinstance(s, NumericRecordArray)
-        assert isinstance(s["outer"], NumericRecordArray)  # not a plain Record
+        assert isinstance(s.at_path("outer"), NumericRecordArray)  # not a plain Record
 
     def test_unbatched_nested_field_stays_record(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(0))
         assert isinstance(s, Record) and not isinstance(s, RecordArray)
-        assert isinstance(s["outer"], Record) and not isinstance(s["outer"], RecordArray)
+        assert isinstance(s.at_path("outer"), Record) and not isinstance(
+            s.at_path("outer"), RecordArray
+        )
+
+    def test_batched_depth_two_nested_sampling(self):
+        # A depth-2 nesting exercises the interior-subtree lookup inside
+        # _sample_nested (template.children, since template [] is leaf-only);
+        # only leaf components sit below depth 1 in the fixtures above.
+        from probpipe.core._record_array import NumericRecordArray
+
+        deep = ProductDistribution(
+            name="deep",
+            grp={
+                "sub": {"force": Normal(loc=0.0, scale=1.0, name="force")},
+                "mass": Normal(loc=1.0, scale=0.5, name="mass"),
+            },
+            noise=Normal(loc=0.0, scale=1.0, name="noise"),
+        )
+        s = sample(deep, key=jax.random.PRNGKey(0), sample_shape=(4,))
+        assert isinstance(s, NumericRecordArray)
+        assert tuple(s.template.keys()) == ("grp/sub/force", "grp/mass", "noise")
+        assert s["grp/sub/force"].shape == (4,)
 
     def test_batched_nested_flatten_roundtrip(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
@@ -344,8 +365,8 @@ class TestNestedSampleFlatten:
         assert not isinstance(joint, NumericRecordDistribution)
         s = sample(joint, key=jax.random.PRNGKey(0), sample_shape=(4,))
         assert isinstance(s, RecordArray) and not isinstance(s, NumericRecordArray)
-        assert isinstance(s["outer"], RecordArray)
-        assert not isinstance(s["outer"], NumericRecordArray)
+        assert isinstance(s.at_path("outer"), RecordArray)
+        assert not isinstance(s.at_path("outer"), NumericRecordArray)
 
 
 # ===========================================================================
@@ -1059,24 +1080,24 @@ class TestNestedProductDistribution:
         key = jax.random.PRNGKey(1)
         s = sample(nested_joint, key=key)
         assert isinstance(s, (Record, RecordArray))
-        assert isinstance(s["physics"], Record)
-        assert "force" in s["physics"]
-        assert "mass" in s["physics"]
+        assert isinstance(s.at_path("physics"), Record)
+        assert "force" in s.at_path("physics")
+        assert "mass" in s.at_path("physics")
         assert "observation" in s
 
     def test_sample_leaf_shapes(self, nested_joint):
         key = jax.random.PRNGKey(2)
         s = sample(nested_joint, key=key, sample_shape=(10,))
-        assert s["physics"]["force"].shape == (10,)
-        assert s["physics"]["mass"].shape == (10,)
+        assert s["physics/force"].shape == (10,)
+        assert s["physics/mass"].shape == (10,)
         assert s["observation"].shape == (10,)
 
     def test_sample_single(self, nested_joint):
         key = jax.random.PRNGKey(3)
         s = sample(nested_joint, key=key)
         # Each leaf should be a scalar
-        assert s["physics"]["force"].shape == ()
-        assert s["physics"]["mass"].shape == ()
+        assert s["physics/force"].shape == ()
+        assert s["physics/mass"].shape == ()
         assert s["observation"].shape == ()
 
     # -- log_prob ----------------------------------------------------------
@@ -1098,8 +1119,8 @@ class TestNestedProductDistribution:
         mass_dist = Gamma(concentration=2.0, rate=1.0, name="mass")
         obs_dist = Normal(loc=0.0, scale=0.1, name="observation")
         lp_manual = (
-            jnp.asarray(log_prob(force_dist, s["physics"]["force"]))
-            + jnp.asarray(log_prob(mass_dist, s["physics"]["mass"]))
+            jnp.asarray(log_prob(force_dist, s["physics/force"]))
+            + jnp.asarray(log_prob(mass_dist, s["physics/mass"]))
             + jnp.asarray(log_prob(obs_dist, s["observation"]))
         )
         np.testing.assert_allclose(float(lp_joint), float(lp_manual), atol=1e-5)
@@ -1109,15 +1130,15 @@ class TestNestedProductDistribution:
     def test_mean_nested(self, nested_joint):
         m = mean(nested_joint)
         assert isinstance(m, Record)
-        assert isinstance(m["physics"], Record)
-        assert m["physics"]["force"].shape == ()
-        assert m["physics"]["mass"].shape == ()
+        assert isinstance(m.at_path("physics"), Record)
+        assert m["physics/force"].shape == ()
+        assert m["physics/mass"].shape == ()
         assert m["observation"].shape == ()
 
     def test_variance_nested(self, nested_joint):
         v = variance(nested_joint)
         assert isinstance(v, Record)
-        assert isinstance(v["physics"], Record)
+        assert isinstance(v.at_path("physics"), Record)
         assert jnp.all(jnp.asarray(jax.tree.leaves(v)) >= 0)
 
     # -- flatten / unflatten -----------------------------------------------
@@ -1203,11 +1224,11 @@ class TestNestedProductDistribution:
         s = sample(cond, key=key, sample_shape=(5,))
         assert isinstance(s, (Record, RecordArray))
         assert "physics" in s
-        assert isinstance(s["physics"], Record)
-        assert "mass" in s["physics"]
-        assert "force" not in s["physics"]
+        assert isinstance(s.at_path("physics"), Record)
+        assert "mass" in s.at_path("physics")
+        assert "force" not in s.at_path("physics")
         assert "observation" in s
-        assert s["physics"]["mass"].shape == (5,)
+        assert s["physics/mass"].shape == (5,)
         assert s["observation"].shape == (5,)
 
     def test_condition_on_nested_leaf_log_prob(self, nested_joint):
@@ -1368,9 +1389,9 @@ class TestNestedWithMVN:
         key = jax.random.PRNGKey(50)
         s = sample(nested_mvn, key=key, sample_shape=(5,))
         assert isinstance(s, (Record, RecordArray))
-        assert isinstance(s["group"], Record)
-        assert s["group"]["position"].shape == (5, 2)
-        assert s["group"]["scale"].shape == (5,)
+        assert isinstance(s.at_path("group"), Record)
+        assert s["group/position"].shape == (5, 2)
+        assert s["group/scale"].shape == (5,)
         assert s["label"].shape == (5,)
 
         # Flatten a single sample (no batch dim)
@@ -1384,7 +1405,7 @@ class TestNestedWithMVN:
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(
-            recovered["group"]["position"], s_single["group"]["position"], atol=1e-6
+            recovered["group/position"], s_single["group/position"], atol=1e-6
         )
 
     def test_getitem_top_level(self, nested_mvn):

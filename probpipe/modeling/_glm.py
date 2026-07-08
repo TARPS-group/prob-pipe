@@ -24,10 +24,12 @@ def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
     if isinstance(x, jnp.ndarray):
         return x
     if isinstance(x, (Record, RecordArray)):
-        fields = x.fields
-        if len(fields) == 1:
-            return jnp.asarray(x[fields[0]])
-        arrays = [jnp.asarray(x[f]) for f in fields]
+        # Leaf keys via the template (RecordArray's own keys() is top-level and
+        # its [] is leaf-only), so a nested value coerces instead of raising.
+        keys = list(x.event_template.keys())
+        if len(keys) == 1:
+            return jnp.asarray(x[keys[0]])
+        arrays = [jnp.asarray(x[k]) for k in keys]
         return jnp.stack(arrays, axis=-1)
     return jnp.asarray(x)
 

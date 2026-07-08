@@ -510,9 +510,9 @@ class TestApproximateDistributionValuesTemplate:
         )
         draws = post.draws()
         assert isinstance(draws, (Record, RecordArray))
-        assert isinstance(draws["params"], (Record, RecordArray))
-        assert draws["params"]["a"].shape == (30,)
-        assert draws["params"]["b"].shape == (30,)
+        assert isinstance(draws.at_path("params"), (Record, RecordArray))
+        assert draws["params/a"].shape == (30,)
+        assert draws["params/b"].shape == (30,)
         assert draws["scale"].shape == (30,)
 
     def test_nested_template_accessors_match_top_level_fields(self):
@@ -556,8 +556,8 @@ class TestApproximateDistributionValuesTemplate:
         with pytest.raises(AttributeError, match="multiple fields"):
             _ = post.event_shape
         # The nested template is preserved on ``event_template``.
-        assert isinstance(post.event_template["params"], EventTemplate)
-        assert post.event_template["params"].fields == ("a", "b")
+        assert isinstance(post.event_template.at_path("params"), EventTemplate)
+        assert tuple(post.event_template.at_path("params").children) == ("a", "b")
         # Moments key by the user's top-level fields, not by an
         # auto-wrap leaf.
         from probpipe import mean as op_mean
@@ -574,8 +574,8 @@ class TestApproximateDistributionValuesTemplate:
         # ``draws()`` walks the full template (incl. nesting).
         draws = post.draws()
         assert draws.fields == expected_fields
-        assert draws["params"]["a"].shape == (40,)
-        assert draws["params"]["b"].shape == (40,)
+        assert draws["params/a"].shape == (40,)
+        assert draws["params/b"].shape == (40,)
         assert draws["scale"].shape == (40,)
         # ``flat_samples`` view is the (n, total_dim) matrix.
         assert post.flat_samples.shape == (40, vector_size)

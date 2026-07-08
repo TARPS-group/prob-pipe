@@ -79,33 +79,37 @@ def _event_template_from_data(
 ) -> EventTemplate:
     """Build a ``EventTemplate`` from stored Record data.
 
-    Strips the first dimension (sample axis) from each field to get
-    event shapes, optionally prepending ``leading_shape``.
+    Strips the first dimension (sample axis) from each leaf to get event
+    shapes, optionally prepending ``leading_shape``. Leaf-keyed by full
+    ``/``-path, so a nested record yields a matching nested template
+    (path-keyed construction rebuilds the nesting).
     """
     specs: dict[str, tuple[int, ...]] = {}
-    for fname in record_data.fields:
-        arr = jnp.asarray(record_data[fname])
-        specs[fname] = (*leading_shape, *arr.shape[1:])
+    for key, val in record_data.items():
+        arr = jnp.asarray(val)
+        specs[key] = (*leading_shape, *arr.shape[1:])
     return EventTemplate(specs)
 
 
 def _index_record(record_data: Record, idx) -> NumericRecord:
-    """Index every field of a Record with the same indices.
+    """Index every leaf of a Record with the same indices.
 
     Returns a :class:`NumericRecord` so single-field results expose the
     ``__jax_array__`` / ``__float__`` shims at downstream call sites.
+    Leaf-keyed, so nested structure is preserved through the indexing.
     """
-    return NumericRecord({f: jnp.asarray(record_data[f])[idx] for f in record_data.fields})
+    return NumericRecord({k: jnp.asarray(v)[idx] for k, v in record_data.items()})
 
 
 def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
-    """Apply *op* to each field of a Record, returning a :class:`NumericRecord`.
+    """Apply *op* to each leaf of a Record, returning a :class:`NumericRecord`.
 
     All-numeric outputs by construction; returning a ``NumericRecord``
     lets single-field consumers use ``jnp.asarray(result)`` /
     ``float(result)`` directly via the existing single-field shims.
+    Leaf-keyed, so nested structure is preserved.
     """
-    return NumericRecord({f: op(jnp.asarray(record_data[f])) for f in record_data.fields})
+    return NumericRecord({k: op(jnp.asarray(v)) for k, v in record_data.items()})
 
 
 def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:
@@ -509,9 +513,7 @@ class RecordEmpiricalDistribution(
         # to that rule.
         cached = getattr(self, "_samples_record", None)
         if cached is None:
-            cached = NumericRecord(
-                {f: jnp.asarray(self._record_data[f]) for f in self._record_data.fields}
-            )
+            cached = NumericRecord({k: jnp.asarray(v) for k, v in self._record_data.items()})
             object.__setattr__(self, "_samples_record", cached)
         return cached
 
@@ -543,8 +545,7 @@ class RecordEmpiricalDistribution(
         cached = getattr(self, "_flat_samples_cache", None)
         if cached is None:
             parts = [
-                jnp.asarray(self._record_data[f]).reshape(self._num_atoms, -1)
-                for f in self._record_data.fields
+                jnp.asarray(v).reshape(self._num_atoms, -1) for _, v in self._record_data.items()
             ]
             cached = jnp.concatenate(parts, axis=-1)
             object.__setattr__(self, "_flat_samples_cache", cached)
@@ -575,14 +576,15 @@ class RecordEmpiricalDistribution(
         Raises
         ------
         AttributeError
-            If ``len(self.fields) > 1``.
+            If the stored value has more than one leaf field
+            (``len(self._record_data) > 1``).
         """
-        if len(self._record_data.fields) == 1:
-            f = self._record_data.fields[0]
-            return tuple(jnp.asarray(self._record_data[f]).shape[1:])
+        if len(self._record_data) == 1:
+            (key,) = self._record_data.keys()
+            return tuple(jnp.asarray(self._record_data[key]).shape[1:])
         raise AttributeError(
             f"{type(self).__name__} has multiple fields "
-            f"({self._record_data.fields}); ``event_shape`` is only "
+            f"({tuple(self._record_data.keys())}); ``event_shape`` is only "
             f"defined for single-field records. Use ``event_shapes`` "
             f"(plural) for the per-field dict."
         )
@@ -595,13 +597,11 @@ class RecordEmpiricalDistribution(
         :attr:`event_shape` (singular), which is single-field-only and
         raises on multi-field.
         """
-        return {
-            f: tuple(jnp.asarray(self._record_data[f]).shape[1:]) for f in self._record_data.fields
-        }
+        return {k: tuple(jnp.asarray(v).shape[1:]) for k, v in self._record_data.items()}
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        return {f: jnp.asarray(self._record_data[f]).dtype for f in self._record_data.fields}
+        return {k: jnp.asarray(v).dtype for k, v in self._record_data.items()}
 
     @property
     def dim(self) -> int:
