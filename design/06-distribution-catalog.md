@@ -81,11 +81,16 @@ Both families are ordinary distributions over nonstandard event types, which is 
 
 ### Contract
 
-There is no approximate-distribution class, since any family can arise as an approximation. An inference result is an ordinary member of whichever family realizes it: a variational posterior is a parametric or bijector-transformed family, an MCMC or ABC posterior is empirical, and an amortized posterior is a learned conditional evaluated at the data. What the results share is not a type but a record: each carries `provenance` naming the method, the target, and the inputs, and each exposes exactly the capabilities its realizing family supports. Whether a result is exact or approximate, and relative to what, is read from that record.
+An inference result is an ordinary member of whichever family realizes it: a variational posterior is a parametric or bijector-transformed family, an MCMC or ABC posterior is empirical, and an amortized posterior is a learned conditional evaluated at the data. What the results share is a record: each carries `provenance` naming the method, the target, and the inputs, and each exposes exactly the capabilities its realizing family supports. Whether a result is exact or approximate, and relative to what, is read from that record.
 
 ### Rationale
 
-Approximation is a relation between a result and its target, not a property of the law itself: a variational Gaussian's density is exact for the law it *is*, and approximate only relative to the posterior it stands in for. Reifying that relation as a class would encode a non-mathematical distinction (`D1 – Mathematical fidelity`), so the relation lives in `provenance` instead (`C6 – Traceable and reproducible workflows`), and honest capabilities come from the realizing family (`D3 – Capability-based operations`).
+Approximation is a relation between a result and its target: a variational Gaussian's density is exact for the law it *is*, and approximate only relative to the posterior it stands in for. A relation belongs in the record of how the result arose, so it lives in `provenance` (`C6 – Traceable and reproducible workflows`), keeping the type mathematical (`D1 – Mathematical fidelity`) and the capabilities those of the realizing family (`D3 – Capability-based operations`).
+
+### Open points
+
+- *Tagging approximate results.* `provenance` records how a result arose, and a lighter tag on top may be worth adding, either an `is_approximate` flag or a convention within `annotations`. Any such tag would span tracked terms generally, since conditional distributions and linear operators can be approximate too.
+- *Approximation error.* Capturing a result's approximation error (a bound, a diagnostic, a fitted estimate) has no generic representation yet. For now it rides in `annotations`, keyed by the producing method.
 
 ## VI.8 — Conditional families
 
