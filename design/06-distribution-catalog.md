@@ -46,7 +46,7 @@ Two bootstrap forms share one convention: the **source** may be any distribution
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in `T`'s batch form.
 - A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is a pushforward, `pushforward(stat, ...)`, of whichever form the statistic reads, a replicate dataset or a replicate measure.
 
-A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a standardized, mean-zero density `K` placed at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. The kernel's role is to be recentered and rescaled, which is what `SmoothingKernel` provides: standardized draws and the standardized log-density, with the placement done by the KDE. `_sample` draws an atom by weight and adds bandwidth-scaled kernel noise, exact for the KDE law. `_log_prob` is the log of the weighted average of the rescaled kernel densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only.
+A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never touches kernel-specific parameters. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only.
 
 ```python
 class EmpiricalDistribution[T](Distribution[T]):
@@ -61,18 +61,23 @@ class BootstrapDistribution(Distribution):   # a random measure: a draw is an Em
     def __init__(self, name: str, source: SupportsSampling, replicate_size: int | None = None) -> None: ...
     # the empirical measure of one replicate
 
-class SmoothingKernel(ABC):                # a standardized, mean-zero density on ℝᵈ
+class SmoothingKernel(ABC):                # a bank of mean-zero kernel copies, one per center
+    @classmethod
     @abstractmethod
-    def _sample(self, key: Key, shape: tuple[int, ...]) -> Array: ...   # standardized noise
+    def build_kernels(cls, centers: Array | NumericRecordBatch,
+                      scales: ArrayLike) -> SmoothingKernel: ...
+    # the uniform constructor: one placed copy per center, scales broadcast over centers and coordinates
     @abstractmethod
-    def _log_density(self, u: Array) -> Array: ...                      # standardized log-density
+    def _sample(self, key: Key, index: Array) -> Array: ...   # draws from the indexed copies
+    @abstractmethod
+    def _log_density(self, x: Array) -> Array: ...            # per-copy log-density at x, scale Jacobian included
 class GaussianKernel(SmoothingKernel): ...
 class EpanechnikovKernel(SmoothingKernel): ...
 
 class KDEDistribution(Distribution[Array]):
     def __init__(self, name: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike,
-                 weights: Array | None = None, kernel: SmoothingKernel | None = None) -> None: ...
-    # kernel defaults to GaussianKernel; the law is Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)
+                 weights: Array | None = None, kernel: type[SmoothingKernel] = GaussianKernel) -> None: ...
+    # builds the placed copies via kernel.build_kernels(atoms, bandwidth); the law is Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)
 ```
 
 ### Rationale
@@ -87,7 +92,7 @@ All four are bona fide laws with honestly partial capabilities (`D1 – Mathemat
 
 ### Contract
 
-A `MixtureDistribution` is a convex combination of component distributions over one shared event template. `_sample` draws a component index by weight and then a component draw. `_log_prob` is the weighted log-sum-exp, present exactly when every component scores. Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `predictive` returns for a finite mixing distribution, and the general form of a dependent joint's detached marginal.
+A `MixtureDistribution` is a convex combination of component distributions over one shared event template. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `predictive` returns for a finite mixing distribution, and the general form of a dependent joint's detached marginal.
 
 ```python
 class MixtureDistribution(Distribution[T]):
