@@ -188,8 +188,8 @@ there is deliberately no `create_registry()` helper (it would save
 nothing and invite throwaway registries that clutter the catalog).
 
 ```python
-# probpipe/validation/_kl_registry.py   (illustrative — the KL registry
-# lands in a later stage of this effort; the shape is the template)
+# probpipe/discrepancies/_kl_registry.py   (the KL divergence family —
+# the canonical instance of this recipe)
 from __future__ import annotations
 
 from ..core._registry import BinaryDispatchMethod, BinaryDispatchRegistry, MethodInfo
