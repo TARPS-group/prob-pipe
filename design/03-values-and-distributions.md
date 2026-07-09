@@ -39,7 +39,7 @@ class ArraySpec(ValueSpec):  # a numeric array leaf
     dtype: DType
     support: Constraint
 
-class OpaqueSpec(ValueSpec):  # a non-array Python object
+class OpaqueSpec(ValueSpec):  # a non-array, non-mapping Python object
     meta: Hashable
 
 class FunctionSpec(ValueSpec):  # a leaf holding a callable
@@ -135,7 +135,7 @@ class Record(NamedTree[Any], Tracked, Annotated):
                  event_template: EventTemplate | None = None,
                  **kw_fields: Any) -> None: ...
         # name is the required first argument (semantic identity)
-        # a nested sub-record's name is its field key.
+        # a nested sub-record's name is its field key; a mapping-valued field is a subtree, never a leaf.
         # Binds to event_template if given (structural validation);
         # Otherwise, infers it once via EventTemplate.infer_from.
 
