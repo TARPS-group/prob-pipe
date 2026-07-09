@@ -45,6 +45,7 @@ A mean is defined whenever draws can be averaged: coordinate-wise for arrays, po
 - With `sample_shape=()` it returns a single draw, wrapped as the `Record` the `event_template` describes. A scalar law returns a single-field `Record` keyed by the distribution's name. The wrap is unconditional: even a draw whose raw type carries identity, such as the `Distribution` a random measure yields, is returned as a `Record` with that draw as its leaf value.
 - A non-empty `sample_shape` prepends batch axes and returns a `RecordBatch`, or a `NumericRecordBatch` when the draw is numeric, with those leading dimensions.
 - With `raw=True`, `sample` skips the wrap. For `sample_shape=()` it returns the bare draw type `T`, carrying no name or provenance, whatever the event type. For a non-empty `sample_shape` it returns `T`'s batch form: an array with the `sample_shape` axes leading for a numeric draw, and an element batch otherwise (a `DistributionBatch` for a distribution-valued draw, and a `FunctionBatch` or `OpaqueBatch` for function-valued or opaque draws).
+- Sampling requires a concrete event template and raises with the free dimensions named; in the fused conditional path, the given value binds them first.
 - The PRNG `key` is explicit and supplied by the caller, so a draw is reproducible from its key.
 - The draw carries `provenance` recording `sample` and the distribution it came from.
 
