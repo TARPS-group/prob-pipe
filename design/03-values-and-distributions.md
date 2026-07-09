@@ -35,7 +35,7 @@ class ValueSpec(ABC):
     def is_valid(self, value: Any) -> bool: ...
 
 class ArraySpec(ValueSpec):  # a numeric array leaf
-    shape: tuple[int, ...]
+    shape: tuple[int | str, ...]   # a str names a symbolic dimension
     dtype: DType
     support: Constraint
 
@@ -59,6 +59,10 @@ class EventTemplate(NamedTree[ValueSpec]):
     def infer_from(cls, value: Any) -> EventTemplate: ...   # best-effort, possibly lossy
     @property
     def is_numeric(self) -> bool: ...
+    @property
+    def is_concrete(self) -> bool: ...                      # False when any dimension is symbolic
+    @property
+    def free_dims(self) -> frozenset[str]: ...              # the unbound symbolic dimensions
     def numeric_subset(self) -> NumericEventTemplate: ...   # remove non-ArraySpec leaves
 ```
 
@@ -69,12 +73,20 @@ class NumericEventTemplate(EventTemplate):
     @property
     def leaf_shapes(self) -> dict[str, tuple[int, ...]]: ...   # per-field array shapes, canonical order
     @property
-    def vector_size(self) -> int: ...                          # total flat dimension
+    def vector_size(self) -> int: ...                          # total flat dimension; defined only when concrete
 ```
+
+**Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer: `ArraySpec(shape=("obs", "features"))` fixes the rank and the dimension's identity while deferring its size, and one name within a template family refers to one dimension, so `X: ("obs", "features")` and `β: ("features",)` share a dimension. A template with any symbolic entry is **polymorphic**: `is_concrete` is false and `free_dims` lists the names. Five rules govern them.
+
+- *Scope is structural.* A name co-refers within the template family of one tracked term (for a `ConditionalDistribution`, the given and event templates jointly) and nowhere else. Templates carry no scope object, so they serialize as plain data.
+- *Binding is one joint unification.* Validating a `Record`, binding a given, or composing unifies all shapes in one pass over the family: every occurrence of a name must resolve to one size, a conflict raises, and a bound dimension never rebinds. Per-leaf `is_valid` checks rank, dtype, and support, leaving size consistency to the family-level pass. Binding returns a new object.
+- *Composition renames.* `*` and `joint` import each operand's dimensions under a deterministic factor-qualified renaming, and dimensions unify only through shared fields. The joint stores the factors so refined, and the renaming is canonical, so derived names and fingerprints stay deterministic.
+- *Values bind per call.* A value argument, such as the value scored by `log_prob` or the given in a fused conditional call, binds dimensions for that call only. Persistent refinement happens through `condition_on`, composition, `Record` construction, and the explicit binder `with_dims(**sizes)`.
+- *The concreteness boundary.* A `Record` and a `LinOp` never carry an unbound dimension, since construction binds their templates against the data. Operations that need sizes, such as `vector_size`, `to_vector`, `from_vector`, `sample`, and `cov`, raise on a polymorphic template and name the free dimensions.
 
 ### Rationale
 
-As the *type layer*, an `EventTemplate` is the explicit structure that travels with a value and with the producers and consumers of values (`D5 – Explicit, carried structure`). It separates the structure of one event from the orthogonal axes of *multiplicity* and *identity*, keeping those distinctions explicit (`D1 – Mathematical fidelity`).
+As the *type layer*, an `EventTemplate` is the explicit structure that travels with a value and with the producers and consumers of values (`D5 – Explicit, carried structure`). It separates the structure of one event from the orthogonal axes of *multiplicity* and *identity*, keeping those distinctions explicit (`D1 – Mathematical fidelity`). A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
 
 ### Open points
 
@@ -112,6 +124,8 @@ Since the structure of `Record` matches that of its template, the following inva
 1. *matching keys:* `record.keys() == record.event_template.keys()`.
 2. *valid values:* for any valid key `p`, `record.event_template[p].is_valid(record[p])`.
 3. *matching sub-templates:* for any valid non-key path `p`, `record.at_path(p).event_template == record.event_template.at_path(p)`.
+
+Against a polymorphic template the invariants are checked by one joint unification across all fields, and construction binds the template, so a `Record` never carries an unbound dimension.
 
 Two records are equal when they share a class, an `event_template`, and field-by-field equal data. Because the template is carried rather than re-inferred, an identity transform that threads it through compares equal to its input. A transform that instead rebuilds the template by inference matches only when that inference recovers the original, for instance when the original template was itself produced by `infer_from`.
 
@@ -186,7 +200,7 @@ A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side:
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces, and it is `Tracked`. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors. A `LinOp` built from a bare matrix defaults to single-field templates, by the same convention that presents a scalar draw as a single-field `Record`. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces, and it is `Tracked`. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors. A `LinOp` built from a bare matrix defaults to single-field templates, by the same convention that presents a scalar draw as a single-field `Record`. Its templates are always concrete, and construction from a template with unbound dimensions raises. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
 ```python
 class LinOp(Tracked, ABC):
@@ -255,6 +269,8 @@ class Distribution[T](Tracked, Annotated):
 
     def with_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
     # rename event fields; keys resolve as for NamedTree.with_names, and the law is unchanged
+    def with_dims(self, **sizes: int) -> Self: ...
+    # bind named symbolic dimensions; monotone, and a conflict with an existing binding raises
 
 class NumericDistribution(Distribution): ...   # marker: numeric draws, carries a NumericEventTemplate
 ```
@@ -343,7 +359,7 @@ Making each operation a *capability* rather than a base-class method follows `D3
 
 A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `ConditionalDistribution` is not a `Distribution` and does not inherit from one: it has no marginal law, so `sample` / `log_prob` / `mean` do not apply to it unconditionally. Rather, the two are siblings sharing a capability vocabulary.
 
-A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. `with_names` renames fields across both templates, returning the same kernel under new field names.
+A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. `with_names` renames fields across both templates, returning the same kernel under new field names, and `with_dims` binds symbolic dimensions across both.
 
 Users never call a method on the `ConditionalDistribution`. Instead, they use the existing ops: `condition_on(K, s)` evaluates it (exact, no inference) to a `Distribution`, and `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`. Conditioning on only a subset of given fields *curries* to a smaller `ConditionalDistribution` view, while conditioning on a *distribution* over the given yields the predictive mixture `∫ K(s, ·) μ(ds)`.
 
@@ -481,7 +497,7 @@ The result has two mathematical degrees of freedom, *conditional?* (`unmet ≠ �
 | `∅` | `FactoredDistribution` — a joint `Distribution` |
 | `≠ ∅` | `FactoredConditionalDistribution` — a joint `ConditionalDistribution`, its `given_template` exactly `unmet` |
 
-`*` returns the **most specific** class, recomputed from the *flattened* factor graph at each step. `A * B * C` builds one flat N-factor joint, with independent factors commuting and dependent ones kept in conditional-first order.
+`*` returns the **most specific** class, recomputed from the *flattened* factor graph at each step. `A * B * C` builds one flat N-factor joint, with independent factors commuting and dependent ones kept in conditional-first order. Each operand's symbolic dimensions enter under a deterministic factor-qualified renaming and unify only through shared fields, and the joint stores the factors so refined.
 
 **Naming the result.** A joint is *derived*, not created by the user, so `*` **auto-derives** its name deterministically from its factors and marks it `name_is_auto`. An auto-named operand is flattened into a larger joint, while an operand pinned with `with_name` is kept as a single named factor.
 

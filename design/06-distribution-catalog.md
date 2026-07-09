@@ -223,12 +223,11 @@ class BernoulliFamily(GLMFamily): ...     # canonical link: logit; no dispersion
 class PoissonFamily(GLMFamily): ...       # canonical link: log; no dispersion
 
 def glm_likelihood(name: str, family: GLMFamily, link: Bijector | None = None,
-                   *, n_obs: int | None = None, n_features: int | None = None,
-                   X: Array | None = None, dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
-    # the response y (n_obs,) has law family.build(link⁻¹(X @ β), dispersion), with link defaulting
-    # to family.canonical_link. X (n_obs, n_features), β (n_features,), and the dispersion (when the
-    # family has one) are given fields unless supplied here, which fixes them; the shapes are derived
-    # from X when it is supplied and required otherwise
+                   *, X: Array | None = None, dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
+    # given fields X ("obs", "features"), β ("features",), and the dispersion when the family has one;
+    # the event is the response y ("obs",), with law family.build(link⁻¹(X @ β), dispersion) and link
+    # defaulting to family.canonical_link. The dimensions are symbolic until X binds them, at
+    # construction, at condition_on, or in a fused call; supplying X or dispersion here fixes them
 ```
 
 ### Rationale

@@ -62,6 +62,7 @@ Threading an explicit PRNG `key` makes every draw reproducible from its inputs, 
 - `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
 - `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
 - The result is a tracked term: a single-field `Record` whose provenance records the operation, the distribution, and the scored value, with `raw=True` returning the bare array.
+- A scored value binds any symbolic event dimensions for that call only, so one law scores datasets of different sizes.
 - A batch of values, or a `DistributionBatch`, maps elementwise to the batched densities, a single-field `NumericRecordBatch`.
 - For a `ConditionalDistribution`, `log_prob(K, y, given=s)` is the fused conditional path that's equivalent to `log_prob(condition_on(K, s), y)`.
 
@@ -75,7 +76,7 @@ Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (
 
 `condition_on(d, given)` fixes some fields of a distribution or conditional distribution and returns the resulting distribution.
 
-**The `given` argument.** `given` is field-keyed: a `Record`, or a mapping from field paths to values, with each value conforming to the spec at its path. Each key must name either a *given* field (a path in the `given_template`) or a *produced* field (a path in the `event_template`), and any other key is an error. Conditioning is stated entirely in terms of fields, and factors never appear in the call: the derived factor graph is read only to decide which case below applies and to carry it out.
+**The `given` argument.** `given` is field-keyed: a `Record`, or a mapping from field paths to values, with each value conforming to the spec at its path, checked as one simultaneous unification that binds any symbolic dimensions and raises on jointly inconsistent shapes. Each key must name either a *given* field (a path in the `given_template`) or a *produced* field (a path in the `event_template`), and any other key is an error. Conditioning is stated entirely in terms of fields, and factors never appear in the call: the derived factor graph is read only to decide which case below applies and to carry it out.
 
 **Dispatch.** The operation dispatches on the conditioning capability: a `ConditionalDistribution` always implements it (`_condition_on` is its required primitive), a `Distribution` implements it optionally (`SupportsConditioning`), and the factored classes implement it with one structural rule, dispatched on where each conditioned field sits in the factor graph.
 - **Exogenous given, so curry.** Binding a field that the object conditions on but does not produce returns a smaller `ConditionalDistribution`, or an ordinary `Distribution` once all given fields are bound. This is exact and involves no inference.
@@ -114,7 +115,7 @@ Composition is written as an expression so that a model is *built* rather than d
 
 ### Contract
 
-`pushforward(f, d)` returns the law of `f(X)` for `X ~ d`. The map `f` may be a plain or workflow function, a `Bijector`, or a `LinOp`, and `d`'s `event_template` must conform to the map's input, with the result carrying the map's output template. For a `LinOp`, `A @ d` is operator sugar for `pushforward(A, d)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and pushes a distribution forward.
+`pushforward(f, d)` returns the law of `f(X)` for `X ~ d`. The map `f` may be a plain or workflow function, a `Bijector`, or a `LinOp`, and `d`'s `event_template` must conform to the map's input, unifying any symbolic dimensions, with the result carrying the map's output template under the resulting substitution. For a `LinOp`, `A @ d` is operator sugar for `pushforward(A, d)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and pushes a distribution forward.
 
 **The pushforward registry.** The operation is dispatched through a `BinaryDispatchRegistry` keyed on the map's and the distribution's types, whose methods are **pushforward rules**. Auto-selection tries the rules in priority order:
 - **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
