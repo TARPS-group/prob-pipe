@@ -92,7 +92,7 @@ All four are bona fide laws with honestly partial capabilities (`D1 – Mathemat
 
 ### Contract
 
-A `MixtureDistribution` is a convex combination of component distributions over one shared event template. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `predictive` returns for a finite mixing distribution, and the general form of a dependent joint's detached marginal.
+A `MixtureDistribution` is a convex combination of component distributions over one shared event template. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `predictive` returns for a finite mixing distribution, and the form a dependent joint's detached marginal takes under finite mixing.
 
 ```python
 class MixtureDistribution(Distribution[T]):

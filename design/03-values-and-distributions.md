@@ -180,7 +180,7 @@ class RecordBatch(Batch[Record]):
     @property
     def event_template(self) -> EventTemplate: ...
 
-    def __getitem__(self, key: int | slice | str | tuple[str, ...]) -> Record | RecordBatch | Array | Batch: ...
+    def __getitem__(self, key: int | slice | tuple[int, ...] | str | tuple[str, ...]) -> Record | RecordBatch | Array | Batch: ...
     # int / slice (or a tuple of ints) -> an element Record or a sub-batch, indexing the batch axes
     # field path (str or tuple of strs) -> the field's column in its native batch form:
     #   an array for an array field, the matching element batch otherwise; a sub-RecordBatch if nested
@@ -500,7 +500,7 @@ bound  = G_A ∩ F_B            # dependency edges: left A conditions on a field
 unmet  = (G_A − F_B) ∪ G_B    # residual exogenous givens — met by no factor
 require  F_A ∩ F_B = ∅         # each field is produced exactly once
      and G_B ∩ F_A = ∅         # B must not consume a field A produces — else reorder (producer on the right)
-law:  p(F_A, F_B | unmet) = p_A(F_A | F_B) · p_B(F_B | G_B)      # reads left → right
+law:  p(F_A, F_B | unmet) = p_A(F_A | bound ∪ (G_A − F_B)) · p_B(F_B | G_B)      # reads left → right
 ```
 
 The result has two mathematical degrees of freedom, *conditional?* (`unmet ≠ ∅`) and *dependent?* (`bound ≠ ∅`), but only the first is a **class** distinction:
