@@ -45,6 +45,10 @@ class OpaqueSpec(ValueSpec):  # a non-array Python object
 class FunctionSpec(ValueSpec):  # a leaf holding a callable
     input_template: EventTemplate
     output_template: EventTemplate
+
+class Constraint(ABC):              # an array support, carried by ArraySpec
+    @abstractmethod
+    def contains(self, value: Array) -> Array: ...   # elementwise membership
 ```
 
 A `FunctionSpec` accepts a bare `ValueSpec` on either side and wraps it in a single-field template, so `FunctionSpec(ArraySpec(...), ArraySpec(...))` types a scalar function by the same convention that presents a scalar draw as a single-field value.
@@ -144,7 +148,7 @@ class Record(NamedTree[Any], Tracked, Annotated):
     # reconstruct from values in the template's canonical order; ValueError on count/shape mismatch
 ```
 
-When every leaf is a numeric array, a `Record` is a `NumericRecord`, which is itself a pytree of arrays (its children the field values, its `event_template` static metadata). It adds flat vectorization, reading the necessary information (`leaf_shapes`, `vector_size`, and canonical order) from the template. Because a `NumericRecord` is a bare array pytree, it passes through `grad` / `vmap` / `jit` unchanged.
+When every leaf is a numeric array, a `Record` is a `NumericRecord`, which is itself a pytree of arrays (its children the field values, its `event_template` static metadata). It adds flat vectorization, reading the necessary information (`leaf_shapes`, `vector_size`, and canonical order) from the template. Because a `NumericRecord` is a bare array pytree, it passes through `grad` / `vmap` / `jit` unchanged. Passing through means leaf transport only: a JAX transform maps the leaves and never promotes a `Record` to a `RecordBatch`. Flattening is deliberately numeric-only, which is why `NamedTree` itself has no `flatten`.
 
 ```python
 class NumericRecord(Record):
@@ -156,6 +160,10 @@ class NumericRecord(Record):
 ### Rationale
 
 A `Record` is the *values* half of `C1 – Uniform interface to distributions and values`: a distribution's draw is a `Record` (or a `RecordBatch` for many), and a function over named values consumes one. It is where `D5 – Explicit, carried structure` becomes concrete — a `Record` *carries* its template as authoritative structure, threaded forward from whoever produced it, rather than having it re-inferred from raw arrays downstream. Inheriting the `NamedTree` interface, a value's parts are reached by meaningful name (`C5 – Naming for unambiguous meaning`) and navigation yields views, not copies (`D7 – Single source of truth`).
+
+### Notes
+
+- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality.
 
 ### Open points
 
@@ -172,12 +180,13 @@ class RecordBatch(Batch[Record]):
     @property
     def event_template(self) -> EventTemplate: ...
 
-    def __getitem__(self, key: int | slice | str | tuple[str, ...]) -> Record | RecordBatch | Array: ...
-    # int / slice -> an element Record or a sub-batch
-    # field path  -> that field's column, or a sub-RecordBatch if nested
+    def __getitem__(self, key: int | slice | str | tuple[str, ...]) -> Record | RecordBatch | Array | Batch: ...
+    # int / slice (or a tuple of ints) -> an element Record or a sub-batch, indexing the batch axes
+    # field path (str or tuple of strs) -> the field's column in its native batch form:
+    #   an array for an array field, the matching element batch otherwise; a sub-RecordBatch if nested
 ```
 
-Both forms return views. A `RecordBatch` omits the field-keyed `Mapping` protocol (`keys()` / `values()` / `children`), so `len` and `iter` unambiguously range over the batch, and the field structure is read from `event_template`.
+Storage is columnar: per-field columns in each field's batch form. A field column is therefore a direct view, and an element `Record` is assembled on demand from the columns rather than stored a second time. A `RecordBatch` omits the field-keyed `Mapping` protocol (`keys()` / `values()` / `children`), so `len` and `iter` unambiguously range over the batch, and the field structure is read from `event_template`.
 
 When every element is a `NumericRecord`, the batch is a `NumericRecordBatch`: a pytree of arrays whose leading dimensions are the `batch_shape`, bound to one shared `NumericEventTemplate`. Because it is a bare array pytree, it passes through `vmap` / `grad` / `jit` unchanged. It also adds batched flat vectorization, where `to_vector` stacks one flat vector per element into a `(*batch_shape, vector_size)` array:
 
@@ -186,6 +195,7 @@ class NumericRecordBatch(RecordBatch):
     def to_vector(self) -> Array: ...
     @classmethod
     def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecordBatch: ...
+    # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 
 ### Rationale
@@ -223,15 +233,15 @@ class LinOp(Tracked, ABC):
     def solve(self, b: Array) -> Array: ...
     def cholesky(self) -> LinOp: ...           # a triangular factor L with A = L Lᵀ
     def diag(self) -> Array: ...
-    def logdet(self) -> float: ...
-    def trace(self) -> float: ...
+    def logdet(self) -> Array: ...   # scalar Arrays rather than floats, keeping the queries differentiable
+    def trace(self) -> Array: ...
 
     @property
     def flags(self) -> frozenset[str]: ...      # structure metadata, e.g. "symmetric", "positive_definite"
     def with_flag(self, flag: str) -> Self: ... # functional; construction otherwise fixes the flags
 ```
 
-**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type. The algebra checks and propagates the templates: `A @ B` requires `B`'s output template to equal `A`'s input template and carries `(B.input_template, A.output_template)`, `A + B` requires both pairs to match, and `A.T` swaps them.
+**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type. The algebra checks and propagates the templates: `A @ B` requires `B`'s output template to equal `A`'s input template and carries `(B.input_template, A.output_template)`, `A + B` requires both pairs to match, and `A.T` swaps them. Composite operators are tracked terms like any other, with names auto-derived from their operands and marked `name_is_auto`.
 
 **Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant.
 
@@ -357,7 +367,7 @@ A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` —
 
 A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two templates jointly, so a name shared between given and event fields is one dimension, and the fused conditional paths bind dimensions from the given value at call time. `with_names` renames fields across both templates, returning the same kernel under new field names, and `with_dims` binds symbolic dimensions across both.
 
-Users never call a method on the `ConditionalDistribution`. Instead, they use the existing ops: `condition_on(K, s)` evaluates it (exact, no inference) to a `Distribution`, and `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`. Conditioning on only a subset of given fields *curries* to a smaller `ConditionalDistribution` view, while conditioning on a *distribution* over the given yields the predictive mixture `∫ K(s, ·) μ(ds)`.
+Users never call a method on the `ConditionalDistribution`. Instead, they use the existing ops: `condition_on(K, s)` binds the given fields, evaluating it to a `Distribution` exactly and with no inference, and `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`, bitwise under a shared PRNG key in the exact cases and in law when inference is involved. Conditioning on only a subset of given fields *curries* to a smaller `ConditionalDistribution` view, while conditioning on a *distribution* over the given yields the predictive mixture `∫ K(s, ·) μ(ds)`.
 
 ```python
 class ConditionalDistribution[S, T](Tracked, Annotated):
@@ -367,7 +377,8 @@ class ConditionalDistribution[S, T](Tracked, Annotated):
     def given_template(self) -> EventTemplate: ...
     @property
     def event_template(self) -> EventTemplate: ...
-    def _condition_on(self, given: S, /, **kwargs) -> Distribution[T]: ...   # the required primitive: the law K(given, ·)
+    def _condition_on(self, given: S, /, **kwargs) -> Distribution[T] | ConditionalDistribution: ...
+    # the required primitive: the law K(given, ·), or a curried kernel for a partial given
 
 @runtime_checkable
 class SupportsConditionalSampling[S, T](Protocol):
@@ -393,6 +404,12 @@ class FullyNumericConditionalDistribution(
         NumericConditionalDistribution, ConditionalNumericDistribution): ...   # both sides numeric
 ```
 
+| class | given | event |
+|---|---|---|
+| `NumericConditionalDistribution` | numeric | any |
+| `ConditionalNumericDistribution` | any | numeric |
+| `FullyNumericConditionalDistribution` | numeric | numeric |
+
 **The conditional distribution value specification.** The `ConditionalDistributionSpec(given_template, event_template)` class extends the value spec to include a `ConditionalDistribution` as a valid value, analogously to `DistributionSpec`:
 
 ```python
@@ -407,7 +424,7 @@ Applying a `ConditionalDistribution` to a conditioning value returns a `Distribu
 
 ### Contract
 
-A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one `event_template`, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate conditional distributions sharing one `given_template` and one `event_template`. They are grouped because they are the identical multiplicity wrapper over the two distribution-like base types, and the conditional one merely adds the `given_template`.
+A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one `event_template`, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate conditional distributions sharing one `given_template` and one `event_template`. They are grouped because they are the identical multiplicity wrapper over the two distribution-like base types, and the conditional one merely adds the `given_template`. They are also the native batch forms of `DistributionSpec`- and `ConditionalDistributionSpec`-valued draws.
 
 ```python
 class DistributionBatch(Batch[Distribution]):
@@ -433,7 +450,7 @@ This is `D1 – Mathematical fidelity` on the distribution layer: a `Distributio
 
 A *factored distribution* is a distribution **built from named sub-distributions**. Beyond being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. The `FactoredDistribution` and `FactoredConditionalDistribution` classes generically implement `SupportsFactors` for distributions and conditional distributions. As another example, the `FactoredMultivariateGaussian` is a factored distribution in which the factors are jointly Gaussian, so conditioning and marginalization are exact.
 
-The generic factored (conditional) distributions `FactoredDistribution` and `FactoredConditionalDistribution`  carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint distribution's `event_template` is the flat union of the fields its factors produce.
+The generic factored (conditional) distributions `FactoredDistribution` and `FactoredConditionalDistribution`  carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint distribution's `event_template` is the structural, disjoint union of the factors' produced templates: each factor's top-level fields become top-level fields of the joint, with their internal structure preserved and no additional nesting introduced. Factor names are unique across the list, and a duplicate is an error.
 In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically. Sampling and the log-prob capabilities follow the intersection of the factors': if all factors implement `SupportsLogProb` then so does the factored distribution. The moment capabilities are narrower, since factor-wise conditional moments compose into a closed form only in special structures, such as an edge-free joint or the jointly Gaussian case; otherwise a joint's moments fall back to the Monte Carlo route. As with other generic distributions, there are also numeric specializations.
 
 ```python
@@ -503,7 +520,7 @@ def __mul__(self, other: Distribution | ConditionalDistribution) -> FactoredDist
 
 ### Rationale
 
-Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 – Generality first`, an independent product (`bound = ∅`) is just an edge-free joint, so *dependent?* is a runtime property of the derived graph and only *conditional?* names a class, giving two classes rather than four. The conditional-first order is already a valid topological listing, so composition is associative and acyclicity is automatic, with no separate graph inference.
+Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 – Generality first`, an independent product (`bound = ∅`) is just an edge-free joint, so *dependent?* is a runtime property of the derived graph and only *conditional?* names a class, giving two classes rather than four. The conditional-first order is already a valid topological listing, so composition is associative and acyclicity is automatic, with no separate graph inference. Associativity rests on the `G_B ∩ F_A = ∅` requirement, under which the validity of `(A * B) * C` and `A * (B * C)` coincide.
 
 ### Notes
 
@@ -534,7 +551,7 @@ The line between the last two is **factorization, not field count**: a multi-fie
 - **Parametric (closed-form).** The standard families: continuous (`Normal`, `Gamma`, `Beta`, `Exponential`), discrete (`Bernoulli`, `Categorical`, `Poisson`), and multivariate (`MultivariateNormal`, `Dirichlet`). They are backed by a tensor library, with exact `sample` / `log_prob` / moments and a constrained-support `event_template`, and they make up the bulk of the atomic, array-valued row. The multivariate families implement `SupportsMarginals` exactly.
 - **Empirical.** A finite, possibly weighted, sample set: `sample` resamples, moments are sample estimates, and marginals are again empirical. It carries no density. Scalar or structured.
 - **Transformed (pushforward).** A base distribution pushed through a function, which is what lifting a function over a distribution-valued argument produces. An invertible map keeps an exact `log_prob` by change of variables, while a general map keeps `sample` and Monte-Carlo-estimates the rest.
-- **Mixture.** A convex combination of component distributions. It is also the form a dependent joint's detached `marginal` generally takes.
+- **Mixture.** A convex combination of finitely many component distributions. It is the form a dependent joint's detached `marginal` takes under finite mixing; over a continuous parent the detached marginal is realized as empirical.
 - **Random function.** A distribution over functions, whose event is a `FunctionSpec` leaf: a draw is a callable, and `mean` returns the mean function. A Gaussian process is the canonical case.
 - **Random measure.** A distribution *over distributions*: a draw is itself a `Distribution` (a `DistributionSpec` leaf), and `mean` returns the marginalized law.
 
@@ -552,7 +569,7 @@ The hierarchy embodies `D2 – Generality first`: one base refined by *optional 
 
 A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*.
 
-A converter declares the source types it converts *from* and the target types it converts *to*, a cheap `check` that reports feasibility without converting, and the conversion itself. A conversion is rarely unique, so each carries a **fidelity**: `exact` for an equivalent representation, `moment-match` when only low-order moments are preserved, and `sample` for a Monte Carlo stand-in. The registry prefers higher fidelity, and a caller can name a converter or set a minimum fidelity.
+A converter declares the source types it converts *from* and the target types it converts *to*, a cheap `check` that reports feasibility without converting, and the conversion itself. A conversion is rarely unique, so each carries a **fidelity**: `exact` for an equivalent representation, `moment_match` when only low-order moments are preserved, and `sample` for a Monte Carlo stand-in. The fidelities are totally ordered, `EXACT > MOMENT_MATCH > SAMPLE`, the registry prefers higher fidelity, and a caller can name a converter or set a minimum fidelity against that order.
 
 ```python
 class ConversionMethod(Enum):
@@ -566,6 +583,7 @@ class ConversionInfo:               # the result of a converter's feasibility pr
     method: ConversionMethod | None = None
 
 class Converter(ABC):
+    name: str                            # unique within the registry; convert(..., method=name) selects it
     def source_types(self) -> tuple[type, ...]: ...
     def target_types(self) -> tuple[type, ...]: ...
     def check(self, source, target_type: type) -> ConversionInfo: ...
@@ -582,7 +600,7 @@ converter_registry: ConverterRegistry   # the global instance, keyed on the (sou
 
 ### Rationale
 
-Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment-match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`).
+Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment_match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`).
 
 ## III.14 — Constraint reparameterization
 
@@ -591,6 +609,14 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 Gradient-based and Hamiltonian inference work in an unconstrained space, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a bijector that takes `ℝⁿ` onto that support. `bijector_for(constraint)` returns the canonical bijector, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
 
 ```python
+class Bijector(ABC):                    # an invertible map with a tractable Jacobian
+    @abstractmethod
+    def forward(self, x: Array) -> Array: ...
+    @abstractmethod
+    def inverse(self, y: Array) -> Array: ...
+    @abstractmethod
+    def forward_log_det_jacobian(self, x: Array) -> Array: ...
+
 def bijector_for(constraint: Constraint) -> Bijector: ...    # the canonical map ℝⁿ → support(constraint)
 def register_bijector(
     key: type[Constraint] | Constraint,

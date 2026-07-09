@@ -24,7 +24,7 @@ Values in ProbPipe are represented as named, ordered trees.  ProbPipe uses the f
 - A **child** of a node is an entry directly under that node.
 - The **canonical order** of a tree is a depth-first walk visiting children in insertion order.
 
-Naming, addressing, traversal, and structure-preserving transforms are defined once in the `NamedTree` class. Specially, a `NamedTree` is a `Mapping` whose keys are exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, they are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. Sibling names are distinct, so every path identifies at most one node. Distinct subtrees may reuse a name, as in `a/c` and `b/c`, and a bare name is then ambiguous on its own.
+Naming, addressing, traversal, and structure-preserving transforms are defined once in the `NamedTree` class. Specially, a `NamedTree` is a `Mapping` whose keys are exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, `[]` raises on an interior path. Interior nodes are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. Sibling names are distinct, so every path identifies at most one node. Distinct subtrees may reuse a name, as in `a/c` and `b/c`, and a bare name is then ambiguous on its own.
 
 ```python
 class NamedTree[L]:
@@ -43,7 +43,7 @@ class NamedTree[L]:
     def children(self) -> Mapping[str, L | Self]: ...
     def is_field(self, path: str | tuple[str, ...]) -> bool: ...
     @property
-    def is_multi_field(self) -> bool: ...
+    def is_multi_field(self) -> bool: ...   # True when the tree holds more than one field
 
     # structure-preserving transforms — return the same family
     def with_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
@@ -51,7 +51,7 @@ class NamedTree[L]:
     def map(self, f: Callable[[L], L], /, *args, **kwargs) -> Self: ...
     def map_with_keys(self, f: Callable[[str, L], L], /, *args, **kwargs) -> Self: ...
     def replace(self, path: str | tuple[str, ...], leaf: L | Self) -> Self: ...
-    def merge(self, other: Self) -> Self: ...
+    def merge(self, other: Self) -> Self: ...              # a key collision raises
     def without(self, path: str | tuple[str, ...]) -> Self: ...
 
     # (de)serialization
@@ -73,13 +73,14 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 - *Same-family closure.* Every navigator and transform returns the same family, enforced by `_node_type()`.
 - *Leaf type versus node type.* The parameter `L` declares the leaf type, the only axis on which tree families differ: it is what `values()`, `[]`, and `map` traffic in. The node type is not a second parameter, since interior nodes are always instances of the family's own class, which is what `_node_type()` reports. The runtime partition therefore uses the node type alone: a field value is an interior node when it is an instance of `_node_type()`, and a leaf otherwise. Validation is handled once in `NamedTree` rather than by each family: construction checks every leaf against the family's declared leaf type, reported by `_leaf_type()`, so a malformed tree fails at construction rather than at first navigation. A family whose leaves are arbitrary values declares `object`, making the check vacuous.
 - *Navigation yields views.* `children`, `at_path`, and `[]` return a subtree or leaf that is a *view* into the same underlying store, derived on demand rather than copied out.
+- *Serialization caveat.* `from_nested_dict` reads every mapping as a subtree, so a dict-valued opaque leaf does not round-trip faithfully.
 - *Bare-name reference.* `with_names` renames by `old="new"` pairs, where a key may be a bare name instead of a full path: a bare name resolves to the unique node so named and raises when the tree contains it more than once. Keyword pairs therefore cover the common case, while the positional mapping form addresses any path, as in `with_names({"group1/mu": "loc"})`. The `Mapping` interface itself is untouched, with `[]` and `keys()` keyed by full path.
 
 ## II.2 — Identity & metadata: `Tracked`, `Annotated`, `Provenance`
 
 ### Contract
 
-Identity & metadata is the cross-cutting layer that lets any object carry, alongside its mathematical content, three things: a **name** (what the object is called), a **provenance** (how it was produced), and free-form **annotations** (auxiliary information supplied by the user or an algorithm). The structure for identity and metadata is provided by two mixins: `Tracked` (name + provenance) and `Annotated` (annotations). All ProbPipe objects must be `Tracked`. We call any such object a **tracked term**: a value, distribution, conditional distribution, or batch that carries a name and provenance, and the kind of object ProbPipe operations consume and produce.
+Identity & metadata is the cross-cutting layer that lets any object carry, alongside its mathematical content, three things: a **name** (what the object is called), a **provenance** (how it was produced), and free-form **annotations** (auxiliary information supplied by the user or an algorithm). The structure for identity and metadata is provided by two mixins: `Tracked` (name + provenance) and `Annotated` (annotations). Every first-class object, the kind an operation consumes and produces, must be `Tracked`, while structural helpers such as templates and specs are not. We call any such object a **tracked term**: a value, distribution, conditional distribution, linear operator, or batch that carries a name and provenance.
 
 Annotation metadata is a free-form mapping:
 
@@ -117,7 +118,7 @@ class ParentInfo:
 
 ### Contract
 
-A `Batch` is the generic `Tracked` nd array of shape `batch_shape` that holds objects of a common element type. It could also be `Annotated` if applications for it arise. A concrete batch implementation must specify how to store the elements. Since a batch is a *collection* of its elements, `len` / `iter` / `batch_shape` / `batch_size` operate only on the batch axes. The `batch_*` names are kept deliberately rather than a numpy-style `.shape` / `size`, which could ambiguously cover both the batch axes and the per-element content. A concrete batch implementation adds whatever its element type affords in that element's own section — including, where useful, indexing into the elements' fields, since `[]` dispatches unambiguously on the key type.
+A `Batch` is the generic `Tracked` nd array of shape `batch_shape` that holds objects of a common element type. `batch_shape` is nonempty: a batch has at least one batch axis. It could also be `Annotated` if applications for it arise. A concrete batch implementation must specify how to store the elements. Since a batch is a *collection* of its elements, `len` / `iter` / `batch_shape` / `batch_size` operate only on the batch axes. The `batch_*` names are kept deliberately rather than a numpy-style `.shape` / `size`, which could ambiguously cover both the batch axes and the per-element content. A concrete batch implementation adds whatever its element type affords in that element's own section — including, where useful, indexing into the elements' fields, since `[]` dispatches unambiguously on the key type.
 
 ```python
 class Batch[E](Tracked):
@@ -167,8 +168,8 @@ class MethodInfo:
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
     def register(self, method: M) -> None: ...
-    def execute(self, *args, method: str | None = None) -> Any: ...   # auto-select, or run the named method
-    def check(self, *args, method: str | None = None) -> MethodInfo: ...
+    def execute(self, *args, method: str | None = None, **kwargs) -> Any: ...   # auto-select, or run the named method
+    def check(self, *args, method: str | None = None, **kwargs) -> MethodInfo: ...
     def list_methods(self) -> list[str]: ...                           # names, in selection order
 
 class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ...    # keys on one argument's type
