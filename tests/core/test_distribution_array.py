@@ -65,6 +65,36 @@ class TestConstruction:
         assert da[-1] is comps[3]
         assert da[-2] is comps[2]
 
+    def test_integer_index_out_of_bounds_raises(self):
+        comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
+        da = _make_distribution_array(comps)
+        with pytest.raises(IndexError, match="out of bounds"):
+            _ = da[3]
+        with pytest.raises(IndexError, match="out of bounds"):
+            _ = da[100]
+        with pytest.raises(IndexError, match="out of bounds"):
+            _ = da[-4]
+
+    def test_multidim_integer_index_out_of_bounds_raises(self):
+        from probpipe import DistributionArray
+
+        da = DistributionArray.from_batched_params(
+            Normal,
+            batch_shape=(2, 3),
+            loc=jnp.arange(6.0).reshape(2, 3),
+            scale=1.0,
+            name="g",
+        )
+        assert float(da[-1, -1].loc) == 5.0
+        with pytest.raises(IndexError, match="axis 0"):
+            _ = da[2, 0]
+        with pytest.raises(IndexError, match="axis 1"):
+            _ = da[0, 3]
+        with pytest.raises(IndexError, match="axis 0"):
+            _ = da[-3, 0]
+        with pytest.raises(IndexError, match="axis 1"):
+            _ = da[0, -4]
+
     def test_iter_yields_components(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
@@ -243,6 +273,26 @@ class TestContainerSurface:
         with pytest.raises(TypeError, match="0-d"):
             len(da)
         assert da.size == 1
+
+    def test_zero_d_indexing_matches_numpy(self):
+        """A 0-d array accepts the empty-tuple index, not integer axes."""
+        from probpipe import DistributionArray
+        from probpipe import MultivariateNormal as _MVN
+
+        da = DistributionArray.from_batched_params(
+            _MVN,
+            batch_shape=(),
+            loc=jnp.zeros(3),
+            cov=jnp.eye(3),
+            name="m",
+        )
+        assert isinstance(da[()], _MVN)
+        with pytest.raises(IndexError, match="0-d"):
+            _ = da[0]
+        with pytest.raises(IndexError, match="0-d"):
+            _ = da[-1]
+        with pytest.raises(IndexError, match="0-d"):
+            _ = da[:]
 
 
 # ---------------------------------------------------------------------------

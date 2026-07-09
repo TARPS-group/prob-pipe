@@ -549,7 +549,26 @@ class NumericRecordArray(RecordArray):
     ) -> NumericRecordArray | Any:
         """Apply a reduction function over a batch axis."""
         new_batch = self._batch_shape[:axis] + self._batch_shape[axis + 1 :]
-        fields = {name: fn(self._tree[name], axis) for name in self._tree}
+
+        def _reduce_value(value: Any, spec: Any) -> Any:
+            if isinstance(value, NumericRecordArray):
+                return value._reduce(fn, axis)
+            if isinstance(value, Record):
+                if not isinstance(spec, EventTemplate):
+                    return fn(value, axis)
+                fields = {
+                    name: _reduce_value(child, spec.children[name])
+                    for name, child in value.children.items()
+                }
+                if not new_batch:
+                    return NumericRecord(fields)
+                return NumericRecordArray(fields, batch_shape=new_batch, template=spec)
+            return fn(value, axis)
+
+        fields = {
+            name: _reduce_value(value, self._template.children[name])
+            for name, value in self._tree.items()
+        }
         if not new_batch:
             return NumericRecord(fields)
         return NumericRecordArray(fields, batch_shape=new_batch, template=self._template)

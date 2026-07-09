@@ -886,12 +886,7 @@ class TestFromVectorRoundTripBatched:
         assert v.batch_shape == (2, 3)
         assert isinstance(v.at_path("nested"), NumericRecordArray)
         assert v["nested/b"].shape == (2, 3, 2)
-        # NOTE: assert via the vector round-trip, not ``from_vector(...) == v``.
-        # RecordArray.__eq__ is currently broken for a nested *Array field (it
-        # calls jnp.array_equal on the nested array, which raises, then falls
-        # back to an identity check). Tracked in #235 (batch-records PR); once
-        # that is fixed, simplify to ``tpl.from_vector(tpl.to_vector(v)) == v``.
-        assert jnp.array_equal(tpl.to_vector(v), flat)
+        assert tpl.from_vector(tpl.to_vector(v)) == v
 
 
 class TestFromVectorErrors:
