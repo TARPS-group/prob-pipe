@@ -8,6 +8,7 @@ from ..core.distribution import Distribution
 from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsLogProb
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -71,9 +72,10 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             )
         self._prior = prior
         self._likelihood = likelihood
-        # ``Distribution`` metaclass requires a non-empty name; default
-        # to the class name when the caller doesn't supply one.
-        self._name = name if name else "SimpleModel"
+        # Default to the class name when the caller does not supply one;
+        # the default is an auto-derived name.
+        name, name_is_auto = auto_name(name or None, "SimpleModel")
+        self._init_tracked(name, name_is_auto=name_is_auto)
 
         # Build merged event_template: prior params + likelihood data fields.
         # This makes fields include both parameter and data names,

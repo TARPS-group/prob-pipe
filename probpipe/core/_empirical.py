@@ -67,6 +67,7 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record
+from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -295,9 +296,7 @@ class EmpiricalDistribution[T](
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        name_is_auto = name is None
-        if name is None:
-            name = "empirical"
+        name, name_is_auto = auto_name(name, "empirical")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
 
@@ -483,9 +482,7 @@ class RecordEmpiricalDistribution(
         self._record_data = samples
         self._num_atoms = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        name_is_auto = name is None
-        if name is None:
-            name = "empirical(" + ",".join(samples.fields) + ")"
+        name, name_is_auto = auto_name(name, "empirical(" + ",".join(samples.fields) + ")")
         # Skip EmpiricalDistribution.__init__ (different storage shape);
         # call Distribution.__init__ directly for name registration.
         Distribution.__init__(self, name=name, name_is_auto=name_is_auto)
@@ -870,9 +867,7 @@ class BootstrapReplicateDistribution[T](
             if replicate_size < 1:
                 raise ValueError(f"replicate_size must be positive, got {replicate_size}")
             self._replicate_size = replicate_size
-        name_is_auto = name is None
-        if name is None:
-            name = "bootstrap"
+        name, name_is_auto = auto_name(name, "bootstrap")
         super().__init__(name=name, name_is_auto=name_is_auto)
         if self._source_kind == "sampleable":
             self._source_size = None

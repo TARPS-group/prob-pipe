@@ -26,7 +26,7 @@ from probpipe import (
     RecordArray,
 )
 from probpipe.core.event_template import EventTemplate
-from probpipe.core.tracked import Annotated, Tracked
+from probpipe.core.tracked import Annotated, Tracked, auto_name
 
 # ===========================================================================
 # 1. Mixin membership — every core object is a tracked term
@@ -65,6 +65,14 @@ class TestMixinMembership:
 # ===========================================================================
 # 2. name_is_auto — user-given vs. auto-derived
 # ===========================================================================
+
+
+class TestAutoNameHelper:
+    def test_supplied_name_is_user_given(self):
+        assert auto_name("mine", "default") == ("mine", False)
+
+    def test_missing_name_takes_default_as_auto(self):
+        assert auto_name(None, "default") == ("default", True)
 
 
 class TestNameIsAuto:
@@ -180,6 +188,25 @@ class TestWithName:
         assert m.name == "y"
         assert m.provenance is None
 
+    def test_with_name_decouples_annotations_container(self):
+        # Post-rename annotation writes must not show through on the
+        # original (the container is copied; entry values are shared).
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        n._annotations = {"fit": "exact"}
+        m = n.with_name("y")
+        m.annotations["check"] = "added-on-copy"
+        assert "check" not in n.annotations
+        assert m.annotations["fit"] == "exact"
+
+    def test_with_name_decouples_datatree_annotations(self):
+        xr = pytest.importorskip("xarray")
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        n._annotations = xr.DataTree.from_dict({"arviz": xr.Dataset()})
+        m = n.with_name("y")
+        m.annotations["diagnostics"] = xr.DataTree()
+        assert "diagnostics" not in n.annotations.children
+        assert "arviz" in m.annotations.children
+
     def test_with_name_after_provenance_starts_fresh_chain(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         n.with_provenance(Provenance("first"))
@@ -245,6 +272,26 @@ class TestAnnotated:
 # ===========================================================================
 # 6. Batch element types round-trip identity state
 # ===========================================================================
+
+
+class TestProductPickleRoundTrip:
+    def test_auto_named_product_keeps_auto_flag(self):
+        joint = ProductDistribution(
+            mu=Normal(loc=0.0, scale=1.0, name="mu"),
+            sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
+        )
+        assert joint.name_is_auto is True
+        back = pickle.loads(pickle.dumps(joint))
+        assert back.name == joint.name
+        assert back.name_is_auto is True
+
+    def test_user_named_product_keeps_identity_and_provenance(self):
+        joint = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"), name="my_joint")
+        joint.with_provenance(Provenance("op"))
+        back = pickle.loads(pickle.dumps(joint))
+        assert back.name == "my_joint"
+        assert back.name_is_auto is False
+        assert back.provenance.operation == "op"
 
 
 class TestBatchPickleRoundTrip:

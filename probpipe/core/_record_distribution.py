@@ -197,9 +197,9 @@ class _RecordDistributionView(Distribution):
             raise KeyError(
                 f"No field {key!r} in event_template (available: {tuple(template.children)})"
             )
-        # Bypass Distribution.__init__ validation (view name comes from
-        # the field key, not a user-supplied argument).
-        self._name = key
+        # Bypass Distribution.__init__ validation; the view's name is
+        # derived from the field key, not user-supplied, so it is auto.
+        self._init_tracked(key, name_is_auto=True)
         self._parent = parent
         self._key = key
         self._key_path = (key,)

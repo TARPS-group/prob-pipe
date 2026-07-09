@@ -69,6 +69,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
+from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # Sampling & expectation helpers
@@ -652,9 +653,7 @@ class BootstrapDistribution(
             weights=weights,
             log_weights=log_weights,
         )
-        name_is_auto = name is None
-        if name is None:
-            name = "bootstrap_dist"
+        name, name_is_auto = auto_name(name, "bootstrap_dist")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
 
@@ -930,9 +929,10 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 
     def __init__(self, base: Distribution):
         self._base = base
-        # Carry the base's name through; ``base.name`` is guaranteed
-        # non-empty by the Distribution metaclass.
-        self._name = base.name
+        # Carry the base's identity through; ``base.name`` is guaranteed
+        # non-empty by the Distribution metaclass, and the view mirrors
+        # whether that name was auto-derived.
+        self._init_tracked(base.name, name_is_auto=base.name_is_auto)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -1187,7 +1187,11 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         # ``_name``. ``base.name`` is guaranteed non-empty by the
         # Distribution metaclass, so the fallback is always valid.
         self._base = base
-        self._name = name if name is not None else base.name
+        if name is not None:
+            self._init_tracked(name)
+        else:
+            # Fall back to the base's name, mirroring its auto flag.
+            self._init_tracked(base.name, name_is_auto=base.name_is_auto)
         # Pre-set the user-supplied template so the auto-build path in
         # ``NumericRecordDistribution.event_template`` is skipped.
         object.__setattr__(self, "_event_template", template)

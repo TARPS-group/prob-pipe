@@ -49,6 +49,7 @@ import numpy as np
 from .._array_utils import _slice_leading_axes
 from ._distribution_base import Distribution
 from .protocols import SupportsArrayBackend
+from .tracked import auto_name
 
 if TYPE_CHECKING:
     from .protocols import _DistributionArrayBackend
@@ -169,9 +170,7 @@ class DistributionArray[T](Distribution[T]):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
-        name_is_auto = name is None
-        if name is None:
-            name = "distribution_array"
+        name, name_is_auto = auto_name(name, "distribution_array")
         super().__init__(name=name, name_is_auto=name_is_auto)
         # A DistributionArray holding MC-marginal components inherits
         # their approximation status; if any component is approximate
@@ -347,9 +346,7 @@ class DistributionArray[T](Distribution[T]):
         instance._components = None
         instance._batch_shape = tuple(backend.batch_shape)
         instance._backend = backend
-        name_is_auto = name is None
-        if name is None:
-            name = "distribution_array"
+        name, name_is_auto = auto_name(name, "distribution_array")
         Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
         # Approximation status flows from the backend. TFP-backed
         # arrays are exact; a future Record-backend (over a

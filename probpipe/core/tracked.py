@@ -26,7 +26,33 @@ from typing import Any, Self
 
 from .provenance import Provenance
 
-__all__ = ["Annotated", "Tracked"]
+__all__ = ["Annotated", "Tracked", "auto_name"]
+
+
+def auto_name(name: str | None, default: str) -> tuple[str, bool]:
+    """Resolve an optional user-supplied name against an auto-derived default.
+
+    The standard idiom for a constructor whose ``name`` may be omitted:
+    returns ``(name, False)`` when *name* was supplied (a user-given name)
+    and ``(default, True)`` when it was ``None`` (an auto-derived name),
+    ready to pass to ``__init__(name=..., name_is_auto=...)`` or
+    :meth:`Tracked._init_tracked`.
+
+    Parameters
+    ----------
+    name : str or None
+        The caller-supplied name, or ``None`` to use *default*.
+    default : str
+        The auto-derived name to fall back on.
+
+    Returns
+    -------
+    tuple of (str, bool)
+        The resolved name and the matching ``name_is_auto`` flag.
+    """
+    if name is None:
+        return default, True
+    return name, False
 
 
 class Tracked:
@@ -116,11 +142,14 @@ class Tracked:
     def with_name(self, name: str) -> Self:
         """Return a copy of this object under a new user-given name.
 
-        The copy is shallow: it shares all internal state with the original
-        but has ``name`` set to *name* and :attr:`name_is_auto` set to
-        ``False`` (a rename is always a user choice). The copy's
-        :attr:`provenance` records the rename, with the original as parent,
-        so the lineage chain is preserved.
+        The copy is shallow: it shares its data with the original but has
+        ``name`` set to *name* and :attr:`name_is_auto` set to ``False`` (a
+        rename is always a user choice). The copy's :attr:`provenance`
+        records the rename, with the original as parent, so the lineage
+        chain is preserved. On an ``Annotated`` host the annotations
+        *container* is copied (its entries are shared), so annotations
+        written after the rename land on one object without appearing on
+        the other.
 
         This renames the object *itself*. To rename the named fields inside a
         structured object, use ``with_names`` on the named-tree types.
@@ -146,6 +175,14 @@ class Tracked:
         object.__setattr__(clone, "_name", name)
         object.__setattr__(clone, "_name_is_auto", False)
         object.__setattr__(clone, "_provenance", None)
+        # Decouple the annotations container: writers add entries in place
+        # (the documented append-only channel), and a shared container would
+        # let a post-rename write show through on the original. A shallow
+        # container copy shares the entry values but not the container.
+        annotations = getattr(clone, "_annotations", None)
+        if annotations is not None:
+            copied = annotations.copy() if hasattr(annotations, "copy") else dict(annotations)
+            object.__setattr__(clone, "_annotations", copied)
         clone.with_provenance(
             Provenance.create(
                 "with_name",
@@ -193,6 +230,21 @@ class Tracked:
                 "Provenance is write-once; create a new object instead."
             )
         object.__setattr__(self, "_provenance", provenance)
+        return self
+
+    def _restore_identity(self, *, name_is_auto: bool, provenance: Provenance | None) -> Self:
+        """Restore identity state on a reconstructed object, returning it.
+
+        The shared tail of every unpickle helper: after the constructor has
+        rebuilt the object (setting ``_name`` from the stored name), this
+        re-applies the stored :attr:`name_is_auto` flag and, when present,
+        the stored provenance — bypassing the write-once guard, since the
+        reconstruction is restoring recorded state rather than rewriting
+        lineage.
+        """
+        object.__setattr__(self, "_name_is_auto", bool(name_is_auto))
+        if provenance is not None:
+            object.__setattr__(self, "_provenance", provenance)
         return self
 
     # -- copying -------------------------------------------------------------

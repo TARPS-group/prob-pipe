@@ -444,10 +444,7 @@ def _unpickle_numeric_record(
     store: dict, name: str, name_is_auto: bool, provenance
 ) -> NumericRecord:
     nr = NumericRecord(name=name, **store)
-    object.__setattr__(nr, "_name_is_auto", name_is_auto)
-    if provenance is not None:
-        object.__setattr__(nr, "_provenance", provenance)
-    return nr
+    return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
 # ---------------------------------------------------------------------------

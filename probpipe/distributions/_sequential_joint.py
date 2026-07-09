@@ -33,6 +33,7 @@ from ..core.protocols import (
 )
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -174,9 +175,7 @@ class SequentialJointDistribution(
         self._raw_components: dict[str, Distribution | Callable[..., Distribution]] = dict(
             components
         )
-        name_is_auto = name is None
-        if name is None:
-            name = "sequential(" + ",".join(components.keys()) + ")"
+        name, name_is_auto = auto_name(name, "sequential(" + ",".join(components.keys()) + ")")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}

@@ -34,6 +34,7 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record
+from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # MarginalizedBroadcastDistribution — output marginal of a broadcast
@@ -109,9 +110,7 @@ class _MixtureMarginal[T](Distribution[T]):
         n = len(components)
         self._components = components
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        name_is_auto = name is None
-        if name is None:
-            name = "mixture_marginal"
+        name, name_is_auto = auto_name(name, "mixture_marginal")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
 
@@ -285,9 +284,7 @@ class _ListMarginal[T](Distribution[T]):
     ):
         self._items = items
         self._w = Weights(n=len(items), weights=weights, log_weights=log_weights)
-        name_is_auto = name is None
-        if name is None:
-            name = "list_marginal"
+        name, name_is_auto = auto_name(name, "list_marginal")
         super().__init__(name=name, name_is_auto=name_is_auto)
 
     @property
@@ -759,9 +756,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
-        name_is_auto = name is None
-        if name is None:
-            name = "broadcast"
+        name, name_is_auto = auto_name(name, "broadcast")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
         self._marginal_cache: MarginalizedBroadcastDistribution | None = None

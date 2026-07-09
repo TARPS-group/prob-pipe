@@ -20,6 +20,7 @@ from ..custom_types import Array
 from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
 from .event_template import ArraySpec, EventTemplate
 from .record import Record
+from .tracked import auto_name
 
 __all__ = [
     "NumericRecordArray",
@@ -114,12 +115,11 @@ class RecordArray(Record):
         # We bypass Record's normal constructor path because RecordArray
         # requires its own field-validation hook and an auto-name that
         # reflects the class name, not the "record(...)" default.
-        name_is_auto = name is None
-        if name is None:
-            name = f"{type(self).__name__.lower()}({','.join(store.keys())})"
+        name, name_is_auto = auto_name(
+            name, f"{type(self).__name__.lower()}({','.join(store.keys())})"
+        )
         object.__setattr__(self, "_tree", store)
         self._init_tracked(name, name_is_auto=name_is_auto)
-        object.__setattr__(self, "_annotations", None)
         object.__setattr__(self, "_batch_shape", batch_shape)
         object.__setattr__(self, "_template", template)
 
@@ -722,7 +722,6 @@ class _RecordArrayView(RecordArray):
         object.__setattr__(self, "_template", template)
         object.__setattr__(self, "_batch_shape", parent._batch_shape)
         self._init_tracked(f"{parent._name}[{field!r}]", name_is_auto=True)
-        object.__setattr__(self, "_annotations", None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_field", field)
 
@@ -797,20 +796,14 @@ def _unpickle_record_array(
     store: dict, batch_shape: tuple, template, name: str, name_is_auto: bool, provenance
 ) -> RecordArray:
     ra = RecordArray(store, batch_shape=batch_shape, template=template, name=name)
-    object.__setattr__(ra, "_name_is_auto", name_is_auto)
-    if provenance is not None:
-        object.__setattr__(ra, "_provenance", provenance)
-    return ra
+    return ra._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
 def _unpickle_numeric_record_array(
     store: dict, batch_shape: tuple, template, name: str, name_is_auto: bool, provenance
 ) -> NumericRecordArray:
     nra = NumericRecordArray(store, batch_shape=batch_shape, template=template, name=name)
-    object.__setattr__(nra, "_name_is_auto", name_is_auto)
-    if provenance is not None:
-        object.__setattr__(nra, "_provenance", provenance)
-    return nra
+    return nra._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
 # ---------------------------------------------------------------------------

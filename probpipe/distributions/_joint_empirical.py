@@ -44,6 +44,7 @@ from ..core.protocols import (
 )
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -139,9 +140,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 
         self._joint_samples = stored
         self._num_atoms = n
-        name_is_auto = name is None
-        if name is None:
-            name = "joint_empirical(" + ",".join(samples.keys()) + ")"
+        name, name_is_auto = auto_name(name, "joint_empirical(" + ",".join(samples.keys()) + ")")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()

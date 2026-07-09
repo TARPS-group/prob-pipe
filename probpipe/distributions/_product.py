@@ -38,6 +38,7 @@ from ..core.protocols import (
 )
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -244,14 +245,15 @@ class ProductDistribution(
                     f"All leaf components must be Distribution instances, got {type(leaf).__name__}"
                 )
         self._components = resolved
-        name_is_auto = name is None
-        if name is None:
-            name = "product(" + ",".join(resolved.keys()) + ")"
+        name, name_is_auto = auto_name(name, "product(" + ",".join(resolved.keys()) + ")")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
-        return (_unpickle_product_distribution, (dict(self._components), self._name))
+        return (
+            _unpickle_product_distribution,
+            (dict(self._components), self._name, self._name_is_auto, self._provenance),
+        )
 
     # -- Sampling (returns Record) ------------------------------------------
 
@@ -444,9 +446,10 @@ class ProductDistribution(
         return f"ProductDistribution({comp_str}{name_str})"
 
 
-def _unpickle_product_distribution(components, name):
+def _unpickle_product_distribution(components, name, name_is_auto, provenance):
     """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
-    return ProductDistribution(**components, name=name)
+    p = ProductDistribution(**components, name=name)
+    return p._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
 # ---------------------------------------------------------------------------

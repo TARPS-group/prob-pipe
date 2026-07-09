@@ -53,7 +53,7 @@ from .event_template import (
     _PathSubtree,
     _unflatten_paths,
 )
-from .tracked import Annotated, Tracked
+from .tracked import Annotated, Tracked, auto_name
 
 if TYPE_CHECKING:
     from ._numeric_record import NumericRecord
@@ -313,7 +313,7 @@ class Record(_NamedTree, Tracked, Annotated):
                         # the producing generator) — reuse it verbatim, keeping
                         # its name / provenance / backend aux. Identity, not ``==``:
                         # ``ArraySpec`` equality treats an unset dtype as equal
-                        # to a concrete one (see #337), so ``==`` could wrongly
+                        # to a concrete one, so ``==`` could wrongly
                         # skip adopting a richer supplied spec.
                         field_map[field_name] = value
                     else:
@@ -326,11 +326,8 @@ class Record(_NamedTree, Tracked, Annotated):
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
         object.__setattr__(self, "_tree", field_map)
-        name_is_auto = name is None
-        if name is None:
-            name = "record(" + ",".join(field_map.keys()) + ")"
+        name, name_is_auto = auto_name(name, "record(" + ",".join(field_map.keys()) + ")")
         self._init_tracked(name, name_is_auto=name_is_auto)
-        object.__setattr__(self, "_annotations", None)
         if event_template is None:
             event_template = EventTemplate.infer_from(field_map)
         else:
@@ -875,10 +872,7 @@ def _pack_fields(
 
 def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance) -> Record:
     r = Record(name=name, **store)
-    object.__setattr__(r, "_name_is_auto", name_is_auto)
-    if provenance is not None:
-        object.__setattr__(r, "_provenance", provenance)
-    return r
+    return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
 # ---------------------------------------------------------------------------

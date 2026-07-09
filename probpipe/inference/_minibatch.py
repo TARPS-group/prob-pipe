@@ -50,6 +50,7 @@ from ..core.protocols import (
     SupportsUnnormalizedLogProb,
 )
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 if TYPE_CHECKING:
@@ -226,9 +227,7 @@ class MinibatchedDistribution(
         self._with_replacement = bool(with_replacement)
         self._rescale_factor = float(self._n / batch_size)
 
-        name_is_auto = name is None
-        if name is None:
-            name = f"MinibatchedDistribution(batch_size={batch_size})"
+        name, name_is_auto = auto_name(name, f"MinibatchedDistribution(batch_size={batch_size})")
         super().__init__(name=name, name_is_auto=name_is_auto)
 
     # -- read-only metadata --------------------------------------------------

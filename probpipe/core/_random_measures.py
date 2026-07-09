@@ -87,6 +87,7 @@ from abc import abstractmethod
 from ..custom_types import Array
 from ._distribution_base import Distribution
 from .constraints import Constraint
+from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # RandomMeasure[T]
@@ -115,8 +116,7 @@ class RandomMeasure[T](Distribution[Distribution[T]]):
     """
 
     def __init__(self, *, name: str | None = None, name_is_auto: bool = False):
-        if name is None:
-            name, name_is_auto = type(self).__name__, True
+        name, name_is_auto = auto_name(name, type(self).__name__)
         super().__init__(name=name, name_is_auto=name_is_auto)
 
 
