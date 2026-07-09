@@ -2,10 +2,10 @@
 
 This module is private. Public diagnostic functions live in
 ``probpipe.diagnostics`` and write ProbPipe-computed results under
-``posterior._auxiliary["diagnostics"]``.
+``posterior._annotations["diagnostics"]``.
 
 The bridge owns conversion into ArviZ-compatible datasets and raw diagnostic
-inputs stored under ``posterior._auxiliary["arviz"]``. Users should normally
+inputs stored under ``posterior._annotations["arviz"]``. Users should normally
 interact with ``add_mcmc_diagnostics``, ``add_ppc``, ``add_loo``, and
 ``posterior.diagnostics`` instead of importing this module directly.
 """

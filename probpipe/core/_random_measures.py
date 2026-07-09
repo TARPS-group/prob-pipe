@@ -114,8 +114,10 @@ class RandomMeasure[T](Distribution[Distribution[T]]):
     components like any other.
     """
 
-    def __init__(self, *, name: str | None = None):
-        super().__init__(name=name or type(self).__name__)
+    def __init__(self, *, name: str | None = None, name_is_auto: bool = False):
+        if name is None:
+            name, name_is_auto = type(self).__name__, True
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
 
 # ---------------------------------------------------------------------------

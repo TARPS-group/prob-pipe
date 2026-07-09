@@ -17,8 +17,8 @@ How much history is retained is controlled by a global `ProvenanceMode`:
 | Mode | What is stored | Memory cost |
 |------|----------------|-------------|
 | `LIGHTWEIGHT` (default) | `ParentInfo` descriptors — type name, distribution name, and the parent's own provenance chain | Low — parent data arrays can be GC'd |
-| `FULL` | `ParentInfo` plus a live reference to the parent object via `.obj` | Higher — full ancestry stays in memory |
-| `OFF` | Nothing — `dist.source` is `None` | Zero |
+| `FULL` | `ParentInfo` plus a live reference to the parent object via `.parent` | Higher — full ancestry stays in memory |
+| `OFF` | Nothing — `dist.provenance` is `None` | Zero |
 
 Set the mode once at startup:
 
@@ -46,7 +46,7 @@ ancestors = provenance_ancestors(posterior)
 anc = ancestors[0]
 print(anc.type_name)   # "Normal"
 print(anc.name)        # "prior"
-print(anc.obj)         # None in LIGHTWEIGHT — parent may have been GC'd
+print(anc.parent)         # None in LIGHTWEIGHT — parent may have been GC'd
 ```
 
 To access the live parent object, switch to FULL mode before running the
@@ -57,8 +57,8 @@ probpipe.provenance_config.mode = ProvenanceMode.FULL
 
 posterior = wf(prior)
 anc = provenance_ancestors(posterior)[0]
-anc.obj                       # the live Normal distribution
-anc.obj.sample(key, (100,))   # sample from it
+anc.parent                       # the live Normal distribution
+anc.parent.sample(key, (100,))   # sample from it
 ```
 
 ## Migration from the pre-LIGHTWEIGHT API
@@ -80,8 +80,8 @@ assert any(a.name == "prior" for a in ancestors)   # name-based check
 # Or: opt in to FULL mode for live-object access
 probpipe.provenance_config.mode = ProvenanceMode.FULL
 ancestors = provenance_ancestors(result)
-assert any(a.obj is prior for a in ancestors)
-ancestors[0].obj.sample(key, (10,))
+assert any(a.parent is prior for a in ancestors)
+ancestors[0].parent.sample(key, (10,))
 ```
 
 ## Content fingerprints
@@ -98,7 +98,7 @@ posterior = wf(prior)
 anc = provenance_ancestors(posterior)[0]
 print(anc.fingerprint)   # e.g. "8d86780c50cea472"
 
-d = posterior.source.to_dict()
+d = posterior.provenance.to_dict()
 print(d["parents"][0]["fingerprint"])   # same digest
 ```
 

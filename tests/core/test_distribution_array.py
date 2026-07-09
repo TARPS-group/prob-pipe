@@ -499,15 +499,15 @@ class TestProvenance:
     def test_initial_source_is_none(self):
         comps = [Normal(loc=0.0, scale=1.0, name="d0")]
         da = _make_distribution_array(comps)
-        assert da.source is None
+        assert da.provenance is None
 
-    def test_with_source_roundtrip(self):
+    def test_with_provenance_roundtrip(self):
         comps = [Normal(loc=0.0, scale=1.0, name="d0")]
         da = _make_distribution_array(comps)
         parent = Normal(loc=0.0, scale=1.0, name="parent")
-        da.with_source(Provenance("sweep", parents=(parent,)))
-        assert da.source.operation == "sweep"
-        assert da.source.parents == (parent,)
+        da.with_provenance(Provenance("sweep", parents=(parent,)))
+        assert da.provenance.operation == "sweep"
+        assert da.provenance.parents == (parent,)
 
 
 # ---------------------------------------------------------------------------

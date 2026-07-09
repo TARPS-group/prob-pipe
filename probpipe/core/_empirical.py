@@ -295,9 +295,10 @@ class EmpiricalDistribution[T](
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
+        name_is_auto = name is None
         if name is None:
             name = "empirical"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -482,11 +483,12 @@ class RecordEmpiricalDistribution(
         self._record_data = samples
         self._num_atoms = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
+        name_is_auto = name is None
         if name is None:
             name = "empirical(" + ",".join(samples.fields) + ")"
         # Skip EmpiricalDistribution.__init__ (different storage shape);
         # call Distribution.__init__ directly for name registration.
-        Distribution.__init__(self, name=name)
+        Distribution.__init__(self, name=name, name_is_auto=name_is_auto)
         self._approximate = True
         self._event_template = _event_template_from_data(samples)
 
@@ -815,7 +817,7 @@ class BootstrapReplicateDistribution[T](
                     f"positive int giving the number of items per replicate."
                 )
             self._source_kind = "sampleable"
-            self._source = source
+            self._source_dist = source
             self._data = None
             self._w = None
             default_replicate_size = replicate_size
@@ -827,7 +829,7 @@ class BootstrapReplicateDistribution[T](
             return
 
         self._source_kind = "data"
-        self._source = None
+        self._source_dist = None
         if isinstance(source, EmpiricalDistribution):
             self._data = source.samples
             self._w = source._w
@@ -868,9 +870,10 @@ class BootstrapReplicateDistribution[T](
             if replicate_size < 1:
                 raise ValueError(f"replicate_size must be positive, got {replicate_size}")
             self._replicate_size = replicate_size
+        name_is_auto = name is None
         if name is None:
             name = "bootstrap"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         if self._source_kind == "sampleable":
             self._source_size = None
         else:
@@ -919,7 +922,7 @@ class BootstrapReplicateDistribution[T](
 
     def _one_bootstrap(self, key: PRNGKey) -> Any:
         if self._source_kind == "sampleable":
-            return self._source._sample(key, sample_shape=(self._replicate_size,))
+            return self._source_dist._sample(key, sample_shape=(self._replicate_size,))
         idx = self._w.choice(key, shape=(self._replicate_size,))
         return self._data[idx]
 
@@ -991,7 +994,7 @@ class BootstrapReplicateDistribution[T](
             return (
                 f"BootstrapReplicateDistribution("
                 f"replicate_size={self._replicate_size}, "
-                f"source={type(self._source).__name__})"
+                f"source={type(self._source_dist).__name__})"
             )
         return (
             f"BootstrapReplicateDistribution("
@@ -1107,7 +1110,7 @@ class RecordBootstrapReplicateDistribution(
         # Bootstrap-base bookkeeping. Set self._data so the base's
         # `.data` property returns the Record (matches old behaviour).
         self._source_kind = "data"
-        self._source = None
+        self._source_dist = None
         self._data = self._record_data
         self._init_bootstrap_state(
             default_replicate_size,

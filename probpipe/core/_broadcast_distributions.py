@@ -109,9 +109,10 @@ class _MixtureMarginal[T](Distribution[T]):
         n = len(components)
         self._components = components
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
+        name_is_auto = name is None
         if name is None:
             name = "mixture_marginal"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
 
     @property
@@ -284,9 +285,10 @@ class _ListMarginal[T](Distribution[T]):
     ):
         self._items = items
         self._w = Weights(n=len(items), weights=weights, log_weights=log_weights)
+        name_is_auto = name is None
         if name is None:
             name = "list_marginal"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
     @property
     def num_atoms(self) -> int:
@@ -397,7 +399,7 @@ def _make_marginal(
 # through to a plain-list wrapping with a clear error if even that
 # fails.
 #
-# Caller attaches ``.with_source(...)`` externally via ``_coerce_output``.
+# Caller attaches ``.with_provenance(...)`` externally via ``_coerce_output``.
 # ---------------------------------------------------------------------------
 
 
@@ -757,9 +759,10 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
+        name_is_auto = name is None
         if name is None:
             name = "broadcast"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
         self._marginal_cache: MarginalizedBroadcastDistribution | None = None
 
@@ -840,8 +843,8 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
                 self._w,
                 output_distributions=self._output_distributions,
             )
-            if self.source is not None and isinstance(self._marginal_cache, Distribution):
-                self._marginal_cache.with_source(self.source)
+            if self.provenance is not None and isinstance(self._marginal_cache, Distribution):
+                self._marginal_cache.with_provenance(self.provenance)
         return self._marginal_cache
 
     @property

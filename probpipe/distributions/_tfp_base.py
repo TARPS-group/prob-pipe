@@ -132,7 +132,7 @@ class TFPDistribution(
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
-    def __init__(self, *, name: str) -> None:
+    def __init__(self, *, name: str, name_is_auto: bool = False) -> None:
         """Final-stage initializer for TFP-backed distributions.
 
         Concrete subclasses (``Normal``, ``Beta``, …) set
@@ -141,7 +141,7 @@ class TFPDistribution(
         the TFP backend is fully constructed and we can validate its
         ``batch_shape``.
         """
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         if _BATCHED_INIT_BYPASS.get():
             return
         # KDE-style subclasses set ``_tfp_dist`` *after* this call;

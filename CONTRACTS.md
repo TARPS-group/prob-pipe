@@ -90,7 +90,7 @@ if it were user-guide reference text.
 | `Record` / `NumericRecord` | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
 | Batch types (`RecordArray`/`NumericRecordArray`/`DistributionArray` → `*Batch`) | docstrings in `_record_array.py`, `_distribution_array.py`; #235 Chapter 2 |
 | `WorkflowFunction` & ops (`sample`, `log_prob`, …) | docstrings in `core/node.py`, `core/ops.py`, `_workflow_result.py`; #235 Chapter 3 |
-| Naming / provenance / annotations (`Tracked` / `Annotated` mixins) | the naming contract in #235 Chapter 5; mixin docstrings once they land |
+| Naming / provenance / annotations (`Tracked` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
 
 ## Canonical variable names (use these; don't invent synonyms)
 | Concept | Name |

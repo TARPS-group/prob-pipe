@@ -1,4 +1,4 @@
-"""Tests for Distribution base-class machinery (name, renamed, provenance)."""
+"""Tests for Distribution base-class machinery (name, with_name, provenance)."""
 
 from __future__ import annotations
 
@@ -53,63 +53,63 @@ _NO_BATCH_SHAPE_DISTS = [
 
 
 class TestRenamedBasics:
-    """Distribution.renamed() returns a new object with a new name."""
+    """Distribution.with_name() returns a new object with a new name."""
 
     def test_returns_new_object(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.renamed("y")
+        n2 = n.with_name("y")
         assert n is not n2
         assert n.name == "x"  # original unchanged
         assert n2.name == "y"
 
     def test_is_same_type(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        assert type(n.renamed("y")) is type(n)
+        assert type(n.with_name("y")) is type(n)
 
     def test_is_shallow_copy(self):
         """Underlying parameters are shared (not deep-copied)."""
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.renamed("y")
+        n2 = n.with_name("y")
         assert n2._loc is n._loc  # shared array
         assert n2._scale is n._scale
 
 
 class TestRenamedProvenance:
-    """renamed() attaches a 'renamed' Provenance pointing to the original."""
+    """with_name() attaches a 'with_name' Provenance pointing to the original."""
 
     def test_source_operation(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.renamed("y")
-        assert n2.source is not None
-        assert n2.source.operation == "renamed"
+        n2 = n.with_name("y")
+        assert n2.provenance is not None
+        assert n2.provenance.operation == "with_name"
 
     def test_source_parents(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.renamed("y")
-        assert len(n2.source.parents) == 1
-        assert n2.source.parents[0].name == "x"
+        n2 = n.with_name("y")
+        assert len(n2.provenance.parents) == 1
+        assert n2.provenance.parents[0].name == "x"
 
     def test_source_metadata(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.renamed("y")
-        assert n2.source.metadata["old_name"] == "x"
-        assert n2.source.metadata["new_name"] == "y"
+        n2 = n.with_name("y")
+        assert n2.provenance.metadata["old_name"] == "x"
+        assert n2.provenance.metadata["new_name"] == "y"
 
     def test_rename_chain_preserves_ancestry(self, full_provenance_mode):
-        """a.renamed("b").renamed("c") keeps a in the ancestor DAG."""
+        """a.with_name("b").with_name("c") keeps a in the ancestor DAG."""
         a = Normal(loc=0.0, scale=1.0, name="a")
-        b = a.renamed("b")
-        c = b.renamed("c")
+        b = a.with_name("b")
+        c = b.with_name("c")
         ancestors = provenance_ancestors(c)
-        assert any(anc.obj is a for anc in ancestors)
-        assert any(anc.obj is b for anc in ancestors)
+        assert any(anc.parent is a for anc in ancestors)
+        assert any(anc.parent is b for anc in ancestors)
 
     def test_original_source_not_mutated(self):
         """Renaming does not alter the original's source."""
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n.with_source(Provenance("construction", parents=()))
-        n.renamed("y")
-        assert n.source.operation == "construction"
+        n.with_provenance(Provenance("construction", parents=()))
+        n.with_name("y")
+        assert n.provenance.operation == "construction"
 
 
 class TestRenamedSampling:
@@ -117,7 +117,7 @@ class TestRenamedSampling:
 
     def test_sample_statistics_match(self):
         n = Normal(loc=2.0, scale=0.5, name="x")
-        n2 = n.renamed("mu")
+        n2 = n.with_name("mu")
         key = jax.random.PRNGKey(0)
         s1 = n._sample(key, (2000,))
         s2 = n2._sample(key, (2000,))
@@ -126,7 +126,7 @@ class TestRenamedSampling:
 
     def test_log_prob_matches(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.renamed("z")
+        n2 = n.with_name("z")
         x = jnp.asarray(1.23)
         np.testing.assert_allclose(
             float(n._log_prob(x)),
@@ -136,24 +136,24 @@ class TestRenamedSampling:
 
     def test_event_shape_matches(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
-        renamed = mvn.renamed("b")
+        renamed = mvn.with_name("b")
         assert renamed.event_shape == mvn.event_shape
 
 
 class TestRenamedEventTemplate:
-    """renamed() regenerates the cached event_template with the new name."""
+    """with_name() regenerates the cached event_template with the new name."""
 
     def test_template_field_name_updates(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         # Touch the template on the original so it's cached
         assert n.event_template.fields == ("x",)
-        n2 = n.renamed("growth_rate")
+        n2 = n.with_name("growth_rate")
         assert n2.event_template.fields == ("growth_rate",)
 
     def test_template_shape_preserved(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
         assert mvn.event_template["a"] == ArraySpec((3,))
-        b = mvn.renamed("b")
+        b = mvn.with_name("b")
         assert b.event_template["b"] == ArraySpec((3,))
 
 
@@ -196,22 +196,22 @@ class TestNoBatchShape:
 
 
 class TestAuxiliaryDiagnosticsAccessor:
-    def test_auxiliary_defaults_to_none(self):
+    def test_annotations_defaults_to_none(self):
         dist = Normal(loc=0.0, scale=1.0, name="x")
-        assert dist.auxiliary is None
+        assert dist.annotations is None
         assert dist.diagnostics is None
 
-    def test_diagnostics_none_when_auxiliary_has_no_diagnostics_group(self):
+    def test_diagnostics_none_when_annotations_has_no_diagnostics_group(self):
         import xarray as xr
 
         dist = Normal(loc=0.0, scale=1.0, name="x")
-        dist._auxiliary = xr.DataTree.from_dict({"arviz": xr.Dataset()})
-        assert dist.auxiliary is dist._auxiliary
+        dist._annotations = xr.DataTree.from_dict({"arviz": xr.Dataset()})
+        assert dist.annotations is dist._annotations
         assert dist.diagnostics is None
 
-    def test_diagnostics_none_when_auxiliary_has_no_children_attr(self):
+    def test_diagnostics_none_when_annotations_has_no_children_attr(self):
         dist = Normal(loc=0.0, scale=1.0, name="x")
-        dist._auxiliary = object()
+        dist._annotations = object()
 
         assert dist.diagnostics is None
 
@@ -221,7 +221,7 @@ class TestAuxiliaryDiagnosticsAccessor:
         from probpipe.diagnostics.views import DiagnosticsView
 
         dist = Normal(loc=0.0, scale=1.0, name="x")
-        dist._auxiliary = xr.DataTree.from_dict(
+        dist._annotations = xr.DataTree.from_dict(
             {"diagnostics": xr.Dataset(attrs={"warnings": "[]"})}
         )
         view = dist.diagnostics
@@ -315,7 +315,7 @@ class TestMetaclassEnforcement:
 
 
 class TestRenamedTemplateRoundtrip:
-    """``NumericRecordDistribution.renamed`` regenerates an auto-built
+    """``NumericRecordDistribution.with_name`` regenerates an auto-built
     template under the new name; explicit and multi-field templates
     are preserved.
     """
@@ -330,11 +330,11 @@ class TestRenamedTemplateRoundtrip:
         # Trigger the auto-build so ``_event_template`` is cached.
         assert original.event_template.fields == ("x",)
 
-        clone = original.renamed("y")
+        clone = original.with_name("y")
         assert clone.name == "y"
         # The rebuilt template uses the new name as the field key.
         assert clone.event_template.fields == ("y",)
-        # The original is untouched (renamed returns a copy).
+        # The original is untouched (with_name returns a copy).
         assert original.event_template.fields == ("x",)
 
     def test_renamed_preserves_multi_field_template(self):
@@ -352,7 +352,7 @@ class TestRenamedTemplateRoundtrip:
             y=1,
         )
         original_fields = jg.event_template.fields
-        clone = jg.renamed("renamed_jg")
+        clone = jg.with_name("renamed_jg")
         assert clone.event_template.fields == original_fields
 
     def test_renamed_preserves_non_numeric_event_template(self):
@@ -370,6 +370,6 @@ class TestRenamedTemplateRoundtrip:
             ids=np.array([0, 1, 2]),
         )
         original_fields = je.event_template.fields
-        clone = je.renamed("renamed_je")
+        clone = je.with_name("renamed_je")
         assert clone.event_template is not None
         assert clone.event_template.fields == original_fields

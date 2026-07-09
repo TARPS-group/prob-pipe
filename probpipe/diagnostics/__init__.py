@@ -6,7 +6,7 @@ ProbPipe posterior objects.
 Primary public API
 ------------------
 
-In-place diagnostic functions mutate ``posterior._auxiliary`` and return
+In-place diagnostic functions mutate ``posterior._annotations`` and return
 ``None``::
 
     from probpipe.diagnostics import (
@@ -20,14 +20,14 @@ In-place diagnostic functions mutate ``posterior._auxiliary`` and return
 
 These functions write diagnostic summaries under::
 
-    posterior._auxiliary["diagnostics"]
+    posterior._annotations["diagnostics"]
 
 and, when needed, ArviZ-compatible data under::
 
-    posterior._auxiliary["arviz"]
+    posterior._annotations["arviz"]
 
-``posterior._auxiliary["arviz"]`` contains ArviZ-compatible xarray DataTree
-data and raw diagnostic inputs. ``posterior._auxiliary["diagnostics"]`` contains
+``posterior._annotations["arviz"]`` contains ArviZ-compatible xarray DataTree
+data and raw diagnostic inputs. ``posterior._annotations["diagnostics"]`` contains
 ProbPipe-computed summaries, results, warnings, and metadata exposed through
 ``posterior.diagnostics``.
 
@@ -49,7 +49,7 @@ subtree. The accessor classes are available as::
 ArviZ plotting
 --------------
 
-ArviZ-compatible data live under ``posterior._auxiliary["arviz"]`` and are
+ArviZ-compatible data live under ``posterior._annotations["arviz"]`` and are
 exposed as ``posterior.arviz_data``. For backward compatibility,
 ``posterior.inference_data`` is an alias for the same DataTree subtree.
 Plotting support depends on which ArviZ groups have been written::

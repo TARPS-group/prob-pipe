@@ -5,24 +5,24 @@ LOO/PSIS functionality.
 
 Design
 ------
-Functions in this file mutate ``posterior._auxiliary`` in place and return
+Functions in this file mutate ``posterior._annotations`` in place and return
 ``None``. They are intentionally plain Python functions, not
 ``@workflow_function``s, because diagnostics are post-hoc annotations on an
 already-fitted posterior.
 
 ArviZ-compatible data are stored under::
 
-    _auxiliary/arviz/
+    _annotations/arviz/
 
 ProbPipe diagnostic summaries are stored under::
 
-    _auxiliary/diagnostics/runs/loo
+    _annotations/diagnostics/runs/loo
 
 Main function
 -------------
 add_loo
     Compute PSIS-LOO using ArviZ and attach scalar summaries to
-    ``posterior._auxiliary``.
+    ``posterior._annotations``.
 """
 
 from __future__ import annotations
@@ -102,12 +102,12 @@ def _get_arviz_tree(posterior: Distribution) -> Any:
 
     Preferred layout::
 
-        posterior._auxiliary["arviz"]
+        posterior._annotations["arviz"]
 
     This function is defensive so that it also works during transition periods
     where older posteriors expose only ``posterior.inference_data``.
     """
-    aux = getattr(posterior, "_auxiliary", None)
+    aux = getattr(posterior, "_annotations", None)
 
     if aux is not None:
         try:
@@ -122,7 +122,7 @@ def _get_arviz_tree(posterior: Distribution) -> Any:
             continue
 
         if arviz_data is not None:
-            # If the accessor accidentally returns the full auxiliary tree,
+            # If the accessor accidentally returns the full annotations tree,
             # prefer its /arviz subtree when present.
             try:
                 return arviz_data["arviz"]
@@ -320,26 +320,26 @@ def add_loo(
     force: bool = False,
     store_pointwise: bool = True,
 ) -> None:
-    """Compute PSIS-LOO and attach results to ``posterior._auxiliary``.
+    """Compute PSIS-LOO and attach results to ``posterior._annotations``.
 
-    This function mutates ``posterior._auxiliary`` in place and returns
+    This function mutates ``posterior._annotations`` in place and returns
     ``None``.
 
     Parameters
     ----------
     posterior : Distribution
         Posterior distribution whose ArviZ-compatible xarray DataTree data are
-        stored under ``posterior._auxiliary["arviz"]``.
+        stored under ``posterior._annotations["arviz"]``.
 
     log_likelihood : optional
         Pointwise log likelihood. If provided, it is written to
-        ``_auxiliary/arviz/log_likelihood`` before calling ArviZ. This is an
+        ``_annotations/arviz/log_likelihood`` before calling ArviZ. This is an
         advanced override; the normal user-facing workflow is
         ``add_loo(posterior)``.
 
     model, data : optional
         Inputs used to compute pointwise log likelihoods when
-        ``_auxiliary/arviz/log_likelihood`` is missing. This keeps LOO owned by
+        ``_annotations/arviz/log_likelihood`` is missing. This keeps LOO owned by
         ``add_loo`` instead of requiring a separate public precomputation step.
 
     var_name : str
@@ -369,7 +369,7 @@ def add_loo(
     -------
     None
     """
-    if not force and _has_group(getattr(posterior, "_auxiliary", None), "diagnostics/runs/loo"):
+    if not force and _has_group(getattr(posterior, "_annotations", None), "diagnostics/runs/loo"):
         return None
 
     # ------------------------------------------------------------------
@@ -406,7 +406,7 @@ def add_loo(
         if arviz_tree is None or not _has_group(arviz_tree, "log_likelihood"):
             raise ValueError(
                 "No pointwise log_likelihood group found under "
-                "posterior._auxiliary['arviz']. add_loo needs pointwise log "
+                "posterior._annotations['arviz']. add_loo needs pointwise log "
                 "likelihoods with shape (chain, draw, obs). Either use an "
                 "inference backend/model path that records pointwise log "
                 "likelihoods, pass log_likelihood=... as an advanced override, "
@@ -565,7 +565,7 @@ def _add_log_likelihood(
     Returns
     -------
     None
-        Mutates ``posterior._auxiliary`` in place.
+        Mutates ``posterior._annotations`` in place.
 
     Notes
     -----

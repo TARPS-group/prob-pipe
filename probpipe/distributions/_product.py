@@ -116,7 +116,7 @@ def _resolve_nested_names(parent_key: str, d: dict) -> dict:
         if isinstance(val, dict):
             result[key] = _resolve_nested_names(key, val)
         elif hasattr(val, "name") and val.name != key:
-            result[key] = val.renamed(key)
+            result[key] = val.with_name(key)
         else:
             result[key] = val
     return result
@@ -195,7 +195,7 @@ class ProductDistribution(
         ``NumericRecordDistribution`` instances (leaves) or nested dicts
         whose leaves are ``NumericRecordDistribution`` instances.
         When a keyword key differs from the distribution's name, the
-        distribution is automatically renamed (via ``renamed()``) to
+        distribution is automatically renamed (via ``with_name()``) to
         match the key.
 
     Examples
@@ -231,7 +231,7 @@ class ProductDistribution(
             if isinstance(comp, dict):
                 resolved[key] = _resolve_nested_names(key, comp)
             elif comp.name != key:
-                resolved[key] = comp.renamed(key)
+                resolved[key] = comp.with_name(key)
             else:
                 resolved[key] = comp
         # Leaves can be any ``Distribution``. When every leaf is a
@@ -244,9 +244,10 @@ class ProductDistribution(
                     f"All leaf components must be Distribution instances, got {type(leaf).__name__}"
                 )
         self._components = resolved
+        name_is_auto = name is None
         if name is None:
             name = "product(" + ",".join(resolved.keys()) + ")"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
@@ -420,7 +421,7 @@ class ProductDistribution(
         new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
         result = ProductDistribution(**new_components, name=self._name)
         conditioned_names = [" > ".join(path) for path in observed_leaves]
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],

@@ -226,9 +226,10 @@ class MinibatchedDistribution(
         self._with_replacement = bool(with_replacement)
         self._rescale_factor = float(self._n / batch_size)
 
+        name_is_auto = name is None
         if name is None:
             name = f"MinibatchedDistribution(batch_size={batch_size})"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
     # -- read-only metadata --------------------------------------------------
 

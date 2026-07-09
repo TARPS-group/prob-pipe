@@ -774,7 +774,7 @@ class TestReprAndEquality:
 
 
 class TestProvenance:
-    """Record carries the same ``.source`` / ``.with_source`` slot as
+    """Record carries the same ``.provenance`` / ``.with_provenance`` slot as
     Distribution, so workflow outputs can attach a Provenance node
     regardless of which of the three output types (Record, RecordArray,
     Distribution) the broadcasting layer produced.
@@ -782,54 +782,54 @@ class TestProvenance:
 
     def test_initial_source_is_none(self):
         r = Record(x=1.0, y=2.0)
-        assert r.source is None
+        assert r.provenance is None
 
-    def test_with_source_sets_and_returns_self(self):
+    def test_with_provenance_sets_and_returns_self(self):
         r = Record(x=1.0)
-        out = r.with_source(Provenance("op", parents=()))
+        out = r.with_provenance(Provenance("op", parents=()))
         assert out is r
-        assert r.source.operation == "op"
+        assert r.provenance.operation == "op"
 
-    def test_with_source_is_write_once(self):
+    def test_with_provenance_is_write_once(self):
         r = Record(x=1.0)
-        r.with_source(Provenance("first", parents=()))
+        r.with_provenance(Provenance("first", parents=()))
         with pytest.raises(RuntimeError, match="write-once"):
-            r.with_source(Provenance("second", parents=()))
+            r.with_provenance(Provenance("second", parents=()))
 
     # Semantic transformations reset the source — the new Record is a
     # different logical value even though the class preserves.
 
     def test_replace_resets_source(self):
-        r = Record(x=1.0).with_source(Provenance("orig", parents=()))
+        r = Record(x=1.0).with_provenance(Provenance("orig", parents=()))
         r2 = r.replace(x=2.0)
-        assert r2.source is None
-        assert r.source.operation == "orig"  # original unaffected
+        assert r2.provenance is None
+        assert r.provenance.operation == "orig"  # original unaffected
 
     def test_merge_resets_source(self):
-        r = Record(x=1.0).with_source(Provenance("orig", parents=()))
+        r = Record(x=1.0).with_provenance(Provenance("orig", parents=()))
         merged = r.merge(Record(y=2.0))
-        assert merged.source is None
+        assert merged.provenance is None
 
     def test_without_resets_source(self):
-        r = Record(x=1.0, y=2.0).with_source(Provenance("orig", parents=()))
+        r = Record(x=1.0, y=2.0).with_provenance(Provenance("orig", parents=()))
         r2 = r.without("y")
-        assert r2.source is None
+        assert r2.provenance is None
 
     def test_map_resets_source(self):
-        r = Record(x=1.0).with_source(Provenance("orig", parents=()))
+        r = Record(x=1.0).with_provenance(Provenance("orig", parents=()))
         r2 = r.map(lambda v: v + 1)
-        assert r2.source is None
+        assert r2.provenance is None
 
     # Structural equality / hashing ignore source — two Records with the
     # same fields but different provenance are still equal.
 
     def test_eq_ignores_source(self):
-        r1 = Record(x=1.0).with_source(Provenance("a", parents=()))
-        r2 = Record(x=1.0).with_source(Provenance("b", parents=()))
+        r1 = Record(x=1.0).with_provenance(Provenance("a", parents=()))
+        r2 = Record(x=1.0).with_provenance(Provenance("b", parents=()))
         assert r1 == r2
 
     def test_hash_ignores_source(self):
-        r1 = Record(x=1.0).with_source(Provenance("a", parents=()))
+        r1 = Record(x=1.0).with_provenance(Provenance("a", parents=()))
         r2 = Record(x=1.0)
         assert hash(r1) == hash(r2)
 
@@ -840,10 +840,10 @@ class TestProvenance:
 
     def test_pytree_roundtrip_drops_source(self):
         r = Record(x=1.0, y=jnp.array([2.0, 3.0]))
-        r.with_source(Provenance("op", parents=()))
+        r.with_provenance(Provenance("op", parents=()))
         leaves, treedef = jax.tree_util.tree_flatten(r)
         r2 = jax.tree_util.tree_unflatten(treedef, leaves)
-        assert r2.source is None
+        assert r2.provenance is None
         # But the Record is otherwise structurally identical.
         assert r2 == r
 
@@ -852,15 +852,15 @@ class TestProvenance:
 
     def test_provenance_ancestors_walks_through_distribution(self):
         prior = Normal(loc=0.0, scale=1.0, name="prior")
-        r = Record(theta=1.0).with_source(Provenance("draw", parents=(prior,)))
+        r = Record(theta=1.0).with_provenance(Provenance("draw", parents=(prior,)))
         ancestors = provenance_ancestors(r)
         assert len(ancestors) == 1
         assert ancestors[0] is prior
 
     def test_provenance_ancestors_walks_nested_records(self):
         prior = Normal(loc=0.0, scale=1.0, name="prior")
-        middle = Record(theta=1.0).with_source(Provenance("draw", parents=(prior,)))
-        outer = Record(result=2.0).with_source(Provenance("transform", parents=(middle,)))
+        middle = Record(theta=1.0).with_provenance(Provenance("draw", parents=(prior,)))
+        outer = Record(result=2.0).with_provenance(Provenance("transform", parents=(middle,)))
         ancestors = provenance_ancestors(outer)
         names = [getattr(a, "name", None) for a in ancestors]
         assert names == [middle.name, "prior"]

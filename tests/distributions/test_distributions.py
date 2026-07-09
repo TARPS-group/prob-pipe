@@ -180,8 +180,8 @@ class TestMultivariateNormal:
         g2 = from_distribution(ed, MultivariateNormal, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.name == "fitted"
-        assert g2.source is not None
-        assert g2.source.operation == "from_distribution"
+        assert g2.provenance is not None
+        assert g2.provenance.operation == "from_distribution"
 
     def test_from_distribution_gaussian(self, gaussian, key):
         """Moment-match from another MultivariateNormal via sampling."""
@@ -292,8 +292,8 @@ class TestEmpiricalDistribution:
         ed = from_distribution(gaussian, RecordEmpiricalDistribution, key=key, num_samples=50)
         assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
-        assert ed.source is not None
-        assert ed.source.operation == "from_distribution"
+        assert ed.provenance is not None
+        assert ed.provenance.operation == "from_distribution"
         assert ed.name == gaussian.name
 
     def test_from_distribution_custom_name(self, gaussian, key):
@@ -683,19 +683,19 @@ class TestDistributionABC:
 
     def test_source_default_none(self, gaussian):
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
-        assert g.source is None
+        assert g.provenance is None
 
-    def test_with_source(self, gaussian):
+    def test_with_provenance(self, gaussian):
         p = Provenance("test")
-        gaussian.with_source(p)
-        assert gaussian.source is p
+        gaussian.with_provenance(p)
+        assert gaussian.provenance is p
 
-    def test_with_source_write_once(self, gaussian):
+    def test_with_provenance_write_once(self, gaussian):
         p1 = Provenance("first")
-        gaussian.with_source(p1)
+        gaussian.with_provenance(p1)
         p2 = Provenance("second")
-        with pytest.raises(RuntimeError, match="Source already set"):
-            gaussian.with_source(p2)
+        with pytest.raises(RuntimeError, match="Provenance already set"):
+            gaussian.with_provenance(p2)
 
     def test_name(self, loc, cov_matrix):
         g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")

@@ -175,7 +175,7 @@ class TestAdaptiveWarmup:
             num_chains=1,
             random_seed=3,
         )
-        accept_rate = result.source.metadata["accept_rate"]
+        accept_rate = result.provenance.metadata["accept_rate"]
         assert 0.10 < accept_rate < 0.65, f"unexpected accept_rate {accept_rate}"
 
     def test_adapt_false_falls_back_to_fixed_step(self, iso_gaussian):
@@ -196,10 +196,10 @@ class TestAdaptiveWarmup:
             adapt=False,
             random_seed=0,
         )
-        assert result.source.metadata["step_size"] == 0.01
-        assert result.source.metadata["adapt"] is False
+        assert result.provenance.metadata["step_size"] == 0.01
+        assert result.provenance.metadata["adapt"] is False
         # sigma = 0.01 * I → near-degenerate proposal → almost all accepted.
-        assert result.source.metadata["accept_rate"] > 0.9
+        assert result.provenance.metadata["accept_rate"] > 0.9
 
     def test_explicit_proposal_cov_overrides_adaptation(self, iso_gaussian):
         """``proposal_cov=`` takes precedence over both adaptation and step_size.
@@ -218,7 +218,7 @@ class TestAdaptiveWarmup:
             random_seed=0,
         )
         assert result.num_draws == 400
-        assert result.source.metadata["accept_rate"] > 0.9
+        assert result.provenance.metadata["accept_rate"] > 0.9
 
     def test_explicit_proposal_cov_huge_kills_acceptance(self, iso_gaussian):
         """The mirror case: a huge proposal cov drives acceptance toward zero,
@@ -231,7 +231,7 @@ class TestAdaptiveWarmup:
             proposal_cov=huge_chol,
             random_seed=0,
         )
-        assert result.source.metadata["accept_rate"] < 0.1
+        assert result.provenance.metadata["accept_rate"] < 0.1
 
 
 class TestNumWarmupZeroWarning:
@@ -391,7 +391,7 @@ class TestWindowedWarmup:
             random_seed=7,
         )
         assert result.num_draws == 4000
-        assert result.source.metadata["n_windows"] == 1
+        assert result.provenance.metadata["n_windows"] == 1
         draws = np.concatenate(
             [np.asarray(c) for c in result.chains],
             axis=0,
@@ -491,7 +491,7 @@ class TestEagerFallback:
             num_warmup=200,
             random_seed=42,
         )
-        assert result.source.metadata["accept_rate"] > 0.10
+        assert result.provenance.metadata["accept_rate"] > 0.10
 
 
 # ---------------------------------------------------------------------------

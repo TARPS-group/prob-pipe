@@ -169,9 +169,10 @@ class DistributionArray[T](Distribution[T]):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
+        name_is_auto = name is None
         if name is None:
             name = "distribution_array"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         # A DistributionArray holding MC-marginal components inherits
         # their approximation status; if any component is approximate
         # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
@@ -346,9 +347,10 @@ class DistributionArray[T](Distribution[T]):
         instance._components = None
         instance._batch_shape = tuple(backend.batch_shape)
         instance._backend = backend
+        name_is_auto = name is None
         if name is None:
             name = "distribution_array"
-        Distribution.__init__(instance, name=name)
+        Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
         # Approximation status flows from the backend. TFP-backed
         # arrays are exact; a future Record-backend (over a
         # ``RecordEmpiricalDistribution``) will report

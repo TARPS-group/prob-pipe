@@ -265,10 +265,10 @@ class NumericRecordDistribution(RecordDistribution):
         object.__setattr__(self, "_event_template", tpl)
         return tpl
 
-    def renamed(self, new_name: str) -> NumericRecordDistribution:
+    def with_name(self, new_name: str) -> NumericRecordDistribution:
         """Return a renamed copy, regenerating an auto-built template.
 
-        Extends :meth:`Distribution.renamed`. When the cached template
+        Extends :meth:`Tracked.with_name`. When the cached template
         is the single-field auto-build (one field keyed by the old
         name), the clone's ``_event_template`` is cleared so the next
         access rebuilds it under ``new_name``. Multi-leaf and
@@ -276,7 +276,7 @@ class NumericRecordDistribution(RecordDistribution):
         are part of the distribution's identity, not derived from
         ``name``.
         """
-        clone = super().renamed(new_name)
+        clone = super().with_name(new_name)
         tpl = getattr(clone, "_event_template", None)
         if tpl is not None and len(tpl.fields) == 1 and tpl.fields[0] == self._name:
             object.__setattr__(clone, "_event_template", None)
@@ -652,9 +652,10 @@ class BootstrapDistribution(
             weights=weights,
             log_weights=log_weights,
         )
+        name_is_auto = name is None
         if name is None:
             name = "bootstrap_dist"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
 
     _sampling_cost: str = "low"

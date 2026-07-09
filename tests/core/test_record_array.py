@@ -711,7 +711,7 @@ class TestNumericRecordArrayValidation:
 
 
 class TestProvenance:
-    """RecordArray carries the same ``.source`` / ``.with_source`` slot
+    """RecordArray carries the same ``.provenance`` / ``.with_provenance`` slot
     as Record and Distribution so sweep outputs can record which
     parameters / distributions produced them.
     """
@@ -721,43 +721,43 @@ class TestProvenance:
         return NumericRecordArray.stack([NumericRecord(x=float(i), y=2.0 * i) for i in range(3)])
 
     def test_initial_source_is_none(self, ra):
-        assert ra.source is None
+        assert ra.provenance is None
 
-    def test_with_source_sets_and_returns_self(self, ra):
-        out = ra.with_source(Provenance("sweep", parents=()))
+    def test_with_provenance_sets_and_returns_self(self, ra):
+        out = ra.with_provenance(Provenance("sweep", parents=()))
         assert out is ra
-        assert ra.source.operation == "sweep"
+        assert ra.provenance.operation == "sweep"
 
-    def test_with_source_is_write_once(self, ra):
-        ra.with_source(Provenance("first", parents=()))
+    def test_with_provenance_is_write_once(self, ra):
+        ra.with_provenance(Provenance("first", parents=()))
         with pytest.raises(RuntimeError, match="write-once"):
-            ra.with_source(Provenance("second", parents=()))
+            ra.with_provenance(Provenance("second", parents=()))
 
     def test_eq_ignores_source(self, ra):
         ra2 = NumericRecordArray.stack([NumericRecord(x=float(i), y=2.0 * i) for i in range(3)])
-        ra.with_source(Provenance("a", parents=()))
-        ra2.with_source(Provenance("b", parents=()))
+        ra.with_provenance(Provenance("a", parents=()))
+        ra2.with_provenance(Provenance("b", parents=()))
         assert ra == ra2
 
     def test_pytree_roundtrip_drops_source(self, ra):
-        ra.with_source(Provenance("sweep", parents=()))
+        ra.with_provenance(Provenance("sweep", parents=()))
         leaves, treedef = jax.tree_util.tree_flatten(ra)
         ra2 = jax.tree_util.tree_unflatten(treedef, leaves)
-        assert ra2.source is None
+        assert ra2.provenance is None
         assert ra2 == ra
 
     def test_numeric_record_array_inherits_slot(self, ra):
         # ``ra`` is a NumericRecordArray (subclass of RecordArray) —
         # verify the slot is inherited without redeclaration.
         assert isinstance(ra, NumericRecordArray)
-        assert hasattr(ra, "source")
+        assert hasattr(ra, "provenance")
 
     # Integration: provenance_ancestors walks RecordArray → parent
     # distributions.
 
     def test_provenance_ancestors_through_distribution(self, ra):
         prior = Normal(loc=0.0, scale=1.0, name="prior")
-        ra.with_source(Provenance("sweep", parents=(prior,)))
+        ra.with_provenance(Provenance("sweep", parents=(prior,)))
         ancestors = provenance_ancestors(ra)
         assert len(ancestors) == 1
         assert ancestors[0] is prior
@@ -820,12 +820,12 @@ class TestHierarchy:
 
     def test_source_slot_inherited_from_record(self):
         ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(2)])
-        # Record defines the ``_source`` slot; RecordArray should
+        # Record defines the ``_provenance`` slot; RecordArray should
         # *not* redeclare it (that would raise a layout conflict on
         # construction). Confirm the attribute works end-to-end.
-        assert ra.source is None
-        ra.with_source(Provenance("test", parents=()))
-        assert ra.source.operation == "test"
+        assert ra.provenance is None
+        ra.with_provenance(Provenance("test", parents=()))
+        assert ra.provenance.operation == "test"
 
     def test_name_slot_inherited_from_record(self):
         """RecordArray uses Record's ``_name`` slot for its stored name,

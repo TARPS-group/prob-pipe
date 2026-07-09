@@ -9,7 +9,7 @@ This module has two layers:
    - ``_compute_mcse_op``
 
    These compute diagnostics and return structured ``Record`` results.
-   They do not mutate ``posterior._auxiliary``. Not part of the public API.
+   They do not mutate ``posterior._annotations``. Not part of the public API.
 
 2. In-place writer wrappers returning ``None``:
 
@@ -18,12 +18,12 @@ This module has two layers:
    - ``add_mcse``
    - ``add_mcmc_diagnostics``
 
-   These call the pure ops, write results into ``posterior._auxiliary``,
+   These call the pure ops, write results into ``posterior._annotations``,
    emit warnings, and return ``None``.
 
 The in-place wrappers write MCMC summaries under::
 
-    _auxiliary/diagnostics/mcmc/
+    _annotations/diagnostics/mcmc/
 
 The pure ops are useful for workflows where diagnostics are pure operations
 returning ProbPipe ``Record`` objects.
@@ -240,7 +240,7 @@ def _compute_rhat_op(
     """Pure R-hat diagnostic operation.
 
     Computes R-hat and returns a ``Record``. Does not mutate
-    ``posterior._auxiliary`` and does not emit warnings.
+    ``posterior._annotations`` and does not emit warnings.
 
     Parameters
     ----------
@@ -314,7 +314,7 @@ def _compute_ess_op(
     """Pure ESS diagnostic operation.
 
     Computes bulk ESS and tail ESS and returns a ``Record``. Does not mutate
-    ``posterior._auxiliary`` and does not emit warnings.
+    ``posterior._annotations`` and does not emit warnings.
 
     Parameters
     ----------
@@ -374,7 +374,7 @@ def _compute_mcse_op(
     """Pure MCSE diagnostic operation.
 
     Computes MCSE of the mean and MCSE of the standard deviation and returns
-    a ``Record``. Does not mutate ``posterior._auxiliary``.
+    a ``Record``. Does not mutate ``posterior._annotations``.
 
     Parameters
     ----------
@@ -425,7 +425,7 @@ def _write_mcmc_record(
     posterior: ApproximateDistribution,
     record: Record,
 ) -> None:
-    """Write an MCMC diagnostic Record into ``posterior._auxiliary``."""
+    """Write an MCMC diagnostic Record into ``posterior._annotations``."""
     from ._datatree import _write_mcmc_field
 
     kind = _record_kind(record)
@@ -490,7 +490,7 @@ def add_rhat(
     threshold: float = _RHAT_THRESHOLD,
     force: bool = False,
 ) -> None:
-    """Compute R-hat and attach to ``_auxiliary/diagnostics/mcmc/``.
+    """Compute R-hat and attach to ``_annotations/diagnostics/mcmc/``.
 
     This is the in-place wrapper around :func:`_compute_rhat_op`.
 
@@ -525,7 +525,7 @@ def add_ess(
     threshold: int = _ESS_THRESHOLD,
     force: bool = False,
 ) -> None:
-    """Compute bulk and tail ESS and attach to ``_auxiliary/diagnostics/mcmc/``.
+    """Compute bulk and tail ESS and attach to ``_annotations/diagnostics/mcmc/``.
 
     This is the in-place wrapper around :func:`_compute_ess_op`.
 
@@ -558,7 +558,7 @@ def add_mcse(
     *,
     force: bool = False,
 ) -> None:
-    """Compute MCSE and attach to ``_auxiliary/diagnostics/mcmc/``.
+    """Compute MCSE and attach to ``_annotations/diagnostics/mcmc/``.
 
     This is the in-place wrapper around :func:`_compute_mcse_op`.
 
@@ -591,7 +591,7 @@ def add_mcmc_diagnostics(
     ess_threshold: int = _ESS_THRESHOLD,
     force: bool = False,
 ) -> None:
-    """Compute MCMC diagnostics and attach to ``_auxiliary/diagnostics/mcmc/``.
+    """Compute MCMC diagnostics and attach to ``_annotations/diagnostics/mcmc/``.
 
     Computes R-hat, bulk ESS, tail ESS, and MCSE by default.
     Skips any metric already present unless ``force=True``.

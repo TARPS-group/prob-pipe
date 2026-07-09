@@ -328,8 +328,8 @@ class TestFromDistribution:
         """Cross-class conversion attaches provenance."""
         g = Gamma(concentration=3.0, rate=1.0, name="g")
         n = from_distribution(g, Normal, key=key, check_support=False)
-        assert n.source is not None
-        assert n.source.operation == "from_distribution"
+        assert n.provenance is not None
+        assert n.provenance.operation == "from_distribution"
 
     # -- empirical from anything --
     def test_empirical_from_normal(self, key):

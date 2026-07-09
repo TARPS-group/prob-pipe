@@ -139,9 +139,10 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 
         self._joint_samples = stored
         self._num_atoms = n
+        name_is_auto = name is None
         if name is None:
             name = "joint_empirical(" + ",".join(samples.keys()) + ")"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()
         if self._components is not None:
@@ -283,7 +284,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
             weights=self._w,
             name=self._name,
         )
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],

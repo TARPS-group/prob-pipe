@@ -42,9 +42,13 @@ class RecordArray(Record):
       ``isinstance(x, RecordArray)`` for the batched case, or
       ``isinstance(x, Record) and not isinstance(x, RecordArray)`` for
       scalar-only.
-    - ``.source`` / ``.with_source`` / ``.name`` are inherited from
-      Record (stored on the ``_name`` / ``_source`` slots declared on
-      Record).
+    - The :class:`~probpipe.core.tracked.Tracked` identity surface
+      (``.name`` / ``.name_is_auto`` / ``.provenance`` / ``.with_name`` /
+      ``.with_provenance``) is inherited from Record (stored on the slots
+      declared on Record). A batch is contractually ``Tracked`` only; the
+      ``annotations`` slot inherited from Record is an interim artifact of
+      ``RecordArray`` subclassing ``Record`` and will go away when the batch
+      types are reworked onto the generic ``Batch``.
     - The leaf-keyed *field-navigation* surface (``at_path`` / ``children`` /
       ``is_field``) is inherited from ``_NamedTree`` and works the same as on a
       single ``Record``; string ``[]`` is likewise leaf-only (use ``at_path`` for
@@ -106,15 +110,16 @@ class RecordArray(Record):
         # subclasses (e.g. NumericRecordArray) see a canonicalised view
         # of the leaves. Raises from ``_validate_fields`` propagate.
         store = type(self)._validate_fields(store, batch_shape, template)
-        # Inherit the Record plumbing for _fields / _name / _source.
+        # Inherit the Record plumbing for the field store and identity slots.
         # We bypass Record's normal constructor path because RecordArray
         # requires its own field-validation hook and an auto-name that
         # reflects the class name, not the "record(...)" default.
+        name_is_auto = name is None
         if name is None:
             name = f"{type(self).__name__.lower()}({','.join(store.keys())})"
         object.__setattr__(self, "_tree", store)
-        object.__setattr__(self, "_name", name)
-        object.__setattr__(self, "_source", None)
+        self._init_tracked(name, name_is_auto=name_is_auto)
+        object.__setattr__(self, "_annotations", None)
         object.__setattr__(self, "_batch_shape", batch_shape)
         object.__setattr__(self, "_template", template)
 
@@ -136,13 +141,20 @@ class RecordArray(Record):
         """
         return store
 
-    # ``__setattr__`` / ``__delattr__`` / ``.name`` / ``.source`` /
-    # ``.with_source`` / ``.fields`` are inherited from :class:`Record`.
+    # ``__setattr__`` / ``__delattr__`` / ``.name`` / ``.provenance`` /
+    # ``.with_provenance`` / ``.fields`` are inherited from :class:`Record`.
 
     def __reduce__(self):
         return (
             _unpickle_record_array,
-            (dict(self._tree), self._batch_shape, self._template, self._name, self._source),
+            (
+                dict(self._tree),
+                self._batch_shape,
+                self._template,
+                self._name,
+                self._name_is_auto,
+                self._provenance,
+            ),
         )
 
     # -- Properties ---------------------------------------------------------
@@ -518,7 +530,14 @@ class NumericRecordArray(RecordArray):
     def __reduce__(self):
         return (
             _unpickle_numeric_record_array,
-            (dict(self._tree), self._batch_shape, self._template, self._name, self._source),
+            (
+                dict(self._tree),
+                self._batch_shape,
+                self._template,
+                self._name,
+                self._name_is_auto,
+                self._provenance,
+            ),
         )
 
     # -- 1-D vector conversion ----------------------------------------------
@@ -683,8 +702,8 @@ class _RecordArrayView(RecordArray):
         object.__setattr__(self, "_tree", store)
         object.__setattr__(self, "_template", template)
         object.__setattr__(self, "_batch_shape", parent._batch_shape)
-        object.__setattr__(self, "_name", f"{parent._name}[{field!r}]")
-        object.__setattr__(self, "_source", None)
+        self._init_tracked(f"{parent._name}[{field!r}]", name_is_auto=True)
+        object.__setattr__(self, "_annotations", None)
         object.__setattr__(self, "_parent", parent)
         object.__setattr__(self, "_field", field)
 
@@ -756,20 +775,22 @@ class _RecordArrayView(RecordArray):
 
 
 def _unpickle_record_array(
-    store: dict, batch_shape: tuple, template, name: str, source
+    store: dict, batch_shape: tuple, template, name: str, name_is_auto: bool, provenance
 ) -> RecordArray:
     ra = RecordArray(store, batch_shape=batch_shape, template=template, name=name)
-    if source is not None:
-        object.__setattr__(ra, "_source", source)
+    object.__setattr__(ra, "_name_is_auto", name_is_auto)
+    if provenance is not None:
+        object.__setattr__(ra, "_provenance", provenance)
     return ra
 
 
 def _unpickle_numeric_record_array(
-    store: dict, batch_shape: tuple, template, name: str, source
+    store: dict, batch_shape: tuple, template, name: str, name_is_auto: bool, provenance
 ) -> NumericRecordArray:
     nra = NumericRecordArray(store, batch_shape=batch_shape, template=template, name=name)
-    if source is not None:
-        object.__setattr__(nra, "_source", source)
+    object.__setattr__(nra, "_name_is_auto", name_is_auto)
+    if provenance is not None:
+        object.__setattr__(nra, "_provenance", provenance)
     return nra
 
 

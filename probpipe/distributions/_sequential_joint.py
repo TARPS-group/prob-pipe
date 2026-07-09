@@ -174,9 +174,10 @@ class SequentialJointDistribution(
         self._raw_components: dict[str, Distribution | Callable[..., Distribution]] = dict(
             components
         )
+        name_is_auto = name is None
         if name is None:
             name = "sequential(" + ",".join(components.keys()) + ")"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}
         self._sampleable_error: str | None = None
@@ -495,7 +496,7 @@ class SequentialJointDistribution(
         result._components = unconditioned_pre
         result._event_template = _build_event_template(unconditioned_pre)
 
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],

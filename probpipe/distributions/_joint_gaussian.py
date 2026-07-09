@@ -95,9 +95,10 @@ class JointGaussian(
 
         self._mean_vec = mean
         self._cov_mat = cov
+        name_is_auto = name is None
         if name is None:
             name = "joint_gaussian(" + ",".join(component_shapes.keys()) + ")"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._component_shapes = dict(component_shapes)
 
         # Build slices and component MultivariateNormal distributions
@@ -312,7 +313,7 @@ class JointGaussian(
             name=self._name,
             **u_shapes,
         )
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],

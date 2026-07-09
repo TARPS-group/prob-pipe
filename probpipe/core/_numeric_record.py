@@ -92,8 +92,9 @@ class NumericRecord(Record):
     holds the same named, ordered, possibly-nested collection of fields, but
     constrains every field to be a numeric array. It inherits the full
     :class:`Record` interface — the leaf-keyed mapping, the tree navigation, the
-    metadata (:attr:`~Record.name`, :attr:`~Record.source`), and the equality
-    and hashing rules — and adds the array-only features described below.
+    metadata (:attr:`~Record.name`, :attr:`~Record.provenance`), and the
+    equality and hashing rules — and adds the array-only features described
+    below.
 
     The numeric-leaf invariant
     --------------------------
@@ -179,7 +180,7 @@ class NumericRecord(Record):
     Unlike a general :class:`Record`, whose JAX PyTree structure can be finer
     than its ProbPipe structure, a ``NumericRecord`` is a plain PyTree of arrays:
     the two views coincide, and it passes through ``jit`` / ``vmap`` / ``grad``
-    unchanged. As on :class:`Record`, :attr:`name`, :attr:`source`, and
+    unchanged. As on :class:`Record`, :attr:`name`, :attr:`provenance`, and
     :attr:`event_template` are runtime metadata and are not serialized into the
     PyTree aux.
     """
@@ -374,7 +375,10 @@ class NumericRecord(Record):
     # ---------------------------------------------------------------------
 
     def __reduce__(self):
-        return (_unpickle_numeric_record, (dict(self._tree), self._name, self._source))
+        return (
+            _unpickle_numeric_record,
+            (dict(self._tree), self._name, self._name_is_auto, self._provenance),
+        )
 
     def _single_numeric_leaf(self):
         """Return the sole numeric leaf, or raise ``TypeError``."""
@@ -436,10 +440,13 @@ class NumericRecord(Record):
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_numeric_record(store: dict, name: str, source) -> NumericRecord:
+def _unpickle_numeric_record(
+    store: dict, name: str, name_is_auto: bool, provenance
+) -> NumericRecord:
     nr = NumericRecord(name=name, **store)
-    if source is not None:
-        object.__setattr__(nr, "_source", source)
+    object.__setattr__(nr, "_name_is_auto", name_is_auto)
+    if provenance is not None:
+        object.__setattr__(nr, "_provenance", provenance)
     return nr
 
 

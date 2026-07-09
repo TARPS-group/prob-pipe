@@ -8,7 +8,6 @@ Provides:
 
 from __future__ import annotations
 
-import copy as _copy
 from abc import ABC
 
 # ``_ProtocolMeta`` is technically private (leading underscore in
@@ -21,12 +20,10 @@ from abc import ABC
 from typing import TYPE_CHECKING, Any, _ProtocolMeta
 
 if TYPE_CHECKING:
-    from xarray import DataTree
-
     from ..diagnostics.views import DiagnosticsView
     from ._distribution_array import DistributionArray
 
-from .provenance import Provenance
+from .tracked import Annotated, Tracked
 
 # ---------------------------------------------------------------------------
 # Global defaults
@@ -89,25 +86,44 @@ class _DistributionMeta(_ProtocolMeta):
         return instance
 
 
-class Distribution[T](ABC, metaclass=_DistributionMeta):
+class Distribution[T](Tracked, Annotated, ABC, metaclass=_DistributionMeta):
     """
     Abstract base for all ProbPipe distributions, parameterized by
     value type ``T``.
 
-    Every distribution has a ``name``.  Leaf distributions (Normal, Gamma,
+    Every distribution is a tracked term: it is
+    :class:`~probpipe.core.tracked.Tracked` (a :attr:`~Tracked.name`, a
+    :attr:`~Tracked.name_is_auto` flag, and a write-once
+    :attr:`~Tracked.provenance`) and
+    :class:`~probpipe.core.tracked.Annotated` (free-form
+    :attr:`~Annotated.annotations`).  Leaf distributions (Normal, Gamma,
     etc.) require an explicit ``name=`` argument; composite distributions
-    (ProductDistribution, EmpiricalDistribution, etc.) auto-generate a
-    name from their components when one is not provided.
+    (ProductDistribution, EmpiricalDistribution, etc.) auto-derive a
+    name from their components when one is not provided, and mark it with
+    ``name_is_auto=True``.
 
-    Provides naming, provenance, conversion, and approximation tracking.
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.core.protocols.SupportsSampling` protocol.
+
+    Parameters
+    ----------
+    name : str
+        Non-empty name for this distribution.
+    name_is_auto : bool, optional
+        ``True`` when *name* was auto-derived by the caller (a subclass
+        constructor or an operation) rather than supplied by the user.
+        Defaults to ``False``.
+
+    Raises
+    ------
+    TypeError
+        If *name* is not a non-empty string.
     """
 
-    def __init__(self, *, name: str):
+    def __init__(self, *, name: str, name_is_auto: bool = False):
         if not isinstance(name, str) or not name:
             raise TypeError(f"{type(self).__name__} requires a non-empty name= argument")
-        self._name = name
+        self._init_tracked(name, name_is_auto=name_is_auto)
 
     # -- keyword-form value construction ------------------------------------
 
@@ -165,23 +181,25 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         """
         return getattr(self, "_approximate", False)
 
-    # -- auxiliary information ----------------------------------------------
+    # -- annotations ---------------------------------------------------------
+    #
+    # ``annotations`` (the general post-construction metadata store) is
+    # provided by the :class:`~probpipe.core.tracked.Annotated` mixin.
+    # On a fitted posterior the conventional layout is an ``xarray.DataTree``
+    # with ``arviz/`` and ``diagnostics/`` subtrees; see :attr:`diagnostics`.
 
     @property
-    def auxiliary(self) -> DataTree | None:
-        """Auxiliary metadata attached to this distribution.
+    def diagnostics(self) -> DiagnosticsView | None:
+        """Structured view over diagnostic results stored in :attr:`annotations`.
 
-        Returns an ``xarray.DataTree`` of auxiliary information, or ``None``
-        if no auxiliary information has been attached.
+        Returns ``None`` if no diagnostics have been computed yet.
 
-        ``_auxiliary`` is ProbPipe's general-purpose post-construction
-        metadata store. It may contain ArviZ-compatible xarray DataTree data,
-        diagnostic summaries, validation results, provenance-like metadata,
-        or other append-only metadata produced after inference.
+        Inference backends and the diagnostics subsystem store posterior
+        metadata in an ``xarray.DataTree`` attached to the distribution as
+        its :attr:`~probpipe.core.tracked.Annotated.annotations`. The
+        expected layout is::
 
-        The expected diagnostics-related layout is::
-
-            posterior._auxiliary
+            posterior._annotations
             ├── arviz/          # ArviZ-compatible data and raw inputs
             │   ├── posterior
             │   ├── sample_stats
@@ -201,40 +219,6 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         1.0+, this is an ArviZ-compatible ``DataTree`` rather than the older
         ``InferenceData`` representation.
 
-        The ``/diagnostics/`` subtree contains ProbPipe-owned computed
-        summaries, results, warning metadata, and run metadata. It is exposed
-        through the structured ``posterior.diagnostics`` Python accessor.
-
-        Documented exception to distribution immutability
-        -------------------------------------------------
-        Unlike parameter-like state on a :class:`Distribution`, ``_auxiliary``
-        is designed to be mutated in place by inference backends, validators,
-        and diagnostic operations after construction.
-
-        Diagnostic functions such as ``add_mcmc_diagnostics`` and ``add_ppc``
-        write into ``_auxiliary`` and return ``None``. This preserves posterior
-        identity/source tracking while allowing diagnostics to annotate an
-        already-fitted posterior.
-
-        Treat this channel as append-only: new diagnostic operations should
-        write under their own named group and should not overwrite or mutate
-        parameter-like distribution state.
-        """
-        return getattr(self, "_auxiliary", None)
-
-    @property
-    def diagnostics(self) -> DiagnosticsView | None:
-        """Structured view over diagnostic results stored in ``_auxiliary``.
-
-        Returns ``None`` if no diagnostics have been computed yet.
-
-        ProbPipe stores auxiliary posterior metadata in a general-purpose
-        ``xarray.DataTree`` attached to the distribution. The expected layout is::
-
-            posterior._auxiliary
-            ├── arviz/          # ArviZ-compatible data and raw inputs
-            └── diagnostics/    # ProbPipe-computed results and metadata
-
         This property returns a structured Python accessor over the
         ``/diagnostics/`` subtree only. It is distinct from the ArviZ-compatible
         data used for plotting or ArviZ computations.
@@ -242,11 +226,11 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         In other words::
 
             posterior.diagnostics
-                # structured ProbPipe view over posterior._auxiliary["diagnostics"]
+                # structured ProbPipe view over posterior.annotations["diagnostics"]
 
             posterior.arviz_data
                 # ArviZ-compatible xarray DataTree subtree, typically
-                # posterior._auxiliary["arviz"]
+                # posterior.annotations["arviz"]
 
             posterior.inference_data
                 # backward-compatible alias for posterior.arviz_data
@@ -257,7 +241,7 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
 
             posterior = condition_on(model, data)
 
-            # MCMC diagnostics mutate posterior._auxiliary in place and return None.
+            # MCMC diagnostics mutate posterior._annotations in place and return None.
             add_mcmc_diagnostics(posterior)
 
             posterior.diagnostics.rhat
@@ -290,9 +274,9 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         -----
         The diagnostics accessor is read-only. Diagnostic functions such as
         ``add_mcmc_diagnostics`` and ``add_ppc`` are responsible for writing
-        diagnostic results into ``posterior._auxiliary``.
+        diagnostic results into ``posterior._annotations``.
         """
-        aux = self.auxiliary
+        aux = self.annotations
         if aux is None:
             return None
         children = aux.children if hasattr(aux, "children") else {}
@@ -303,56 +287,10 @@ class Distribution[T](ABC, metaclass=_DistributionMeta):
         return DiagnosticsView(aux["diagnostics"])
 
     # -- naming & provenance ------------------------------------------------
-
-    @property
-    def name(self) -> str:
-        """Name of this distribution."""
-        return self._name
-
-    @property
-    def source(self) -> Provenance | None:
-        """Provenance describing how this distribution was created, if any."""
-        return getattr(self, "_source", None)
-
-    def with_source(self, source: Provenance | None) -> Distribution:
-        """Attach provenance to this distribution (write-once).
-
-        Passing ``None`` (e.g. the result of ``Provenance.create()`` under
-        :attr:`ProvenanceMode.OFF`) is a no-op.
-        """
-        if source is None:
-            return self
-        if getattr(self, "_source", None) is not None:
-            raise RuntimeError(
-                f"Source already set on {self!r}. "
-                "Provenance is write-once; create a new distribution instead."
-            )
-        self._source = source
-        return self
-
-    def renamed(self, new_name: str) -> Distribution:
-        """Return a shallow copy with a different name.
-
-        The copy shares all internal state but has a new ``name``.
-        Provenance is tracked: the copy's ``source`` records the rename
-        operation and points to the original as parent.
-
-        ``RecordDistribution`` overrides this to also reset its cached
-        ``_event_template`` so the auto-build path regenerates with
-        the new name.
-        """
-        clone = _copy.copy(self)
-        object.__setattr__(clone, "_name", new_name)
-        # Bypass write-once guard so rename provenance can be attached
-        object.__setattr__(clone, "_source", None)
-        clone.with_source(
-            Provenance.create(
-                "renamed",
-                parents=[self],
-                metadata={"old_name": self.name, "new_name": new_name},
-            )
-        )
-        return clone
+    #
+    # ``name`` / ``name_is_auto`` / ``provenance`` / ``with_name`` /
+    # ``with_provenance`` are provided by the
+    # :class:`~probpipe.core.tracked.Tracked` mixin.
 
     # -- batched-construction alias ----------------------------------------
 

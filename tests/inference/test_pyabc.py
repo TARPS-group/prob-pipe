@@ -242,8 +242,8 @@ class TestPyABCWeightsAndDraws:
 
 
 class TestPyABCDiagnostics:
-    def test_history_exposed_as_auxiliary(self):
-        """The SMC-ABC convergence trajectory is attached as auxiliary
+    def test_history_exposed_as_annotations(self):
+        """The SMC-ABC convergence trajectory is attached as annotations
         diagnostics: one row per generation, a non-increasing epsilon schedule,
         acceptance rates in (0, 1], and the total simulation count."""
         post = condition_on(

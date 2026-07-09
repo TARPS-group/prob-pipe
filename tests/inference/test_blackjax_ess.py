@@ -599,7 +599,7 @@ class TestPosteriorRecovery:
 
 
 # ---------------------------------------------------------------------------
-# Provenance and auxiliary
+# Provenance and annotations
 # ---------------------------------------------------------------------------
 
 
@@ -613,9 +613,9 @@ class TestProvenanceAndAuxiliary:
             random_seed=0,
         )
         assert post.algorithm == "elliptical_slice"
-        assert post.source.operation == "elliptical_slice"
+        assert post.provenance.operation == "elliptical_slice"
 
-    def test_auxiliary_datatree_has_subiter_stats(self, gaussian_model, data):
+    def test_annotations_datatree_has_subiter_stats(self, gaussian_model, data):
         num_chains, num_results = 2, 50
         post = elliptical_slice(
             gaussian_model,

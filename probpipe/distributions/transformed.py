@@ -179,9 +179,10 @@ class TransformedDistribution(NumericRecordDistribution):
     ):
         self._base = base
         self._bijector = bijector
+        name_is_auto = name is None
         if name is None:
             name = f"transformed({base.name})"
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
         if isinstance(base, TFPDistribution):
             self._tfp_transformed = tfd.TransformedDistribution(
@@ -194,7 +195,7 @@ class TransformedDistribution(NumericRecordDistribution):
 
         self._approximate = base.is_approximate
 
-        self.with_source(
+        self.with_provenance(
             Provenance.create(
                 "transform",
                 parents=[base],

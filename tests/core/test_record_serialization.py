@@ -77,20 +77,20 @@ def test_record_provenance_preserved():
     from probpipe.core.provenance import Provenance
 
     r = Record(x=jnp.array(1.0))
-    r.with_source(Provenance(operation="test_op", metadata={"k": "v"}))
-    assert r._source is not None
+    r.with_provenance(Provenance(operation="test_op", metadata={"k": "v"}))
+    assert r._provenance is not None
 
     r2 = roundtrip(r)
-    assert r2._source is not None
-    assert r2._source.operation == "test_op"
-    assert r2._source.metadata == {"k": "v"}
+    assert r2._provenance is not None
+    assert r2._provenance.operation == "test_op"
+    assert r2._provenance.metadata == {"k": "v"}
 
 
 def test_record_no_provenance_roundtrip():
     r = Record(x=jnp.array(1.0))
-    assert r._source is None
+    assert r._provenance is None
     r2 = roundtrip(r)
-    assert r2._source is None
+    assert r2._provenance is None
 
 
 # ---------------------------------------------------------------------------

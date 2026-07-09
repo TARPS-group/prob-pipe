@@ -282,12 +282,12 @@ class TestProvenanceChain:
 
         sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         out = f(p=sweep)
-        assert out.source is not None
-        assert out.source.operation == "workflow.stack"
-        assert any(p.obj is sweep for p in out.source.parents)
-        assert out.source.metadata["batch_shape"] == (3,)
-        assert out.source.metadata["k"] == 0
-        assert out.source.metadata["func"] == "f"
+        assert out.provenance is not None
+        assert out.provenance.operation == "workflow.stack"
+        assert any(p.parent is sweep for p in out.provenance.parents)
+        assert out.provenance.metadata["batch_shape"] == (3,)
+        assert out.provenance.metadata["k"] == 0
+        assert out.provenance.metadata["func"] == "f"
 
     def test_nested_provenance_includes_both(self, full_provenance_mode):
         @workflow_function(n_broadcast_samples=10, dispatch="sequential")
@@ -297,15 +297,15 @@ class TestProvenanceChain:
         sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         noise_dist = Normal(loc=0.0, scale=1.0, name="noise")
         out = f(p=sweep, noise=noise_dist)
-        assert out.source.operation == "workflow.nested"
-        assert any(p.obj is sweep for p in out.source.parents)
-        assert any(p.obj is noise_dist for p in out.source.parents)
-        assert out.source.metadata["k"] == 10
+        assert out.provenance.operation == "workflow.nested"
+        assert any(p.parent is sweep for p in out.provenance.parents)
+        assert any(p.parent is noise_dist for p in out.provenance.parents)
+        assert out.provenance.metadata["k"] == 10
 
     def test_pure_sweep_provenance_lightweight(self):
         """Default LIGHTWEIGHT: the sweep output keeps a traversable source — a
-        ``ParentInfo`` with ``obj=None`` (so the parent array is GC-eligible) and
-        the lineage preserved via ``.source``."""
+        ``ParentInfo`` with ``parent=None`` (so the parent array is GC-eligible) and
+        the lineage preserved via ``.provenance``."""
 
         @workflow_function
         def f(p: NumericRecord) -> float:
@@ -313,10 +313,10 @@ class TestProvenanceChain:
 
         sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         out = f(p=sweep)
-        assert out.source is not None
-        assert out.source.operation == "workflow.stack"
-        parent = out.source.parents[0]
-        assert parent.obj is None  # live ref dropped in LIGHTWEIGHT
+        assert out.provenance is not None
+        assert out.provenance.operation == "workflow.stack"
+        parent = out.provenance.parents[0]
+        assert parent.parent is None  # live ref dropped in LIGHTWEIGHT
         assert parent.type_name == "NumericRecordArray"
         assert any(a.type_name == "NumericRecordArray" for a in provenance_ancestors(out))
 
@@ -330,7 +330,7 @@ class TestProvenanceChain:
 
         sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
         out = f(p=sweep)
-        assert out.source is None
+        assert out.provenance is None
 
 
 # ---------------------------------------------------------------------------

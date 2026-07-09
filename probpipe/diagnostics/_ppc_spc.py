@@ -12,22 +12,22 @@ This module has two layers:
    - ``_ppc_op``
 
    These compute diagnostics and return structured ``Record`` results.
-   They do not mutate ``_auxiliary``. Not part of the public API.
+   They do not mutate ``_annotations``. Not part of the public API.
 
 2. In-place writer wrappers returning ``None``:
 
    - ``add_ppc``
 
-   These call the pure ops, write results into ``distribution._auxiliary``,
+   These call the pure ops, write results into ``distribution._annotations``,
    and return ``None``.
 
 ArviZ-compatible data are written under::
 
-    _auxiliary/arviz/
+    _annotations/arviz/
 
 ProbPipe diagnostic summaries and run metadata are written under::
 
-    _auxiliary/diagnostics/
+    _annotations/diagnostics/
 """
 
 from __future__ import annotations
@@ -209,7 +209,7 @@ def _ppc_op(
     """Pure PPC operation returning a ``Record``.
 
     This function computes one or more posterior/prior predictive checks and
-    returns a structured ``Record``. It does not mutate ``posterior._auxiliary``.
+    returns a structured ``Record``. It does not mutate ``posterior._annotations``.
 
     Parameters
     ----------
@@ -392,7 +392,7 @@ def _ppc_op(
 
 
 def _write_ppc_record(posterior: Distribution, record: Record) -> None:
-    """Write a PPC diagnostic Record into ``posterior._auxiliary``."""
+    """Write a PPC diagnostic Record into ``posterior._annotations``."""
     posterior_predictive_dataset = record["posterior_predictive_dataset"]
     observed_data_dataset = record["observed_data_dataset"]
 
@@ -427,10 +427,10 @@ def add_ppc(
     n_replications: int = 500,
     key: PRNGKey | None = None,
 ) -> None:
-    """Compute a PPC and write results into ``posterior._auxiliary``.
+    """Compute a PPC and write results into ``posterior._annotations``.
 
     This is the in-place wrapper around :func:`_ppc_op`. Calls ``_ppc_op``
-    and writes the resulting ``Record`` into ``posterior._auxiliary``,
+    and writes the resulting ``Record`` into ``posterior._annotations``,
     then returns ``None``.
 
     Parameters
