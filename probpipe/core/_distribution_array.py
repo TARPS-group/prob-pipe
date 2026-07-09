@@ -449,6 +449,12 @@ class DistributionArray[T](Distribution[T]):
         ``shape=batch_shape`` object array.
         """
         bshape = self._batch_shape
+        if not bshape:
+            if key == ():
+                if self._backend is not None:
+                    return self._backend.cell(0)
+                return self._components[0]
+            raise IndexError("too many indices for 0-d DistributionArray")
         # Normalise the key to a tuple, one entry per leading axis.
         if isinstance(key, tuple):
             if len(key) > len(bshape):
@@ -462,11 +468,22 @@ class DistributionArray[T](Distribution[T]):
 
         # Fast path: all axes addressed by int (or int-like). Compute
         # the flat index directly; no object-array materialisation.
-        # ``np.ravel_multi_index`` rejects negative indices, so wrap
-        # them into the positive range first (``dists[-1]`` is a
-        # common pattern — e.g. "last posterior in an iterate output").
+        # ``np.ravel_multi_index`` rejects negative indices, so normalize
+        # valid Python-style negatives first. Positive overflow and
+        # negatives past the axis bounds must still raise ``IndexError``.
         if all(isinstance(k, (int, np.integer)) or hasattr(k, "__index__") for k in key_tuple):
-            indices = tuple(int(k) % dim for k, dim in zip(key_tuple, bshape))
+            indices = []
+            for axis, (k, dim) in enumerate(zip(key_tuple, bshape)):
+                idx = int(k)
+                if idx < 0:
+                    idx += dim
+                if idx < 0 or idx >= dim:
+                    raise IndexError(
+                        f"DistributionArray index {int(k)} is out of bounds "
+                        f"for axis {axis} with size {dim}"
+                    )
+                indices.append(idx)
+            indices = tuple(indices)
             flat = int(np.ravel_multi_index(indices, bshape))
             if self._backend is not None:
                 return self._backend.cell(flat)

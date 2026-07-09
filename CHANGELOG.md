@@ -294,6 +294,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Core container indexing and nested reductions.** `DistributionArray`
+  integer indexing now raises `IndexError` for positive overflow and negatives
+  past the axis bounds, while 0-d arrays accept only empty-tuple indexing.
+  `NumericRecordArray.mean()` and `.var()` now recurse through nested numeric
+  record fields instead of treating nested records as arrays.
+
 - **Linear-algebra and Gaussian-conditioning edge cases on the algebra bug-fix
   branch.** `RootLinOp.diag()` now squares diagonal roots; `CholeskyLinOp`
   keeps lower-root (`L @ L.T`) and upper-root (`U.T @ U`) representations

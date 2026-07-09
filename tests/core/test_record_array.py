@@ -445,6 +445,95 @@ class TestNumericRecordArrayReductions:
         assert isinstance(m, NumericRecord)
         np.testing.assert_allclose(m["x"], 5.5)
 
+    def test_mean_nested_records(self):
+        tpl = EventTemplate(outer=EventTemplate(a=(), b=(2,)), m=())
+        flat = jnp.asarray(
+            [
+                [0.0, 0.0, 1.0, 10.0],
+                [1.0, 1.0, 2.0, 11.0],
+                [2.0, 2.0, 3.0, 12.0],
+            ]
+        )
+        nra = tpl.from_vector(flat)
+        m = nra.mean(axis=0)
+        assert isinstance(m, NumericRecord)
+        assert isinstance(m.at_path("outer"), NumericRecord)
+        np.testing.assert_allclose(m["outer/a"], 1.0)
+        np.testing.assert_allclose(m["outer/b"], [1.0, 2.0])
+        np.testing.assert_allclose(m["m"], 11.0)
+
+    def test_var_nested_records(self):
+        tpl = EventTemplate(outer=EventTemplate(a=(), b=(2,)), m=())
+        flat = jnp.asarray(
+            [
+                [0.0, 0.0, 1.0, 10.0],
+                [1.0, 1.0, 2.0, 11.0],
+                [2.0, 2.0, 3.0, 12.0],
+            ]
+        )
+        nra = tpl.from_vector(flat)
+        v = nra.var(axis=0)
+        assert isinstance(v, NumericRecord)
+        assert isinstance(v.at_path("outer"), NumericRecord)
+        np.testing.assert_allclose(v["outer/a"], 2.0 / 3.0)
+        np.testing.assert_allclose(v["outer/b"], [2.0 / 3.0, 2.0 / 3.0])
+        np.testing.assert_allclose(v["m"], 2.0 / 3.0)
+
+    def test_reduce_plain_nested_record_field(self):
+        tpl = EventTemplate(outer=EventTemplate(a=(), b=(2,)), m=())
+        inner = Record(
+            a=jnp.asarray([0.0, 1.0, 2.0]),
+            b=jnp.asarray([[0.0, 1.0], [1.0, 2.0], [2.0, 3.0]]),
+        )
+        nra = NumericRecordArray(
+            {"outer": inner, "m": jnp.asarray([10.0, 11.0, 12.0])},
+            batch_shape=(3,),
+            template=tpl,
+        )
+
+        m = nra.mean(axis=0)
+        assert isinstance(m, NumericRecord)
+        assert isinstance(m.at_path("outer"), NumericRecord)
+        np.testing.assert_allclose(m["outer/a"], 1.0)
+        np.testing.assert_allclose(m["outer/b"], [1.0, 2.0])
+        np.testing.assert_allclose(m["m"], 11.0)
+
+        v = nra.var(axis=0)
+        assert isinstance(v, NumericRecord)
+        assert isinstance(v.at_path("outer"), NumericRecord)
+        np.testing.assert_allclose(v["outer/a"], 2.0 / 3.0)
+        np.testing.assert_allclose(v["outer/b"], [2.0 / 3.0, 2.0 / 3.0])
+        np.testing.assert_allclose(v["m"], 2.0 / 3.0)
+
+    def test_mean_nested_records_multidim_batch(self):
+        tpl = EventTemplate(outer=EventTemplate(a=()), m=())
+        flat = jnp.arange(12.0).reshape(2, 3, tpl.vector_size)
+        nra = tpl.from_vector(flat)
+        m = nra.mean(axis=0)
+        assert isinstance(m, NumericRecordArray)
+        assert isinstance(m.at_path("outer"), NumericRecordArray)
+        assert m.batch_shape == (3,)
+        assert m.at_path("outer").batch_shape == (3,)
+        np.testing.assert_allclose(m["outer/a"], [3.0, 5.0, 7.0])
+        np.testing.assert_allclose(m["m"], [4.0, 6.0, 8.0])
+
+    def test_reduce_plain_nested_record_field_multidim_batch(self):
+        tpl = EventTemplate(outer=EventTemplate(a=()), m=())
+        inner = Record(a=jnp.arange(6.0).reshape(2, 3))
+        nra = NumericRecordArray(
+            {"outer": inner, "m": jnp.arange(6.0).reshape(2, 3) + 10.0},
+            batch_shape=(2, 3),
+            template=tpl,
+        )
+
+        m = nra.mean(axis=0)
+        assert isinstance(m, NumericRecordArray)
+        assert isinstance(m.at_path("outer"), NumericRecordArray)
+        assert m.batch_shape == (3,)
+        assert m.at_path("outer").batch_shape == (3,)
+        np.testing.assert_allclose(m["outer/a"], [1.5, 2.5, 3.5])
+        np.testing.assert_allclose(m["m"], [11.5, 12.5, 13.5])
+
 
 # ---------------------------------------------------------------------------
 # JAX PyTree
