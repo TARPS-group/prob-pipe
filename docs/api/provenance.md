@@ -1,4 +1,4 @@
-# Provenance
+# Identity & provenance
 
 Every `Distribution` or `Record` returned by a workflow function carries
 a `Provenance` record linking it to its inputs and the op that produced
@@ -9,6 +9,33 @@ edge points from a value to one of its inputs.
 went into producing `value`. `provenance_dag(value)` renders the same
 information as a Graphviz `Digraph` — useful for debugging or displaying
 lineage in a notebook.
+
+## The `Tracked` and `Annotated` mixins
+
+The identity surface is defined once, by two mixins in
+`probpipe.core.tracked`, and shared by every core object:
+
+- **`Tracked`** — a `name`, a `name_is_auto` flag recording whether the name
+  was auto-derived by the operation that produced the object (`True`) or
+  supplied by the user (`False`), and a write-once `provenance` attached via
+  `with_provenance(...)`. `with_name(name)` returns a shallow copy under a
+  new user-given name, with provenance recording the rename. `Distribution`,
+  `Record`/`NumericRecord`, and the batch types are all `Tracked`.
+- **`Annotated`** — a free-form `annotations` mapping for auxiliary
+  information attached after construction (diagnostics, validation results).
+  An `xarray.DataTree` is a valid value; fitted posteriors use it with
+  `arviz/` and `diagnostics/` subtrees. `Distribution` and `Record` are
+  `Annotated`.
+
+```python
+from probpipe import Normal
+
+n = Normal(loc=0.0, scale=1.0, name="weight")
+n.name          # "weight"
+n.name_is_auto  # False — user-given
+m = n.with_name("prior_weight")
+m.provenance.operation  # "with_name"; the parent descriptor points at n
+```
 
 ## Tracking modes
 
@@ -116,6 +143,10 @@ The fingerprint is intended as the foundation for a future Prefect
 `cache_key_fn` that will enable cross-run task caching and failure recovery.
 
 ## API reference
+
+::: probpipe.Tracked
+
+::: probpipe.Annotated
 
 ::: probpipe.ProvenanceMode
 
