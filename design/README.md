@@ -24,7 +24,7 @@ Each object also has an indexed-collection form (a batch), and every operation l
 | expectation and moments | `E[f(X)]` for `X ~ μ`; mean, variance, covariance, quantiles |
 | pushforward | `f♯μ`, the law of `f(X)` for `X ~ μ` |
 | composition | `p(x \| y) · p(y)`, `f ∘ g`, `A B` |
-| conditioning | `μ(· \| y = b)` for a field `y`, from exact currying to Bayesian inversion |
+| conditioning | `μ(· \| y = b)` for a field `y`, from exact currying to Bayes' rule |
 | marginalization | the law of a named field of `X ~ μ` |
 | prediction | `μK = ∫ K(s, ·) μ(ds)` |
 
