@@ -48,7 +48,8 @@ class FunctionSpec(ValueSpec):  # a leaf holding a callable
 
 class Constraint(ABC):              # an array support, carried by ArraySpec
     @abstractmethod
-    def contains(self, value: Array) -> Array: ...   # elementwise membership
+    def check(self, value: ArrayLike) -> Array: ...   # elementwise membership
+    # constraints compare and hash by value, so an instance can serve as a registry key
 ```
 
 A `FunctionSpec` accepts a bare `ValueSpec` on either side and wraps it in a single-field template, so `FunctionSpec(ArraySpec(...), ArraySpec(...))` types a scalar function by the same convention that presents a scalar draw as a single-field value.
