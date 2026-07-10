@@ -104,6 +104,8 @@ predict.with_options(n_broadcast_samples=1000, seed=7)(theta=prior, x=x_obs)
 # controls go to with_options; theta and x bind to the wrapped function
 ```
 
+The `seed` fixes randomness deterministically and *structurally*. It is split along the computation graph, and again by index along each broadcast or batch axis, so every draw receives a distinct key as a pure function of its position rather than from any shared counter. The split never folds in the *values* of the inputs, which preserves common random numbers: perturbing an input reuses the same keys, so comparisons across nearby inputs and reparameterization gradients stay low-variance rather than being swamped by independent sampling noise. A fresh estimate or an independent stream is obtained by changing the `seed`. The one cost is that the streams are tied to the program's structure, so reordering the computation reshuffles them.
+
 ### Rationale
 
 A computation must wrap an *ordinary* function with no naming restrictions (`C5 – Naming for unambiguous meaning`): a user should never have to rename a `seed` parameter because the framework wanted that word. Holding the control plane in a separate namespace removes the collision entirely, while keeping the bare decorator and a single call site ergonomic.
@@ -114,7 +116,7 @@ A computation must wrap an *ordinary* function with no naming restrictions (`C5 
 
 Two orthogonal computational concerns sit beneath a lifted call, both with defaults so a user need not touch them:
 
-- **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is differentiable end-to-end, and dispatch never changes the result beyond floating-point effects of evaluation order.
+- **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is differentiable end-to-end, and dispatch never changes the result beyond floating-point effects of evaluation order. Because each unit's PRNG key is fixed by its index rather than taken from a shared counter, the result is identical across `jax`, `sequential`, and `thread`, and parallel execution contends for no mutable random state: nothing is locked, and no key is drawn twice.
 - **Orchestration — *whether* the call is traced.** Off by default. A computation can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result.
 
 ### Rationale
