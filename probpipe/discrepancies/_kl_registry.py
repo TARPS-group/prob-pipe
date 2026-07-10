@@ -23,9 +23,7 @@ The Monte Carlo fallback sits at a *low positive* priority rather than
 ``OPT_IN_ONLY_PRIORITY`` so that ``kl_divergence(p, q)`` returns a
 numerical answer whenever one is computable; ``method="kl_mc"`` forces it.
 
-The public op lives in :mod:`probpipe.core.ops`.  See
-``docs/contributor/dispatch-conventions.md`` for the conventions this
-module follows.
+The public op lives in :mod:`probpipe.core.ops`.
 """
 
 from __future__ import annotations

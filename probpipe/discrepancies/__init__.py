@@ -6,7 +6,7 @@ Wasserstein, or MMD.  Each family is a binary operation on
 ``(Distribution, Distribution)`` and is implemented as its own
 :class:`~probpipe.core._registry.BinaryDispatchRegistry` so the best
 feasible method (closed-form when available, Monte Carlo otherwise) is
-selected by priority.  See ``docs/contributor/dispatch-conventions.md``.
+selected by priority.
 
 This package is distinct from :mod:`probpipe.validation`, which is about
 *model adequacy* (predictive checks and calibration); discrepancies are
