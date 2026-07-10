@@ -122,6 +122,7 @@ from probpipe.core.transition import (
     with_conversion,
     with_resampling,
 )
+from probpipe.discrepancies import kl_registry
 from probpipe.distributions import (
     # Discrete
     Bernoulli,
@@ -333,6 +334,8 @@ __all__ = [
     "interval",
     # Transition / iteration
     "iterate",
+    # Discrepancies
+    "kl_registry",
     "learn_amortized_likelihood",
     "learn_amortized_posterior",
     "learn_amortized_ratio",
@@ -369,6 +372,7 @@ from probpipe.core.ops import (
     cov,
     expectation,
     from_distribution,
+    kl_divergence,
     log_prob,
     mean,
     prob,
