@@ -66,6 +66,7 @@ from typing import TYPE_CHECKING, Any
 import jax
 import jax.numpy as jnp
 import numpy as np
+import numpy.typing as npt
 
 from ..custom_types import Array, ArrayLike
 from .constraints import Constraint
@@ -469,7 +470,7 @@ class _NamedTree:
     #
     # The leaf-map computations below are pure structure: they read the storage
     # tree and return a new flat ``path -> object`` mapping, with no knowledge of
-    # leaf specs or an authoritative template. ``without`` / ``merge`` / ``replace``
+    # value specs or an authoritative template. ``without`` / ``merge`` / ``replace``
     # rebuild ``type(self)`` from that map (correct for a tree of specs, where the
     # edited specs *are* the schema); a value type that carries a separate
     # authoritative schema overrides those three to thread it, reusing these helpers.
@@ -661,26 +662,24 @@ class _NamedTree:
 class ValueSpec(ABC):
     """The structure of one leaf value — the base of the concrete specs.
 
-    A ``ValueSpec`` describes what a single value looks like: an array of a
-    given shape (:class:`ArraySpec`), a ``Distribution`` over a given event
-    structure (:class:`DistributionSpec`), a callable between two event
-    structures (:class:`FunctionSpec`), or an opaque Python object
-    (:class:`OpaqueSpec`). These are the leaves of an :class:`EventTemplate`.
+    A ``ValueSpec`` describes what a single value looks like; the concrete
+    specs (see the module docstring for the catalog) cover numeric arrays,
+    distributions, callables, and opaque Python objects. These are the
+    leaves of an :class:`EventTemplate`.
 
     A spec carries no name: it becomes a *field* only when an
-    :class:`EventTemplate` stores it under a key. Every spec is a frozen,
-    hashable dataclass comparing by value, so templates built from specs are
-    themselves hashable.
+    :class:`EventTemplate` stores it under a key. Every subclass **must** be
+    a frozen, hashable dataclass comparing by value — a template hashes its
+    specs (e.g. as a jit cache key), so an unhashable or mutable spec would
+    break every template that stores it.
     """
 
     @abstractmethod
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a valid value for this spec.
 
-        Each concrete spec checks everything it declares (see its own
-        ``is_valid`` docstring for the exact conditions): an
-        :class:`ArraySpec` checks shape, and dtype / support when set; the
-        other specs check the value's type.
+        Each concrete spec checks everything it declares; see its own
+        ``is_valid`` docstring for the exact conditions.
 
         Parameters
         ----------
@@ -709,7 +708,7 @@ class ArraySpec(ValueSpec):
     """
 
     shape: tuple[int, ...]
-    dtype: jnp.dtype | None = None
+    dtype: npt.DTypeLike | None = None
     support: Constraint | None = None
 
     def __post_init__(self) -> None:
@@ -723,9 +722,12 @@ class ArraySpec(ValueSpec):
             object.__setattr__(self, "dtype", np.dtype(self.dtype))
 
     def __eq__(self, other: object) -> bool:
+        # Mirror the dataclass-generated ``__eq__``: on a class mismatch,
+        # defer to the reflected comparison (Python then falls back to
+        # ``False`` when both sides decline).
         if other.__class__ is not self.__class__:
             return NotImplemented
-        assert isinstance(other, ArraySpec)
+        assert isinstance(other, ArraySpec)  # narrow for the type checker
         # ``numpy.dtype`` treats ``None`` as an alias for the default dtype
         # (``np.dtype(None)`` is float64), so a plain field comparison would
         # report an unset dtype equal to a concrete one. Compare set-ness
@@ -747,6 +749,16 @@ class ArraySpec(ValueSpec):
         dtype ``np.asarray`` gives it); and every element satisfies
         ``support.check`` when ``support`` is set. Strings, mappings, Python
         lists/tuples, and non-numeric arrays are invalid.
+
+        Notes
+        -----
+        The ``support`` check delegates to ``Constraint.check`` and reduces
+        the result to a Python ``bool``, so a spec with ``support`` set
+        cannot be validated under ``jax.jit`` tracing (the shape and dtype
+        checks can). Constraints compare in the value's own dtype, and JAX
+        orders complex values lexicographically rather than rejecting them,
+        so a real-ordering constraint does not exclude complex inputs on its
+        own — set ``dtype`` to pin the input to a real dtype.
         """
         shape = _full_array_shape_or_none(value)
         if shape is None or shape != self.shape:
@@ -779,6 +791,15 @@ class OpaqueSpec(ValueSpec):
         those belong under an :class:`ArraySpec`) nor a ``Mapping`` (a mapping
         denotes tree structure, never a leaf). ``meta`` is metadata about the
         spec and is not checked against the value.
+
+        Notes
+        -----
+        Interim divergence: :class:`~probpipe.Record` and
+        :meth:`EventTemplate.infer_from` currently still treat a plain
+        ``dict`` value as an opaque leaf; such a value does not satisfy this
+        spec. This method states the target contract — mappings are
+        structure, never leaves — and the record layer is scheduled to align
+        with it.
         """
         return _full_array_shape_or_none(value) is None and not isinstance(value, Mapping)
 
@@ -809,17 +830,23 @@ class DistributionSpec(ValueSpec):
         """Whether *value* is a ``Distribution`` whose draws match ``event_template``.
 
         *value* must be a :class:`~probpipe.Distribution` whose own
-        ``event_template`` equals this spec's. As an interim implementation
-        detail, a distribution that does not (yet) expose an event template is
-        accepted on the type check alone; once every distribution carries its
-        template, the equality check is unconditional.
+        ``event_template`` equals this spec's. A distribution always carries
+        the schema of its draws, so one that exposes no event template (or
+        whose template cannot be derived) does not satisfy any
+        ``DistributionSpec``.
         """
         from ._distribution_base import Distribution
 
         if not isinstance(value, Distribution):
             return False
-        template = getattr(value, "event_template", None)
-        return template is None or template == self.event_template
+        try:
+            template = value.event_template
+        except (AttributeError, TypeError):
+            # No template attribute, or an auto-deriving template property
+            # that cannot run — either way the schema is unknown, so the
+            # value cannot be certified against this spec.
+            return False
+        return template == self.event_template
 
 
 @dataclass(frozen=True)
@@ -831,7 +858,8 @@ class FunctionSpec(ValueSpec):
     :class:`ValueSpec`, which is wrapped in a single-field template (field
     ``"input"`` or ``"output"`` respectively) — so
     ``FunctionSpec(ArraySpec(()), ArraySpec(()))`` types a scalar function by
-    the same convention that presents a scalar value as a single field.
+    the same convention that presents a scalar value as a single field. After
+    construction both attributes are always ``EventTemplate``\\ s.
 
     Raises
     ------
@@ -840,8 +868,8 @@ class FunctionSpec(ValueSpec):
         :class:`ValueSpec`.
     """
 
-    input_template: EventTemplate
-    output_template: EventTemplate
+    input_template: EventTemplate | ValueSpec
+    output_template: EventTemplate | ValueSpec
 
     def __post_init__(self) -> None:
         for attr, wrap_name in (("input_template", "input"), ("output_template", "output")):
@@ -865,7 +893,7 @@ class FunctionSpec(ValueSpec):
         return callable(value)
 
 
-# ``_FieldSpec`` adds nested templates to the stored-leaf union;
+# A stored field spec is a ``ValueSpec`` leaf or a nested ``EventTemplate``;
 # ``_FieldSpecInput`` also admits the construction-time sugar the constructor
 # normalises (a bare shape tuple or ``None``).
 type _FieldSpec = ValueSpec | EventTemplate
@@ -887,8 +915,7 @@ def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
     if isinstance(spec, tuple):
         return ArraySpec(shape=spec)
     raise TypeError(
-        f"spec must be a shape tuple, None, a ValueSpec "
-        f"(ArraySpec/OpaqueSpec/DistributionSpec/FunctionSpec), or an "
+        f"spec must be a shape tuple, None, a ValueSpec, or an "
         f"EventTemplate, got {type(spec).__name__}"
     )
 
@@ -910,9 +937,9 @@ def _all_numeric(specs: Iterable[Any]) -> bool:
 
     Drives the base-class auto-promotion hook so ``EventTemplate(x=(), y=(3,))``
     returns a ``NumericEventTemplate`` without opting in explicitly. Raw inputs
-    also allow the shape-tuple sugar; ``None`` / ``OpaqueSpec`` /
-    ``DistributionSpec`` / ``FunctionSpec`` / mixed nested templates and any
-    unsupported type are non-numeric (``__init__`` rejects the latter).
+    also allow the shape-tuple sugar; ``None``, every non-``ArraySpec`` spec,
+    mixed nested templates, and any unsupported type are non-numeric
+    (``__init__`` rejects the latter).
     """
     return all(isinstance(s, tuple) or _is_numeric_spec(s) for s in specs)
 
@@ -949,7 +976,7 @@ class EventTemplate(_NamedTree):
 
     An ``EventTemplate`` describes the **structure** of a value as a **named
     tree** — an insertion-ordered map of named fields whose only internal node
-    is a nested ``EventTemplate`` and whose leaves are leaf specs. It is the
+    is a nested ``EventTemplate`` and whose leaves are value specs. It is the
     schema of a :class:`~probpipe.Record` (the value type with the same
     named-tree shape), **not** a description of an arbitrary JAX PyTree (see
     *Terminology* and *JAX pytree contract* below).
@@ -971,10 +998,9 @@ class EventTemplate(_NamedTree):
       ``"physics/mass"``; a single name for a flat template). The mapping
       protocol (:meth:`keys` / :meth:`values` / :meth:`items` / iteration /
       ``len`` / ``in`` / ``[]``) ranges over the fields, keyed by path.
-    - **leaf** — a *terminal* node: a :class:`ValueSpec` (:class:`ArraySpec` /
-      :class:`OpaqueSpec` / :class:`DistributionSpec` / :class:`FunctionSpec`).
-      A nested ``EventTemplate`` is an *internal node*, not a leaf; the fields
-      are the leaves.
+    - **leaf** — a *terminal* node: a :class:`ValueSpec`. A nested
+      ``EventTemplate`` is an *internal node*, not a leaf; the fields are the
+      leaves.
     - **key vs. path** — a **key** addresses a field (a leaf); a **path** may
       also address an interior node. The mapping operators (``[]`` / ``in`` /
       iteration) are leaf-keyed, so a partial path is *not* a member and
@@ -992,14 +1018,14 @@ class EventTemplate(_NamedTree):
 
     JAX pytree contract
     -------------------
-    An ``EventTemplate`` is **not** a registered JAX pytree node — its leaf specs
+    An ``EventTemplate`` is **not** a registered JAX pytree node — its value specs
     are atomic, so ``jax.tree_util.tree_leaves(template) == [template]``. It is
     the *schema* of the value pytrees it describes, not a pytree itself (think of
     it as an enriched ``PyTreeDef`` that also carries each leaf's kind / shape).
 
     For a value ``v`` it describes (a :class:`~probpipe.Record`): a nested
     ``EventTemplate`` mirrors a nested ``Record`` (both internal nodes), and each
-    leaf spec mirrors one field value. When every leaf is an array (the
+    value spec mirrors one field value. When every leaf is an array (the
     :class:`NumericEventTemplate` / :class:`~probpipe.NumericRecord` case),
     ``jax.tree_util.tree_leaves(v)`` returns the leaves in :meth:`keys`
     order. The one place the template's leaves and JAX's diverge is an
@@ -1015,8 +1041,7 @@ class EventTemplate(_NamedTree):
         - ``tuple[int, ...]`` — shape of a numeric array leaf (e.g. ``()`` for a
           scalar, ``(3,)`` for a 3-vector); normalised to :class:`ArraySpec`.
         - ``None`` — opaque (non-array) leaf; normalised to :class:`OpaqueSpec`.
-        - a :class:`ValueSpec` — :class:`ArraySpec` / :class:`OpaqueSpec` /
-          :class:`DistributionSpec` / :class:`FunctionSpec` (passed through).
+        - a :class:`ValueSpec` — an already-built spec (passed through).
         - ``EventTemplate`` — a nested sub-structure (an internal node).
 
     Examples
@@ -1033,7 +1058,7 @@ class EventTemplate(_NamedTree):
     leaves and describes the expected structure for type-checking and
     vectorization. Leaves are stored as frozen, hashable spec objects, so a
     template is itself hashable (usable as a jit / treedef cache key).
-    ``__getitem__`` returns the stored leaf spec (and raises on an interior
+    ``__getitem__`` returns the stored value spec (and raises on an interior
     node — see *Terminology*); the enumeration of leaves is :meth:`keys`, and
     per-leaf array shapes (on a numeric template) live on
     :attr:`~NumericEventTemplate.leaf_shapes`.
@@ -1109,10 +1134,9 @@ class EventTemplate(_NamedTree):
 
     # -- Tree structure -----------------------------------------------------
     #
-    # The mapping / navigation surface is inherited from :class:`_NamedTree`. A
-    # leaf here is a :class:`ValueSpec` (:class:`ArraySpec` / :class:`OpaqueSpec`
-    # / :class:`DistributionSpec` / :class:`FunctionSpec`); an internal node is
-    # a nested ``EventTemplate``.
+    # The mapping / navigation surface is inherited from :class:`_NamedTree`.
+    # A leaf here is a :class:`ValueSpec`; an internal node is a nested
+    # ``EventTemplate``.
 
     @classmethod
     def _node_type(cls) -> type:
@@ -1136,9 +1160,9 @@ class EventTemplate(_NamedTree):
 
         Recursive: descends into nested :class:`EventTemplate` fields and
         returns ``True`` only if *all* leaves (at every depth) are numeric
-        array leaves. Any :class:`OpaqueSpec` / :class:`DistributionSpec` /
-        :class:`FunctionSpec` leaf — or a nested sub-template that is not
-        itself all-numeric — makes the whole template non-numeric.
+        array leaves. Any non-:class:`ArraySpec` leaf — or a nested
+        sub-template that is not itself all-numeric — makes the whole
+        template non-numeric.
 
         This is computed as an explicit recursive leaf check rather than
         ``isinstance(self, NumericEventTemplate)``. Under the ``__new__``
@@ -1186,9 +1210,8 @@ class EventTemplate(_NamedTree):
 
         Keeps every numeric leaf, recursing into nested
         :class:`EventTemplate` fields (each contributes its own
-        ``numeric_subset()``); drops :class:`OpaqueSpec` /
-        :class:`DistributionSpec` / :class:`FunctionSpec` leaves; and prunes
-        any nested template that becomes empty. Surviving leaves keep their
+        ``numeric_subset()``); drops every non-:class:`ArraySpec` leaf; and
+        prunes any nested template that becomes empty. Surviving leaves keep their
         ``/``-delimited paths (the projection is path-stable). Inference uses
         this to recover the numeric leaves of a mixed template.
 
@@ -1295,7 +1318,7 @@ class EventTemplate(_NamedTree):
         return tuple(self._tree.items()) == tuple(other._tree.items())
 
     def __hash__(self) -> int:
-        # All field specs (leaf specs and nested templates) are hashable, so
+        # All field specs (value specs and nested templates) are hashable, so
         # the order-sensitive item tuple hashes directly. Insertion order is
         # part of the template's identity.
         return hash(tuple(self._tree.items()))

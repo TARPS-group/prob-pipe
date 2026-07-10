@@ -115,7 +115,7 @@ class TestFieldAccess:
 class TestNamedTreeSurfaceOnEventTemplate:
     """EventTemplate gained the shared ``_NamedTree`` collection protocol:
     ``/``-path and tuple indexing, path membership, iteration, and
-    ``keys``/``values``/``items`` — over its leaf specs, keyed by leaf path.
+    ``keys``/``values``/``items`` — over its value specs, keyed by leaf path.
     Exercised on a *nested* template (the flat case is covered above).
     """
 
@@ -542,8 +542,11 @@ class TestValueSpecs:
         assert OpaqueSpec() == OpaqueSpec()
         assert OpaqueSpec(meta="a") == OpaqueSpec(meta="a")
         assert OpaqueSpec(meta="a") != OpaqueSpec(meta="b")
-        inner = EventTemplate(x=())
-        assert DistributionSpec(event_template=inner) == DistributionSpec(event_template=inner)
+        # Distinct-but-equal templates, so this pins value equality (a
+        # shared object would also pass under identity-based equality).
+        assert DistributionSpec(event_template=EventTemplate(x=())) == DistributionSpec(
+            event_template=EventTemplate(x=())
+        )
         assert FunctionSpec(
             input_template=EventTemplate(x=()), output_template=EventTemplate(y=())
         ) == FunctionSpec(input_template=EventTemplate(x=()), output_template=EventTemplate(y=()))
@@ -554,12 +557,50 @@ class TestValueSpecs:
     def test_value_spec_is_abstract_base(self):
         for cls in (ArraySpec, OpaqueSpec, DistributionSpec, FunctionSpec):
             assert issubclass(cls, ValueSpec)
-        with pytest.raises(TypeError):
+        with pytest.raises(TypeError, match="abstract"):
             ValueSpec()  # type: ignore[abstract]
+
+    def test_value_spec_exported_leaf_spec_removed(self):
+        import probpipe
+
+        assert probpipe.ValueSpec is ValueSpec
+        assert "ValueSpec" in probpipe.__all__
+        assert not hasattr(probpipe, "LeafSpec")
+        assert "LeafSpec" not in probpipe.__all__
+
+    def test_equal_specs_hash_equal(self):
+        # ``ArraySpec.__hash__`` is hand-written; pin the eq/hash contract for
+        # every spec kind, including a populated ArraySpec.
+        from probpipe.core.constraints import positive
+
+        inner_a, inner_b = EventTemplate(x=()), EventTemplate(x=())
+        pairs = [
+            (ArraySpec((3,)), ArraySpec((3,))),
+            (
+                ArraySpec((2,), dtype="float32", support=positive),
+                ArraySpec((2,), dtype=jnp.float32, support=positive),
+            ),
+            (OpaqueSpec(meta="a"), OpaqueSpec(meta="a")),
+            (DistributionSpec(event_template=inner_a), DistributionSpec(event_template=inner_b)),
+        ]
+        for a, b in pairs:
+            assert a == b
+            assert hash(a) == hash(b)
+
+    def test_distribution_and_function_spec_inequality(self):
+        # Distinct-but-equal templates compare equal; different templates
+        # do not (the equality is by value, not object identity).
+        assert DistributionSpec(event_template=EventTemplate(x=())) != DistributionSpec(
+            event_template=EventTemplate(y=())
+        )
+        assert FunctionSpec(EventTemplate(a=()), EventTemplate(b=())) != FunctionSpec(
+            EventTemplate(a=()), EventTemplate(c=())
+        )
 
     def test_array_spec_unset_dtype_not_equal_to_set(self):
         # numpy treats ``np.dtype(None)`` as the default dtype, so a naive
-        # field comparison would report these equal while they hash apart.
+        # field comparison would report these equal (while the eq/hash
+        # contract requires equal objects to hash equal).
         assert ArraySpec(()) != ArraySpec((), dtype=jnp.float64)
         assert ArraySpec((), dtype=jnp.float64) != ArraySpec(())
 
@@ -574,9 +615,40 @@ class TestValueSpecs:
         assert len(set(specs)) == 1
         assert all(s.dtype == np.dtype("float32") for s in specs)
 
+    def test_array_spec_pickle_round_trip(self):
+        import pickle
+
+        spec = ArraySpec((3,), dtype="float32")
+        restored = pickle.loads(pickle.dumps(spec))
+        assert restored == spec
+        assert hash(restored) == hash(spec)
+        assert restored.dtype == np.dtype("float32")
+
+    def test_template_with_all_spec_kinds_pickle_round_trip(self):
+        import pickle
+
+        tpl = EventTemplate(
+            x=ArraySpec((2,), dtype="float32"),
+            label=OpaqueSpec(meta="tag"),
+            d=DistributionSpec(event_template=EventTemplate(a=())),
+            f=FunctionSpec(ArraySpec(()), ArraySpec(())),
+        )
+        restored = pickle.loads(pickle.dumps(tpl))
+        assert restored == tpl
+        assert hash(restored) == hash(tpl)
+
+    def test_array_spec_zero_dim_allowed(self):
+        spec = ArraySpec((0,))
+        assert spec.shape == (0,)
+        assert spec.is_valid(jnp.ones(0))
+        assert not spec.is_valid(jnp.ones(1))
+
     def test_distribution_spec_requires_event_template(self):
         with pytest.raises(TypeError, match="must be an EventTemplate"):
             DistributionSpec(event_template=(3,))  # type: ignore[arg-type]
+        # Unlike FunctionSpec, a bare ValueSpec is not auto-wrapped here.
+        with pytest.raises(TypeError, match="must be an EventTemplate"):
+            DistributionSpec(event_template=ArraySpec(()))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -604,6 +676,7 @@ class TestArraySpecIsValid:
         spec = ArraySpec(())
         assert not spec.is_valid("text")
         assert not spec.is_valid([1.0, 2.0])
+        assert not spec.is_valid((1.0, 2.0))
         assert not spec.is_valid({"a": 1.0})
         assert not spec.is_valid(None)
         assert not spec.is_valid(np.asarray(["a"]))
@@ -630,6 +703,29 @@ class TestArraySpecIsValid:
         assert spec.is_valid(jnp.asarray([1.0, 2.0]))
         assert not spec.is_valid(jnp.asarray([1.0, -2.0]))
 
+    def test_support_checked_on_python_scalar(self):
+        from probpipe.core.constraints import positive
+
+        spec = ArraySpec((), support=positive)
+        assert spec.is_valid(2.0)
+        assert not spec.is_valid(-2.0)
+
+    def test_support_vacuous_on_empty_array(self):
+        from probpipe.core.constraints import positive
+
+        assert ArraySpec((0,), support=positive).is_valid(jnp.ones(0))
+
+    def test_dtype_and_support_together(self):
+        # The checks compose: shape, then dtype, then support — each can
+        # independently reject.
+        from probpipe.core.constraints import positive
+
+        spec = ArraySpec((2,), dtype=jnp.float32, support=positive)
+        assert spec.is_valid(jnp.asarray([1.0, 2.0], dtype=jnp.float32))
+        # np, not jnp: JAX without x64 would silently downcast to float32.
+        assert not spec.is_valid(np.asarray([1.0, 2.0], dtype=np.float64))
+        assert not spec.is_valid(jnp.asarray([1.0, -2.0], dtype=jnp.float32))
+
 
 class TestOpaqueSpecIsValid:
     def test_non_array_objects_valid(self):
@@ -648,6 +744,16 @@ class TestOpaqueSpecIsValid:
     def test_mapping_invalid(self):
         # A mapping denotes tree structure, never a leaf value.
         assert not OpaqueSpec().is_valid({"a": 1})
+
+    def test_dict_leaf_divergence_is_deliberate(self):
+        # Interim divergence, pinned on purpose: Record still stores a plain
+        # dict value as an opaque leaf, so the spec inferred FROM such a value
+        # does not validate it. is_valid states the target contract (mappings
+        # are structure, never leaves); the record layer aligns later.
+        r = Record(x={"a": 1})
+        spec = r.event_template["x"]
+        assert spec == OpaqueSpec()
+        assert not spec.is_valid(r["x"])
 
     def test_meta_not_checked(self):
         assert OpaqueSpec(meta="tag").is_valid("anything")
@@ -670,6 +776,48 @@ class TestDistributionSpecIsValid:
         spec = DistributionSpec(event_template=EventTemplate(x=()))
         assert not spec.is_valid(42)
         assert not spec.is_valid(EventTemplate(x=()))
+
+    def test_distribution_without_template_invalid(self):
+        # A distribution always carries the schema of its draws; one that
+        # exposes no event template cannot satisfy any DistributionSpec.
+        from probpipe.core._distribution_base import Distribution
+
+        class _NoTemplate(Distribution):
+            def __init__(self):
+                super().__init__(name="d")
+
+        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        assert not spec.is_valid(_NoTemplate())
+
+    def test_distribution_with_none_template_invalid(self):
+        from probpipe.core._distribution_base import Distribution
+
+        class _NoneTemplate(Distribution):
+            def __init__(self):
+                super().__init__(name="d")
+
+            @property
+            def event_template(self):
+                return None
+
+        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        assert not spec.is_valid(_NoneTemplate())
+
+    def test_raising_template_property_returns_false(self):
+        # An auto-deriving ``event_template`` property that cannot run raises
+        # TypeError; is_valid must swallow it (never raises on a mismatch).
+        from probpipe.core._distribution_base import Distribution
+
+        class _RaisingTemplate(Distribution):
+            def __init__(self):
+                super().__init__(name="d")
+
+            @property
+            def event_template(self):
+                raise TypeError("template not derivable")
+
+        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        assert not spec.is_valid(_RaisingTemplate())
 
 
 class TestFunctionSpecIsValid:

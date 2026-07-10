@@ -125,7 +125,7 @@ class Record(_NamedTree):
     :attr:`event_template` always reflects the structure of the stored value.
     Because an :class:`EventTemplate` is itself a :class:`_NamedTree`, its tree
     mirrors the record's exactly: each nested ``Record`` corresponds to a
-    nested ``EventTemplate``, and each field value corresponds to a leaf spec
+    nested ``EventTemplate``, and each field value corresponds to a value spec
     (an array to an :class:`ArraySpec`, any non-array to an
     :class:`OpaqueSpec`, and so on). ::
 
@@ -136,7 +136,7 @@ class Record(_NamedTree):
         # A record's subtree and its template's subtree stay in lock-step:
         r.at_path("y").event_template == r.event_template.at_path("y")  # True
 
-        # Each field value maps to a leaf spec by type:
+        # Each field value maps to a value spec by type:
         Record(vec=jnp.zeros(3), label="fox").event_template
         # EventTemplate(vec=(3,), label=None)   — array -> ArraySpec, str -> OpaqueSpec
 
@@ -169,7 +169,7 @@ class Record(_NamedTree):
     structure, and any mismatch in tree shape or field/spec kind raises
     ``ValueError``. When omitted, the template is inferred via
     :meth:`EventTemplate.infer_from`; inference recovers the tree structure but
-    is lossy on the leaf specs (e.g. it cannot recover a :class:`FunctionSpec`'s
+    is lossy on the value specs (e.g. it cannot recover a :class:`FunctionSpec`'s
     input / output structure). ::
 
         Record(a=1.0, event_template=EventTemplate(a=(), b=()))
@@ -326,7 +326,7 @@ class Record(_NamedTree):
         Validates the **whole tree**, recursively: at every level the field-name
         sets must match, a nested ``Record`` must align with a nested
         ``EventTemplate`` (both internal nodes), and a non-``Record`` leaf must
-        align with a leaf spec. Per-leaf shape / dtype / kind conformance is the
+        align with a value spec. Per-leaf shape / dtype / kind conformance is the
         producing generator's responsibility and is *not* checked here.
 
         Raises ``ValueError`` naming the ``/``-path of the first mismatch.
@@ -351,7 +351,7 @@ class Record(_NamedTree):
                 elif value_is_node != spec_is_node:
                     raise ValueError(
                         f"event_template / record structure mismatch at {path!r}: "
-                        f"template has a {'nested template' if spec_is_node else 'leaf spec'} "
+                        f"template has a {'nested template' if spec_is_node else 'value spec'} "
                         f"but record has a {'nested Record' if value_is_node else 'leaf value'}"
                     )
                 # both leaves -> OK (leaf-content conformance is not checked here)
@@ -622,7 +622,7 @@ class Record(_NamedTree):
         return type(self)(new_children, event_template=EventTemplate(specs))
 
     def _spec_of(self, value: _FieldValue) -> Any:
-        """The leaf spec describing a new field *value*, for template threading."""
+        """The value spec describing a new field *value*, for template threading."""
         if isinstance(value, Record):
             return value.event_template
         return EventTemplate.infer_from({"_leaf_": value}).children["_leaf_"]
@@ -722,7 +722,7 @@ class Record(_NamedTree):
 
         With *event_template* given, the template — not the Python type — decides
         structure at each position: a ``dict`` where the template has an interior
-        node is recursed into, while a ``dict`` where the template has a leaf spec
+        node is recursed into, while a ``dict`` where the template has a value spec
         is kept verbatim as opaque data. The template is then carried onto the
         result exactly as in normal construction.
         """
