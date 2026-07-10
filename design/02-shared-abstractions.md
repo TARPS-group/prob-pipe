@@ -187,11 +187,11 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ..
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
 
-A single **catalog** makes every registry discoverable. It provides a list of registries, their methods with their priorities, and a one-line description, so a user can see which methods exist and how a given call will resolve. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`.
+A single **catalog** makes every registry discoverable. It provides a list of registries, their entries with their priorities, and a one-line description, so a user can see which entries exist and how a given call will resolve. An **entry** is one registered item, an inference method, a converter, or a bijector factory, depending on the registry. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`.
 
 ```python
 @dataclass(frozen=True)
-class MethodSummary:
+class EntrySummary:
     name: str
     priority: int | None
     supported_types: tuple[Any, ...] = ()
@@ -205,15 +205,15 @@ class RegistryInfo:            # the catalog's per-registry record
     name: str                  # unique within the catalog
     description: str           # one line
     kind: str                  # e.g., "dispatch", "factory", "converter"
-    method_count: int
+    entry_count: int
 
 @runtime_checkable
 class SupportsRegistryCataloging(Protocol):
     name: str
     description: str
     kind: str
-    def method_summaries(self) -> list[MethodSummary]: ...
-    def describe_method(self, name: str) -> MethodSummary: ...
+    def entry_summaries(self) -> list[EntrySummary]: ...
+    def describe_entry(self, name: str) -> EntrySummary: ...
 
 class RegistryCatalog:
     def register(self, registry: SupportsRegistryCataloging) -> None: ...   # empty or duplicate names raise
@@ -222,8 +222,6 @@ class RegistryCatalog:
     def __getitem__(self, name: str) -> SupportsRegistryCataloging: ...     # get the registry
     def __contains__(self, name: object) -> bool: ...                       # check if a registry exists
     def describe(self, name: str) -> str: ...                               # a readable summary of one registry
-    def register_method(self, registry_name: str, method: Any) -> None: ...
-
 registry_catalog = RegistryCatalog()  # the global instance
 ```
 

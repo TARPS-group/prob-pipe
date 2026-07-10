@@ -598,9 +598,9 @@ The hierarchy embodies `D2 – Generality first`: one base refined by *optional 
 
 ### Contract
 
-A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*.
+A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*. The registry is an ordinary binary dispatch registry keyed on `(type(source), target)`: the target is already a type, so the second key is the argument itself rather than its type, supplied through the key extraction the dispatch base leaves to its subclasses.
 
-A converter declares the source types it converts *from* and the target types it converts *to*, a cheap `check` that reports feasibility without converting, and the conversion itself. A conversion is rarely unique, so each carries a **fidelity**: `exact` for an equivalent representation, `moment_match` when only low-order moments are preserved, and `sample` for a Monte Carlo stand-in. The fidelities are totally ordered, `EXACT > MOMENT_MATCH > SAMPLE`, the registry prefers higher fidelity, and a caller can name a converter or set a minimum fidelity against that order.
+A converter declares the source types it converts *from* and the target types it converts *to* in the binary method's two slots, a cheap `check` that reports feasibility without converting, and the conversion as its `execute`. A conversion is rarely unique, so each carries a **fidelity**: `exact` for an equivalent representation, `moment_match` when only low-order moments are preserved, and `sample` for a Monte Carlo stand-in. The fidelities are totally ordered, `EXACT > MOMENT_MATCH > SAMPLE`. Priority remains the registry's sole selection order, with converter priorities assigned from the fidelity tiers, `EXACT` in the exact tier and the inexact fidelities in descending bands below it, so higher fidelity is preferred through the existing mechanism rather than a second ordering. A caller can name a converter or set `min_fidelity`, a feasibility floor `check` enforces.
 
 ```python
 class ConversionMethod(Enum):
@@ -609,29 +609,27 @@ class ConversionMethod(Enum):
     SAMPLE = "sample"
 
 @dataclass(frozen=True)
-class ConversionInfo:               # the result of a converter's feasibility probe
-    feasible: bool
+class ConversionInfo(MethodInfo):   # the feasibility probe's result, extended with fidelity
     method: ConversionMethod | None = None
 
-class Converter(ABC):
+class Converter(BinaryDispatchMethod):
     name: str                            # unique within the registry; convert(..., method=name) selects it
-    def source_types(self) -> tuple[type, ...]: ...
-    def target_types(self) -> tuple[type, ...]: ...
-    def check(self, source, target_type: type) -> ConversionInfo: ...
-    def convert(self, source, target_type: type) -> Distribution: ...
+    def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (source, target) types
+    def check(self, source, target_type: type, *,
+              min_fidelity: ConversionMethod | None = None) -> ConversionInfo: ...
+    def execute(self, source, target_type: type) -> Distribution: ...             # the conversion itself
 
-class ConverterRegistry:
-    def register(self, converter: Converter) -> None: ...
-    def check(self, source, target_type: type) -> ConversionInfo: ...
+class ConverterRegistry(BinaryDispatchRegistry[Converter]):
+    # keyed on (type(source), target): the second key is the target type itself
     def convert(self, source, target_type: type,
                 method: str | None = None, min_fidelity: ConversionMethod | None = None) -> Distribution: ...
 
-converter_registry: ConverterRegistry   # the global instance, keyed on the (source, target) type pair
+converter_registry: ConverterRegistry   # the global instance
 ```
 
 ### Rationale
 
-Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment_match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`).
+Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment_match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`). Realizing the registry as a subclass of the shared dispatch machinery gives conversion registration, feasibility probing, prioritized selection, and cataloging without duplicating any of them (`D7 – Single source of truth`).
 
 ## III.14 — Constraint reparameterization
 
@@ -654,6 +652,8 @@ def register_bijector(
     factory: Callable[[Constraint], Bijector],
 ) -> None: ...
 ```
+
+The factory keys on constraint instances and types rather than dispatching on argument types alone, so it is not a dispatch registry; it still satisfies `SupportsRegistryCataloging` and appears in the registry catalog alongside the dispatch registries.
 
 ### Rationale
 
