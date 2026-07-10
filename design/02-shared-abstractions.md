@@ -138,7 +138,7 @@ class Batch[E](Tracked):
     def __getitem__(self, index: Any) -> E | Self: ...  # returns a view of either an element or a sub-batch
 ```
 
-**Axis groups.** A batch's axes are partitioned into ordered **levels**: `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and indexing operate on the outermost level, and an element of a multi-level batch is the inner-level batch, as a view. Nesting therefore needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store.
+**Axis groups.** A batch's axes are partitioned into ordered **levels**: `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and indexing operate on the outermost level, and an element of a multi-level batch is the inner-level batch, as a view. Nesting therefore needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store. Nesting is unbounded in principle, though two levels, a collection of collections, cover the cases that arise in practice.
 
 **Element identity.** An element view of a batch derives its name as `name[i]` from the batch's own name, marked `name_is_auto`, with provenance recording the indexing, and the elements of nested levels compose the scheme, as in `name[i][j]`. A batch whose elements are bare values yields bare elements, which carry no identity to derive.
 
@@ -187,7 +187,7 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ..
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
 
-A single **catalog** makes every registry discoverable. It provides a list of registries, their entries with their priorities, and a one-line description, so a user can see which entries exist and how a given call will resolve. An **entry** is one registered item, an inference method, a converter, or a bijector factory, depending on the registry. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`.
+A single **catalog** makes every registry discoverable. It provides a list of registries, their entries with their priorities, and a one-line description, so a user can see which entries exist and how a given call will resolve. An **entry** is one registered item within a registry; the catalog uses this generic term rather than *method* because it spans registries whose items are not all type-dispatched methods. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`.
 
 ```python
 @dataclass(frozen=True)
