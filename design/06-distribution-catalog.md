@@ -108,9 +108,16 @@ A mixture supports an operation exactly when its components do, the same interse
 
 ### Contract
 
-Each pushforward rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws. Whatever the rule, a linear map's result delegates `mean` and `cov` exactly.
+Each pushforward rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy carrier for `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws. Whatever the rule, a linear map's result delegates `mean` and `cov` exactly.
 
 ```python
+class LinearPushforwardDistribution(Distribution):
+    def __init__(self, name: str, base: Distribution, op: LinOp) -> None: ...
+    # the law of op @ X for X ~ base; the event template is op's output template.
+    # _sample pushes base draws through op; _mean and _cov delegate exactly,
+    # E[A X] = A E[X] and Cov(A X) = A Cov(X) Aᵀ, lazily through the operator algebra;
+    # _log_prob only when op is invertible, by change of variables
+
 class BijectorTransformedDistribution(Distribution[T]):
     def __init__(self, name: str, base: Distribution, bijector: Bijector) -> None: ...
     # _sample pushes base draws through the bijector;

@@ -126,14 +126,20 @@ class Batch[E](Tracked):
     def batch_shape(self) -> tuple[int, ...]: ...
     @property
     def batch_size(self) -> int: ...                    # total element count, prod(batch_shape)
+    @property
+    def axis_groups(self) -> tuple[tuple[int, ...], ...]: ...   # batch_shape tiled into levels, outermost first
     def __len__(self) -> int: ...                       # leading-axis size, batch_shape[0]
     def __iter__(self) -> Iterator[E | Self]: ...       # over the leading batch axis
     def __getitem__(self, index: Any) -> E | Self: ...  # returns a view of either an element or a sub-batch
 ```
 
+**Axis groups.** A batch's axes are partitioned into ordered **levels**: `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and indexing operate on the outermost level, and an element of a multi-level batch is the inner-level batch, as a view. Nesting therefore needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store.
+
+**Element identity.** An element view of a batch derives its name as `name[i]` from the batch's own name, marked `name_is_auto`, with provenance recording the indexing, and the elements of nested levels compose the scheme, as in `name[i][j]`. A batch whose elements are bare values yields bare elements, which carry no identity to derive.
+
 ### Rationale
 
-`Batch` is necessary to satisfy `D1 – Mathematical fidelity` by ensuring how many objects there are stays separate from what one object contains. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). When those elements are array-backed the mapping should be vectorized and differentiable (`D6 – Differentiability where possible`). To satisfy `D7 – Single source of truth`, indexing or iterating yields a *view*.
+`Batch` is necessary to satisfy `D1 – Mathematical fidelity` by ensuring how many objects there are stays separate from what one object contains. The level structure extends the same fidelity to collections of collections: how many objects sit at each level is a mathematical distinction, so `N` laws with `S` draws each are `(N,)` of `(S,)` rather than one anonymous `(N, S)`. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). When those elements are array-backed the mapping should be vectorized and differentiable (`D6 – Differentiability where possible`). To satisfy `D7 – Single source of truth`, indexing or iterating yields a *view*, the levels of a multi-level batch included.
 
 ## II.4 — Dispatch and registries
 

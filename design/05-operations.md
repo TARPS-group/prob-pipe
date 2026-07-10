@@ -174,11 +174,13 @@ Both return a **tracked term** whose `provenance` records the access and its sou
 ### Contract
 
 Every operation lifts to a `Batch` by mapping over its elements, which is the workflow-function sweep applied to the operation itself.
-- `sample` and `log_prob` over a `DistributionBatch` return a `RecordBatch` and the batched densities, with the batch axes preserved.
-- A moment over a `DistributionBatch` returns a batch of the corresponding values, such as a `LinOpBatch` for `cov`.
+- `sample` over a `DistributionBatch` returns a **nested** batch, the outer level ranging over the laws and the inner over each law's draws: `sample(d_batch, key, sample_shape=(S,))` has `axis_groups` of `(d_batch.batch_shape, (S,))`, and iterating it visits one law's `RecordBatch` of draws at a time. `log_prob` maps elementwise to the batched densities, with the batch axes preserved.
+- A moment over a `DistributionBatch` returns a batch of the corresponding values, such as a `LinOpBatch` for `cov`. A multi-level query nests the same way: `quantile(d_batch, q)` puts the laws on the outer level and the levels of `q` on the inner.
+- **Alignment.** A binary operation zips batched operands level-wise with broadcasting, outermost level first: within a level the shapes must be broadcast-compatible, size-1 axes broadcast, and an outer product is requested by explicit reshaping rather than implied. A shallower operand broadcasts across the deeper operand's inner levels, so a flat batch of `N` values scores against the laws level of a nested sampling result. `given=` accepts a `RecordBatch` and yields the `DistributionBatch` of conditioned laws.
+- Two operands are exempt from batch lifting: the factors of composition (`*` and `joint`) and the map operand of `pushforward`, which are consumed as objects rather than swept.
 - When the elements are array-backed, the map is a single vectorized call rather than a Python loop, which is the batched-backend optimization.
 - An operation applied to a batch whose elements lack the required capability raises the same capability error a single element would.
 
 ### Rationale
 
-A batched operation is not a new operation but the workflow-function sweep applied to an existing one, so a `Batch` supports exactly the operations its elements do (`D3 – Capability-based operations`). When the elements are array-backed the sweep is a single vectorized call, which preserves differentiability (`D6 – Differentiability where possible`).
+A batched operation is not a new operation but the workflow-function sweep applied to an existing one, so a `Batch` supports exactly the operations its elements do (`D3 – Capability-based operations`). Nesting the laws level over the draws level keeps two genuinely different multiplicities distinct in the result itself (`D1 – Mathematical fidelity`). When the elements are array-backed the sweep is a single vectorized call, which preserves differentiability (`D6 – Differentiability where possible`).
