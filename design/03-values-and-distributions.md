@@ -278,8 +278,23 @@ class Distribution[T](Tracked, Annotated):
     # rename event fields; keys resolve as for NamedTree.with_names, and the law is unchanged
     def with_dims(self, **sizes: int) -> Self: ...
     # bind named symbolic dimensions; monotone, and a conflict with an existing binding raises
+    def __getitem__(self, path: str | tuple[str, ...]) -> FieldView: ...
+    # the field view at a leaf or group path; available on every distribution
 
 class NumericDistribution(Distribution): ...   # marker: numeric draws, carries a NumericEventTemplate
+```
+
+**Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. Every distribution carries an `event_template` with at least one named field, so views exist on every distribution, however it was constructed and whatever it supports. The capabilities a view offers are derived from its parent's, one by one, fixed with the capability protocols.
+
+```python
+class FieldView(Distribution):
+    # constructed by Distribution.__getitem__, never by hand
+    @property
+    def parent(self) -> Distribution: ...
+    @property
+    def path(self) -> str: ...
+    # event_template == parent.event_template.at_path(path); name == the field key,
+    # marked name_is_auto; provenance records the view and its parent
 ```
 
 **The distribution value specification.** The `DistributionSpec(event_template)` class extends the value spec to include a `Distribution` as a valid value (with the given `event_template`). Hence, it is possible to define random measures (distributions over distributions). A draw from a random measure is therefore a `Record` whose leaf value is a `Distribution`, wrapped like any other draw.
@@ -290,11 +305,7 @@ DistributionSpec(event_template: EventTemplate)
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and, when it is array-backed, differentiable end-to-end (`D6 – Differentiability where possible`).
-
-### Notes
-
-- *Field views.* `d["x"]` returns a view of the marginal of field `x`. Sibling views co-sample from one parent draw, so correlation between them is preserved. Every distribution carries an `event_template` with at least one named field, so the field interface is available on every distribution, however it was constructed.
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and, when it is array-backed, differentiable end-to-end (`D6 – Differentiability where possible`). A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`).
 
 ## III.7 — Distribution capabilities
 
@@ -343,7 +354,7 @@ class SupportsQuantile[T](Protocol):
 
 @runtime_checkable
 class SupportsExpectation[T](Protocol):
-    def _expectation(self, f: Callable[[T], Array]) -> Array: ...   # closed-form E[f(X)]
+    def _expectation(self, f: Callable[[T], Array]) -> Array: ...   # exact E[f(X)] for arbitrary f
 
 @runtime_checkable
 class SupportsConditioning(Protocol):
@@ -354,11 +365,27 @@ class SupportsMarginals(Protocol):
     def _marginal(self, path: str | tuple[str, ...]) -> Distribution: ...   # the detached marginal of a field or field group
 ```
 
-Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_cov` and `_quantile` require a numeric draw, with `_cov` ranging over the *flattened* draw, while `_mean` and `_variance` are event-typed and open to any event type that supports them. For a random measure, a draw's log-density is itself random, so the `SupportsRandom*LogProb` capabilities take no value and return the law of the log-density function, the random function `x ↦ log D(x)` for `D ~ M`.
+Here `Key` is a PRNG key and `ArrayLike` an array-or-scalar input. `_cov` and `_quantile` require a numeric draw, with `_cov` ranging over the *flattened* draw, while `_mean` and `_variance` are event-typed and open to any event type that supports them. For a random measure, a draw's log-density is itself random, so the `SupportsRandom*LogProb` capabilities take no value and return the law of the log-density function, the random function `x ↦ log D(x)` for `D ~ M`. `_expectation` must integrate an *arbitrary* function exactly, which in practice means finite support: its argument is an opaque callable, so a per-call feasibility check has nothing to inspect, and a law that is exact only for special maps must not advertise the capability. Exact moments of structured maps are instead the business of `pushforward`, which dispatches on the map's type.
+
+**View derivation.** A `FieldView` derives each capability from its parent's, so what a view supports is read off the parent. For a parent `d` and a view `v = d[p]`, with π the extraction of field `p` from an event:
+
+| capability on `v` | derivation | available when |
+|---|---|---|
+| `_sample` | co-sample: draw `X ~ d` and return `π(X)` | parent `SupportsSampling` |
+| `_mean` | projection: `mean(d)[p]`, since `E[πX] = π E[X]` | parent `SupportsMean` |
+| `_variance` | restriction of `variance(d)` to the coordinates of `p` | parent `SupportsVariance` |
+| `_cov` | the sub-block `P Σ Pᵀ`, with `P` the coordinate-selection `LinOp`, built lazily through the operator algebra | parent `SupportsCovariance`, numeric field |
+| `_quantile` | restriction of the parent's per-coordinate quantiles to `p` | parent `SupportsQuantile`, numeric field |
+| `_expectation` | composition: `d._expectation(f ∘ π)` | parent `SupportsExpectation` |
+| `_log_prob` / `_unnormalized_log_prob` | via the detached marginal `d._marginal(p)` | parent `SupportsMarginals`, exact at `p`, and the marginal scores |
+| `_marginal` at a sub-path `q` | path composition: `d._marginal(p/q)` | parent `SupportsMarginals`, exact at `p/q` |
+| `_condition_on` a sub-field `s ⊂ p` | conditioning commutes with marginalization: `d.condition_on(s)[p ∖ s]`, both sides the law of `p ∖ s` given `s` | parent conditioning available for `s` |
+
+The projection rows are exact whenever the parent's answer is, and the density rows are exact per path. Only sampling requires the parent to sample, so a view on a non-sampling parent still carries its projected moments.
 
 ### Rationale
 
-Making each operation a *capability* rather than a base-class method follows `D3 – Capability-based operations`. Because support is structural (tested by `isinstance(dist, SupportsX)`, not subclassing), a distribution gains an operation just by implementing its method, and a wrapper (a view, a transform) exposes exactly the capabilities of whatever it wraps.
+Making each operation a *capability* rather than a base-class method follows `D3 – Capability-based operations`. Because support is structural (tested by `isinstance(dist, SupportsX)`, not subclassing), a distribution gains an operation just by implementing its method. A transform that preserves the event exposes exactly the capabilities of whatever it wraps, and a field view offers those its parent's capabilities can derive, so advertised support stays honest in both cases.
 
 ## III.8 — `ConditionalDistribution`
 
@@ -395,6 +422,8 @@ class SupportsConditionalMean[S, T](Protocol):
 #   SupportsConditionalExpectation (_conditional_expectation(given, f, …) -> Array),
 #   SupportsConditionalMarginals (_conditional_marginal(given, path) -> Distribution).
 ```
+
+The conditional vocabulary is closed by one rule: every unconditional capability has a conditional counterpart whose method prepends the given to the unconditional signature. The two vocabularies stay mirrored by construction, and a capability added on the unconditional side names its conditional twin automatically.
 
 **The numeric special cases.** A `ConditionalDistribution` has *two* templates, and either can be numeric, so the single `Numeric` prefix becomes positional: `Numeric` before `Conditional` marks the **given** side numeric, `Numeric` before `Distribution` marks the **event** side numeric, and `FullyNumeric*` marks both. Each is a marker only, adding no operations of its own (mirroring `NumericDistribution`).
 
@@ -452,7 +481,7 @@ This is `D1 – Mathematical fidelity` on the distribution layer: a `Distributio
 A *factored distribution* is a distribution **built from named sub-distributions**. Beyond being an ordinary distribution, it carries an explicit factorization into its parts. The capability that marks a factored distribution is `SupportsFactors`. The `FactoredDistribution` and `FactoredConditionalDistribution` classes generically implement `SupportsFactors` for distributions and conditional distributions. As another example, the `FactoredMultivariateGaussian` is a factored distribution in which the factors are jointly Gaussian, so conditioning and marginalization are exact.
 
 The generic factored (conditional) distributions `FactoredDistribution` and `FactoredConditionalDistribution`  carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint distribution's `event_template` is the structural, disjoint union of the factors' produced templates: each factor's top-level fields become top-level fields of the joint, with their internal structure preserved and no additional nesting introduced. Factor names are unique across the list, and a duplicate is an error.
-In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Both provide the `Supports*` capabilities dynamically. Sampling and the log-prob capabilities follow the intersection of the factors': if all factors implement `SupportsLogProb` then so does the factored distribution. The moment capabilities are narrower, since factor-wise conditional moments compose into a closed form only in special structures, such as an edge-free joint or the jointly Gaussian case; otherwise a joint's moments fall back to the Monte Carlo route. As with other generic distributions, there are also numeric specializations.
+In the case of the `FactoredConditionalDistribution`, conditioning values for all given fields results in a `FactoredDistribution`. Sampling and the log-prob capabilities follow the intersection of the factors': if all factors implement `SupportsLogProb` then so does the factored distribution. The moment capabilities are decided at construction, present exactly when the joint's structure makes the moment derivable, so a capability check stays honest. An edge-free joint derives its moments componentwise from its factors. Jointly Gaussian factors compose into a `FactoredMultivariateGaussian`, whose moments are exact. Any other dependent joint carries no moment capability, because factor-wise conditional moments do not compose into a closed form. For example, with `x ~ Normal(0, 1)` and `y | x ~ Normal(exp(x), 1)`, both factors have closed-form means, yet `E[y] = e^{1/2}` is not reachable from them at point arguments. Such a joint's moments are answered by the moment operations' Monte Carlo fallback. As with other generic distributions, there are also numeric specializations.
 
 ```python
 @runtime_checkable
@@ -475,14 +504,14 @@ class FactoredFullyNumericConditionalDistribution(
 **Field versus factor.** A **field** is a named part of a draw, that is, a path in the `event_template`. A **factor** is a constituent distribution the joint was built from. The two coincide only for an independent joint of single-field factors and differ in general. A correlated `MultivariateNormal` presented as `{intercept, slope}` is one factor with two fields. Conversely, the same draw `{x, y}` can arise from a single bivariate normal (no factors), from two independent factors (no edges), or from a chain p(y | x) · p(x) (two factors, one edge). The fields are identical but the factorization differs.
 
 **The two access interfaces.** A joint exposes up to two clearly separated interfaces, never through the same operator.
-- The **field interface** is available on every distribution that can sample. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. A view's detached law, and any capability beyond sampling, comes from the parent's `SupportsMarginals`, and `marginal(d, "intercept")` returns that same marginal **detached** from the parent.
+- The **field interface** is available on every distribution. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. A view carries each capability its parent's capabilities can derive, its density routes through the parent's `SupportsMarginals`, and `marginal(d, "intercept")` returns that same marginal **detached** from the parent.
 - The **factor interface** is available only with `SupportsFactors`. `factor(d, "coeffs")` returns a building-block factor, keyed by factor name, which is a `Distribution` or, for a dependent edge, a `ConditionalDistribution`. There need be no factor for a given field, and no field for a given factor.
 
 **Marginals of a joint.** Whether a marginal is exactly available depends on the factors' own marginal support and on where the target sits in the dependence graph, so the factored classes resolve `_marginal` per path rather than wholesale. The graph reduction is always exact: the target's ancestor closure yields a sub-joint of whole factors, and everything outside it integrates out for free. What remains is integrating the extra ancestor fields back out, which is exact in three cases: there are none (the target is ancestrally closed, as for a root factor or an edge-free group), the reduction lies within a single factor and delegates to that factor's own `SupportsMarginals`, or the affected factors admit closed-form integration, as when they are jointly Gaussian. On any other path `_marginal` raises, and the `marginal` operation falls back to its Monte Carlo route.
 
 ### Rationale
 
-Factorization is an *optional capability*, `SupportsFactors`, rather than a base class. This is `D2 – Generality first`: a joint is an ordinary distribution that gains factor access by carrying the capability, instead of sitting in a parallel class tower. Keeping the field interface (part of a draw) and the factor interface (part of the construction) separate serves `D1 – Mathematical fidelity`, since the two are genuinely different in the mathematics. Independence is likewise a property of the derived graph rather than a class, so dropping any dedicated product class loses no behavior: an edge-free joint still samples its factors in parallel and conditions exactly on a field. For sampling and densities a joint's capabilities are the intersection of its factors': ancestral `sample` requires every factor to sample, and a summed `log_prob` requires every factor to score.
+Factorization is an *optional capability*, `SupportsFactors`, rather than a base class. This is `D2 – Generality first`: a joint is an ordinary distribution that gains factor access by carrying the capability, instead of sitting in a parallel class tower. Keeping the field interface (part of a draw) and the factor interface (part of the construction) separate serves `D1 – Mathematical fidelity`, since the two are genuinely different in the mathematics. Independence is likewise a property of the derived graph rather than a class, so dropping any dedicated product class loses no behavior: an edge-free joint still samples its factors in parallel and conditions exactly on a field. For sampling and densities a joint's capabilities are the intersection of its factors': ancestral `sample` requires every factor to sample, and a summed `log_prob` requires every factor to score. Deciding moment presence at construction keeps `D3 – Capability-based operations` honest, since a capability is advertised exactly when the object can answer it.
 
 ### Notes
 
