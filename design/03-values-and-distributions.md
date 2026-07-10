@@ -262,7 +262,7 @@ Operations mint linear operators, covariances above all, and every operation mus
 
 ### Contract
 
-A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_names`, which returns the same law under new field names. A distribution whose template is polymorphic is legal: operations that need sizes raise, naming the free dimensions, until a value binds them or `with_dims` does so explicitly.
+A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. It carries an `event_template` (the schema of one draw) and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_path_names`, which returns the same law under new field names. A distribution whose template is polymorphic is legal: operations that need sizes raise, naming the free dimensions, until a value binds them or `with_dims` does so explicitly.
 
 A `NumericDistribution` is a `Distribution` whose draws are numeric, so it carries a `NumericEventTemplate` and can use the flat-vector machinery.
 
@@ -275,8 +275,8 @@ class Distribution[T](Tracked, Annotated):
     @property
     def event_shape(self) -> tuple[int, ...]: ...    # defined only when a draw is a single array
 
-    def with_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
-    # rename event fields; keys resolve as for NamedTree.with_names, and the law is unchanged
+    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
+    # rename event fields; keys resolve as for NamedTree.with_path_names, and the law is unchanged
     def with_dims(self, **sizes: int) -> Self: ...
     # bind named symbolic dimensions; monotone, and a conflict with an existing binding raises
     def __getitem__(self, path: str | tuple[str, ...]) -> FieldView: ...
@@ -394,7 +394,7 @@ Making each operation a *capability* rather than a base-class method follows `D3
 
 A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `ConditionalDistribution` is not a `Distribution` and does not inherit from one: it has no marginal law, so `sample` / `log_prob` / `mean` do not apply to it unconditionally. Rather, the two are siblings sharing a capability vocabulary.
 
-A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two templates jointly, so a name shared between given and event fields is one dimension, and the fused conditional paths bind dimensions from the given value at call time. `with_names` renames fields across both templates, returning the same kernel under new field names, and `with_dims` binds symbolic dimensions across both.
+A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). They lift a `FunctionSpec`'s input/output from values to distributions, and their field names must be disjoint. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two templates jointly, so a name shared between given and event fields is one dimension, and the fused conditional paths bind dimensions from the given value at call time. `with_path_names` renames fields across both templates, returning the same kernel under new field names, and `with_dims` binds symbolic dimensions across both.
 
 Users never call a method on the `ConditionalDistribution`. Instead, they use the existing ops: `condition_on(K, s)` binds the given fields, evaluating it to a `Distribution` exactly and with no inference, and `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`, bitwise under a shared PRNG key in the exact cases and in law when inference is involved. Conditioning on only a subset of given fields *curries* to a smaller `ConditionalDistribution` view, while conditioning on a *distribution* over the given yields the predictive mixture `∫ K(s, ·) μ(ds)`.
 
@@ -556,7 +556,7 @@ Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 –
 ### Notes
 
 - *Operator coexistence.* `*` also denotes scalar scaling on some objects, such as a random function or a linear operator. The two coexist by operand-type dispatch: `Distribution` and `ConditionalDistribution` operands compose, while scalar operands scale.
-- *The realigning `joint` form.* `joint(A, B, **align)` is `*` plus field renaming, for factors whose names do not line up: it is `A * B.with_names(**align)`.
+- *The realigning `joint` form.* `joint(A, B, **align)` is `*` plus field renaming, for factors whose names do not line up: it is `A * B.with_path_names(**align)`.
 
 ## III.12 — The `Distribution` hierarchy
 
