@@ -39,24 +39,56 @@ This makes `C1 – Uniform interface to distributions and values` and `C4 – Fu
 
 ### Contract
 
-A workflow function compares each argument against the type its function expects, and lifts where they differ:
+A workflow function compares each argument against the type its function expects, and lifts where they differ. Lifting always proceeds by **sampling**, whatever the function.
 
-- **A distribution where a value is expected → broadcast.** The distribution is sampled `n` times and the function is applied to each draw. The result is an **empirical distribution** over the outputs, which approximates the pushforward of the input through `f`. If the function genuinely expects a distribution, as its annotation indicates, the distribution passes through unlifted.
+**The trigger.** A parameter that is unannotated, or annotated with a value type, expects a value, so a distribution passed in that position is lifted. A parameter annotated `Distribution`, `Distribution[...]`, or any `Supports*` protocol declares that the function consumes the distribution itself, which then passes through unlifted. Per draw, the function receives what `sample` returns, the draw's `Record`.
+
+- **A distribution where a value is expected → broadcast.** The distribution is sampled `n` times and the function is applied to each draw. The result is an **empirical distribution** over the outputs, which approximates the pushforward of the input through `f`.
 - **A batch where one element is expected → sweep.** The function is mapped over the batch's elements, returning a batch of outputs.
 - **Both at once → a nested sweep of broadcasts.** The function is mapped over the batch's elements, with a broadcast performed within each.
 - **Neither → a plain call.** A `ConditionalDistribution`-valued argument is an error rather than a plain call, since a kernel has no marginal law to lift over.
 
-**Correlation is preserved.** Arguments that are *views of one parent* (sibling field views) are co-sampled from a single parent draw, so dependence between them flows through `f` rather than being broken by independent sampling. (Operationally, broadcast arguments are grouped by parent identity, and each group draws once.)
+**Grouping and correlation.** The lifted arguments are grouped by **root ancestor**, transitively: sibling views of one parent, the same distribution passed twice, and a parent passed alongside its own view all fall in one group. Each group contributes one joint draw per repetition, so dependence between its members flows through `f` rather than being broken by independent sampling. A view lifts by sampling its parent, so its parent must itself sample. Groups with no common ancestor draw independently: the lift samples the **product law**, and, as a corollary, detached marginals of one joint lift independently while its views co-sample. For example, `f(d, d["x"])` forms one group, and each repetition evaluates `f` on a joint draw and its own projection, while `f(d1, d2)` for unrelated `d1` and `d2` samples the product of their laws. The number of lifted arguments changes only the grouping, never the mechanism or the return type.
 
-By default the result holds only the outputs, but setting `include_inputs = True` instead returns the **joint** distribution over the sampled inputs *and* the outputs.
+**The output wrapping.** The result's fields come from the function's return value. A **mapping** return becomes fields keyed by the mapping's keys, since mappings are never leaves. Any other return becomes one field keyed by the workflow function's name, its spec inferred, an `ArraySpec` for an array and an `OpaqueSpec` otherwise, tuples included. An opaque output samples downstream but carries none of the numeric machinery, so a function whose output deserves structure returns a mapping or declares it. The optional `output_template=` on the decorator declares the output structure the producer knows and inference cannot recover, such as a constrained support or a symbolic dimension shared across fields. The declared template is bound per call by unification, which also validates the function's output against it on every call.
+
+```python
+@workflow_function(output_template=EventTemplate(rate=ArraySpec(("obs",), float32, positive)))
+def rate(x):
+    return jnp.exp(x)
+# inference alone would read the support as real; the declaration carries support=positive
+# and binds "obs" to the actual output length on each call
+```
+
+**Including the inputs.** By default the result holds only the outputs. With `include_inputs=True` it is instead the **joint** empirical distribution over the sampled inputs and the outputs: one top-level field per lifted parameter, named by the parameter, whose subtree is that argument's `event_template` (a single-field argument still nests, so the layout never depends on the argument's field count), plus the output fields. A plain-value argument contributes no field, since it is recorded in provenance rather than sampled. Sibling uniqueness applies across the lifted-parameter names and the output keys, and a collision, such as a function named after one of its own lifted parameters, is an error at result construction. Grouping affects only how the draws are taken, never this layout.
+
+```python
+# posterior.event_template == EventTemplate(beta=ArraySpec(shape=(5,), dtype=float32, support=real))
+
+@workflow_function(include_inputs=True, n_broadcast_samples=200, seed=7)
+def predict(theta, x):
+    return x @ theta["beta"]      # theta arrives as the Record a posterior draw is
+
+result = predict(theta=posterior, x=X_new)   # X_new: a plain (20, 5) array, not lifted
+
+# result: empirical over 200 atoms, each one joint draw (theta_s, predict(theta_s, X_new)):
+#   EventTemplate(
+#       theta=EventTemplate(beta=ArraySpec(shape=(5,), dtype=float32, support=real)),
+#       predict=ArraySpec(shape=(20,), dtype=float32, support=real),
+#   )
+# so the fields are theta/beta and predict; X_new lands in provenance, not in the law
+```
+
+Each atom is one joint draw, so the result couples every sampled input with its own output, which is what a predictive check or a sensitivity analysis reads off it.
 
 ### Rationale
 
-This is `C4 – Function lifting via pushforward` realized: replacing any argument of `f` with a distribution over that argument's type leaves `f` well-defined, and the result is the pushforward. Doing it by sampling keeps the contract fully general (`D2 – Generality first`): it works for any `f` and any distribution, with closed-form shortcuts reserved for specific cases, and it leaves the user's function untouched. Co-sampling by parent is what makes the lift *correct* rather than merely type-correct: it is the same correlation-preserving mechanism the field views rest on, so passing sibling views through a function transports their joint law.
+This is `C4 – Function lifting via pushforward` realized: replacing any argument of `f` with a distribution over that argument's type leaves `f` well-defined, and the result is the pushforward. Doing it by sampling keeps the contract fully general (`D2 – Generality first`): it works for any `f`, any number of lifted arguments, and any distribution that samples, with closed-form shortcuts reserved for the operations built on structured maps, and it leaves the user's function untouched. The annotation trigger makes the lifting boundary explicit in the one place the author already states intent, the signature. Co-sampling by root ancestor is what makes the lift *correct* rather than merely type-correct: it is the same correlation-preserving mechanism the field views rest on, so passing sibling views through a function transports their joint law. Declared output structure is `D5 – Explicit, carried structure` at the lift boundary: inference from a returned value is lossy, so the producer that knows the support or the dimension identities declares them, and they travel with the result.
 
 ### Open points
 
 - *Default sample count.* How many draws a broadcast takes by default (a speed-versus-accuracy ceiling, with an explicit per-call override always available) is unsettled. The default should signal "rough estimate," not "tuned."
+- *Single-value presentation.* Whether a single-field draw presents to the wrapped function as the bare value rather than the single-field `Record` follows the single-value-coercion question left open with `Record`.
 
 ## IV.3 — Controls vs. arguments
 
