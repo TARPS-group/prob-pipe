@@ -12,6 +12,7 @@ from probpipe.core.event_template import (
     FunctionSpec,
     NumericEventTemplate,
     OpaqueSpec,
+    ValueSpec,
 )
 
 # ---------------------------------------------------------------------------
@@ -473,11 +474,12 @@ class TestRepr:
 
     def test_populated_array_spec_shows_full_repr(self):
         # A spec carrying dtype/support is not bare, so repr falls back to the
-        # full dataclass repr rather than the bare-shape shorthand.
+        # full dataclass repr rather than the bare-shape shorthand. The dtype
+        # renders in its normalised ``numpy.dtype`` form.
         tpl = EventTemplate(x=ArraySpec((3,), dtype="float32"))
         r = repr(tpl)
         assert "ArraySpec(" in r
-        assert "dtype='float32'" in r
+        assert "dtype=dtype('float32')" in r
 
     def test_populated_opaque_spec_shows_full_repr(self):
         tpl = EventTemplate(label=OpaqueSpec(meta="tag"), x=())
@@ -486,12 +488,12 @@ class TestRepr:
 
 
 # ---------------------------------------------------------------------------
-# Leaf specs — the closed sum (ArraySpec / OpaqueSpec / DistributionSpec /
-# FunctionSpec)
+# Value specs — the ValueSpec base and its concrete subclasses (ArraySpec /
+# OpaqueSpec / DistributionSpec / FunctionSpec)
 # ---------------------------------------------------------------------------
 
 
-class TestLeafSpecs:
+class TestValueSpecs:
     def test_array_spec_defaults(self):
         spec = ArraySpec((3,))
         assert spec.shape == (3,)
@@ -514,7 +516,7 @@ class TestLeafSpecs:
         for spec in (
             ArraySpec((3,)),
             OpaqueSpec(),
-            DistributionSpec(inner_template=EventTemplate(x=())),
+            DistributionSpec(event_template=EventTemplate(x=())),
             FunctionSpec(input_template=EventTemplate(x=()), output_template=EventTemplate(y=())),
         ):
             with pytest.raises(FrozenInstanceError):
@@ -525,7 +527,7 @@ class TestLeafSpecs:
         specs = {
             ArraySpec((3,)): 1,
             OpaqueSpec(): 2,
-            DistributionSpec(inner_template=EventTemplate(x=())): 3,
+            DistributionSpec(event_template=EventTemplate(x=())): 3,
             FunctionSpec(
                 input_template=EventTemplate(x=()), output_template=EventTemplate(y=())
             ): 4,
@@ -541,13 +543,182 @@ class TestLeafSpecs:
         assert OpaqueSpec(meta="a") == OpaqueSpec(meta="a")
         assert OpaqueSpec(meta="a") != OpaqueSpec(meta="b")
         inner = EventTemplate(x=())
-        assert DistributionSpec(inner_template=inner) == DistributionSpec(inner_template=inner)
+        assert DistributionSpec(event_template=inner) == DistributionSpec(event_template=inner)
         assert FunctionSpec(
             input_template=EventTemplate(x=()), output_template=EventTemplate(y=())
         ) == FunctionSpec(input_template=EventTemplate(x=()), output_template=EventTemplate(y=()))
 
     def test_array_and_opaque_specs_are_distinct(self):
         assert ArraySpec(()) != OpaqueSpec()
+
+    def test_value_spec_is_abstract_base(self):
+        for cls in (ArraySpec, OpaqueSpec, DistributionSpec, FunctionSpec):
+            assert issubclass(cls, ValueSpec)
+        with pytest.raises(TypeError):
+            ValueSpec()  # type: ignore[abstract]
+
+    def test_array_spec_unset_dtype_not_equal_to_set(self):
+        # numpy treats ``np.dtype(None)`` as the default dtype, so a naive
+        # field comparison would report these equal while they hash apart.
+        assert ArraySpec(()) != ArraySpec((), dtype=jnp.float64)
+        assert ArraySpec((), dtype=jnp.float64) != ArraySpec(())
+
+    def test_array_spec_dtype_spellings_normalise(self):
+        # Any numpy-coercible dtype spelling yields the same (equal, and
+        # equal-hashing) spec.
+        specs = [
+            ArraySpec((), dtype="float32"),
+            ArraySpec((), dtype=jnp.float32),
+            ArraySpec((), dtype=np.dtype("float32")),
+        ]
+        assert len(set(specs)) == 1
+        assert all(s.dtype == np.dtype("float32") for s in specs)
+
+    def test_distribution_spec_requires_event_template(self):
+        with pytest.raises(TypeError, match="must be an EventTemplate"):
+            DistributionSpec(event_template=(3,))  # type: ignore[arg-type]
+
+
+# ---------------------------------------------------------------------------
+# ValueSpec.is_valid — does a concrete value match the spec?
+# ---------------------------------------------------------------------------
+
+
+class TestArraySpecIsValid:
+    def test_shape_match(self):
+        spec = ArraySpec((3,))
+        assert spec.is_valid(jnp.ones(3))
+        assert spec.is_valid(np.ones(3))
+        assert not spec.is_valid(jnp.ones(2))
+        assert not spec.is_valid(jnp.ones((3, 1)))
+
+    def test_scalar_shape(self):
+        spec = ArraySpec(())
+        assert spec.is_valid(1.5)
+        assert spec.is_valid(2)
+        assert spec.is_valid(True)
+        assert spec.is_valid(jnp.asarray(1.0))
+        assert not spec.is_valid(jnp.ones(1))
+
+    def test_non_numeric_values_invalid(self):
+        spec = ArraySpec(())
+        assert not spec.is_valid("text")
+        assert not spec.is_valid([1.0, 2.0])
+        assert not spec.is_valid({"a": 1.0})
+        assert not spec.is_valid(None)
+        assert not spec.is_valid(np.asarray(["a"]))
+
+    def test_dtype_checked_when_set(self):
+        spec = ArraySpec((2,), dtype=jnp.float32)
+        assert spec.is_valid(jnp.ones(2, dtype=jnp.float32))
+        assert not spec.is_valid(jnp.ones(2, dtype=jnp.int32))
+
+    def test_dtype_unset_accepts_any_numeric_dtype(self):
+        spec = ArraySpec((2,))
+        assert spec.is_valid(jnp.ones(2, dtype=jnp.float32))
+        assert spec.is_valid(np.ones(2, dtype=np.int64))
+
+    def test_python_scalar_dtype_is_numpy_default(self):
+        # A bare Python scalar reports the dtype ``np.asarray`` gives it.
+        assert ArraySpec((), dtype=np.asarray(1.0).dtype).is_valid(1.0)
+        assert not ArraySpec((), dtype=jnp.int32).is_valid(1.0)
+
+    def test_support_checked_when_set(self):
+        from probpipe.core.constraints import positive
+
+        spec = ArraySpec((2,), support=positive)
+        assert spec.is_valid(jnp.asarray([1.0, 2.0]))
+        assert not spec.is_valid(jnp.asarray([1.0, -2.0]))
+
+
+class TestOpaqueSpecIsValid:
+    def test_non_array_objects_valid(self):
+        spec = OpaqueSpec()
+        assert spec.is_valid("label")
+        assert spec.is_valid(object())
+        assert spec.is_valid(None)
+        assert spec.is_valid([1, 2, 3])
+
+    def test_numeric_values_invalid(self):
+        # A numeric scalar or array belongs under an ArraySpec.
+        spec = OpaqueSpec()
+        assert not spec.is_valid(1.5)
+        assert not spec.is_valid(jnp.ones(2))
+
+    def test_mapping_invalid(self):
+        # A mapping denotes tree structure, never a leaf value.
+        assert not OpaqueSpec().is_valid({"a": 1})
+
+    def test_meta_not_checked(self):
+        assert OpaqueSpec(meta="tag").is_valid("anything")
+
+
+class TestDistributionSpecIsValid:
+    def test_matching_distribution_valid(self):
+        from probpipe import Normal
+
+        dist = Normal(name="x", loc=0.0, scale=1.0)
+        assert DistributionSpec(event_template=dist.event_template).is_valid(dist)
+
+    def test_template_mismatch_invalid(self):
+        from probpipe import Normal
+
+        dist = Normal(name="x", loc=0.0, scale=1.0)
+        assert not DistributionSpec(event_template=EventTemplate(y=())).is_valid(dist)
+
+    def test_non_distribution_invalid(self):
+        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        assert not spec.is_valid(42)
+        assert not spec.is_valid(EventTemplate(x=()))
+
+
+class TestFunctionSpecIsValid:
+    def test_callable_valid(self):
+        spec = FunctionSpec(input_template=EventTemplate(a=()), output_template=EventTemplate(b=()))
+        assert spec.is_valid(lambda a: a)
+        assert spec.is_valid(np.sin)
+
+    def test_non_callable_invalid(self):
+        spec = FunctionSpec(input_template=EventTemplate(a=()), output_template=EventTemplate(b=()))
+        assert not spec.is_valid(3.0)
+        assert not spec.is_valid("f")
+
+
+# ---------------------------------------------------------------------------
+# FunctionSpec — bare-spec convenience
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionSpecBareSpec:
+    def test_bare_specs_wrap_in_single_field_templates(self):
+        spec = FunctionSpec(ArraySpec(()), ArraySpec((2,)))
+        assert spec.input_template == EventTemplate(input=ArraySpec(()))
+        assert spec.output_template == EventTemplate(output=ArraySpec((2,)))
+
+    def test_bare_spec_on_one_side_only(self):
+        out = EventTemplate(y=(), z=(3,))
+        spec = FunctionSpec(OpaqueSpec(), out)
+        assert spec.input_template == EventTemplate(input=OpaqueSpec())
+        assert spec.output_template is out
+
+    def test_templates_pass_through_unwrapped(self):
+        inp, out = EventTemplate(a=()), EventTemplate(b=())
+        spec = FunctionSpec(inp, out)
+        assert spec.input_template is inp
+        assert spec.output_template is out
+
+    def test_invalid_side_rejected(self):
+        with pytest.raises(TypeError, match="input_template"):
+            FunctionSpec((3,), EventTemplate(b=()))  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="output_template"):
+            FunctionSpec(EventTemplate(a=()), "not a template")  # type: ignore[arg-type]
+
+    def test_wrapped_spec_equality_and_hash(self):
+        # The wrapped form and the explicit single-field form are one spec.
+        a = FunctionSpec(ArraySpec(()), ArraySpec(()))
+        b = FunctionSpec(EventTemplate(input=ArraySpec(())), EventTemplate(output=ArraySpec(())))
+        assert a == b
+        assert hash(a) == hash(b)
 
 
 # ---------------------------------------------------------------------------
@@ -580,7 +751,7 @@ class TestConstructionSpecs:
         assert tpl["label"] is spec
 
     def test_explicit_distribution_and_function_specs_accepted(self):
-        dspec = DistributionSpec(inner_template=EventTemplate(x=()))
+        dspec = DistributionSpec(event_template=EventTemplate(x=()))
         fspec = FunctionSpec(
             input_template=EventTemplate(a=()), output_template=EventTemplate(b=())
         )
@@ -612,7 +783,7 @@ class TestAutoPromotionSpecs:
         assert type(tpl) is EventTemplate
 
     def test_distribution_spec_blocks_promotion(self):
-        tpl = EventTemplate(x=(), d=DistributionSpec(inner_template=EventTemplate(a=())))
+        tpl = EventTemplate(x=(), d=DistributionSpec(event_template=EventTemplate(a=())))
         assert type(tpl) is EventTemplate
 
     def test_function_spec_blocks_promotion(self):
@@ -628,7 +799,7 @@ class TestAutoPromotionSpecs:
 
     def test_numeric_rejects_distribution_spec(self):
         with pytest.raises(TypeError, match="non-numeric"):
-            NumericEventTemplate(x=(), d=DistributionSpec(inner_template=EventTemplate(a=())))
+            NumericEventTemplate(x=(), d=DistributionSpec(event_template=EventTemplate(a=())))
 
     def test_numeric_rejects_function_spec(self):
         with pytest.raises(TypeError, match="non-numeric"):
@@ -667,7 +838,7 @@ class TestShapeAccessorBackCompat:
 
 
 def _dist_spec() -> DistributionSpec:
-    return DistributionSpec(inner_template=EventTemplate(a=()))
+    return DistributionSpec(event_template=EventTemplate(a=()))
 
 
 def _func_spec() -> FunctionSpec:

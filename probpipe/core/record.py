@@ -296,9 +296,9 @@ class Record(_NamedTree):
                         # (e.g. built by ``from_field_values`` or threaded from
                         # the producing generator) — reuse it verbatim, keeping
                         # its name / source / backend aux. Identity, not ``==``:
-                        # ``ArraySpec`` equality treats an unset dtype as equal
-                        # to a concrete one (see #337), so ``==`` could wrongly
-                        # skip adopting a richer supplied spec.
+                        # the point is to adopt the *supplied* template object,
+                        # and an equal-but-distinct child template must still be
+                        # rebuilt through it.
                         field_map[field_name] = value
                     else:
                         field_map[field_name] = type(value)(
