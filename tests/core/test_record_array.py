@@ -756,9 +756,9 @@ class TestNumericRecordArrayValidation:
 
     def test_rejects_numpy_object_dtype_batch(self):
         """Parallel regression for the _is_numeric_leaf object-dtype fix:
-        NumericRecordArray._validate_fields shares the same
-        _NUMERIC_DTYPE_KINDS set, so an object-dtype batched field
-        must be rejected up front (not left to blow up inside JAX)."""
+        NumericRecordArray._validate_fields shares the same numeric-dtype
+        predicate, so an object-dtype batched field must be rejected up
+        front (not left to blow up inside JAX)."""
         tpl = EventTemplate(x=())
         with pytest.raises(TypeError, match="non-numeric dtype"):
             NumericRecordArray(

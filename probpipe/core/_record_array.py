@@ -17,8 +17,8 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array
-from ._numeric_record import _NUMERIC_DTYPE_KINDS, NumericRecord
-from .event_template import ArraySpec, EventTemplate
+from ._numeric_record import NumericRecord
+from .event_template import ArraySpec, EventTemplate, _is_numeric_dtype
 from .record import Record
 
 __all__ = [
@@ -498,8 +498,7 @@ class NumericRecordArray(RecordArray):
                     f"NumericRecordArray: field {name!r} must be a "
                     f"numeric array, got {type(raw).__name__}"
                 )
-            kind = getattr(raw.dtype, "kind", None)
-            if kind not in _NUMERIC_DTYPE_KINDS:
+            if not _is_numeric_dtype(raw.dtype):
                 raise TypeError(
                     f"NumericRecordArray: field {name!r} has non-numeric dtype {raw.dtype!r}"
                 )

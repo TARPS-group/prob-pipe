@@ -137,19 +137,32 @@ class TestConstruction:
             nr = NumericRecord(x=arr)
             assert isinstance(nr["x"], jnp.ndarray), f"failed for dtype {dt}"
 
-    def test_numeric_dtype_kinds_shared_constant(self):
-        """``NumericRecord`` and ``NumericRecordArray`` must agree on
-        which dtype kinds are numeric. Duplicated literals would let
-        the two validation sites drift silently — this test pins down
-        that they consume the same frozenset."""
-        from probpipe.core._numeric_record import _NUMERIC_DTYPE_KINDS
+    def test_numeric_dtype_predicate_shared(self):
+        """Every numeric gate — ``NumericRecord``, ``NumericRecordArray``,
+        template inference, and the ``Design`` marginals probe — must agree
+        on which dtypes are numeric. Duplicated literals would let the
+        sites drift silently — this test pins down that they consume the
+        one shared predicate."""
+        from probpipe.core import _numeric_record, _record_array
+        from probpipe.core.event_template import _is_numeric_dtype
+        from probpipe.record import design
 
-        assert frozenset("biufc") == _NUMERIC_DTYPE_KINDS
-        # Import path is also the import path used by
-        # NumericRecordArray._validate_fields (see _record_array.py).
-        from probpipe.core import _record_array
+        assert _numeric_record._is_numeric_dtype is _is_numeric_dtype
+        assert _record_array._is_numeric_dtype is _is_numeric_dtype
+        assert design._is_numeric_dtype is _is_numeric_dtype
 
-        assert _record_array._NUMERIC_DTYPE_KINDS is _NUMERIC_DTYPE_KINDS
+    def test_bfloat16_leaf_accepted(self):
+        # ml_dtypes numerics (kind "V") are numeric leaves.
+        nr = NumericRecord(x=jnp.ones(3, dtype=jnp.bfloat16))
+        assert nr["x"].dtype == jnp.bfloat16
+
+    def test_bfloat16_vector_round_trip(self):
+        nr = NumericRecord(x=jnp.ones(3, dtype=jnp.bfloat16), y=jnp.zeros((), dtype=jnp.bfloat16))
+        tpl = nr.event_template
+        vec = tpl.to_vector(nr)
+        assert vec.shape == (4,)
+        assert vec.dtype == jnp.bfloat16
+        assert tpl.from_vector(vec) == nr
 
 
 # ---------------------------------------------------------------------------
