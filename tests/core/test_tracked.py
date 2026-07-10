@@ -67,6 +67,25 @@ class TestMixinMembership:
 # ===========================================================================
 
 
+class TestNameEnforcement:
+    def test_tracked_host_must_set_nonempty_name(self):
+        """The construction-time name check lives on Tracked, not per host."""
+
+        class Nameless(Tracked):
+            def __init__(self):
+                pass
+
+        with pytest.raises(TypeError, match="non-empty name"):
+            Nameless()
+
+        class EmptyNamed(Tracked):
+            def __init__(self):
+                self._init_tracked("")
+
+        with pytest.raises(TypeError, match="non-empty name"):
+            EmptyNamed()
+
+
 class TestAutoNameHelper:
     def test_supplied_name_is_user_given(self):
         assert auto_name("mine", "default") == ("mine", False)

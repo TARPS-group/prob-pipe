@@ -22,7 +22,15 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Mapping
-from typing import Any, Self
+
+# ``_ProtocolMeta`` is technically private (leading underscore in
+# ``typing``), but it's the only way to compose a custom metaclass with
+# ``@runtime_checkable`` protocols without a metaclass conflict.  The
+# name has been stable since Python 3.7 and is widely used in the
+# ecosystem (Pydantic, attrs, etc.). If a future Python release renames
+# it, the metaclass would need to switch to whatever new base ``typing``
+# exposes; the conflict-avoidance constraint itself doesn't change.
+from typing import Any, Self, _ProtocolMeta
 
 from .provenance import Provenance
 
@@ -55,7 +63,38 @@ def auto_name(name: str | None, default: str) -> tuple[str, bool]:
     return name, False
 
 
-class Tracked:
+class _TrackedMeta(_ProtocolMeta):
+    """Metaclass enforcing that every ``Tracked`` instance has a
+    non-empty ``name`` set by the time construction returns.
+
+    The check runs after ``__init__`` so it covers every construction
+    path: classes that call ``super().__init__(name=...)``, classes that
+    call :meth:`Tracked._init_tracked` directly, and classes that assign
+    ``self._name`` themselves. The only failure case is a class that
+    finishes ``__init__`` without setting ``_name`` to a non-empty
+    string — then construction raises ``TypeError``.
+
+    Extends ``typing._ProtocolMeta`` (rather than the more obvious
+    ``ABCMeta``) so ``Tracked`` hosts can mix in ``@runtime_checkable``
+    protocols (``SupportsSampling``, ``SupportsLogProb``, …) without a
+    metaclass conflict. ``_ProtocolMeta`` is itself an ``ABCMeta``
+    subclass.
+    """
+
+    def __call__(cls, *args: Any, **kwargs: Any) -> Any:
+        instance = super().__call__(*args, **kwargs)
+        name = getattr(instance, "_name", None)
+        if not isinstance(name, str) or not name:
+            raise TypeError(
+                f"{cls.__name__}.__init__ must set a non-empty name "
+                f"(via _init_tracked(name, ...) / super().__init__(name=...) "
+                f"or by assigning self._name to a non-empty string) "
+                f"before returning."
+            )
+        return instance
+
+
+class Tracked(metaclass=_TrackedMeta):
     """Identity mixin: a :attr:`name` and a write-once :attr:`provenance`.
 
     A ``Tracked`` object carries, alongside its mathematical content, the two
@@ -100,6 +139,11 @@ class Tracked:
     slots) and initializes via :meth:`_init_tracked`. All writes go through
     ``object.__setattr__`` so the mixin also works on immutable hosts that
     block normal attribute assignment.
+
+    The non-empty-name guarantee is enforced at construction by the mixin's
+    metaclass (:class:`_TrackedMeta`): finishing ``__init__`` without a
+    non-empty ``_name`` raises ``TypeError``. Host classes therefore never
+    need their own name check.
     """
 
     __slots__ = ()

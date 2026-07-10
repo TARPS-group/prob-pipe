@@ -184,7 +184,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         self._random_seed = random_seed
         # Forward bijectors (unconstrained -> support); missing entries mean identity.
         self._bijectors = bijectors or {}
-        # The ``Distribution`` metaclass requires a non-empty name; the
+        # The Tracked metaclass check requires a non-empty name; the
         # derived default is an auto name.
         self._init_tracked(f"BayesFlowModel({method})", name_is_auto=True)
 

@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from ._distribution_base import Distribution, _DistributionMeta
+from ._distribution_base import Distribution
 from .event_template import ArraySpec, EventTemplate
 from .protocols import (
     SupportsCovariance,
@@ -30,6 +30,7 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record
+from .tracked import _TrackedMeta
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
 
@@ -346,7 +347,7 @@ def _build_event_template(
 # ---------------------------------------------------------------------------
 
 
-class _RecordDistributionMeta(_DistributionMeta):
+class _RecordDistributionMeta(_TrackedMeta):
     """Metaclass adding the ``event_template`` set-or-derivable check
     on top of the base ``name`` check.
 

@@ -930,7 +930,7 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
     def __init__(self, base: Distribution):
         self._base = base
         # Carry the base's identity through; ``base.name`` is guaranteed
-        # non-empty by the Distribution metaclass, and the view mirrors
+        # non-empty by the Tracked metaclass check, and the view mirrors
         # whether that name was auto-derived.
         self._init_tracked(base.name, name_is_auto=base.name_is_auto)
 
@@ -1183,9 +1183,9 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         name: str | None = None,
     ):
         # Skip ``Distribution.__init__`` to avoid double-validation;
-        # the metaclass post-init check still enforces a non-empty
-        # ``_name``. ``base.name`` is guaranteed non-empty by the
-        # Distribution metaclass, so the fallback is always valid.
+        # the Tracked metaclass check still enforces a non-empty
+        # ``_name``. ``base.name`` is guaranteed non-empty by that same
+        # check, so the fallback is always valid.
         self._base = base
         if name is not None:
             self._init_tracked(name)

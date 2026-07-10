@@ -242,7 +242,7 @@ class TestDistributionRepr:
 
 
 class TestMetaclassEnforcement:
-    """The ``_DistributionMeta`` metaclass enforces a non-empty ``name``
+    """The ``_TrackedMeta`` metaclass enforces a non-empty ``name``
     on every Distribution subclass instance, even when the subclass
     bypasses ``super().__init__``.
     """

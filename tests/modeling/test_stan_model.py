@@ -199,7 +199,7 @@ class TestStanModelSurface:
 
     def test_name_defaults_to_class_name(self, conjugate_stan_file):
         # Without an explicit name, StanModel falls back to the class name to
-        # satisfy the Distribution metaclass's non-empty-name requirement.
+        # satisfy the Tracked metaclass's non-empty-name requirement.
         model = StanModel(conjugate_stan_file, data={"N": 3, "y": [1.0, 2.0, 3.0]})
         assert model.name == "StanModel"
 

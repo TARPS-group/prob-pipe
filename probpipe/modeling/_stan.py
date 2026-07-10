@@ -265,8 +265,8 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
 
     def __init__(self, model: StanModel):
         self._model = model
-        # ``base.name`` is guaranteed non-empty by the Distribution
-        # metaclass — wrap with an ``_unconstrained`` suffix (derived, so auto).
+        # ``base.name`` is guaranteed non-empty by the Tracked
+        # metaclass check — wrap with an ``_unconstrained`` suffix (derived, so auto).
         self._init_tracked(f"{model.name}_unconstrained", name_is_auto=True)
 
     @property

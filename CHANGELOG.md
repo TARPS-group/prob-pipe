@@ -19,7 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   terms too. `name_is_auto` records whether an object's name was auto-derived
   by the operation that produced it (`True`) or supplied by the user
   (`False`), so later composition can re-derive auto names while preserving
-  user-given ones. Both mixins are exported from the top-level `probpipe`
+  user-given ones. The construction-time guarantee that every tracked term
+  has a non-empty name is enforced by the mixin's metaclass, replacing the
+  previous `Distribution`-only metaclass check and extending it to the
+  `Record` family. Both mixins are exported from the top-level `probpipe`
   package.
 
 - **pyabc SMC-ABC inference backend (#238).** A `pyabc_smcabc` method
