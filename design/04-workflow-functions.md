@@ -97,7 +97,7 @@ This is `C4 – Function lifting via pushforward` realized: replacing any argume
 A workflow function keeps two namespaces strictly apart:
 
 - **The wrapped function's arguments.** Every positional and keyword argument of a call binds to the wrapped function.
-- **ProbPipe controls.** The sample count, PRNG seed, and the `include_inputs` switch are set on the decorator (construction time) or, for a single call, through a `with_options` view:
+- **ProbPipe controls.** The controls are the sample count (`n_broadcast_samples`), the PRNG `seed`, the `include_inputs` switch, and the dispatch and orchestration selectors. Each is set on the decorator (construction time) or, for a single call, through a `with_options` view, which covers every control. The `seed` deterministically derives the PRNG `Key` that any operation invoked inside the call consumes:
 
 ```python
 predict.with_options(n_broadcast_samples=1000, seed=7)(theta=prior, x=x_obs)

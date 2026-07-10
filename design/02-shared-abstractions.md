@@ -101,18 +101,23 @@ class Tracked:
 
 class Provenance:
     operation: str                       # the operation that produced the object
-    parents:   tuple[ParentInfo, ...]    # descriptors of the inputs
+    parents:   tuple[ParentInfo, ...]    # descriptors of the tracked inputs
+    controls:  Mapping[str, Any]         # the resolved controls: PRNG key, sample count, selected method, ...
+    inputs:    Mapping[str, ParentInfo]  # plain (untracked) arguments, keyed by parameter name
 
 class ParentInfo:
     type_name:   str
     name:        str
-    fingerprint: str          # stable content hash
-    parent:      Any | None   # optional reference to original parent
+    fingerprint: str            # best-effort content hash
+    fingerprint_is_weak: bool   # True when the fingerprint is only object identity
+    parent:      Any | None     # optional reference to original parent
 ```
+
+A provenance records everything its operation resolved: the tracked parents, the plain arguments, and the **controls** the run actually used, the PRNG key, sample counts, and any selected method among them, so a result can be reproduced from its record. Fingerprints are best-effort, in tiers: a content hash for arrays and records, the qualified name and code hash for a closure-free callable, and object identity otherwise, with `fingerprint_is_weak` marking that last tier.
 
 ### Rationale
 
-`Tracked` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
+`Tracked` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Recording the resolved controls, not just the parents, is what turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
 
 ## II.3 — `Batch`
 
