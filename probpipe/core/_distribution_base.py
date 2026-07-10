@@ -286,12 +286,6 @@ class Distribution[T](Tracked, Annotated, ABC, metaclass=_DistributionMeta):
 
         return DiagnosticsView(aux["diagnostics"])
 
-    # -- naming & provenance ------------------------------------------------
-    #
-    # ``name`` / ``name_is_auto`` / ``provenance`` / ``with_name`` /
-    # ``with_provenance`` are provided by the
-    # :class:`~probpipe.core.tracked.Tracked` mixin.
-
     # -- batched-construction alias ----------------------------------------
 
     @classmethod

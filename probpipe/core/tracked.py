@@ -219,16 +219,12 @@ class Tracked:
         Raises
         ------
         RuntimeError
-            If provenance is already set. Provenance is write-once — create a
-            new object instead of rewriting lineage.
+            If provenance is already set (provenance is write-once).
         """
         if provenance is None:
             return self
         if getattr(self, "_provenance", None) is not None:
-            raise RuntimeError(
-                f"Provenance already set on {self!r}. "
-                "Provenance is write-once; create a new object instead."
-            )
+            raise RuntimeError(f"Provenance already set on {self!r}. Provenance is write-once.")
         object.__setattr__(self, "_provenance", provenance)
         return self
 
