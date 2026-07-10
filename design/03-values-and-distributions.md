@@ -164,7 +164,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Notes
 
-- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays and its static aux data is the template and name only, so provenance and annotations do not survive a JAX transform boundary; lineage instead rides on the workflow layer, which records the transform itself.
+- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays and its static aux data is the template and name only, so provenance and annotations do not survive a JAX transform boundary; lineage instead rides on the computation layer, which records the transform itself.
 
 ### Open points
 
@@ -174,7 +174,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Contract
 
-A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTemplate`. It is the batched value a workflow produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `Tracked` but not `Annotated`, and it is a *collection* of records rather than itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
+A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTemplate`. It is the batched value a computation produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `Tracked` but not `Annotated`, and it is a *collection* of records rather than itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
 
 ```python
 class RecordBatch(Batch[Record]):

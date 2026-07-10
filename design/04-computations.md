@@ -1,8 +1,8 @@
-# Part IV — Workflow Functions
+# Part IV — Computations
 
-A **workflow function** is an ordinary function lifted into ProbPipe's world of distributions and values. The user writes a plain function over its "natural" values, and wrapping it makes that function (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. The operations of Part V are themselves workflow functions, which is why this part comes first: `sample`, `log_prob`, and `condition_on` inherit the lifting, tracking, dispatch, and orchestration defined here.
+A **computation** is an ordinary function lifted into ProbPipe's world of distributions and values. The user writes a plain function over its "natural" values, and wrapping it makes that function (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. The operations of Part V are themselves computations, which is why this part comes first: `sample`, `log_prob`, and `condition_on` inherit the lifting, tracking, dispatch, and orchestration defined here. Computations are the nodes; a whole ProbPipe *workflow* is what they compose into.
 
-## IV.0 — Overview: what a workflow function adds
+## IV.0 — Overview: what a computation adds
 
 Wrapping a function `f` layers four things on top of calling `f`, each defined in a section below:
 
@@ -13,33 +13,33 @@ Wrapping a function `f` layers four things on top of calling `f`, each defined i
 | IV.3  | controls vs. arguments   | ProbPipe controls (sample count, seed, …) are kept in a namespace separate from that of the arguments to `f`.                                                                                            |
 | IV.4  | dispatch & orchestration | *how* the per-draw calls run computationally and *whether* they are traced for lineage.                                                                                                                 |
 
-## IV.1 — `WorkflowFunction`
+## IV.1 — `Computation`
 
 ### Contract
 
-A `WorkflowFunction` wraps exactly one function and presents it as a node in a computation graph. It is created with the `@workflow_function` decorator:
+A `Computation` wraps exactly one function and presents it as a node in a computation graph. It is created with the `@computation` decorator:
 
 ```python
-@workflow_function
+@computation
 def predict(theta, x): ...                    # an ordinary function over concrete values
 
-@workflow_function(seed=42, dispatch="jax")    # optional construction-time controls
+@computation(seed=42, dispatch="jax")    # optional construction-time controls
 def predict(theta, x): ...
 ```
 
-Calling it runs the wrapped function and returns a `Tracked` result: the output is wrapped as a value or distribution carrying `Provenance` that records this workflow function and its tracked inputs. A call whose arguments are all ordinary values is one invocation of `f` followed by that wrap. A distribution- or batch-valued argument triggers lifting instead.
+Calling it runs the wrapped function and returns a `Tracked` result: the output is wrapped as a value or distribution carrying `Provenance` that records this computation and its tracked inputs. A call whose arguments are all ordinary values is one invocation of `f` followed by that wrap. A distribution- or batch-valued argument triggers lifting instead.
 
-A workflow function is a node in a directed graph: arguments that are themselves workflow objects become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse. A workflow function may also belong to a *module* that supplies some of its inputs and dependencies, but the unit of execution is always the single wrapped function.
+A computation is a node in a directed graph: arguments that are themselves tracked terms become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse. A computation may also belong to a *module* that supplies some of its inputs and dependencies, but the unit of execution is always the single wrapped function.
 
 ### Rationale
 
-This makes `C1 – Uniform interface to distributions and values` and `C4 – Function lifting via pushforward` operational: a user writes mathematics as an ordinary, testable function, and ProbPipe lifts it to act on distributions and values without the function being rewritten. Making every workflow function a graph node delivers `C6 – Traceable and reproducible workflows`: each result records how it was produced, and a whole workflow can later be traced or re-run. Because the wrapper changes only invocation and tracking, the operations can be *defined* as workflow functions and inherit all of it.
+This makes `C1 – Uniform interface to distributions and values` and `C4 – Function lifting via pushforward` operational: a user writes mathematics as an ordinary, testable function, and ProbPipe lifts it to act on distributions and values without the function being rewritten. Making every computation a graph node delivers `C6 – Traceable and reproducible workflows`: each result records how it was produced, and a whole workflow can later be traced or re-run. Because the wrapper changes only invocation and tracking, the operations can be *defined* as computations and inherit all of it.
 
 ## IV.2 — Lifting over distributions and batches
 
 ### Contract
 
-A workflow function compares each argument against the type its function expects, and lifts where they differ. Lifting always proceeds by **sampling**, whatever the function.
+A computation compares each argument against the type its function expects, and lifts where they differ. Lifting always proceeds by **sampling**, whatever the function.
 
 **The trigger.** A parameter that is unannotated, or annotated with a value type, expects a value, so a distribution passed in that position is lifted. A parameter annotated `Distribution`, `Distribution[...]`, or any `Supports*` protocol declares that the function consumes the distribution itself, which then passes through unlifted. Per draw, the function receives what `sample` returns, the draw's `Record`.
 
@@ -50,10 +50,10 @@ A workflow function compares each argument against the type its function expects
 
 **Grouping and correlation.** The lifted arguments are grouped by **root ancestor**, transitively: sibling views of one parent, the same distribution passed twice, and a parent passed alongside its own view all fall in one group. Each group contributes one joint draw per repetition, so dependence between its members flows through `f` rather than being broken by independent sampling. A view lifts by sampling its parent, so its parent must itself sample. Groups with no common ancestor draw independently: the lift samples the **product law**, and, as a corollary, detached marginals of one joint lift independently while its views co-sample. For example, `f(d, d["x"])` forms one group, and each repetition evaluates `f` on a joint draw and its own projection, while `f(d1, d2)` for unrelated `d1` and `d2` samples the product of their laws. The number of lifted arguments changes only the grouping, never the mechanism or the return type.
 
-**The output wrapping.** The result's fields come from the function's return value. A **mapping** return becomes fields keyed by the mapping's keys, since mappings are never leaves. Any other return becomes one field keyed by the workflow function's name, its spec inferred, an `ArraySpec` for an array and an `OpaqueSpec` otherwise, tuples included. An opaque output samples downstream but carries none of the numeric machinery, so a function whose output deserves structure returns a mapping or declares it. The optional `output_template=` on the decorator declares the output structure the producer knows and inference cannot recover, such as a constrained support or a symbolic dimension shared across fields. The declared template is bound per call by unification, which also validates the function's output against it on every call.
+**The output wrapping.** The result's fields come from the function's return value. A **mapping** return becomes fields keyed by the mapping's keys, since mappings are never leaves. Any other return becomes one field keyed by the computation's name, its spec inferred, an `ArraySpec` for an array and an `OpaqueSpec` otherwise, tuples included. An opaque output samples downstream but carries none of the numeric machinery, so a function whose output deserves structure returns a mapping or declares it. The optional `output_template=` on the decorator declares the output structure the producer knows and inference cannot recover, such as a constrained support or a symbolic dimension shared across fields. The declared template is bound per call by unification, which also validates the function's output against it on every call.
 
 ```python
-@workflow_function(output_template=EventTemplate(rate=ArraySpec(("obs",), float32, positive)))
+@computation(output_template=EventTemplate(rate=ArraySpec(("obs",), float32, positive)))
 def rate(x):
     return jnp.exp(x)
 # inference alone would read the support as real; the declaration carries support=positive
@@ -65,7 +65,7 @@ def rate(x):
 ```python
 # posterior.event_template == EventTemplate(beta=ArraySpec(shape=(5,), dtype=float32, support=real))
 
-@workflow_function(include_inputs=True, n_broadcast_samples=200, seed=7)
+@computation(include_inputs=True, n_broadcast_samples=200, seed=7)
 def predict(theta, x):
     return x @ theta["beta"]      # theta arrives as the Record a posterior draw is
 
@@ -94,7 +94,7 @@ This is `C4 – Function lifting via pushforward` realized: replacing any argume
 
 ### Contract
 
-A workflow function keeps two namespaces strictly apart:
+A computation keeps two namespaces strictly apart:
 
 - **The wrapped function's arguments.** Every positional and keyword argument of a call binds to the wrapped function.
 - **ProbPipe controls.** The controls are the sample count (`n_broadcast_samples`), the PRNG `seed`, the `include_inputs` switch, and the dispatch and orchestration selectors. Each is set on the decorator (construction time) or, for a single call, through a `with_options` view, which covers every control. The `seed` deterministically derives the PRNG `Key` that any operation invoked inside the call consumes:
@@ -106,7 +106,7 @@ predict.with_options(n_broadcast_samples=1000, seed=7)(theta=prior, x=x_obs)
 
 ### Rationale
 
-A workflow function must wrap an *ordinary* function with no naming restrictions (`C5 – Naming for unambiguous meaning`): a user should never have to rename a `seed` parameter because the framework wanted that word. Holding the control plane in a separate namespace removes the collision entirely, while keeping the bare decorator and a single call site ergonomic.
+A computation must wrap an *ordinary* function with no naming restrictions (`C5 – Naming for unambiguous meaning`): a user should never have to rename a `seed` parameter because the framework wanted that word. Holding the control plane in a separate namespace removes the collision entirely, while keeping the bare decorator and a single call site ergonomic.
 
 ## IV.4 — Dispatch and orchestration
 
@@ -115,7 +115,7 @@ A workflow function must wrap an *ordinary* function with no naming restrictions
 Two orthogonal computational concerns sit beneath a lifted call, both with defaults so a user need not touch them:
 
 - **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is differentiable end-to-end, and dispatch never changes the result beyond floating-point effects of evaluation order.
-- **Orchestration — *whether* the call is traced.** Off by default. A workflow function can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result.
+- **Orchestration — *whether* the call is traced.** Off by default. A computation can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result.
 
 ### Rationale
 
