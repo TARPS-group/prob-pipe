@@ -681,7 +681,7 @@ class TestDistributionABC:
         with pytest.raises(TypeError):
             from_distribution(None, NumericRecordDistribution)
 
-    def test_source_default_none(self, gaussian):
+    def test_provenance_default_none(self, gaussian):
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         assert g.provenance is None
 

@@ -780,7 +780,7 @@ class TestProvenance:
     Distribution) the broadcasting layer produced.
     """
 
-    def test_initial_source_is_none(self):
+    def test_initial_provenance_is_none(self):
         r = Record(x=1.0, y=2.0)
         assert r.provenance is None
 
@@ -799,23 +799,23 @@ class TestProvenance:
     # Semantic transformations reset the source — the new Record is a
     # different logical value even though the class preserves.
 
-    def test_replace_resets_source(self):
+    def test_replace_resets_provenance(self):
         r = Record(x=1.0).with_provenance(Provenance("orig", parents=()))
         r2 = r.replace(x=2.0)
         assert r2.provenance is None
         assert r.provenance.operation == "orig"  # original unaffected
 
-    def test_merge_resets_source(self):
+    def test_merge_resets_provenance(self):
         r = Record(x=1.0).with_provenance(Provenance("orig", parents=()))
         merged = r.merge(Record(y=2.0))
         assert merged.provenance is None
 
-    def test_without_resets_source(self):
+    def test_without_resets_provenance(self):
         r = Record(x=1.0, y=2.0).with_provenance(Provenance("orig", parents=()))
         r2 = r.without("y")
         assert r2.provenance is None
 
-    def test_map_resets_source(self):
+    def test_map_resets_provenance(self):
         r = Record(x=1.0).with_provenance(Provenance("orig", parents=()))
         r2 = r.map(lambda v: v + 1)
         assert r2.provenance is None
@@ -823,12 +823,12 @@ class TestProvenance:
     # Structural equality / hashing ignore source — two Records with the
     # same fields but different provenance are still equal.
 
-    def test_eq_ignores_source(self):
+    def test_eq_ignores_provenance(self):
         r1 = Record(x=1.0).with_provenance(Provenance("a", parents=()))
         r2 = Record(x=1.0).with_provenance(Provenance("b", parents=()))
         assert r1 == r2
 
-    def test_hash_ignores_source(self):
+    def test_hash_ignores_provenance(self):
         r1 = Record(x=1.0).with_provenance(Provenance("a", parents=()))
         r2 = Record(x=1.0)
         assert hash(r1) == hash(r2)
@@ -838,7 +838,7 @@ class TestProvenance:
     # the aux tuple would break jax.tree_util.tree_unflatten's equality
     # semantics). Document this caveat with a test.
 
-    def test_pytree_roundtrip_drops_source(self):
+    def test_pytree_roundtrip_drops_provenance(self):
         r = Record(x=1.0, y=jnp.array([2.0, 3.0]))
         r.with_provenance(Provenance("op", parents=()))
         leaves, treedef = jax.tree_util.tree_flatten(r)

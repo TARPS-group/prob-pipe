@@ -809,7 +809,7 @@ class TestProvenance:
     def ra(self):
         return NumericRecordArray.stack([NumericRecord(x=float(i), y=2.0 * i) for i in range(3)])
 
-    def test_initial_source_is_none(self, ra):
+    def test_initial_provenance_is_none(self, ra):
         assert ra.provenance is None
 
     def test_with_provenance_sets_and_returns_self(self, ra):
@@ -822,13 +822,13 @@ class TestProvenance:
         with pytest.raises(RuntimeError, match="write-once"):
             ra.with_provenance(Provenance("second", parents=()))
 
-    def test_eq_ignores_source(self, ra):
+    def test_eq_ignores_provenance(self, ra):
         ra2 = NumericRecordArray.stack([NumericRecord(x=float(i), y=2.0 * i) for i in range(3)])
         ra.with_provenance(Provenance("a", parents=()))
         ra2.with_provenance(Provenance("b", parents=()))
         assert ra == ra2
 
-    def test_pytree_roundtrip_drops_source(self, ra):
+    def test_pytree_roundtrip_drops_provenance(self, ra):
         ra.with_provenance(Provenance("sweep", parents=()))
         leaves, treedef = jax.tree_util.tree_flatten(ra)
         ra2 = jax.tree_util.tree_unflatten(treedef, leaves)
@@ -907,7 +907,7 @@ class TestHierarchy:
         assert mro.index("RecordArray") < mro.index("Record")
         assert mro.index("Record") < mro.index("object")
 
-    def test_source_slot_inherited_from_record(self):
+    def test_provenance_slot_inherited_from_record(self):
         ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(2)])
         # Record defines the ``_provenance`` slot; RecordArray should
         # *not* redeclare it (that would raise a layout conflict on

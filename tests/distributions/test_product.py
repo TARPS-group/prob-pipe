@@ -935,7 +935,7 @@ class TestPositionalAndAutoRename:
         # Should be the exact same object (no copy)
         assert joint.components["x"] is n
 
-    def test_renamed_method_directly(self):
+    def test_with_name_method_directly(self):
         """Distribution.with_name() returns a copy with new name."""
         n = Normal(loc=0.0, scale=1.0, name="x")
         n2 = n.with_name("y")

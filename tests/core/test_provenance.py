@@ -78,7 +78,7 @@ class TestProvenanceBasics:
 
 
 class TestParentInfoHashEq:
-    def test_hashable_without_source(self):
+    def test_hashable_without_provenance(self):
         """Root ParentInfo (provenance=None) is hashable."""
         p = ParentInfo(type_name="Normal", name="prior")
         assert isinstance(hash(p), int)

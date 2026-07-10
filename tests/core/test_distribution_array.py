@@ -546,7 +546,7 @@ class TestLogProbViaSweep:
 
 
 class TestProvenance:
-    def test_initial_source_is_none(self):
+    def test_initial_provenance_is_none(self):
         comps = [Normal(loc=0.0, scale=1.0, name="d0")]
         da = _make_distribution_array(comps)
         assert da.provenance is None

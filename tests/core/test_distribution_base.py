@@ -52,7 +52,7 @@ _NO_BATCH_SHAPE_DISTS = [
 ]
 
 
-class TestRenamedBasics:
+class TestWithNameBasics:
     """Distribution.with_name() returns a new object with a new name."""
 
     def test_returns_new_object(self):
@@ -74,22 +74,22 @@ class TestRenamedBasics:
         assert n2._scale is n._scale
 
 
-class TestRenamedProvenance:
+class TestWithNameProvenance:
     """with_name() attaches a 'with_name' Provenance pointing to the original."""
 
-    def test_source_operation(self):
+    def test_provenance_operation(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         n2 = n.with_name("y")
         assert n2.provenance is not None
         assert n2.provenance.operation == "with_name"
 
-    def test_source_parents(self):
+    def test_provenance_parents(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         n2 = n.with_name("y")
         assert len(n2.provenance.parents) == 1
         assert n2.provenance.parents[0].name == "x"
 
-    def test_source_metadata(self):
+    def test_provenance_metadata(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         n2 = n.with_name("y")
         assert n2.provenance.metadata["old_name"] == "x"
@@ -104,7 +104,7 @@ class TestRenamedProvenance:
         assert any(anc.parent is a for anc in ancestors)
         assert any(anc.parent is b for anc in ancestors)
 
-    def test_original_source_not_mutated(self):
+    def test_original_provenance_not_mutated(self):
         """Renaming does not alter the original's source."""
         n = Normal(loc=0.0, scale=1.0, name="x")
         n.with_provenance(Provenance("construction", parents=()))
@@ -112,7 +112,7 @@ class TestRenamedProvenance:
         assert n.provenance.operation == "construction"
 
 
-class TestRenamedSampling:
+class TestWithNameSampling:
     """Renamed copies behave identically under sampling/log_prob."""
 
     def test_sample_statistics_match(self):
@@ -140,7 +140,7 @@ class TestRenamedSampling:
         assert renamed.event_shape == mvn.event_shape
 
 
-class TestRenamedEventTemplate:
+class TestWithNameEventTemplate:
     """with_name() regenerates the cached event_template with the new name."""
 
     def test_template_field_name_updates(self):
@@ -195,7 +195,7 @@ class TestNoBatchShape:
         assert da.batch_shape == (5,)
 
 
-class TestAuxiliaryDiagnosticsAccessor:
+class TestAnnotationsDiagnosticsAccessor:
     def test_annotations_defaults_to_none(self):
         dist = Normal(loc=0.0, scale=1.0, name="x")
         assert dist.annotations is None
@@ -314,13 +314,13 @@ class TestMetaclassEnforcement:
             _NoTemplate()
 
 
-class TestRenamedTemplateRoundtrip:
+class TestWithNameTemplateRoundtrip:
     """``NumericRecordDistribution.with_name`` regenerates an auto-built
     template under the new name; explicit and multi-field templates
     are preserved.
     """
 
-    def test_renamed_rebuilds_single_field_auto_template(self):
+    def test_with_name_rebuilds_single_field_auto_template(self):
         """Single-field auto-built template: the clone's
         ``event_template`` has the new field name (matches
         ``new_name``)."""
@@ -337,7 +337,7 @@ class TestRenamedTemplateRoundtrip:
         # The original is untouched (with_name returns a copy).
         assert original.event_template.fields == ("x",)
 
-    def test_renamed_preserves_multi_field_template(self):
+    def test_with_name_preserves_multi_field_template(self):
         """Multi-field joints have explicit templates whose field
         names are independent of the distribution's name — renaming
         must not touch the template."""
@@ -355,7 +355,7 @@ class TestRenamedTemplateRoundtrip:
         clone = jg.with_name("renamed_jg")
         assert clone.event_template.fields == original_fields
 
-    def test_renamed_preserves_non_numeric_event_template(self):
+    def test_with_name_preserves_non_numeric_event_template(self):
         """``JointEmpirical`` (non-NRD ``RecordDistribution``) builds its
         template from the stored samples, not from the distribution's
         name — renaming must leave the template intact (otherwise the

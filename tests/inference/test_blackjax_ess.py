@@ -603,7 +603,7 @@ class TestPosteriorRecovery:
 # ---------------------------------------------------------------------------
 
 
-class TestProvenanceAndAuxiliary:
+class TestProvenanceAndAnnotations:
     def test_provenance(self, gaussian_model, data):
         post = elliptical_slice(
             gaussian_model,

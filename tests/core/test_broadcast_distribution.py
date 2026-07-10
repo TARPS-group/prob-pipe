@@ -888,7 +888,7 @@ class TestCoerceOutput:
         _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")
         assert da.provenance.operation == "nested"
 
-    def test_existing_source_is_not_overwritten(self):
+    def test_existing_provenance_is_not_overwritten(self):
         """If the broadcasting layer has already wired a fresh inner
         marginal with a source (e.g., a _MixtureMarginal was built with
         its own provenance), ``_coerce_output`` must not crash and the
