@@ -841,15 +841,16 @@ class DistributionSpec(ValueSpec):
             return False
         try:
             template = value.event_template
-        except (AttributeError, TypeError):
-            # No template attribute, or an auto-deriving template property
-            # that cannot run — either way the schema is unknown, so the
-            # value cannot be certified against this spec.
+        except Exception:
+            # A validity probe is total: a missing template attribute or a
+            # template property that fails to run (whatever it raises) means
+            # the schema is unknown, so the value cannot be certified
+            # against this spec.
             return False
         return template == self.event_template
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class FunctionSpec(ValueSpec):
     """A leaf whose value is a callable.
 
@@ -868,19 +869,30 @@ class FunctionSpec(ValueSpec):
         :class:`ValueSpec`.
     """
 
-    input_template: EventTemplate | ValueSpec
-    output_template: EventTemplate | ValueSpec
+    input_template: EventTemplate
+    output_template: EventTemplate
 
-    def __post_init__(self) -> None:
-        for attr, wrap_name in (("input_template", "input"), ("output_template", "output")):
-            template = getattr(self, attr)
+    # Hand-written so the constructor accepts the bare-spec convenience while
+    # the fields keep the stored (post-normalisation) type; the generated
+    # ``__eq__`` / ``__hash__`` / ``__repr__`` come from the field list above.
+    def __init__(
+        self,
+        input_template: EventTemplate | ValueSpec,
+        output_template: EventTemplate | ValueSpec,
+    ) -> None:
+        sides = (
+            ("input_template", "input", input_template),
+            ("output_template", "output", output_template),
+        )
+        for attr, wrap_name, template in sides:
             if isinstance(template, ValueSpec):
-                object.__setattr__(self, attr, EventTemplate(**{wrap_name: template}))
+                template = EventTemplate(**{wrap_name: template})
             elif not isinstance(template, EventTemplate):
                 raise TypeError(
                     f"FunctionSpec.{attr} must be an EventTemplate or a bare "
                     f"ValueSpec, got {type(template).__name__}"
                 )
+            object.__setattr__(self, attr, template)
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.

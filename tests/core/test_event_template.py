@@ -803,9 +803,11 @@ class TestDistributionSpecIsValid:
         spec = DistributionSpec(event_template=EventTemplate(x=()))
         assert not spec.is_valid(_NoneTemplate())
 
-    def test_raising_template_property_returns_false(self):
-        # An auto-deriving ``event_template`` property that cannot run raises
-        # TypeError; is_valid must swallow it (never raises on a mismatch).
+    @pytest.mark.parametrize("error", [TypeError, RuntimeError, ValueError])
+    def test_raising_template_property_returns_false(self, error):
+        # An ``event_template`` property that fails to run — whatever it
+        # raises — leaves the schema unknown; is_valid must return False
+        # rather than propagate (the probe is total).
         from probpipe.core._distribution_base import Distribution
 
         class _RaisingTemplate(Distribution):
@@ -814,7 +816,7 @@ class TestDistributionSpecIsValid:
 
             @property
             def event_template(self):
-                raise TypeError("template not derivable")
+                raise error("template not derivable")
 
         spec = DistributionSpec(event_template=EventTemplate(x=()))
         assert not spec.is_valid(_RaisingTemplate())
@@ -842,6 +844,10 @@ class TestFunctionSpecBareSpec:
         spec = FunctionSpec(ArraySpec(()), ArraySpec((2,)))
         assert spec.input_template == EventTemplate(input=ArraySpec(()))
         assert spec.output_template == EventTemplate(output=ArraySpec((2,)))
+        # The stored attributes are always EventTemplates, whatever the
+        # constructor input form.
+        assert isinstance(spec.input_template, EventTemplate)
+        assert isinstance(spec.output_template, EventTemplate)
 
     def test_bare_spec_on_one_side_only(self):
         out = EventTemplate(y=(), z=(3,))
