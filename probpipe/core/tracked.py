@@ -296,9 +296,14 @@ class Tracked(metaclass=_TrackedMeta):
         slot across the class hierarchy via ``object.__setattr__``, bypassing
         both ``__init__`` and any immutability guard on ``__setattr__``. Used
         by :meth:`with_name`; host classes with exotic storage may override.
+
+        Allocation uses ``object.__new__`` directly: ``type(self)`` is
+        already the resolved concrete class, so a host's own ``__new__`` —
+        which exists to *select* a class from constructor arguments and may
+        require them — must not run again here.
         """
         cls = type(self)
-        clone = cls.__new__(cls)
+        clone = object.__new__(cls)
         instance_dict = getattr(self, "__dict__", None)
         if instance_dict is not None:
             clone.__dict__.update(instance_dict)

@@ -566,6 +566,7 @@ def _make_stack(
                 outs,
                 batch_shape=batch_shape,
                 name=name,
+                name_is_auto=True,
             )
 
         # Numeric scalars / arrays → wrap in NumericRecordArray with

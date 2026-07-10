@@ -287,6 +287,7 @@ class MinibatchedDistribution(
             batch=batch,
             rescale_factor=self._rescale_factor,
             name=f"{self.name}/draw",
+            name_is_auto=True,
         )
 
     # -- SupportsRandomUnnormalizedLogProb -----------------------------------
@@ -343,10 +344,11 @@ class _FixedMinibatchDistribution(
         rescale_factor: float,
         *,
         name: str | None = None,
+        name_is_auto: bool = False,
     ):
-        super().__init__(
-            name=name or "fixed_minibatch_distribution",
-        )
+        if not name:
+            name, name_is_auto = "fixed_minibatch_distribution", True
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._prior = prior
         self._likelihood = likelihood
         self._batch = batch
@@ -412,7 +414,7 @@ class _RandomMinibatchLogProb(
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution):
-        super().__init__(name=f"{measure.name}/random_log_prob")
+        super().__init__(name=f"{measure.name}/random_log_prob", name_is_auto=True)
         self._measure = measure
 
     # -- RandomFunction.__call__ --------------------------------------------
@@ -471,7 +473,7 @@ class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
-        super().__init__(name=f"{measure.name}@theta")
+        super().__init__(name=f"{measure.name}@theta", name_is_auto=True)
         self._measure = measure
         self._theta = theta
 

@@ -421,10 +421,13 @@ class _TFPArrayBackend:
         scalar_params = {
             key: _slice_leading_axes(value, multi) for key, value in self._batched_params.items()
         }
-        return self._dist_cls(
+        cell = self._dist_cls(
             **scalar_params,
             name=f"{self._name}_{flat}",
         )
+        # The per-cell suffix is derived by the backend, not user-typed.
+        object.__setattr__(cell, "_name_is_auto", True)
+        return cell
 
     def _normalize_index(self, index: int | tuple[int, ...]) -> tuple[tuple[int, ...], int]:
         """Return ``(multi_index, flat_index)`` for the given input.

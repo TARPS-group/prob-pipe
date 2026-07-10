@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import pickle
 
+import jax
 import jax.numpy as jnp
 import pytest
 
@@ -234,6 +235,118 @@ class TestWithName:
         assert m.provenance.operation == "with_name"
         # and the original's chain is reachable through the parent descriptor
         assert m.provenance.parents[0].provenance is n.provenance
+
+
+# ===========================================================================
+# 3b. with_name on hosts with argument-taking __new__ (views, routers)
+# ===========================================================================
+
+
+class TestWithNameOnCustomNewHosts:
+    """with_name must work on every Tracked host, including classes whose
+    __new__ takes required arguments (dynamic class selection / views)."""
+
+    def test_transformed_distribution(self):
+        import tensorflow_probability.substrates.jax.bijectors as tfb
+
+        from probpipe import TransformedDistribution
+
+        t = TransformedDistribution(Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
+        t2 = t.with_name("y")
+        assert t2.name == "y"
+        assert t2.name_is_auto is False
+        key = jax.random.PRNGKey(0)
+        assert jnp.allclose(jnp.asarray(t._sample(key, (5,))), jnp.asarray(t2._sample(key, (5,))))
+
+    def test_flattened_distribution_view(self):
+        from probpipe import MultivariateNormal
+
+        mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="theta")
+        flat = mvn.as_flat_distribution()
+        renamed = flat.with_name("theta_flat")
+        assert renamed.name == "theta_flat"
+        assert renamed.name_is_auto is False
+        assert renamed.event_shape == flat.event_shape
+
+    def test_record_distribution_view(self):
+        joint = ProductDistribution(
+            mu=Normal(loc=0.0, scale=1.0, name="mu"),
+            sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
+        )
+        view = joint["mu"]
+        renamed = view.with_name("mu_view")
+        assert renamed.name == "mu_view"
+        assert renamed.name_is_auto is False
+
+    def test_empirical_router(self):
+        emp = EmpiricalDistribution(["a", "b", "c"])
+        renamed = emp.with_name("labels")
+        assert renamed.name == "labels"
+        assert renamed.name_is_auto is False
+        assert emp.name_is_auto is True
+
+
+# ===========================================================================
+# 3c. name_is_auto propagation through derived objects
+# ===========================================================================
+
+
+class TestFlagPropagation:
+    """Operations that build a new object from a parent keep the identity
+    flag consistent with where the name actually came from."""
+
+    def test_minibatched_distribution_default_name_is_auto(self):
+        import tensorflow_probability.substrates.jax.glm as tfp_glm
+
+        from probpipe import MultivariateNormal
+        from probpipe.inference._minibatch import MinibatchedDistribution
+        from probpipe.modeling import GLMLikelihood
+
+        X = jnp.eye(4)
+        y = jnp.array([1.0, 0.0, 1.0, 0.0])
+        prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
+        lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
+        m = MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2)
+        assert m.name == "MinibatchedDistribution(batch_size=2)"
+        assert m.name_is_auto is True
+        named = MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2, name="mine")
+        assert named.name_is_auto is False
+
+    def test_product_conditioning_mirrors_flag(self):
+        auto_joint = ProductDistribution(
+            mu=Normal(loc=0.0, scale=1.0, name="mu"),
+            sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
+        )
+        cond = auto_joint._condition_on(mu=0.5)
+        assert cond.name_is_auto is True
+        named_joint = ProductDistribution(
+            mu=Normal(loc=0.0, scale=1.0, name="mu"),
+            sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
+            name="my_joint",
+        )
+        cond_named = named_joint._condition_on(mu=0.5)
+        assert cond_named.name_is_auto is False
+
+    def test_distribution_array_slice_mirrors_flag(self):
+        da = Normal.from_batched_params(loc=jnp.zeros(4), scale=1.0, name="batch")
+        assert da.name_is_auto is False
+        assert da[0:2].name_is_auto is False
+        # An auto-named array (e.g. a sweep product) keeps auto on slices.
+        object.__setattr__(da, "_name_is_auto", True)
+        assert da[0:2].name_is_auto is True
+
+    def test_from_batched_params_cells_are_auto(self):
+        da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="x")
+        cell = da[0]
+        assert cell.name == "x_0"
+        assert cell.name_is_auto is True
+
+    def test_full_factorial_design_name_is_auto(self):
+        from probpipe.record import FullFactorialDesign
+
+        design = FullFactorialDesign(a=jnp.arange(2.0), b=jnp.arange(3.0))
+        assert design.name.startswith("FullFactorialDesign")
+        assert design.name_is_auto is True
 
 
 # ===========================================================================

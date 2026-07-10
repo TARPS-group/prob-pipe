@@ -422,6 +422,11 @@ class ProductDistribution(
     ) -> ProductDistribution:
         new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
         result = ProductDistribution(**new_components, name=self._name)
+        # The result inherits this joint's name, so it mirrors this joint's
+        # auto flag; the constructor would otherwise treat the inherited
+        # (possibly auto-derived) name as user-given. Set directly — the
+        # **components signature leaves no room for a name_is_auto keyword.
+        object.__setattr__(result, "_name_is_auto", self._name_is_auto)
         conditioned_names = [" > ".join(path) for path in observed_leaves]
         result.with_provenance(
             Provenance.create(

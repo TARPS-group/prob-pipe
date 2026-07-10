@@ -246,6 +246,8 @@ def with_resampling(
                     new_record,
                     name=out_dist.name,
                 )
+                # The result inherits out_dist's name, so it mirrors its flag.
+                object.__setattr__(resampled, "_name_is_auto", out_dist.name_is_auto)
                 resampled.with_provenance(
                     Provenance.create(
                         "resample",
