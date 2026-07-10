@@ -63,7 +63,7 @@ probpipe.provenance_config.mode = ProvenanceMode.OFF    # for production without
 FULL modes:
 
 ```python
-from probpipe import Normal, provenance_ancestors, ProvenanceMode
+from probpipe import Normal, provenance_ancestors, ProvenanceMode, sample
 import probpipe
 
 prior = Normal(loc=0.0, scale=1.0, name="prior")
@@ -84,8 +84,8 @@ probpipe.provenance_config.mode = ProvenanceMode.FULL
 
 posterior = wf(prior)
 anc = provenance_ancestors(posterior)[0]
-anc.parent                       # the live Normal distribution
-anc.parent.sample(key, (100,))   # sample from it
+anc.parent                                      # the live Normal distribution
+sample(anc.parent, key=key, sample_shape=(100,))  # sample from it
 ```
 
 ## Migration from the pre-LIGHTWEIGHT API
@@ -98,7 +98,7 @@ small changes:
 # Old — ancestors were live Distribution objects
 ancestors = provenance_ancestors(result)
 assert prior in ancestors          # identity check
-ancestors[0].sample(key, (10,))   # sampling from ancestor
+sample(ancestors[0], key=key, sample_shape=(10,))   # sampling from ancestor
 
 # New — ancestors are ParentInfo descriptors by default
 ancestors = provenance_ancestors(result)
@@ -108,7 +108,7 @@ assert any(a.name == "prior" for a in ancestors)   # name-based check
 probpipe.provenance_config.mode = ProvenanceMode.FULL
 ancestors = provenance_ancestors(result)
 assert any(a.parent is prior for a in ancestors)
-ancestors[0].parent.sample(key, (10,))
+sample(ancestors[0].parent, key=key, sample_shape=(10,))
 ```
 
 ## Content fingerprints
