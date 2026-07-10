@@ -43,7 +43,7 @@ class RecordArray(Record):
       ``isinstance(x, RecordArray)`` for the batched case, or
       ``isinstance(x, Record) and not isinstance(x, RecordArray)`` for
       scalar-only.
-    - The :class:`~probpipe.core.tracked.Tracked` identity surface
+    - The :class:`~probpipe.core.tracked.Tracked` identity attributes and methods
       (``.name`` / ``.name_is_auto`` / ``.provenance`` / ``.with_name`` /
       ``.with_provenance``) is inherited from Record (stored on the slots
       declared on Record). A batch is contractually ``Tracked`` only; the

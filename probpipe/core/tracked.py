@@ -4,8 +4,8 @@ Every object a ProbPipe operation returns is a **tracked term**: it carries a
 :attr:`~Tracked.name` (what the object is called) and, optionally, a
 :attr:`~Tracked.provenance` (how it was produced). Some objects additionally
 carry free-form :attr:`~Annotated.annotations` (auxiliary information supplied
-by the user or an algorithm). This identity-and-metadata surface is orthogonal
-to what an object *is* mathematically, so it is defined once, here, as two
+by the user or an algorithm). These identity and metadata attributes are orthogonal
+to what an object *is* mathematically, so they are defined once, here, as two
 mixins:
 
 - :class:`Tracked` — name + provenance. Every ProbPipe value, distribution,

@@ -12,7 +12,7 @@ lineage in a notebook.
 
 ## The `Tracked` and `Annotated` mixins
 
-The identity surface is defined once, by two mixins in
+The identity attributes and methods are defined once, by two mixins in
 `probpipe.core.tracked`, and shared by every core object:
 
 - **`Tracked`** — a `name`, a `name_is_auto` flag recording whether the name

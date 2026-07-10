@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - **`Tracked` / `Annotated` identity-and-metadata mixins (#336).** New
-  `probpipe.core.tracked` module defining the shared identity surface every
+  `probpipe.core.tracked` module defining the shared identity attributes and methods every
   ProbPipe object carries: `Tracked` (a `name`, a `name_is_auto` flag, and a
   write-once `provenance` attached via `with_provenance`, plus `with_name` for
   rename-as-copy) and `Annotated` (a free-form `annotations` mapping).
@@ -103,8 +103,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Identity surface renamed to the design-reference vocabulary (#336,
-  breaking).** The duplicated per-class naming/provenance/metadata surface on
+- **Identity attributes and methods renamed to the design-reference vocabulary (#336,
+  breaking).** The duplicated per-class naming/provenance/metadata code on
   `Distribution` and `Record` is replaced by the `Tracked` / `Annotated`
   mixins, with a hard rename (no aliases): `source` → `provenance`,
   `with_source(...)` → `with_provenance(...)`, `renamed(...)` →
