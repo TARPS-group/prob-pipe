@@ -15,6 +15,7 @@ from ._view_base import (
     DataTreeView,
     DiagnosticRunView,
     NotComputed,
+    read_json_attr,
 )
 
 __all__ = [
@@ -24,6 +25,7 @@ __all__ = [
     "MCMCView",
     "NotComputed",
     "PPCView",
+    "SensitivityView",
 ]
 
 
@@ -242,6 +244,51 @@ class LOOView(DatasetView):
 
 
 # ---------------------------------------------------------------------------
+# SensitivityView
+# ---------------------------------------------------------------------------
+
+
+class SensitivityView(DatasetView):
+    """Structured read-only accessor for ``/diagnostics/runs/sensitivity``."""
+
+    @property
+    def prior_sensitivity(self) -> dict[str, float | NotComputed]:
+        return self.indexed("prior_sensitivity", dim="param")
+
+    @property
+    def likelihood_sensitivity(self) -> dict[str, float | NotComputed]:
+        return self.indexed("likelihood_sensitivity", dim="param")
+
+    @property
+    def has_likelihood(self) -> bool:
+        return bool(self.attr("has_likelihood", False))
+
+    @property
+    def threshold(self) -> float:
+        return float(self.attr("threshold", 0.05))
+
+    @property
+    def diagnosis(self) -> dict[str, str]:
+        return read_json_attr(self.attrs, "diagnosis_json", {})
+
+    @property
+    def warnings(self) -> list[str]:
+        return [
+            f"'{param}' shows {label} (threshold={self.threshold})."
+            for param, label in self.diagnosis.items()
+            if label.startswith("potential") or label == "prior sensitive"
+        ]
+
+    def __repr__(self) -> str:
+        if not self.exists:
+            return "SensitivityView(not computed)"
+        return (
+            f"SensitivityView(params={list(self.prior_sensitivity.keys())}, "
+            f"has_likelihood={self.has_likelihood})"
+        )
+
+
+# ---------------------------------------------------------------------------
 # DiagnosticsView
 # ---------------------------------------------------------------------------
 
@@ -282,6 +329,10 @@ class DiagnosticsView(DataTreeView):
     def loo(self) -> LOOView:
         return LOOView(self._child_or_none("runs", "loo"))
 
+    @property
+    def sensitivity(self) -> SensitivityView:
+        return SensitivityView(self._child_or_none("runs", "sensitivity"))
+
     # ── convenience MCMC passthroughs -------------------------------------
 
     @property
@@ -310,7 +361,7 @@ class DiagnosticsView(DataTreeView):
 
     @property
     def warnings(self) -> list[str]:
-        return self.mcmc.warnings + self.loo.warnings
+        return self.mcmc.warnings + self.loo.warnings + self.sensitivity.warnings
 
     # ── generic run list ---------------------------------------------------
 
@@ -407,6 +458,12 @@ class DiagnosticsView(DataTreeView):
                 "looic": _ser(self.loo.looic),
                 "pareto_k_max": _ser(self.loo.pareto_k_max),
                 "warnings": self.loo.warnings,
+            },
+            "sensitivity": {
+                "prior_sensitivity": _ser(self.sensitivity.prior_sensitivity),
+                "likelihood_sensitivity": _ser(self.sensitivity.likelihood_sensitivity),
+                "diagnosis": self.sensitivity.diagnosis,
+                "warnings": self.sensitivity.warnings,
             },
             "runs": [
                 {

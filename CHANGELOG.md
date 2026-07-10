@@ -25,6 +25,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `posterior.diagnostics` views (`DiagnosticsView`, `MCMCView`, `PPCView`, and
   `LOOView`); and ArviZ-compatible interop through `posterior.arviz_data`.
 
+- **`add_sensitivity` prior/likelihood power-scaling diagnostics (#73).**
+  Power-scales the prior and, when a `log_likelihood` is supplied, the
+  likelihood, and reports per-parameter sensitivity and a diagnosis
+  (`"potential prior-data conflict"`, `"potential strong prior / weak
+  likelihood"`, or `"✓"`) — delegating the PSIS reweighting and diagnostic
+  entirely to ArviZ's `psense`/`psense_summary` (Kallioinen et al. 2024).
+  Exposed through the new `SensitivityView` on `posterior.diagnostics`.
+
 - **`probpipe.validation` posterior-vs-reference comparison metrics.** A
   dependency-light scoring layer for validating inference methods against a
   trusted reference: `Reference` (a container for analytic / long-NUTS /

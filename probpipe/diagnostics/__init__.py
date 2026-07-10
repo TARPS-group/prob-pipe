@@ -16,6 +16,7 @@ In-place diagnostic functions mutate ``posterior._auxiliary`` and return
         add_mcmc_diagnostics,
         add_ppc,
         add_loo,
+        add_sensitivity,
     )
 
 These functions write diagnostic summaries under::
@@ -43,6 +44,7 @@ subtree. The accessor classes are available as::
         MCMCView,
         PPCView,
         LOOView,
+        SensitivityView,
         NotComputed,
     )
 
@@ -97,6 +99,14 @@ __all__ += [
 ]
 
 
+# ── Power-scaling sensitivity ─────────────────────────────────────────────
+from ._sensitivity import add_sensitivity
+
+__all__ += [
+    "add_sensitivity",
+]
+
+
 # ── Diagnostic view classes ───────────────────────────────────────────────
 # Prefer the new public facade if present. Fall back to _datatree for
 # compatibility during the refactor.
@@ -108,6 +118,7 @@ try:
         MCMCView,
         NotComputed,
         PPCView,
+        SensitivityView,
     )
 except ImportError:
     from ._datatree import (
@@ -117,6 +128,7 @@ except ImportError:
         MCMCView,
         NotComputed,
         PPCView,
+        SensitivityView,
     )
 
 __all__ += [
@@ -126,4 +138,5 @@ __all__ += [
     "MCMCView",
     "NotComputed",
     "PPCView",
+    "SensitivityView",
 ]

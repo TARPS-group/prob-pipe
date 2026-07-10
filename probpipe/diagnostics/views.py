@@ -15,6 +15,7 @@ Examples
         MCMCView,
         PPCView,
         LOOView,
+        SensitivityView,
         DiagnosticRunView,
         NotComputed,
     )
@@ -22,6 +23,7 @@ Examples
     posterior.diagnostics.mcmc.rhat
     posterior.diagnostics.ppc.result
     posterior.diagnostics.loo.elpd_loo
+    posterior.diagnostics.sensitivity.diagnosis
 """
 
 from __future__ import annotations
@@ -43,6 +45,7 @@ from ._views import (
     LOOView,
     MCMCView,
     PPCView,
+    SensitivityView,
 )
 
 __all__ = [
@@ -54,6 +57,7 @@ __all__ = [
     "MCMCView",
     "NotComputed",
     "PPCView",
+    "SensitivityView",
     "read_indexed",
     "read_json_attr",
     "read_scalar",

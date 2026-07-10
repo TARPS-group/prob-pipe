@@ -24,11 +24,20 @@ for a fitted posterior.
 
 ::: probpipe.diagnostics.add_loo
 
+## Sensitivity diagnostics
+
+`add_sensitivity` computes prior/likelihood power-scaling sensitivity —
+whether the posterior depends strongly on the prior, the likelihood, or
+both (prior-data conflict) — by delegating to ArviZ's `psense`/
+`psense_summary` (Kallioinen et al. 2024).
+
+::: probpipe.diagnostics.add_sensitivity
+
 ## Diagnostic views
 
 `posterior.diagnostics` returns a structured view over the diagnostics subtree.
-The concrete views expose MCMC, posterior predictive check, and LOO results
-without requiring users to traverse `_auxiliary` directly.
+The concrete views expose MCMC, posterior predictive check, LOO, and
+sensitivity results without requiring users to traverse `_auxiliary` directly.
 
 ::: probpipe.diagnostics.DiagnosticsView
 
@@ -37,6 +46,8 @@ without requiring users to traverse `_auxiliary` directly.
 ::: probpipe.diagnostics.PPCView
 
 ::: probpipe.diagnostics.LOOView
+
+::: probpipe.diagnostics.SensitivityView
 
 ::: probpipe.diagnostics.DiagnosticRunView
 

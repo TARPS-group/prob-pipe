@@ -33,6 +33,7 @@ from ._views import (
     LOOView,
     MCMCView,
     PPCView,
+    SensitivityView,
 )
 
 __all__ = [
@@ -44,6 +45,7 @@ __all__ = [
     "MCMCView",
     "NotComputed",
     "PPCView",
+    "SensitivityView",
     "_add_group",
     "_get_or_create_mcmc_ds",
     "_mcmc_has_field",
