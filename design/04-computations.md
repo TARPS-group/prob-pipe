@@ -1,6 +1,6 @@
 # Part IV — Computations
 
-A **computation** is an ordinary function lifted into ProbPipe's world of distributions and values. The user writes a plain function over its "natural" values, and wrapping it makes that function (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. The operations of Part V are themselves computations, which is why this part comes first: `sample`, `log_prob`, and `condition_on` inherit the lifting, tracking, dispatch, and orchestration defined here. Computations are the nodes; a whole ProbPipe *workflow* is what they compose into.
+A **computation** is an ordinary function lifted into ProbPipe's world of distributions and values. The user writes a plain function over its "natural" values, and wrapping it makes that function (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. The operations of Part V are themselves computations, which is why this part comes first: `sample`, `log_prob`, and `condition_on` inherit the lifting, tracking, dispatch, and orchestration defined here. Computations compose into a *workflow*.
 
 ## IV.0 — Overview: what a computation adds
 
@@ -104,7 +104,7 @@ predict.with_options(n_broadcast_samples=1000, seed=7)(theta=prior, x=x_obs)
 # controls go to with_options; theta and x bind to the wrapped function
 ```
 
-The `seed` fixes randomness deterministically and *structurally*. It is split along the computation graph, and again by index along each broadcast or batch axis, so every draw receives a distinct key as a pure function of its position rather than from any shared counter. The split never folds in the *values* of the inputs, which preserves common random numbers: perturbing an input reuses the same keys, so comparisons across nearby inputs and reparameterization gradients stay low-variance rather than being swamped by independent sampling noise. A fresh estimate or an independent stream is obtained by changing the `seed`. The one cost is that the streams are tied to the program's structure, so reordering the computation reshuffles them.
+The `seed` fixes randomness deterministically and *structurally*. It is split along the computation graph, and again by index along each broadcast or batch axis, so every draw receives a distinct key as a pure function of its position. Perturbing an input therefore reuses the same keys, preserving common random numbers: comparisons across nearby inputs and reparameterization gradients stay low-variance rather than being swamped by independent sampling noise. A fresh estimate or an independent stream is obtained by changing the `seed`. The one cost is that the streams are tied to the program's structure, so reordering the computation reshuffles them.
 
 ### Rationale
 
