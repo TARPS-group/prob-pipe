@@ -87,7 +87,6 @@ from abc import abstractmethod
 from ..custom_types import Array
 from ._distribution_base import Distribution
 from .constraints import Constraint
-from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # RandomMeasure[T]
@@ -119,7 +118,7 @@ class RandomMeasure[T](Distribution[Distribution[T]]):
         # Default only when no name was supplied; a subclass passing a
         # derived name with name_is_auto=True keeps its flag.
         if name is None:
-            name, name_is_auto = auto_name(name, type(self).__name__)
+            name, name_is_auto = type(self).__name__, True
         super().__init__(name=name, name_is_auto=name_is_auto)
 
 

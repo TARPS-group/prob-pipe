@@ -194,7 +194,6 @@ from probpipe.record import Design, FullFactorialDesign
 from probpipe.validation import predictive_check
 
 __all__ = [
-    # Identity & metadata mixins
     "Annotated",
     # Inference
     "ApproximateDistribution",
@@ -304,7 +303,6 @@ __all__ = [
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
     "TFPDistribution",
-    # Identity & metadata mixins
     "Tracked",
     # Transformed
     "TransformedDistribution",

@@ -237,6 +237,47 @@ class TestWithName:
         assert m.provenance.parents[0].provenance is n.provenance
 
 
+class TestWithNameOnBatchTypes:
+    """with_name on the batch types: a copy under the new user-given name,
+    sharing field data, with the original unchanged."""
+
+    def test_record_array(self):
+        ra = RecordArray(
+            {"a": jnp.zeros((3,))},
+            batch_shape=(3,),
+            template=EventTemplate(a=()),
+        )
+        ra2 = ra.with_name("mine")
+        assert ra2 is not ra
+        assert ra2.name == "mine"
+        assert ra2.name_is_auto is False
+        assert ra2["a"] is ra["a"]
+        assert ra2.batch_shape == ra.batch_shape
+        assert ra2.template is ra.template
+        assert ra.name_is_auto is True  # original unchanged
+
+    def test_numeric_record_array(self):
+        nra = NumericRecordArray(
+            {"a": jnp.zeros((3,))},
+            batch_shape=(3,),
+            template=EventTemplate(a=()),
+            name="orig",
+        )
+        nra2 = nra.with_name("new")
+        assert nra2.name == "new"
+        assert nra2.name_is_auto is False
+        assert nra2["a"] is nra["a"]
+        assert nra.name == "orig"
+
+    def test_distribution_array(self):
+        da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="batch")
+        da2 = da.with_name("renamed_batch")
+        assert da2.name == "renamed_batch"
+        assert da2.name_is_auto is False
+        assert da2.batch_shape == da.batch_shape
+        assert da.name == "batch"
+
+
 # ===========================================================================
 # 3b. with_name on hosts with argument-taking __new__ (views, routers)
 # ===========================================================================

@@ -285,6 +285,25 @@ class TestDistributionHashing:
         assert fingerprint(k1) != fingerprint(k2)
 
 
+class TestBootstrapSourceFingerprint:
+    """A sampleable-source bootstrap's fingerprint covers the live source
+    distribution, so replicates of different sources fingerprint distinctly."""
+
+    def test_different_sources_differ(self):
+        from probpipe import BootstrapReplicateDistribution
+
+        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        b2 = BootstrapReplicateDistribution(Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10)
+        assert fingerprint(b1) != fingerprint(b2)
+
+    def test_same_source_matches(self):
+        from probpipe import BootstrapReplicateDistribution
+
+        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        b2 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        assert fingerprint(b1) == fingerprint(b2)
+
+
 # ===========================================================================
 # 7. WorkflowFunction hashing
 # ===========================================================================
