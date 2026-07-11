@@ -106,6 +106,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
+  breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
+  now subclass a common `ValueSpec` ABC, and every spec implements
+  `is_valid(value) -> bool` — the check that a concrete value matches the spec
+  (shape / dtype / support for arrays; `OpaqueSpec` accepts any non-mapping
+  value; a `DistributionSpec` requires a `Distribution` carrying an equal
+  `event_template`; `FunctionSpec` requires a callable). A non-matching value
+  returns `False` rather than raising, but an unexpected error from inspecting
+  a malformed value is left to propagate rather than masked as invalid. The
+  `LeafSpec` type alias is **removed**; use `ValueSpec` (exported from
+  `probpipe`). **Renamed** `DistributionSpec.inner_template` →
+  `event_template`. `FunctionSpec`'s `input_template` / `output_template` are
+  now optional (default `None`, meaning "structure unspecified", so a bare
+  `FunctionSpec()` describes any callable); either may still be given as a
+  bare `ValueSpec`, wrapped in a single-field template (fields `input` /
+  `output`). `ArraySpec` fixes: `dtype` is
+  normalised to `numpy.dtype` at construction so equal dtypes compare and hash
+  equal however they were spelled (the field is annotated `DTypeLike`
+  accordingly), and a spec with an unset `dtype` no longer compares equal to
+  one with a concrete dtype (the two previously compared equal but hashed
+  apart).
+
 - **Identity attributes and methods renamed to the design-reference vocabulary (#336,
   breaking).** The duplicated per-class naming/provenance/metadata code on
   `Distribution` and `Record` is replaced by the `Tracked` / `Annotated`

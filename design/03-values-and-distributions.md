@@ -39,12 +39,12 @@ class ArraySpec(ValueSpec):  # a numeric array leaf
     dtype: DType
     support: Constraint
 
-class OpaqueSpec(ValueSpec):  # a non-array, non-mapping Python object
+class OpaqueSpec(ValueSpec):  # the fallback spec; is_valid accepts any non-mapping value
     meta: Hashable
 
 class FunctionSpec(ValueSpec):  # a leaf holding a callable
-    input_template: EventTemplate
-    output_template: EventTemplate
+    input_template: EventTemplate | None   # None: that side's structure is unspecified
+    output_template: EventTemplate | None
 
 class Constraint(ABC):              # an array support, carried by ArraySpec
     @abstractmethod
@@ -52,7 +52,7 @@ class Constraint(ABC):              # an array support, carried by ArraySpec
     # constraints compare and hash by value, so an instance can serve as a registry key
 ```
 
-A `FunctionSpec` accepts a bare `ValueSpec` on either side and wraps it in a single-field template, so `FunctionSpec(ArraySpec(...), ArraySpec(...))` types a scalar function by the same convention that presents a scalar draw as a single-field value.
+A `FunctionSpec` types a callable by its input and output structure. Either template is optional: `None` leaves that side's structure unspecified, so a bare `FunctionSpec()` describes any callable, and the templates are supplied only where the signature is known or required. Either side may also be given as a bare `ValueSpec`, which is wrapped in a single-field template, so `FunctionSpec(ArraySpec(...), ArraySpec(...))` types a scalar function by the same convention that presents a scalar draw as a single-field value.
 
 When every leaf is an `ArraySpec` then all values are numeric and construction auto-promotes to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
 

@@ -85,9 +85,9 @@ from probpipe.core.event_template import (
     DistributionSpec,
     EventTemplate,
     FunctionSpec,
-    LeafSpec,
     NumericEventTemplate,
     OpaqueSpec,
+    ValueSpec,
 )
 from probpipe.core.node import (
     Module,
@@ -247,7 +247,6 @@ __all__ = [
     # KDE
     "KDEDistribution",
     "Laplace",
-    "LeafSpec",
     "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
@@ -308,6 +307,7 @@ __all__ = [
     "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
+    "ValueSpec",
     "VonMisesFisher",
     # Weights
     "Weights",
