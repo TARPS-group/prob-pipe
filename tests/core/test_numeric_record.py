@@ -139,16 +139,17 @@ class TestConstruction:
 
     def test_numeric_dtype_predicate_shared(self):
         """Every numeric gate — ``NumericRecord``, ``NumericRecordArray``,
-        template inference, and the ``Design`` marginals probe — must agree
-        on which dtypes are numeric. Duplicated literals would let the
-        sites drift silently — this test pins down that they consume the
-        one shared predicate."""
-        from probpipe.core import _numeric_record, _record_array
+        template inference, the broadcast-template builder, and the ``Design``
+        marginals probe — must agree on which dtypes are numeric. Duplicated
+        literals would let the sites drift silently — this test pins down that
+        they consume the one shared predicate."""
+        from probpipe.core import _broadcast_distributions, _numeric_record, _record_array
         from probpipe.core.event_template import _is_numeric_dtype
         from probpipe.record import design
 
         assert _numeric_record._is_numeric_dtype is _is_numeric_dtype
         assert _record_array._is_numeric_dtype is _is_numeric_dtype
+        assert _broadcast_distributions._is_numeric_dtype is _is_numeric_dtype
         assert design._is_numeric_dtype is _is_numeric_dtype
 
     def test_bfloat16_leaf_accepted(self):
