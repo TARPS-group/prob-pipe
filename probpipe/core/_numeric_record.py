@@ -182,9 +182,10 @@ class NumericRecord(Record):
     Unlike a general :class:`Record`, whose JAX PyTree structure can be finer
     than its ProbPipe structure, a ``NumericRecord`` is a plain PyTree of arrays:
     the two views coincide, and it passes through ``jit`` / ``vmap`` / ``grad``
-    unchanged. As on :class:`Record`, :attr:`name`, :attr:`provenance`, and
-    :attr:`event_template` are runtime metadata and are not serialized into the
-    PyTree aux.
+    unchanged. As on :class:`Record`, the PyTree aux carries the
+    ``(event_template, name, name_is_auto)`` triple, so the template and name
+    survive a flatten/unflatten round-trip; :attr:`provenance` and
+    :attr:`annotations` do not cross a JAX transform boundary.
     """
 
     __slots__ = ("_aux", "_vector_size")
@@ -454,9 +455,15 @@ def _unpickle_numeric_record(
 # ---------------------------------------------------------------------------
 
 
-def _numeric_record_unflatten(aux: tuple[str, ...], children: list) -> NumericRecord:
-    """Unflatten NumericRecord from JAX pytree traversal."""
-    return NumericRecord(dict(zip(aux, children)))
+def _numeric_record_unflatten(
+    aux: tuple[EventTemplate, str, bool], children: list
+) -> NumericRecord:
+    """Unflatten NumericRecord from JAX pytree traversal, threading the aux template."""
+    template, name, name_is_auto = aux
+    nr = NumericRecord(
+        dict(zip(tuple(template.children), children)), name=name, event_template=template
+    )
+    return nr._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 
 jax.tree_util.register_pytree_node(NumericRecord, _record_flatten, _numeric_record_unflatten)

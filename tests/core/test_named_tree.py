@@ -187,3 +187,67 @@ class TestMappingsAreNeverLeaves:
     def test_opaque_spec_agrees(self):
         # The spec layer and the record layer enforce the same rule.
         assert not OpaqueSpec().is_valid({"a": 1})
+
+
+# ===========================================================================
+# 5. Pytree children/aux split (template + identity ride the aux)
+# ===========================================================================
+
+
+class TestPytreeAuxSplit:
+    def test_template_and_identity_survive_roundtrip(self):
+        import jax
+
+        spec = ArraySpec((), dtype=jnp.float32)
+        r = Record(
+            a=jnp.array(1.0, dtype=jnp.float32),
+            b="label",
+            name="mine",
+            event_template=EventTemplate(a=spec, b=None),
+        )
+        leaves, treedef = jax.tree_util.tree_flatten(r)
+        back = jax.tree_util.tree_unflatten(treedef, leaves)
+        assert back.event_template["a"] == spec  # explicit template threaded, not re-inferred
+        assert back.name == "mine"
+        assert back.name_is_auto is False
+
+    def test_auto_flag_survives_roundtrip(self):
+        import jax
+
+        r = Record(a=jnp.array(1.0))  # auto-named
+        back = jax.tree_util.tree_unflatten(*reversed(jax.tree_util.tree_flatten(r)))
+        assert back.name_is_auto is True
+
+    def test_provenance_and_annotations_do_not_cross(self):
+        import jax
+
+        from probpipe import Provenance
+
+        r = Record(a=jnp.array(1.0)).with_provenance(Provenance("op"))
+        object.__setattr__(r, "_annotations", {"k": 1})
+        back = jax.tree_util.tree_unflatten(*reversed(jax.tree_util.tree_flatten(r)))
+        assert back.provenance is None
+        assert back.annotations is None
+
+    def test_numeric_record_jit_and_vmap(self):
+        import jax
+
+        nr = NumericRecord(x=jnp.arange(3.0), g=NumericRecord(y=jnp.array(2.0)))
+        assert float(jax.jit(lambda rec: rec["x"].sum())(nr)) == 3.0
+        batched = NumericRecord(x=jnp.ones((4, 3)), g=NumericRecord(y=jnp.ones(4)))
+        out = jax.vmap(lambda rec: rec["x"].sum() + rec["g/y"])(batched)
+        assert out.shape == (4,)
+
+    def test_treedefs_equal_iff_templates_equal(self):
+        import jax
+
+        r1 = Record(a=jnp.array(1.0, dtype=jnp.float32))
+        r2 = Record(a=jnp.array(9.0, dtype=jnp.float32))
+        assert jax.tree_util.tree_structure(r1) == jax.tree_util.tree_structure(r2)
+        richer = Record(
+            a=jnp.array(1.0, dtype=jnp.float32),
+            event_template=EventTemplate(a=ArraySpec((), dtype=jnp.float32)),
+        )
+        # Treedef equality is stricter than record equality: a richer explicit
+        # template distinguishes the treedefs even when the data is equal.
+        assert jax.tree_util.tree_structure(richer) != jax.tree_util.tree_structure(r1)

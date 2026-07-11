@@ -251,12 +251,12 @@ class Record(NamedTree, Tracked, Annotated):
     be aware that they will traverse the finer tree. The two notions of the tree
     coincide when every field is an array (e.g. :class:`NumericRecord`).
 
-    :attr:`name`, :attr:`provenance`, :attr:`annotations`, and
-    :attr:`event_template` are runtime metadata and are not serialised into the
-    PyTree aux (which holds only the field names). Round-tripping through
-    ``jax.tree_util.tree_flatten`` / ``tree_unflatten`` therefore drops them;
-    re-attach provenance on the reconstructed Record if you need to preserve
-    the chain.
+    The PyTree registration's children are the field values and its static aux
+    data is the ``(event_template, name, name_is_auto)`` triple, so the
+    template and name survive a ``tree_flatten`` / ``tree_unflatten``
+    round-trip. :attr:`provenance` and :attr:`annotations` do **not** cross a
+    JAX transform boundary; re-attach provenance on the reconstructed Record
+    if you need to preserve the chain.
     """
 
     __slots__ = (
@@ -396,11 +396,10 @@ class Record(NamedTree, Tracked, Annotated):
         -----
         Inference is a lossy fallback (it cannot recover an ``ArraySpec``'s
         ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
-        ``DistributionSpec`` / ``FunctionSpec``). Like :attr:`name` and
-        :attr:`provenance`, the template is runtime metadata: it is not
-        serialised into the JAX pytree aux, so a value reconstructed by
-        ``tree_unflatten`` (or unpickling) infers a fresh template from the
-        rebuilt data.
+        ``DistributionSpec`` / ``FunctionSpec``). The template rides in the
+        JAX pytree aux data, so a value reconstructed by ``tree_unflatten``
+        carries this same template; unpickling instead infers a fresh
+        template from the rebuilt data.
         """
         return self._event_template
 
@@ -906,22 +905,26 @@ def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance) -> 
 # ---------------------------------------------------------------------------
 
 
-def _record_flatten(v: Record) -> tuple[list, tuple[str, ...]]:
+def _record_flatten(v: Record) -> tuple[list, tuple[EventTemplate, str, bool]]:
     """Flatten Record for JAX pytree traversal.
 
-    Leaves are the stored values exactly as-is. JAX will further traverse
-    any nested ``Record`` children it encounters because ``Record`` is a
-    registered pytree type. Non-pytree objects (strings, opaque objects)
-    become pytree leaves themselves, and any leaf-wise transformation
-    applied by JAX must accept them.
+    The children are the stored field values exactly as-is; JAX further
+    traverses any nested ``Record`` children because ``Record`` is a
+    registered pytree type, and non-pytree objects (strings, opaque objects)
+    become pytree leaves themselves. The static aux data is the
+    ``(event_template, name, name_is_auto)`` triple — the template and name
+    survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
+    provenance and annotations do not cross a JAX transform boundary.
     """
     children = list(v._tree.values())
-    return children, tuple(v._tree)
+    return children, (v._event_template, v._name, v._name_is_auto)
 
 
-def _record_unflatten(aux: tuple[str, ...], children: list) -> Record:
-    """Unflatten Record from JAX pytree traversal."""
-    return Record(dict(zip(aux, children)))
+def _record_unflatten(aux: tuple[EventTemplate, str, bool], children: list) -> Record:
+    """Unflatten Record from JAX pytree traversal, threading the aux template."""
+    template, name, name_is_auto = aux
+    r = Record(dict(zip(tuple(template.children), children)), name=name, event_template=template)
+    return r._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 
 jax.tree_util.register_pytree_node(Record, _record_flatten, _record_unflatten)

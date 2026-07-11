@@ -1130,7 +1130,10 @@ def _value_treedef(
                 fields[name] = jnp.broadcast_to(numeric_fill, (*batch_shape, *spec.shape))
         if batch_shape:
             return NumericRecordArray(fields, batch_shape=batch_shape, template=tpl)
-        return NumericRecord(fields)
+        # Thread the real template: the pytree aux carries it, so the treedef
+        # this skeleton produces must match a value built from *tpl*, not from
+        # a template re-inferred off the placeholder leaves.
+        return NumericRecord(fields, event_template=tpl)
 
     return jax.tree_util.tree_structure(_build(template))
 
