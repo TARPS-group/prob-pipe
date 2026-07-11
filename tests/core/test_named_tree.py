@@ -317,3 +317,39 @@ class TestRecordAutoPromotion:
             {"a": jnp.zeros((3,))}, batch_shape=(3,), template=EventTemplate(a=())
         )
         assert type(nra) is NumericRecordArray
+
+
+# ===========================================================================
+# 7. Value-level (de)serialization entry points
+# ===========================================================================
+
+
+class TestValueLevelEntryPoints:
+    def test_from_field_values_round_trip_with_name(self):
+        r = Record(a=jnp.array(1.0), b="tag", name="mine")
+        rebuilt = Record.from_field_values("mine", r.event_template, r.values())
+        assert rebuilt == r
+        assert rebuilt.name == "mine"
+        assert rebuilt.name_is_auto is False
+
+    def test_from_field_values_numeric_template_promotes(self):
+        tpl = EventTemplate(a=(), b=(2,))
+        rebuilt = Record.from_field_values("v", tpl, [jnp.array(1.0), jnp.zeros(2)])
+        assert type(rebuilt) is NumericRecord
+        assert rebuilt.event_template is tpl
+
+    def test_from_field_values_count_mismatch(self):
+        with pytest.raises(ValueError, match="expected"):
+            Record.from_field_values("v", EventTemplate(a=(), b=()), [1.0])
+
+    def test_numeric_record_from_vector_round_trip(self):
+        nr = NumericRecord(x=jnp.arange(3.0), g=NumericRecord(y=jnp.array(2.0)))
+        back = NumericRecord.from_vector("mine", nr.event_template, nr.to_vector())
+        assert back == nr
+        assert back.name == "mine"
+        assert back.name_is_auto is False
+
+    def test_numeric_record_from_vector_rejects_batched(self):
+        nr = NumericRecord(x=jnp.arange(3.0))
+        with pytest.raises(TypeError, match="1-D"):
+            NumericRecord.from_vector("v", nr.event_template, jnp.ones((4, 3)))

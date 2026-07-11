@@ -183,13 +183,13 @@ class TestConvenienceConstructors:
             # layout, which from_field_values reconstructs).
             Record(physics=NumericRecord(force=jnp.zeros(2), mass=1.0), obs="tag"),
         ]:
-            rebuilt = r.event_template.from_field_values(list(r.values()))
+            rebuilt = Record.from_field_values(r.name, r.event_template, r.values())
             assert rebuilt == r
 
     def test_from_field_values_count_mismatch_raises(self):
         tpl = EventTemplate(a=(), b=())
         with pytest.raises(ValueError):
-            tpl.from_field_values([1.0])
+            Record.from_field_values("r", tpl, [1.0])
 
 
 # ---------------------------------------------------------------------------

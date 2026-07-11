@@ -347,7 +347,7 @@ class TestNumericAPIOnRecord:
         # traversal on Record; the JAX-pytree flatten/unflatten are NOT Record
         # methods.
         v = Record(a=1.0, label="x")
-        assert v.event_template.from_field_values(list(v.values())) == v
+        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
         assert not hasattr(Record, "flatten")
         assert not hasattr(Record, "unflatten")
 
@@ -381,13 +381,13 @@ class TestGeneralDecomposition:
     def test_roundtrip_with_opaque_leaf(self):
         # Opaque (non-numeric) leaves round-trip — unlike to_vector.
         v = Record(x=jnp.array([1.0, 2.0]), label="horseshoe", count=3)
-        assert v.event_template.from_field_values(list(v.values())) == v
+        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord
 
         v = NumericRecord(a=jnp.array([1.0, 2.0, 3.0]), b=NumericRecord(c=jnp.array(5.0)))
-        rebuilt = v.event_template.from_field_values(list(v.values()))
+        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
         assert rebuilt == v
         assert isinstance(rebuilt, NumericRecord)
         assert isinstance(rebuilt.at_path("b"), NumericRecord)
@@ -398,12 +398,12 @@ class TestGeneralDecomposition:
             theta=Record(loc=jnp.array([0.0, 1.0]), label="prior"),
             tag="run-7",
         )
-        assert v.event_template.from_field_values(list(v.values())) == v
+        assert Record.from_field_values(v.name, v.event_template, v.values()) == v
 
     def test_wrong_leaf_count_raises(self):
         v = Record(a=1.0, b=2.0)
         with pytest.raises(ValueError, match="expected 2"):
-            v.event_template.from_field_values([1.0])
+            Record.from_field_values("v", v.event_template, [1.0])
 
     def test_jax_pytree_roundtrip_still_works(self):
         # Record stays a registered pytree; the JAX path round-trips via

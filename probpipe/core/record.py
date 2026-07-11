@@ -37,7 +37,7 @@ of expensive compute nodes rather than inside them.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
@@ -212,7 +212,7 @@ class Record(NamedTree, Tracked, Annotated):
     identity transform round-trips to an equal record depends on how it treats
     the template. A transform that **threads the template through** — ``replace``
     / ``merge`` / ``without``, or reconstruction via
-    :meth:`EventTemplate.from_field_values` — preserves it exactly and compares
+    :meth:`Record.from_field_values` — preserves it exactly and compares
     equal. A transform that instead **re-infers** the template — ``map`` /
     ``map_with_keys``, which rebuild the result and re-infer its specs — compares
     equal only when inference recovers the original template, for instance when
@@ -809,6 +809,61 @@ class Record(NamedTree, Tracked, Annotated):
             return cls(flat)
         return cls(flat, event_template=event_template)
 
+    @classmethod
+    def from_field_values(cls, name: str, template: EventTemplate, values: Iterable[Any]) -> Record:
+        """Reconstruct a value from an ordered sequence of field values.
+
+        *values* supplies one object per field, in canonical order (the order
+        of the template's :meth:`~NamedTree.keys`); the names and tree shape
+        come from *template*, which the result carries as its
+        **authoritative** :attr:`event_template` (nothing is inferred), so
+        the round-trip is faithful:
+        ``Record.from_field_values(r.name, r.event_template, r.values()) == r``.
+        The export side is just ``list(record.values())``. The result's class
+        follows the template's numericness — a :class:`NumericEventTemplate`
+        builds a :class:`NumericRecord` via the auto-promotion.
+
+        Parameters
+        ----------
+        name : str
+            Name for the reconstructed record (user-given).
+        template : EventTemplate
+            The authoritative schema supplying names, nesting, and order.
+        values : iterable
+            One field value per template key, in canonical order.
+
+        Returns
+        -------
+        Record
+            The reconstructed value (a ``NumericRecord`` for a numeric
+            template).
+
+        Raises
+        ------
+        ValueError
+            If the number of *values* is not the number of fields
+            (``len(template)``).
+        """
+        values = list(values)
+        if len(values) != len(template):
+            raise ValueError(
+                f"Record.from_field_values: got {len(values)} values, "
+                f"expected {len(template)} (one per field)."
+            )
+        leaf_iter = iter(values)
+
+        def _build(tpl: EventTemplate, node_name: str | None) -> Record:
+            fields = {
+                field_name: (
+                    _build(spec, None) if isinstance(spec, EventTemplate) else next(leaf_iter)
+                )
+                for field_name, spec in tpl.children.items()
+            }
+            # ``Record.__new__`` selects the class from the template.
+            return Record(fields, name=node_name, event_template=tpl)
+
+        return _build(template, name)
+
     # -- Leaf-wise operations -----------------------------------------------
     #
     # ``map`` / ``map_with_keys`` are inherited from ``NamedTree`` (they apply a
@@ -816,7 +871,7 @@ class Record(NamedTree, Tracked, Annotated):
     # the result's per-leaf specs). See ``NamedTree.map``.
 
     # A record's leaves in canonical order are ``list(record.values())``;
-    # reconstruct via ``record.event_template.from_field_values(...)``.
+    # reconstruct via ``Record.from_field_values(name, template, values)``.
 
     # -- Repr ---------------------------------------------------------------
 

@@ -732,51 +732,6 @@ class EventTemplate(NamedTree):
             )
         return NumericEventTemplate(specs)
 
-    # -- Leaf-list (de)serialization (general; leaves kept whole) -----------
-
-    def from_field_values(self, values: Iterable[Any]) -> Any:
-        """Reconstruct a value from an ordered sequence of field values.
-
-        *values* supplies one object per leaf field, in canonical leaf order (the
-        order of :meth:`keys`); the names and tree shape are taken from this template, so
-        the result mirrors it — a nested template builds a nested
-        :class:`~probpipe.Record`, a :class:`NumericEventTemplate` builds a
-        :class:`~probpipe.NumericRecord`. The result carries this template as its
-        **authoritative** :attr:`~probpipe.Record.event_template` (nothing is
-        inferred), so the round-trip is faithful:
-        ``tpl.from_field_values(list(r.values())) == r`` when
-        ``r.event_template == tpl``. The export side is just ``list(r.values())``.
-
-        Single (unbatched) values only; batched reconstruction arrives with the
-        batch abstractions. Per-leaf shape/dtype is not checked (only the count).
-
-        Raises
-        ------
-        ValueError
-            If the number of *values* is not the number of fields (``len(self)``).
-        """
-        values = list(values)
-        n_leaves = len(self)
-        if len(values) != n_leaves:
-            raise ValueError(
-                f"{type(self).__name__}.from_field_values: got {len(values)} values, "
-                f"expected {n_leaves} (one per field)."
-            )
-        leaf_iter = iter(values)
-
-        def _build(template: EventTemplate) -> Any:
-            from ._numeric_record import NumericRecord
-            from .record import Record
-
-            fields = {
-                name: (_build(spec) if isinstance(spec, EventTemplate) else next(leaf_iter))
-                for name, spec in template._tree.items()
-            }
-            cls = NumericRecord if isinstance(template, NumericEventTemplate) else Record
-            return cls(fields, event_template=template)
-
-        return _build(self)
-
     # -- Equality and hashing -----------------------------------------------
 
     def __eq__(self, other: object) -> bool:
@@ -1039,7 +994,7 @@ class NumericEventTemplate(EventTemplate):
         ``(*batch_shape, vector_size)`` rebuilds a
         :class:`~probpipe.NumericRecordArray` with that ``batch_shape``.
 
-        This differs from :meth:`from_field_values` (which rebuilds from whole
+        This differs from :meth:`Record.from_field_values` (which rebuilds from whole
         leaves, any type): ``from_vector`` is numeric-only and rebuilds from a
         dense vector alone, using this template's leaf shapes.
 

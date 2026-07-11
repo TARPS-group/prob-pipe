@@ -39,15 +39,10 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
-from ..custom_types import ArrayLike
+from ..custom_types import Array, ArrayLike
 from ._array_backend import aux_for
-from .event_template import (
-    EventTemplate,
-    _check_no_path_sep,
-    _is_numeric_dtype,
-    _PathSubtree,
-    _unflatten_paths,
-)
+from .event_template import EventTemplate, NumericEventTemplate, _is_numeric_dtype
+from .named_tree import _check_no_path_sep, _PathSubtree, _unflatten_paths
 from .record import Record, _record_flatten
 
 __all__ = ["NumericRecord", "_is_numeric_leaf"]
@@ -310,6 +305,55 @@ class NumericRecord(Record):
         leaves into a single dense vector.
         """
         return self.event_template.to_vector(self)
+
+    @classmethod
+    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecord:
+        """Reconstruct a single record from its dense 1-D vector.
+
+        The value-level inverse of :meth:`to_vector`: splits *vec* into the
+        template's per-field blocks, reshapes each to its ``ArraySpec`` shape
+        in canonical order, and returns a ``NumericRecord`` carrying
+        *template* as its authoritative schema under the user-given *name*.
+        The structural definition lives on
+        :meth:`NumericEventTemplate.from_vector`, which this delegates to.
+
+        Parameters
+        ----------
+        name : str
+            Name for the reconstructed record (user-given).
+        template : NumericEventTemplate
+            The flat layout supplying field names, shapes, and order.
+        vec : Array
+            A vector of shape ``(template.vector_size,)`` — one single
+            (unbatched) value.
+
+        Returns
+        -------
+        NumericRecord
+            The reconstructed record, with ``record.to_vector()`` equal to
+            *vec*.
+
+        Raises
+        ------
+        TypeError
+            If *vec* carries leading batch axes — batched reconstruction is
+            the batch type's concern; use
+            :meth:`NumericEventTemplate.from_vector` directly for a batched
+            matrix.
+        ValueError
+            If the vector length does not equal ``template.vector_size``.
+        """
+        vec = jnp.asarray(vec)
+        if vec.ndim != 1:
+            raise TypeError(
+                f"NumericRecord.from_vector expects a 1-D vector (one value); "
+                f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
+                f"NumericEventTemplate.from_vector."
+            )
+        record = template.from_vector(vec)
+        object.__setattr__(record, "_name", name)
+        object.__setattr__(record, "_name_is_auto", False)
+        return record
 
     # -- Conversion back to native backends --------------------------------
 
