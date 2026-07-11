@@ -342,6 +342,15 @@ class Record(NamedTree, Tracked, Annotated):
         if cls is Record:
             from ._numeric_record import NumericRecord
 
+            # Guard the required name before promotion picks a class, so a
+            # name-less call reports ``Record`` rather than the promoted
+            # ``NumericRecord`` the user never wrote.
+            if not args:
+                raise TypeError(
+                    "Record requires its name as the first positional argument, "
+                    "e.g. Record('my_record', x=...); the name= keyword and "
+                    "name-less forms were removed."
+                )
             event_template = kwargs.get("event_template")
             if len(args) > 1 and args[1] is not None:
                 source: Mapping[str, Any] = args[1]
@@ -850,8 +859,8 @@ class Record(NamedTree, Tracked, Annotated):
         — every level becomes a ``NumericRecord``.
 
         This is the single entry point for the ``Record`` → ``NumericRecord``
-        conversion; constructing ``NumericRecord(**record.select_all())`` runs
-        the same coercion and aux-capture path.
+        conversion; constructing ``NumericRecord(record.name,
+        **record.select_all())`` runs the same coercion and aux-capture path.
 
         Raises
         ------

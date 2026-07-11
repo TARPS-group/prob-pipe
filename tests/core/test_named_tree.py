@@ -328,8 +328,9 @@ class TestRecordAutoPromotion:
 
 class TestValueLevelEntryPoints:
     def test_from_field_values_round_trip_with_name(self):
-        r = Record("r", a=jnp.array(1.0), b="tag", name="mine")
-        rebuilt = Record.from_field_values("mine", r.event_template, r.values())
+        r = Record("mine", a=jnp.array(1.0), b="tag")
+        assert list(r.keys()) == ["a", "b"]  # name is positional-only, not a field
+        rebuilt = Record.from_field_values(r.name, r.event_template, r.values())
         assert rebuilt == r
         assert rebuilt.name == "mine"
         assert rebuilt.name_is_auto is False

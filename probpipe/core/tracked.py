@@ -196,7 +196,7 @@ class Tracked(metaclass=_TrackedMeta):
         the other.
 
         This renames the object *itself*. To rename the named fields inside a
-        structured object, use ``with_names`` on the named-tree types.
+        structured object, use ``with_path_names`` on the named-tree types.
 
         Parameters
         ----------

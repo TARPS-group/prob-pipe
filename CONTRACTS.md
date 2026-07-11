@@ -104,7 +104,8 @@ if it were user-guide reference text.
 | independent-draw shape prefix for `sample` | `sample_shape` |
 | a distribution's structural schema | `event_template` |
 | PRNG key | `key` |
-| a field name / key | `name` |
+| a tracked object's own identity name (the required first arg of `Record` / a distribution) | `name` |
+| a field key within a tree / the name being assigned to a field | `field_name` / `key` |
 *(Extend this table whenever a new contract introduces a recurring parameter.)*
 
 ## Per-PR checklist (copy into the PR description)

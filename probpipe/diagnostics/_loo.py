@@ -638,7 +638,7 @@ def _add_log_likelihood(
         datum = _auto_record({"X": x_i, "y": y_i})
         return ll.per_datum_log_likelihood(params_flat, datum)
 
-    # Note: Record(X=x_i, y=y_i) is constructed inside the vmapped
+    # Note: the per-datum record is constructed inside the vmapped
     # function. If the likelihood's per_datum_log_likelihood is not
     # JAX-traceable (e.g. uses Python control flow on datum fields),
     # the except branch below falls back to a Python loop.
