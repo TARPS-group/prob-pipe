@@ -785,10 +785,11 @@ class NamedTree:
     def _split_path(path: tuple[Any, ...]) -> tuple[str, ...]:
         """Normalise a path argument to a tuple of single-name segments.
 
-        Accepts the forms used across the surface: a ``/``-delimited string
-        (``"a/b"``), separate string segments (``"a", "b"``), or a single tuple
-        of names (``("a", "b")``). Every segment must be a string; a non-string
-        segment raises ``TypeError``.
+        Accepts the forms the path-taking methods (``at_path`` / ``replace`` /
+        ``with_path_names``) allow: a ``/``-delimited string (``"a/b"``),
+        separate string segments (``"a", "b"``), or a single tuple of names
+        (``("a", "b")``). Every segment must be a string; a non-string segment
+        raises ``TypeError``.
         """
         if len(path) == 1 and isinstance(path[0], tuple):
             parts: tuple[Any, ...] = path[0]

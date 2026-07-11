@@ -153,6 +153,38 @@ class TestNameIsAuto:
         assert emp.name == "empirical"
         assert emp.name_is_auto is True
 
+    def test_structural_edits_rederive_auto_names(self):
+        # An auto-derived name describes the current field keys, so a
+        # transform that changes the field set must re-derive it — the same
+        # rule ``map`` follows. Keeping the pre-edit name would advertise
+        # fields that no longer exist.
+        r = _auto_record({"a": jnp.array(1.0), "b": jnp.array(2.0)})
+        assert r.without("b").name == "record(a)"
+        assert r.map(lambda x: x).name == "record(a,b)"
+        merged = _auto_record({"a": jnp.array(1.0)}).merge(_auto_record({"c": jnp.array(3.0)}))
+        assert merged.name == "record(a,c)"
+        assert r.with_path_names(a="z").name == "record(z,b)"
+
+    def test_structural_edits_preserve_user_names(self):
+        # A user-given name is the object's identity, not a field summary,
+        # so structural edits keep it verbatim and never flip name_is_auto.
+        r = Record("mine", a=jnp.array(1.0), b=jnp.array(2.0))
+        for edited in (
+            r.without("b"),
+            r.merge(Record("o", c=jnp.array(3.0))),
+            r.with_path_names(a="z"),
+        ):
+            assert edited.name == "mine"
+            assert edited.name_is_auto is False
+
+    def test_nested_auto_name_derives_from_top_level_keys(self):
+        # The derived name uses top-level field keys (not full leaf paths),
+        # so every transform agrees regardless of nesting depth.
+        nested = _auto_record({"a": _auto_record({"b": jnp.array(1.0), "c": jnp.array(2.0)})})
+        assert nested.name == "record(a)"
+        assert nested.with_path_names({"a/b": "z"}).name == "record(a)"
+        assert nested.map(lambda x: x).name == "record(a)"
+
     def test_name_is_auto_survives_record_pickle(self):
         auto = _auto_record({"a": 1.0})
         named = Record("mine", a=1.0)

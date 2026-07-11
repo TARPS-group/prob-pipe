@@ -17,7 +17,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array
-from ._numeric_record import NumericRecord
 from .event_template import ArraySpec, EventTemplate, _is_numeric_dtype
 from .record import Record, _auto_record
 from .tracked import auto_name
@@ -472,10 +471,6 @@ class NumericRecordArray(RecordArray):
     """
 
     __slots__ = ()
-
-    # Integer indexing (``arr[i]``) returns a NumericRecord so the numeric
-    # guarantee is preserved through slicing.
-    _record_cls: type = NumericRecord
 
     @classmethod
     def _validate_fields(

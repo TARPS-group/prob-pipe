@@ -343,20 +343,27 @@ class Record(NamedTree, Tracked, Annotated):
             from ._numeric_record import NumericRecord
 
             event_template = kwargs.get("event_template")
-            if event_template is not None:
-                numeric = isinstance(event_template, NumericEventTemplate)
+            if len(args) > 1 and args[1] is not None:
+                source: Mapping[str, Any] = args[1]
             else:
-                if len(args) > 1 and args[1] is not None:
-                    source: Mapping[str, Any] = args[1]
-                else:
-                    source = {
-                        k: v
-                        for k, v in kwargs.items()
-                        if k not in ("event_template", "name_is_auto")
-                    }
-                numeric = bool(source) and all(
-                    _is_numeric_field_value(value) for value in source.values()
-                )
+                source = {
+                    k: v for k, v in kwargs.items() if k not in ("event_template", "name_is_auto")
+                }
+            # Promote only when every field coerces to a bare array with
+            # nothing lost (the value probe) *and* no explicit non-numeric
+            # template vetoes it. A backend-typed leaf (xarray / pandas)
+            # fails the probe, so a plain ``Record`` carrying one stays plain
+            # even when its numeric template is threaded back in — by a
+            # structural edit or ``from_field_values`` — rather than silently
+            # coercing the leaf and breaking the ``to_native`` round-trip.
+            template_allows = event_template is None or isinstance(
+                event_template, NumericEventTemplate
+            )
+            numeric = (
+                template_allows
+                and bool(source)
+                and all(_is_numeric_field_value(value) for value in source.values())
+            )
             if numeric:
                 return object.__new__(NumericRecord)
         return object.__new__(cls)
@@ -536,9 +543,10 @@ class Record(NamedTree, Tracked, Annotated):
 
     # -- Tree structure -----------------------------------------------------
     #
-    # The mapping / navigation surface is inherited from :class:`~probpipe.core.named_tree.NamedTree`. A
-    # leaf here is a stored (non-``Record``) value; an internal node is a nested
-    # ``Record``.
+    # The mapping and path-navigation methods (``keys`` / ``values`` /
+    # ``items`` / ``[]`` / ``at_path`` / ``children``) are inherited from
+    # :class:`~probpipe.core.named_tree.NamedTree`. A leaf here is a stored
+    # (non-``Record``) value; an internal node is a nested ``Record``.
 
     @classmethod
     def _node_type(cls) -> type:
@@ -622,6 +630,24 @@ class Record(NamedTree, Tracked, Annotated):
             return child.event_template
         return self.event_template.children[name]
 
+    def _rebuild_root(self, children: Mapping[str, Any], event_template: EventTemplate) -> Record:
+        """Rebuild the root of a structural transform, threading the template.
+
+        Applies the transform identity rule in one place: a user-given name
+        is preserved, while an auto-derived name is re-derived from the
+        result's top-level field keys — matching :meth:`_rebuild_node` (used
+        by :meth:`map`) so every structural edit agrees. Without this, a
+        transform that changes the field set (``without`` / ``merge`` /
+        ``with_path_names``) would keep an auto name describing the pre-edit
+        fields.
+        """
+        if self._name_is_auto:
+            name = _derived_record_name(event_template.children)
+            return self._rebuild_class()(
+                name, children, event_template=event_template, name_is_auto=True
+            )
+        return self._rebuild_class()(self._name, children, event_template=event_template)
+
     def without(self, *paths: str) -> Record:
         """Return a new Record without the fields/subtrees at *paths*.
 
@@ -664,12 +690,7 @@ class Record(NamedTree, Tracked, Annotated):
             specs[name] = edited.event_template
         if not new_children:
             raise ValueError("Cannot remove all fields from a collection")
-        return self._rebuild_class()(
-            self._name,
-            new_children,
-            event_template=EventTemplate(specs),
-            name_is_auto=self._name_is_auto,
-        )
+        return self._rebuild_root(new_children, EventTemplate(specs))
 
     def merge(self, other: Record) -> Record:
         """Return the union of this Record and *other* (see :meth:`NamedTree.merge`).
@@ -699,12 +720,7 @@ class Record(NamedTree, Tracked, Annotated):
                 continue
             new_children[name] = child
             specs[name] = other._child_spec(name, child)
-        return self._rebuild_class()(
-            self._name,
-            new_children,
-            event_template=EventTemplate(specs),
-            name_is_auto=self._name_is_auto,
-        )
+        return self._rebuild_root(new_children, EventTemplate(specs))
 
     def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Record:
         """Return a new Record with the values at the given paths replaced.
@@ -788,14 +804,7 @@ class Record(NamedTree, Tracked, Annotated):
                 "must not collide with an existing sibling name"
             )
         renamed_template = self.event_template.with_path_names(mapping, **kwargs)
-        if self._name_is_auto:
-            return self._rebuild_class()(
-                _derived_record_name(renamed),
-                renamed,
-                event_template=renamed_template,
-                name_is_auto=True,
-            )
-        return self._rebuild_class()(self._name, renamed, event_template=renamed_template)
+        return self._rebuild_root(renamed, renamed_template)
 
     # -- Backend conversion -------------------------------------------------
 
@@ -1146,7 +1155,11 @@ def _record_flatten(v: Record) -> tuple[list, tuple[EventTemplate, str, bool]]:
     survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
     provenance and annotations do not cross a JAX transform boundary.
     """
-    children = list(v._tree.values())
+    # Emit children in the template's field order so they realign with the
+    # aux template on unflatten. ``_tree`` order normally matches, but a
+    # record built with an explicit template ordered differently would
+    # otherwise zip each value against the wrong field name.
+    children = [v._tree[name] for name in v._event_template.children]
     return children, (v._event_template, v._name, v._name_is_auto)
 
 

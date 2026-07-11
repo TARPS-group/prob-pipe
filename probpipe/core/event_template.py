@@ -618,9 +618,10 @@ class EventTemplate(NamedTree):
 
     # -- Tree structure -----------------------------------------------------
     #
-    # The mapping / navigation surface is inherited from :class:`~probpipe.core.named_tree.NamedTree`.
-    # A leaf here is a :class:`ValueSpec`; an internal node is a nested
-    # ``EventTemplate``.
+    # The mapping and path-navigation methods (``keys`` / ``values`` /
+    # ``items`` / ``[]`` / ``at_path`` / ``children``) are inherited from
+    # :class:`~probpipe.core.named_tree.NamedTree`. A leaf here is a
+    # :class:`ValueSpec`; an internal node is a nested ``EventTemplate``.
 
     @classmethod
     def _node_type(cls) -> type:

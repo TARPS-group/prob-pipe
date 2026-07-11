@@ -322,6 +322,19 @@ class TestStorage:
         assert v["y"].dims == ("time",)
         np.testing.assert_array_equal(v["y"].coords["time"].values, [10, 20, 30])
 
+    def test_xarray_leaf_survives_structural_edit(self):
+        from probpipe import NumericRecord
+
+        xr = pytest.importorskip("xarray")
+        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
+        v = Record("r", y=da, z=jnp.array(1.0))
+        # A structural edit re-threads the (numeric) template but must keep
+        # the backend leaf verbatim rather than promoting and coercing it.
+        edited = v.without("z")
+        assert not isinstance(edited, NumericRecord)
+        assert edited["y"] is da
+        assert not isinstance(v.replace(z=jnp.array(2.0)), NumericRecord)
+
 
 class TestNumericAPIOnRecord:
     """The numeric-1-D APIs live on NumericRecord, not on Record.
@@ -382,6 +395,21 @@ class TestGeneralDecomposition:
         # Opaque (non-numeric) leaves round-trip — unlike to_vector.
         v = Record("r", x=jnp.array([1.0, 2.0]), label="horseshoe", count=3)
         assert Record.from_field_values(v.name, v.event_template, v.values()) == v
+
+    def test_roundtrip_with_backend_leaf_stays_plain(self):
+        # A verbatim backend leaf (xarray) keeps its plain-Record class
+        # across the round-trip. Its inferred template is numeric, but
+        # re-threading it must not promote and coerce the leaf — that would
+        # change the concrete type and break equality.
+        from probpipe import NumericRecord
+
+        xr = pytest.importorskip("xarray")
+        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
+        v = Record("obs", x=da)
+        assert not isinstance(v, NumericRecord)
+        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        assert type(rebuilt) is type(v)
+        assert rebuilt == v
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord
@@ -473,6 +501,16 @@ class TestPyTree:
         assert isinstance(v2.at_path("params"), Record)
         assert v2["params/r"] == 11.0
         assert v2["z"] == 13.0
+
+    def test_tree_map_realigns_values_by_template_order(self):
+        # Flatten emits children in the template's field order and unflatten
+        # zips them back against that same order, so a record whose stored
+        # field order differs from its explicit template survives a
+        # round-trip with each value on its own field (never transposed).
+        v = Record("r", {"b": 2.0, "a": 1.0}, event_template=EventTemplate(a=(), b=()))
+        v2 = jax.tree.map(lambda x: x, v)
+        assert float(v2["a"]) == 1.0
+        assert float(v2["b"]) == 2.0
 
     def test_jit(self):
         v = Record("r", a=1.0, b=2.0)
