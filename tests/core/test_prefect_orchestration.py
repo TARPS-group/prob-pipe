@@ -241,10 +241,10 @@ class TestPrefectProvenance:
             seed=40,
         )
         result = wf(x=normal_dist)
-        assert result.source is not None
-        assert result.source.operation == "broadcast"
-        assert result.source.metadata["orchestrate"] == "task"
-        assert result.source.metadata["n_samples"] == 20
+        assert result.provenance is not None
+        assert result.provenance.operation == "broadcast"
+        assert result.provenance.metadata["orchestrate"] == "task"
+        assert result.provenance.metadata["n_samples"] == 20
 
     def test_flow_provenance(self, normal_dist):
         wf = WorkflowFunction(
@@ -255,8 +255,8 @@ class TestPrefectProvenance:
             seed=41,
         )
         result = wf(x=normal_dist)
-        assert result.source is not None
-        assert result.source.metadata["orchestrate"] == "flow"
+        assert result.provenance is not None
+        assert result.provenance.metadata["orchestrate"] == "flow"
 
     def test_no_orchestration_provenance(self, normal_dist):
         wf = WorkflowFunction(
@@ -267,8 +267,8 @@ class TestPrefectProvenance:
             seed=42,
         )
         result = wf(x=normal_dist)
-        assert result.source is not None
-        assert result.source.metadata["orchestrate"] == "off"
+        assert result.provenance is not None
+        assert result.provenance.metadata["orchestrate"] == "off"
 
 
 # ---------------------------------------------------------------------------

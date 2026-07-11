@@ -36,7 +36,7 @@ class TestConstruction:
     """SimpleGenerativeModel construction and input validation."""
 
     def test_default_name(self, model):
-        # Default name now follows the class name (Distribution metaclass
+        # Default name now follows the class name (the Tracked metaclass
         # requires every instance to have a non-empty name).
         assert model.name == "SimpleGenerativeModel"
 

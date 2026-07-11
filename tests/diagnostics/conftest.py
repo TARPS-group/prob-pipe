@@ -48,7 +48,7 @@ class _FakePosterior:
         self._n_draws = n_draws
         # shape: (n_chains, n_draws) per param
         self._data = {p: rng.standard_normal((n_chains, n_draws)) for p in param_names}
-        self._auxiliary = None
+        self._annotations = None
 
     # ---- ApproximateDistribution protocol expected by diagnostics ----
 

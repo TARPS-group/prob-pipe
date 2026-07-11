@@ -110,6 +110,7 @@ def execute_sweep(
         per_row_marginals,
         batch_shape=plan.sweep_batch_shape,
         name=workflow_name or "sweep",
+        name_is_auto=True,
     )
     provenance = make_sweep_provenance(
         values=values,

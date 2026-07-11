@@ -1,4 +1,4 @@
-"""Provenance tracking and graph utilities for distribution lineage."""
+"""Provenance tracking and graph utilities for tracked-term lineage."""
 
 from __future__ import annotations
 
@@ -37,16 +37,16 @@ class ParentInfo:
 
     Always carries enough information to describe lineage and traverse the
     ancestry DAG.  In FULL mode it additionally retains a live reference to
-    the parent object via ``obj``.
+    the parent object via ``parent``.
 
     Attributes
     ----------
     type_name : str
         Class name of the parent (e.g. ``"EmpiricalDistribution"``).
     name : str or None
-        Distribution or record name of the parent.  ``None`` for unnamed
-        parents (uncommon; most framework objects carry a name).
-    source : Provenance or None
+        Name of the parent tracked term.  ``None`` for unnamed parents
+        (uncommon; most framework objects carry a name).
+    provenance : Provenance or None
         The parent's own provenance node.  Kept in both LIGHTWEIGHT and
         FULL modes so the ancestry DAG remains traversable without holding
         the parent's data arrays alive.  Excluded from hashing (``Provenance``
@@ -57,9 +57,9 @@ class ParentInfo:
         by :meth:`Provenance.create`.  ``None`` only when fingerprinting
         raises an unexpected error.  Intended as the foundation for a future
         Prefect ``cache_key_fn``.  Excluded from equality and hashing: descriptor
-        identity is structural (``type_name`` / ``name`` / ``source``), so a
+        identity is structural (``type_name`` / ``name`` / ``provenance``), so a
         content digest must not perturb ancestor-set dedup.
-    obj : ProvenanceNode or None
+    parent : ProvenanceNode or None
         The live parent object.  Set in FULL mode; ``None`` in LIGHTWEIGHT
         so the parent's data can be garbage-collected.  Excluded from
         equality and hashing.
@@ -67,9 +67,9 @@ class ParentInfo:
 
     type_name: str
     name: str | None
-    source: Provenance | None = field(default=None, hash=False)
+    provenance: Provenance | None = field(default=None, hash=False)
     fingerprint: str | None = field(default=None, compare=False)
-    obj: ProvenanceNode | None = field(default=None, compare=False)
+    parent: ProvenanceNode | None = field(default=None, compare=False)
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +79,22 @@ class ParentInfo:
 
 @dataclass(frozen=True)
 class Provenance:
-    """Tracks how a distribution was created."""
+    """How a tracked term was produced: an operation plus parent descriptors.
+
+    Attached write-once to a tracked term via ``with_provenance``.
+
+    Attributes
+    ----------
+    operation : str
+        The operation that produced the object (e.g. ``"broadcast"``,
+        ``"condition_on"``, ``"with_name"``).
+    parents : tuple of ParentInfo
+        Descriptors of the inputs the operation consumed.
+    metadata : dict
+        Optional scalar/string metadata about the operation (e.g. the old
+        and new names of a rename). Serialized alongside the operation by
+        :meth:`to_dict`.
+    """
 
     operation: str
     parents: tuple[Any, ...] = ()
@@ -98,7 +113,7 @@ class Provenance:
         ----------
         recurse : bool
             If True, recursively serialize parent provenance chains via
-            each parent's ``.source``.
+            each parent's ``.provenance``.
         """
         parent_dicts = []
         for p in self.parents:
@@ -108,8 +123,8 @@ class Provenance:
             }
             if p.fingerprint is not None:
                 entry["fingerprint"] = p.fingerprint
-            if recurse and p.source is not None:
-                entry["source"] = p.source.to_dict(recurse=True)
+            if recurse and p.provenance is not None:
+                entry["provenance"] = p.provenance.to_dict(recurse=True)
             parent_dicts.append(entry)
 
         safe_metadata = {}
@@ -149,16 +164,16 @@ class Provenance:
         """Build provenance respecting the global :attr:`~probpipe.provenance_config` mode.
 
         Returns ``None`` when the mode is :attr:`ProvenanceMode.OFF` so that
-        call sites can pass the result directly to ``with_source()`` without
-        an extra guard — ``with_source(None)`` is a no-op.
+        call sites can pass the result directly to ``with_provenance()``
+        without an extra guard — ``with_provenance(None)`` is a no-op.
 
         Parameters
         ----------
         operation:
             Provenance operation label (e.g. ``"broadcast"``).
         parents:
-            Raw parent objects that carry a ``.source`` attribute (already
-            filtered and deduplicated by the caller).
+            Raw parent objects that carry a ``.provenance`` attribute
+            (already filtered and deduplicated by the caller).
         metadata:
             Optional mapping of scalar/string metadata.
         """
@@ -184,9 +199,9 @@ class Provenance:
             return ParentInfo(
                 type_name=type(p).__name__,
                 name=getattr(p, "name", None),
-                source=getattr(p, "source", None),
+                provenance=getattr(p, "provenance", None),
                 fingerprint=fp,
-                obj=p if keep else None,
+                parent=p if keep else None,
             )
 
         refs = tuple(_make_parent(p) for p in parents)
@@ -201,33 +216,33 @@ class Provenance:
 def _parent_key(p: Any) -> Any:
     """Stable dedup key for a parent node.
 
-    Uses live-object identity in FULL mode (``p.obj`` is set), and a
-    ``(type_name, name, id(source))`` tuple in LIGHTWEIGHT mode.  The
-    parent's ``.source`` Provenance node is the same object on every path
-    to the same ancestor, so its id is stable even though each path holds
-    a distinct ``ParentInfo`` instance.
+    Uses live-object identity in FULL mode (``p.parent`` is set), and a
+    ``(type_name, name, id(provenance))`` tuple in LIGHTWEIGHT mode.  The
+    parent's ``.provenance`` node is the same object on every path to the
+    same ancestor, so its id is stable even though each path holds a
+    distinct ``ParentInfo`` instance.
 
-    Two distinct *root* parents (``source is None``) that share a type and
-    name collapse to one key in LIGHTWEIGHT — an accepted limitation of
-    dropping object identity; FULL keeps them distinct via ``id(p.obj)``.
+    Two distinct *root* parents (``provenance is None``) that share a type
+    and name collapse to one key in LIGHTWEIGHT — an accepted limitation of
+    dropping object identity; FULL keeps them distinct via ``id(p.parent)``.
     """
     if isinstance(p, ParentInfo):
-        if p.obj is not None:
-            return id(p.obj)
-        return (p.type_name, p.name, id(p.source))
+        if p.parent is not None:
+            return id(p.parent)
+        return (p.type_name, p.name, id(p.provenance))
     return id(p)
 
 
 def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
     """Return all ancestor nodes reachable via provenance chains.
 
-    Traverses ``node.source.parents`` recursively (breadth-first) and
+    Traverses ``node.provenance.parents`` recursively (breadth-first) and
     returns a flat list of unique ancestors, ordered by discovery.
     The input *node* is **not** included in the result.
 
     Returns :class:`ParentInfo` descriptors.  In FULL mode the live parent
-    object is accessible via ``ancestor.obj``; in LIGHTWEIGHT ``ancestor.obj``
-    is ``None``.
+    object is accessible via ``ancestor.parent``; in LIGHTWEIGHT
+    ``ancestor.parent`` is ``None``.
     """
     visited: set = {id(node)}
     ancestors: list = []
@@ -240,15 +255,15 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
             queue.append(p)
             ancestors.append(p)
 
-    if node.source is not None:
-        for p in node.source.parents:
+    if node.provenance is not None:
+        for p in node.provenance.parents:
             _enqueue(p)
 
     while queue:
         current = queue.pop(0)
-        current_source = current.source
-        if current_source is not None:
-            for p in current_source.parents:
+        current_provenance = current.provenance
+        if current_provenance is not None:
+            for p in current_provenance.parents:
                 _enqueue(p)
 
     return ancestors
@@ -293,9 +308,9 @@ def provenance_dag(dist: Distribution):
         if key not in visited:
             visited.add(key)
             dot.node(nid, _label(p.type_name, p.name))
-            if p.source is not None:
-                for pp in p.source.parents:
-                    _visit_parent(pp, nid, p.source.operation)
+            if p.provenance is not None:
+                for pp in p.provenance.parents:
+                    _visit_parent(pp, nid, p.provenance.operation)
         dot.edge(nid, child_nid, label=operation)
 
     def _visit_dist(d: Distribution) -> str:
@@ -304,9 +319,9 @@ def provenance_dag(dist: Distribution):
             return nid
         visited.add(id(d))
         dot.node(nid, _label(type(d).__name__, d.name or ""))
-        if d.source is not None:
-            for p in d.source.parents:
-                _visit_parent(p, nid, d.source.operation)
+        if d.provenance is not None:
+            for p in d.provenance.parents:
+                _visit_parent(p, nid, d.provenance.operation)
         return nid
 
     _visit_dist(dist)

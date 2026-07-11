@@ -406,7 +406,9 @@ def _update_distribution(
             _update(h, dist.log_weights, depth + 1, max_array_bytes)
     else:
         # Generic fallback for other non-TFP distributions.
-        _SKIP = frozenset({"_name", "_source", "_auxiliary", "_sampling_cost"})
+        _SKIP = frozenset(
+            {"_name", "_name_is_auto", "_provenance", "_annotations", "_sampling_cost"}
+        )
         for attr, val in sorted(vars(dist).items()):
             if attr in _SKIP or attr.startswith("__"):
                 continue

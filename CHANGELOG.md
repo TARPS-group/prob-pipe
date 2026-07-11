@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Tracked` / `Annotated` identity-and-metadata mixins (#336).** New
+  `probpipe.core.tracked` module defining the shared identity attributes and methods every
+  ProbPipe object carries: `Tracked` (a `name`, a `name_is_auto` flag, and a
+  write-once `provenance` attached via `with_provenance`, plus `with_name` for
+  rename-as-copy) and `Annotated` (a free-form `annotations` mapping).
+  `Distribution` and `Record` / `NumericRecord` inherit both; the batch types
+  (`RecordArray` / `NumericRecordArray` / `DistributionArray`) are tracked
+  terms too. `name_is_auto` records whether an object's name was auto-derived
+  by the operation that produced it (`True`) or supplied by the user
+  (`False`), so later composition can re-derive auto names while preserving
+  user-given ones. The construction-time guarantee that every tracked term
+  has a non-empty name is enforced by the mixin's metaclass, replacing the
+  previous `Distribution`-only metaclass check and extending it to the
+  `Record` family. Both mixins are exported from the top-level `probpipe`
+  package.
+
 - **pyabc SMC-ABC inference backend (#238).** A `pyabc_smcabc` method
   (priority 6) for `SimpleGenerativeModel`: it derives a joint pyabc prior from
   the prior's flattened parameter vector (so correlated and multivariate priors
@@ -89,6 +105,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **Identity attributes and methods renamed to the design-reference vocabulary (#336,
+  breaking).** The duplicated per-class naming/provenance/metadata code on
+  `Distribution` and `Record` is replaced by the `Tracked` / `Annotated`
+  mixins, with a hard rename (no aliases): `source` → `provenance`,
+  `with_source(...)` → `with_provenance(...)`, `renamed(...)` →
+  `with_name(...)` (rename provenance now records the operation as
+  `"with_name"`), and the `auxiliary` metadata store → `annotations`
+  (`_auxiliary` → `_annotations`; a `DataTree` remains a valid value and the
+  diagnostics accessors are unchanged). `make_posterior`'s `auxiliary=`
+  keyword is now `annotations=`. `ParentInfo` fields follow the reference:
+  `obj` → `parent` and `source` → `provenance` (the serialized provenance
+  dict key changes accordingly). `BootstrapReplicateDistribution`'s internal
+  source-distribution slot is renamed `_source_dist` and is now included in
+  content fingerprints (previously it was unintentionally skipped, so
+  replicates of different source distributions could fingerprint equal).
 
 - **Leaf-keyed named-collection surface for `Record` / `EventTemplate` (#326,
   breaking).** The mapping protocol (`keys`, `values`, `items`, `__iter__`,

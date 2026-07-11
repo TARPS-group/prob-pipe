@@ -47,7 +47,7 @@ class _KeyedLikelihood:
 
 
 class _NormalLocationPosterior:
-    _auxiliary = None
+    _annotations = None
 
     def _sample(self, key, shape):
         import jax
@@ -185,8 +185,8 @@ class TestAddPpc:
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
         )
-        assert posterior._auxiliary is not None
-        ppc_ds = posterior._auxiliary["diagnostics"]["runs"]["ppc"].to_dataset()
+        assert posterior._annotations is not None
+        ppc_ds = posterior._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
         assert "p_value" in ppc_ds.data_vars
         assert ppc_ds.attrs["plot_ready"] is False
         assert ppc_ds.attrs["plot_fn"] == ""
@@ -201,7 +201,7 @@ class TestAddPpc:
             generative_likelihood=_NumpyLikelihood(),
             n_replications=50,
         )
-        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
+        view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         p = view.p_values.get("_mean")
         if isinstance(p, float):
             assert 0.0 <= p <= 1.0
@@ -219,7 +219,7 @@ class TestAddPpc:
             key=jax.random.PRNGKey(0),
         )
 
-        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
+        view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert view.p_values["_mean"] == pytest.approx(0.5, abs=0.06)
 
     def test_p_value_responds_to_shifted_observed_data(self):
@@ -235,7 +235,7 @@ class TestAddPpc:
             key=jax.random.PRNGKey(0),
         )
 
-        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
+        view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert view.p_values["_mean"] < 0.01
 
     def test_multiple_test_fns(self, posterior):
@@ -247,7 +247,7 @@ class TestAddPpc:
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
         )
-        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
+        view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         assert set(view.p_values.keys()) == {"_mean", "_std"}
 
     def test_observed_stored(self, posterior):
@@ -259,7 +259,7 @@ class TestAddPpc:
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
         )
-        view = PPCView(posterior._auxiliary["diagnostics"]["runs"]["ppc"])
+        view = PPCView(posterior._annotations["diagnostics"]["runs"]["ppc"])
         obs = view.observed.get("_mean")
         if isinstance(obs, float):
             assert np.isfinite(obs)
@@ -285,7 +285,7 @@ class TestAddPpc:
             n_replications=5,
         )
 
-        ppc_ds = posterior._auxiliary["diagnostics"]["runs"]["ppc"].to_dataset()
+        ppc_ds = posterior._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
         assert ppc_ds.attrs["has_observed_data"] is False
         assert bool(ppc_ds.attrs["wrote_arviz_observed_data"]) is False
         assert "replicated_stat_mean" in ppc_ds.data_vars
@@ -322,7 +322,7 @@ class TestAddPpc:
             generative_likelihood=_NumpyLikelihood(),
             n_replications=20,
         )
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert view.ppc.exists
 
     def test_keyed_likelihood_uses_batched_path(self, posterior):
@@ -357,4 +357,4 @@ class TestAddPpc:
 
         _write_ppc_record(posterior, record)
 
-        assert "posterior_predictive" in posterior._auxiliary["arviz"].children
+        assert "posterior_predictive" in posterior._annotations["arviz"].children

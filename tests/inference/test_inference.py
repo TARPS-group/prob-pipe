@@ -48,13 +48,13 @@ class TestApproximateDistribution:
         warmup1 = jax.random.normal(jax.random.PRNGKey(2), (10, 2))
         warmup2 = jax.random.normal(jax.random.PRNGKey(3), (10, 2))
         chains = [chain1, chain2]
-        auxiliary = build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
+        annotations = build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         return make_posterior(
             chains,
             parents=(prior,),
             algorithm="test",
-            auxiliary=auxiliary,
+            annotations=annotations,
         )
 
     def test_empty_chains_raises(self):
@@ -75,17 +75,17 @@ class TestApproximateDistribution:
 
     def test_algorithm_from_provenance(self, two_chain_dist):
         assert two_chain_dist.algorithm == "test"
-        assert two_chain_dist.source.metadata["algorithm"] == "test"
+        assert two_chain_dist.provenance.metadata["algorithm"] == "test"
 
-    def test_auxiliary_contains_arviz_data(self, two_chain_dist):
-        assert two_chain_dist.auxiliary is not None
+    def test_annotations_contains_arviz_data(self, two_chain_dist):
+        assert two_chain_dist.annotations is not None
         # ArviZ-compatible data use xarray DataTree on ArviZ 1.x.
-        assert hasattr(two_chain_dist.auxiliary, "groups") or hasattr(
-            two_chain_dist.auxiliary, "children"
+        assert hasattr(two_chain_dist.annotations, "groups") or hasattr(
+            two_chain_dist.annotations, "children"
         )
 
     def test_arviz_data_accessor(self, two_chain_dist):
-        aux = two_chain_dist.auxiliary
+        aux = two_chain_dist.annotations
         assert aux is not None
         assert "arviz" in aux.children
 
@@ -95,7 +95,7 @@ class TestApproximateDistribution:
         assert "warmup" in arviz_data.children
 
     def test_inference_data_alias(self, two_chain_dist):
-        aux = two_chain_dist.auxiliary
+        aux = two_chain_dist.annotations
         assert aux is not None
         assert "arviz" in aux.children
 
@@ -104,7 +104,7 @@ class TestApproximateDistribution:
         assert "posterior" in idata.children
         assert "warmup" in idata.children
 
-    def test_arviz_data_none_without_auxiliary(self):
+    def test_arviz_data_none_without_annotations(self):
         dist = ApproximateDistribution(
             [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
             name="x",
@@ -112,7 +112,7 @@ class TestApproximateDistribution:
         assert dist.arviz_data is None
         assert dist.inference_data is None
 
-    def test_arviz_data_falls_back_to_legacy_auxiliary_layout(self):
+    def test_arviz_data_falls_back_to_legacy_annotations_layout(self):
         import xarray as xr
 
         dist = ApproximateDistribution(
@@ -120,7 +120,7 @@ class TestApproximateDistribution:
             name="x",
         )
         legacy_aux = xr.DataTree.from_dict({"posterior": xr.Dataset()})
-        dist._auxiliary = legacy_aux
+        dist._annotations = legacy_aux
 
         assert dist.arviz_data is legacy_aux
         assert dist.inference_data is legacy_aux
@@ -130,11 +130,11 @@ class TestApproximateDistribution:
             [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
             name="x",
         )
-        dist._auxiliary = object()
+        dist._annotations = object()
 
         assert dist.warmup_samples is None
 
-    def test_make_posterior_accepts_auxiliary_dataset_nodes(self):
+    def test_make_posterior_accepts_annotations_dataset_nodes(self):
         import xarray as xr
 
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
@@ -143,13 +143,13 @@ class TestApproximateDistribution:
             [chain],
             parents=(prior,),
             algorithm="test",
-            auxiliary={"posterior": xr.Dataset()},
+            annotations={"posterior": xr.Dataset()},
         )
 
         assert posterior.inference_data is not None
         assert "posterior" in posterior.inference_data.children
 
-    def test_make_posterior_skips_auxiliary_root_group(self):
+    def test_make_posterior_skips_annotations_root_group(self):
         import xarray as xr
 
         chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
@@ -158,18 +158,18 @@ class TestApproximateDistribution:
             [chain],
             parents=(prior,),
             algorithm="test",
-            auxiliary={
+            annotations={
                 "/": xr.Dataset(attrs={"ignored": True}),
                 "posterior": xr.Dataset(),
             },
         )
 
-        assert posterior.auxiliary is not None
-        assert "arviz" in posterior.auxiliary.children
+        assert posterior.annotations is not None
+        assert "arviz" in posterior.annotations.children
         assert "posterior" in posterior.inference_data.children
         assert "" not in posterior.inference_data.children
 
-    def test_warmup_from_auxiliary(self, two_chain_dist):
+    def test_warmup_from_annotations(self, two_chain_dist):
         warmup = two_chain_dist.warmup_samples
         assert warmup is not None
         assert len(warmup) == 2
@@ -479,13 +479,13 @@ class TestApproximateDistributionValuesTemplate:
         template = EventTemplate(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
-        auxiliary = build_mcmc_datatree([chain], warmup_chains=[warmup])
+        annotations = build_mcmc_datatree([chain], warmup_chains=[warmup])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior(
             [chain],
             parents=(prior,),
             algorithm="test",
-            auxiliary=auxiliary,
+            annotations=annotations,
             event_template=template,
         )
         draws = post.draws(include_warmup=True)
@@ -587,31 +587,31 @@ class TestApproximateDistributionValuesTemplate:
         assert dist.num_chains == 1
         assert dist.num_draws == 20
 
-    def test_bare_dist_no_auxiliary(self):
+    def test_bare_dist_no_annotations(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
-        assert dist.auxiliary is None
+        assert dist.annotations is None
         assert dist.inference_data is None
 
-    def test_auxiliary_has_posterior_group(self):
+    def test_annotations_has_posterior_group(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        auxiliary = build_mcmc_datatree([chain])
+        annotations = build_mcmc_datatree([chain])
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         post = make_posterior(
             [chain],
             parents=(prior,),
             algorithm="test",
-            auxiliary=auxiliary,
+            annotations=annotations,
         )
 
-        assert post.auxiliary is not None
-        assert "arviz" in post.auxiliary.children
+        assert post.annotations is not None
+        assert "arviz" in post.annotations.children
 
         idata = post.inference_data
         assert idata is not None
         assert "posterior" in idata.children
 
-    def test_algorithm_default_without_auxiliary(self):
+    def test_algorithm_default_without_annotations(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
         assert dist.algorithm == "unknown"
@@ -642,7 +642,7 @@ class TestRWMH:
         assert result.algorithm == "blackjax_rwmh"
 
     def test_inference_data_produced(self):
-        """RWMH produces auxiliary DataTree with posterior group."""
+        """RWMH produces an annotations DataTree with posterior group."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
@@ -655,8 +655,8 @@ class TestRWMH:
         assert "posterior" in result.inference_data
         # RWMH scalar stats (accept_rate, step_size) live in provenance,
         # not as per-draw arrays in sample_stats.
-        assert result.source.metadata["accept_rate"] > 0
-        assert result.source.metadata["step_size"] == 0.5
+        assert result.provenance.metadata["accept_rate"] > 0
+        assert result.provenance.metadata["step_size"] == 0.5
 
     def test_multi_chain(self):
         """RWMH with multiple chains."""
@@ -696,8 +696,8 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert result.source is not None
-        assert result.source.operation == "blackjax_rwmh"
+        assert result.provenance is not None
+        assert result.provenance.operation == "blackjax_rwmh"
 
     def test_with_log_prob_fn_normal_normal_conjugate(self):
         """RWMH posterior must recover the analytical Normal-Normal conjugate.

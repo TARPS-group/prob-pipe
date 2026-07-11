@@ -116,10 +116,10 @@ class TestProbPipeConverter:
     def test_provenance_attached(self):
         g = Gamma(concentration=3.0, rate=1.0, name="prior")
         result = converter_registry.convert(g, Normal)
-        assert result.source is not None
-        assert result.source.operation == "from_distribution"
-        assert len(result.source.parents) == 1
-        assert result.source.parents[0].name == "prior"
+        assert result.provenance is not None
+        assert result.provenance.operation == "from_distribution"
+        assert len(result.provenance.parents) == 1
+        assert result.provenance.parents[0].name == "prior"
 
     def test_approximate_flag(self):
         g = Gamma(concentration=3.0, rate=1.0, name="g")
@@ -171,7 +171,7 @@ class TestAllCrossFamilyConversions:
         g = Gamma(concentration=9.0, rate=1.0, name="g")
         result = converter_registry.convert(g, target_cls, check_support=False, num_samples=500)
         assert isinstance(result, target_cls)
-        assert result.source is not None  # cross-family: provenance attached
+        assert result.provenance is not None  # cross-family: provenance attached
 
     def test_bernoulli_from_poisson(self):
         p = Poisson(rate=0.5, name="p")
@@ -305,8 +305,8 @@ class TestTFPConverter:
 
     def test_tfp_to_probpipe_provenance(self):
         result = converter_registry.convert(tfd.Normal(0, 1), Normal)
-        assert result.source is not None
-        assert result.source.operation == "convert_from_tfp"
+        assert result.provenance is not None
+        assert result.provenance.operation == "convert_from_tfp"
 
     def test_unknown_tfp_to_empirical(self):
         """Unknown TFP types fall back to sampling → RecordEmpiricalDistribution."""
@@ -434,8 +434,8 @@ class TestScipyConverter:
         import scipy.stats as ss
 
         result = converter_registry.convert(ss.norm(0, 1), Normal)
-        assert result.source is not None
-        assert result.source.operation == "convert_from_scipy"
+        assert result.provenance is not None
+        assert result.provenance.operation == "convert_from_scipy"
 
     def test_scipy_norm_positional_args(self):
         """Scipy norm created with positional args should still extract correctly."""
@@ -628,8 +628,8 @@ class TestBootstrapMetadata:
         """TFP distributions have exact mean/var, so no bootstrap in metadata."""
         g = Gamma(concentration=9.0, rate=1.0, name="g")
         result = converter_registry.convert(g, Normal, num_samples=500)
-        assert result.source is not None
-        meta = result.source.metadata
+        assert result.provenance is not None
+        meta = result.provenance.metadata
         # Gamma has analytical mean/variance → no BootstrapDistribution stored
         assert "mean_bootstrap" not in meta
         assert "var_bootstrap" not in meta
@@ -639,10 +639,10 @@ class TestBootstrapMetadata:
         samples = jax.random.normal(jax.random.PRNGKey(0), (200,))
         emp = RecordEmpiricalDistribution(samples[:, None], name="x")
         result = converter_registry.convert(emp, Normal)
-        assert result.source is not None
+        assert result.provenance is not None
         # EmpiricalDistribution._mean()/_variance() return plain arrays;
         # at minimum, provenance should be attached
-        assert result.source.operation == "from_distribution"
+        assert result.provenance.operation == "from_distribution"
 
     def test_same_class_no_bootstrap_metadata(self):
         """Same-class conversion returns source directly, no provenance."""
@@ -654,10 +654,10 @@ class TestBootstrapMetadata:
         """Cross-family conversion attaches provenance with source as parent."""
         g = Gamma(concentration=9.0, rate=1.0, name="g")
         result = converter_registry.convert(g, Normal)
-        assert result.source is not None
-        assert result.source.operation == "from_distribution"
-        assert len(result.source.parents) == 1
-        assert result.source.parents[0].name == "g"
+        assert result.provenance is not None
+        assert result.provenance.operation == "from_distribution"
+        assert len(result.provenance.parents) == 1
+        assert result.provenance.parents[0].name == "g"
 
 
 class TestEdgeCases:
@@ -844,9 +844,9 @@ class TestProtocolConversion:
         samples = jax.random.normal(jax.random.PRNGKey(5), (200,))
         emp = RecordEmpiricalDistribution(samples, name="posterior")
         result = converter_registry.convert(emp, SupportsLogProb)
-        assert result.source is not None
-        assert len(result.source.parents) == 1
-        assert result.source.parents[0].name == "posterior"
+        assert result.provenance is not None
+        assert len(result.provenance.parents) == 1
+        assert result.provenance.parents[0].name == "posterior"
 
     def test_multi_field_empirical_preserves_template_through_kde(self):
         """Multi-field RecordEmpirical → KDE preserves the named template

@@ -56,7 +56,7 @@ def _add_group(
     group_name: str,
     dataset: xr.Dataset,
 ) -> None:
-    """Add or replace a group in ``posterior._auxiliary`` in place.
+    """Add or replace a group in ``posterior._annotations`` in place.
 
     Preserves existing nested DataTree groups by flattening the tree to a
     path -> Dataset dictionary, replacing/inserting the target group, and
@@ -64,7 +64,7 @@ def _add_group(
     """
     import xarray as xr
 
-    aux = getattr(posterior, "_auxiliary", None)
+    aux = getattr(posterior, "_annotations", None)
 
     dicto: dict[str, Any] = {}
 
@@ -75,7 +75,7 @@ def _add_group(
 
     object.__setattr__(
         posterior,
-        "_auxiliary",
+        "_annotations",
         xr.DataTree.from_dict(dicto),
     )
 
@@ -84,7 +84,7 @@ def _get_or_create_mcmc_ds(posterior: ApproximateDistribution) -> xr.Dataset:
     """Return existing ``/diagnostics/mcmc`` dataset or an empty one."""
     import xarray as xr
 
-    aux = getattr(posterior, "_auxiliary", None)
+    aux = getattr(posterior, "_annotations", None)
 
     if aux is not None:
         try:
@@ -135,7 +135,7 @@ def _mcmc_has_field(
     field_name: str,
 ) -> bool:
     """Return True if ``field_name`` exists in ``/diagnostics/mcmc``."""
-    aux = getattr(posterior, "_auxiliary", None)
+    aux = getattr(posterior, "_annotations", None)
 
     if aux is None:
         return False

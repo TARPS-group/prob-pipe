@@ -80,7 +80,7 @@ def condition_on_nutpie(
         chains,
         parents=(model,),
         algorithm="nutpie_nuts",
-        auxiliary=trace,
+        annotations=trace,
         event_template=event_template,
         field_order=field_order,
         num_results=num_results,

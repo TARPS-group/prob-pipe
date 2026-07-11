@@ -436,14 +436,17 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 1. **Distributions are immutable** — parameters fixed at construction;
    operations return new distributions. The one documented exception
-   is `Distribution._auxiliary` (a `DataTree` of post-construction
+   is the `annotations` store (`_annotations`, provided by the
+   `Annotated` mixin in `probpipe.core.tracked`; a string-keyed
+   mapping, typically an `xarray.DataTree`, of post-construction
    metadata): validators and diagnostic ops (e.g.,
    `predictive_check`) attach their results in-place under named
-   groups (`auxiliary["predictive_check"]`, future `auxiliary["loo"]`,
-   ...). This is a deliberate carve-out — the alternative of returning
-   a renamed clone for every diagnostic would break source/identity
-   tracking that downstream code relies on. Treat `_auxiliary` as
-   append-only; never mutate other state post-construction.
+   groups (`annotations["predictive_check"]`, future
+   `annotations["loo"]`, ...). This is a deliberate carve-out — the
+   alternative of returning a renamed clone for every diagnostic would
+   break the provenance/identity tracking that downstream code relies
+   on. Treat `_annotations` as append-only; never mutate other state
+   post-construction.
 2. **Operations are standalone workflow functions** — `sample()`, `mean()`,
    `log_prob()`, `condition_on()` are `WorkflowFunction` instances in
    `probpipe/core/ops.py`.
@@ -478,13 +481,19 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `Record` and `RecordDistribution` because it shadowed methods and
    properties like `.mean`, `.var`, `.fields`, `.map`, and produced
    confusing errors.
-6. **Every distribution is named** — `Distribution.__init__` requires a
-   non-empty `name: str`.  Leaf distributions (Normal, Gamma, etc.)
-   require an explicit `name=` at construction.  Composite distributions
+6. **Every object is a tracked term** — distributions, records, and the
+   batch types all carry the `Tracked` identity attributes and methods
+   (`name`, `name_is_auto`, write-once `provenance` via
+   `with_provenance`, `with_name`) from `probpipe.core.tracked`, and
+   the mixin's metaclass enforces a non-empty `name` at construction
+   for every host.  Leaf distributions (Normal, Gamma, etc.) require an
+   explicit `name=` at construction.  Composite distributions
    (ProductDistribution, EmpiricalDistribution, TransformedDistribution,
-   etc.) auto-generate a name from their components when one is not
-   provided.  `ProductDistribution` validates that each component
-   distribution's `name` matches its keyword key (e.g.,
+   etc.) auto-derive a name from their components when one is not
+   provided and record that with `name_is_auto=True`; an operation that
+   builds a new object from a parent keeps the flag consistent with
+   where the name came from.  `ProductDistribution` validates that each
+   component distribution's `name` matches its keyword key (e.g.,
    `ProductDistribution(x=Normal(0, 1, name="x"))`).
 7. **Uniform output wrap at the WorkflowFunction boundary** — every
    `@workflow_function` return is coerced into the
@@ -518,7 +527,8 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 | Abstraction | Description |
 |-------------|-------------|
-| `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and `auxiliary` properties |
+| `Tracked` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `Tracked` carries `name`, `name_is_auto`, and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Distribution` and `Record` mix in both; the batch types are tracked terms through their bases. |
+| `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and the `Tracked` / `Annotated` identity attributes |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; leaves stored verbatim (no coercion); `select()` for workflow function splatting |
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `to_vector` / `vector_size` (the numeric 1-D serialization; the inverse `from_vector` lives on `NumericEventTemplate`). Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
 | `RecordArray` | Batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array |

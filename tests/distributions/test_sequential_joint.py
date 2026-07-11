@@ -287,8 +287,8 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, z=jnp.array(0.0))
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "condition_on"
 
     def test_condition_on_unknown_raises(self):
         joint = SequentialJointDistribution(

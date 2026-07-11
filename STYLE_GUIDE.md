@@ -340,7 +340,7 @@ from probpipe.core.record import Record
 
 A handful of `core/` and `distributions/` modules fit this profile —
 `protocols.py`, `record.py`, `distribution.py`, `ops.py`,
-`constraints.py`, `provenance.py`, `transition.py`, `node.py`,
+`constraints.py`, `provenance.py`, `tracked.py`, `transition.py`, `node.py`,
 `continuous.py`, `discrete.py`, `multivariate.py`, `transformed.py`.
 Everything else in those subpackages (the `_*.py` files) is an
 implementation detail re-exported via the package `__init__.py`.
@@ -757,13 +757,15 @@ modules (`_*.py`) whose symbols are re-exported through the package
 Distribution objects are immutable. Parameters are fixed at construction;
 operations return new distribution objects rather than mutating state.
 
-**The one carve-out is `Distribution._auxiliary`**, a `DataTree` whose
-job is to collect post-construction metadata (validation results,
-diagnostic outputs, future LOO/WAIC scores) under named groups. Ops
-like `predictive_check` mutate it in place because the alternative —
-returning a renamed clone for every diagnostic — would break the
-source/identity tracking that downstream code relies on. Treat it as
-append-only and never use it as a back-channel for mutating
+**The one carve-out is the `annotations` store** (`_annotations`, provided
+by the `Annotated` mixin in `probpipe.core.tracked` and carried by
+`Distribution` and `Record`): a string-keyed mapping — typically an
+`xarray.DataTree` — whose job is to collect post-construction metadata
+(validation results, diagnostic outputs, future LOO/WAIC scores) under
+named groups. Ops like `predictive_check` mutate it in place because the
+alternative — returning a renamed clone for every diagnostic — would
+break the provenance/identity tracking that downstream code relies on.
+Treat it as append-only and never use it as a back-channel for mutating
 parameter-like state.
 
 ### 9.3 Error messages

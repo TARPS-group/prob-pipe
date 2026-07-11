@@ -20,7 +20,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from ._distribution_base import Distribution, _DistributionMeta
+from ._distribution_base import Distribution
 from .event_template import ArraySpec, EventTemplate
 from .protocols import (
     SupportsCovariance,
@@ -30,6 +30,7 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record
+from .tracked import _TrackedMeta
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
 
@@ -197,9 +198,9 @@ class _RecordDistributionView(Distribution):
             raise KeyError(
                 f"No field {key!r} in event_template (available: {tuple(template.children)})"
             )
-        # Bypass Distribution.__init__ validation (view name comes from
-        # the field key, not a user-supplied argument).
-        self._name = key
+        # Bypass Distribution.__init__ validation; the view's name is
+        # derived from the field key, not user-supplied, so it is auto.
+        self._init_tracked(key, name_is_auto=True)
         self._parent = parent
         self._key = key
         self._key_path = (key,)
@@ -346,7 +347,7 @@ def _build_event_template(
 # ---------------------------------------------------------------------------
 
 
-class _RecordDistributionMeta(_DistributionMeta):
+class _RecordDistributionMeta(_TrackedMeta):
     """Metaclass adding the ``event_template`` set-or-derivable check
     on top of the base ``name`` check.
 

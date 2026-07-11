@@ -498,7 +498,7 @@ class WorkflowFunction(Node):
 
         # Non-broadcast call — one function invocation, then wrap.
         # Provenance parents are the inputs that carry their own
-        # ``.source`` slot (Distribution / Record / RecordArray).
+        # ``.provenance`` slot (Distribution / Record / RecordArray).
         # Known harmless duplication: the distribution-broadcast module builds
         # the same request shape. A later execution cleanup can centralize this
         # without reintroducing private facade wrappers.
@@ -511,7 +511,7 @@ class WorkflowFunction(Node):
         seen: set[int] = set()
         candidates = []
         for v in values.values():
-            if hasattr(v, "source") and id(v) not in seen:
+            if hasattr(v, "provenance") and id(v) not in seen:
                 seen.add(id(v))
                 candidates.append(v)
         name = self._name or self._func.__name__

@@ -190,7 +190,7 @@ for label, bagged in [("Poisson", bagged_poisson), ("NegBin", bagged_nb)]:
 # 5. Provenance
 # ---------------------------------------------------------------------------
 
-src = bagged_nb.source
+src = bagged_nb.provenance
 print("Provenance (NegBin bagged posterior):")
 print(f"  Operation:   {src.operation}")
 print(f"  Orchestrate: {src.metadata['orchestrate']}")

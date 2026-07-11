@@ -192,4 +192,6 @@ class FullFactorialDesign(Design):
             template=EventTemplate(template_spec),
             name=f"FullFactorialDesign({','.join(names)})",
         )
+        # The name is derived from the marginals, not user-typed.
+        object.__setattr__(self, "_name_is_auto", True)
         object.__setattr__(self, "_marginals", dict(marginals))

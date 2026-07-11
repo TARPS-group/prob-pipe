@@ -41,8 +41,12 @@ class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
     This class is generic in ``X`` (input type) and ``Y`` (output type).
     """
 
-    def __init__(self, *, name: str | None = None):
-        super().__init__(name=name or type(self).__name__)
+    def __init__(self, *, name: str | None = None, name_is_auto: bool = False):
+        # Default only when no name was supplied; a subclass passing a
+        # derived name with name_is_auto=True keeps its flag.
+        if not name:
+            name, name_is_auto = type(self).__name__, True
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
     # -- Fundamental interface ----------------------------------------------
 

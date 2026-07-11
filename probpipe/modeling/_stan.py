@@ -17,6 +17,7 @@ import numpy as np
 from ..core.distribution import Distribution
 from ..core.event_template import NumericEventTemplate
 from ..core.protocols import SupportsLogProb
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
 from ._base import ProbabilisticModel
 
@@ -157,9 +158,10 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
 
         self._stan_file = stan_file
         self._stan_data = data
-        # ``Distribution`` metaclass requires a non-empty name; default
-        # to the class name when the caller doesn't supply one.
-        self._name = name if name else "StanModel"
+        # Default to the class name when the caller does not supply one;
+        # the default is an auto-derived name.
+        name, name_is_auto = auto_name(name or None, "StanModel")
+        self._init_tracked(name, name_is_auto=name_is_auto)
 
         # Compile and instantiate. BridgeStan's constructor takes the
         # ``.stan`` path directly (compiling on demand) and serializes a
@@ -263,9 +265,9 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
 
     def __init__(self, model: StanModel):
         self._model = model
-        # ``base.name`` is guaranteed non-empty by the Distribution
-        # metaclass — wrap with an ``_unconstrained`` suffix.
-        self._name = f"{model.name}_unconstrained"
+        # ``base.name`` is guaranteed non-empty by the Tracked
+        # metaclass check — wrap with an ``_unconstrained`` suffix (derived, so auto).
+        self._init_tracked(f"{model.name}_unconstrained", name_is_auto=True)
 
     @property
     def event_shape(self) -> tuple[int, ...]:

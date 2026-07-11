@@ -421,9 +421,9 @@ class TestConditionOn:
     def test_provenance(self):
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
         cond = condition_on(jg, x=jnp.array([0.0]))
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
-        assert "x" in cond.source.metadata["conditioned"]
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "condition_on"
+        assert "x" in cond.provenance.metadata["conditioned"]
 
     def test_conditional_sampling(self):
         """Draw samples from conditional and verify they're centered correctly."""

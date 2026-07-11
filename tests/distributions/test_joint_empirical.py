@@ -349,9 +349,9 @@ class TestConditionOn:
             y=jnp.array([3.0, 4.0]),
         )
         cond = condition_on(je, x=jnp.array(1.0))
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
-        assert "x" in cond.source.metadata["conditioned"]
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "condition_on"
+        assert "x" in cond.provenance.metadata["conditioned"]
 
     def test_condition_on_unknown_raises(self):
         je = JointEmpirical(

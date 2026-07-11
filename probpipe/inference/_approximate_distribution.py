@@ -1,4 +1,4 @@
-"""Approximate empirical distribution with chain structure and auxiliary DataTree."""
+"""Approximate empirical distribution with chain structure and annotations DataTree."""
 
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     Stores per-chain sample arrays for chain-structured access via
     :meth:`draws`.  Algorithm metadata, sample statistics, warmup
-    samples, and the ArviZ ``DataTree`` live in ``dist.auxiliary``
+    samples, and the ArviZ ``DataTree`` live in ``dist.annotations``
     (on the Distribution base class), not as attributes of this class.
 
     Parameters
@@ -302,14 +302,14 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     @property
     def algorithm(self) -> str:
         """Name of the inference algorithm (read from provenance)."""
-        src = self.source
+        src = self.provenance
         if src is not None:
             return src.metadata.get("algorithm", src.operation)
         return "unknown"
 
     @property
     def arviz_data(self) -> DataTree | None:
-        """The ArviZ-compatible xarray DataTree stored under ``_auxiliary["arviz"]``.
+        """The ArviZ-compatible xarray DataTree stored under ``_annotations["arviz"]``.
 
         Use ArviZ, arviz-stats, and arviz-plots functions for diagnostics and
         plots::
@@ -319,11 +319,11 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
         Plotting utilities may also consume this tree where supported.
 
-        Returns ``None`` if no auxiliary data has been attached. Falls
-        back to ``_auxiliary`` directly if set before the ``/arviz/``
+        Returns ``None`` if no annotations have been attached. Falls
+        back to ``_annotations`` directly if set before the ``/arviz/``
         subtree convention was adopted.
         """
-        aux = self.auxiliary
+        aux = self.annotations
         if aux is None:
             return None
         if hasattr(aux, "children") and "arviz" in aux.children:
@@ -342,7 +342,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     @property
     def warmup_samples(self) -> list[Array] | None:
-        """Per-chain warmup samples extracted from auxiliary data."""
+        """Per-chain warmup samples extracted from the annotations."""
         arviz_data = self.arviz_data
         if arviz_data is None:
             return None
@@ -370,7 +370,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         chain : int or None
             Chain index.  If ``None``, concatenates all chains.
         include_warmup : bool
-            If ``True`` and warmup samples are in the auxiliary DataTree,
+            If ``True`` and warmup samples are in the annotations DataTree,
             prepend them.
 
         Returns
@@ -430,7 +430,7 @@ def make_posterior(
     parents: tuple[Distribution, ...],
     algorithm: str,
     *,
-    auxiliary: DataTree | None = None,
+    annotations: DataTree | None = None,
     event_template: EventTemplate | None = None,
     field_order: list[str] | None = None,
     weights: ArrayLike | Weights | None = None,
@@ -446,8 +446,8 @@ def make_posterior(
         Parent distributions for provenance tracking.
     algorithm : str
         Inference algorithm name (e.g. ``"tfp_nuts"``, ``"blackjax_rwmh"``).
-    auxiliary : DataTree or None
-        Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
+    annotations : DataTree or None
+        Pre-built annotations DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
     event_template : EventTemplate or None
         If provided, ``draws()`` returns named ``Record``.
@@ -470,7 +470,7 @@ def make_posterior(
     Returns
     -------
     ApproximateDistribution
-        Posterior with chain structure, auxiliary DataTree, and provenance.
+        Posterior with chain structure, annotations DataTree, and provenance.
     """
     import xarray as xr
 
@@ -482,19 +482,19 @@ def make_posterior(
         weights=weights,
     )
 
-    if auxiliary is not None:
-        # Nest ArviZ-compatible DataTree groups under /arviz/ so _auxiliary
+    if annotations is not None:
+        # Nest ArviZ-compatible DataTree groups under /arviz/ so _annotations
         # can hold other subtrees (e.g. /diagnostics/) alongside it.
         dicto: dict = {}
-        for group_path, node in auxiliary.items():
+        for group_path, node in annotations.items():
             if group_path == "/":
                 continue
             clean = group_path.lstrip("/")
             ds = node.to_dataset() if isinstance(node, xr.DataTree) else node
             dicto[f"arviz/{clean}"] = ds
-        result._auxiliary = xr.DataTree.from_dict(dicto)
+        result._annotations = xr.DataTree.from_dict(dicto)
 
-    result.with_source(
+    result.with_provenance(
         Provenance.create(
             algorithm, parents=list(parents), metadata={"algorithm": algorithm, **meta}
         )

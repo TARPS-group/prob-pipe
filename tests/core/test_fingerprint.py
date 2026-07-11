@@ -285,6 +285,25 @@ class TestDistributionHashing:
         assert fingerprint(k1) != fingerprint(k2)
 
 
+class TestBootstrapSourceFingerprint:
+    """A sampleable-source bootstrap's fingerprint covers the live source
+    distribution, so replicates of different sources fingerprint distinctly."""
+
+    def test_different_sources_differ(self):
+        from probpipe import BootstrapReplicateDistribution
+
+        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        b2 = BootstrapReplicateDistribution(Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10)
+        assert fingerprint(b1) != fingerprint(b2)
+
+    def test_same_source_matches(self):
+        from probpipe import BootstrapReplicateDistribution
+
+        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        b2 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        assert fingerprint(b1) == fingerprint(b2)
+
+
 # ===========================================================================
 # 7. WorkflowFunction hashing
 # ===========================================================================
@@ -559,7 +578,7 @@ class TestParentInfoIdentity:
     def test_fingerprint_excluded_from_equality(self):
         # Two descriptors for the same ancestor compare/hash equal regardless of
         # the content digest, so a fingerprint can't perturb ancestor-set dedup.
-        a = ParentInfo(type_name="X", name="n", source=None, fingerprint="aaaaaaaaaaaaaaaa")
-        b = ParentInfo(type_name="X", name="n", source=None, fingerprint="bbbbbbbbbbbbbbbb")
+        a = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="aaaaaaaaaaaaaaaa")
+        b = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
         assert a == b
         assert hash(a) == hash(b)

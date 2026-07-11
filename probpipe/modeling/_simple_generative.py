@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.protocols import SupportsSampling
+from ..core.tracked import auto_name
 from ._base import ProbabilisticModel
 from ._likelihood import GenerativeLikelihood
 
@@ -94,9 +95,10 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
             )
         self._prior = prior
         self._likelihood = likelihood
-        # ``Distribution`` metaclass requires a non-empty name; default
-        # to the class name when the caller doesn't supply one.
-        self._name = name if name else "SimpleGenerativeModel"
+        # Default to the class name when the caller does not supply one;
+        # the default is an auto-derived name.
+        name, name_is_auto = auto_name(name or None, "SimpleGenerativeModel")
+        self._init_tracked(name, name_is_auto=name_is_auto)
 
     # -- Distribution interface ---------------------------------------------
 

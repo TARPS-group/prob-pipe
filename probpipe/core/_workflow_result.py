@@ -107,15 +107,15 @@ def _coerce_output(
     Returns
     -------
     Record | RecordArray | Distribution
-        The value, possibly wrapped, with ``.source`` attached when it
+        The value, possibly wrapped, with ``.provenance`` attached when it
         was empty. An already-sourced value keeps its existing source
         (inner marginals produced by the broadcast layer carry their
         own provenance; ``_coerce_output`` doesn't overwrite).
     """
     if broadcast_mode == BROADCAST_WRAP:
         value = _wrap_as_record(value, field_name)
-    if provenance is not None and hasattr(value, "with_source"):
+    if provenance is not None and hasattr(value, "with_provenance"):
         # Existing source, e.g. an inner marginal, keeps its provenance.
         with suppress(RuntimeError):
-            value.with_source(provenance)
+            value.with_provenance(provenance)
     return value

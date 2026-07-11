@@ -114,6 +114,7 @@ from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestor
 from probpipe.core.record import (
     Record,
 )
+from probpipe.core.tracked import Annotated, Tracked
 from probpipe.core.transition import (
     iterate,
     with_conversion,
@@ -193,6 +194,7 @@ from probpipe.record import Design, FullFactorialDesign
 from probpipe.validation import predictive_check
 
 __all__ = [
+    "Annotated",
     # Inference
     "ApproximateDistribution",
     "ArrayRandomFunction",
@@ -301,6 +303,7 @@ __all__ = [
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
     "TFPDistribution",
+    "Tracked",
     # Transformed
     "TransformedDistribution",
     "TruncatedNormal",
