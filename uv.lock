@@ -3573,7 +3573,7 @@ requires-dist = [
     { name = "jupyter", marker = "extra == 'dev'" },
     { name = "matplotlib", marker = "extra == 'pymc'" },
     { name = "matplotlib", marker = "extra == 'viz'" },
-    { name = "mkdocs-jupyter", marker = "extra == 'docs'", specifier = ">=0.25.1,<0.26" },
+    { name = "mkdocs-jupyter", marker = "extra == 'docs'", specifier = "<0.26" },
     { name = "mkdocs-material", marker = "extra == 'docs'" },
     { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'" },
     { name = "nbformat", marker = "extra == 'dev'" },
