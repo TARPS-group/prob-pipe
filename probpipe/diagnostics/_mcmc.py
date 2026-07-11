@@ -2,13 +2,13 @@
 
 This module has two layers:
 
-1. Private pure ops returning ``Record`` objects:
+1. Private pure ops returning payload dicts:
 
    - ``_compute_rhat_op``
    - ``_compute_ess_op``
    - ``_compute_mcse_op``
 
-   These compute diagnostics and return structured ``Record`` results.
+   These compute diagnostics and return structured payload dicts.
    They do not mutate ``posterior._annotations``. Not part of the public API.
 
 2. In-place writer wrappers returning ``None``:
@@ -26,18 +26,18 @@ The in-place wrappers write MCMC summaries under::
     _annotations/diagnostics/mcmc/
 
 The pure ops are useful for workflows where diagnostics are pure operations
-returning ProbPipe ``Record`` objects.
+returning plain payload dicts.
 """
 
 from __future__ import annotations
 
 import json
 import warnings
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 
-from ..core.record import Record
 from ._utils import _dataset_values
 
 if TYPE_CHECKING:
@@ -199,8 +199,8 @@ def _ess_warnings(
     return msgs
 
 
-def _emit_record_warnings(record: Record) -> None:
-    """Emit warnings stored in a diagnostic Record."""
+def _emit_record_warnings(record: Mapping[str, Any]) -> None:
+    """Emit warnings stored in a diagnostic payload."""
     try:
         warnings_list = record["warnings"]
     except Exception:
@@ -218,12 +218,12 @@ def _json_warnings(warnings_list: list[str]) -> str:
     return json.dumps(list(warnings_list))
 
 
-def _record_kind(record: Record) -> str:
-    """Return the diagnostic kind from a Record."""
+def _record_kind(record: Mapping[str, Any]) -> str:
+    """Return the diagnostic kind from a payload mapping."""
     try:
         return str(record["kind"])
     except Exception as exc:
-        raise ValueError("Diagnostic Record is missing required field 'kind'.") from exc
+        raise ValueError("Diagnostic payload is missing required key 'kind'.") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -236,10 +236,10 @@ def _compute_rhat_op(
     *,
     method: str = "rank",
     threshold: float = _RHAT_THRESHOLD,
-) -> Record:
+) -> dict[str, Any]:
     """Pure R-hat diagnostic operation.
 
-    Computes R-hat and returns a ``Record``. Does not mutate
+    Computes R-hat and returns a payload dict. Does not mutate
     ``posterior._annotations`` and does not emit warnings.
 
     Parameters
@@ -253,8 +253,8 @@ def _compute_rhat_op(
 
     Returns
     -------
-    Record
-        Record with fields ``kind``, ``values``, ``warnings``, and ``attrs``.
+    dict
+        Payload dict with keys ``kind``, ``values``, ``warnings``, and ``attrs``.
     """
     from ._datatree import NotComputed, to_named_posterior_dataset
 
@@ -271,13 +271,12 @@ def _compute_rhat_op(
             "rhat_warnings": _json_warnings(warns),
         }
 
-        return Record(
-            name="rhat_diagnostic",
-            kind="rhat",
-            values=values,
-            warnings=warns,
-            attrs=attrs,
-        )
+        return {
+            "kind": "rhat",
+            "values": values,
+            "warnings": warns,
+            "attrs": attrs,
+        }
 
     ds = to_named_posterior_dataset(posterior)
     rhat_ds = arviz_rhat(ds, method=method)
@@ -292,13 +291,12 @@ def _compute_rhat_op(
         "rhat_warnings": _json_warnings(warns),
     }
 
-    return Record(
-        name="rhat_diagnostic",
-        kind="rhat",
-        values=values,
-        warnings=warns,
-        attrs=attrs,
-    )
+    return {
+        "kind": "rhat",
+        "values": values,
+        "warnings": warns,
+        "attrs": attrs,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -310,10 +308,10 @@ def _compute_ess_op(
     posterior: ApproximateDistribution,
     *,
     threshold: int = _ESS_THRESHOLD,
-) -> Record:
+) -> dict[str, Any]:
     """Pure ESS diagnostic operation.
 
-    Computes bulk ESS and tail ESS and returns a ``Record``. Does not mutate
+    Computes bulk ESS and tail ESS and returns a payload dict. Does not mutate
     ``posterior._annotations`` and does not emit warnings.
 
     Parameters
@@ -325,8 +323,8 @@ def _compute_ess_op(
 
     Returns
     -------
-    Record
-        Record with fields ``kind``, ``bulk``, ``tail``, ``warnings``,
+    dict
+        Payload dict with keys ``kind``, ``bulk``, ``tail``, ``warnings``,
         ``bulk_attrs``, and ``tail_attrs``.
     """
     from ._datatree import to_named_posterior_dataset
@@ -352,15 +350,14 @@ def _compute_ess_op(
         "ess_warnings": _json_warnings(warns),
     }
 
-    return Record(
-        name="ess_diagnostic",
-        kind="ess",
-        bulk=bulk,
-        tail=tail,
-        warnings=warns,
-        bulk_attrs=bulk_attrs,
-        tail_attrs=tail_attrs,
-    )
+    return {
+        "kind": "ess",
+        "bulk": bulk,
+        "tail": tail,
+        "warnings": warns,
+        "bulk_attrs": bulk_attrs,
+        "tail_attrs": tail_attrs,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -370,11 +367,11 @@ def _compute_ess_op(
 
 def _compute_mcse_op(
     posterior: ApproximateDistribution,
-) -> Record:
+) -> dict[str, Any]:
     """Pure MCSE diagnostic operation.
 
     Computes MCSE of the mean and MCSE of the standard deviation and returns
-    a ``Record``. Does not mutate ``posterior._annotations``.
+    a payload dict. Does not mutate ``posterior._annotations``.
 
     Parameters
     ----------
@@ -383,8 +380,8 @@ def _compute_mcse_op(
 
     Returns
     -------
-    Record
-        Record with fields ``kind``, ``mean``, ``sd``, ``warnings``,
+    dict
+        Payload dict with keys ``kind``, ``mean``, ``sd``, ``warnings``,
         ``mean_attrs``, and ``sd_attrs``.
     """
     from ._datatree import to_named_posterior_dataset
@@ -405,15 +402,14 @@ def _compute_mcse_op(
         "mcse_method": "sd",
     }
 
-    return Record(
-        name="mcse_diagnostic",
-        kind="mcse",
-        mean=mean,
-        sd=sd,
-        warnings=[],
-        mean_attrs=mean_attrs,
-        sd_attrs=sd_attrs,
-    )
+    return {
+        "kind": "mcse",
+        "mean": mean,
+        "sd": sd,
+        "warnings": [],
+        "mean_attrs": mean_attrs,
+        "sd_attrs": sd_attrs,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -423,9 +419,9 @@ def _compute_mcse_op(
 
 def _write_mcmc_record(
     posterior: ApproximateDistribution,
-    record: Record,
+    record: Mapping[str, Any],
 ) -> None:
-    """Write an MCMC diagnostic Record into ``posterior._annotations``."""
+    """Write an MCMC diagnostic payload into ``posterior._annotations``."""
     from ._datatree import _write_mcmc_field
 
     kind = _record_kind(record)
@@ -475,7 +471,7 @@ def _write_mcmc_record(
             _write_mcmc_record(posterior, child)
         return None
 
-    raise ValueError(f"Unknown MCMC diagnostic Record kind: {kind!r}")
+    raise ValueError(f"Unknown MCMC diagnostic payload kind: {kind!r}")
 
 
 # ---------------------------------------------------------------------------

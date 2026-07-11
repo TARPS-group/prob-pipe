@@ -59,12 +59,11 @@ class TestPathKeyedConstruction:
         with pytest.raises(TypeError):
             Record({42: 1.0})
 
-    def test_plain_dict_value_is_opaque_leaf(self):
-        # A dict VALUE is opaque data, not structure: it is one leaf, not exploded.
-        r = Record(meta={"seed": 0}, x=1.0)
-        assert tuple(r.keys()) == ("meta", "x")
-        assert r["meta"] == {"seed": 0}
-        assert isinstance(r.event_template["meta"], OpaqueSpec)
+    def test_mapping_value_is_rejected_as_leaf(self):
+        # Mappings are never leaves: a mapping value denotes tree structure,
+        # so the constructor rejects it rather than storing an opaque leaf.
+        with pytest.raises(TypeError, match="never leaves"):
+            Record(meta={"seed": 0}, x=1.0)
 
 
 # ---------------------------------------------------------------------------
@@ -159,12 +158,14 @@ class TestConvenienceConstructors:
         r = Record.from_nested_dict({"physics": {"force": 1.0}, "obs": 2.0})
         assert tuple(r.keys()) == ("physics/force", "obs")
 
-    def test_from_nested_dict_template_keeps_dict_leaf_opaque(self):
-        # With a template marking 'meta' a leaf, a dict there stays opaque data.
+    def test_from_nested_dict_reads_every_mapping_as_structure(self):
+        # Mappings are never leaves: every mapping level becomes a subtree,
+        # even where a template proposes a leaf there — the mismatch raises.
         tpl = EventTemplate(meta=OpaqueSpec(), x=())
-        r = Record.from_nested_dict({"meta": {"seed": 0}, "x": 1.0}, event_template=tpl)
-        assert tuple(r.keys()) == ("meta", "x")
-        assert r["meta"] == {"seed": 0}
+        with pytest.raises(ValueError):
+            Record.from_nested_dict({"meta": {"seed": 0}, "x": 1.0}, event_template=tpl)
+        r = Record.from_nested_dict({"meta": {"seed": 0}, "x": 1.0})
+        assert tuple(r.keys()) == ("meta/seed", "x")
 
     def test_to_nested_dict_distinct_from_flat_dict(self):
         r = Record(physics=Record(force=1.0, mass=2.0), obs=3.0)

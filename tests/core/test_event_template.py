@@ -114,7 +114,7 @@ class TestFieldAccess:
 
 
 class TestNamedTreeSurfaceOnEventTemplate:
-    """EventTemplate gained the shared ``_NamedTree`` collection protocol:
+    """EventTemplate gained the shared ``NamedTree`` collection protocol:
     ``/``-path and tuple indexing, path membership, iteration, and
     ``keys``/``values``/``items`` — over its value specs, keyed by leaf path.
     Exercised on a *nested* template (the flat case is covered above).
@@ -792,15 +792,11 @@ class TestOpaqueSpecIsValid:
 
         assert not OpaqueSpec().is_valid(MappingProxyType({"a": 1}))
 
-    def test_dict_leaf_divergence_is_deliberate(self):
-        # Interim divergence, pinned on purpose: Record still stores a plain
-        # dict value as an opaque leaf, so the spec inferred FROM such a value
-        # does not validate it. is_valid states the target contract (mappings
-        # are structure, never leaves); the record layer aligns later.
-        r = Record(x={"a": 1})
-        spec = r.event_template["x"]
-        assert spec == OpaqueSpec()
-        assert not spec.is_valid(r["x"])
+    def test_record_layer_agrees_mappings_are_never_leaves(self):
+        # The record layer enforces the same rule as the spec: a mapping
+        # value denotes tree structure, so storing one as a leaf raises.
+        with pytest.raises(TypeError, match="never leaves"):
+            Record(x={"a": 1})
 
     def test_meta_not_checked(self):
         assert OpaqueSpec(meta="tag").is_valid("anything")

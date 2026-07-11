@@ -8,7 +8,6 @@ import numpy as np
 import pytest
 
 import probpipe.diagnostics._mcmc as mcmc
-from probpipe.core.record import Record
 from probpipe.diagnostics._datatree_store import _mcmc_has_field
 from probpipe.diagnostics._mcmc import (
     _check_arviz,
@@ -213,29 +212,28 @@ class TestMcmcHelpers:
                 raise KeyError(key)
 
         _emit_record_warnings(_NoWarnings())
-        _emit_record_warnings(Record(name="no_warnings", kind="test", warnings=None))
+        _emit_record_warnings({"kind": "test", "warnings": None})
 
     def test_write_mcmc_record_handles_composite_and_unknown_records(self, posterior):
-        child = Record(
-            name="rhat_child",
-            kind="rhat",
-            values={"alpha": 1.0},
-            attrs={},
-        )
-        composite = Record(name="all_mcmc", kind="mcmc", records={"rhat": child})
+        child = {
+            "kind": "rhat",
+            "values": {"alpha": 1.0},
+            "attrs": {},
+        }
+        composite = {"kind": "mcmc", "records": {"rhat": child}}
 
         _write_mcmc_record(posterior, composite)
 
         assert _mcmc_has_field(posterior, "rhat")
 
         with pytest.raises(ValueError, match="Unknown MCMC"):
-            _write_mcmc_record(posterior, Record(name="unknown", kind="bogus"))
+            _write_mcmc_record(posterior, {"kind": "bogus"})
 
         class _MissingKind:
             def __getitem__(self, key):
                 raise KeyError(key)
 
-        with pytest.raises(ValueError, match="missing required field"):
+        with pytest.raises(ValueError, match="missing required key"):
             _write_mcmc_record(posterior, _MissingKind())
 
 

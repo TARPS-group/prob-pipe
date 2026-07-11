@@ -51,7 +51,7 @@ class RecordArray(Record):
       ``RecordArray`` subclassing ``Record`` and will go away when the batch
       types are reworked onto the generic ``Batch``.
     - The leaf-keyed *field-navigation* surface (``at_path`` / ``children`` /
-      ``is_field``) is inherited from ``_NamedTree`` and works the same as on a
+      ``is_field``) is inherited from ``NamedTree`` and works the same as on a
       single ``Record``; string ``[]`` is likewise leaf-only (use ``at_path`` for
       a sub-batch). The batch-axis operators (``len`` / iteration / integer ``[]``
       and the meaning of ``keys`` / ``values`` / ``items`` / ``in``) keep their
@@ -354,7 +354,7 @@ class RecordArray(Record):
     # -- Structural transforms & edits (deferred for the batch types) --------
     #
     # ``replace`` / ``merge`` / ``without`` / ``map`` / ``map_with_keys`` /
-    # ``from_nested_dict`` are defined on ``_NamedTree`` for the single
+    # ``from_nested_dict`` are defined on ``NamedTree`` for the single
     # value/spec collections and rebuild through single-value construction. On
     # a batch their semantics (which axis they act on, how the batch shape
     # composes) are not yet defined, so they all raise ``NotImplementedError``
@@ -380,6 +380,12 @@ class RecordArray(Record):
 
     def map_with_keys(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError("map_with_keys() is not supported on a batched record.")
+
+    def with_path_names(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError(
+            "with_path_names() is not supported on a batched record yet; it is "
+            "part of the batch-axis rework."
+        )
 
     @classmethod
     def from_nested_dict(cls, data: Mapping[str, Any], **kwargs: Any) -> Any:

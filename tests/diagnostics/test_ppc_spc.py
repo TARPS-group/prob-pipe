@@ -338,22 +338,18 @@ class TestAddPpc:
         assert "p_value" in ds
 
     def test_dataset_from_record_rejects_non_dataset(self):
-        from probpipe.core.record import Record
 
         with pytest.raises(TypeError, match=r"xarray\.Dataset"):
-            _dataset_from_record(Record(name="bad", dataset="not-a-dataset"))
+            _dataset_from_record({"dataset": "not-a-dataset"})
 
     def test_write_ppc_record_stores_optional_predictive_group(self, posterior):
-        from probpipe.core.record import Record
-
         run_ds = xr.Dataset({"p_value": xr.DataArray([0.5], dims=["test_fn"])})
         pred_ds = xr.Dataset({"y": xr.DataArray(np.ones((1, 2)), dims=["chain", "draw"])})
-        record = Record(
-            name="ppc",
-            posterior_predictive_dataset=pred_ds,
-            observed_data_dataset=None,
-            dataset=run_ds,
-        )
+        record = {
+            "posterior_predictive_dataset": pred_ds,
+            "observed_data_dataset": None,
+            "dataset": run_ds,
+        }
 
         _write_ppc_record(posterior, record)
 

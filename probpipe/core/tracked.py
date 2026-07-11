@@ -14,7 +14,7 @@ mixins:
   distribution types (``Record``, ``Distribution``), not required of batches.
 
 Classes mix these in alongside their mathematical base (e.g. ``class
-Record(_NamedTree, Tracked, Annotated)``) and initialize the identity state in
+Record(NamedTree, Tracked, Annotated)``) and initialize the identity state in
 their constructor via :meth:`Tracked._init_tracked`.
 """
 
@@ -110,7 +110,7 @@ class Tracked(metaclass=_TrackedMeta):
     differently downstream — an auto-derived name may be re-derived when the
     object is combined into a larger one, while a user-given name is
     preserved. :meth:`with_name` renames the object itself (returning a copy
-    marked user-named); this is distinct from ``with_names`` on the named-tree
+    marked user-named); this is distinct from ``with_path_names`` on the named-tree
     types, which renames the *fields within* an object.
 
     Provenance is **write-once**: it is attached at most once via

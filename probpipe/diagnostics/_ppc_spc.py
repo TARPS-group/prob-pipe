@@ -7,11 +7,11 @@ Design
 ------
 This module has two layers:
 
-1. Private pure ops returning ``Record`` objects:
+1. Private pure ops returning payload dicts:
 
    - ``_ppc_op``
 
-   These compute diagnostics and return structured ``Record`` results.
+   These compute diagnostics and return structured payload dicts.
    They do not mutate ``_annotations``. Not part of the public API.
 
 2. In-place writer wrappers returning ``None``:
@@ -33,7 +33,7 @@ ProbPipe diagnostic summaries and run metadata are written under::
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -42,7 +42,6 @@ import xarray as xr
 
 from .._utils import _auto_key
 from ..core.distribution import Distribution
-from ..core.record import Record
 from ..custom_types import PRNGKey
 from ..validation._predictive_check import (
     _predictive_check_batched,
@@ -181,8 +180,8 @@ def _replicated_statistics_summary(
     return summary
 
 
-def _dataset_from_record(record: Record) -> xr.Dataset:
-    """Return the xarray Dataset stored in a diagnostic Record."""
+def _dataset_from_record(record: Mapping[str, Any]) -> xr.Dataset:
+    """Return the xarray Dataset stored in a diagnostic payload."""
     ds = record["dataset"]
     if not isinstance(ds, xr.Dataset):
         raise TypeError(
@@ -205,11 +204,11 @@ def _ppc_op(
     generative_likelihood=None,
     n_replications: int = 500,
     key: PRNGKey | None = None,
-) -> Record:
-    """Pure PPC operation returning a ``Record``.
+) -> dict[str, Any]:
+    """Pure PPC operation returning a payload dict.
 
     This function computes one or more posterior/prior predictive checks and
-    returns a structured ``Record``. It does not mutate ``posterior._annotations``.
+    returns a structured payload dict. It does not mutate ``posterior._annotations``.
 
     Parameters
     ----------
@@ -239,8 +238,8 @@ def _ppc_op(
 
     Returns
     -------
-    Record
-        Diagnostic Record containing scalar results, xarray datasets, and
+    dict
+        Diagnostic payload dict containing scalar results, xarray datasets, and
         plotting metadata.
     """
     gl = _resolve_generative_likelihood(posterior, generative_likelihood)
@@ -366,24 +365,22 @@ def _ppc_op(
 
     run_ds.attrs = attrs
 
-    result_record = Record(
-        name="ppc_result",
-        p_value={name: _safe_float(results[name].get("p_value")) for name in fn_names},
-        observed={name: _safe_float(results[name].get("observed")) for name in fn_names},
-        replicated_summary=rep_stat_summary or {},
-    )
+    result_payload = {
+        "p_value": {name: _safe_float(results[name].get("p_value")) for name in fn_names},
+        "observed": {name: _safe_float(results[name].get("observed")) for name in fn_names},
+        "replicated_summary": rep_stat_summary or {},
+    }
 
-    return Record(
-        name="ppc_diagnostic",
-        kind="ppc",
-        result=result_record,
-        dataset=run_ds,
-        posterior_predictive_dataset=None,
-        observed_data_dataset=observed_data_dataset,
-        plot_fn=plot_fn,
-        plot_ready=plot_ready,
-        attrs=attrs,
-    )
+    return {
+        "kind": "ppc",
+        "result": result_payload,
+        "dataset": run_ds,
+        "posterior_predictive_dataset": None,
+        "observed_data_dataset": observed_data_dataset,
+        "plot_fn": plot_fn,
+        "plot_ready": plot_ready,
+        "attrs": attrs,
+    }
 
 
 # ---------------------------------------------------------------------
@@ -391,8 +388,8 @@ def _ppc_op(
 # ---------------------------------------------------------------------
 
 
-def _write_ppc_record(posterior: Distribution, record: Record) -> None:
-    """Write a PPC diagnostic Record into ``posterior._annotations``."""
+def _write_ppc_record(posterior: Distribution, record: Mapping[str, Any]) -> None:
+    """Write a PPC diagnostic payload into ``posterior._annotations``."""
     posterior_predictive_dataset = record["posterior_predictive_dataset"]
     observed_data_dataset = record["observed_data_dataset"]
 
@@ -430,7 +427,7 @@ def add_ppc(
     """Compute a PPC and write results into ``posterior._annotations``.
 
     This is the in-place wrapper around :func:`_ppc_op`. Calls ``_ppc_op``
-    and writes the resulting ``Record`` into ``posterior._annotations``,
+    and writes the resulting payload into ``posterior._annotations``,
     then returns ``None``.
 
     Parameters
