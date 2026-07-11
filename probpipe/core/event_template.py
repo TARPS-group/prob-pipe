@@ -985,6 +985,23 @@ def _all_numeric(specs: Iterable[Any]) -> bool:
 _NUMERIC_KINDS = frozenset("biufc")
 
 
+def _is_numeric_dtype(dtype: Any) -> bool:
+    """Whether *dtype* is a numeric dtype — the shared numeric-gate predicate.
+
+    Covers the standard numpy kinds (bool, int, uint, float, complex) plus
+    the ml_dtypes extension types JAX registers (``bfloat16``, the
+    ``float8_*`` family, ``int4`` / ``uint4``), which numpy reports as kind
+    ``"V"``. Structured (record) dtypes are not numeric. Every place that
+    decides "is this array numeric?" — template inference, spec validation,
+    and the ``NumericRecord`` / ``NumericRecordArray`` leaf gates — routes
+    through this predicate so the sites cannot drift apart.
+    """
+    kind = getattr(dtype, "kind", None)
+    if kind in _NUMERIC_KINDS:
+        return True
+    return kind == "V" and jnp.issubdtype(dtype, jnp.number)
+
+
 def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
     """Return the shape of a numeric array-like value, or ``None``.
 
@@ -994,11 +1011,7 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
     """
     if isinstance(val, (bool, int, float, complex, np.integer, np.floating, np.bool_)):
         return ()
-    if (
-        hasattr(val, "shape")
-        and hasattr(val, "dtype")
-        and getattr(val.dtype, "kind", None) in _NUMERIC_KINDS
-    ):
+    if hasattr(val, "shape") and hasattr(val, "dtype") and _is_numeric_dtype(val.dtype):
         return tuple(val.shape)
     return None
 

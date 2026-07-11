@@ -4,7 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # dev/** covers stacked PRs (a PR based on another PR's dev/ branch),
+    # which would otherwise get no CI until the base merges and the PR
+    # retargets to main.
+    branches: [main, "dev/**"]
 
 # Cancel superseded runs on PR pushes (saves CI minutes during iteration).
 # Pushes to main keep running — never cancel work that gates the merged history.

@@ -23,7 +23,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._record_array import RecordArray
-from ..core.event_template import EventTemplate
+from ..core.event_template import EventTemplate, _is_numeric_dtype
 
 __all__ = ["Design", "FullFactorialDesign"]
 
@@ -38,7 +38,7 @@ def _is_numeric_sequence(seq: Any) -> bool:
 
     Strings and byte sequences are rejected (they're iterable but
     categorical-valued). We probe via ``jnp.asarray`` and check the
-    resulting dtype's kind.
+    resulting dtype with the shared numeric-dtype predicate.
     """
     if isinstance(seq, (str, bytes)):
         return False
@@ -46,7 +46,7 @@ def _is_numeric_sequence(seq: Any) -> bool:
         arr = jnp.asarray(seq)
     except (TypeError, ValueError):
         return False
-    return arr.dtype.kind in "biufc"
+    return _is_numeric_dtype(arr.dtype)
 
 
 def _seq_to_column(

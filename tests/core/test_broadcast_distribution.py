@@ -774,6 +774,21 @@ class TestMakeStack:
         np.testing.assert_allclose(out["a"], [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(out["label"], ["row0", "row1", "row2"])
 
+    def test_bfloat16_field_inferred_numeric_not_opaque(self):
+        """The broadcast-template builder shares the numeric-dtype gate, so an
+        ml_dtypes (bfloat16) field stacks into an ArraySpec column rather than
+        being mislabeled opaque (#343)."""
+        from probpipe import Record, RecordArray
+        from probpipe.core._broadcast_distributions import _make_stack
+        from probpipe.core.event_template import ArraySpec, OpaqueSpec
+
+        records = [Record(x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
+        out = _make_stack(records, n=3, field_name="demo")
+        assert isinstance(out, RecordArray)
+        assert out["x"].dtype == jnp.bfloat16
+        assert out.template["x"] == ArraySpec((2,))  # numeric, not None/opaque
+        assert out.template["label"] == OpaqueSpec()
+
     def test_list_of_distributions_gives_distribution_array(self):
         from probpipe import DistributionArray, Normal
         from probpipe.core._broadcast_distributions import _make_stack

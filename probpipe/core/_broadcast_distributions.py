@@ -26,7 +26,7 @@ from ._empirical import (
     RecordEmpiricalDistribution,
 )
 from ._record_array import RecordArray
-from .event_template import EventTemplate
+from .event_template import EventTemplate, _is_numeric_dtype
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -549,7 +549,7 @@ def _make_stack(
                     fields[fname] = arr.reshape(batch_shape + arr.shape[1:])
             tpl_spec: dict[str, Any] = {}
             for fname, v in fields.items():
-                if hasattr(v, "dtype") and getattr(v.dtype, "kind", None) in "biufc":
+                if hasattr(v, "dtype") and _is_numeric_dtype(v.dtype):
                     tpl_spec[fname] = tuple(v.shape[len(batch_shape) :])
                 else:
                     tpl_spec[fname] = None

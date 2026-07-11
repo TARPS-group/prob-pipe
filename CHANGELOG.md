@@ -319,6 +319,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **ml_dtypes arrays (bfloat16, float8, int4) now classify as numeric
+  (#343).** The numeric-dtype gates previously keyed on numpy's
+  `dtype.kind`, under which the ml_dtypes extension types JAX registers
+  report `"V"` (void) — so a bfloat16 array failed `ArraySpec.is_valid`,
+  inferred as an `OpaqueSpec`, and was rejected as a `NumericRecord` /
+  `NumericRecordArray` leaf. All five gates (template inference, spec
+  validation, the two record-layer leaf checks, the broadcast-template
+  builder, and the `Design` marginals probe) now route through one shared
+  predicate that also admits ml_dtypes numerics; structured (record)
+  dtypes remain non-numeric. The internal `_NUMERIC_DTYPE_KINDS` constant
+  is removed in favor of the shared predicate.
+
 - **Core container indexing and nested reductions.** `DistributionArray`
   integer indexing now raises `IndexError` for positive overflow and negatives
   past the axis bounds, while 0-d arrays accept only empty-tuple indexing.

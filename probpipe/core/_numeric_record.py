@@ -41,21 +41,22 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import aux_for
-from .event_template import EventTemplate, _check_no_path_sep, _PathSubtree, _unflatten_paths
+from .event_template import (
+    EventTemplate,
+    _check_no_path_sep,
+    _is_numeric_dtype,
+    _PathSubtree,
+    _unflatten_paths,
+)
 from .record import Record, _record_flatten
 
-__all__ = ["_NUMERIC_DTYPE_KINDS", "NumericRecord", "_is_numeric_leaf"]
+__all__ = ["NumericRecord", "_is_numeric_leaf"]
 
 
 # Scalar types accepted as numeric leaves. ``bool`` is intentionally
 # included: JAX treats it as dtype ``bool_`` and numpy arrays of bools
 # participate in arithmetic as 0/1.
 _NUMERIC_SCALARS = (bool, int, float, complex, np.integer, np.floating, np.bool_)
-
-# dtype.kind codes for numeric arrays: b=bool, i=int, u=uint, f=float,
-# c=complex. Shared with ``NumericRecordArray._validate_fields`` so the
-# two validation sites stay in lockstep.
-_NUMERIC_DTYPE_KINDS = frozenset("biufc")
 
 
 def _is_numeric_leaf(val: Any) -> bool:
@@ -64,24 +65,25 @@ def _is_numeric_leaf(val: Any) -> bool:
     Rejects object-dtype arrays, string-like scalars, and opaque types
     that don't expose ``dtype`` / ``shape``. ``pandas.DataFrame``-like
     types whose elements are numeric are accepted via their ``.dtypes``
-    summary.
+    summary. Dtype numericness is decided by the shared
+    ``_is_numeric_dtype`` predicate, so this gate,
+    ``NumericRecordArray._validate_fields``, and template inference agree
+    on what counts as numeric.
     """
     if isinstance(val, (str, bytes)):
         return False
     if isinstance(val, _NUMERIC_SCALARS):
         return True
     if hasattr(val, "dtype") and hasattr(val, "shape"):
-        kind = getattr(val.dtype, "kind", None)
-        return kind in _NUMERIC_DTYPE_KINDS
+        return _is_numeric_dtype(val.dtype)
     # ``pandas.DataFrame`` has ``.dtypes`` (per-column) but no ``.dtype``.
     # Accept when every column is numeric.
     dtypes = getattr(val, "dtypes", None)
     if dtypes is not None and hasattr(val, "shape"):
         try:
-            kinds = {getattr(d, "kind", None) for d in dtypes}
+            return len(dtypes) > 0 and all(_is_numeric_dtype(d) for d in dtypes)
         except TypeError:
             return False
-        return bool(kinds) and kinds.issubset(_NUMERIC_DTYPE_KINDS)
     return False
 
 

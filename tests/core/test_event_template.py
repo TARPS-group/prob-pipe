@@ -692,6 +692,29 @@ class TestArraySpecIsValid:
         assert spec.is_valid(jnp.ones(2, dtype=jnp.float32))
         assert spec.is_valid(np.ones(2, dtype=np.int64))
 
+    def test_ml_dtypes_are_numeric(self):
+        # bfloat16 / float8 report numpy kind "V" but are numeric JAX arrays;
+        # they satisfy ArraySpec (shape-only and dtype-pinned). infer_from
+        # therefore routes them to the array side (see the infer_from test).
+        bf16 = jnp.ones(2, dtype=jnp.bfloat16)
+        assert ArraySpec((2,)).is_valid(bf16)
+        assert ArraySpec((2,), dtype=jnp.bfloat16).is_valid(bf16)
+        assert not ArraySpec((2,), dtype=jnp.float32).is_valid(bf16)
+        f8 = jnp.ones((), dtype=jnp.float8_e4m3fn)
+        assert ArraySpec(()).is_valid(f8)
+
+    def test_structured_dtype_stays_non_numeric(self):
+        # numpy structured dtypes are also kind "V" but are not numeric:
+        # they fail ArraySpec, so infer_from routes them to OpaqueSpec.
+        rec = np.zeros(2, dtype=[("a", "f4")])
+        assert not ArraySpec((2,)).is_valid(rec)
+        assert EventTemplate.infer_from({"r": rec})["r"] == OpaqueSpec()
+
+    def test_infer_from_bfloat16_is_numeric(self):
+        tpl = EventTemplate.infer_from({"x": jnp.ones((2, 3), dtype=jnp.bfloat16)})
+        assert isinstance(tpl, NumericEventTemplate)
+        assert tpl["x"] == ArraySpec((2, 3))
+
     def test_python_scalar_dtype_is_numpy_default(self):
         # A bare Python scalar reports the dtype ``np.asarray`` gives it.
         assert ArraySpec((), dtype=np.asarray(1.0).dtype).is_valid(1.0)
