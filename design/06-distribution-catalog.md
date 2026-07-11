@@ -40,7 +40,7 @@ One adapter with thin family constructors keeps the backend a computational deta
 
 ### Contract
 
-An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
+An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
 
 Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap (an empirical source, resampled) and the parametric bootstrap (a fitted law, redrawn) in one interface, with `replicate_size` defaulting to the source's atom count when the source is empirical and required otherwise.
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in `T`'s batch form.
@@ -108,9 +108,16 @@ A mixture supports an operation exactly when its components do, the same interse
 
 ### Contract
 
-Each pushforward rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws. Whatever the rule, a linear map's result delegates `mean` and `cov` exactly.
+Each pushforward rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy carrier for `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws. Whatever the rule, a linear map's result delegates `mean` and `cov` exactly.
 
 ```python
+class LinearPushforwardDistribution(Distribution):
+    def __init__(self, name: str, base: Distribution, op: LinOp) -> None: ...
+    # the law of op @ X for X ~ base; the event template is op's output template.
+    # _sample pushes base draws through op; _mean and _cov delegate exactly,
+    # E[A X] = A E[X] and Cov(A X) = A Cov(X) Aᵀ, lazily through the operator algebra;
+    # _log_prob only when op is invertible, by change of variables
+
 class BijectorTransformedDistribution(Distribution[T]):
     def __init__(self, name: str, base: Distribution, bijector: Bijector) -> None: ...
     # _sample pushes base draws through the bijector;

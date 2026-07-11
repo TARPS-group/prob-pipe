@@ -46,7 +46,7 @@ class NamedTree[L]:
     def is_multi_field(self) -> bool: ...   # True when the tree holds more than one field
 
     # structure-preserving transforms — return the same family
-    def with_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
+    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
     # rename nodes, old -> new; keys are paths, or bare names when unambiguous
     def map(self, f: Callable[[L], L], /, *args, **kwargs) -> Self: ...
     def map_with_keys(self, f: Callable[[str, L], L], /, *args, **kwargs) -> Self: ...
@@ -74,7 +74,7 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 - *Leaf type versus node type.* The parameter `L` declares the leaf type, the only axis on which tree families differ: it is what `values()`, `[]`, and `map` traffic in. The node type is not a second parameter, since interior nodes are always instances of the family's own class, which is what `_node_type()` reports. The runtime partition therefore uses the node type alone: a field value is an interior node when it is an instance of `_node_type()`, and a leaf otherwise. Validation is handled once in `NamedTree` rather than by each family: construction checks every leaf against the family's declared leaf type, reported by `_leaf_type()`, so a malformed tree fails at construction rather than at first navigation. A family whose leaves are arbitrary values declares `object`, making the check vacuous.
 - *Navigation yields views.* `children`, `at_path`, and `[]` return a subtree or leaf that is a *view* into the same underlying store, derived on demand rather than copied out.
 - *Mappings are never leaves.* Construction rejects a mapping-valued leaf, and `from_nested_dict` reads every mapping as a subtree, so the two agree and serialization round-trips faithfully.
-- *Bare-name reference.* `with_names` renames by `old="new"` pairs, where a key may be a bare name instead of a full path: a bare name resolves to the unique node so named and raises when the tree contains it more than once. Keyword pairs therefore cover the common case, while the positional mapping form addresses any path, as in `with_names({"group1/mu": "loc"})`. The `Mapping` interface itself is untouched, with `[]` and `keys()` keyed by full path.
+- *Bare-name reference.* `with_path_names` renames by `old="new"` pairs, where a key may be a bare name instead of a full path: a bare name resolves to the unique node so named and raises when the tree contains it more than once. Keyword pairs therefore cover the common case, while the positional mapping form addresses any path, as in `with_path_names({"group1/mu": "loc"})`. The `Mapping` interface itself is untouched, with `[]` and `keys()` keyed by full path.
 
 ## II.2 — Identity & metadata: `Tracked`, `Annotated`, `Provenance`
 
@@ -89,7 +89,7 @@ class Annotated:
     annotations: Mapping[str, Any] | None
 ```
 
-A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`. `with_name` renames the object itself, unlike `NamedTree.with_names`, which renames the fields within it. The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves.
+A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: an auto-derived name may need to be updated when the object is combined into a larger one, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`. `with_name` renames the object itself, unlike `NamedTree.with_path_names`, which renames the fields within it. A name is a human label rather than an identity: nothing resolves an object by name, derived names need no escaping scheme, and two objects may share a name wherever field uniqueness does not force distinctness. The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves.
 
 ```python
 class Tracked:
@@ -101,18 +101,23 @@ class Tracked:
 
 class Provenance:
     operation: str                       # the operation that produced the object
-    parents:   tuple[ParentInfo, ...]    # descriptors of the inputs
+    parents:   tuple[ParentInfo, ...]    # descriptors of the tracked inputs
+    controls:  Mapping[str, Any]         # the resolved controls: PRNG key, sample count, selected method, ...
+    inputs:    Mapping[str, ParentInfo]  # plain (untracked) arguments, keyed by parameter name
 
 class ParentInfo:
     type_name:   str
     name:        str
-    fingerprint: str          # stable content hash
-    parent:      Any | None   # optional reference to original parent
+    fingerprint: str            # best-effort content hash
+    fingerprint_is_weak: bool   # True when the fingerprint is only object identity
+    parent:      Any | None     # optional reference to original parent
 ```
+
+A provenance records everything its operation resolved: the tracked parents, the plain arguments, and the **controls** the run actually used, the PRNG key, sample counts, and any selected method among them, so a result can be reproduced from its record. Fingerprints are best-effort, in tiers: a content hash for arrays and records, the qualified name and code hash for a closure-free callable, and object identity otherwise, with `fingerprint_is_weak` marking that last tier.
 
 ### Rationale
 
-`Tracked` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
+`Tracked` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Recording the resolved controls, not just the parents, is what turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
 
 ## II.3 — `Batch`
 
@@ -126,14 +131,30 @@ class Batch[E](Tracked):
     def batch_shape(self) -> tuple[int, ...]: ...
     @property
     def batch_size(self) -> int: ...                    # total element count, prod(batch_shape)
+    @property
+    def axis_groups(self) -> tuple[tuple[int, ...], ...]: ...   # batch_shape tiled into levels, outermost first
+    @property
+    def level_names(self) -> tuple[str, ...]: ...       # one name per level, aligned with axis_groups
+    def with_level_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
+    # shallow copy renaming levels old -> new; shapes and elements unchanged, as with_path_names is for fields
     def __len__(self) -> int: ...                       # leading-axis size, batch_shape[0]
     def __iter__(self) -> Iterator[E | Self]: ...       # over the leading batch axis
     def __getitem__(self, index: Any) -> E | Self: ...  # returns a view of either an element or a sub-batch
+    def select(self, **levels: int | slice | None | tuple[int | slice | None, ...]) -> E | Self: ...
+    # index by named level (a view); unnamed levels kept whole, None means the whole axis (:)
 ```
+
+**Axis groups.** A batch's axes are partitioned into ordered **levels**. `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and indexing operate on the outermost level, and an element of a multi-level batch is the inner-level batch, as a view. Nesting needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store.
+
+**Level names.** Each level carries a name, listed in order by `level_names`. A name is auto-derived by the operation that produces the level, and `with_level_names` repins it: a shallow copy changing only the names. Names are unique within a batch: an operation that would mint a duplicate appends the smallest free integer suffix, so nested sampling yields `draw`, then `draw2`, and a rename onto an existing name raises. Operations align batched operands by level name, and two levels meant to correspond under different names are lined up by renaming one. Level names are independent of the field names within each element.
+
+**Element identity.** An element view of a batch derives its name as `name[i]` from the batch's own name, marked `name_is_auto`, with provenance recording the indexing, and the elements of nested levels compose the scheme, as in `name[i][j]`. A batch whose elements are bare values yields bare elements, which carry no identity to derive.
+
+**Selecting by level.** `select(**levels)` indexes a batch along its named levels and returns a view, the by-name counterpart of positional `[]`. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order, where an integer drops its axis and a slice or `None` keeps it, `None` meaning the whole axis as `:` does. A level spanning several axes takes one indexer per axis, and a shorter indexer fills the leading axes and leaves the rest whole, so a scalar `draw=i` on a two-axis `draw` level means `draw=(i, None)`. Selecting an entire single-axis level by an integer removes it, yielding the inner batch or element just as positional indexing and iteration do, while a level left unnamed is kept whole. This parallels xarray's `isel`, with `level_names` in the role of xarray dimension names; there is no label-based counterpart, since batch levels carry no coordinate labels.
 
 ### Rationale
 
-`Batch` is necessary to satisfy `D1 – Mathematical fidelity` by ensuring how many objects there are stays separate from what one object contains. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). When those elements are array-backed the mapping should be vectorized and differentiable (`D6 – Differentiability where possible`). To satisfy `D7 – Single source of truth`, indexing or iterating yields a *view*.
+`Batch` is necessary to satisfy `D1 – Mathematical fidelity` by ensuring how many objects there are stays separate from what one object contains. The level structure extends the same fidelity to collections of collections: how many objects sit at each level is a mathematical distinction, so `N` laws with `S` draws each are `(N,)` of `(S,)` rather than one anonymous `(N, S)`. Naming the levels is `C5 – Naming for unambiguous meaning` on that axis, letting a user say which multiplicity is which and letting operations align batches by meaning rather than by position. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). When those elements are array-backed the mapping should be vectorized and differentiable (`D6 – Differentiability where possible`). To satisfy `D7 – Single source of truth`, indexing or iterating yields a *view*, the levels of a multi-level batch included.
 
 ## II.4 — Dispatch and registries
 
@@ -141,7 +162,7 @@ class Batch[E](Tracked):
 
 Some operations have many possible implementations, and which one applies depends on the *types* of the objects involved rather than on an object's own class. A **dispatch registry** holds those implementations as named methods and selects one for a given call.
 
-Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration.
+Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. Within one priority, the method whose declared types sit closest to the argument's class in method-resolution order wins, and any remaining tie falls to registration order. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration.
 
 ```python
 class BaseDispatchMethod(ABC):
@@ -176,11 +197,11 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ..
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
 
-A single **catalog** makes every registry discoverable. It provides a list of registries, their methods with their priorities, and a one-line description, so a user can see which methods exist and how a given call will resolve. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`.
+A single **catalog** makes every registry discoverable. It provides a list of registries, their entries with their priorities, and a one-line description, so a user can see which entries exist and how a given call will resolve. An **entry** is one registered item within a registry; the catalog uses this generic term rather than *method* because it spans registries whose items are not all type-dispatched methods. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`.
 
 ```python
 @dataclass(frozen=True)
-class MethodSummary:
+class EntrySummary:
     name: str
     priority: int | None
     supported_types: tuple[Any, ...] = ()
@@ -194,15 +215,15 @@ class RegistryInfo:            # the catalog's per-registry record
     name: str                  # unique within the catalog
     description: str           # one line
     kind: str                  # e.g., "dispatch", "factory", "converter"
-    method_count: int
+    entry_count: int
 
 @runtime_checkable
 class SupportsRegistryCataloging(Protocol):
     name: str
     description: str
     kind: str
-    def method_summaries(self) -> list[MethodSummary]: ...
-    def describe_method(self, name: str) -> MethodSummary: ...
+    def entry_summaries(self) -> list[EntrySummary]: ...
+    def describe_entry(self, name: str) -> EntrySummary: ...
 
 class RegistryCatalog:
     def register(self, registry: SupportsRegistryCataloging) -> None: ...   # empty or duplicate names raise
@@ -211,8 +232,6 @@ class RegistryCatalog:
     def __getitem__(self, name: str) -> SupportsRegistryCataloging: ...     # get the registry
     def __contains__(self, name: object) -> bool: ...                       # check if a registry exists
     def describe(self, name: str) -> str: ...                               # a readable summary of one registry
-    def register_method(self, registry_name: str, method: Any) -> None: ...
-
 registry_catalog = RegistryCatalog()  # the global instance
 ```
 
