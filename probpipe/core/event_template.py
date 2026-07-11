@@ -689,8 +689,11 @@ class ValueSpec(ABC):
         Returns
         -------
         bool
-            ``True`` iff *value* matches this spec. Never raises on a
-            mismatched value — an invalid value returns ``False``.
+            ``True`` iff *value* matches this spec; a value the spec does not
+            describe returns ``False`` rather than raising. A spec swallows
+            only the specific conditions that mean "does not match" (each spec
+            documents its own); it does not suppress an unexpected error from
+            inspecting a malformed value, so a genuine bug still surfaces.
         """
 
 
@@ -837,11 +840,14 @@ class DistributionSpec(ValueSpec):
         """Whether *value* is a ``Distribution`` whose draws match ``event_template``.
 
         *value* must be a :class:`~probpipe.Distribution` whose own
-        ``event_template`` equals this spec's. A distribution always carries
-        the schema of its draws, so one that exposes no event template (or
-        whose template cannot be derived) does not satisfy any
-        ``DistributionSpec``. Never raises on a mismatched value — a value the
-        spec does not describe returns ``False``.
+        ``event_template`` equals this spec's. A distribution that is not one,
+        or that legitimately exposes no template — no ``event_template``
+        attribute, or a template that cannot yet be derived — does not satisfy
+        the spec and returns ``False``. These are the only two "schema
+        unavailable" conditions treated as a non-match; any *other* error
+        raised while reading ``event_template`` signals a malfunctioning
+        distribution and is left to propagate rather than being masked as
+        invalid.
         """
         from ._distribution_base import Distribution
 
@@ -849,11 +855,13 @@ class DistributionSpec(ValueSpec):
             return False
         try:
             template = value.event_template
-        except Exception:
-            # A validity probe is total: a missing template attribute or a
-            # template property that fails to run (whatever it raises) means
-            # the schema is unknown, so the value cannot be certified
-            # against this spec.
+        except (AttributeError, TypeError):
+            # The two documented "schema unavailable" signals: no
+            # ``event_template`` attribute (AttributeError) or a template that
+            # cannot be derived (TypeError — e.g. an un-named auto-deriving
+            # distribution). Both mean the value can't be certified. A
+            # narrower catch than ``Exception`` on purpose: an unexpected
+            # error is a bug to surface, not a silent "invalid".
             return False
         return template == self.event_template
 

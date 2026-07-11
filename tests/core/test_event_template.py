@@ -827,23 +827,41 @@ class TestDistributionSpecIsValid:
         spec = DistributionSpec(event_template=EventTemplate(x=()))
         assert not spec.is_valid(_NoneTemplate())
 
-    @pytest.mark.parametrize("error", [TypeError, RuntimeError, ValueError])
-    def test_raising_template_property_returns_false(self, error):
-        # An ``event_template`` property that fails to run — whatever it
-        # raises — leaves the schema unknown; is_valid must return False
-        # rather than propagate (the probe is total).
+    def test_type_error_template_is_not_a_match(self):
+        # TypeError is the documented "template not derivable" signal (e.g. an
+        # un-named auto-deriving distribution): a non-match, so is_valid
+        # returns False.
         from probpipe.core._distribution_base import Distribution
 
-        class _RaisingTemplate(Distribution):
+        class _NotDerivable(Distribution):
             def __init__(self):
                 super().__init__(name="d")
 
             @property
             def event_template(self):
-                raise error("template not derivable")
+                raise TypeError("template not derivable")
 
         spec = DistributionSpec(event_template=EventTemplate(x=()))
-        assert not spec.is_valid(_RaisingTemplate())
+        assert not spec.is_valid(_NotDerivable())
+
+    @pytest.mark.parametrize("error", [RuntimeError, ValueError, KeyError])
+    def test_unexpected_template_error_propagates(self, error):
+        # An unexpected error from event_template is a malfunctioning
+        # distribution, not a clean non-match — is_valid must not mask it as
+        # invalid; it propagates so the bug surfaces.
+        from probpipe.core._distribution_base import Distribution
+
+        class _Broken(Distribution):
+            def __init__(self):
+                super().__init__(name="d")
+
+            @property
+            def event_template(self):
+                raise error("boom")
+
+        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        with pytest.raises(error):
+            spec.is_valid(_Broken())
 
 
 class TestFunctionSpecIsValid:

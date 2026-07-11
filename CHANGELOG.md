@@ -112,7 +112,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `is_valid(value) -> bool` — the check that a concrete value matches the spec
   (shape / dtype / support for arrays; `OpaqueSpec` accepts any non-mapping
   value; a `DistributionSpec` requires a `Distribution` carrying an equal
-  `event_template`; `FunctionSpec` requires a callable — and none raise). The
+  `event_template`; `FunctionSpec` requires a callable). A non-matching value
+  returns `False` rather than raising, but an unexpected error from inspecting
+  a malformed value is left to propagate rather than masked as invalid. The
   `LeafSpec` type alias is **removed**; use `ValueSpec` (exported from
   `probpipe`). **Renamed** `DistributionSpec.inner_template` →
   `event_template`. `FunctionSpec`'s `input_template` / `output_template` are
