@@ -57,8 +57,9 @@ class TestConstruction:
             NumericRecord(missing=None)
 
     def test_nested_record_not_numeric_raises(self):
-        """Nested plain Record in NumericRecord raises."""
-        inner = Record(x=1.0)
+        """A nested non-numeric Record in NumericRecord raises. (An
+        all-numeric inner Record promotes to NumericRecord and nests fine.)"""
+        inner = Record(x="tag")
         with pytest.raises(TypeError, match="NumericRecord"):
             NumericRecord(params=inner, z=2.0)
 

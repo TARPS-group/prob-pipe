@@ -393,6 +393,6 @@ class TestFieldNameCollision:
         d = Normal(0.0, 1.0, name="value")
         # bare positional works (and equals value=, which binds to the param):
         assert jnp.allclose(log_prob(d, 1.5), log_prob(d, value=1.5))
-        # the positional Record does NOT work for a single-field distribution:
-        with pytest.raises(TypeError):
-            log_prob(d, Record(value=1.5))
+        # a positional single-field Record promotes to NumericRecord, whose
+        # scalar shim coerces to the bare value — so it agrees too:
+        assert jnp.allclose(log_prob(d, Record(value=1.5)), log_prob(d, 1.5))

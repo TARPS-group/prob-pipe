@@ -50,10 +50,20 @@ class TestConstruction:
         with pytest.raises(ValueError, match="at least one"):
             Record()
 
-    def test_stores_values_verbatim(self):
+    def test_all_numeric_promotes_and_coerces(self):
+        from probpipe import NumericRecord
+
         arr = np.array([1.0, 2.0, 3.0])
         v = Record(x=arr)
-        # Record no longer performs any conversion — stored as-is.
+        # All-numeric construction promotes to NumericRecord, whose invariant
+        # coerces bare numeric leaves to jax.Array.
+        assert type(v) is NumericRecord
+        assert isinstance(v["x"], jnp.ndarray)
+
+    def test_mixed_record_stores_values_verbatim(self):
+        arr = np.array([1.0, 2.0, 3.0])
+        v = Record(x=arr, label="tag")
+        # A mixed record stays a plain Record and stores leaves as-is.
         assert v["x"] is arr
 
     def test_accepts_opaque_leaves(self):
@@ -68,9 +78,11 @@ class TestConstruction:
 
     def test_scalars(self):
         v = Record(a=1, b=2.5, c=True)
+        # All-numeric records promote; scalar values coerce to jax scalars
+        # and stay value-equal.
         assert v["a"] == 1
         assert v["b"] == 2.5
-        assert v["c"] is True
+        assert bool(v["c"]) is True
 
     def test_nested(self):
         inner = Record(x=1.0, y=2.0)
@@ -265,16 +277,21 @@ class TestStorage:
     these assertions will be the first to fail.
     """
 
-    def test_numpy_stored_verbatim(self):
+    def test_numpy_coerced_by_promotion(self):
         arr = np.array([1.0, 2.0])
         v = Record(x=arr)
-        assert v["x"] is arr
-        assert isinstance(v["x"], np.ndarray)
+        # Promotion coerces a bare numpy leaf to jax.Array; a mixed record
+        # keeps it verbatim.
+        assert isinstance(v["x"], jnp.ndarray)
+        mixed = Record(x=arr, label="tag")
+        assert mixed["x"] is arr
 
-    def test_scalar_stored_verbatim(self):
+    def test_scalar_coerced_by_promotion(self):
         v = Record(x=42.0)
         assert v["x"] == 42.0
-        assert isinstance(v["x"], float)
+        assert isinstance(v["x"], jnp.ndarray)
+        mixed = Record(x=42.0, label="tag")
+        assert isinstance(mixed["x"], float)
 
     def test_jax_stored_verbatim(self):
         arr = jnp.array([1.0, 2.0])
@@ -319,8 +336,8 @@ class TestNumericAPIOnRecord:
     ``_resolved`` / ``_coords`` are intentionally not checked here.
     """
 
-    def test_numeric_vector_ops_absent_from_record(self):
-        v = Record(a=1.0)
+    def test_numeric_vector_ops_absent_from_mixed_record(self):
+        v = Record(a=1.0, label="tag")
         for attr in ("to_vector", "vector_size", "zip"):
             assert not hasattr(v, attr), f"Record should not expose {attr!r}"
         assert not hasattr(Record, "zip")
@@ -504,11 +521,11 @@ class TestPyTree:
 class TestConversion:
     def test_to_dict_verbatim(self):
         arr = np.array([2.0, 3.0])
-        v = Record(a=1.0, b=arr)
+        v = Record(a=1.0, b=arr, label="tag")
         d = v.to_dict()
         assert isinstance(d, dict)
-        assert set(d.keys()) == {"a", "b"}
-        # No coercion — values returned as stored.
+        assert set(d.keys()) == {"a", "b", "label"}
+        # No coercion beyond construction — values returned as stored.
         assert d["a"] == 1.0
         assert d["b"] is arr
 
@@ -612,10 +629,14 @@ class TestLeafOps:
         assert v2["a"] == 4.0
         assert v2["b"] == 9.0
 
-    def test_map_returns_same_class(self):
-        """``map`` on a plain Record returns a Record."""
-        v = Record(a=2.0, b=3.0)
-        assert type(v.map(lambda x: x + 1)) is Record
+    def test_map_rederives_the_numeric_axis(self):
+        """``map`` rebuilds through the base class, re-deciding promotion."""
+        from probpipe import NumericRecord
+
+        mixed = Record(a=2.0, label="tag")
+        assert type(mixed.map(lambda x: 1.0)) is NumericRecord  # promoted
+        numeric = Record(a=2.0, b=3.0)
+        assert type(numeric.map(lambda x: "s")) is Record  # demoted
 
     def test_map_preserves_numeric_record(self):
         """``map`` on a NumericRecord returns a NumericRecord as long as
@@ -626,14 +647,15 @@ class TestLeafOps:
         out = nr.map(lambda x: x * 2)
         assert type(out) is NumericRecord
 
-    def test_map_on_numeric_record_rejects_non_numeric_output(self):
-        """A map that returns a string violates the NumericRecord
-        invariant and must fail loudly at reconstruction."""
+    def test_map_on_numeric_record_demotes_on_non_numeric_output(self):
+        """A map whose outputs are no longer numeric re-derives the numeric
+        axis: the rebuild routes through the base class and demotes."""
         from probpipe import NumericRecord
 
         nr = NumericRecord(a=1.0, b=2.0)
-        with pytest.raises(TypeError, match="numeric"):
-            nr.map(lambda x: "not numeric")
+        out = nr.map(lambda x: "not numeric")
+        assert type(out) is Record
+        assert out["a"] == "not numeric"
 
     def test_map_nested(self):
         v = Record(inner=Record(x=2.0), y=3.0)
@@ -683,7 +705,7 @@ class TestReprAndEquality:
         assert "shape=(3, 4)" in r
 
     def test_repr_nested(self):
-        v = Record(inner=Record(x=1.0))
+        v = Record(inner=Record(x="tag"))
         r = repr(v)
         assert "inner=Record(" in r
 
@@ -723,12 +745,16 @@ class TestReprAndEquality:
         assert hash(v1) != hash(v2)
 
     def test_eq_type_strict(self):
-        """Record == NumericRecord is False even with identical fields."""
+        """Equality is class-strict; promotion aligns classes by content, so
+        an all-numeric Record construction equals its NumericRecord twin."""
         from probpipe import NumericRecord
 
         r = Record(a=1.0, b=2.0)
         nr = NumericRecord(a=1.0, b=2.0)
-        assert r != nr
+        assert type(r) is NumericRecord  # promoted
+        assert r == nr
+        mixed = Record(a=1.0, label="tag")
+        assert mixed != Record(a=1.0, label="other")
 
     # Hash / eq contract: ``a == b`` must imply ``hash(a) == hash(b)``.
     # Regression for review comment (a) on a8be0b3 — ``__hash__`` used

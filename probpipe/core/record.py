@@ -45,7 +45,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from .event_template import EventTemplate
+from .event_template import EventTemplate, NumericEventTemplate, _full_array_shape_or_none
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _PathSubtree, _unflatten_paths
 from .tracked import Annotated, Tracked, auto_name
 
@@ -58,6 +58,33 @@ __all__ = [
 
 # A field value: nested ``Record`` or anything else (stored as-is).
 type _FieldValue = Any
+
+
+def _is_numeric_field_value(value: Any) -> bool:
+    """Whether a raw field value triggers the ``NumericRecord`` promotion.
+
+    A value counts iff coercing it to a ``jax.Array`` loses nothing: a bare
+    numeric array (jax / numpy) or a numeric Python scalar. A backend-typed
+    numeric leaf — one the aux registry knows how to capture, e.g. an
+    ``xarray.DataArray`` or a ``pandas`` object — does **not** trigger
+    promotion, so it stays stored verbatim in a plain ``Record`` and the
+    caller opts into the coercion explicitly (``to_numeric()`` /
+    ``NumericRecord(...)``). A nested record counts iff it is a
+    ``NumericRecord``; a batched child never is.
+    """
+    if isinstance(value, _PathSubtree):
+        # Structural nesting from path-keyed construction: numeric iff every
+        # value beneath it is.
+        return bool(value) and all(_is_numeric_field_value(v) for v in value.values())
+    if isinstance(value, Record):
+        from ._numeric_record import NumericRecord
+
+        return isinstance(value, NumericRecord)
+    from ._array_backend import aux_for
+
+    if aux_for(value) is not None:
+        return False
+    return _full_array_shape_or_none(value) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -153,12 +180,14 @@ class Record(NamedTree, Tracked, Annotated):
     dictionary. Mappings are never leaves: a mapping value denotes tree
     structure, so passing a plain ``dict`` as a field value raises
     ``TypeError`` — nest the entries as fields (via :meth:`from_nested_dict`
-    or a nested ``Record``) instead. A plain ``Record`` is **not** auto-promoted
-    when every field happens to be numeric — the result is still a ``Record``
-    (though its :attr:`event_template` does promote to a
-    :class:`NumericEventTemplate`); construct a :class:`NumericRecord`
-    explicitly, or call :meth:`to_numeric`, when you want the numeric value
-    type. ::
+    or a nested ``Record``) instead. When every leaf is a numeric array (so
+    the carried template is a :class:`NumericEventTemplate`), ``Record(...)``
+    **auto-promotes** to :class:`NumericRecord`, mirroring the
+    ``EventTemplate`` promotion; the numeric axis is re-derived whenever a
+    transform constructs a new record, so an edit that removes the last
+    non-numeric leaf promotes the result and one that introduces a
+    non-numeric leaf demotes it. An explicit non-numeric ``event_template``
+    keeps the result a plain ``Record``. ::
 
         # All three build the same record:
         Record(x=1.5, y=Record(a=0.0, b=2.0))
@@ -267,6 +296,35 @@ class Record(NamedTree, Tracked, Annotated):
         "_provenance",
         "_tree",
     )
+
+    def __new__(cls, *args: Any, **kwargs: Any):
+        # Only auto-promote when invoked directly on the base class —
+        # explicit ``NumericRecord(...)`` calls run their own strict
+        # validation, and the subclasses (batch types, views) own their
+        # construction entirely, so the signature stays generic here.
+        # The numeric axis keys on the carried template: an explicit
+        # template decides directly, and otherwise the raw values are
+        # probed with the same predicate template inference uses, so the
+        # decision agrees with the template the instance will carry.
+        if cls is Record:
+            from ._numeric_record import NumericRecord
+
+            event_template = kwargs.get("event_template")
+            if event_template is not None:
+                numeric = isinstance(event_template, NumericEventTemplate)
+            else:
+                if args and args[0] is not None:
+                    source: Mapping[str, Any] = args[0]
+                else:
+                    source = {
+                        k: v for k, v in kwargs.items() if k not in ("name", "event_template")
+                    }
+                numeric = bool(source) and all(
+                    _is_numeric_field_value(value) for value in source.values()
+                )
+            if numeric:
+                return object.__new__(NumericRecord)
+        return object.__new__(cls)
 
     def __init__(
         self,
@@ -427,6 +485,16 @@ class Record(NamedTree, Tracked, Annotated):
     def _node_type(cls) -> type:
         return Record
 
+    @classmethod
+    def _rebuild_class(cls) -> type:
+        # Structural edits rebuild through the base class so ``__new__``
+        # re-decides the numeric auto-promotion from the edited leaves: a
+        # replacement that removes the last non-numeric leaf promotes the
+        # result to ``NumericRecord``, and one that introduces a non-numeric
+        # leaf demotes it — the numeric axis is an invariant of the current
+        # leaves, not of the object's history.
+        return Record
+
     # -- Selection ----------------------------------------------------------
 
     def select(self, *fields: str, **mapping: str) -> dict[str, _FieldValue]:
@@ -526,7 +594,7 @@ class Record(NamedTree, Tracked, Annotated):
             specs[name] = edited.event_template
         if not new_children:
             raise ValueError("Cannot remove all fields from a collection")
-        return type(self)(new_children, event_template=EventTemplate(specs))
+        return self._rebuild_class()(new_children, event_template=EventTemplate(specs))
 
     def merge(self, other: Record) -> Record:
         """Return the union of this Record and *other* (see :meth:`NamedTree.merge`).
@@ -556,7 +624,7 @@ class Record(NamedTree, Tracked, Annotated):
                 continue
             new_children[name] = child
             specs[name] = other._child_spec(name, child)
-        return type(self)(new_children, event_template=EventTemplate(specs))
+        return self._rebuild_class()(new_children, event_template=EventTemplate(specs))
 
     def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Record:
         """Return a new Record with the values at the given paths replaced.
@@ -604,7 +672,7 @@ class Record(NamedTree, Tracked, Annotated):
             else:
                 new_children[name] = child
                 specs[name] = self._child_spec(name, child)
-        return type(self)(new_children, event_template=EventTemplate(specs))
+        return self._rebuild_class()(new_children, event_template=EventTemplate(specs))
 
     def _spec_of(self, value: _FieldValue) -> Any:
         """The value spec describing a new field *value*, for template threading."""
@@ -921,9 +989,17 @@ def _record_flatten(v: Record) -> tuple[list, tuple[EventTemplate, str, bool]]:
 
 
 def _record_unflatten(aux: tuple[EventTemplate, str, bool], children: list) -> Record:
-    """Unflatten Record from JAX pytree traversal, threading the aux template."""
+    """Unflatten Record from JAX pytree traversal, threading the aux template.
+
+    Reconstructs a plain ``Record`` unconditionally — JAX requires the
+    unflattened tree to reproduce the flattened treedef, so this path must
+    not re-run the ``__new__`` promotion (a verbatim backend leaf, e.g. an
+    ``xarray.DataArray``, has a numeric template but was flattened as a
+    plain ``Record``).
+    """
     template, name, name_is_auto = aux
-    r = Record(dict(zip(tuple(template.children), children)), name=name, event_template=template)
+    r = object.__new__(Record)
+    r.__init__(dict(zip(tuple(template.children), children)), name=name, event_template=template)
     return r._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 

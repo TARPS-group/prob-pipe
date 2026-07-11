@@ -120,15 +120,18 @@ class TestRecordArrayAccess:
         np.testing.assert_allclose(r["x"], [27, 28, 29])
         np.testing.assert_allclose(r["y"], 9.0)
 
-    def test_getitem_int_on_recordarray_returns_record(self):
-        """The base ``RecordArray`` materialises elements as ``Record``."""
+    def test_getitem_int_on_recordarray_rederives_element_class(self):
+        """Element materialisation re-derives the numeric axis: an all-numeric
+        element promotes to ``NumericRecord`` even from a base ``RecordArray``."""
+        from probpipe import NumericRecord
+
         tpl = EventTemplate(x=(3,))
         ra = RecordArray(
             x=jnp.arange(30.0).reshape(10, 3),
             batch_shape=(10,),
             template=tpl,
         )
-        assert type(ra[0]) is Record
+        assert type(ra[0]) is NumericRecord
 
     def test_getitem_int_on_numeric_recordarray_returns_numeric_record(self):
         """``NumericRecordArray[int]`` must return a ``NumericRecord`` so

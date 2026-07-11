@@ -251,3 +251,69 @@ class TestPytreeAuxSplit:
         # Treedef equality is stricter than record equality: a richer explicit
         # template distinguishes the treedefs even when the data is equal.
         assert jax.tree_util.tree_structure(richer) != jax.tree_util.tree_structure(r1)
+
+
+# ===========================================================================
+# 6. Record -> NumericRecord auto-promotion (the numeric axis re-derives)
+# ===========================================================================
+
+
+class TestRecordAutoPromotion:
+    def test_all_numeric_construction_promotes(self):
+        assert type(Record(a=1.0, b=jnp.arange(3.0))) is NumericRecord
+
+    def test_mixed_construction_stays_plain(self):
+        assert type(Record(a=1.0, label="tag")) is Record
+
+    def test_nested_path_keyed_children_promote(self):
+        r = Record({"g/a": 1.0, "g/h/b": 2.0, "c": "tag"})
+        assert type(r) is Record
+        assert type(r.at_path("g")) is NumericRecord
+        assert type(r.at_path("g/h")) is NumericRecord
+
+    def test_explicit_non_numeric_template_wins(self):
+        r = Record(a=1.0, event_template=EventTemplate(a=OpaqueSpec()))
+        assert type(r) is Record
+
+    def test_backend_leaves_stay_verbatim(self):
+        xr = pytest.importorskip("xarray")
+        import numpy as np
+
+        da = xr.DataArray(np.arange(3.0), dims=["t"])
+        r = Record(a=da)
+        # Promotion never silently coerces a backend-typed leaf; the caller
+        # opts in via to_numeric() / NumericRecord(...).
+        assert type(r) is Record
+        assert r["a"] is da
+        assert type(r.to_numeric().to_native()["a"]) is xr.DataArray
+
+    def test_edits_rederive_promotion_and_demotion(self):
+        mixed = Record(a=1.0, label="tag")
+        assert type(mixed.without("label")) is NumericRecord
+        numeric = Record(a=1.0, b=2.0)
+        assert type(numeric.replace(b="tag")) is Record
+        assert type(numeric.merge(Record(c="tag"))) is Record
+
+    def test_pytree_roundtrip_is_class_stable(self):
+        import jax
+
+        xr = pytest.importorskip("xarray")
+        import numpy as np
+
+        # A verbatim backend leaf has a numeric template but flattened as a
+        # plain Record; unflatten must reproduce the treedef, not re-promote.
+        r = Record(a=xr.DataArray(np.arange(3.0), dims=["t"]))
+        leaves, treedef = jax.tree_util.tree_flatten(r)
+        back = jax.tree_util.tree_unflatten(treedef, leaves)
+        assert type(back) is Record
+        assert jax.tree_util.tree_structure(back) == treedef
+
+    def test_batch_subclasses_unaffected(self):
+        from probpipe import NumericRecordArray, RecordArray
+
+        ra = RecordArray({"a": jnp.zeros((3,))}, batch_shape=(3,), template=EventTemplate(a=()))
+        assert type(ra) is RecordArray
+        nra = NumericRecordArray(
+            {"a": jnp.zeros((3,))}, batch_shape=(3,), template=EventTemplate(a=())
+        )
+        assert type(nra) is NumericRecordArray

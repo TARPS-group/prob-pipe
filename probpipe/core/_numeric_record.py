@@ -175,9 +175,10 @@ class NumericRecord(Record):
 
     Notes
     -----
-    Constructing ``NumericRecord(**fields)`` and calling
-    ``Record(**fields).to_numeric()`` follow the same validation and coercion
-    path and produce identical results.
+    Constructing ``NumericRecord(**fields)``, constructing
+    ``Record(**fields)`` from all-numeric fields (which auto-promotes), and
+    calling ``to_numeric()`` follow the same validation and coercion path and
+    produce identical results.
 
     Unlike a general :class:`Record`, whose JAX PyTree structure can be finer
     than its ProbPipe structure, a ``NumericRecord`` is a plain PyTree of arrays:

@@ -86,10 +86,11 @@ class TestConditionalRoundTrip:
         r = Record({"x": jnp.float32(1.0)}, event_template=tpl)
         assert Record(dict(r)) != r  # re-inferred template drops the dtype
 
-    def test_numeric_record_value_only_is_lossy(self):
+    def test_numeric_record_value_only_round_trips(self):
         nr = NumericRecord(a=1.0, b=2.0)
-        # Re-inference builds a base Record, not a NumericRecord.
-        assert Record(dict(nr)) != nr
+        # Auto-promotion re-derives the numeric class from the values, so
+        # the value-only rebuild is no longer lossy.
+        assert Record(dict(nr)) == nr
 
 
 # ---------------------------------------------------------------------------
