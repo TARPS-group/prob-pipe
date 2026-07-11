@@ -684,7 +684,7 @@ class TestRecordDataUnpacking:
         N = 20
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
-        data = Record(X=jnp.asarray(X), y=jnp.asarray(y))
+        data = Record("r", X=jnp.asarray(X), y=jnp.asarray(y))
 
         model = PyMCModel(self._xy_model)
         # _pymc_model unpacks and coerces. Result is a PyMC model built
@@ -720,5 +720,5 @@ class TestRecordDataUnpacking:
         # Just confirm this doesn't raise the
         # "unsupported operand type(s) for *: 'TensorVariable' and
         #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.
-        built = model._pymc_model(data=Record(X=X, y=y))
+        built = model._pymc_model(data=Record("r", X=X, y=y))
         assert "y" in {rv.name for rv in built.observed_RVs}

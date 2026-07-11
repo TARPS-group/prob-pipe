@@ -668,7 +668,7 @@ class TestRecordArrayMarginal:
     def record_workflow(self):
         @workflow_function
         def transform(x, y):
-            return Record(sum=x + y, diff=x - y)
+            return Record("r", sum=x + y, diff=x - y)
 
         return transform
 
@@ -752,7 +752,7 @@ class TestMakeStack:
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._broadcast_distributions import _make_stack
 
-        records = [NumericRecord(a=float(i), b=float(i) * 2) for i in range(5)]
+        records = [NumericRecord("nr", a=float(i), b=float(i) * 2) for i in range(5)]
         out = _make_stack(records, n=5, field_name="demo")
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (5,)
@@ -767,7 +767,7 @@ class TestMakeStack:
         from probpipe import NumericRecordArray, Record, RecordArray
         from probpipe.core._broadcast_distributions import _make_stack
 
-        records = [Record(a=float(i), label=f"row{i}") for i in range(3)]
+        records = [Record("r", a=float(i), label=f"row{i}") for i in range(3)]
         out = _make_stack(records, n=3, field_name="demo")
         assert isinstance(out, RecordArray)
         assert not isinstance(out, NumericRecordArray)
@@ -782,7 +782,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
         from probpipe.core.event_template import ArraySpec, OpaqueSpec
 
-        records = [Record(x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
+        records = [Record("r", x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
         out = _make_stack(records, n=3, field_name="demo")
         assert isinstance(out, RecordArray)
         assert out["x"].dtype == jnp.bfloat16
@@ -806,7 +806,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         inner = [
-            NumericRecordArray.stack([NumericRecord(x=float(i * 10 + j)) for j in range(4)])
+            NumericRecordArray.stack([NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)])
             for i in range(3)
         ]
         out = _make_stack(inner, n=3, field_name="demo")
@@ -834,7 +834,7 @@ class TestMakeStack:
         from probpipe import NumericRecordArray, Record
         from probpipe.core._broadcast_distributions import _make_stack
 
-        rec = Record(x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
+        rec = Record("r", x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
         out = _make_stack(rec, n=5, field_name="demo")
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (5,)
@@ -880,7 +880,7 @@ class TestCoerceOutput:
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._workflow_result import _coerce_output
 
-        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
+        ra = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
         assert ra.provenance is None
         prov = Provenance("sweep", parents=())
         out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
@@ -911,7 +911,7 @@ class TestCoerceOutput:
         from probpipe import NumericRecord
         from probpipe.core._workflow_result import _coerce_output
 
-        nr = NumericRecord(x=1.0).with_provenance(Provenance("inner", parents=()))
+        nr = NumericRecord("nr", x=1.0).with_provenance(Provenance("inner", parents=()))
         # Second set would normally raise RuntimeError; _coerce_output
         # swallows it.
         _coerce_output(

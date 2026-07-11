@@ -47,7 +47,7 @@ import numpy as np
 from ..custom_types import ArrayLike
 from .event_template import EventTemplate, NumericEventTemplate, _full_array_shape_or_none
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _PathSubtree, _unflatten_paths
-from .tracked import Annotated, Tracked, auto_name
+from .tracked import Annotated, Tracked
 
 if TYPE_CHECKING:
     from ._numeric_record import NumericRecord
@@ -87,6 +87,34 @@ def _is_numeric_field_value(value: Any) -> bool:
     return _full_array_shape_or_none(value) is not None
 
 
+def _derived_record_name(field_keys: Iterable[str]) -> str:
+    """The deterministic name an operation derives for a record it produces."""
+    return "record(" + ",".join(field_keys) + ")"
+
+
+def _auto_record(
+    fields: Mapping[str, Any],
+    *,
+    name: str | None = None,
+    event_template: EventTemplate | None = None,
+) -> Record:
+    """Operation-side constructor: build a record under an auto-derived name.
+
+    The ``Record`` constructor requires a user-given name; an *operation*
+    that produces a record instead derives a deterministic name from its
+    inputs and marks it ``name_is_auto=True``. This helper is that derived
+    path: *name* supplies the operation's derived name (e.g. the producing
+    distribution's name), defaulting to the field-derived
+    ``record(<keys>)``. Promotion applies as in normal construction.
+    """
+    return Record(
+        name if name is not None else _derived_record_name(fields),
+        dict(fields),
+        event_template=event_template,
+        name_is_auto=True,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Record
 # ---------------------------------------------------------------------------
@@ -114,7 +142,7 @@ class Record(NamedTree, Tracked, Annotated):
     insertion order. A record must have at least one field; an empty record is
     not allowed. ::
 
-        r = Record(x=1.5, y=Record(a=0.0, b=2.0))
+        r = Record("r", x=1.5, y=Record("y", a=0.0, b=2.0))
         r["x"]          # 1.5
         r["y/a"]        # 0.0   — a nested leaf, by /-path ...
         r["y", "a"]     # 0.0   — ... or by tuple
@@ -158,7 +186,7 @@ class Record(NamedTree, Tracked, Annotated):
         r.at_path("y").event_template == r.event_template.at_path("y")  # True
 
         # Each field value maps to a value spec by type:
-        Record(vec=jnp.zeros(3), label="fox").event_template
+        Record("r", vec=jnp.zeros(3), label="fox").event_template
         # EventTemplate(vec=(3,), label=None)   — array -> ArraySpec, str -> OpaqueSpec
 
     Metadata: identity and annotations
@@ -190,9 +218,9 @@ class Record(NamedTree, Tracked, Annotated):
     keeps the result a plain ``Record``. ::
 
         # All three build the same record:
-        Record(x=1.5, y=Record(a=0.0, b=2.0))
-        Record({"x": 1.5, "y/a": 0.0, "y/b": 2.0})
-        Record.from_nested_dict({"x": 1.5, "y": {"a": 0.0, "b": 2.0}})
+        Record("r", x=1.5, y=Record("y", a=0.0, b=2.0))
+        Record("r", {"x": 1.5, "y/a": 0.0, "y/b": 2.0})
+        Record.from_nested_dict("r", {"x": 1.5, "y": {"a": 0.0, "b": 2.0}})
 
     When an ``event_template`` is supplied it is validated against the value's
     structure, and any mismatch in tree shape or field/spec kind raises
@@ -201,7 +229,7 @@ class Record(NamedTree, Tracked, Annotated):
     is lossy on the value specs (e.g. it cannot recover a :class:`FunctionSpec`'s
     input / output structure). ::
 
-        Record(a=1.0, event_template=EventTemplate(a=(), b=()))
+        Record("r", a=1.0, event_template=EventTemplate(a=(), b=()))
         # ValueError: event_template fields ['a', 'b'] do not match record fields ['a'] ...
 
     Equality and hashing
@@ -232,21 +260,26 @@ class Record(NamedTree, Tracked, Annotated):
 
     Parameters
     ----------
+    name : str
+        The record's name — the required first positional argument on
+        explicit construction (a user-given name). An operation that
+        produces a record supplies a deterministic name derived from its
+        inputs and marks it via ``name_is_auto``.
     _fields : Mapping, optional
         Fields as a positional mapping (any ``collections.abc.Mapping``, copied
         into a ``dict`` at construction) — an alternative to keyword ``**fields``
         (passing both raises). Use it when a field name would collide with the
-        ``name`` / ``event_template`` keywords. Positional-only (the leading
-        underscore keeps it from shadowing a field literally named ``fields``).
+        ``event_template`` / ``name_is_auto`` keywords. Positional-only (the
+        leading underscore keeps it from shadowing a field literally named
+        ``fields``).
     **fields
         Named values, stored unchanged: ``jax`` / ``numpy`` arrays, Python
         scalars, strings, ``xarray`` / ``pandas`` objects, nested ``Record``s,
-        or any opaque object. At least one field is required.
-    name : str, optional
-        Human-readable label for introspection / provenance. When omitted, a
-        label is auto-derived from the field names and the record is marked
-        ``name_is_auto=True``; a supplied name is user-given
-        (``name_is_auto=False``).
+        or any opaque object. At least one field is required. A nested record
+        takes its name from the field key it sits under.
+    name_is_auto : bool, optional
+        ``True`` when *name* was derived by the producing operation rather
+        than supplied by the user. Defaults to ``False``.
     event_template : EventTemplate, optional
         The value's authoritative schema. When omitted it is inferred from the
         field data at construction (via :meth:`EventTemplate.infer_from`); when
@@ -313,11 +346,13 @@ class Record(NamedTree, Tracked, Annotated):
             if event_template is not None:
                 numeric = isinstance(event_template, NumericEventTemplate)
             else:
-                if args and args[0] is not None:
-                    source: Mapping[str, Any] = args[0]
+                if len(args) > 1 and args[1] is not None:
+                    source: Mapping[str, Any] = args[1]
                 else:
                     source = {
-                        k: v for k, v in kwargs.items() if k not in ("name", "event_template")
+                        k: v
+                        for k, v in kwargs.items()
+                        if k not in ("event_template", "name_is_auto")
                     }
                 numeric = bool(source) and all(
                     _is_numeric_field_value(value) for value in source.values()
@@ -328,11 +363,12 @@ class Record(NamedTree, Tracked, Annotated):
 
     def __init__(
         self,
+        name: str,
         _fields: Mapping[str, _FieldValue] | None = None,
         /,
         *,
-        name: str | None = None,
         event_template: EventTemplate | None = None,
+        name_is_auto: bool = False,
         **fields: _FieldValue,
     ):
         if _fields is not None:
@@ -355,7 +391,9 @@ class Record(NamedTree, Tracked, Annotated):
                     sub_template = template_child
             try:
                 if isinstance(value, _PathSubtree):
-                    field_map[field_name] = type(self)(value, event_template=sub_template)
+                    field_map[field_name] = type(self)(
+                        field_name, value, event_template=sub_template, name_is_auto=True
+                    )
                 elif (
                     sub_template is not None
                     and isinstance(value, Record)
@@ -368,30 +406,51 @@ class Record(NamedTree, Tracked, Annotated):
                         # The child already carries this exact template object
                         # (e.g. built by ``from_field_values`` or threaded from
                         # the producing generator) — reuse it verbatim, keeping
-                        # its name / provenance / backend aux. Identity, not ``==``:
+                        # its provenance / backend aux. Identity, not ``==``:
                         # the point is to adopt the *supplied* template object,
                         # and an equal-but-distinct child template must still be
                         # rebuilt through it.
-                        field_map[field_name] = value
+                        field_map[field_name] = self._named_by_key(field_name, value)
                     else:
                         field_map[field_name] = type(value)(
-                            dict(value._tree), event_template=sub_template
+                            field_name,
+                            dict(value._tree),
+                            event_template=sub_template,
+                            name_is_auto=True,
                         )
                 else:
-                    if not isinstance(value, Record):
+                    if isinstance(value, Record):
+                        value = self._named_by_key(field_name, value)
+                    else:
                         self._check_leaf(field_name, value)
                     field_map[field_name] = value
             except ValueError as error:
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
         object.__setattr__(self, "_tree", field_map)
-        name, name_is_auto = auto_name(name, "record(" + ",".join(field_map.keys()) + ")")
         self._init_tracked(name, name_is_auto=name_is_auto)
         if event_template is None:
             event_template = EventTemplate.infer_from(field_map)
         else:
             self._validate_event_template(event_template)
         object.__setattr__(self, "_event_template", event_template)
+
+    @staticmethod
+    def _named_by_key(field_name: str, child: Record) -> Record:
+        """Align a nested record's name with the field key it sits under.
+
+        A nested object takes its name from its field key. When the child
+        already carries that name it is stored as-is; otherwise a shallow
+        identity copy (fields, template, aux shared) is stored under the key
+        name, marked auto — the name follows the key, so a later rename of
+        the field re-derives it.
+        """
+        if child._name == field_name:
+            return child
+        renamed = child._shallow_copy()
+        object.__setattr__(renamed, "_name", field_name)
+        object.__setattr__(renamed, "_name_is_auto", True)
+        return renamed
 
     def _validate_event_template(self, event_template: EventTemplate) -> None:
         """Check that an explicitly-supplied template matches this record's structure.
@@ -495,6 +554,17 @@ class Record(NamedTree, Tracked, Annotated):
         # leaves, not of the object's history.
         return Record
 
+    def _rebuild_node(self, leaves: Mapping[str, Any], *, node_name: str | None) -> Record:
+        # A nested node is named by its field key (auto — the name follows
+        # the key). The root follows the transform identity rule: a
+        # user-given name is preserved, an auto-derived one is re-derived
+        # from the result's field keys.
+        if node_name is not None:
+            return self._rebuild_class()(node_name, leaves, name_is_auto=True)
+        if self._name_is_auto:
+            return self._rebuild_class()(_derived_record_name(leaves), leaves, name_is_auto=True)
+        return self._rebuild_class()(self._name, leaves)
+
     # -- Selection ----------------------------------------------------------
 
     def select(self, *fields: str, **mapping: str) -> dict[str, _FieldValue]:
@@ -594,7 +664,12 @@ class Record(NamedTree, Tracked, Annotated):
             specs[name] = edited.event_template
         if not new_children:
             raise ValueError("Cannot remove all fields from a collection")
-        return self._rebuild_class()(new_children, event_template=EventTemplate(specs))
+        return self._rebuild_class()(
+            self._name,
+            new_children,
+            event_template=EventTemplate(specs),
+            name_is_auto=self._name_is_auto,
+        )
 
     def merge(self, other: Record) -> Record:
         """Return the union of this Record and *other* (see :meth:`NamedTree.merge`).
@@ -624,7 +699,12 @@ class Record(NamedTree, Tracked, Annotated):
                 continue
             new_children[name] = child
             specs[name] = other._child_spec(name, child)
-        return self._rebuild_class()(new_children, event_template=EventTemplate(specs))
+        return self._rebuild_class()(
+            self._name,
+            new_children,
+            event_template=EventTemplate(specs),
+            name_is_auto=self._name_is_auto,
+        )
 
     def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Record:
         """Return a new Record with the values at the given paths replaced.
@@ -672,7 +752,12 @@ class Record(NamedTree, Tracked, Annotated):
             else:
                 new_children[name] = child
                 specs[name] = self._child_spec(name, child)
-        return self._rebuild_class()(new_children, event_template=EventTemplate(specs))
+        return self._rebuild_class()(
+            self._name,
+            new_children,
+            event_template=EventTemplate(specs),
+            name_is_auto=self._name_is_auto,
+        )
 
     def _spec_of(self, value: _FieldValue) -> Any:
         """The value spec describing a new field *value*, for template threading."""
@@ -703,8 +788,14 @@ class Record(NamedTree, Tracked, Annotated):
                 "must not collide with an existing sibling name"
             )
         renamed_template = self.event_template.with_path_names(mapping, **kwargs)
-        name = None if self._name_is_auto else self._name
-        return self._rebuild_class()(renamed, name=name, event_template=renamed_template)
+        if self._name_is_auto:
+            return self._rebuild_class()(
+                _derived_record_name(renamed),
+                renamed,
+                event_template=renamed_template,
+                name_is_auto=True,
+            )
+        return self._rebuild_class()(self._name, renamed, event_template=renamed_template)
 
     # -- Backend conversion -------------------------------------------------
 
@@ -764,50 +855,63 @@ class Record(NamedTree, Tracked, Annotated):
         from ._numeric_record import NumericRecord
 
         return NumericRecord(
+            self._name,
             {
-                name: val.to_numeric() if isinstance(val, Record) else val
-                for name, val in self._tree.items()
-            }
+                field_name: val.to_numeric() if isinstance(val, Record) else val
+                for field_name, val in self._tree.items()
+            },
+            name_is_auto=self._name_is_auto,
         )
 
     # -- Coercion -----------------------------------------------------------
 
     @classmethod
-    def ensure(cls, x: Any) -> Record:
+    def ensure(cls, x: Any, *, name: str | None = None) -> Record:
         """Coerce *x* to Record if it isn't already.
 
-        - ``Record`` → pass through
-        - ``dict`` → ``Record(**x)``
-        - array-like → ``Record(data=x)``
+        - ``Record`` → pass through (any *name* is ignored)
+        - ``dict`` → its entries become the fields
+        - anything else → a single-field record keyed ``data``
+
+        A freshly wrapped value is named *name* when given; otherwise its
+        name is derived from the resulting field keys and marked auto.
         """
         if isinstance(x, cls):
             return x
-        if isinstance(x, dict):
-            return cls(x)
-        return cls(data=x)
+        fields = dict(x) if isinstance(x, dict) else {"data": x}
+        if name is None:
+            return cls(_derived_record_name(fields), fields, name_is_auto=True)
+        return cls(name, fields)
 
     # -- Constructors -------------------------------------------------------
 
     @classmethod
-    def from_dict(cls, d: dict[str, ArrayLike | Record]) -> Record:
-        """Construct Record from a dict of arrays."""
-        return cls(d)
+    def from_dict(cls, name: str, d: dict[str, ArrayLike | Record]) -> Record:
+        """Construct a Record named *name* from a dict of arrays."""
+        return cls(name, d)
 
     @classmethod
     def from_nested_dict(
-        cls, data: Mapping[str, Any], *, event_template: EventTemplate | None = None
+        cls,
+        name: str,
+        data: Mapping[str, Any],
+        /,
+        *,
+        event_template: EventTemplate | None = None,
     ) -> Record:
-        """Build a Record from a **nested** mapping (see :meth:`NamedTree.from_nested_dict`).
+        """Build a Record named *name* from a **nested** mapping.
 
         Every ``Mapping`` level becomes a nested sub-record and every other
-        value a field — mappings are never leaves. With *event_template*
-        given, the template is validated against that structure and carried
-        onto the result exactly as in normal construction.
+        value a field — mappings are never leaves (see
+        :meth:`NamedTree.from_nested_dict`, whose signature this extends
+        with the record's required name). With *event_template* given, the
+        template is validated against that structure and carried onto the
+        result exactly as in normal construction.
         """
         flat = cls._flatten_paths(data)
         if event_template is None:
-            return cls(flat)
-        return cls(flat, event_template=event_template)
+            return cls(name, flat)
+        return cls(name, flat, event_template=event_template)
 
     @classmethod
     def from_field_values(cls, name: str, template: EventTemplate, values: Iterable[Any]) -> Record:
@@ -852,17 +956,19 @@ class Record(NamedTree, Tracked, Annotated):
             )
         leaf_iter = iter(values)
 
-        def _build(tpl: EventTemplate, node_name: str | None) -> Record:
+        def _build(tpl: EventTemplate, node_name: str, node_is_auto: bool) -> Record:
             fields = {
                 field_name: (
-                    _build(spec, None) if isinstance(spec, EventTemplate) else next(leaf_iter)
+                    _build(spec, field_name, True)
+                    if isinstance(spec, EventTemplate)
+                    else next(leaf_iter)
                 )
                 for field_name, spec in tpl.children.items()
             }
             # ``Record.__new__`` selects the class from the template.
-            return Record(fields, name=node_name, event_template=tpl)
+            return Record(node_name, fields, event_template=tpl, name_is_auto=node_is_auto)
 
-        return _build(template, name)
+        return _build(template, name, False)
 
     # -- Leaf-wise operations -----------------------------------------------
     #
@@ -1010,7 +1116,8 @@ def _pack_fields(
         raise TypeError(
             f"{prefix}expected exactly the fields {tuple(fields)} — {'; '.join(parts)}."
         )
-    return Record(**{f: field_kwargs[f] for f in fields})
+    field_map = {f: field_kwargs[f] for f in fields}
+    return Record(_derived_record_name(field_map), field_map, name_is_auto=True)
 
 
 # ---------------------------------------------------------------------------
@@ -1019,7 +1126,7 @@ def _pack_fields(
 
 
 def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance) -> Record:
-    r = Record(name=name, **store)
+    r = Record(name, store)
     return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
@@ -1054,7 +1161,7 @@ def _record_unflatten(aux: tuple[EventTemplate, str, bool], children: list) -> R
     """
     template, name, name_is_auto = aux
     r = object.__new__(Record)
-    r.__init__(dict(zip(tuple(template.children), children)), name=name, event_template=template)
+    r.__init__(name, dict(zip(tuple(template.children), children)), event_template=template)
     return r._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 

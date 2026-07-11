@@ -32,7 +32,7 @@ from ..core.protocols import (
     protocols_supported_by_all,
 )
 from ..core.provenance import Provenance
-from ..core.record import Record
+from ..core.record import Record, _auto_record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
@@ -331,7 +331,7 @@ class SequentialJointDistribution(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return Record(fields)
+        return _auto_record(fields)
 
     def _eval_log_prob(self, value, *, components: str) -> Array:
         """Evaluate log-density over selected components.
@@ -414,11 +414,11 @@ class SequentialJointDistribution(
         samples.  This returns the prototype (prior-evaluated) means
         as an approximation.
         """
-        return Record({k: v._mean() for k, v in self._proto_components.items()})
+        return _auto_record({k: v._mean() for k, v in self._proto_components.items()})
 
     def _variance(self) -> Record:
         """Per-component variances (approximate --- uses prototype components)."""
-        return Record({k: v._variance() for k, v in self._proto_components.items()})
+        return _auto_record({k: v._variance() for k, v in self._proto_components.items()})
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(

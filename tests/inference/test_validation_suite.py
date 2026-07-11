@@ -35,7 +35,7 @@ class TestSGLDCovarianceBias:
         m = conjugate_linear_model
         sgld = condition_on(
             m.model,
-            Record(X=m.design, y=m.data),
+            Record("r", X=m.design, y=m.data),
             method="blackjax_sgld",
             batch_size=20,
             num_results=5000,

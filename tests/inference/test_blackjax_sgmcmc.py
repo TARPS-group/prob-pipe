@@ -48,7 +48,7 @@ def logistic_problem():
     # No-intercept logistic regression: prior dims pair 1-to-1 with X columns.
     lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X, fit_intercept=False)
     model = SimpleModel(prior=prior, likelihood=lik)
-    data = Record(X=X, y=y)
+    data = Record("r", X=X, y=y)
     return {
         "model": model,
         "data": data,

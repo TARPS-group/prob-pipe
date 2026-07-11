@@ -170,7 +170,7 @@ class TestFlattening:
     """The multi-field θ★ flattening + component-naming that ranks rely on."""
 
     def test_flatten_point_honors_field_order(self):
-        point = Record(a=jnp.array([1.0, 2.0]), b=jnp.array([3.0]))
+        point = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array([3.0]))
         np.testing.assert_array_equal(
             np.asarray(_flatten_point(point, ("a", "b"))), [1.0, 2.0, 3.0]
         )
@@ -182,7 +182,7 @@ class TestFlattening:
     def test_component_names_expand_per_field(self):
         # A length-k field becomes field[0..k-1]; a scalar field keeps its name —
         # in posterior field order, matching flat_samples columns.
-        emp = EmpiricalDistribution(Record(a=jnp.zeros((10, 2)), b=jnp.zeros((10,))), name="m")
+        emp = EmpiricalDistribution(Record("r", a=jnp.zeros((10, 2)), b=jnp.zeros((10,))), name="m")
         assert _component_names(emp) == ("a[0]", "a[1]", "b")
 
 

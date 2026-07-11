@@ -181,6 +181,19 @@ class NamedTree:
         """
         return cls
 
+    def _rebuild_node(self, leaves: Mapping[str, Any], *, node_name: str | None) -> Any:
+        """Construct one rebuilt node from a flat leaf map (hook).
+
+        The structure-preserving transforms build their results through this
+        hook. *node_name* is the field key the node sits under for a nested
+        node and ``None`` for the root. The default constructs through
+        :meth:`_rebuild_class` and ignores *node_name*; a family whose
+        constructor requires a name (the value types) overrides this to
+        supply it — a nested node is named by its field key, and the root
+        follows the transform's identity rule.
+        """
+        return self._rebuild_class()(leaves)
+
     @classmethod
     def _leaf_type(cls) -> type | tuple[type, ...]:
         """The family's declared leaf type (hook).
@@ -432,7 +445,9 @@ class NamedTree:
                             f"that would introduce nesting and change the structure"
                         )
                     new_children[name] = nxt
-            return node._rebuild_class()(new_children)
+            return node._rebuild_node(
+                new_children, node_name=prefix.rstrip(_PATH_SEP).rsplit(_PATH_SEP, 1)[-1] or None
+            )
 
         result = build(self, "")
         if next(it, sentinel) is not sentinel:
@@ -511,7 +526,7 @@ class NamedTree:
         subtree). A missing path raises ``KeyError``; removing every field raises
         ``ValueError``. Surviving fields keep their order and their specs.
         """
-        return self._rebuild_class()(self._leaves_without(paths))
+        return self._rebuild_node(self._leaves_without(paths), node_name=None)
 
     def _leaves_merged(self, other: Any) -> dict[str, Any]:
         """Flat leaf-map unioning ``self``'s then *other*'s leaves, keyed by path."""
@@ -530,7 +545,7 @@ class NamedTree:
         clash between them, raises ``ValueError``. ``self``'s fields come first,
         then ``other``'s.
         """
-        return self._rebuild_class()(self._leaves_merged(other))
+        return self._rebuild_node(self._leaves_merged(other), node_name=None)
 
     @staticmethod
     def _resolve_replace_updates(
@@ -596,7 +611,7 @@ class NamedTree:
         resolved = self._resolve_replace_updates(_updates, updates)
         if not resolved:
             return self
-        return self._rebuild_class()(self._leaves_replaced(resolved))
+        return self._rebuild_node(self._leaves_replaced(resolved), node_name=None)
 
     # -- Field renaming -------------------------------------------------------
 
@@ -718,7 +733,7 @@ class NamedTree:
                 "must not collide with an existing sibling name"
             )
         try:
-            return self._rebuild_class()(renamed)
+            return self._rebuild_node(renamed, node_name=None)
         except ValueError as error:  # field-vs-prefix collisions from construction
             raise ValueError(f"with_path_names() produced an invalid tree: {error}") from None
 

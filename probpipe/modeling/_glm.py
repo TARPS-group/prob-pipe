@@ -49,7 +49,7 @@ class GLMLikelihood:
     Joint bootstrapping of covariates and response uses the Record
     form::
 
-        Xy = Record(X=X_covariates, y=y_observed)
+        Xy = _auto_record({"X": X_covariates, "y": y_observed})
         bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(Xy))
         bagged = condition_on.with_options(n_broadcast_samples=16)(
             model, bootstrap,

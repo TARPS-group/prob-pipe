@@ -76,7 +76,7 @@ def prep_data(width, satellites) -> Record:
     width = np.asarray(width, dtype=np.float32)
     width_z = (width - np.mean(width)) / np.std(width)
     X = np.column_stack([np.ones(len(width)), width_z]).astype(np.float32)
-    return Record(X=X, y=np.asarray(satellites, dtype=np.float32))
+    return Record("data", X=X, y=np.asarray(satellites, dtype=np.float32))
 
 
 data = prep_data(df["width_cm"], df["satellites"])

@@ -239,9 +239,9 @@ def with_resampling(
                 # Resample per-leaf (samples is a NumericRecord; index each
                 # leaf's stacked array along the sample axis). Path-keyed
                 # construction rebuilds any nested structure.
-                from .record import Record
+                from .record import _auto_record
 
-                new_record = Record({k: v[indices] for k, v in out_dist.samples.items()})
+                new_record = _auto_record({k: v[indices] for k, v in out_dist.samples.items()})
                 resampled = EmpiricalDistribution(
                     new_record,
                     name=out_dist.name,

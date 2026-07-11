@@ -43,7 +43,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..core.provenance import Provenance
-from ..core.record import Record
+from ..core.record import Record, _auto_record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
@@ -213,7 +213,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         Subclasses override to return a typed batched container (e.g.
         ``NumericRecordArray``) when the leaves are numeric.
         """
-        return Record(self._resample_rows(key, sample_shape))
+        return _auto_record(self._resample_rows(key, sample_shape))
 
     def _resample_rows(
         self,
@@ -375,7 +375,7 @@ class NumericJointEmpirical(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return Record(result)
+        return _auto_record(result)
 
     # -- event_shapes (used by the record template) ------------------------
 
@@ -388,11 +388,15 @@ class NumericJointEmpirical(
 
     def _mean(self) -> Record:
         """Per-component weighted means."""
-        return Record({cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()})
+        return _auto_record(
+            {cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()}
+        )
 
     def _variance(self) -> Record:
         """Per-component weighted variances."""
-        return Record({cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()})
+        return _auto_record(
+            {cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()}
+        )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(

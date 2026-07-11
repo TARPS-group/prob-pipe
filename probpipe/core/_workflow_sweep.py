@@ -19,6 +19,7 @@ from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import _RecordArrayView
 from .distribution import BroadcastDistribution, Distribution
 from .provenance import Provenance
+from .record import _auto_record
 
 
 def execute_sweep(
@@ -222,8 +223,7 @@ def execute_sweep_rows_jax(
     def single_call(array_slice_leaves):
         kwargs = dict(static)
         for name in array_args:
-            array_value = values[name]
-            kwargs[name] = array_value._record_cls(array_slice_leaves[name])
+            kwargs[name] = _auto_record(array_slice_leaves[name])
         return func(**kwargs)
 
     vmap_input = {}

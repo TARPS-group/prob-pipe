@@ -49,7 +49,7 @@ from ..core.protocols import (
     SupportsSampling,
     SupportsUnnormalizedLogProb,
 )
-from ..core.record import Record
+from ..core.record import Record, _auto_record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 
@@ -109,7 +109,7 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     """
     if isinstance(data, Record):
         # Covers Record and RecordArray (the latter via subclass).
-        return Record({f: jnp.asarray(child)[indices] for f, child in data.children.items()})
+        return _auto_record({f: jnp.asarray(child)[indices] for f, child in data.children.items()})
     return jnp.asarray(data)[indices]
 
 

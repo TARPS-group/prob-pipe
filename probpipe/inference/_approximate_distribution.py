@@ -14,7 +14,7 @@ from .._weights import Weights
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
 from ..core.event_template import ArraySpec, EventTemplate, NumericEventTemplate, OpaqueSpec
 from ..core.provenance import Provenance
-from ..core.record import Record
+from ..core.record import Record, _auto_record
 from ..custom_types import Array, ArrayLike
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
@@ -257,7 +257,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     shape = spec.shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
-            super().__init__(Record(fields), weights=weights, name=name or "posterior")
+            super().__init__(_auto_record(fields), weights=weights, name=name or "posterior")
             self._event_template = event_template
         else:
             # Single-field path: ``name`` (default ``"posterior"``)

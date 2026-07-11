@@ -463,7 +463,7 @@ class TestValuesEmpiricalDistribution:
     def values_data(self):
         X = jnp.ones((20, 3))
         y = jnp.arange(20.0)
-        return Record(X=X, y=y)
+        return Record("r", X=X, y=y)
 
     def test_dispatch(self, values_data):
         from probpipe.core._empirical import RecordEmpiricalDistribution
@@ -548,7 +548,7 @@ class TestValuesBootstrapReplicateDistribution:
     def values_data(self):
         X = jnp.ones((20, 3))
         y = jnp.arange(20.0)
-        return Record(X=X, y=y)
+        return Record("r", X=X, y=y)
 
     @pytest.fixture
     def bootstrap(self, values_data):

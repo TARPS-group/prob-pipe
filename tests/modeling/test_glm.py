@@ -122,7 +122,7 @@ class TestGLMLikelihood:
         # Per-datum path with 1-D covariate.
         p_lp = lik.per_datum_log_likelihood(
             params,
-            Record(X=jnp.asarray(x[0]), y=jnp.array(1.0)),
+            Record("r", X=jnp.asarray(x[0]), y=jnp.array(1.0)),
         )
         assert jnp.isfinite(p_lp)
 
@@ -202,14 +202,14 @@ class TestGLMLikelihoodWithValues:
     """GLMLikelihood accepts Record for params and data."""
 
     def test_log_likelihood_with_values_params(self, poisson_lik):
-        params = Record(beta=jnp.array([1.0, 0.5]))
+        params = Record("r", beta=jnp.array([1.0, 0.5]))
         data = jnp.ones(20)
         ll = poisson_lik.log_likelihood(params, data)
         assert jnp.isfinite(ll)
 
     def test_log_likelihood_with_record_data(self, poisson_lik):
         params = jnp.array([1.0, 0.5])
-        data = Record(y=jnp.ones(20))
+        data = Record("r", y=jnp.ones(20))
         ll = poisson_lik.log_likelihood(params, data)
         assert jnp.isfinite(ll)
 
@@ -218,14 +218,14 @@ class TestGLMLikelihoodWithValues:
         data_raw = jnp.ones(20, dtype=float)
         ll_raw = float(poisson_lik.log_likelihood(params_raw, data_raw))
 
-        params_v = Record(beta=params_raw)
-        data_v = Record(y=data_raw)
+        params_v = Record("r", beta=params_raw)
+        data_v = Record("r", y=data_raw)
         ll_v = float(poisson_lik.log_likelihood(params_v, data_v))
         np.testing.assert_allclose(ll_v, ll_raw, rtol=1e-6)
 
     def test_coerce_multi_field_values_stacks(self, poisson_lik):
         """Multi-field Record are stacked into a flat vector (insertion order)."""
-        params_v = Record(intercept=jnp.array(1.0), slope=jnp.array(0.5))
+        params_v = Record("r", intercept=jnp.array(1.0), slope=jnp.array(0.5))
         params_raw = jnp.array([1.0, 0.5])  # intercept, slope (insertion order)
         data = jnp.ones(20)
         ll_v = float(poisson_lik.log_likelihood(params_v, data))
@@ -236,7 +236,8 @@ class TestGLMLikelihoodWithValues:
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=5.0 * jnp.eye(2), name="beta")
         model = SimpleModel(prior, poisson_lik)
         data = Record(
-            y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1, 0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float)
+            "r",
+            y=jnp.array([2, 1, 3, 0, 5, 1, 2, 4, 3, 1, 0, 2, 6, 1, 3, 2, 0, 4, 1, 3], dtype=float),
         )
         posterior = condition_on(model, data, num_results=50, num_warmup=25, random_seed=0)
         assert mean(posterior).shape == (2,)

@@ -19,7 +19,7 @@ import numpy as np
 from ..custom_types import Array
 from ._numeric_record import NumericRecord
 from .event_template import ArraySpec, EventTemplate, _is_numeric_dtype
-from .record import Record
+from .record import Record, _auto_record
 from .tracked import auto_name
 
 __all__ = [
@@ -223,13 +223,6 @@ class RecordArray(Record):
         """
         return _RecordArrayView(self, field)
 
-    _record_cls: type = Record
-    """Class used to materialise a single element via integer indexing.
-
-    Overridden on :class:`NumericRecordArray` so element extraction
-    returns a :class:`NumericRecord` (preserving the numeric guarantee).
-    """
-
     def _get_record(self, index: int) -> Record:
         """Extract a single Record at a flat batch index.
 
@@ -244,14 +237,14 @@ class RecordArray(Record):
             if isinstance(val, RecordArray):
                 return val._get_record(index)
             if isinstance(val, Record):
-                # A NumericRecord requires NumericRecord children, so a plain-Record
-                # nested field (batch-shaped leaves stored on a plain Record) is
-                # promoted; a non-numeric parent keeps the child's own type.
-                cls = NumericRecord if isinstance(self, NumericRecordArray) else type(val)
-                return cls({k: _elem(child) for k, child in val.children.items()})
+                # ``_auto_record`` derives the element's name and re-derives the
+                # numeric axis: an all-numeric nested field promotes to
+                # ``NumericRecord`` (preserving the NumericRecordArray invariant),
+                # while a non-numeric one stays a plain ``Record``.
+                return _auto_record({k: _elem(child) for k, child in val.children.items()})
             return val[nd_index]
 
-        return self._record_cls({name: _elem(self._tree[name]) for name in self._tree})
+        return _auto_record({name: _elem(self._tree[name]) for name in self._tree})
 
     def __contains__(self, name: str) -> bool:
         return name in self._tree
@@ -388,7 +381,7 @@ class RecordArray(Record):
         )
 
     @classmethod
-    def from_nested_dict(cls, data: Mapping[str, Any], **kwargs: Any) -> Any:
+    def from_nested_dict(cls, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError(
             "from_nested_dict() is not supported on a batched record; construct "
             "with batch_shape= and template= directly."
@@ -585,7 +578,7 @@ class NumericRecordArray(RecordArray):
                     for name, child in value.children.items()
                 }
                 if not new_batch:
-                    return NumericRecord(fields)
+                    return _auto_record(fields)
                 return NumericRecordArray(fields, batch_shape=new_batch, template=spec)
             return fn(value, axis)
 
@@ -594,7 +587,7 @@ class NumericRecordArray(RecordArray):
             for name, value in self._tree.items()
         }
         if not new_batch:
-            return NumericRecord(fields)
+            return _auto_record(fields)
         return NumericRecordArray(fields, batch_shape=new_batch, template=self._template)
 
     def mean(self, axis: int = 0) -> Any:

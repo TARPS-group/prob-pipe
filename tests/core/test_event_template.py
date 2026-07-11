@@ -231,8 +231,9 @@ class TestKeys:
     def test_order_matches_flatten_and_to_vector(self):
         # The canonical leaf order is the order flatten() / to_vector() use.
         v = NumericRecord(
+            "nr",
             x=jnp.array([1.0, 2.0]),
-            nested=NumericRecord(a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
+            nested=NumericRecord("nr", a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
         )
         tpl = EventTemplate.infer_from(v)
         assert tuple(tpl.keys()) == ("x", "nested/a", "nested/b")
@@ -357,7 +358,7 @@ class TestEqualityAndHashing:
 
 class TestInferFrom:
     def test_scalar_fields(self):
-        r = Record(a=1.0, b=2.0)
+        r = Record("r", a=1.0, b=2.0)
         tpl = EventTemplate.infer_from(r)
         assert tpl.fields == ("a", "b")
         assert tpl["a"] == ArraySpec(())
@@ -367,7 +368,7 @@ class TestInferFrom:
         # The non-Record branch: a bare mapping is inferred field by field
         # (a nested Record contributes its own event_template).
         tpl = EventTemplate.infer_from(
-            {"a": 1.0, "x": jnp.zeros(3), "params": Record(m=jnp.zeros(2))}
+            {"a": 1.0, "x": jnp.zeros(3), "params": Record("r", m=jnp.zeros(2))}
         )
         assert tuple(tpl.children) == ("a", "x", "params")
         assert tpl["a"] == ArraySpec(())
@@ -380,14 +381,14 @@ class TestInferFrom:
             EventTemplate.infer_from({})
 
     def test_array_fields(self):
-        r = Record(x=jnp.zeros(5), y=jnp.zeros((2, 3)))
+        r = Record("r", x=jnp.zeros(5), y=jnp.zeros((2, 3)))
         tpl = EventTemplate.infer_from(r)
         assert tpl["x"] == ArraySpec((5,))
         assert tpl["y"] == ArraySpec((2, 3))
 
     def test_nested_record(self):
-        inner = Record(x=1.0, y=jnp.zeros(3))
-        outer = Record(params=inner, z=2.0)
+        inner = Record("r", x=1.0, y=jnp.zeros(3))
+        outer = Record("r", params=inner, z=2.0)
         tpl = EventTemplate.infer_from(outer)
         assert isinstance(tpl.at_path("params"), EventTemplate)
         assert tpl["params/x"] == ArraySpec(())
@@ -397,7 +398,7 @@ class TestInferFrom:
     def test_roundtrip_vector_size(self):
         from probpipe.core._numeric_record import NumericRecord
 
-        r = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
+        r = NumericRecord("nr", a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
         tpl = EventTemplate.infer_from(r)
         # Auto-promoted to NumericEventTemplate because the input was a
         # NumericRecord, so ``vector_size`` is reachable.
@@ -412,7 +413,7 @@ class TestInferFrom:
         to name the subclass explicitly."""
         from probpipe.core._numeric_record import NumericRecord
 
-        r = NumericRecord(a=1.0, b=jnp.zeros(2))
+        r = NumericRecord("nr", a=1.0, b=jnp.zeros(2))
         tpl = EventTemplate.infer_from(r)
         assert isinstance(tpl, NumericEventTemplate)
 
@@ -420,7 +421,7 @@ class TestInferFrom:
         """A plain ``Record`` with a non-numeric leaf can't be promoted —
         the result is a plain :class:`EventTemplate` with an opaque
         slot."""
-        r = Record(x=1.0, label="tag")
+        r = Record("r", x=1.0, label="tag")
         tpl = EventTemplate.infer_from(r)
         assert type(tpl) is EventTemplate
         assert tpl["label"] == OpaqueSpec()
@@ -431,7 +432,7 @@ class TestInferFrom:
         Users should wrap lists in np.asarray/jnp.asarray for a numeric
         template entry — this test pins down that behavior so the
         documented guidance stays in sync with the implementation."""
-        r = Record(xs=[1.0, 2.0, 3.0])
+        r = Record("r", xs=[1.0, 2.0, 3.0])
         tpl = EventTemplate.infer_from(r)
         assert tpl["xs"] == OpaqueSpec()
 
@@ -439,7 +440,7 @@ class TestInferFrom:
         """The opposite end of the list-leaf story: wrapping the list
         in ``np.asarray`` produces a numeric template entry."""
 
-        r = Record(xs=np.asarray([1.0, 2.0, 3.0]))
+        r = Record("r", xs=np.asarray([1.0, 2.0, 3.0]))
         tpl = EventTemplate.infer_from(r)
         assert tpl["xs"] == ArraySpec((3,))
 
@@ -796,7 +797,7 @@ class TestOpaqueSpecIsValid:
         # The record layer enforces the same rule as the spec: a mapping
         # value denotes tree structure, so storing one as a leaf raises.
         with pytest.raises(TypeError, match="never leaves"):
-            Record(x={"a": 1})
+            Record("r", x={"a": 1})
 
     def test_meta_not_checked(self):
         assert OpaqueSpec(meta="tag").is_valid("anything")
@@ -1210,35 +1211,37 @@ class TestNumericSubset:
 
 class TestToVector:
     def test_scalar_value(self):
-        v = NumericRecord(x=1.5)
+        v = NumericRecord("nr", x=1.5)
         tpl = EventTemplate.infer_from(v)
         vec = tpl.to_vector(v)
         assert vec.shape == (1,)
         assert jnp.array_equal(vec, jnp.asarray([1.5]))
 
     def test_vector_value(self):
-        v = NumericRecord(y=jnp.arange(3.0))
+        v = NumericRecord("nr", y=jnp.arange(3.0))
         tpl = EventTemplate.infer_from(v)
         vec = tpl.to_vector(v)
         assert vec.shape == (3,)
         assert jnp.array_equal(vec, jnp.arange(3.0))
 
     def test_multi_field_value(self):
-        v = NumericRecord(x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
+        v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
         tpl = EventTemplate.infer_from(v)
         vec = tpl.to_vector(v)
         assert vec.shape == (1 + 3 + 8,)
 
     def test_to_vector_shape_is_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,), z=(2, 4))
-        v = NumericRecord(x=0.0, y=jnp.zeros(3), z=jnp.zeros((2, 4)))
+        v = NumericRecord("nr", x=0.0, y=jnp.zeros(3), z=jnp.zeros((2, 4)))
         assert tpl.to_vector(v).shape == (tpl.vector_size,)
 
     def test_order_and_value_match_instance_to_vector(self):
         # The template-level to_vector must agree with the instance-level
         # NumericRecord.to_vector (same canonical leaf order), so the two are
         # interchangeable.
-        v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
+        v = NumericRecord(
+            "nr", x=1.0, y=jnp.arange(3.0), nested=NumericRecord("nr", a=2.0, b=jnp.arange(2.0))
+        )
         tpl = EventTemplate.infer_from(v)
         assert jnp.array_equal(tpl.to_vector(v), v.to_vector())
 
@@ -1257,22 +1260,24 @@ class TestToVector:
 
 class TestFromVectorRoundTripSingle:
     def test_scalar(self):
-        v = NumericRecord(x=1.5)
+        v = NumericRecord("nr", x=1.5)
         tpl = EventTemplate.infer_from(v)
         assert tpl.from_vector(tpl.to_vector(v)) == v
 
     def test_vector(self):
-        v = NumericRecord(y=jnp.arange(3.0))
+        v = NumericRecord("nr", y=jnp.arange(3.0))
         tpl = EventTemplate.infer_from(v)
         assert tpl.from_vector(tpl.to_vector(v)) == v
 
     def test_multi_field(self):
-        v = NumericRecord(x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
+        v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
         tpl = EventTemplate.infer_from(v)
         assert tpl.from_vector(tpl.to_vector(v)) == v
 
     def test_nested(self):
-        v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
+        v = NumericRecord(
+            "nr", x=1.0, y=jnp.arange(3.0), nested=NumericRecord("nr", a=2.0, b=jnp.arange(2.0))
+        )
         tpl = EventTemplate.infer_from(v)
         round_tripped = tpl.from_vector(tpl.to_vector(v))
         assert isinstance(round_tripped, NumericRecord)

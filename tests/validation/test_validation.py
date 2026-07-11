@@ -165,7 +165,7 @@ class TestPredictiveCheck:
         import probpipe.validation._predictive_check as predictive_check_module
         from probpipe.core._numeric_record import NumericRecord
 
-        numeric = NumericRecord(x=np.array([0.0, 1.0, 2.0]), name="posterior")
+        numeric = NumericRecord("posterior", x=np.array([0.0, 1.0, 2.0]))
 
         class _FakeRecordEmpiricalDistribution:
             def __init__(self, values, name=None):

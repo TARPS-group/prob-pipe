@@ -292,7 +292,7 @@ class TestIndexSampleHelper:
     def test_single_field_record_unwraps(self):
         from probpipe import Record
 
-        s = Record(x=jnp.arange(15.0).reshape(5, 3))
+        s = Record("r", x=jnp.arange(15.0).reshape(5, 3))
 
         for i in range(5):
             row = _workflow_distribution_broadcast._index_sample(s, i)
@@ -303,6 +303,7 @@ class TestIndexSampleHelper:
         from probpipe import NumericRecord, Record
 
         s = Record(
+            "r",
             mu=jnp.arange(5.0),
             sigma=jnp.arange(5.0) + 100.0,
         )
@@ -318,6 +319,7 @@ class TestIndexSampleHelper:
         from probpipe import NumericRecord, Record
 
         s = Record(
+            "r",
             scalar=jnp.arange(4.0),
             vec=jnp.arange(12.0).reshape(4, 3),
         )

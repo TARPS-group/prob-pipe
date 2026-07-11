@@ -36,7 +36,7 @@ import numpy as np
 import xarray as xr
 
 from ..core.distribution import Distribution
-from ..core.record import Record
+from ..core.record import Record, _auto_record
 from ._datatree import _add_group
 from ._utils import _json_dumps_safe, _leaf_keys, _record_get, _safe_float
 
@@ -611,7 +611,7 @@ def _add_log_likelihood(
             idx += size
         # Positional (path-keyed) construction so /-paths rebuild the nesting;
         # keyword construction would reject a key containing "/".
-        return Record(out)
+        return _auto_record(out)
 
     def _draws_to_flat(draws_c: Any) -> Any:
         """Stack all fields into a (n_draws, n_params) array."""
@@ -635,7 +635,7 @@ def _add_log_likelihood(
         JAX only traces the numeric computation inside
         ``per_datum_log_likelihood``, not the Record construction.
         """
-        datum = Record(X=x_i, y=y_i)
+        datum = _auto_record({"X": x_i, "y": y_i})
         return ll.per_datum_log_likelihood(params_flat, datum)
 
     # Note: Record(X=x_i, y=y_i) is constructed inside the vmapped
@@ -671,7 +671,7 @@ def _add_log_likelihood(
             for d in range(n_draws):
                 param_record = _flat_to_record(params_flat[d], _field_meta)
                 for i in range(n_obs):
-                    datum = Record(X=X[i], y=y[i])
+                    datum = _auto_record({"X": X[i], "y": y[i]})
                     log_lik[c, d, i] = float(ll.per_datum_log_likelihood(param_record, datum))
 
     log_lik_ds = _log_likelihood_to_dataset(log_lik, var_name=var_name)

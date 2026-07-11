@@ -121,7 +121,7 @@ class TestGLMLikelihood:
             [
                 glm.per_datum_log_likelihood(
                     params,
-                    Record(X=X[i], y=y[i]),
+                    Record("r", X=X[i], y=y[i]),
                 )
                 for i in range(X.shape[0])
             ]
@@ -175,7 +175,7 @@ class TestDefaultFallback:
         lkl = _RecordLikelihood()
         params = jnp.array([0.0])
         # A single observation as Record: X.shape == (2,), y.shape == ()
-        datum = Record(X=jnp.array([3.0, 2.0]), y=jnp.array(7.0))
+        datum = Record("r", X=jnp.array([3.0, 2.0]), y=jnp.array(7.0))
 
         lp = _default_per_datum_log_likelihood(lkl, params, datum)
         # After tree-map: X→shape (1, 2), y→shape (1,). sum(X)+sum(y) = 5+7 = 12

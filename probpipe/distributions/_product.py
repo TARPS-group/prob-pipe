@@ -37,7 +37,7 @@ from ..core.protocols import (
     protocols_supported_by_all,
 )
 from ..core.provenance import Provenance
-from ..core.record import Record
+from ..core.record import Record, _auto_record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
@@ -306,7 +306,7 @@ class ProductDistribution(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return Record(fields)
+        return _auto_record(fields)
 
     # -- Log-prob -----------------------------------------------------------
 
@@ -558,7 +558,7 @@ def _sample_nested(components: dict, key, sample_shape, template=None, numeric=F
 
         cls = NumericRecordArray if numeric else RecordArray
         return cls(fields, batch_shape=sample_shape, template=template)
-    return Record(fields)
+    return _auto_record(fields)
 
 
 def _map_components(components: dict, fn) -> Record:
@@ -569,7 +569,7 @@ def _map_components(components: dict, fn) -> Record:
             fields[name] = _map_components(comp, fn)
         else:
             fields[name] = fn(comp)
-    return Record(fields)
+    return _auto_record(fields)
 
 
 # ---------------------------------------------------------------------------

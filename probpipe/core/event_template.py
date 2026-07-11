@@ -1070,7 +1070,6 @@ def _value_treedef(
     :func:`jax.tree_util.tree_unflatten` lets ``from_vector`` delegate the value
     assembly to one place.
     """
-    from ._numeric_record import NumericRecord
     from ._record_array import NumericRecordArray
 
     numeric_fill = jnp.zeros((), dtype=jnp.float32)
@@ -1088,7 +1087,9 @@ def _value_treedef(
         # Thread the real template: the pytree aux carries it, so the treedef
         # this skeleton produces must match a value built from *tpl*, not from
         # a template re-inferred off the placeholder leaves.
-        return NumericRecord(fields, event_template=tpl)
+        from .record import _auto_record
+
+        return _auto_record(fields, event_template=tpl)
 
     return jax.tree_util.tree_structure(_build(template))
 

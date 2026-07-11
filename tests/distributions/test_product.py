@@ -849,7 +849,7 @@ class TestLogProbBatchValues:
         batch_lps = jnp.asarray(log_prob(joint_xy, samples))
 
         for i in range(10):
-            s_i = Record({k: v[i] for k, v in samples.items()})
+            s_i = Record("r", {k: v[i] for k, v in samples.items()})
             expected = float(log_prob(normal_x, s_i["x"])) + float(log_prob(normal_y, s_i["y"]))
             np.testing.assert_allclose(float(batch_lps[i]), expected, atol=1e-5)
 

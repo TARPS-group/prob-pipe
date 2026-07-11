@@ -1155,7 +1155,7 @@ class TestRecordDistributionProperties:
 
     def test_record_distribution_flatten_unflatten(self, posterior):
         """NumericRecordDistribution.flatten_value / unflatten_value round-trip."""
-        v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
+        v = Record("r", K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
         flat = posterior.flatten_value(v)
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # insertion: K, phi, r
         v2 = posterior.unflatten_value(flat, template=posterior.event_template)
@@ -1164,7 +1164,7 @@ class TestRecordDistributionProperties:
         np.testing.assert_allclose(float(v2["r"]), 3.0)
 
     def test_flatten_unflatten_roundtrip(self, posterior, template):
-        v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
+        v = Record("r", K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
         flat = posterior.flatten_value(v)
         assert flat.shape == (3,)
         v2 = posterior.unflatten_value(flat, template=posterior.event_template)
@@ -1200,35 +1200,35 @@ class TestValuesSelect:
     """Record.select() for concrete data."""
 
     def test_positional(self):
-        v = Record(r=1.0, K=70.0, phi=10.0)
+        v = Record("r", r=1.0, K=70.0, phi=10.0)
         sel = v.select("r", "K")
         assert set(sel.keys()) == {"r", "K"}
         np.testing.assert_allclose(float(sel["r"]), 1.0)
         np.testing.assert_allclose(float(sel["K"]), 70.0)
 
     def test_keyword_remap(self):
-        v = Record(r=1.0, K=70.0)
+        v = Record("r", r=1.0, K=70.0)
         sel = v.select(growth_rate="r")
         assert "growth_rate" in sel
         np.testing.assert_allclose(float(sel["growth_rate"]), 1.0)
 
     def test_mixed(self):
-        v = Record(r=1.0, K=70.0, phi=10.0)
+        v = Record("r", r=1.0, K=70.0, phi=10.0)
         sel = v.select("phi", growth_rate="r")
         assert set(sel.keys()) == {"phi", "growth_rate"}
 
     def test_missing_field_raises(self):
-        v = Record(r=1.0)
+        v = Record("r", r=1.0)
         with pytest.raises(KeyError, match="nonexistent"):
             v.select("nonexistent")
 
     def test_missing_mapping_target_raises(self):
-        v = Record(r=1.0)
+        v = Record("r", r=1.0)
         with pytest.raises(KeyError, match="z"):
             v.select(x="z")
 
     def test_empty_select(self):
-        v = Record(r=1.0, K=70.0)
+        v = Record("r", r=1.0, K=70.0)
         sel = v.select()
         assert sel == {}
 

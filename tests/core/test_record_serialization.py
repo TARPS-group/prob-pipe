@@ -27,9 +27,7 @@ from probpipe.core.event_template import (
     NumericEventTemplate,
     OpaqueSpec,
 )
-from probpipe.core.record import (
-    Record,
-)
+from probpipe.core.record import Record, _auto_record
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -51,7 +49,7 @@ def cloudpickle_roundtrip(obj):
 
 
 def test_record_pickle_roundtrip():
-    r = Record(x=jnp.array(1.0), y=jnp.array([2.0, 3.0]), name="myrecord")
+    r = Record("myrecord", x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
     r2 = roundtrip(r)
     assert r2.name == "myrecord"
     assert r2.fields == ("x", "y")
@@ -60,14 +58,15 @@ def test_record_pickle_roundtrip():
 
 
 def test_record_pickle_auto_name():
-    r = Record(a=jnp.array(1.0), b=jnp.array(2.0))
+    r = _auto_record({"a": jnp.array(1.0), "b": jnp.array(2.0)})
     r2 = roundtrip(r)
     assert r2.name == r.name
+    assert r2.name_is_auto is True
     assert r2.fields == ("a", "b")
 
 
 def test_record_immutability_after_unpickle():
-    r = Record(x=jnp.array(1.0))
+    r = Record("r", x=jnp.array(1.0))
     r2 = roundtrip(r)
     with pytest.raises(AttributeError, match="immutable"):
         r2.x = jnp.array(99.0)
@@ -76,7 +75,7 @@ def test_record_immutability_after_unpickle():
 def test_record_provenance_preserved():
     from probpipe.core.provenance import Provenance
 
-    r = Record(x=jnp.array(1.0))
+    r = Record("r", x=jnp.array(1.0))
     r.with_provenance(Provenance(operation="test_op", metadata={"k": "v"}))
     assert r._provenance is not None
 
@@ -87,7 +86,7 @@ def test_record_provenance_preserved():
 
 
 def test_record_no_provenance_roundtrip():
-    r = Record(x=jnp.array(1.0))
+    r = Record("r", x=jnp.array(1.0))
     assert r._provenance is None
     r2 = roundtrip(r)
     assert r2._provenance is None
@@ -122,7 +121,7 @@ def test_numeric_event_template_pickle_roundtrip():
 
 
 def test_numeric_record_pickle_roundtrip():
-    nr = NumericRecord(r=jnp.array(1.8), K=jnp.array(70.0), phi=jnp.array(10.0))
+    nr = NumericRecord("nr", r=jnp.array(1.8), K=jnp.array(70.0), phi=jnp.array(10.0))
     nr2 = roundtrip(nr)
     assert nr2.fields == ("r", "K", "phi")
     assert float(nr2["r"]) == pytest.approx(1.8)
@@ -130,14 +129,14 @@ def test_numeric_record_pickle_roundtrip():
 
 
 def test_numeric_record_vector_size_recomputed():
-    nr = NumericRecord(a=jnp.ones((2, 3)))
+    nr = NumericRecord("nr", a=jnp.ones((2, 3)))
     assert nr.vector_size == 6
     nr2 = roundtrip(nr)
     assert nr2.vector_size == 6
 
 
 def test_numeric_record_cloudpickle_roundtrip():
-    nr = NumericRecord(x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
+    nr = NumericRecord("nr", x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
     nr2 = cloudpickle_roundtrip(nr)
     assert nr2.fields == ("x", "y")
     assert float(nr2["x"]) == pytest.approx(1.0)

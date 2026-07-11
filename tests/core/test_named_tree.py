@@ -13,6 +13,7 @@ import pytest
 from probpipe import EventTemplate, NumericRecord, Record
 from probpipe.core.event_template import ArraySpec, NumericEventTemplate, OpaqueSpec, ValueSpec
 from probpipe.core.named_tree import NamedTree
+from probpipe.core.record import _auto_record
 
 # ===========================================================================
 # 1. NamedTree is the public substrate
@@ -21,9 +22,9 @@ from probpipe.core.named_tree import NamedTree
 
 class TestPublicSubstrate:
     def test_families_are_named_trees(self):
-        assert isinstance(Record(a=1.0), NamedTree)
+        assert isinstance(Record("r", a=1.0), NamedTree)
         assert isinstance(EventTemplate(a=()), NamedTree)
-        assert isinstance(NumericRecord(a=jnp.array(1.0)), NamedTree)
+        assert isinstance(NumericRecord("nr", a=jnp.array(1.0)), NamedTree)
 
     def test_leaf_type_hooks(self):
         assert EventTemplate._leaf_type() is ValueSpec
@@ -41,16 +42,16 @@ class TestPublicSubstrate:
 
 class TestIsMultiField:
     def test_single_field_record(self):
-        assert Record(a=1.0).is_multi_field is False
+        assert Record("r", a=1.0).is_multi_field is False
 
     def test_nested_single_field_record(self):
-        assert Record(g=Record(a=1.0)).is_multi_field is False
+        assert Record("r", g=Record("r", a=1.0)).is_multi_field is False
 
     def test_multi_field_record(self):
-        assert Record(a=1.0, b=2.0).is_multi_field is True
+        assert Record("r", a=1.0, b=2.0).is_multi_field is True
 
     def test_nested_multi_field_record(self):
-        assert Record(g=Record(a=1.0, b=2.0)).is_multi_field is True
+        assert Record("r", g=Record("r", a=1.0, b=2.0)).is_multi_field is True
 
     def test_template(self):
         assert EventTemplate(a=()).is_multi_field is False
@@ -65,7 +66,7 @@ class TestIsMultiField:
 class TestWithPathNames:
     @pytest.fixture
     def record(self):
-        return Record(x=1.0, g=Record(mu=2.0, sigma=3.0))
+        return Record("r", x=1.0, g=Record("r", mu=2.0, sigma=3.0))
 
     def test_bare_name_unique(self, record):
         renamed = record.with_path_names(mu="loc")
@@ -87,13 +88,13 @@ class TestWithPathNames:
         assert tuple(renamed.children) == tuple(record.children)
 
     def test_sibling_swap_is_simultaneous(self):
-        r = Record(a=1.0, b=2.0)
+        r = Record("r", a=1.0, b=2.0)
         swapped = r.with_path_names(a="b", b="a")
         assert swapped["b"] == 1.0
         assert swapped["a"] == 2.0
 
     def test_ambiguous_bare_name_raises(self):
-        r = Record(g=Record(x=1.0), h=Record(x=2.0))
+        r = Record("r", g=Record("r", x=1.0), h=Record("r", x=2.0))
         with pytest.raises(ValueError, match="ambiguous"):
             r.with_path_names(x="y")
 
@@ -126,24 +127,24 @@ class TestWithPathNames:
         assert tuple(renamed.keys()) == ("alpha", "b")
 
     def test_numeric_record_family_preserved(self):
-        nr = NumericRecord(a=jnp.array(1.0))
+        nr = NumericRecord("nr", a=jnp.array(1.0))
         renamed = nr.with_path_names(a="alpha")
         assert isinstance(renamed, NumericRecord)
         assert tuple(renamed.keys()) == ("alpha",)
 
     def test_auto_name_rederives_user_name_preserved(self):
-        auto = Record(a=1.0, b=2.0)  # auto-named "record(a,b)"
+        auto = _auto_record({"a": 1.0, "b": 2.0})  # derived name "record(a,b)"
         renamed = auto.with_path_names(a="alpha")
         assert renamed.name == "record(alpha,b)"
         assert renamed.name_is_auto is True
-        named = Record(a=1.0, b=2.0, name="mine")
+        named = Record("mine", a=1.0, b=2.0)
         renamed_named = named.with_path_names(a="alpha")
         assert renamed_named.name == "mine"
         assert renamed_named.name_is_auto is False
 
     def test_explicit_template_metadata_survives(self):
         spec = ArraySpec((), dtype=jnp.float32)
-        r = Record(a=jnp.array(1.0, dtype=jnp.float32), event_template=EventTemplate(a=spec))
+        r = Record("r", a=jnp.array(1.0, dtype=jnp.float32), event_template=EventTemplate(a=spec))
         renamed = r.with_path_names(a="alpha")
         assert renamed.event_template["alpha"] == spec
 
@@ -163,24 +164,24 @@ class TestWithPathNames:
 class TestMappingsAreNeverLeaves:
     def test_constructor_rejects_mapping_leaf(self):
         with pytest.raises(TypeError, match="never leaves"):
-            Record(meta={"seed": 0})
+            Record("r", meta={"seed": 0})
 
     def test_nested_constructor_rejects_mapping_leaf(self):
         with pytest.raises(TypeError, match="never leaves"):
-            Record(g=Record(meta={"seed": 0}))
+            Record("r", g=Record("r", meta={"seed": 0}))
 
     def test_replace_rejects_mapping_leaf(self):
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         with pytest.raises(TypeError, match="never leaves"):
             r.replace(a={"seed": 0})
 
     def test_from_nested_dict_reads_mappings_as_structure(self):
-        r = Record.from_nested_dict({"a": {"b": 1.0}, "c": 2.0})
+        r = Record.from_nested_dict("r", {"a": {"b": 1.0}, "c": 2.0})
         assert tuple(r.keys()) == ("a/b", "c")
 
     def test_serialization_round_trips(self):
-        r = Record(g=Record(a=1.0, b=2.0), c=3.0)
-        back = Record.from_nested_dict(r.to_nested_dict())
+        r = Record("r", g=Record("r", a=1.0, b=2.0), c=3.0)
+        back = Record.from_nested_dict("r", r.to_nested_dict())
         assert tuple(back.keys()) == tuple(r.keys())
         assert back == r
 
@@ -200,9 +201,9 @@ class TestPytreeAuxSplit:
 
         spec = ArraySpec((), dtype=jnp.float32)
         r = Record(
+            "mine",
             a=jnp.array(1.0, dtype=jnp.float32),
             b="label",
-            name="mine",
             event_template=EventTemplate(a=spec, b=None),
         )
         leaves, treedef = jax.tree_util.tree_flatten(r)
@@ -214,7 +215,7 @@ class TestPytreeAuxSplit:
     def test_auto_flag_survives_roundtrip(self):
         import jax
 
-        r = Record(a=jnp.array(1.0))  # auto-named
+        r = _auto_record({"a": jnp.array(1.0)})  # operation-derived (auto)
         back = jax.tree_util.tree_unflatten(*reversed(jax.tree_util.tree_flatten(r)))
         assert back.name_is_auto is True
 
@@ -223,7 +224,7 @@ class TestPytreeAuxSplit:
 
         from probpipe import Provenance
 
-        r = Record(a=jnp.array(1.0)).with_provenance(Provenance("op"))
+        r = Record("r", a=jnp.array(1.0)).with_provenance(Provenance("op"))
         object.__setattr__(r, "_annotations", {"k": 1})
         back = jax.tree_util.tree_unflatten(*reversed(jax.tree_util.tree_flatten(r)))
         assert back.provenance is None
@@ -232,19 +233,20 @@ class TestPytreeAuxSplit:
     def test_numeric_record_jit_and_vmap(self):
         import jax
 
-        nr = NumericRecord(x=jnp.arange(3.0), g=NumericRecord(y=jnp.array(2.0)))
+        nr = NumericRecord("nr", x=jnp.arange(3.0), g=NumericRecord("nr", y=jnp.array(2.0)))
         assert float(jax.jit(lambda rec: rec["x"].sum())(nr)) == 3.0
-        batched = NumericRecord(x=jnp.ones((4, 3)), g=NumericRecord(y=jnp.ones(4)))
+        batched = NumericRecord("nr", x=jnp.ones((4, 3)), g=NumericRecord("nr", y=jnp.ones(4)))
         out = jax.vmap(lambda rec: rec["x"].sum() + rec["g/y"])(batched)
         assert out.shape == (4,)
 
     def test_treedefs_equal_iff_templates_equal(self):
         import jax
 
-        r1 = Record(a=jnp.array(1.0, dtype=jnp.float32))
-        r2 = Record(a=jnp.array(9.0, dtype=jnp.float32))
+        r1 = Record("r", a=jnp.array(1.0, dtype=jnp.float32))
+        r2 = Record("r", a=jnp.array(9.0, dtype=jnp.float32))
         assert jax.tree_util.tree_structure(r1) == jax.tree_util.tree_structure(r2)
         richer = Record(
+            "r",
             a=jnp.array(1.0, dtype=jnp.float32),
             event_template=EventTemplate(a=ArraySpec((), dtype=jnp.float32)),
         )
@@ -260,19 +262,19 @@ class TestPytreeAuxSplit:
 
 class TestRecordAutoPromotion:
     def test_all_numeric_construction_promotes(self):
-        assert type(Record(a=1.0, b=jnp.arange(3.0))) is NumericRecord
+        assert type(Record("r", a=1.0, b=jnp.arange(3.0))) is NumericRecord
 
     def test_mixed_construction_stays_plain(self):
-        assert type(Record(a=1.0, label="tag")) is Record
+        assert type(Record("r", a=1.0, label="tag")) is Record
 
     def test_nested_path_keyed_children_promote(self):
-        r = Record({"g/a": 1.0, "g/h/b": 2.0, "c": "tag"})
+        r = Record("r", {"g/a": 1.0, "g/h/b": 2.0, "c": "tag"})
         assert type(r) is Record
         assert type(r.at_path("g")) is NumericRecord
         assert type(r.at_path("g/h")) is NumericRecord
 
     def test_explicit_non_numeric_template_wins(self):
-        r = Record(a=1.0, event_template=EventTemplate(a=OpaqueSpec()))
+        r = Record("r", a=1.0, event_template=EventTemplate(a=OpaqueSpec()))
         assert type(r) is Record
 
     def test_backend_leaves_stay_verbatim(self):
@@ -280,7 +282,7 @@ class TestRecordAutoPromotion:
         import numpy as np
 
         da = xr.DataArray(np.arange(3.0), dims=["t"])
-        r = Record(a=da)
+        r = Record("r", a=da)
         # Promotion never silently coerces a backend-typed leaf; the caller
         # opts in via to_numeric() / NumericRecord(...).
         assert type(r) is Record
@@ -288,11 +290,11 @@ class TestRecordAutoPromotion:
         assert type(r.to_numeric().to_native()["a"]) is xr.DataArray
 
     def test_edits_rederive_promotion_and_demotion(self):
-        mixed = Record(a=1.0, label="tag")
+        mixed = Record("r", a=1.0, label="tag")
         assert type(mixed.without("label")) is NumericRecord
-        numeric = Record(a=1.0, b=2.0)
+        numeric = Record("r", a=1.0, b=2.0)
         assert type(numeric.replace(b="tag")) is Record
-        assert type(numeric.merge(Record(c="tag"))) is Record
+        assert type(numeric.merge(Record("r", c="tag"))) is Record
 
     def test_pytree_roundtrip_is_class_stable(self):
         import jax
@@ -302,7 +304,7 @@ class TestRecordAutoPromotion:
 
         # A verbatim backend leaf has a numeric template but flattened as a
         # plain Record; unflatten must reproduce the treedef, not re-promote.
-        r = Record(a=xr.DataArray(np.arange(3.0), dims=["t"]))
+        r = Record("r", a=xr.DataArray(np.arange(3.0), dims=["t"]))
         leaves, treedef = jax.tree_util.tree_flatten(r)
         back = jax.tree_util.tree_unflatten(treedef, leaves)
         assert type(back) is Record
@@ -326,7 +328,7 @@ class TestRecordAutoPromotion:
 
 class TestValueLevelEntryPoints:
     def test_from_field_values_round_trip_with_name(self):
-        r = Record(a=jnp.array(1.0), b="tag", name="mine")
+        r = Record("r", a=jnp.array(1.0), b="tag", name="mine")
         rebuilt = Record.from_field_values("mine", r.event_template, r.values())
         assert rebuilt == r
         assert rebuilt.name == "mine"
@@ -343,13 +345,13 @@ class TestValueLevelEntryPoints:
             Record.from_field_values("v", EventTemplate(a=(), b=()), [1.0])
 
     def test_numeric_record_from_vector_round_trip(self):
-        nr = NumericRecord(x=jnp.arange(3.0), g=NumericRecord(y=jnp.array(2.0)))
+        nr = NumericRecord("nr", x=jnp.arange(3.0), g=NumericRecord("nr", y=jnp.array(2.0)))
         back = NumericRecord.from_vector("mine", nr.event_template, nr.to_vector())
         assert back == nr
         assert back.name == "mine"
         assert back.name_is_auto is False
 
     def test_numeric_record_from_vector_rejects_batched(self):
-        nr = NumericRecord(x=jnp.arange(3.0))
+        nr = NumericRecord("nr", x=jnp.arange(3.0))
         with pytest.raises(TypeError, match="1-D"):
             NumericRecord.from_vector("v", nr.event_template, jnp.ones((4, 3)))

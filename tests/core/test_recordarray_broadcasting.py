@@ -42,7 +42,7 @@ class TestRecordArrayDetection:
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(4)])
+        ra = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(4)])
         out = f(p=ra)
         assert out.batch_shape == (4,)
 
@@ -54,7 +54,7 @@ class TestRecordArrayDetection:
         def f(ra: NumericRecordArray):
             return ra["x"].sum()
 
-        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(4)])
+        ra = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(4)])
         out = f(ra=ra)
         # Single inner call - output is the unwrapped float result.
         assert float(out) == 6.0
@@ -84,8 +84,8 @@ class TestRecordArrayDetection:
         def f(a: NumericRecord, b: NumericRecord) -> float:
             return a["x"] + b["y"]
 
-        a = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
-        b = NumericRecordArray.stack([NumericRecord(y=float(i)) for i in range(5)])
+        a = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
+        b = NumericRecordArray.stack([NumericRecord("nr", y=float(i)) for i in range(5)])
         out = f(a=a, b=b)
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (3, 5)
@@ -102,7 +102,7 @@ class TestPureSweepParityMatrix:
     @pytest.fixture
     def sweep(self):
         return NumericRecordArray.stack(
-            [NumericRecord(r=float(i), k=10.0 * i) for i in range(1, 5)]
+            [NumericRecord("nr", r=float(i), k=10.0 * i) for i in range(1, 5)]
         )
 
     def test_scalar_return_wraps_as_numericrecordarray(self, sweep):
@@ -128,7 +128,7 @@ class TestPureSweepParityMatrix:
     def test_numericrecord_return_stacks(self, sweep):
         @workflow_function
         def f(p: NumericRecord) -> NumericRecord:
-            return NumericRecord(prod=p["r"] * p["k"], sum=p["r"] + p["k"])
+            return NumericRecord("nr", prod=p["r"] * p["k"], sum=p["r"] + p["k"])
 
         out = f(p=sweep)
         assert isinstance(out, NumericRecordArray)
@@ -142,7 +142,7 @@ class TestPureSweepParityMatrix:
 
         @workflow_function
         def f(p: NumericRecord) -> Record:
-            return Record(value=p["r"] * p["k"], label="row")
+            return Record("r", value=p["r"] * p["k"], label="row")
 
         out = f(p=sweep)
         assert isinstance(out, RecordArray)
@@ -197,7 +197,7 @@ class TestNestedSweepPlusDistribution:
 
     @pytest.fixture
     def sweep(self):
-        return NumericRecordArray.stack([NumericRecord(bias=float(i)) for i in range(3)])
+        return NumericRecordArray.stack([NumericRecord("nr", bias=float(i)) for i in range(3)])
 
     def test_scalar_inner_gives_distribution_array(self, sweep):
         @workflow_function(n_broadcast_samples=50, dispatch="sequential")
@@ -216,7 +216,7 @@ class TestNestedSweepPlusDistribution:
     def test_record_inner_gives_distribution_array(self, sweep):
         @workflow_function(n_broadcast_samples=30, dispatch="sequential")
         def f(p: NumericRecord, noise: float) -> NumericRecord:
-            return NumericRecord(x=p["bias"] + noise, y=p["bias"] - noise)
+            return NumericRecord("nr", x=p["bias"] + noise, y=p["bias"] - noise)
 
         out = f(p=sweep, noise=Normal(loc=0.0, scale=0.1, name="noise"))
         assert isinstance(out, DistributionArray)
@@ -251,7 +251,7 @@ class TestDispatch:
             return p["r"] * p["k"]
 
         sweep = NumericRecordArray.stack(
-            [NumericRecord(r=float(i), k=10.0 * i) for i in range(1, 5)]
+            [NumericRecord("nr", r=float(i), k=10.0 * i) for i in range(1, 5)]
         )
         out_loop = f_loop(p=sweep)
         out_jax = f_jax(p=sweep)
@@ -262,8 +262,8 @@ class TestDispatch:
         def f(a: NumericRecord, b: NumericRecord) -> float:
             return a["x"] + b["y"]
 
-        a = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
-        b = NumericRecordArray.stack([NumericRecord(y=float(i)) for i in range(5)])
+        a = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
+        b = NumericRecordArray.stack([NumericRecord("nr", y=float(i)) for i in range(5)])
 
         with pytest.raises(ValueError, match="single plain RecordArray sweep"):
             f(a=a, b=b)
@@ -280,7 +280,7 @@ class TestProvenanceChain:
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
+        sweep = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
         out = f(p=sweep)
         assert out.provenance is not None
         assert out.provenance.operation == "workflow.stack"
@@ -294,7 +294,7 @@ class TestProvenanceChain:
         def f(p: NumericRecord, noise: float) -> float:
             return p["x"] + noise
 
-        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
+        sweep = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
         noise_dist = Normal(loc=0.0, scale=1.0, name="noise")
         out = f(p=sweep, noise=noise_dist)
         assert out.provenance.operation == "workflow.nested"
@@ -311,7 +311,7 @@ class TestProvenanceChain:
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
+        sweep = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
         out = f(p=sweep)
         assert out.provenance is not None
         assert out.provenance.operation == "workflow.stack"
@@ -328,7 +328,7 @@ class TestProvenanceChain:
         def f(p: NumericRecord) -> float:
             return p["x"]
 
-        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
+        sweep = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
         out = f(p=sweep)
         assert out.provenance is None
 
@@ -385,7 +385,7 @@ class TestMultiDimensionalBatch:
     def test_2d_sweep_record_output(self, sweep_2d):
         @workflow_function
         def f(p: NumericRecord) -> NumericRecord:
-            return NumericRecord(sum=p["r"] + p["k"], prod=p["r"] * p["k"])
+            return NumericRecord("nr", sum=p["r"] + p["k"], prod=p["r"] * p["k"])
 
         out = f(p=sweep_2d)
         assert isinstance(out, NumericRecordArray)
@@ -456,6 +456,6 @@ class TestAutoWrapFieldName:
         def my_scalar_fn(p: NumericRecord) -> float:
             return p["x"] * 2
 
-        sweep = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
+        sweep = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
         out = my_scalar_fn(p=sweep)
         assert out.fields == ("my_scalar_fn",)

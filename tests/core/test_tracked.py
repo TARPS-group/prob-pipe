@@ -27,6 +27,7 @@ from probpipe import (
     RecordArray,
 )
 from probpipe.core.event_template import EventTemplate
+from probpipe.core.record import _auto_record
 from probpipe.core.tracked import Annotated, Tracked, auto_name
 
 # ===========================================================================
@@ -41,12 +42,12 @@ class TestMixinMembership:
         assert isinstance(n, Annotated)
 
     def test_record_is_tracked_and_annotated(self):
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         assert isinstance(r, Tracked)
         assert isinstance(r, Annotated)
 
     def test_numeric_record_is_tracked_and_annotated(self):
-        nr = NumericRecord(a=jnp.array(1.0))
+        nr = NumericRecord("nr", a=jnp.array(1.0))
         assert isinstance(nr, Tracked)
         assert isinstance(nr, Annotated)
 
@@ -102,12 +103,16 @@ class TestNameIsAuto:
         assert n.name_is_auto is False
 
     def test_user_named_record_is_not_auto(self):
-        r = Record(a=1.0, name="mine")
+        r = Record("mine", a=1.0)
         assert r.name == "mine"
         assert r.name_is_auto is False
 
-    def test_unnamed_record_is_auto(self):
-        r = Record(a=1.0, b=2.0)
+    def test_constructor_requires_name(self):
+        with pytest.raises(TypeError):
+            Record(a=1.0)
+
+    def test_operation_derived_record_is_auto(self):
+        r = _auto_record({"a": 1.0, "b": 2.0})
         assert r.name == "record(a,b)"
         assert r.name_is_auto is True
 
@@ -149,8 +154,8 @@ class TestNameIsAuto:
         assert emp.name_is_auto is True
 
     def test_name_is_auto_survives_record_pickle(self):
-        auto = Record(a=1.0)
-        named = Record(a=1.0, name="mine")
+        auto = _auto_record({"a": 1.0})
+        named = Record("mine", a=1.0)
         assert pickle.loads(pickle.dumps(auto)).name_is_auto is True
         assert pickle.loads(pickle.dumps(named)).name_is_auto is False
 
@@ -169,7 +174,7 @@ class TestWithName:
         assert n.name == "x"
 
     def test_with_name_clears_auto_flag(self):
-        r = Record(a=1.0)  # auto-named
+        r = _auto_record({"a": 1.0})  # operation-derived (auto) name
         assert r.name_is_auto is True
         r2 = r.with_name("mine")
         assert r2.name == "mine"
@@ -186,7 +191,7 @@ class TestWithName:
         assert m.provenance.parents[0].name == "x"
 
     def test_with_name_on_immutable_record(self):
-        r = Record(a=jnp.array(1.0), b=jnp.array(2.0), name="orig")
+        r = Record("orig", a=jnp.array(1.0), b=jnp.array(2.0))
         r2 = r.with_name("new")
         assert r2.name == "new"
         # shallow copy: field data is shared, not copied
@@ -347,10 +352,12 @@ class TestFlagPropagation:
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
         prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
         lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-        m = MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2)
+        m = MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
         assert m.name == "MinibatchedDistribution(batch_size=2)"
         assert m.name_is_auto is True
-        named = MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2, name="mine")
+        named = MinibatchedDistribution(
+            prior, lik, Record("r", X=X, y=y), batch_size=2, name="mine"
+        )
         assert named.name_is_auto is False
 
     def test_product_conditioning_mirrors_flag(self):
@@ -397,17 +404,17 @@ class TestFlagPropagation:
 
 class TestWithProvenance:
     def test_returns_self_for_chaining(self):
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         assert r.with_provenance(Provenance("op")) is r
         assert r.provenance.operation == "op"
 
     def test_none_is_noop(self):
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         assert r.with_provenance(None) is r
         assert r.provenance is None
 
     def test_write_once_raises(self):
-        for obj in (Record(a=1.0), Normal(loc=0.0, scale=1.0, name="x")):
+        for obj in (Record("r", a=1.0), Normal(loc=0.0, scale=1.0, name="x")):
             obj.with_provenance(Provenance("first"))
             with pytest.raises(RuntimeError, match="write-once"):
                 obj.with_provenance(Provenance("second"))
@@ -420,7 +427,7 @@ class TestWithProvenance:
 
 class TestAnnotated:
     def test_annotations_default_none(self):
-        assert Record(a=1.0).annotations is None
+        assert Record("r", a=1.0).annotations is None
         assert Normal(loc=0.0, scale=1.0, name="x").annotations is None
 
     def test_annotations_accepts_plain_mapping(self):
@@ -437,7 +444,7 @@ class TestAnnotated:
     def test_annotations_on_record_via_object_setattr(self):
         # Record is immutable; the annotations channel is written by
         # framework code via object.__setattr__.
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         object.__setattr__(r, "_annotations", {"k": 1})
         assert r.annotations == {"k": 1}
 

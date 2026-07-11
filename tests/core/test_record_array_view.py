@@ -48,7 +48,9 @@ from probpipe.core.event_template import EventTemplate
 @pytest.fixture
 def numeric_ra():
     """A NumericRecordArray with two numeric fields, batch_shape=(4,)."""
-    return NumericRecordArray.stack([NumericRecord(x=float(i), y=float(i * 2)) for i in range(4)])
+    return NumericRecordArray.stack(
+        [NumericRecord("nr", x=float(i), y=float(i * 2)) for i in range(4)]
+    )
 
 
 @pytest.fixture
@@ -227,8 +229,8 @@ class TestSweepGroupingByParent:
     def test_two_views_different_parents_product(self):
         """Views from two different ``RecordArray``s carry different
         parent ids → distinct groups → cartesian product."""
-        ra_a = NumericRecordArray.stack([NumericRecord(a=float(i)) for i in range(3)])
-        ra_b = NumericRecordArray.stack([NumericRecord(b=float(j * 10)) for j in range(2)])
+        ra_a = NumericRecordArray.stack([NumericRecord("nr", a=float(i)) for i in range(3)])
+        ra_b = NumericRecordArray.stack([NumericRecord("nr", b=float(j * 10)) for j in range(2)])
 
         @workflow_function
         def f(a, b):
@@ -241,7 +243,7 @@ class TestSweepGroupingByParent:
     def test_view_plus_plain_ra_products(self, numeric_ra):
         """A view and an independent ``RecordArray`` are in different
         groups (the view's parent ≠ the independent RA) → product."""
-        other = NumericRecordArray.stack([NumericRecord(z=float(k * 100)) for k in range(2)])
+        other = NumericRecordArray.stack([NumericRecord("nr", z=float(k * 100)) for k in range(2)])
 
         @workflow_function
         def f(x, p):
@@ -255,7 +257,7 @@ class TestSweepGroupingByParent:
         """A 3-field NumericRecordArray with three sibling views
         collapses to one (n,) axis, not (n, n, n)."""
         ra = NumericRecordArray.stack(
-            [NumericRecord(a=float(i), b=float(i * 2), c=float(i * 10)) for i in range(5)]
+            [NumericRecord("nr", a=float(i), b=float(i * 2), c=float(i * 10)) for i in range(5)]
         )
 
         @workflow_function

@@ -143,17 +143,20 @@ class NumericRecord(Record):
 
     Parameters
     ----------
+    name : str
+        The record's name — the required first positional argument, exactly
+        as on :class:`Record`.
     _fields : Mapping, optional
         Fields as a positional mapping — an alternative to keyword ``**fields``
         (passing both raises). As on :class:`Record`, use it when a field name
-        would collide with the ``name`` / ``event_template`` keywords.
+        would collide with the ``event_template`` / ``name_is_auto`` keywords.
     **fields
         Named numeric values: a numeric array (``jax`` / ``numpy`` / ``xarray`` /
         ``pandas`` with a numeric dtype), a numeric Python scalar, or a nested
         ``NumericRecord``. At least one field is required.
-    name : str, optional
-        Human-readable label for introspection / provenance. Defaults to a label
-        derived from the field names.
+    name_is_auto : bool, optional
+        ``True`` when *name* was derived by the producing operation rather
+        than supplied by the user. Defaults to ``False``.
     event_template : NumericEventTemplate, optional
         The value's authoritative schema. When omitted it is inferred from the
         field data at construction; when supplied it is validated against the
@@ -188,11 +191,12 @@ class NumericRecord(Record):
 
     def __init__(
         self,
+        name: str,
         _fields: Mapping[str, ArrayLike | NumericRecord] | None = None,
         /,
         *,
-        name: str | None = None,
         event_template: EventTemplate | None = None,
+        name_is_auto: bool = False,
         **fields: ArrayLike | NumericRecord,
     ):
         # Build the validated + coerced field dict *before* Record's
@@ -219,11 +223,13 @@ class NumericRecord(Record):
                     child = event_template.children.get(field_name)
                     if isinstance(child, EventTemplate):
                         sub_template = child
-                raw_fields[field_name] = type(self)(value, event_template=sub_template)
+                raw_fields[field_name] = type(self)(
+                    field_name, value, event_template=sub_template, name_is_auto=True
+                )
             else:
                 raw_fields[field_name] = value
         validated, aux = self._validate_and_coerce(raw_fields)
-        super().__init__(validated, name=name, event_template=event_template)
+        super().__init__(name, validated, event_template=event_template, name_is_auto=name_is_auto)
         # Cache vector_size — leaves are immutable arrays after construction.
         total = 0
         for val in self._tree.values():
@@ -398,7 +404,7 @@ class NumericRecord(Record):
             else:
                 hooks, blob = entry
                 fields[field_name] = hooks.restore(val, blob)
-        return Record(fields)
+        return Record(self._name, fields, name_is_auto=self._name_is_auto)
 
     # -- Single-field scalar-like coercion ---------------------------------
     #
@@ -491,7 +497,7 @@ class NumericRecord(Record):
 def _unpickle_numeric_record(
     store: dict, name: str, name_is_auto: bool, provenance
 ) -> NumericRecord:
-    nr = NumericRecord(name=name, **store)
+    nr = NumericRecord(name, store)
     return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
@@ -505,9 +511,7 @@ def _numeric_record_unflatten(
 ) -> NumericRecord:
     """Unflatten NumericRecord from JAX pytree traversal, threading the aux template."""
     template, name, name_is_auto = aux
-    nr = NumericRecord(
-        dict(zip(tuple(template.children), children)), name=name, event_template=template
-    )
+    nr = NumericRecord(name, dict(zip(tuple(template.children), children)), event_template=template)
     return nr._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 
