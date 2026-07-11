@@ -90,10 +90,10 @@ def iterate[T, S](
             )
 
         # Auto-attach provenance if not already set
-        if result.source is None:
+        if result.provenance is None:
             # write-once guard: re-sourcing an already-sourced result raises
             with contextlib.suppress(RuntimeError):
-                result.with_source(
+                result.with_provenance(
                     Provenance.create(
                         "iterate",
                         parents=[current],
@@ -187,7 +187,7 @@ def with_resampling(
     produce equally-weighted particles.
 
     The pre-resampling ESS is stored in provenance metadata of the
-    resampled distribution (``dist.source.metadata["ess"]``) since
+    resampled distribution (``dist.provenance.metadata["ess"]``) since
     this information would otherwise be lost after resampling to
     uniform weights.
 
@@ -246,7 +246,9 @@ def with_resampling(
                     new_record,
                     name=out_dist.name,
                 )
-                resampled.with_source(
+                # The result inherits out_dist's name, so it mirrors its flag.
+                object.__setattr__(resampled, "_name_is_auto", out_dist.name_is_auto)
+                resampled.with_provenance(
                     Provenance.create(
                         "resample",
                         parents=[out_dist],

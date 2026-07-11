@@ -135,29 +135,29 @@ def predictive_check[P, D](
         result["observed_statistic"] = obs_stat
         result["p_value"] = p_value
 
-    # Attach to the distribution's ``auxiliary`` DataTree under a
+    # Attach to the distribution's ``annotations`` DataTree under a
     # ``predictive_check`` group; each invocation appends a numbered
     # child Dataset (``check_0``, ``check_1``, …). This keeps the
     # validation history alongside the distribution without crowding
     # the public API surface with a separate ``validation_results``
     # property — and future validation functions (LOO, WAIC, …)
     # land under their own named groups in the same DataTree.
-    _record_check_in_auxiliary(distribution, stats_array, result)
+    _record_check_in_annotations(distribution, stats_array, result)
 
     return result
 
 
-def _record_check_in_auxiliary(
+def _record_check_in_annotations(
     distribution: Any,
     stats_array: Any,
     result: dict[str, Any],
 ) -> None:
     """Append a per-invocation result Dataset under
-    ``distribution.auxiliary["predictive_check/check_N"]``.
+    ``distribution.annotations["predictive_check/check_N"]``.
 
-    Mutates ``distribution._auxiliary`` in place. This is the
+    Mutates ``distribution._annotations`` in place. This is the
     documented exception to ``Distribution`` immutability (see
-    :attr:`Distribution.auxiliary` and ``CONTRIBUTING.md`` §"Design
+    :attr:`Distribution.annotations` and ``CONTRIBUTING.md`` §"Design
     principles" §1) — diagnostic ops attach results under named
     groups rather than returning renamed clones, which would break
     source/identity tracking.
@@ -169,7 +169,7 @@ def _record_check_in_auxiliary(
     - ``test_fn_name`` + optional ``observed_statistic`` /
       ``p_value`` become Dataset attrs.
 
-    Frozen/slotted distributions (where ``_auxiliary`` can't be set
+    Frozen/slotted distributions (where ``_annotations`` can't be set
     via ``object.__setattr__``) skip the attachment silently — the
     caller still gets the ``result`` dict via the public return.
     """
@@ -190,11 +190,11 @@ def _record_check_in_auxiliary(
         attrs=attrs,
     )
 
-    aux = getattr(distribution, "_auxiliary", None)
+    aux = getattr(distribution, "_annotations", None)
     if aux is None:
         aux = DataTree()
         try:
-            object.__setattr__(distribution, "_auxiliary", aux)
+            object.__setattr__(distribution, "_annotations", aux)
         except (AttributeError, TypeError):
             # Frozen/immutable distribution — give up silently.
             return

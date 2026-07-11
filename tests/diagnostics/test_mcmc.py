@@ -37,7 +37,7 @@ class _VectorPosterior:
         self.chains = [object(), object()]
         rng = np.random.default_rng(123)
         self._data = rng.standard_normal((2, 120, 2))
-        self._auxiliary = None
+        self._annotations = None
 
     def draws(self, *, chain):
         return {"beta": self._data[chain]}
@@ -53,7 +53,7 @@ class _ScalarVectorPosterior:
             "alpha": rng.standard_normal((2, 160)),
             "beta": rng.standard_normal((2, 160, 2)),
         }
-        self._auxiliary = None
+        self._annotations = None
 
     def draws(self, *, chain):
         return {name: values[chain] for name, values in self._data.items()}
@@ -72,7 +72,7 @@ class _NonMixingPosterior:
             ],
             axis=0,
         )
-        self._auxiliary = None
+        self._annotations = None
 
     def draws(self, *, chain):
         return {"theta": self._data[chain]}
@@ -118,7 +118,7 @@ class TestAddRhat:
         add_rhat(posterior)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         rhat = view.rhat
         assert set(rhat.keys()) == {"alpha", "beta"}
         for v in rhat.values():
@@ -129,7 +129,7 @@ class TestAddRhat:
         add_rhat(posterior)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         for v in view.rhat.values():
             if isinstance(v, float):
                 assert v < 1.1
@@ -138,7 +138,7 @@ class TestAddRhat:
         add_rhat(posterior_single_chain)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior_single_chain._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior_single_chain._annotations["diagnostics"])
         for v in view.rhat.values():
             assert isinstance(v, NotComputed)
 
@@ -158,7 +158,7 @@ class TestAddRhat:
 
         add_rhat(posterior)
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert view.rhat["alpha"] == pytest.approx(float(expected["alpha"]))
         assert view.rhat["beta[0]"] == pytest.approx(float(expected["beta"][0]))
         assert view.rhat["beta[1]"] == pytest.approx(float(expected["beta"][1]))
@@ -168,7 +168,7 @@ class TestAddRhat:
 
         add_rhat(posterior, threshold=999.0)
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert view.rhat["theta"] > 1.5
 
 
@@ -254,7 +254,7 @@ class TestAddEss:
         add_ess(posterior)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         for v in view.ess_bulk.values():
             if isinstance(v, float):
                 assert v > 0
@@ -266,7 +266,7 @@ class TestAddEss:
         add_ess(posterior_3params)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior_3params._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior_3params._annotations["diagnostics"])
         assert set(view.ess_bulk.keys()) == {"mu", "sigma", "nu"}
 
     def test_does_not_return_value(self, posterior):
@@ -301,7 +301,7 @@ class TestAddEss:
 
         add_ess(posterior, threshold=0)
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert view.ess_bulk["alpha"] == pytest.approx(float(expected_bulk["alpha"]))
         assert view.ess_tail["alpha"] == pytest.approx(float(expected_tail["alpha"]))
         assert view.ess_bulk["beta[0]"] == pytest.approx(float(expected_bulk["beta"][0]))
@@ -323,7 +323,7 @@ class TestAddMcse:
         add_mcse(posterior)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         for v in view.mcse_mean.values():
             if isinstance(v, float):
                 assert np.isfinite(v)
@@ -349,7 +349,7 @@ class TestAddMcse:
 
         add_mcse(posterior)
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert view.mcse_mean["alpha"] == pytest.approx(float(expected_mean["alpha"]))
         assert view.mcse_sd["alpha"] == pytest.approx(float(expected_sd["alpha"]))
         assert view.mcse_mean["beta[0]"] == pytest.approx(float(expected_mean["beta"][0]))
@@ -372,7 +372,7 @@ class TestAddMcmcDiagnostics:
         add_mcmc_diagnostics(posterior)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         table = view.summary_table()
         assert "alpha" in table
         assert "beta" in table
@@ -384,7 +384,7 @@ class TestAddMcmcDiagnostics:
         add_mcmc_diagnostics(posterior)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         d = view.to_dict()
         # Must be JSON-serialisable (NotComputed is converted by to_dict)
         json.dumps(d)
@@ -394,7 +394,7 @@ class TestAddMcmcDiagnostics:
         add_mcmc_diagnostics(posterior)
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         # Warnings may be empty; we just check it's a list
         assert isinstance(view.warnings, list)
 
@@ -408,7 +408,7 @@ class TestAddMcmcDiagnostics:
 
         from probpipe.diagnostics._views import DiagnosticsView
 
-        view = DiagnosticsView(posterior._auxiliary["diagnostics"])
+        view = DiagnosticsView(posterior._annotations["diagnostics"])
         assert set(view.rhat) == {"beta[0]", "beta[1]"}
         assert set(view.ess_bulk) == {"beta[0]", "beta[1]"}
         assert set(view.mcse_mean) == {"beta[0]", "beta[1]"}

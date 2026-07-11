@@ -113,7 +113,7 @@ nav:
     - Workflows and orchestration: api/workflows.md
     - Constraints and bijectors: api/constraints.md
     - Conversion and interop: api/converters.md
-    - Provenance: api/provenance.md
+    - Identity & provenance: api/provenance.md
     - Extending ProbPipe: api/extending.md
     - Internals: api/internals.md
   - Cite: cite.md

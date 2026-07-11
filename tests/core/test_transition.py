@@ -41,7 +41,7 @@ def provenance_step(dist, value):
     field = dist.samples.fields[0]
     samples = dist.samples[field] + value
     new_dist = EmpiricalDistribution(samples, name=field)
-    new_dist.with_source(Provenance("custom_step", parents=(dist,), metadata={"value": value}))
+    new_dist.with_provenance(Provenance("custom_step", parents=(dist,), metadata={"value": value}))
     return new_dist
 
 
@@ -78,25 +78,25 @@ class TestIterate:
         """Provenance is auto-attached when step function doesn't set it."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0])
         dist = dists[1]
-        assert dist.source is not None
-        assert dist.source.operation == "iterate"
-        assert dist.source.metadata["step"] == 0
-        assert len(dist.source.parents) == 1
-        assert dist.source.parents[0].name == initial.name
+        assert dist.provenance is not None
+        assert dist.provenance.operation == "iterate"
+        assert dist.provenance.metadata["step"] == 0
+        assert len(dist.provenance.parents) == 1
+        assert dist.provenance.parents[0].name == initial.name
 
     def test_provenance_preserved(self, initial):
         """Provenance set by step function is not overwritten."""
         dists = iterate(step_fn=provenance_step, initial=initial, inputs=[1.0])
         dist = dists[1]
-        assert dist.source.operation == "custom_step"
-        assert dist.source.metadata["value"] == 1.0
+        assert dist.provenance.operation == "custom_step"
+        assert dist.provenance.metadata["value"] == 1.0
 
     def test_provenance_chain(self, initial):
         """Each step's provenance points to the previous distribution."""
         dists = iterate(step_fn=shift_step, initial=initial, inputs=[1.0, 2.0, 3.0])
-        assert dists[1].source.parents[0].name == initial.name
-        assert dists[2].source.parents[0].name == dists[1].name
-        assert dists[3].source.parents[0].name == dists[2].name
+        assert dists[1].provenance.parents[0].name == initial.name
+        assert dists[2].provenance.parents[0].name == dists[1].name
+        assert dists[3].provenance.parents[0].name == dists[2].name
 
     def test_callback(self, initial):
         """Callback receives correct (index, dist) pairs."""
@@ -174,8 +174,8 @@ class TestWithConversion:
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         converted = dists[-1]
         # The converter sets provenance with the source dist as parent
-        assert converted.source is not None
-        assert len(converted.source.parents) > 0
+        assert converted.provenance is not None
+        assert len(converted.provenance.parents) > 0
 
     def test_multi_step_stays_parametric(self):
         """Each step produces a parametric distribution usable as next prior."""
@@ -212,7 +212,7 @@ class TestWithResampling:
         step = with_resampling(shift_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
         # No resampling occurred, so no "resample" provenance
-        assert dists[-1].source.operation != "resample"
+        assert dists[-1].provenance.operation != "resample"
 
     def test_resample_degenerate(self):
         """Highly non-uniform weights -> resampling triggered."""
@@ -228,7 +228,7 @@ class TestWithResampling:
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
         resampled = dists[-1]
         assert resampled.is_uniform
-        assert resampled.source.operation == "resample"
+        assert resampled.provenance.operation == "resample"
 
     def test_resample_stores_ess_in_metadata(self):
         """Pre-resampling ESS is stored in provenance metadata."""
@@ -242,9 +242,9 @@ class TestWithResampling:
         step = with_resampling(weighted_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
         resampled = dists[-1]
-        assert "ess" in resampled.source.metadata
-        assert "ess_ratio" in resampled.source.metadata
-        assert resampled.source.metadata["ess_ratio"] < 0.5
+        assert "ess" in resampled.provenance.metadata
+        assert "ess_ratio" in resampled.provenance.metadata
+        assert resampled.provenance.metadata["ess_ratio"] < 0.5
 
     def test_non_empirical_passthrough(self):
         """Non-EmpiricalDistribution passes through unchanged."""

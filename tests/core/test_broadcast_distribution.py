@@ -213,9 +213,9 @@ class TestBroadcastDistributionProvenance:
             broadcast_args=["x"],
         )
         prov = Provenance("broadcast", metadata={"func": "test"})
-        bd.with_source(prov)
-        assert bd.source is prov
-        assert bd.source.operation == "broadcast"
+        bd.with_provenance(prov)
+        assert bd.provenance is prov
+        assert bd.provenance.operation == "broadcast"
 
 
 # ---------------------------------------------------------------------------
@@ -859,18 +859,18 @@ class TestCoerceOutput:
         )
 
         np.testing.assert_allclose(float(out), 3.14)
-        assert out.source is None
+        assert out.provenance is None
 
     def test_stack_mode_attaches_to_recordarray(self):
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._workflow_result import _coerce_output
 
         ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
-        assert ra.source is None
+        assert ra.provenance is None
         prov = Provenance("sweep", parents=())
         out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
         assert out is ra
-        assert ra.source.operation == "sweep"
+        assert ra.provenance.operation == "sweep"
 
     def test_attaches_to_distribution_array(self):
         from probpipe import DistributionArray, Normal
@@ -883,12 +883,12 @@ class TestCoerceOutput:
             field_name="demo",
         )
         assert isinstance(da, DistributionArray)
-        assert da.source is None
+        assert da.provenance is None
         prov = Provenance("nested", parents=())
         _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")
-        assert da.source.operation == "nested"
+        assert da.provenance.operation == "nested"
 
-    def test_existing_source_is_not_overwritten(self):
+    def test_existing_provenance_is_not_overwritten(self):
         """If the broadcasting layer has already wired a fresh inner
         marginal with a source (e.g., a _MixtureMarginal was built with
         its own provenance), ``_coerce_output`` must not crash and the
@@ -896,7 +896,7 @@ class TestCoerceOutput:
         from probpipe import NumericRecord
         from probpipe.core._workflow_result import _coerce_output
 
-        nr = NumericRecord(x=1.0).with_source(Provenance("inner", parents=()))
+        nr = NumericRecord(x=1.0).with_provenance(Provenance("inner", parents=()))
         # Second set would normally raise RuntimeError; _coerce_output
         # swallows it.
         _coerce_output(
@@ -905,4 +905,4 @@ class TestCoerceOutput:
             provenance=Provenance("outer", parents=()),
             field_name="f",
         )
-        assert nr.source.operation == "inner"
+        assert nr.provenance.operation == "inner"

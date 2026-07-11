@@ -30,7 +30,7 @@ from probpipe.diagnostics._views import LOOView
 
 class _FakePosterior:
     def __init__(self, with_arviz_log_likelihood: bool = False):
-        self._auxiliary = None
+        self._annotations = None
         if with_arviz_log_likelihood:
             ll = np.random.default_rng(0).standard_normal((2, 100, 30))
             ll_ds = xr.Dataset({"y": xr.DataArray(ll, dims=["chain", "draw", "obs"])})
@@ -354,7 +354,7 @@ class TestAddLoo:
         mock_loo.return_value = _fake_loo_result()
         post = self._posterior_with_ll()
         add_loo(post)
-        loo_ds = post._auxiliary["diagnostics"]["runs"]["loo"].to_dataset()
+        loo_ds = post._annotations["diagnostics"]["runs"]["loo"].to_dataset()
         assert "elpd_loo" in loo_ds.data_vars
 
     @patch("probpipe.diagnostics._loo.az.loo")
@@ -362,7 +362,7 @@ class TestAddLoo:
         mock_loo.return_value = _fake_loo_result(elpd_loo=-50.0, se=2.0, p_loo=1.5)
         post = self._posterior_with_ll()
         add_loo(post)
-        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         assert view.elpd_loo == pytest.approx(-50.0)
         assert view.se == pytest.approx(2.0)
         assert view.p_loo == pytest.approx(1.5)
@@ -372,7 +372,7 @@ class TestAddLoo:
         mock_loo.return_value = _fake_loo_result(elpd_loo=-60.0, looic=None)
         post = self._posterior_with_ll()
         add_loo(post)
-        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         looic = view.looic
         if isinstance(looic, float):
             assert looic == pytest.approx(120.0)
@@ -383,7 +383,7 @@ class TestAddLoo:
         mock_loo.return_value = _fake_loo_result(pareto_k=k, good_k=0.7)
         post = self._posterior_with_ll()
         add_loo(post)
-        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         assert view.pareto_k_bad_count == 5
 
     @patch("probpipe.diagnostics._loo.az.loo")
@@ -391,7 +391,7 @@ class TestAddLoo:
         mock_loo.return_value = _fake_loo_result(warning=True)
         post = self._posterior_with_ll()
         add_loo(post)
-        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         assert view.warning is True
 
     @patch("probpipe.diagnostics._loo.az.loo")
@@ -417,12 +417,12 @@ class TestAddLoo:
         assert mock_loo.call_count == 2
 
     @patch("probpipe.diagnostics._loo.az.loo")
-    def test_log_likelihood_arg_writes_to_auxiliary(self, mock_loo):
+    def test_log_likelihood_arg_writes_to_annotations(self, mock_loo):
         mock_loo.return_value = _fake_loo_result()
         post = _FakePosterior(with_arviz_log_likelihood=False)
         ll = np.random.default_rng(0).standard_normal((2, 100, 20))
         add_loo(post, log_likelihood=ll)
-        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         assert "y" in ll_ds.data_vars
 
     def test_raises_without_log_likelihood(self):
@@ -430,9 +430,9 @@ class TestAddLoo:
         with pytest.raises(ValueError, match="log_likelihood"):
             add_loo(post)
 
-    def test_raises_without_auxiliary(self):
+    def test_raises_without_annotations(self):
         post = _FakePosterior(with_arviz_log_likelihood=False)
-        post._auxiliary = None
+        post._annotations = None
         with pytest.raises(ValueError):
             add_loo(post)
 
@@ -449,7 +449,7 @@ class TestAddLoo:
         mock_loo.return_value = _fake_loo_result(pareto_k=k)
         post = self._posterior_with_ll()
         add_loo(post, store_pointwise=True)
-        loo_ds = post._auxiliary["diagnostics"]["runs"]["loo"].to_dataset()
+        loo_ds = post._annotations["diagnostics"]["runs"]["loo"].to_dataset()
         assert "pareto_k" in loo_ds.data_vars
 
     @patch("probpipe.diagnostics._loo.az.loo")
@@ -457,7 +457,7 @@ class TestAddLoo:
         mock_loo.return_value = _fake_loo_result()
         post = self._posterior_with_ll()
         add_loo(post, store_pointwise=False)
-        loo_ds = post._auxiliary["diagnostics"]["runs"]["loo"].to_dataset()
+        loo_ds = post._annotations["diagnostics"]["runs"]["loo"].to_dataset()
         assert "pareto_k" not in loo_ds.data_vars
 
     @patch("probpipe.diagnostics._loo.az.loo")
@@ -469,7 +469,7 @@ class TestAddLoo:
 
         add_loo(post)
 
-        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         assert view.plot_ready is True
 
     def test_matches_direct_arviz_loo(self):
@@ -500,13 +500,13 @@ class TestAddLoo:
 
         add_loo(post, log_likelihood=log_likelihood)
 
-        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         expected_elpd = getattr(expected, "elpd_loo", getattr(expected, "elpd", np.nan))
         expected_p = getattr(expected, "p_loo", getattr(expected, "p", np.nan))
         assert view.elpd_loo == pytest.approx(float(expected_elpd))
         assert view.se == pytest.approx(float(expected.se))
         assert view.p_loo == pytest.approx(float(expected_p))
-        loo_ds = post._auxiliary["diagnostics"]["runs"]["loo"].to_dataset()
+        loo_ds = post._annotations["diagnostics"]["runs"]["loo"].to_dataset()
         assert int(loo_ds["n_samples"]) == expected.n_samples
         assert int(loo_ds["n_data_points"]) == expected.n_data_points
 
@@ -517,7 +517,7 @@ class TestAddLoo:
 
 
 class TestGetArvizTree:
-    def test_prefers_auxiliary_arviz(self):
+    def test_prefers_annotations_arviz(self):
         from probpipe.diagnostics._loo import _get_arviz_tree
 
         post = _FakePosterior(with_arviz_log_likelihood=True)
@@ -529,7 +529,7 @@ class TestGetArvizTree:
         from probpipe.diagnostics._loo import _get_arviz_tree
 
         class _PostWithInferenceData:
-            _auxiliary = None
+            _annotations = None
 
             @property
             def inference_data(self):
@@ -544,19 +544,19 @@ class TestGetArvizTree:
         from probpipe.diagnostics._loo import _get_arviz_tree
 
         class _EmptyPost:
-            _auxiliary = None
+            _annotations = None
             inference_data = None
 
         assert _get_arviz_tree(_EmptyPost()) is None
 
-    def test_auxiliary_without_arviz_falls_back_to_auxiliary(self):
+    def test_annotations_without_arviz_falls_back_to_annotations(self):
         from probpipe.diagnostics._loo import _get_arviz_tree
 
         class _Post:
-            _auxiliary = xr.DataTree.from_dict({"diagnostics": xr.Dataset()})
+            _annotations = xr.DataTree.from_dict({"diagnostics": xr.Dataset()})
             inference_data = None
 
-        assert _get_arviz_tree(_Post()) is _Post._auxiliary
+        assert _get_arviz_tree(_Post()) is _Post._annotations
 
 
 # ---------------------------------------------------------------------------
@@ -632,7 +632,7 @@ class TestAddLooKwargs:
         mock_loo.return_value = _fake_loo_result(elpd_loo=-60.0, looic=None)
         post = self._posterior_with_ll()
         add_loo(post)
-        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         assert view.looic == pytest.approx(120.0)
 
 
@@ -683,7 +683,7 @@ class _FakePostForLL:
     """Fake posterior compatible with internal log-likelihood computation."""
 
     def __init__(self, n_chains: int = 2, n_draws: int = 50, n_features: int = 1):
-        self._auxiliary = None
+        self._annotations = None
         self._n_chains = n_chains
         self._n_draws = n_draws
         rng = np.random.default_rng(1)
@@ -727,14 +727,14 @@ class TestAddLogLikelihood:
     def test_writes_log_likelihood_group(self):
         post, model, data = self._setup()
         _add_log_likelihood(post, model, data)
-        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         assert "y" in ll_ds.data_vars
 
     def test_output_shape(self):
         n_obs = 15
         post, model, data = self._setup(n_obs=n_obs)
         _add_log_likelihood(post, model, data)
-        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         da = ll_ds["y"]
         assert da.dims == ("chain", "draw", "obs")
         assert da.shape == (post.num_chains, post.num_draws, n_obs)
@@ -742,14 +742,14 @@ class TestAddLogLikelihood:
     def test_values_are_finite(self):
         post, model, data = self._setup()
         _add_log_likelihood(post, model, data)
-        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         arr = np.asarray(ll_ds["y"].values)
         assert np.all(np.isfinite(arr))
 
     def test_custom_var_name(self):
         post, model, data = self._setup()
         _add_log_likelihood(post, model, data, var_name="log_lik")
-        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         assert "log_lik" in ll_ds.data_vars
 
     def test_returns_none(self):
@@ -761,7 +761,7 @@ class TestAddLogLikelihood:
         post, model, data = self._setup(n_obs=5)
         with patch("jax.vmap", side_effect=Exception("no vmap")):
             _add_log_likelihood(post, model, data)
-        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         assert ll_ds["y"].shape == (post.num_chains, post.num_draws, 5)
 
     def test_add_loo_computes_missing_log_likelihood_from_model_and_data(self):
@@ -776,10 +776,10 @@ class TestAddLogLikelihood:
         with _patch("probpipe.diagnostics._loo.az.loo", return_value=fake_result):
             add_loo(post, model=model, data=data)
 
-        assert post._auxiliary is not None
-        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        assert post._annotations is not None
+        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         assert "y" in ll_ds.data_vars
-        view = LOOView(post._auxiliary["diagnostics"]["runs"]["loo"])
+        view = LOOView(post._annotations["diagnostics"]["runs"]["loo"])
         assert isinstance(view.elpd_loo, float)
 
     def test_fast_path_writes_log_likelihood(self):
@@ -803,7 +803,7 @@ class TestAddLogLikelihood:
 
         _add_log_likelihood(post, model, data)
 
-        ll_ds = post._auxiliary["arviz"]["log_likelihood"].to_dataset()
+        ll_ds = post._annotations["arviz"]["log_likelihood"].to_dataset()
         assert ll_ds["y"].shape == (1, 4, 3)
 
     def test_fast_path_and_fallback_log_likelihoods_match(self):
@@ -836,6 +836,6 @@ class TestAddLogLikelihood:
         with patch("jax.vmap", side_effect=Exception("no vmap")):
             _add_log_likelihood(fallback_post, model, data)
 
-        fast = fast_post._auxiliary["arviz"]["log_likelihood"].to_dataset()["y"]
-        fallback = fallback_post._auxiliary["arviz"]["log_likelihood"].to_dataset()["y"]
+        fast = fast_post._annotations["arviz"]["log_likelihood"].to_dataset()["y"]
+        fallback = fallback_post._annotations["arviz"]["log_likelihood"].to_dataset()["y"]
         np.testing.assert_allclose(fast, fallback, rtol=1e-6)

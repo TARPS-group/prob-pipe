@@ -20,6 +20,7 @@ from ..core.distribution import (
 )
 from ..core.protocols import SupportsLogProb, SupportsMean, SupportsSampling, SupportsVariance
 from ..core.provenance import Provenance
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._tfp_base import TFPDistribution
 
@@ -179,9 +180,8 @@ class TransformedDistribution(NumericRecordDistribution):
     ):
         self._base = base
         self._bijector = bijector
-        if name is None:
-            name = f"transformed({base.name})"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, f"transformed({base.name})")
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
         if isinstance(base, TFPDistribution):
             self._tfp_transformed = tfd.TransformedDistribution(
@@ -194,7 +194,7 @@ class TransformedDistribution(NumericRecordDistribution):
 
         self._approximate = base.is_approximate
 
-        self.with_source(
+        self.with_provenance(
             Provenance.create(
                 "transform",
                 parents=[base],

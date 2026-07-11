@@ -109,9 +109,9 @@ def _smc_diagnostics(history: Any) -> DataTree:
         coords={"generation": populations["t"].to_numpy()},
         attrs={"total_nr_simulations": int(history.total_nr_simulations)},
     )
-    auxiliary = xr.DataTree()
-    auxiliary["smc_diagnostics"] = xr.DataTree(dataset=diagnostics)
-    return auxiliary
+    annotations = xr.DataTree()
+    annotations["smc_diagnostics"] = xr.DataTree(dataset=diagnostics)
+    return annotations
 
 
 class PyABCSMCMethod(InferenceMethod):
@@ -294,7 +294,7 @@ class PyABCSMCMethod(InferenceMethod):
             weights=jnp.asarray(weights / weights.sum()),
             event_template=template,
             field_order=list(prior.event_shapes),
-            auxiliary=_smc_diagnostics(history),
+            annotations=_smc_diagnostics(history),
             n_particles=n_particles,
             max_populations=max_populations,
             eps_alpha=eps_alpha,

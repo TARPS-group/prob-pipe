@@ -93,7 +93,7 @@ class TestExecuteDistributionBroadcast:
         assert all(
             not isinstance(call_values["x"], Normal) for call_values in request.call_value_list
         )
-        assert result.source.metadata == {
+        assert result.provenance.metadata == {
             "dispatch": "thread",
             "orchestrate": "off",
             "n_samples": 5,

@@ -458,9 +458,9 @@ class TestConditionOn:
 
     def test_provenance_attached(self, joint_xy):
         cond = condition_on(joint_xy, y=jnp.array(0.5))
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
-        assert "y" in cond.source.metadata["conditioned"]
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "condition_on"
+        assert "y" in cond.provenance.metadata["conditioned"]
 
     def test_keyerror_on_unknown_component(self, joint_xy):
         with pytest.raises(KeyError, match="not found"):
@@ -897,12 +897,12 @@ class TestPositionalAndAutoRename:
         n = Normal(loc=0.0, scale=1.0, name="x")
         joint = ProductDistribution(growth_rate=n)
         comp = joint.components["growth_rate"]
-        assert comp.source is not None
-        assert comp.source.operation == "renamed"
-        assert len(comp.source.parents) == 1
-        assert comp.source.parents[0].name == "x"
-        assert comp.source.metadata["old_name"] == "x"
-        assert comp.source.metadata["new_name"] == "growth_rate"
+        assert comp.provenance is not None
+        assert comp.provenance.operation == "with_name"
+        assert len(comp.provenance.parents) == 1
+        assert comp.provenance.parents[0].name == "x"
+        assert comp.provenance.metadata["old_name"] == "x"
+        assert comp.provenance.metadata["new_name"] == "growth_rate"
 
     def test_auto_rename_samples_correctly(self):
         """Auto-renamed component samples from the same distribution."""
@@ -935,15 +935,15 @@ class TestPositionalAndAutoRename:
         # Should be the exact same object (no copy)
         assert joint.components["x"] is n
 
-    def test_renamed_method_directly(self):
-        """Distribution.renamed() returns a copy with new name."""
+    def test_with_name_method_directly(self):
+        """Distribution.with_name() returns a copy with new name."""
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.renamed("y")
+        n2 = n.with_name("y")
         assert n2.name == "y"
         assert n.name == "x"  # original unchanged
-        assert n2.source.operation == "renamed"
-        assert len(n2.source.parents) == 1
-        assert n2.source.parents[0].name == "x"
+        assert n2.provenance.operation == "with_name"
+        assert len(n2.provenance.parents) == 1
+        assert n2.provenance.parents[0].name == "x"
         # Sampling still works
         s = n2._sample(jax.random.PRNGKey(0), (10,))
         assert s.shape == (10,)
@@ -981,7 +981,7 @@ class TestPositionalAndAutoRename:
         original = Normal(loc=0.0, scale=1.0, name="x")
         joint = ProductDistribution(renamed_x=original)
         renamed = joint.components["renamed_x"]
-        assert any(a.obj is original for a in provenance_ancestors(renamed))
+        assert any(a.parent is original for a in provenance_ancestors(renamed))
 
 
 class TestDistributionViewFromDistribution:
@@ -1295,8 +1295,8 @@ class TestNestedProductDistribution:
     def test_condition_on_provenance(self, nested_joint):
         """Conditioned distribution should have provenance."""
         cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "condition_on"
 
     def test_condition_on_empty_raises(self, nested_joint):
         """Calling condition_on with no arguments should raise."""

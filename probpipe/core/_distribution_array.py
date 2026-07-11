@@ -49,6 +49,7 @@ import numpy as np
 from .._array_utils import _slice_leading_axes
 from ._distribution_base import Distribution
 from .protocols import SupportsArrayBackend
+from .tracked import auto_name
 
 if TYPE_CHECKING:
     from .protocols import _DistributionArrayBackend
@@ -169,9 +170,8 @@ class DistributionArray[T](Distribution[T]):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
-        if name is None:
-            name = "distribution_array"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, "distribution_array")
+        super().__init__(name=name, name_is_auto=name_is_auto)
         # A DistributionArray holding MC-marginal components inherits
         # their approximation status; if any component is approximate
         # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
@@ -301,7 +301,10 @@ class DistributionArray[T](Distribution[T]):
             multi = np.unravel_index(flat, batch_shape) if batch_shape else ()
             multi_t = tuple(int(x) for x in multi)
             cell_params = {k: _slice_leading_axes(v, multi_t) for k, v in batched_params.items()}
-            components.append(dist_cls(name=f"{name}_{flat}", **cell_params))
+            cell = dist_cls(name=f"{name}_{flat}", **cell_params)
+            # The per-cell suffix is derived by this factory, not user-typed.
+            object.__setattr__(cell, "_name_is_auto", True)
+            components.append(cell)
         return cls(components, batch_shape=batch_shape, name=name)
 
     # -- backend-delegated constructor --------------------------------------
@@ -346,9 +349,8 @@ class DistributionArray[T](Distribution[T]):
         instance._components = None
         instance._batch_shape = tuple(backend.batch_shape)
         instance._backend = backend
-        if name is None:
-            name = "distribution_array"
-        Distribution.__init__(instance, name=name)
+        name, name_is_auto = auto_name(name, "distribution_array")
+        Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
         # Approximation status flows from the backend. TFP-backed
         # arrays are exact; a future Record-backend (over a
         # ``RecordEmpiricalDistribution``) will report
@@ -509,6 +511,7 @@ class DistributionArray[T](Distribution[T]):
             new_components,
             batch_shape=sliced.shape,
             name=self._name,
+            name_is_auto=self._name_is_auto,
         )
 
     def __iter__(self):
@@ -641,6 +644,7 @@ def _make_distribution_array(
     *,
     batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
+    name_is_auto: bool | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray``.
 
@@ -662,5 +666,12 @@ def _make_distribution_array(
         ``len(components)``.
     name : str, optional
         Name for provenance.
+    name_is_auto : bool, optional
+        Overrides the flag on the result — pass the parent's flag when the
+        result inherits a possibly-auto name (e.g. a slice). ``None`` keeps
+        the constructor's own resolution (auto iff *name* was omitted).
     """
-    return DistributionArray(components, batch_shape=batch_shape, name=name)
+    array = DistributionArray(components, batch_shape=batch_shape, name=name)
+    if name_is_auto is not None:
+        object.__setattr__(array, "_name_is_auto", bool(name_is_auto))
+    return array

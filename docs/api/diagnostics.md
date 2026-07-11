@@ -1,7 +1,7 @@
 # Diagnostics
 
 Utilities for attaching Bayesian diagnostics to fitted posteriors in place.
-The public diagnostic operations mutate `posterior._auxiliary` and return
+The public diagnostic operations mutate `posterior._annotations` and return
 `None`; users normally read the results back through `posterior.diagnostics`.
 ArviZ-compatible data are exposed through `posterior.arviz_data`.
 
@@ -28,7 +28,7 @@ for a fitted posterior.
 
 `posterior.diagnostics` returns a structured view over the diagnostics subtree.
 The concrete views expose MCMC, posterior predictive check, and LOO results
-without requiring users to traverse `_auxiliary` directly.
+without requiring users to traverse `_annotations` directly.
 
 ::: probpipe.diagnostics.DiagnosticsView
 

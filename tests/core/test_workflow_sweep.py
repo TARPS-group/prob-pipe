@@ -246,5 +246,5 @@ class TestExecuteSweep:
                 "include_inputs": True,
             },
         ]
-        assert result.source.operation == "workflow.nested"
-        assert result.source.metadata["k"] == 7
+        assert result.provenance.operation == "workflow.nested"
+        assert result.provenance.metadata["k"] == 7

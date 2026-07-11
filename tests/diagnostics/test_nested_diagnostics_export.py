@@ -97,7 +97,7 @@ class _RecordDrawsPosterior:
     """
 
     def __init__(self, template, n_chains=2, n_draws=8):
-        self._auxiliary = None
+        self._annotations = None
         self._n_chains = n_chains
         self._n_draws = n_draws
         self._template = template
@@ -167,7 +167,7 @@ def test_add_log_likelihood_fallback_loop_values(template, intercept_key, slope_
     data = {"X": model._x, "y": np.random.default_rng(1).standard_normal(n_obs)}
     with patch("jax.vmap", side_effect=Exception("no vmap")):
         _add_log_likelihood(post, model, data)
-    ll = post._auxiliary["arviz"]["log_likelihood"].to_dataset()["y"]
+    ll = post._annotations["arviz"]["log_likelihood"].to_dataset()["y"]
     assert ll.shape == (n_chains, n_draws, n_obs)
 
     # Independent baseline: column 0 of the flat draw is the intercept, the

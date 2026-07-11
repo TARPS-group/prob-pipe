@@ -26,7 +26,7 @@ from probpipe.core.node import WorkflowFunction
 from probpipe.core.provenance import ParentInfo
 
 # ===========================================================================
-# 1. Provenance basics (dataclass, with_source, write-once)
+# 1. Provenance basics (dataclass, with_provenance, write-once)
 # ===========================================================================
 
 
@@ -51,25 +51,25 @@ class TestProvenanceBasics:
 
     def test_write_once(self):
         n = Normal(loc=0.0, scale=1.0, name="n")
-        n.with_source(Provenance("first"))
+        n.with_provenance(Provenance("first"))
         with pytest.raises(RuntimeError, match="already set"):
-            n.with_source(Provenance("second"))
+            n.with_provenance(Provenance("second"))
 
-    def test_with_source_none_is_noop_distribution(self):
-        """with_source(None) leaves a Distribution unchanged."""
+    def test_with_provenance_none_is_noop_distribution(self):
+        """with_provenance(None) leaves a Distribution unchanged."""
         n = Normal(loc=0.0, scale=1.0, name="n")
-        result = n.with_source(None)
+        result = n.with_provenance(None)
         assert result is n
-        assert n.source is None
+        assert n.provenance is None
 
-    def test_with_source_none_is_noop_record(self):
-        """with_source(None) leaves a Record unchanged."""
+    def test_with_provenance_none_is_noop_record(self):
+        """with_provenance(None) leaves a Record unchanged."""
         from probpipe import Record
 
         r = Record({"x": jnp.array(1.0)})
-        result = r.with_source(None)
+        result = r.with_provenance(None)
         assert result is r
-        assert r.source is None
+        assert r.provenance is None
 
 
 # ===========================================================================
@@ -78,22 +78,22 @@ class TestProvenanceBasics:
 
 
 class TestParentInfoHashEq:
-    def test_hashable_without_source(self):
-        """Root ParentInfo (source=None) is hashable."""
+    def test_hashable_without_provenance(self):
+        """Root ParentInfo (provenance=None) is hashable."""
         p = ParentInfo(type_name="Normal", name="prior")
         assert isinstance(hash(p), int)
 
-    def test_hashable_with_source(self):
+    def test_hashable_with_provenance(self):
         """Non-root ParentInfo (source set) is hashable despite Provenance.metadata."""
         src = Provenance("op", metadata={"key": "val"})
-        p = ParentInfo(type_name="Gamma", name="mid", source=src)
+        p = ParentInfo(type_name="Gamma", name="mid", provenance=src)
         assert isinstance(hash(p), int)
 
     def test_usable_in_set(self):
         """set(provenance_ancestors(d)) does not raise TypeError."""
         X = Normal(loc=0.0, scale=1.0, name="X")
         Y = Normal(loc=0.0, scale=1.0, name="Y")
-        Y.with_source(Provenance.create("op", parents=[X]))
+        Y.with_provenance(Provenance.create("op", parents=[X]))
         ancestors = provenance_ancestors(Y)
         s = set(ancestors)
         assert len(s) == 1
@@ -101,8 +101,8 @@ class TestParentInfoHashEq:
     def test_equal_same_fields(self):
         """Two ParentInfo with identical fields compare equal."""
         src = Provenance("op")
-        a = ParentInfo(type_name="Normal", name="x", source=src)
-        b = ParentInfo(type_name="Normal", name="x", source=src)
+        a = ParentInfo(type_name="Normal", name="x", provenance=src)
+        b = ParentInfo(type_name="Normal", name="x", provenance=src)
         assert a == b
 
     def test_not_equal_different_name(self):
@@ -118,15 +118,15 @@ class TestParentInfoHashEq:
     def test_obj_excluded_from_eq(self):
         """obj field does not affect equality — same ancestor, different live ref."""
         n = Normal(loc=0.0, scale=1.0, name="x")
-        a = ParentInfo(type_name="Normal", name="x", obj=n)
-        b = ParentInfo(type_name="Normal", name="x", obj=None)
+        a = ParentInfo(type_name="Normal", name="x", parent=n)
+        b = ParentInfo(type_name="Normal", name="x", parent=None)
         assert a == b
 
     def test_hash_contract(self):
         """Equal ParentInfo must have equal hashes."""
         src = Provenance("op", metadata={"k": 1})
-        a = ParentInfo(type_name="Normal", name="x", source=src)
-        b = ParentInfo(type_name="Normal", name="x", source=src)
+        a = ParentInfo(type_name="Normal", name="x", provenance=src)
+        b = ParentInfo(type_name="Normal", name="x", provenance=src)
         assert a == b
         assert hash(a) == hash(b)
 
@@ -140,20 +140,20 @@ class TestFromDistributionProvenance:
     def test_normal_from_distribution(self):
         src = Beta(alpha=2.0, beta=5.0, name="beta_src")
         converted = from_distribution(src, Normal)
-        assert converted.source is not None
-        assert converted.source.operation == "from_distribution"
-        assert len(converted.source.parents) == 1
-        assert isinstance(converted.source.parents[0], ParentInfo)
-        assert converted.source.parents[0].name == "beta_src"
+        assert converted.provenance is not None
+        assert converted.provenance.operation == "from_distribution"
+        assert len(converted.provenance.parents) == 1
+        assert isinstance(converted.provenance.parents[0], ParentInfo)
+        assert converted.provenance.parents[0].name == "beta_src"
 
     def test_empirical_from_distribution(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
         ed = from_distribution(src, RecordEmpiricalDistribution, n_samples=100)
-        assert ed.source is not None
-        assert ed.source.operation == "from_distribution"
-        assert len(ed.source.parents) == 1
-        assert isinstance(ed.source.parents[0], ParentInfo)
-        assert ed.source.parents[0].name == "norm_src"
+        assert ed.provenance is not None
+        assert ed.provenance.operation == "from_distribution"
+        assert len(ed.provenance.parents) == 1
+        assert isinstance(ed.provenance.parents[0], ParentInfo)
+        assert ed.provenance.parents[0].name == "norm_src"
 
 
 # ===========================================================================
@@ -165,27 +165,27 @@ class TestTransformedDistributionProvenance:
     def test_transform_provenance_attached(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
         td = TransformedDistribution(base, tfb.Exp())
-        assert td.source is not None
-        assert td.source.operation == "transform"
-        assert len(td.source.parents) == 1
-        assert isinstance(td.source.parents[0], ParentInfo)
-        assert td.source.parents[0].name == "base"
-        assert td.source.metadata["bijector"] == "Exp"
+        assert td.provenance is not None
+        assert td.provenance.operation == "transform"
+        assert len(td.provenance.parents) == 1
+        assert isinstance(td.provenance.parents[0], ParentInfo)
+        assert td.provenance.parents[0].name == "base"
+        assert td.provenance.metadata["bijector"] == "Exp"
 
     def test_transform_chain_provenance(self):
         base = Normal(loc=0.0, scale=1.0, name="base")
         bij = tfb.Chain([tfb.Exp(), tfb.Shift(1.0)])
         td = TransformedDistribution(base, bij)
-        assert td.source.metadata["bijector"] == "Chain"
+        assert td.provenance.metadata["bijector"] == "Chain"
 
     def test_transform_with_empirical_base(self):
         ed = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         td = TransformedDistribution(ed, tfb.Exp())
-        assert td.source is not None
-        assert td.source.operation == "transform"
-        assert len(td.source.parents) == 1
-        assert isinstance(td.source.parents[0], ParentInfo)
-        assert td.source.parents[0].name == "x"
+        assert td.provenance is not None
+        assert td.provenance.operation == "transform"
+        assert len(td.provenance.parents) == 1
+        assert isinstance(td.provenance.parents[0], ParentInfo)
+        assert td.provenance.parents[0].name == "x"
 
 
 # ===========================================================================
@@ -200,11 +200,11 @@ class TestConditioningProvenance:
             y=Normal(loc=1.0, scale=2.0, name="y"),
         )
         cond = condition_on(joint, x=jnp.array(0.0))
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
-        assert len(cond.source.parents) == 1
-        assert isinstance(cond.source.parents[0], ParentInfo)
-        assert "x" in cond.source.metadata["conditioned"]
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "condition_on"
+        assert len(cond.provenance.parents) == 1
+        assert isinstance(cond.provenance.parents[0], ParentInfo)
+        assert "x" in cond.provenance.metadata["conditioned"]
 
     def test_sequential_condition_on(self):
         seq = SequentialJointDistribution(
@@ -212,9 +212,9 @@ class TestConditioningProvenance:
             x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(seq, z=jnp.array(1.0))
-        assert cond.source.operation == "condition_on"
-        assert len(cond.source.parents) == 1
-        assert isinstance(cond.source.parents[0], ParentInfo)
+        assert cond.provenance.operation == "condition_on"
+        assert len(cond.provenance.parents) == 1
+        assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):
         jg = JointGaussian(
@@ -224,8 +224,8 @@ class TestConditioningProvenance:
             y=1,
         )
         cond = condition_on(jg, x=jnp.array([0.0]))
-        assert cond.source.operation == "condition_on"
-        assert "x" in cond.source.metadata["conditioned"]
+        assert cond.provenance.operation == "condition_on"
+        assert "x" in cond.provenance.metadata["conditioned"]
 
 
 # ===========================================================================
@@ -243,15 +243,15 @@ class TestBroadcastingProvenance:
         wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(x=n)
         assert hasattr(result, "samples")
-        assert result.source is not None
-        assert result.source.operation == "broadcast"
-        assert len(result.source.parents) == 1
-        assert isinstance(result.source.parents[0], ParentInfo)
-        assert result.source.parents[0].obj is n
-        assert result.source.metadata["dispatch"] == "sequential"
-        assert result.source.metadata["n_samples"] == 20
-        assert result.source.metadata["func"] == "identity"
-        assert result.source.metadata["broadcast_args"] == ["x"]
+        assert result.provenance is not None
+        assert result.provenance.operation == "broadcast"
+        assert len(result.provenance.parents) == 1
+        assert isinstance(result.provenance.parents[0], ParentInfo)
+        assert result.provenance.parents[0].parent is n
+        assert result.provenance.metadata["dispatch"] == "sequential"
+        assert result.provenance.metadata["n_samples"] == 20
+        assert result.provenance.metadata["func"] == "identity"
+        assert result.provenance.metadata["broadcast_args"] == ["x"]
 
     def test_broadcast_jax_provenance(self):
         n = Normal(loc=0.0, scale=1.0, name="jax_input")
@@ -262,9 +262,9 @@ class TestBroadcastingProvenance:
         wf = WorkflowFunction(func=double, dispatch="jax", n_broadcast_samples=20, seed=42)
         result = wf(x=n)
         assert hasattr(result, "samples")
-        assert result.source is not None
-        assert result.source.operation == "broadcast"
-        assert result.source.metadata["dispatch"] == "jax"
+        assert result.provenance is not None
+        assert result.provenance.operation == "broadcast"
+        assert result.provenance.metadata["dispatch"] == "jax"
 
     def test_broadcast_multiple_parents(self):
         a = Normal(loc=0.0, scale=1.0, name="a")
@@ -275,8 +275,8 @@ class TestBroadcastingProvenance:
 
         wf = WorkflowFunction(func=add, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(x=a, y=b)
-        assert result.source is not None
-        assert len(result.source.parents) == 2
+        assert result.provenance is not None
+        assert len(result.provenance.parents) == 2
 
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
@@ -289,8 +289,8 @@ class TestBroadcastingProvenance:
         wf = WorkflowFunction(func=add, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(a=ed, b=n)
         assert hasattr(result, "samples")
-        assert result.source is not None
-        assert result.source.operation == "broadcast"
+        assert result.provenance is not None
+        assert result.provenance.operation == "broadcast"
 
 
 # ===========================================================================
@@ -307,13 +307,13 @@ class TestProvenanceChains:
         cond = condition_on(joint, x=jnp.array(0.0))
 
         # cond's provenance points to joint
-        assert cond.source.operation == "condition_on"
+        assert cond.provenance.operation == "condition_on"
         # joint has no provenance (constructed directly)
-        assert joint.source is None
+        assert joint.provenance is None
         # but converted has provenance pointing to src
-        assert converted.source.operation == "from_distribution"
-        assert isinstance(converted.source.parents[0], ParentInfo)
-        assert converted.source.parents[0].name == "prior"
+        assert converted.provenance.operation == "from_distribution"
+        assert isinstance(converted.provenance.parents[0], ParentInfo)
+        assert converted.provenance.parents[0].name == "prior"
 
     def test_transform_then_broadcast(self, full_provenance_mode):
         """transform → broadcast creates a 2-step chain."""
@@ -326,13 +326,13 @@ class TestProvenanceChains:
         wf = WorkflowFunction(func=log_val, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(x=td)
         # result → broadcast → td → transform → base
-        assert result.source.operation == "broadcast"
-        parent_td = result.source.parents[0]
+        assert result.provenance.operation == "broadcast"
+        parent_td = result.provenance.parents[0]
         assert isinstance(parent_td, ParentInfo)
-        assert parent_td.obj is td
-        assert parent_td.source.operation == "transform"
-        assert isinstance(parent_td.source.parents[0], ParentInfo)
-        assert parent_td.source.parents[0].obj is base
+        assert parent_td.parent is td
+        assert parent_td.provenance.operation == "transform"
+        assert isinstance(parent_td.provenance.parents[0], ParentInfo)
+        assert parent_td.provenance.parents[0].parent is base
 
 
 # ===========================================================================
@@ -362,16 +362,16 @@ class TestSerialization:
         td = TransformedDistribution(src, tfb.Exp(), name="transformed")
         p = Provenance.create("broadcast", parents=[td])
         d = p.to_dict(recurse=True)
-        # td has source (transform), which should be serialized via ParentInfo.source
-        assert "source" in d["parents"][0]
-        assert d["parents"][0]["source"]["operation"] == "transform"
+        # td has source (transform), which should be serialized via ParentInfo.provenance
+        assert "provenance" in d["parents"][0]
+        assert d["parents"][0]["provenance"]["operation"] == "transform"
 
     def test_to_dict_non_recursive(self):
         src = Normal(loc=0.0, scale=1.0, name="src")
         td = TransformedDistribution(src, tfb.Exp(), name="transformed")
         p = Provenance.create("broadcast", parents=[td])
         d = p.to_dict(recurse=False)
-        assert "source" not in d["parents"][0]
+        assert "provenance" not in d["parents"][0]
 
     def test_from_dict_roundtrip(self):
         p = Provenance("my_op", metadata={"a": 1, "b": "two"})
@@ -445,9 +445,9 @@ class TestProvenanceAncestors:
         # result → td → base; both steps now produce ParentInfo in FULL mode.
         assert len(ancestors) == 2
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].obj is td
+        assert ancestors[0].parent is td
         assert isinstance(ancestors[1], ParentInfo)
-        assert ancestors[1].obj is base
+        assert ancestors[1].parent is base
 
     def test_no_duplicates(self, full_provenance_mode):
         """Same parent appearing in multiple roles doesn't duplicate."""
@@ -462,7 +462,7 @@ class TestProvenanceAncestors:
         # n appears as both args but dedup keeps only one ParentInfo for it
         assert len(ancestors) == 1
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].obj is n
+        assert ancestors[0].parent is n
 
     def test_diamond_no_duplicates(self):
         """Shared ancestor in a diamond DAG appears exactly once.
@@ -481,9 +481,9 @@ class TestProvenanceAncestors:
         B = Normal(loc=0.0, scale=1.0, name="B")
         C = Normal(loc=0.0, scale=1.0, name="C")
 
-        A.with_source(Provenance.create("op", parents=[X]))
-        B.with_source(Provenance.create("op", parents=[X]))
-        C.with_source(Provenance.create("op", parents=[A, B]))
+        A.with_provenance(Provenance.create("op", parents=[X]))
+        B.with_provenance(Provenance.create("op", parents=[X]))
+        C.with_provenance(Provenance.create("op", parents=[A, B]))
 
         ancestors = provenance_ancestors(C)
         names = [a.name for a in ancestors]
@@ -549,8 +549,8 @@ class TestProvenanceDag:
         assert num_edges == 2
         # Ancestor chain must contain base (root); all nodes are ParentInfo in FULL mode.
         ancestors = provenance_ancestors(result)
-        assert any(a.obj is td for a in ancestors)
-        assert any(a.obj is base for a in ancestors)
+        assert any(a.parent is td for a in ancestors)
+        assert any(a.parent is base for a in ancestors)
 
     def test_diamond_dag_no_duplicate_nodes(self):
         """Shared ancestor in a diamond renders as a single node, not two."""
@@ -558,8 +558,8 @@ class TestProvenanceDag:
         A = Normal(loc=0.0, scale=1.0, name="A")
         B = Normal(loc=0.0, scale=1.0, name="B")
 
-        A.with_source(Provenance.create("op", parents=[X]))
-        B.with_source(Provenance.create("op", parents=[X]))
+        A.with_provenance(Provenance.create("op", parents=[X]))
+        B.with_provenance(Provenance.create("op", parents=[X]))
 
         # Build a joint whose provenance has both A and B as parents.
         # We test on A or B themselves since provenance_dag only accepts
@@ -568,7 +568,7 @@ class TestProvenanceDag:
         # The real diamond requires a root C; approximate by checking
         # ancestors of a manually-sourced C.
         C = Normal(loc=0.0, scale=1.0, name="C")
-        C.with_source(Provenance.create("op", parents=[A, B]))
+        C.with_provenance(Provenance.create("op", parents=[A, B]))
 
         dag = provenance_dag(C)
         # C + A + B + X = 4 nodes. X must appear only once despite
@@ -597,9 +597,9 @@ class TestProvenanceModes:
 
         wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
-        assert result.source is not None
-        assert len(result.source.parents) == 1
-        parent = result.source.parents[0]
+        assert result.provenance is not None
+        assert len(result.provenance.parents) == 1
+        parent = result.provenance.parents[0]
         assert isinstance(parent, ParentInfo)
         assert parent.type_name == "Normal"
         assert parent.name == "input"
@@ -613,14 +613,14 @@ class TestProvenanceModes:
 
         wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
-        parent = result.source.parents[0]
+        parent = result.provenance.parents[0]
         assert parent is not n
 
     def test_lightweight_ancestors_returns_parentinfo(self):
         """In LIGHTWEIGHT mode provenance_ancestors returns ParentInfo descriptors.
 
-        The DAG is preserved via ParentInfo.source, but live objects are not
-        held — ParentInfo.obj is None.
+        The DAG is preserved via ParentInfo.provenance, but live objects are not
+        held — ParentInfo.parent is None.
         """
         n = Normal(loc=0.0, scale=1.0, name="input")
 
@@ -633,7 +633,7 @@ class TestProvenanceModes:
         assert len(ancestors) == 1
         assert isinstance(ancestors[0], ParentInfo)
         assert ancestors[0].name == "input"
-        assert ancestors[0].obj is None
+        assert ancestors[0].parent is None
 
     def test_lightweight_dag_two_nodes(self):
         """provenance_dag() shows leaf + parent node in LIGHTWEIGHT mode.
@@ -663,7 +663,7 @@ class TestProvenanceModes:
 
         wf = WorkflowFunction(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
-        assert result.source is None
+        assert result.provenance is None
 
     def test_mode_setter_rejects_non_enum(self):
         with pytest.raises(TypeError, match="ProvenanceMode"):
@@ -681,7 +681,7 @@ class TestProvenanceModes:
 
         parent = Normal(loc=0.0, scale=1.0, name="parent")
         child = Normal(loc=0.0, scale=1.0, name="child")
-        child.with_source(Provenance.create("op", parents=[parent]))
+        child.with_provenance(Provenance.create("op", parents=[parent]))
 
         ref = weakref.ref(parent)
         del parent
@@ -690,19 +690,19 @@ class TestProvenanceModes:
         assert ref() is None, "LIGHTWEIGHT provenance should not hold a strong ref to the parent"
 
     def test_full_mode_parent_is_retained(self, full_provenance_mode):
-        """FULL mode keeps the parent alive via ParentInfo.obj."""
+        """FULL mode keeps the parent alive via ParentInfo.parent."""
         import gc
         import weakref
 
         parent = Normal(loc=0.0, scale=1.0, name="parent")
         child = Normal(loc=0.0, scale=1.0, name="child")
-        child.with_source(Provenance.create("op", parents=[parent]))
+        child.with_provenance(Provenance.create("op", parents=[parent]))
 
         ref = weakref.ref(parent)
         del parent
         gc.collect()
 
-        assert ref() is not None, "FULL mode should retain the parent via ParentInfo.obj"
+        assert ref() is not None, "FULL mode should retain the parent via ParentInfo.parent"
 
     def test_off_mode_ancestors_empty(self):
         """In OFF mode provenance_ancestors returns an empty list."""

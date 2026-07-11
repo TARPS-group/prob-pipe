@@ -22,10 +22,10 @@ from probpipe.diagnostics._view_base import NotComputed
 
 
 class _MinimalPosterior:
-    """Minimal posterior stub — only _auxiliary matters for storage tests."""
+    """Minimal posterior stub — only _annotations matters for storage tests."""
 
     def __init__(self):
-        self._auxiliary = None
+        self._annotations = None
 
 
 # ---------------------------------------------------------------------------
@@ -34,17 +34,17 @@ class _MinimalPosterior:
 
 
 class TestAddGroup:
-    def test_creates_auxiliary_from_none(self):
+    def test_creates_annotations_from_none(self):
         post = _MinimalPosterior()
         ds = xr.Dataset({"x": xr.DataArray(1.0)})
         _add_group(post, "diagnostics/mcmc", ds)
-        assert post._auxiliary is not None
+        assert post._annotations is not None
 
     def test_group_accessible_on_tree(self):
         post = _MinimalPosterior()
         ds = xr.Dataset({"rhat": xr.DataArray(1.001)})
         _add_group(post, "diagnostics/mcmc", ds)
-        retrieved = post._auxiliary["diagnostics"]["mcmc"].to_dataset()
+        retrieved = post._annotations["diagnostics"]["mcmc"].to_dataset()
         assert "rhat" in retrieved.data_vars
 
     def test_second_group_preserves_first(self):
@@ -53,8 +53,8 @@ class TestAddGroup:
         ds2 = xr.Dataset({"ess_bulk": xr.DataArray(500.0)})
         _add_group(post, "diagnostics/mcmc", ds1)
         _add_group(post, "diagnostics/runs/ppc", ds2)
-        mcmc_ds = post._auxiliary["diagnostics"]["mcmc"].to_dataset()
-        ppc_ds = post._auxiliary["diagnostics"]["runs"]["ppc"].to_dataset()
+        mcmc_ds = post._annotations["diagnostics"]["mcmc"].to_dataset()
+        ppc_ds = post._annotations["diagnostics"]["runs"]["ppc"].to_dataset()
         assert "rhat" in mcmc_ds.data_vars
         assert "ess_bulk" in ppc_ds.data_vars
 
@@ -64,7 +64,7 @@ class TestAddGroup:
         ds2 = xr.Dataset({"rhat": xr.DataArray(1.001)})
         _add_group(post, "diagnostics/mcmc", ds1)
         _add_group(post, "diagnostics/mcmc", ds2)
-        retrieved = post._auxiliary["diagnostics"]["mcmc"].to_dataset()
+        retrieved = post._annotations["diagnostics"]["mcmc"].to_dataset()
         val = float(retrieved["rhat"].values)
         assert val == pytest.approx(1.001)
 
@@ -86,7 +86,7 @@ class TestAddGroup:
 
 
 class TestGetOrCreateMcmcDs:
-    def test_returns_empty_when_no_auxiliary(self):
+    def test_returns_empty_when_no_annotations(self):
         post = _MinimalPosterior()
         ds = _get_or_create_mcmc_ds(post)
         assert isinstance(ds, xr.Dataset)
@@ -117,7 +117,7 @@ class TestWriteMcmcField:
     def test_writes_field(self):
         post = _MinimalPosterior()
         _write_mcmc_field(post, "rhat", {"alpha": 1.001, "beta": 1.0})
-        ds = post._auxiliary["diagnostics"]["mcmc"].to_dataset()
+        ds = post._annotations["diagnostics"]["mcmc"].to_dataset()
         assert "rhat" in ds.data_vars
         da = ds["rhat"]
         coords = list(da.coords["param"].values)
@@ -126,7 +126,7 @@ class TestWriteMcmcField:
     def test_not_computed_writes_nan(self):
         post = _MinimalPosterior()
         _write_mcmc_field(post, "rhat", {"alpha": NotComputed("single chain")})
-        ds = post._auxiliary["diagnostics"]["mcmc"].to_dataset()
+        ds = post._annotations["diagnostics"]["mcmc"].to_dataset()
         da = ds["rhat"]
         val = float(da.sel(param="alpha").values)
         assert np.isnan(val)
@@ -139,14 +139,14 @@ class TestWriteMcmcField:
             {"alpha": 1.0},
             attrs={"rhat_method": "rank"},
         )
-        ds = post._auxiliary["diagnostics"]["mcmc"].to_dataset()
+        ds = post._annotations["diagnostics"]["mcmc"].to_dataset()
         assert ds.attrs.get("rhat_method") == "rank"
 
     def test_second_write_accumulates_fields(self):
         post = _MinimalPosterior()
         _write_mcmc_field(post, "rhat", {"alpha": 1.001})
         _write_mcmc_field(post, "ess_bulk", {"alpha": 450.0})
-        ds = post._auxiliary["diagnostics"]["mcmc"].to_dataset()
+        ds = post._annotations["diagnostics"]["mcmc"].to_dataset()
         assert "rhat" in ds.data_vars
         assert "ess_bulk" in ds.data_vars
 
@@ -157,7 +157,7 @@ class TestWriteMcmcField:
 
 
 class TestMcmcHasField:
-    def test_false_when_no_auxiliary(self):
+    def test_false_when_no_annotations(self):
         post = _MinimalPosterior()
         assert _mcmc_has_field(post, "rhat") is False
 

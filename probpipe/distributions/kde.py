@@ -23,6 +23,7 @@ from ..core._record_array import NumericRecordArray
 from ..core.constraints import Constraint, real
 from ..core.event_template import NumericEventTemplate
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
@@ -91,8 +92,7 @@ class KDEDistribution(TFPDistribution):
         n, d = samples.shape
         self._samples = samples
         self._d = d
-        if name is None:
-            name = "kde"
+        name, name_is_auto = auto_name(name, "kde")
 
         # Multi-field template support: when the caller supplies a template
         # with more than one field, preset ``_event_template`` so that
@@ -115,7 +115,7 @@ class KDEDistribution(TFPDistribution):
                 )
             object.__setattr__(self, "_event_template", event_template)
 
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)

@@ -53,7 +53,7 @@ from .event_template import (
     _PathSubtree,
     _unflatten_paths,
 )
-from .provenance import Provenance
+from .tracked import Annotated, Tracked, auto_name
 
 if TYPE_CHECKING:
     from ._numeric_record import NumericRecord
@@ -71,7 +71,7 @@ type _FieldValue = Any
 # ---------------------------------------------------------------------------
 
 
-class Record(_NamedTree):
+class Record(_NamedTree, Tracked, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection
@@ -140,12 +140,16 @@ class Record(_NamedTree):
         Record(vec=jnp.zeros(3), label="fox").event_template
         # EventTemplate(vec=(3,), label=None)   — array -> ArraySpec, str -> OpaqueSpec
 
-    Metadata: name and provenance
-    -----------------------------
-    A record carries a human-readable :attr:`name` and, optionally, a
-    :attr:`source` — the :class:`~probpipe.core.provenance.Provenance`
-    describing how it was created, attached write-once via
-    :meth:`with_source`.
+    Metadata: identity and annotations
+    ----------------------------------
+    A record is a tracked term: it is :class:`~probpipe.core.tracked.Tracked`,
+    carrying a human-readable :attr:`name` — with :attr:`name_is_auto`
+    recording whether the name was auto-derived rather than user-given — and,
+    optionally, a :attr:`provenance`, the
+    :class:`~probpipe.core.provenance.Provenance` describing how it was
+    created, attached write-once via :meth:`with_provenance`. It is also
+    :class:`~probpipe.core.tracked.Annotated`, so free-form
+    :attr:`annotations` may be attached after construction.
 
     Construction and validation
     ---------------------------
@@ -214,8 +218,10 @@ class Record(_NamedTree):
         scalars, strings, ``xarray`` / ``pandas`` objects, nested ``Record``s,
         or any opaque object. At least one field is required.
     name : str, optional
-        Human-readable label for introspection / provenance. Defaults to a label
-        derived from the field names.
+        Human-readable label for introspection / provenance. When omitted, a
+        label is auto-derived from the field names and the record is marked
+        ``name_is_auto=True``; a supplied name is user-given
+        (``name_is_auto=False``).
     event_template : EventTemplate, optional
         The value's authoritative schema. When omitted it is inferred from the
         field data at construction (via :meth:`EventTemplate.infer_from`); when
@@ -246,12 +252,22 @@ class Record(_NamedTree):
     be aware that they will traverse the finer tree. The two notions of the tree
     coincide when every field is an array (e.g. :class:`NumericRecord`).
 
-    :attr:`name`, :attr:`source`, and :attr:`event_template` are runtime metadata
-    and are not serialised into the PyTree aux (which holds only the field
-    names).
+    :attr:`name`, :attr:`provenance`, :attr:`annotations`, and
+    :attr:`event_template` are runtime metadata and are not serialised into the
+    PyTree aux (which holds only the field names). Round-tripping through
+    ``jax.tree_util.tree_flatten`` / ``tree_unflatten`` therefore drops them;
+    re-attach provenance on the reconstructed Record if you need to preserve
+    the chain.
     """
 
-    __slots__ = ("_event_template", "_name", "_source", "_tree")
+    __slots__ = (
+        "_annotations",
+        "_event_template",
+        "_name",
+        "_name_is_auto",
+        "_provenance",
+        "_tree",
+    )
 
     def __init__(
         self,
@@ -295,7 +311,7 @@ class Record(_NamedTree):
                         # The child already carries this exact template object
                         # (e.g. built by ``from_field_values`` or threaded from
                         # the producing generator) — reuse it verbatim, keeping
-                        # its name / source / backend aux. Identity, not ``==``:
+                        # its name / provenance / backend aux. Identity, not ``==``:
                         # the point is to adopt the *supplied* template object,
                         # and an equal-but-distinct child template must still be
                         # rebuilt through it.
@@ -310,10 +326,8 @@ class Record(_NamedTree):
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
         object.__setattr__(self, "_tree", field_map)
-        if name is None:
-            name = "record(" + ",".join(field_map.keys()) + ")"
-        object.__setattr__(self, "_name", name)
-        object.__setattr__(self, "_source", None)
+        name, name_is_auto = auto_name(name, "record(" + ",".join(field_map.keys()) + ")")
+        self._init_tracked(name, name_is_auto=name_is_auto)
         if event_template is None:
             event_template = EventTemplate.infer_from(field_map)
         else:
@@ -359,11 +373,14 @@ class Record(_NamedTree):
         _check(self, event_template, "")
 
     # -- Name & provenance --------------------------------------------------
-
-    @property
-    def name(self) -> str:
-        """Name of this Record."""
-        return self._name
+    #
+    # ``name`` / ``name_is_auto`` / ``provenance`` / ``with_name`` /
+    # ``with_provenance`` are provided by the
+    # :class:`~probpipe.core.tracked.Tracked` mixin, and ``annotations`` by
+    # :class:`~probpipe.core.tracked.Annotated`. Semantic transformations
+    # (``replace``, ``merge``, ``without``, ``map``, ``map_with_keys``)
+    # return a *new* Record with no provenance; the caller attaches fresh
+    # provenance there if desired.
 
     @property
     def event_template(self) -> EventTemplate:
@@ -379,47 +396,12 @@ class Record(_NamedTree):
         Inference is a lossy fallback (it cannot recover an ``ArraySpec``'s
         ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
         ``DistributionSpec`` / ``FunctionSpec``). Like :attr:`name` and
-        :attr:`source`, the template is runtime metadata: it is not serialised
-        into the JAX pytree aux, so a value reconstructed by ``tree_unflatten``
-        (or unpickling) infers a fresh template from the rebuilt data.
+        :attr:`provenance`, the template is runtime metadata: it is not
+        serialised into the JAX pytree aux, so a value reconstructed by
+        ``tree_unflatten`` (or unpickling) infers a fresh template from the
+        rebuilt data.
         """
         return self._event_template
-
-    @property
-    def source(self) -> Provenance | None:
-        """Provenance describing how this Record was created, or ``None``."""
-        return self._source
-
-    def with_source(self, source: Provenance | None) -> Record:
-        """Attach provenance to this Record (write-once).
-
-        Passing ``None`` (e.g. the result of ``Provenance.create()`` under
-        :attr:`ProvenanceMode.OFF`) is a no-op.
-
-        Mirrors ``Distribution.with_source`` — `_source` is set once and
-        subsequent calls raise. Semantic transformations (``replace``,
-        ``merge``, ``without``, ``map``, ``map_with_keys``) return a
-        *new* Record with an empty source; the caller attaches fresh
-        provenance there if desired.
-
-        Notes
-        -----
-        ``_source`` is runtime-only metadata — it is not serialised into
-        the JAX pytree aux (a ``Provenance`` parent is a ``Distribution``
-        or ``Record``, neither of which is hashable by structure).
-        Round-tripping through ``jax.tree_util.tree_flatten`` /
-        ``tree_unflatten`` therefore drops the source; re-attach it on
-        the reconstructed Record if you need to preserve the chain.
-        """
-        if source is None:
-            return self
-        if self._source is not None:
-            raise RuntimeError(
-                f"Source already set on {self!r}. "
-                "Provenance is write-once; create a new Record instead."
-            )
-        object.__setattr__(self, "_source", source)
-        return self
 
     # -- Immutability -------------------------------------------------------
 
@@ -430,7 +412,10 @@ class Record(_NamedTree):
         raise AttributeError("Record is immutable")
 
     def __reduce__(self):
-        return (_unpickle_record, (dict(self._tree), self._name, self._source))
+        return (
+            _unpickle_record,
+            (dict(self._tree), self._name, self._name_is_auto, self._provenance),
+        )
 
     # -- Tree structure -----------------------------------------------------
     #
@@ -885,11 +870,9 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_record(store: dict, name: str, source) -> Record:
+def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance) -> Record:
     r = Record(name=name, **store)
-    if source is not None:
-        object.__setattr__(r, "_source", source)
-    return r
+    return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
 # ---------------------------------------------------------------------------

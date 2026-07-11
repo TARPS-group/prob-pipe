@@ -166,7 +166,7 @@ def execute_distribution_broadcast(
         workflow_name=workflow_name,
         func=func,
     )
-    result.with_source(provenance)
+    result.with_provenance(provenance)
 
     if include_inputs:
         return result

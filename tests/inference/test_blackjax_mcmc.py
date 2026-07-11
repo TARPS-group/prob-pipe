@@ -334,7 +334,7 @@ class TestBlackJAXHmc:
 
 
 class TestSampleStats:
-    """The ``sample_stats`` auxiliary group is populated correctly.
+    """The ``sample_stats`` annotations group is populated correctly.
 
     Guards the contract that :func:`build_mcmc_datatree` and ArviZ
     expect: every diagnostic is shaped ``(chain, draw)`` and the

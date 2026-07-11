@@ -25,6 +25,7 @@ from ..core.protocols import (
 )
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -95,9 +96,10 @@ class JointGaussian(
 
         self._mean_vec = mean
         self._cov_mat = cov
-        if name is None:
-            name = "joint_gaussian(" + ",".join(component_shapes.keys()) + ")"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(
+            name, "joint_gaussian(" + ",".join(component_shapes.keys()) + ")"
+        )
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._component_shapes = dict(component_shapes)
 
         # Build slices and component MultivariateNormal distributions
@@ -312,7 +314,7 @@ class JointGaussian(
             name=self._name,
             **u_shapes,
         )
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],

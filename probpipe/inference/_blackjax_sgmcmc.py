@@ -191,7 +191,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
             [chain],
             parents=(prior,),
             algorithm=self._method_name,
-            auxiliary=None,
+            annotations=None,
             event_template=event_template,
             num_results=num_results,
             num_warmup=num_warmup,

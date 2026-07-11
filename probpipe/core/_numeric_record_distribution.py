@@ -69,6 +69,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
+from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # Sampling & expectation helpers
@@ -265,10 +266,10 @@ class NumericRecordDistribution(RecordDistribution):
         object.__setattr__(self, "_event_template", tpl)
         return tpl
 
-    def renamed(self, new_name: str) -> NumericRecordDistribution:
+    def with_name(self, new_name: str) -> NumericRecordDistribution:
         """Return a renamed copy, regenerating an auto-built template.
 
-        Extends :meth:`Distribution.renamed`. When the cached template
+        Extends :meth:`Tracked.with_name`. When the cached template
         is the single-field auto-build (one field keyed by the old
         name), the clone's ``_event_template`` is cleared so the next
         access rebuilds it under ``new_name``. Multi-leaf and
@@ -276,7 +277,7 @@ class NumericRecordDistribution(RecordDistribution):
         are part of the distribution's identity, not derived from
         ``name``.
         """
-        clone = super().renamed(new_name)
+        clone = super().with_name(new_name)
         tpl = getattr(clone, "_event_template", None)
         if tpl is not None and len(tpl.fields) == 1 and tpl.fields[0] == self._name:
             object.__setattr__(clone, "_event_template", None)
@@ -652,9 +653,8 @@ class BootstrapDistribution(
             weights=weights,
             log_weights=log_weights,
         )
-        if name is None:
-            name = "bootstrap_dist"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, "bootstrap_dist")
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -929,9 +929,10 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 
     def __init__(self, base: Distribution):
         self._base = base
-        # Carry the base's name through; ``base.name`` is guaranteed
-        # non-empty by the Distribution metaclass.
-        self._name = base.name
+        # Carry the base's identity through; ``base.name`` is guaranteed
+        # non-empty by the Tracked metaclass check, and the view mirrors
+        # whether that name was auto-derived.
+        self._init_tracked(base.name, name_is_auto=base.name_is_auto)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -1182,11 +1183,15 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         name: str | None = None,
     ):
         # Skip ``Distribution.__init__`` to avoid double-validation;
-        # the metaclass post-init check still enforces a non-empty
-        # ``_name``. ``base.name`` is guaranteed non-empty by the
-        # Distribution metaclass, so the fallback is always valid.
+        # the Tracked metaclass check still enforces a non-empty
+        # ``_name``. ``base.name`` is guaranteed non-empty by that same
+        # check, so the fallback is always valid.
         self._base = base
-        self._name = name if name is not None else base.name
+        if name is not None:
+            self._init_tracked(name)
+        else:
+            # Fall back to the base's name, mirroring its auto flag.
+            self._init_tracked(base.name, name_is_auto=base.name_is_auto)
         # Pre-set the user-supplied template so the auto-build path in
         # ``NumericRecordDistribution.event_template`` is skipped.
         object.__setattr__(self, "_event_template", template)

@@ -38,6 +38,7 @@ from ..core.protocols import (
 )
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -116,7 +117,7 @@ def _resolve_nested_names(parent_key: str, d: dict) -> dict:
         if isinstance(val, dict):
             result[key] = _resolve_nested_names(key, val)
         elif hasattr(val, "name") and val.name != key:
-            result[key] = val.renamed(key)
+            result[key] = val.with_name(key)
         else:
             result[key] = val
     return result
@@ -195,7 +196,7 @@ class ProductDistribution(
         ``NumericRecordDistribution`` instances (leaves) or nested dicts
         whose leaves are ``NumericRecordDistribution`` instances.
         When a keyword key differs from the distribution's name, the
-        distribution is automatically renamed (via ``renamed()``) to
+        distribution is automatically renamed (via ``with_name()``) to
         match the key.
 
     Examples
@@ -231,7 +232,7 @@ class ProductDistribution(
             if isinstance(comp, dict):
                 resolved[key] = _resolve_nested_names(key, comp)
             elif comp.name != key:
-                resolved[key] = comp.renamed(key)
+                resolved[key] = comp.with_name(key)
             else:
                 resolved[key] = comp
         # Leaves can be any ``Distribution``. When every leaf is a
@@ -244,13 +245,15 @@ class ProductDistribution(
                     f"All leaf components must be Distribution instances, got {type(leaf).__name__}"
                 )
         self._components = resolved
-        if name is None:
-            name = "product(" + ",".join(resolved.keys()) + ")"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, "product(" + ",".join(resolved.keys()) + ")")
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
-        return (_unpickle_product_distribution, (dict(self._components), self._name))
+        return (
+            _unpickle_product_distribution,
+            (dict(self._components), self._name, self._name_is_auto, self._provenance),
+        )
 
     # -- Sampling (returns Record) ------------------------------------------
 
@@ -419,8 +422,13 @@ class ProductDistribution(
     ) -> ProductDistribution:
         new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
         result = ProductDistribution(**new_components, name=self._name)
+        # The result inherits this joint's name, so it mirrors this joint's
+        # auto flag; the constructor would otherwise treat the inherited
+        # (possibly auto-derived) name as user-given. Set directly — the
+        # **components signature leaves no room for a name_is_auto keyword.
+        object.__setattr__(result, "_name_is_auto", self._name_is_auto)
         conditioned_names = [" > ".join(path) for path in observed_leaves]
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],
@@ -443,9 +451,10 @@ class ProductDistribution(
         return f"ProductDistribution({comp_str}{name_str})"
 
 
-def _unpickle_product_distribution(components, name):
+def _unpickle_product_distribution(components, name, name_is_auto, provenance):
     """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
-    return ProductDistribution(**components, name=name)
+    p = ProductDistribution(**components, name=name)
+    return p._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
 # ---------------------------------------------------------------------------
