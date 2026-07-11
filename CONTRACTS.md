@@ -73,10 +73,11 @@ if it were user-guide reference text.
      *may* note that as an explicit, clearly-labeled **interim implementation detail** — but never
      let it define the contract or blur a distinction the plan draws.
    - In particular, keep the plan's **vocabulary distinctions** intact even before the code that
-     enforces them lands. *Example:* `to_vector`/`from_vector` (on `NumericEventTemplate`) are the
+     enforces them lands. *Example:* `to_vector`/`from_vector` (on `NumericEventTemplate`, with the value-level
+     counterparts `NumericRecord.to_vector`/`NumericRecord.from_vector`) are the
      **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
      `is_numeric`). The **general** (de)composition keeps each leaf whole (any type): export with
-     `list(record.values())` and reconstruct with `EventTemplate.from_field_values`, visited at the
+     `list(record.values())` and reconstruct with `Record.from_field_values`, visited at the
      **template's** granularity in canonical `keys()` order. Both treat a container-valued opaque
      leaf (tuple/dict/namedtuple) as **one** leaf; JAX's `jax.tree_util.tree_flatten` is the finer
      pytree view that descends into it (`Record` is a registered pytree, but `flatten`/`unflatten`
@@ -86,6 +87,7 @@ if it were user-guide reference text.
 ## Major abstractions & where their contract lives
 | Abstraction | Canonical contract location |
 |---|---|
+| `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
 | `EventTemplate` / `NumericEventTemplate` / `ValueSpec` (`ArraySpec`·`OpaqueSpec`·`DistributionSpec`·`FunctionSpec`) | docstrings in `probpipe/core/event_template.py`; #235 Chapter 1 |
 | `Record` / `NumericRecord` | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
 | Batch types (`RecordArray`/`NumericRecordArray`/`DistributionArray` → `*Batch`) | docstrings in `_record_array.py`, `_distribution_array.py`; #235 Chapter 2 |

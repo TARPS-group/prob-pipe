@@ -124,7 +124,7 @@ def _resolve_value(
     A distribution field whose name collides with the op's own ``value`` or
     ``dist`` parameter cannot be addressed by the keyword form (it binds to the
     parameter). For a multi-field distribution, pass a positional ``Record``
-    (``log_prob(d, Record(value=...))``); for a single-field one, pass the bare
+    (``log_prob(d, Record("v", value=...))``); for a single-field one, pass the bare
     positional value (``log_prob(d, v)`` — a scalar ``_log_prob`` does not
     accept a ``Record``). This mirrors ``condition_on``'s ``observed``.
     """

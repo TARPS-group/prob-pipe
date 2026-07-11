@@ -494,12 +494,18 @@ uv build packaging/probpipe   # probpipe (metapackage)
    builds a new object from a parent keeps the flag consistent with
    where the name came from.  `ProductDistribution` validates that each
    component distribution's `name` matches its keyword key (e.g.,
-   `ProductDistribution(x=Normal(0, 1, name="x"))`).
+   `ProductDistribution(x=Normal(0, 1, name="x"))`).  `Record` and
+   `NumericRecord` take the name as the required first positional
+   argument (`Record(name, ...)`); operations that assemble records
+   internally derive a `record(<field-keys>)` name with
+   `name_is_auto=True` via the private `_auto_record` helper, and a
+   nested record stored as a field is renamed to its field key (also
+   flagged auto-derived).
 7. **Uniform output wrap at the WorkflowFunction boundary** — every
    `@workflow_function` return is coerced into the
    `Record | RecordArray | Distribution` contract before it reaches the
-   caller.  Scalars and `jnp.ndarray`s become
-   `NumericRecord({fn_name: value})` (no sweep) or
+   caller.  Scalars and `jnp.ndarray`s become a single-field auto-named
+   `NumericRecord` with field `fn_name` (no sweep) or
    `NumericRecordArray({fn_name: arr}, batch_shape=sweep_shape)`
    (swept); `dict` / `list` / `tuple` promote via `_make_stack`;
    existing `Record` / `RecordArray` / `Distribution` values pass
@@ -527,10 +533,11 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 | Abstraction | Description |
 |-------------|-------------|
+| `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict (de)construction. `EventTemplate` and `Record` are its two families; each declares its leaf type (`ValueSpec` vs arbitrary values), and mappings are never leaves. |
 | `Tracked` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `Tracked` carries `name`, `name_is_auto`, and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Distribution` and `Record` mix in both; the batch types are tracked terms through their bases. |
 | `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and the `Tracked` / `Annotated` identity attributes |
-| `Record` | Named, immutable, JAX-pytree container for structured non-random values; leaves stored verbatim (no coercion); `select()` for workflow function splatting |
-| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `to_vector` / `vector_size` (the numeric 1-D serialization; the inverse `from_vector` lives on `NumericEventTemplate`). Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
+| `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for workflow function splatting |
+| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
 | `RecordArray` | Batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array |
 | `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `to_vector` / `mean` / `var` |
 | `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); `NumericEventTemplate.from_vector` rebuilds a numeric value from its 1-D vector without an example instance |
@@ -699,10 +706,10 @@ subclass:
 
 ```python
 EmpiricalDistribution(jnp.ones((100, 3)), name="theta")
-# → returns RecordEmpiricalDistribution; auto-wraps the array as
-#   Record(theta=arr)
+# → returns RecordEmpiricalDistribution; auto-wraps the array as a
+#   single-field record with field "theta"
 
-EmpiricalDistribution(Record(x=jnp.zeros((50,)), y=jnp.zeros((50,))))
+EmpiricalDistribution(Record("draws", x=jnp.zeros((50,)), y=jnp.zeros((50,))))
 # → returns RecordEmpiricalDistribution; multi-field record
 ```
 

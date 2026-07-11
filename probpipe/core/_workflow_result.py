@@ -38,17 +38,19 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     - Already-structured values (``Record`` / ``RecordArray`` /
       ``Distribution``) pass through unchanged — their domain field
       names are preserved.
-    - ``dict`` (non-empty) → ``Record(dict(value))``: caller's keys
+    - ``dict`` (non-empty) → ``_auto_record(dict(value))``: caller's keys
       stay addressable as field names.
     - Non-empty ``list`` / ``tuple`` → ``_make_stack``: assembles a
       ``DistributionArray`` / ``RecordArray`` / ``NumericRecordArray``
       matching the inner element type.
-    - Scalar numeric / ``jnp.ndarray`` → ``NumericRecord({field_name: value})``
-      with the function's own name as the single field name. Raw
+    - Scalar numeric / ``jnp.ndarray`` → ``_auto_record({field_name: value})``
+      (a ``NumericRecord``) with the function's own name as the single
+      field name. Raw
       numeric access round-trips via the single-field shim:
       ``float(x)``, ``jnp.array(x)``, and (for callable-valued fields)
       ``x(args)`` call-forwarding.
-    - Anything else (opaque Python object) → ``Record({field_name: value})``.
+    - Anything else (opaque Python object) → ``_auto_record({field_name:
+      value})`` (a plain ``Record``).
     """
     if isinstance(value, (Distribution, Record)):
         return value
@@ -89,7 +91,7 @@ def _coerce_output(
 
         * ``"wrap"`` — non-broadcast call; ``value`` is whatever the
           user's function returned. Scalars / arrays become
-          ``NumericRecord({field_name: value})``; dict / list / tuple
+          ``_auto_record({field_name: value})``; dict / list / tuple
           promote via ``_wrap_as_record``; existing Record /
           RecordArray / Distribution values pass through.
         * ``"stack"`` — array-valued broadcast; ``value`` is a stacked

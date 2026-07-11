@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`NamedTree` — the public name-keyed tree substrate (#338).** New
+  `probpipe.core.named_tree` module holding the ordered, immutable,
+  `/`-path-navigable tree that `EventTemplate` and `Record` now share as their
+  common base (previously the private `_NamedTree`). The substrate owns the
+  leaf-keyed mapping interface, nested-dict (de)construction, and the
+  structural edits `merge` / `without` / `replace`, and gains
+  `with_path_names(old=new, ...)` — rename leaves or whole subtrees by path,
+  or by bare name when unique in the tree. Each family declares its leaf type
+  (`ValueSpec` for templates; arbitrary values for records), checked at
+  construction, and **a `Mapping` is never a leaf**: nested dicts always
+  decompose into nested subtrees, and storing a mapping as a field value
+  raises `TypeError`. Diagnostics payloads, previously carried as Records
+  with dict-valued fields, are now plain dicts.
+
 - **`Tracked` / `Annotated` identity-and-metadata mixins (#336).** New
   `probpipe.core.tracked` module defining the shared identity attributes and methods every
   ProbPipe object carries: `Tracked` (a `name`, a `name_is_auto` flag, and a
@@ -105,6 +119,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **`Record` / `NumericRecord` construction is name-first, and all-numeric
+  records auto-promote (#338, breaking).** The constructors are now
+  `Record(name, fields=None, /, *, event_template=None, **kw_fields)` — the
+  record's name is a required first positional argument, and the old `name=`
+  keyword and nameless forms are removed. `Record(...)` whose fields are all
+  numeric (bare arrays and scalars, no backend metadata) returns a
+  `NumericRecord`; passing an explicit non-numeric `event_template=` pins a
+  plain `Record`. Structural transforms (`without` / `merge` / `replace` /
+  `with_path_names`) re-derive the numeric axis the same way, and a nested
+  record stored as a field is renamed to its field key. Operations that
+  assemble records internally still auto-derive the `record(<field-keys>)`
+  name and mark it `name_is_auto=True`. The pytree registration now carries
+  the event template and identity in the treedef aux data, so
+  `jax.tree_util.tree_map` over a `Record` preserves its template, name, and
+  auto flag. Value-level (de)serialization entry points moved onto the value
+  types: `Record.from_field_values(name, template, values)` replaces
+  `EventTemplate.from_field_values(values)` (removed), and
+  `NumericRecord.from_vector(name, template, vec)` joins
+  `NumericEventTemplate.from_vector` as the classmethod inverse of
+  `NumericRecord.to_vector`. `Record.from_nested_dict` / `from_dict` likewise
+  take the name first.
 
 - **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
   breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`

@@ -172,7 +172,7 @@ def _wrap_numeric_array_as_record(
             f"{role} from a numeric array requires a non-empty name=, "
             f"so the auto-wrapped Record has a meaningful field name. "
             f"Pass name='theta' (or similar), or wrap the array yourself: "
-            f"Record(theta=arr)."
+            f"Record('theta', theta=arr)."
         )
     arr = _as_float_array(arr)
     if arr.ndim == 0:
@@ -249,8 +249,8 @@ class EmpiricalDistribution[T](
 
     - ``samples`` is a :class:`Record` (each field stacked along axis 0),
     - or ``samples`` is a numeric JAX/numpy array and ``name=...`` is
-      passed (the array auto-wraps as a single-field ``Record({name:
-      arr})``).
+      passed (the array auto-wraps as a single-field record keyed by
+      ``name``).
 
     Otherwise, the generic base is returned and stores ``samples`` as a
     numpy object array.
@@ -402,7 +402,8 @@ class RecordEmpiricalDistribution(
 
     Each *sample* is a row of the stored Record: if the data has fields
     ``X`` of shape ``(n, p)`` and ``y`` of shape ``(n,)``, then a single
-    draw is ``Record(X=array(p,), y=scalar)``. Joint row indexing
+    draw is a record with field ``X`` of shape ``(p,)`` and scalar field
+    ``y``. Joint row indexing
     preserves per-observation correlation across fields during sampling
     and resampling.
 
@@ -421,7 +422,8 @@ class RecordEmpiricalDistribution(
     ----------
     samples : Record | array-like
         Sample data. A Record's fields each stack along axis 0; a
-        numeric array auto-wraps as ``Record({name: arr})``.
+        numeric array auto-wraps as a single-field record keyed by
+        ``name``.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalised internally). Mutually
         exclusive with *log_weights*.
