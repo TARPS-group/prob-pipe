@@ -1,5 +1,6 @@
 """Tests for probpipe.core.record.EventTemplate."""
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -726,24 +727,47 @@ class TestArraySpecIsValid:
         assert not spec.is_valid(np.asarray([1.0, 2.0], dtype=np.float64))
         assert not spec.is_valid(jnp.asarray([1.0, -2.0], dtype=jnp.float32))
 
+    def test_shape_dtype_path_is_jit_traceable(self):
+        # The Notes claim: shape/dtype checks read only static (shape, dtype)
+        # attributes, so a support-less spec runs under jax.jit without forcing
+        # concretization — it returns rather than raising. (jit wraps the
+        # Python bool result as a scalar Array, hence bool(...).)
+        spec = ArraySpec((3,), dtype=jnp.float32)
+        assert bool(jax.jit(spec.is_valid)(jnp.ones(3, dtype=jnp.float32))) is True
+        assert bool(jax.jit(spec.is_valid)(jnp.ones(2, dtype=jnp.float32))) is False
+
+    def test_support_path_not_jit_traceable(self):
+        # The counter-claim: a support-carrying spec forces concretization of
+        # a traced value (bool(jnp.all(...))), so it cannot run under trace.
+        from probpipe.core.constraints import positive
+
+        spec = ArraySpec((3,), support=positive)
+        with pytest.raises(jax.errors.TracerBoolConversionError):
+            jax.jit(spec.is_valid)(jnp.ones(3))
+
 
 class TestOpaqueSpecIsValid:
-    def test_non_array_objects_valid(self):
+    def test_non_mapping_objects_valid(self):
         spec = OpaqueSpec()
         assert spec.is_valid("label")
         assert spec.is_valid(object())
         assert spec.is_valid(None)
         assert spec.is_valid([1, 2, 3])
 
-    def test_numeric_values_invalid(self):
-        # A numeric scalar or array belongs under an ArraySpec.
+    def test_numeric_values_valid(self):
+        # As the fallback spec, OpaqueSpec accepts any non-mapping value,
+        # including numerics (though infer_from routes those to ArraySpec).
         spec = OpaqueSpec()
-        assert not spec.is_valid(1.5)
-        assert not spec.is_valid(jnp.ones(2))
+        assert spec.is_valid(1.5)
+        assert spec.is_valid(jnp.ones(2))
 
     def test_mapping_invalid(self):
-        # A mapping denotes tree structure, never a leaf value.
+        # A mapping denotes tree structure (a subtree), never a leaf value —
+        # the one thing OpaqueSpec rejects.
         assert not OpaqueSpec().is_valid({"a": 1})
+        from types import MappingProxyType
+
+        assert not OpaqueSpec().is_valid(MappingProxyType({"a": 1}))
 
     def test_dict_leaf_divergence_is_deliberate(self):
         # Interim divergence, pinned on purpose: Record still stores a plain
@@ -873,6 +897,47 @@ class TestFunctionSpecBareSpec:
         b = FunctionSpec(EventTemplate(input=ArraySpec(())), EventTemplate(output=ArraySpec(())))
         assert a == b
         assert hash(a) == hash(b)
+
+
+# ---------------------------------------------------------------------------
+# FunctionSpec — optional (None) templates: "some callable, structure unknown"
+# ---------------------------------------------------------------------------
+
+
+class TestFunctionSpecOptionalTemplates:
+    def test_bare_function_spec_is_any_callable(self):
+        spec = FunctionSpec()
+        assert spec.input_template is None
+        assert spec.output_template is None
+        assert spec.is_valid(lambda x: x)
+        assert spec.is_valid(np.sin)
+        assert not spec.is_valid(3.0)
+
+    def test_one_side_specified(self):
+        spec = FunctionSpec(output_template=ArraySpec(()))
+        assert spec.input_template is None
+        assert spec.output_template == EventTemplate(output=ArraySpec(()))
+
+    def test_none_specs_are_hashable_and_equal(self):
+        assert FunctionSpec() == FunctionSpec()
+        assert hash(FunctionSpec()) == hash(FunctionSpec())
+        # A template-less spec differs from a typed one.
+        assert FunctionSpec() != FunctionSpec(ArraySpec(()), ArraySpec(()))
+
+    def test_none_spec_usable_as_template_leaf(self):
+        # A FunctionSpec leaf (with unspecified signature) lives in a template
+        # and blocks numeric auto-promotion like any non-array leaf.
+        tpl = EventTemplate(f=FunctionSpec(), x=())
+        assert tpl["f"] == FunctionSpec()
+        assert type(tpl) is EventTemplate
+
+    def test_none_spec_pickle_round_trip(self):
+        import pickle
+
+        spec = FunctionSpec()
+        restored = pickle.loads(pickle.dumps(spec))
+        assert restored == spec
+        assert hash(restored) == hash(spec)
 
 
 # ---------------------------------------------------------------------------

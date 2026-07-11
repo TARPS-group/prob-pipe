@@ -40,8 +40,8 @@ The concrete specs are as follows:
 - :class:`ArraySpec`: describes a numeric array (shape, optional dtype/support)
 - :class:`DistributionSpec`: describes a ``Distribution``. Carries a sub-template
   describing the structure of one sample from the distribution.
-- :class:`FunctionSpec`: describes a callable. Carries two sub-templates,
-  describing the structure of the inputs and outputs of the function.
+- :class:`FunctionSpec`: describes a callable. Optionally carries sub-templates
+  for the structure of the function's inputs and outputs.
 - :class:`OpaqueSpec`: fallback for any other object (no structure exposed).
 
 Numeric vs. Mixed
@@ -696,10 +696,10 @@ class ValueSpec(ABC):
 
 @dataclass(frozen=True, eq=False)
 class ArraySpec(ValueSpec):
-    """A numeric array leaf: a fixed event ``shape`` plus optional metadata.
+    """A numeric-array value spec: a fixed event ``shape`` plus optional metadata.
 
     ``dtype`` and ``support`` are optional (default ``None``); when unset the
-    leaf describes its shape only. ``dtype`` accepts any ``numpy.dtype``
+    spec describes its shape only. ``dtype`` accepts any ``numpy.dtype``
     spelling (a dtype instance, a scalar type such as ``jnp.float32``, or a
     string such as ``"float32"``) and is normalised to ``numpy.dtype`` at
     construction, so equal dtypes compare and hash equal however they were
@@ -708,6 +708,9 @@ class ArraySpec(ValueSpec):
     """
 
     shape: tuple[int, ...]
+    # ``DTypeLike`` types the constructor *input* (a dtype instance, scalar
+    # type, or string); ``__post_init__`` normalises it, so the stored value
+    # is always ``np.dtype | None``.
     dtype: npt.DTypeLike | None = None
     support: Constraint | None = None
 
@@ -748,7 +751,9 @@ class ArraySpec(ValueSpec):
         its dtype equals ``dtype`` when set (a bare Python scalar reports the
         dtype ``np.asarray`` gives it); and every element satisfies
         ``support.check`` when ``support`` is set. Strings, mappings, Python
-        lists/tuples, and non-numeric arrays are invalid.
+        lists/tuples, and non-numeric arrays are invalid. Never raises on a
+        mismatched value — a value the spec does not describe returns
+        ``False``.
 
         Notes
         -----
@@ -776,37 +781,39 @@ class ArraySpec(ValueSpec):
 
 @dataclass(frozen=True)
 class OpaqueSpec(ValueSpec):
-    """A non-array, non-mapping Python-object leaf (str, DataFrame, ...).
+    """The fallback value spec, for a value no other spec describes.
 
-    ``meta`` is optional opaque metadata and must be hashable (or ``None``).
+    An opaque value carries no exposed structure (a string, a DataFrame, an
+    arbitrary Python object, ...). ``meta`` is optional opaque metadata and
+    must be hashable (or ``None``).
     """
 
     meta: Hashable = None
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a non-array, non-mapping Python object.
+        """Whether *value* is a valid opaque value — anything but a mapping.
 
-        An opaque leaf holds any object that is neither a numeric array-like
-        (a numeric scalar or an object with a numeric ``dtype`` / ``shape`` —
-        those belong under an :class:`ArraySpec`) nor a ``Mapping`` (a mapping
-        denotes tree structure, never a leaf). ``meta`` is metadata about the
-        spec and is not checked against the value.
+        As the fallback spec, ``OpaqueSpec`` accepts any value **except** a
+        ``Mapping``: a mapping denotes tree structure (a subtree), never a
+        leaf. Every other value is valid, including a numeric array or scalar
+        — such a value is *typically* described by an :class:`ArraySpec`, but
+        an explicitly-opaque field still accepts it. ``meta`` is metadata
+        about the spec and is not checked against the value.
 
         Notes
         -----
         Interim divergence: :class:`~probpipe.Record` and
-        :meth:`EventTemplate.infer_from` currently still treat a plain
+        :meth:`EventTemplate.infer_from` currently still store a plain
         ``dict`` value as an opaque leaf; such a value does not satisfy this
-        spec. This method states the target contract — mappings are
-        structure, never leaves — and the record layer is scheduled to align
-        with it.
+        spec, since a mapping is structure. This method states the target
+        contract, and the record layer is scheduled to align with it.
         """
-        return _full_array_shape_or_none(value) is None and not isinstance(value, Mapping)
+        return not isinstance(value, Mapping)
 
 
 @dataclass(frozen=True)
 class DistributionSpec(ValueSpec):
-    """A leaf whose value is a ``Distribution``.
+    """A value spec for a ``Distribution``.
 
     ``event_template`` is the :class:`EventTemplate` of one draw from that
     distribution.
@@ -833,7 +840,8 @@ class DistributionSpec(ValueSpec):
         ``event_template`` equals this spec's. A distribution always carries
         the schema of its draws, so one that exposes no event template (or
         whose template cannot be derived) does not satisfy any
-        ``DistributionSpec``.
+        ``DistributionSpec``. Never raises on a mismatched value — a value the
+        spec does not describe returns ``False``.
         """
         from ._distribution_base import Distribution
 
@@ -852,45 +860,55 @@ class DistributionSpec(ValueSpec):
 
 @dataclass(frozen=True, init=False)
 class FunctionSpec(ValueSpec):
-    """A leaf whose value is a callable.
+    """A value spec for a callable, optionally typed by its input/output structure.
 
     ``input_template`` / ``output_template`` are the :class:`EventTemplate`\\ s
-    of the callable's input and output. Either may instead be given as a bare
-    :class:`ValueSpec`, which is wrapped in a single-field template (field
-    ``"input"`` or ``"output"`` respectively) — so
-    ``FunctionSpec(ArraySpec(()), ArraySpec(()))`` types a scalar function by
-    the same convention that presents a scalar value as a single field. After
-    construction both attributes are always ``EventTemplate``\\ s.
+    of the callable's input and output, and each is optional (default
+    ``None``). A template describes a structured signature: its named fields
+    are the callable's inputs (or outputs), so
+    ``FunctionSpec(EventTemplate(x=(), y=(3,)), EventTemplate(out=()))`` types
+    ``f(x, y) -> out``. ``None`` means that side's structure is unspecified,
+    so a bare ``FunctionSpec()`` describes *any* callable — the natural spec
+    for a function of unknown or variable signature.
+
+    As a convenience, either side may be given as a bare :class:`ValueSpec`,
+    which is wrapped in a single-field template (field ``"input"`` or
+    ``"output"`` respectively) — so ``FunctionSpec(ArraySpec(()), ArraySpec(()))``
+    types a scalar-to-scalar function by the same convention that presents a
+    scalar value as a single field. After construction each attribute is an
+    :class:`EventTemplate` or ``None``.
 
     Raises
     ------
     TypeError
-        If either side is neither an :class:`EventTemplate` nor a
+        If either side is not ``None``, an :class:`EventTemplate`, or a
         :class:`ValueSpec`.
     """
 
-    input_template: EventTemplate
-    output_template: EventTemplate
+    input_template: EventTemplate | None
+    output_template: EventTemplate | None
 
     # Hand-written so the constructor accepts the bare-spec convenience while
     # the fields keep the stored (post-normalisation) type; the generated
     # ``__eq__`` / ``__hash__`` / ``__repr__`` come from the field list above.
     def __init__(
         self,
-        input_template: EventTemplate | ValueSpec,
-        output_template: EventTemplate | ValueSpec,
+        input_template: EventTemplate | ValueSpec | None = None,
+        output_template: EventTemplate | ValueSpec | None = None,
     ) -> None:
         sides = (
             ("input_template", "input", input_template),
             ("output_template", "output", output_template),
         )
         for attr, wrap_name, template in sides:
-            if isinstance(template, ValueSpec):
+            if template is None or isinstance(template, EventTemplate):
+                pass
+            elif isinstance(template, ValueSpec):
                 template = EventTemplate(**{wrap_name: template})
-            elif not isinstance(template, EventTemplate):
+            else:
                 raise TypeError(
-                    f"FunctionSpec.{attr} must be an EventTemplate or a bare "
-                    f"ValueSpec, got {type(template).__name__}"
+                    f"FunctionSpec.{attr} must be None, an EventTemplate, or a "
+                    f"bare ValueSpec, got {type(template).__name__}"
                 )
             object.__setattr__(self, attr, template)
 
@@ -898,9 +916,8 @@ class FunctionSpec(ValueSpec):
         """Whether *value* is a callable.
 
         The input/output structure of a bare callable cannot be inspected, so
-        validity is callability alone; ``input_template`` /
-        ``output_template`` document the intended signature but are not
-        checked against the value.
+        validity is callability alone; ``input_template`` / ``output_template``
+        document the intended signature but are not checked against the value.
         """
         return callable(value)
 
