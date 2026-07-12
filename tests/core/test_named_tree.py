@@ -13,7 +13,6 @@ import pytest
 from probpipe import EventTemplate, NumericRecord, Record
 from probpipe.core.event_template import ArraySpec, NumericEventTemplate, OpaqueSpec, ValueSpec
 from probpipe.core.named_tree import NamedTree
-from probpipe.core.record import _auto_record
 
 # ===========================================================================
 # 1. NamedTree is the public substrate
@@ -133,7 +132,9 @@ class TestWithPathNames:
         assert tuple(renamed.keys()) == ("alpha",)
 
     def test_auto_name_rederives_user_name_preserved(self):
-        auto = _auto_record("record(a,b)", {"a": 1.0, "b": 2.0})  # operation-derived (auto)
+        auto = Record(
+            "record(a,b)", {"a": 1.0, "b": 2.0}, name_is_auto=True
+        )  # operation-derived (auto)
         renamed = auto.with_path_names(a="alpha")
         assert renamed.name == "record(alpha,b)"
         assert renamed.name_is_auto is True
@@ -231,7 +232,9 @@ class TestPytreeAuxSplit:
     def test_auto_flag_survives_roundtrip(self):
         import jax
 
-        r = _auto_record("record(a)", {"a": jnp.array(1.0)})  # operation-derived (auto)
+        r = Record(
+            "record(a)", {"a": jnp.array(1.0)}, name_is_auto=True
+        )  # operation-derived (auto)
         back = jax.tree_util.tree_unflatten(*reversed(jax.tree_util.tree_flatten(r)))
         assert back.name_is_auto is True
 

@@ -27,7 +27,6 @@ from probpipe import (
     RecordArray,
 )
 from probpipe.core.event_template import EventTemplate
-from probpipe.core.record import _auto_record
 from probpipe.core.tracked import Annotated, Tracked, auto_name
 
 # ===========================================================================
@@ -112,9 +111,9 @@ class TestNameIsAuto:
             Record(a=1.0)
 
     def test_operation_derived_record_is_auto(self):
-        # ``_auto_record`` is the operation-side constructor: the op supplies a
-        # name and the record is marked auto-derived.
-        r = _auto_record("sample", {"a": 1.0, "b": 2.0})
+        # ``Record(..., name_is_auto=True)`` is the operation-side constructor: the
+        # op supplies a name and the record is marked auto-derived.
+        r = Record("sample", {"a": 1.0, "b": 2.0}, name_is_auto=True)
         assert r.name == "sample"
         assert r.name_is_auto is True
 
@@ -160,11 +159,11 @@ class TestNameIsAuto:
         # transform that changes the field set must re-derive it — the same
         # rule ``map`` follows. Keeping the pre-edit name would advertise
         # fields that no longer exist.
-        r = _auto_record("record(a,b)", {"a": jnp.array(1.0), "b": jnp.array(2.0)})
+        r = Record("record(a,b)", {"a": jnp.array(1.0), "b": jnp.array(2.0)}, name_is_auto=True)
         assert r.without("b").name == "record(a)"
         assert r.map(lambda x: x).name == "record(a,b)"
-        merged = _auto_record("record(a)", {"a": jnp.array(1.0)}).merge(
-            _auto_record("record(c)", {"c": jnp.array(3.0)})
+        merged = Record("record(a)", {"a": jnp.array(1.0)}, name_is_auto=True).merge(
+            Record("record(c)", {"c": jnp.array(3.0)}, name_is_auto=True)
         )
         assert merged.name == "record(a,c)"
         assert r.with_path_names(a="z").name == "record(z,b)"
@@ -184,15 +183,17 @@ class TestNameIsAuto:
     def test_nested_auto_name_derives_from_top_level_keys(self):
         # The derived name uses top-level field keys (not full leaf paths),
         # so every transform agrees regardless of nesting depth.
-        nested = _auto_record(
-            "record(a)", {"a": _auto_record("a", {"b": jnp.array(1.0), "c": jnp.array(2.0)})}
+        nested = Record(
+            "record(a)",
+            {"a": Record("a", {"b": jnp.array(1.0), "c": jnp.array(2.0)}, name_is_auto=True)},
+            name_is_auto=True,
         )
         assert nested.name == "record(a)"
         assert nested.with_path_names({"a/b": "z"}).name == "record(a)"
         assert nested.map(lambda x: x).name == "record(a)"
 
     def test_name_is_auto_survives_record_pickle(self):
-        auto = _auto_record("record(a)", {"a": 1.0})
+        auto = Record("record(a)", {"a": 1.0}, name_is_auto=True)
         named = Record("mine", a=1.0)
         assert pickle.loads(pickle.dumps(auto)).name_is_auto is True
         assert pickle.loads(pickle.dumps(named)).name_is_auto is False
@@ -212,7 +213,7 @@ class TestWithName:
         assert n.name == "x"
 
     def test_with_name_clears_auto_flag(self):
-        r = _auto_record("record(a)", {"a": 1.0})  # operation-derived (auto) name
+        r = Record("record(a)", {"a": 1.0}, name_is_auto=True)  # operation-derived (auto) name
         assert r.name_is_auto is True
         r2 = r.with_name("mine")
         assert r2.name == "mine"

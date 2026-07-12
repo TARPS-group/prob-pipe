@@ -7,7 +7,7 @@ from typing import Any
 from ..core.distribution import Distribution
 from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsLogProb
-from ..core.record import Record, _auto_record
+from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array
 from ._base import ProbabilisticModel
@@ -219,7 +219,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
                     f"positionally instead."
                 )
             params = self._prior._pack_value(**{f: value[f] for f in self._prior_fields})
-            data = _auto_record("data", {f: value[f] for f in data_fields})
+            data = Record("data", {f: value[f] for f in data_fields}, name_is_auto=True)
             return params, data
         raise TypeError(
             f"SimpleModel._log_prob expects a Record over {self.fields} or a "

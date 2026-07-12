@@ -463,7 +463,7 @@ def condition_on(
         observed data; everything else is an inference parameter.
     """
     from ..inference import inference_method_registry
-    from .record import _auto_record
+    from .record import Record
 
     # Separate data kwargs (names matching fields) from
     # inference kwargs (everything else like num_results, num_warmup).
@@ -477,7 +477,7 @@ def condition_on(
                     "Cannot provide both positional `observed` and named "
                     f"data kwargs ({', '.join(data_kwargs)})"
                 )
-            observed = _auto_record("observed", data_kwargs)
+            observed = Record("observed", data_kwargs, name_is_auto=True)
         return inference_method_registry.execute(dist, observed, method=method, **inference_kwargs)
 
     # Exact conditioning (conjugate updates, joint marginalization, etc.)
@@ -494,7 +494,7 @@ def condition_on(
                 "Cannot provide both positional `observed` and named "
                 f"data kwargs ({', '.join(data_kwargs)})"
             )
-        observed = _auto_record("observed", data_kwargs)
+        observed = Record("observed", data_kwargs, name_is_auto=True)
     return inference_method_registry.execute(dist, observed, **inference_kwargs)
 
 

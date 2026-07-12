@@ -468,11 +468,12 @@ class NumericRecordDistribution(RecordDistribution):
         if len(tpl.fields) <= 1:
             td = jax.tree.structure(None)
         else:
-            from .record import _auto_record
+            from .record import Record
 
-            placeholder = _auto_record(
+            placeholder = Record(
                 self.name,
                 {name: jnp.zeros(_field_event_shape(tpl, name)) for name in tpl.fields},
+                name_is_auto=True,
             )
             td = jax.tree.structure(placeholder)
         object.__setattr__(self, "_treedef", td)

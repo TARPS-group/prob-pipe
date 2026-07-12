@@ -33,7 +33,7 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import Record, _auto_record
+from .record import Record
 from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         # batch peels correctly; path-keyed construction rebuilds nesting.
         if isinstance(samples, RecordArray):
             template = samples.template
-            samples = _auto_record(samples.name, {k: samples[k] for k in template})
+            samples = Record(samples.name, {k: samples[k] for k in template}, name_is_auto=True)
         else:
             template = None
         # Default field name for bare-array outputs (the WF marginal

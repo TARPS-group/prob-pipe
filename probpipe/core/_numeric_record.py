@@ -44,7 +44,7 @@ from ..custom_types import Array, ArrayLike
 from ._array_backend import aux_for
 from .event_template import EventTemplate, NumericEventTemplate, _is_numeric_dtype
 from .named_tree import _check_no_path_sep, _unflatten_paths
-from .record import Record, _auto_record, _record_flatten
+from .record import Record, _record_flatten
 
 __all__ = ["NumericRecord", "_is_numeric_leaf"]
 
@@ -512,7 +512,7 @@ def _value_treedef(
 
             return NumericRecordArray(fields, batch_shape=batch_shape, template=tpl)
         # A template carries no name; the caller renames the reconstructed value.
-        return _auto_record("value", fields, event_template=tpl)
+        return Record("value", fields, event_template=tpl, name_is_auto=True)
 
     return jax.tree_util.tree_structure(_build(template))
 

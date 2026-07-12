@@ -24,7 +24,7 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..core.provenance import Provenance
-from ..core.record import Record, _auto_record
+from ..core.record import Record
 from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
@@ -186,13 +186,13 @@ class JointGaussian(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return _auto_record(self.name, result)
+        return Record(self.name, result, name_is_auto=True)
 
     def _log_prob(self, value) -> Array:
         from ..core._record_array import RecordArray
 
         if not isinstance(value, (Record, RecordArray)):
-            value = _auto_record(self.name, value)
+            value = Record(self.name, value, name_is_auto=True)
         from .multivariate import MultivariateNormal as MVN
 
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
@@ -208,7 +208,7 @@ class JointGaussian(
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = self._mean_vec[sl]
-        return _auto_record(self.name, result)
+        return Record(self.name, result, name_is_auto=True)
 
     def _variance(self) -> Record:
         diag = jnp.diag(self._cov_mat)
@@ -216,7 +216,7 @@ class JointGaussian(
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = diag[sl]
-        return _auto_record(self.name, result)
+        return Record(self.name, result, name_is_auto=True)
 
     def _cov(self) -> Array:
         """Full covariance matrix."""

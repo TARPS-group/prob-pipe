@@ -92,26 +92,6 @@ def _derived_record_name(field_keys: Iterable[str]) -> str:
     return "record(" + ",".join(field_keys) + ")"
 
 
-def _auto_record(
-    name: str,
-    fields: Mapping[str, Any],
-    *,
-    event_template: EventTemplate | None = None,
-) -> Record:
-    """Operation-side constructor: build a record under an operation-derived name.
-
-    The ``Record`` constructor requires a user-given name; an *operation*
-    that produces a record instead derives a name from its inputs and marks
-    it ``name_is_auto=True`` so later composition can re-derive it. The
-    operation must supply that *name* — typically the producing
-    distribution's or model's name, or a domain term for the value it
-    returns (e.g. ``"data"`` / ``"observed"``) — so the result is
-    identifiable rather than an anonymous ``record(<keys>)``. Promotion
-    applies as in normal construction.
-    """
-    return Record(name, dict(fields), event_template=event_template, name_is_auto=True)
-
-
 # ---------------------------------------------------------------------------
 # Record
 # ---------------------------------------------------------------------------

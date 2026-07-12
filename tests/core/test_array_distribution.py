@@ -584,10 +584,10 @@ class TestCanonicalConvenience:
         The pytree aux carries the record identity, so the skeleton must
         use the distribution's own name (``"two_field"``), which the
         treedef derives and marks auto."""
-        from probpipe.core.record import _auto_record
+        from probpipe.core.record import Record
 
         expected = jax.tree.structure(
-            _auto_record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))})
+            Record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))}, name_is_auto=True)
         )
         assert multi_leaf_dist.treedef == expected
 

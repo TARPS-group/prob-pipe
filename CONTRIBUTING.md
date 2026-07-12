@@ -496,11 +496,12 @@ uv build packaging/probpipe   # probpipe (metapackage)
    component distribution's `name` matches its keyword key (e.g.,
    `ProductDistribution(x=Normal(0, 1, name="x"))`).  `Record` and
    `NumericRecord` take the name as the required first positional
-   argument (`Record(name, ...)`); operations that assemble records
-   internally derive a `record(<field-keys>)` name with
-   `name_is_auto=True` via the private `_auto_record` helper, and a
-   nested record stored as a field is renamed to its field key (also
-   flagged auto-derived).
+   argument (`Record(name, ...)`); an operation that produces a record
+   supplies a meaningful name — the producing distribution's or model's
+   name, or a domain term such as `"data"` / `"observed"` — and passes
+   `name_is_auto=True` so later composition can re-derive it. A nested
+   record stored as a field is renamed to its field key (also flagged
+   auto-derived).
 7. **Uniform output wrap at the WorkflowFunction boundary** — every
    `@workflow_function` return is coerced into the
    `Record | RecordArray | Distribution` contract before it reaches the

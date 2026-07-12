@@ -458,7 +458,7 @@ def _broadcast_sample(
 
 def _index_sample(s: Any, i: int) -> Any:
     """Index row ``i`` of a per-argument sample batch."""
-    from .record import Record, _auto_record
+    from .record import Record
 
     if isinstance(s, Record):
         # Index each leaf field's batch row; rebuild by path key so a nested
@@ -466,5 +466,5 @@ def _index_sample(s: Any, i: int) -> Any:
         leaf_paths = tuple(s.event_template.keys())
         if len(leaf_paths) == 1:
             return s[leaf_paths[0]][i]
-        return _auto_record(s.name, {p: s[p][i] for p in leaf_paths})
+        return Record(s.name, {p: s[p][i] for p in leaf_paths}, name_is_auto=True)
     return s[i]

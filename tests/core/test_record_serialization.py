@@ -27,7 +27,7 @@ from probpipe.core.event_template import (
     NumericEventTemplate,
     OpaqueSpec,
 )
-from probpipe.core.record import Record, _auto_record
+from probpipe.core.record import Record
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -58,7 +58,7 @@ def test_record_pickle_roundtrip():
 
 
 def test_record_pickle_auto_name():
-    r = _auto_record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)})
+    r = Record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)}, name_is_auto=True)
     r2 = roundtrip(r)
     assert r2.name == r.name
     assert r2.name_is_auto is True

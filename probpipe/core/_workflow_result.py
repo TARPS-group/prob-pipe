@@ -16,7 +16,7 @@ from ._broadcast_distributions import _make_stack
 from ._distribution_base import Distribution
 from ._numeric_record import _is_numeric_leaf
 from .provenance import Provenance
-from .record import Record, _auto_record
+from .record import Record
 
 # Broadcast modes: how a value reached ``_coerce_output``. Named
 # constants so callsites use the same spelling and typos fail loudly.
@@ -57,7 +57,7 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     if isinstance(value, dict) and value:
         # Explode nested dicts into subtrees (mappings are never leaves); the
         # name follows the top-level keys the caller wrote.
-        return _auto_record(field_name, Record._flatten_paths(value))
+        return Record(field_name, Record._flatten_paths(value), name_is_auto=True)
     if isinstance(value, (list, tuple)) and value:
         try:
             return _make_stack(list(value), n=len(value), field_name=field_name)
@@ -69,8 +69,8 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     # opaque duck-typed objects (``unittest.mock.MagicMock`` etc.)
     # whose attribute probing would recurse inside ``jnp.asarray``.
     if _is_numeric_leaf(value):
-        return _auto_record(field_name, {field_name: jnp.asarray(value)})
-    return _auto_record(field_name, {field_name: value})
+        return Record(field_name, {field_name: jnp.asarray(value)}, name_is_auto=True)
+    return Record(field_name, {field_name: value}, name_is_auto=True)
 
 
 def _coerce_output(

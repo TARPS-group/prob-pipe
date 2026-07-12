@@ -18,7 +18,7 @@ import numpy as np
 
 from ..custom_types import Array
 from .event_template import ArraySpec, EventTemplate, _is_numeric_dtype
-from .record import Record, _auto_record
+from .record import Record
 from .tracked import auto_name
 
 __all__ = [
@@ -244,16 +244,20 @@ class RecordArray(Record):
             if isinstance(val, RecordArray):
                 return val._get_record(index)
             if isinstance(val, Record):
-                # ``_auto_record`` derives the element's name and re-derives the
-                # numeric axis: an all-numeric nested field promotes to
+                # ``Record(..., name_is_auto=True)`` derives the element's name and
+                # re-derives the numeric axis: an all-numeric nested field promotes to
                 # ``NumericRecord`` (preserving the NumericRecordArray invariant),
                 # while a non-numeric one stays a plain ``Record``.
-                return _auto_record(
-                    val.name, {k: _elem(child) for k, child in val.children.items()}
+                return Record(
+                    val.name,
+                    {k: _elem(child) for k, child in val.children.items()},
+                    name_is_auto=True,
                 )
             return val[nd_index]
 
-        return _auto_record(self.name, {name: _elem(self._tree[name]) for name in self._tree})
+        return Record(
+            self.name, {name: _elem(self._tree[name]) for name in self._tree}, name_is_auto=True
+        )
 
     def __contains__(self, name: str) -> bool:
         return name in self._tree
@@ -624,7 +628,7 @@ class NumericRecordArray(RecordArray):
                     for name, child in value.children.items()
                 }
                 if not new_batch:
-                    return _auto_record(value.name, fields)
+                    return Record(value.name, fields, name_is_auto=True)
                 return NumericRecordArray(fields, batch_shape=new_batch, template=spec)
             return fn(value, axis)
 
@@ -633,7 +637,7 @@ class NumericRecordArray(RecordArray):
             for name, value in self._tree.items()
         }
         if not new_batch:
-            return _auto_record(self.name, fields)
+            return Record(self.name, fields, name_is_auto=True)
         return NumericRecordArray(fields, batch_shape=new_batch, template=self._template)
 
     def mean(self, axis: int = 0) -> Any:
