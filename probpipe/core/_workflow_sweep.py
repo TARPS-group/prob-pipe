@@ -223,7 +223,7 @@ def execute_sweep_rows_jax(
     def single_call(array_slice_leaves):
         kwargs = dict(static)
         for name in array_args:
-            kwargs[name] = _auto_record(array_slice_leaves[name])
+            kwargs[name] = _auto_record(name, array_slice_leaves[name])
         return func(**kwargs)
 
     vmap_input = {}

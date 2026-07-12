@@ -93,26 +93,23 @@ def _derived_record_name(field_keys: Iterable[str]) -> str:
 
 
 def _auto_record(
+    name: str,
     fields: Mapping[str, Any],
     *,
-    name: str | None = None,
     event_template: EventTemplate | None = None,
 ) -> Record:
-    """Operation-side constructor: build a record under an auto-derived name.
+    """Operation-side constructor: build a record under an operation-derived name.
 
     The ``Record`` constructor requires a user-given name; an *operation*
-    that produces a record instead derives a deterministic name from its
-    inputs and marks it ``name_is_auto=True``. This helper is that derived
-    path: *name* supplies the operation's derived name (e.g. the producing
-    distribution's name), defaulting to the field-derived
-    ``record(<keys>)``. Promotion applies as in normal construction.
+    that produces a record instead derives a name from its inputs and marks
+    it ``name_is_auto=True`` so later composition can re-derive it. The
+    operation must supply that *name* — typically the producing
+    distribution's or model's name, or a domain term for the value it
+    returns (e.g. ``"data"`` / ``"observed"``) — so the result is
+    identifiable rather than an anonymous ``record(<keys>)``. Promotion
+    applies as in normal construction.
     """
-    return Record(
-        name if name is not None else _derived_record_name(fields),
-        dict(fields),
-        event_template=event_template,
-        name_is_auto=True,
-    )
+    return Record(name, dict(fields), event_template=event_template, name_is_auto=True)
 
 
 # ---------------------------------------------------------------------------

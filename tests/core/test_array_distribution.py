@@ -582,10 +582,13 @@ class TestCanonicalConvenience:
         ``NumericRecord`` skeleton with the same field names — locks the
         relationship between ``event_template`` and the sample pytree.
         The pytree aux carries the record identity, so the skeleton must
-        use the auto-derived ``record(a,b)`` name the sampler produces."""
+        use the distribution's own name (``"two_field"``), which the
+        treedef derives and marks auto."""
         from probpipe.core.record import _auto_record
 
-        expected = jax.tree.structure(_auto_record({"a": jnp.zeros(()), "b": jnp.zeros((2,))}))
+        expected = jax.tree.structure(
+            _auto_record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))})
+        )
         assert multi_leaf_dist.treedef == expected
 
     def test_treedef_is_cached(self, multi_leaf_dist):

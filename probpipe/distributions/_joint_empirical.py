@@ -213,7 +213,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         Subclasses override to return a typed batched container (e.g.
         ``NumericRecordArray``) when the leaves are numeric.
         """
-        return _auto_record(self._resample_rows(key, sample_shape))
+        return _auto_record(self.name, self._resample_rows(key, sample_shape))
 
     def _resample_rows(
         self,
@@ -375,7 +375,7 @@ class NumericJointEmpirical(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return _auto_record(result)
+        return _auto_record(self.name, result)
 
     # -- event_shapes (used by the record template) ------------------------
 
@@ -389,13 +389,13 @@ class NumericJointEmpirical(
     def _mean(self) -> Record:
         """Per-component weighted means."""
         return _auto_record(
-            {cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()}
+            self.name, {cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()}
         )
 
     def _variance(self) -> Record:
         """Per-component weighted variances."""
         return _auto_record(
-            {cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()}
+            self.name, {cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()}
         )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):

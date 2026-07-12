@@ -210,7 +210,7 @@ class IncrementalConditioner[P, D](Module):
                 raise ValueError("Cannot provide both `data` and named data kwargs")
             from ..core.record import _auto_record
 
-            data = _auto_record(kwargs)
+            data = _auto_record("data", kwargs)
         posterior = self._step(self._curr_posterior, data)
         self._curr_posterior = posterior
         return posterior

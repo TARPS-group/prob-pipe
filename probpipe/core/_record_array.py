@@ -248,10 +248,12 @@ class RecordArray(Record):
                 # numeric axis: an all-numeric nested field promotes to
                 # ``NumericRecord`` (preserving the NumericRecordArray invariant),
                 # while a non-numeric one stays a plain ``Record``.
-                return _auto_record({k: _elem(child) for k, child in val.children.items()})
+                return _auto_record(
+                    val.name, {k: _elem(child) for k, child in val.children.items()}
+                )
             return val[nd_index]
 
-        return _auto_record({name: _elem(self._tree[name]) for name in self._tree})
+        return _auto_record(self.name, {name: _elem(self._tree[name]) for name in self._tree})
 
     def __contains__(self, name: str) -> bool:
         return name in self._tree
@@ -581,7 +583,7 @@ class NumericRecordArray(RecordArray):
                     for name, child in value.children.items()
                 }
                 if not new_batch:
-                    return _auto_record(fields)
+                    return _auto_record(value.name, fields)
                 return NumericRecordArray(fields, batch_shape=new_batch, template=spec)
             return fn(value, axis)
 
@@ -590,7 +592,7 @@ class NumericRecordArray(RecordArray):
             for name, value in self._tree.items()
         }
         if not new_batch:
-            return _auto_record(fields)
+            return _auto_record(self.name, fields)
         return NumericRecordArray(fields, batch_shape=new_batch, template=self._template)
 
     def mean(self, axis: int = 0) -> Any:

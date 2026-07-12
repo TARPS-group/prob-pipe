@@ -1106,7 +1106,9 @@ def _value_treedef(
         # a template re-inferred off the placeholder leaves.
         from .record import _auto_record
 
-        return _auto_record(fields, event_template=tpl)
+        # A template carries no name; ``from_vector`` reconstructs "a value"
+        # of it (a caller such as ``NumericRecord.from_vector`` renames it).
+        return _auto_record("value", fields, event_template=tpl)
 
     return jax.tree_util.tree_structure(_build(template))
 

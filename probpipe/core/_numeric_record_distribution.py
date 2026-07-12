@@ -471,7 +471,8 @@ class NumericRecordDistribution(RecordDistribution):
             from .record import _auto_record
 
             placeholder = _auto_record(
-                {name: jnp.zeros(_field_event_shape(tpl, name)) for name in tpl.fields}
+                self.name,
+                {name: jnp.zeros(_field_event_shape(tpl, name)) for name in tpl.fields},
             )
             td = jax.tree.structure(placeholder)
         object.__setattr__(self, "_treedef", td)

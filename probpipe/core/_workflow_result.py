@@ -16,7 +16,7 @@ from ._broadcast_distributions import _make_stack
 from ._distribution_base import Distribution
 from ._numeric_record import _is_numeric_leaf
 from .provenance import Provenance
-from .record import Record, _auto_record, _derived_record_name
+from .record import Record, _auto_record
 
 # Broadcast modes: how a value reached ``_coerce_output``. Named
 # constants so callsites use the same spelling and typos fail loudly.
@@ -44,21 +44,20 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     - Non-empty ``list`` / ``tuple`` → ``_make_stack``: assembles a
       ``DistributionArray`` / ``RecordArray`` / ``NumericRecordArray``
       matching the inner element type.
-    - Scalar numeric / ``jnp.ndarray`` → ``_auto_record({field_name: value})``
-      (a ``NumericRecord``) with the function's own name as the single
-      field name. Raw
+    - Scalar numeric / ``jnp.ndarray`` → a single-field ``NumericRecord``
+      named and keyed by the function's own name. Raw
       numeric access round-trips via the single-field shim:
       ``float(x)``, ``jnp.array(x)``, and (for callable-valued fields)
       ``x(args)`` call-forwarding.
-    - Anything else (opaque Python object) → ``_auto_record({field_name:
-      value})`` (a plain ``Record``).
+    - Anything else (opaque Python object) → a single-field plain
+      ``Record`` named and keyed by the function's own name.
     """
     if isinstance(value, (Distribution, Record)):
         return value
     if isinstance(value, dict) and value:
         # Explode nested dicts into subtrees (mappings are never leaves); the
         # name follows the top-level keys the caller wrote.
-        return _auto_record(Record._flatten_paths(value), name=_derived_record_name(value))
+        return _auto_record(field_name, Record._flatten_paths(value))
     if isinstance(value, (list, tuple)) and value:
         try:
             return _make_stack(list(value), n=len(value), field_name=field_name)
@@ -70,8 +69,8 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     # opaque duck-typed objects (``unittest.mock.MagicMock`` etc.)
     # whose attribute probing would recurse inside ``jnp.asarray``.
     if _is_numeric_leaf(value):
-        return _auto_record({field_name: jnp.asarray(value)})
-    return _auto_record({field_name: value})
+        return _auto_record(field_name, {field_name: jnp.asarray(value)})
+    return _auto_record(field_name, {field_name: value})
 
 
 def _coerce_output(
@@ -94,7 +93,7 @@ def _coerce_output(
 
         * ``"wrap"`` — non-broadcast call; ``value`` is whatever the
           user's function returned. Scalars / arrays become
-          ``_auto_record({field_name: value})``; dict / list / tuple
+          a single-field record named after the function; dict / list / tuple
           promote via ``_wrap_as_record``; existing Record /
           RecordArray / Distribution values pass through.
         * ``"stack"`` — array-valued broadcast; ``value`` is a stacked

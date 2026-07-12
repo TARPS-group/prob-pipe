@@ -241,7 +241,9 @@ def with_resampling(
                 # construction rebuilds any nested structure.
                 from .record import _auto_record
 
-                new_record = _auto_record({k: v[indices] for k, v in out_dist.samples.items()})
+                new_record = _auto_record(
+                    out_dist.name, {k: v[indices] for k, v in out_dist.samples.items()}
+                )
                 resampled = EmpiricalDistribution(
                     new_record,
                     name=out_dist.name,

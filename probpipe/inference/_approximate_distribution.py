@@ -257,7 +257,9 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     shape = spec.shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
-            super().__init__(_auto_record(fields), weights=weights, name=name or "posterior")
+            super().__init__(
+                _auto_record(name or "posterior", fields), weights=weights, name=name or "posterior"
+            )
             self._event_template = event_template
         else:
             # Single-field path: ``name`` (default ``"posterior"``)

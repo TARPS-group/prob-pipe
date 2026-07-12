@@ -58,7 +58,7 @@ def test_record_pickle_roundtrip():
 
 
 def test_record_pickle_auto_name():
-    r = _auto_record({"a": jnp.array(1.0), "b": jnp.array(2.0)})
+    r = _auto_record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)})
     r2 = roundtrip(r)
     assert r2.name == r.name
     assert r2.name_is_auto is True

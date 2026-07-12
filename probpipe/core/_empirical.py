@@ -99,7 +99,7 @@ def _index_record(record_data: Record, idx) -> NumericRecord:
     ``__jax_array__`` / ``__float__`` shims at downstream call sites.
     Leaf-keyed, so nested structure is preserved through the indexing.
     """
-    return _auto_record({k: jnp.asarray(v)[idx] for k, v in record_data.items()})
+    return _auto_record(record_data.name, {k: jnp.asarray(v)[idx] for k, v in record_data.items()})
 
 
 def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
@@ -110,7 +110,7 @@ def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
     ``float(result)`` directly via the existing single-field shims.
     Leaf-keyed, so nested structure is preserved.
     """
-    return _auto_record({k: op(jnp.asarray(v)) for k, v in record_data.items()})
+    return _auto_record(record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()})
 
 
 def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:
@@ -190,7 +190,7 @@ def _wrap_numeric_array_as_record(
         n = prod(sample_shape)
         event_shape = arr.shape[n_sample_dims:]
         arr = arr.reshape(n, *event_shape)
-    return _auto_record({name: arr}), name
+    return _auto_record(name, {name: arr}), name
 
 
 def _validate_record_samples(record_data: Record) -> int:
@@ -514,7 +514,9 @@ class RecordEmpiricalDistribution(
         # to that rule.
         cached = getattr(self, "_samples_record", None)
         if cached is None:
-            cached = _auto_record({k: jnp.asarray(v) for k, v in self._record_data.items()})
+            cached = _auto_record(
+                self.name, {k: jnp.asarray(v) for k, v in self._record_data.items()}
+            )
             object.__setattr__(self, "_samples_record", cached)
         return cached
 
@@ -646,7 +648,7 @@ class RecordEmpiricalDistribution(
         # or calls ``flatten_value`` (which handles both types).
         # Single-field consumers still get the shape shim via the
         # NumericRecord coercion path.
-        return _auto_record(fields)
+        return _auto_record(self.name, fields)
 
     # -- moments ------------------------------------------------------------
 
@@ -1247,7 +1249,7 @@ class RecordBootstrapReplicateDistribution(
         for f in self._record_data.fields:
             arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
             stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
-        return _auto_record(stacked)
+        return _auto_record(self.name, stacked)
 
     def _unwrap_dataset(self, dataset: Any) -> Any:
         """Unwrap a single-field auto-wrap dataset to its bare array.

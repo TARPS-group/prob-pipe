@@ -288,7 +288,7 @@ class ProductDistribution(
                 # record-array (canonical, flattenable), not a plain Record.
                 sub_template = self.event_template.children[name] if sample_shape else None
                 fields[name] = _sample_nested(
-                    comp, subkey, sample_shape, template=sub_template, numeric=numeric
+                    name, comp, subkey, sample_shape, template=sub_template, numeric=numeric
                 )
             else:
                 fields[name] = comp._sample(subkey, sample_shape)
@@ -306,7 +306,7 @@ class ProductDistribution(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return _auto_record(fields)
+        return _auto_record(self.name, fields)
 
     # -- Log-prob -----------------------------------------------------------
 
@@ -372,10 +372,10 @@ class ProductDistribution(
     # -- Moments (return Record) --------------------------------------------
 
     def _mean(self) -> Record:
-        return _map_components(self._components, lambda d: d._mean())
+        return _map_components(self.name, self._components, lambda d: d._mean())
 
     def _variance(self) -> Record:
-        return _map_components(self._components, lambda d: d._variance())
+        return _map_components(self.name, self._components, lambda d: d._variance())
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(
@@ -530,7 +530,7 @@ class TFPProductDistribution(ProductDistribution):
 # -- Helpers for nested component pytrees ----------------------------------
 
 
-def _sample_nested(components: dict, key, sample_shape, template=None, numeric=False):
+def _sample_nested(name: str, components: dict, key, sample_shape, template=None, numeric=False):
     """Recursively sample from nested component dicts.
 
     For an **unbatched** draw (``sample_shape == ()``) returns a plain nested
@@ -549,7 +549,7 @@ def _sample_nested(components: dict, key, sample_shape, template=None, numeric=F
             # and template ``[]`` is leaf-only.
             sub_template = template.children[name] if template is not None else None
             fields[name] = _sample_nested(
-                comp, subkey, sample_shape, template=sub_template, numeric=numeric
+                name, comp, subkey, sample_shape, template=sub_template, numeric=numeric
             )
         else:
             fields[name] = comp._sample(subkey, sample_shape)
@@ -558,18 +558,18 @@ def _sample_nested(components: dict, key, sample_shape, template=None, numeric=F
 
         cls = NumericRecordArray if numeric else RecordArray
         return cls(fields, batch_shape=sample_shape, template=template)
-    return _auto_record(fields)
+    return _auto_record(name, fields)
 
 
-def _map_components(components: dict, fn) -> Record:
+def _map_components(name: str, components: dict, fn) -> Record:
     """Apply fn to each leaf distribution, returning nested Record."""
     fields: dict = {}
     for name, comp in components.items():
         if isinstance(comp, dict):
-            fields[name] = _map_components(comp, fn)
+            fields[name] = _map_components(name, comp, fn)
         else:
             fields[name] = fn(comp)
-    return _auto_record(fields)
+    return _auto_record(name, fields)
 
 
 # ---------------------------------------------------------------------------

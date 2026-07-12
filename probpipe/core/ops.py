@@ -477,7 +477,7 @@ def condition_on(
                     "Cannot provide both positional `observed` and named "
                     f"data kwargs ({', '.join(data_kwargs)})"
                 )
-            observed = _auto_record(data_kwargs)
+            observed = _auto_record("observed", data_kwargs)
         return inference_method_registry.execute(dist, observed, method=method, **inference_kwargs)
 
     # Exact conditioning (conjugate updates, joint marginalization, etc.)
@@ -494,7 +494,7 @@ def condition_on(
                 "Cannot provide both positional `observed` and named "
                 f"data kwargs ({', '.join(data_kwargs)})"
             )
-        observed = _auto_record(data_kwargs)
+        observed = _auto_record("observed", data_kwargs)
     return inference_method_registry.execute(dist, observed, **inference_kwargs)
 
 

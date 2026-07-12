@@ -112,8 +112,10 @@ class TestNameIsAuto:
             Record(a=1.0)
 
     def test_operation_derived_record_is_auto(self):
-        r = _auto_record({"a": 1.0, "b": 2.0})
-        assert r.name == "record(a,b)"
+        # ``_auto_record`` is the operation-side constructor: the op supplies a
+        # name and the record is marked auto-derived.
+        r = _auto_record("sample", {"a": 1.0, "b": 2.0})
+        assert r.name == "sample"
         assert r.name_is_auto is True
 
     def test_unnamed_record_array_is_auto(self):
@@ -158,10 +160,12 @@ class TestNameIsAuto:
         # transform that changes the field set must re-derive it — the same
         # rule ``map`` follows. Keeping the pre-edit name would advertise
         # fields that no longer exist.
-        r = _auto_record({"a": jnp.array(1.0), "b": jnp.array(2.0)})
+        r = _auto_record("record(a,b)", {"a": jnp.array(1.0), "b": jnp.array(2.0)})
         assert r.without("b").name == "record(a)"
         assert r.map(lambda x: x).name == "record(a,b)"
-        merged = _auto_record({"a": jnp.array(1.0)}).merge(_auto_record({"c": jnp.array(3.0)}))
+        merged = _auto_record("record(a)", {"a": jnp.array(1.0)}).merge(
+            _auto_record("record(c)", {"c": jnp.array(3.0)})
+        )
         assert merged.name == "record(a,c)"
         assert r.with_path_names(a="z").name == "record(z,b)"
 
@@ -180,13 +184,15 @@ class TestNameIsAuto:
     def test_nested_auto_name_derives_from_top_level_keys(self):
         # The derived name uses top-level field keys (not full leaf paths),
         # so every transform agrees regardless of nesting depth.
-        nested = _auto_record({"a": _auto_record({"b": jnp.array(1.0), "c": jnp.array(2.0)})})
+        nested = _auto_record(
+            "record(a)", {"a": _auto_record("a", {"b": jnp.array(1.0), "c": jnp.array(2.0)})}
+        )
         assert nested.name == "record(a)"
         assert nested.with_path_names({"a/b": "z"}).name == "record(a)"
         assert nested.map(lambda x: x).name == "record(a)"
 
     def test_name_is_auto_survives_record_pickle(self):
-        auto = _auto_record({"a": 1.0})
+        auto = _auto_record("record(a)", {"a": 1.0})
         named = Record("mine", a=1.0)
         assert pickle.loads(pickle.dumps(auto)).name_is_auto is True
         assert pickle.loads(pickle.dumps(named)).name_is_auto is False
@@ -206,7 +212,7 @@ class TestWithName:
         assert n.name == "x"
 
     def test_with_name_clears_auto_flag(self):
-        r = _auto_record({"a": 1.0})  # operation-derived (auto) name
+        r = _auto_record("record(a)", {"a": 1.0})  # operation-derived (auto) name
         assert r.name_is_auto is True
         r2 = r.with_name("mine")
         assert r2.name == "mine"
