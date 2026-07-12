@@ -449,6 +449,17 @@ class Record(NamedTree, Tracked, Annotated):
             event_template = EventTemplate.infer_from(field_map)
         else:
             self._validate_event_template(event_template)
+            # Store fields in the template's field order so iteration,
+            # ``values()``, ``from_field_values``, and pytree unflatten all
+            # agree on one canonical order (the template is authoritative).
+            # Validation above confirmed the key sets match; when the template
+            # was inferred the order already matches, so this only reorders a
+            # record built with an explicitly out-of-order template — matching
+            # how ``RecordArray`` canonicalizes to its template.
+            if tuple(field_map) != tuple(event_template.children):
+                object.__setattr__(
+                    self, "_tree", {k: field_map[k] for k in event_template.children}
+                )
         object.__setattr__(self, "_event_template", event_template)
 
     @staticmethod
@@ -888,17 +899,23 @@ class Record(NamedTree, Tracked, Annotated):
         """Coerce *x* to Record if it isn't already.
 
         - ``Record`` → pass through (any *name* is ignored)
-        - ``dict`` → its entries become the fields
+        - ``dict`` → its entries become the fields; a nested ``dict`` value
+          becomes a nested subtree (mappings are never leaves)
         - anything else → a single-field record keyed ``data``
 
         A freshly wrapped value is named *name* when given; otherwise its
-        name is derived from the resulting field keys and marked auto.
+        name is derived from the top-level field keys and marked auto.
         """
         if isinstance(x, cls):
             return x
-        fields = dict(x) if isinstance(x, dict) else {"data": x}
+        if isinstance(x, dict):
+            fields = cls._flatten_paths(x)
+            derived = _derived_record_name(x)
+        else:
+            fields = {"data": x}
+            derived = _derived_record_name(fields)
         if name is None:
-            return cls(_derived_record_name(fields), fields, name_is_auto=True)
+            return cls(derived, fields, name_is_auto=True)
         return cls(name, fields)
 
     # -- Constructors -------------------------------------------------------

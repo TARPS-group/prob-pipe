@@ -335,6 +335,17 @@ class TestStorage:
         assert edited["y"] is da
         assert not isinstance(v.replace(z=jnp.array(2.0)), NumericRecord)
 
+    def test_backend_leaf_gives_non_numeric_template(self):
+        # A verbatim backend leaf is opaque to inference, so a plain Record
+        # holding one carries a plain (non-numeric) template — the template's
+        # numericness stays in step with the record's own class.
+        from probpipe.core.event_template import NumericEventTemplate
+
+        xr = pytest.importorskip("xarray")
+        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"])
+        v = Record("r", y=da)
+        assert not isinstance(v.event_template, NumericEventTemplate)
+
 
 class TestNumericAPIOnRecord:
     """The numeric-1-D APIs live on NumericRecord, not on Record.
@@ -397,19 +408,39 @@ class TestGeneralDecomposition:
         assert Record.from_field_values(v.name, v.event_template, v.values()) == v
 
     def test_roundtrip_with_backend_leaf_stays_plain(self):
-        # A verbatim backend leaf (xarray) keeps its plain-Record class
-        # across the round-trip. Its inferred template is numeric, but
-        # re-threading it must not promote and coerce the leaf — that would
-        # change the concrete type and break equality.
+        # A verbatim backend leaf (xarray) keeps its plain-Record class and a
+        # non-numeric template across the round-trip: re-threading the template
+        # must not promote and coerce the leaf (that would change the concrete
+        # type and break equality).
         from probpipe import NumericRecord
+        from probpipe.core.event_template import NumericEventTemplate
 
         xr = pytest.importorskip("xarray")
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
         v = Record("obs", x=da)
         assert not isinstance(v, NumericRecord)
+        assert not isinstance(v.event_template, NumericEventTemplate)
         rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
         assert type(rebuilt) is type(v)
         assert rebuilt == v
+
+    def test_roundtrip_with_out_of_order_template(self):
+        # ``values()`` yields in canonical order and ``from_field_values`` walks
+        # the template in that same order, so a record built with an explicitly
+        # out-of-order template round-trips without transposing field values.
+        v = Record("r", {"b": 2.0, "a": 1.0}, event_template=EventTemplate(a=(), b=()))
+        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        assert rebuilt == v
+        assert float(rebuilt["a"]) == 1.0
+        assert float(rebuilt["b"]) == 2.0
+
+    def test_roundtrip_preserves_user_name(self):
+        # ``==`` ignores the name, so assert name fidelity separately: the
+        # reconstructed record carries exactly the name passed in.
+        v = Record("mine", theta=Record("theta", loc=jnp.array([0.0, 1.0]), label="p"), tag="t")
+        rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
+        assert rebuilt.name == "mine"
+        assert rebuilt.name_is_auto is False
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord
@@ -511,6 +542,14 @@ class TestPyTree:
         v2 = jax.tree.map(lambda x: x, v)
         assert float(v2["a"]) == 1.0
         assert float(v2["b"]) == 2.0
+
+    def test_tree_roundtrip_equals_out_of_order_template(self):
+        # Storage is canonicalized to template order at construction, so a
+        # flatten/unflatten round-trip reproduces an equal record (equality is
+        # order-sensitive) rather than one whose fields silently reordered.
+        v = Record("r", {"b": 2.0, "a": 1.0}, event_template=EventTemplate(a=(), b=()))
+        leaves, treedef = jax.tree_util.tree_flatten(v)
+        assert jax.tree_util.tree_unflatten(treedef, leaves) == v
 
     def test_jit(self):
         v = Record("r", a=1.0, b=2.0)
@@ -645,6 +684,14 @@ class TestEnsure:
         v = Record.ensure({"a": 1.0, "b": 2.0})
         assert isinstance(v, Record)
         assert v.fields == ("a", "b")
+
+    def test_nested_dict_explodes_into_subtree(self):
+        # A nested dict value denotes tree structure (mappings are never
+        # leaves): it becomes a nested subtree, not a rejected mapping leaf.
+        v = Record.ensure({"summary": {"mean": 1.0, "count": 2.0}, "x": 3.0})
+        assert isinstance(v, Record)
+        assert list(v.keys()) == ["summary/mean", "summary/count", "x"]
+        assert v.name == "record(summary,x)"
 
     def test_array_coercion(self):
         v = Record.ensure(jnp.array([1.0, 2.0]))

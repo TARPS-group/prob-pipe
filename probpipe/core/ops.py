@@ -426,7 +426,7 @@ def condition_on(
         # Positional (backward compatible):
         condition_on(model, y_obs)
 
-        # Named data kwargs — bundled into Record(X=..., y=...):
+        # Named data kwargs — bundled into a record with fields X and y:
         condition_on.with_options(n_broadcast_samples=16)(
             model, X=bootstrap["X"], y=bootstrap["y"],
         )

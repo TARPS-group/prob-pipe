@@ -677,7 +677,7 @@ class TestRecordDataUnpacking:
         return m
 
     def test_record_input_unpacked_by_field_name(self):
-        """A ``Record(X=..., y=...)`` populates both observed slots."""
+        """A ``Record("data", X=..., y=...)`` populates both observed slots."""
         from probpipe import Record
 
         rng = np.random.RandomState(0)

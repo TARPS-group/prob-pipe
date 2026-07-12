@@ -122,7 +122,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Record` / `NumericRecord` construction is name-first, and all-numeric
   records auto-promote (#338, breaking).** The constructors are now
-  `Record(name, fields=None, /, *, event_template=None, **kw_fields)` — the
+  `Record(name, fields=None, /, *, event_template=None, name_is_auto=False,
+  **kw_fields)` — the
   record's name is a required first positional argument, and the old `name=`
   keyword and nameless forms are removed. `Record(...)` whose fields are all
   numeric (bare arrays and scalars, no backend metadata) returns a

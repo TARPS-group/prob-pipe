@@ -796,6 +796,7 @@ class EventTemplate(NamedTree):
         ValueError
             If *value* is an empty mapping (a template needs at least one field).
         """
+        from ._array_backend import aux_for
         from .record import Record
 
         if isinstance(value, Record):
@@ -804,11 +805,20 @@ class EventTemplate(NamedTree):
             raise TypeError(
                 f"infer_from expects a Record or a mapping of fields, got {type(value).__name__}."
             )
-        specs: dict[str, _FieldSpecInput] = {}
-        for name, val in value.items():
-            specs[name] = (
-                val.event_template if isinstance(val, Record) else _full_array_shape_or_none(val)
-            )
+
+        def _leaf_spec(val: Any) -> _FieldSpecInput:
+            if isinstance(val, Record):
+                return val.event_template
+            # A backend-typed leaf (xarray / pandas) is stored verbatim in a
+            # plain ``Record`` — coercing it to a bare array is lossy — so it
+            # is opaque here, keeping the inferred template non-numeric and in
+            # step with the value's own class (a numeric-looking shape/dtype
+            # would otherwise mislabel it as an ``ArraySpec``).
+            if aux_for(val) is not None:
+                return None
+            return _full_array_shape_or_none(val)
+
+        specs: dict[str, _FieldSpecInput] = {name: _leaf_spec(val) for name, val in value.items()}
         return EventTemplate(specs)
 
     # -- Repr ---------------------------------------------------------------
@@ -1013,7 +1023,8 @@ class NumericEventTemplate(EventTemplate):
         Raises
         ------
         ValueError
-            If *vec*'s trailing axis is not :attr:`vector_size`.
+            If *vec* is 0-dimensional, or its trailing axis is not
+            :attr:`vector_size`.
 
         Notes
         -----
@@ -1025,6 +1036,11 @@ class NumericEventTemplate(EventTemplate):
         to_vector : Serialize a value to a flat vector (the inverse).
         """
         vec = jnp.asarray(vec)
+        if vec.ndim == 0:
+            raise ValueError(
+                f"{type(self).__name__}.from_vector: vec must have a trailing "
+                f"axis of size vector_size={self.vector_size}; got a 0-d scalar."
+            )
         if vec.shape[-1] != self.vector_size:
             raise ValueError(
                 f"{type(self).__name__}.from_vector: vec trailing axis is "

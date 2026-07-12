@@ -1288,6 +1288,13 @@ class TestFromVectorRoundTripSingle:
         v = tpl.from_vector(jnp.arange(4.0))
         assert isinstance(v, NumericRecord)
 
+    def test_zero_d_vec_raises_value_error(self):
+        # A 0-d scalar has no trailing axis; raise the documented ValueError
+        # rather than an IndexError from indexing ``vec.shape[-1]``.
+        tpl = EventTemplate(x=())
+        with pytest.raises(ValueError, match="0-d scalar"):
+            tpl.from_vector(5.0)
+
 
 class TestFromVectorRoundTripBatched:
     def test_single_batch_axis(self):

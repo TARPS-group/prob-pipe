@@ -131,13 +131,21 @@ class RecordArray(Record):
     ) -> OrderedDict[str, Any]:
         """Hook for subclasses to validate / coerce leaves at construction.
 
-        The base implementation is a no-op — ``RecordArray`` accepts any
-        leaves, matching the permissive storage policy of ``Record``.
+        The base implementation enforces only the substrate-wide rule that a
+        mapping is never a leaf (a mapping value denotes tree structure);
+        otherwise ``RecordArray`` accepts any leaves, matching the permissive
+        storage policy of ``Record``.
 
         Subclasses may return a new ``OrderedDict`` with the same keys
         (in template order) and optionally coerced values, or raise
         ``TypeError`` / ``ValueError`` on invalid input.
         """
+        for field_name, value in store.items():
+            if isinstance(value, Mapping):
+                raise TypeError(
+                    f"field {field_name!r} is a mapping ({type(value).__name__}); "
+                    f"mappings denote tree structure and are never leaves"
+                )
         return store
 
     # ``__setattr__`` / ``__delattr__`` / ``.name`` / ``.provenance`` /

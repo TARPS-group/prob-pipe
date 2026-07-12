@@ -180,12 +180,12 @@ def _replicated_statistics_summary(
     return summary
 
 
-def _dataset_from_record(record: Mapping[str, Any]) -> xr.Dataset:
+def _dataset_from_payload(payload: Mapping[str, Any]) -> xr.Dataset:
     """Return the xarray Dataset stored in a diagnostic payload."""
-    ds = record["dataset"]
+    ds = payload["dataset"]
     if not isinstance(ds, xr.Dataset):
         raise TypeError(
-            f"Expected record['dataset'] to be an xarray.Dataset, got {type(ds).__name__}."
+            f"Expected payload['dataset'] to be an xarray.Dataset, got {type(ds).__name__}."
         )
     return ds
 
@@ -388,10 +388,10 @@ def _ppc_op(
 # ---------------------------------------------------------------------
 
 
-def _write_ppc_record(posterior: Distribution, record: Mapping[str, Any]) -> None:
+def _write_ppc_payload(posterior: Distribution, payload: Mapping[str, Any]) -> None:
     """Write a PPC diagnostic payload into ``posterior._annotations``."""
-    posterior_predictive_dataset = record["posterior_predictive_dataset"]
-    observed_data_dataset = record["observed_data_dataset"]
+    posterior_predictive_dataset = payload["posterior_predictive_dataset"]
+    observed_data_dataset = payload["observed_data_dataset"]
 
     if posterior_predictive_dataset is not None:
         _add_group(
@@ -410,7 +410,7 @@ def _write_ppc_record(posterior: Distribution, record: Mapping[str, Any]) -> Non
     _add_group(
         posterior,
         "diagnostics/runs/ppc",
-        _dataset_from_record(record),
+        _dataset_from_payload(payload),
     )
 
 
@@ -449,7 +449,7 @@ def add_ppc(
     key : PRNGKey or None
         JAX PRNG key.
     """
-    record = _ppc_op(
+    payload = _ppc_op(
         posterior,
         test_fns=test_fns,
         observed_data=observed_data,
@@ -459,6 +459,6 @@ def add_ppc(
         key=key,
     )
 
-    _write_ppc_record(posterior, record)
+    _write_ppc_payload(posterior, payload)
 
     return None

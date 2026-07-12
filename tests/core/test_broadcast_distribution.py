@@ -876,6 +876,21 @@ class TestCoerceOutput:
         np.testing.assert_allclose(float(out), 3.14)
         assert out.provenance is None
 
+    def test_wrap_mode_explodes_nested_dict_return(self):
+        # A workflow return of a nested dict denotes tree structure: it wraps
+        # into a nested Record (mappings are never leaves), not a TypeError.
+        from probpipe import Record
+        from probpipe.core._workflow_result import _coerce_output
+
+        out = _coerce_output(
+            {"summary": {"mean": 1.0, "count": 2.0}, "x": 3.0},
+            broadcast_mode="wrap",
+            provenance=None,
+            field_name="f",
+        )
+        assert isinstance(out, Record)
+        assert list(out.keys()) == ["summary/mean", "summary/count", "x"]
+
     def test_stack_mode_attaches_to_recordarray(self):
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._workflow_result import _coerce_output

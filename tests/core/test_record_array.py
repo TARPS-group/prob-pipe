@@ -62,6 +62,13 @@ class TestRecordArrayConstruction:
         with pytest.raises(ValueError, match="at least one"):
             RecordArray(batch_shape=(5,), template=tpl)
 
+    def test_mapping_leaf_rejected(self):
+        # Mappings are never leaves — the substrate rule holds on the batch
+        # type too, even though its constructor bypasses Record.__init__.
+        tpl = EventTemplate(x=None)
+        with pytest.raises(TypeError, match="mappings denote tree structure"):
+            RecordArray({"x": {"a": 1, "b": 2}}, batch_shape=(), template=tpl)
+
     def test_zero_length_batch(self):
         """batch_shape=(0,) is a valid edge case (no samples)."""
         tpl = EventTemplate(x=())

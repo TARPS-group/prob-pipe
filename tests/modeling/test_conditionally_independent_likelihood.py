@@ -130,7 +130,7 @@ class TestGLMLikelihood:
 
     def test_per_datum_requires_record_datum(self, bernoulli_glm):
         """A non-Record datum raises ``TypeError`` with a message
-        pointing at the expected ``Record(X=..., y=...)`` form."""
+        pointing at the expected ``Record("datum", X=..., y=...)`` form."""
         glm, _X = bernoulli_glm
         params = jnp.array([0.5, -0.5, 0.25])
         with pytest.raises(TypeError, match="Record"):

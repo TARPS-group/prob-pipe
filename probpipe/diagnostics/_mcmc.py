@@ -199,10 +199,10 @@ def _ess_warnings(
     return msgs
 
 
-def _emit_record_warnings(record: Mapping[str, Any]) -> None:
+def _emit_payload_warnings(payload: Mapping[str, Any]) -> None:
     """Emit warnings stored in a diagnostic payload."""
     try:
-        warnings_list = record["warnings"]
+        warnings_list = payload["warnings"]
     except Exception:
         return
 
@@ -218,10 +218,10 @@ def _json_warnings(warnings_list: list[str]) -> str:
     return json.dumps(list(warnings_list))
 
 
-def _record_kind(record: Mapping[str, Any]) -> str:
+def _payload_kind(payload: Mapping[str, Any]) -> str:
     """Return the diagnostic kind from a payload mapping."""
     try:
-        return str(record["kind"])
+        return str(payload["kind"])
     except Exception as exc:
         raise ValueError("Diagnostic payload is missing required key 'kind'.") from exc
 
@@ -417,21 +417,21 @@ def _compute_mcse_op(
 # ---------------------------------------------------------------------------
 
 
-def _write_mcmc_record(
+def _write_mcmc_payload(
     posterior: ApproximateDistribution,
-    record: Mapping[str, Any],
+    payload: Mapping[str, Any],
 ) -> None:
     """Write an MCMC diagnostic payload into ``posterior._annotations``."""
     from ._datatree import _write_mcmc_field
 
-    kind = _record_kind(record)
+    kind = _payload_kind(payload)
 
     if kind == "rhat":
         _write_mcmc_field(
             posterior,
             "rhat",
-            record["values"],
-            attrs=record["attrs"],
+            payload["values"],
+            attrs=payload["attrs"],
         )
         return None
 
@@ -439,14 +439,14 @@ def _write_mcmc_record(
         _write_mcmc_field(
             posterior,
             "ess_bulk",
-            record["bulk"],
-            attrs=record["bulk_attrs"],
+            payload["bulk"],
+            attrs=payload["bulk_attrs"],
         )
         _write_mcmc_field(
             posterior,
             "ess_tail",
-            record["tail"],
-            attrs=record["tail_attrs"],
+            payload["tail"],
+            attrs=payload["tail_attrs"],
         )
         return None
 
@@ -454,21 +454,21 @@ def _write_mcmc_record(
         _write_mcmc_field(
             posterior,
             "mcse_mean",
-            record["mean"],
-            attrs=record["mean_attrs"],
+            payload["mean"],
+            attrs=payload["mean_attrs"],
         )
         _write_mcmc_field(
             posterior,
             "mcse_sd",
-            record["sd"],
-            attrs=record["sd_attrs"],
+            payload["sd"],
+            attrs=payload["sd_attrs"],
         )
         return None
 
     if kind == "mcmc":
-        records = record["records"]
+        records = payload["records"]
         for child in records.values():
-            _write_mcmc_record(posterior, child)
+            _write_mcmc_payload(posterior, child)
         return None
 
     raise ValueError(f"Unknown MCMC diagnostic payload kind: {kind!r}")
@@ -498,14 +498,14 @@ def add_rhat(
     if not force and _mcmc_has_field(posterior, "rhat"):
         return None
 
-    record = _compute_rhat_op(
+    payload = _compute_rhat_op(
         posterior,
         method=method,
         threshold=threshold,
     )
 
-    _emit_record_warnings(record)
-    _write_mcmc_record(posterior, record)
+    _emit_payload_warnings(payload)
+    _write_mcmc_payload(posterior, payload)
 
     return None
 
@@ -533,13 +533,13 @@ def add_ess(
     if not force and _mcmc_has_field(posterior, "ess_bulk"):
         return None
 
-    record = _compute_ess_op(
+    payload = _compute_ess_op(
         posterior,
         threshold=threshold,
     )
 
-    _emit_record_warnings(record)
-    _write_mcmc_record(posterior, record)
+    _emit_payload_warnings(payload)
+    _write_mcmc_payload(posterior, payload)
 
     return None
 
@@ -565,10 +565,10 @@ def add_mcse(
     if not force and _mcmc_has_field(posterior, "mcse_mean"):
         return None
 
-    record = _compute_mcse_op(posterior)
+    payload = _compute_mcse_op(posterior)
 
-    _emit_record_warnings(record)
-    _write_mcmc_record(posterior, record)
+    _emit_payload_warnings(payload)
+    _write_mcmc_payload(posterior, payload)
 
     return None
 

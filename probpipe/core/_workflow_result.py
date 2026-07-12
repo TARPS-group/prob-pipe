@@ -16,7 +16,7 @@ from ._broadcast_distributions import _make_stack
 from ._distribution_base import Distribution
 from ._numeric_record import _is_numeric_leaf
 from .provenance import Provenance
-from .record import Record, _auto_record
+from .record import Record, _auto_record, _derived_record_name
 
 # Broadcast modes: how a value reached ``_coerce_output``. Named
 # constants so callsites use the same spelling and typos fail loudly.
@@ -38,8 +38,9 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     - Already-structured values (``Record`` / ``RecordArray`` /
       ``Distribution``) pass through unchanged — their domain field
       names are preserved.
-    - ``dict`` (non-empty) → ``_auto_record(dict(value))``: caller's keys
-      stay addressable as field names.
+    - ``dict`` (non-empty) → a ``Record`` keyed by the caller's keys; a
+      nested ``dict`` value denotes tree structure and becomes a nested
+      subtree (mappings are never leaves), not a single opaque field.
     - Non-empty ``list`` / ``tuple`` → ``_make_stack``: assembles a
       ``DistributionArray`` / ``RecordArray`` / ``NumericRecordArray``
       matching the inner element type.
@@ -55,7 +56,9 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     if isinstance(value, (Distribution, Record)):
         return value
     if isinstance(value, dict) and value:
-        return _auto_record(dict(value))
+        # Explode nested dicts into subtrees (mappings are never leaves); the
+        # name follows the top-level keys the caller wrote.
+        return _auto_record(Record._flatten_paths(value), name=_derived_record_name(value))
     if isinstance(value, (list, tuple)) and value:
         try:
             return _make_stack(list(value), n=len(value), field_name=field_name)

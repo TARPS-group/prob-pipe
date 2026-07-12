@@ -89,6 +89,7 @@ from probpipe.core.event_template import (
     OpaqueSpec,
     ValueSpec,
 )
+from probpipe.core.named_tree import NamedTree
 from probpipe.core.node import (
     Module,
     WorkflowFunction,
@@ -255,6 +256,7 @@ __all__ = [
     "Multinomial",
     # Multivariate
     "MultivariateNormal",
+    "NamedTree",
     "NegativeBinomial",
     # Continuous
     "Normal",

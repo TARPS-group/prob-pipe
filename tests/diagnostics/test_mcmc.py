@@ -11,10 +11,10 @@ import probpipe.diagnostics._mcmc as mcmc
 from probpipe.diagnostics._datatree_store import _mcmc_has_field
 from probpipe.diagnostics._mcmc import (
     _check_arviz,
-    _emit_record_warnings,
+    _emit_payload_warnings,
     _ess_warnings,
     _rhat_warnings,
-    _write_mcmc_record,
+    _write_mcmc_payload,
     add_ess,
     add_mcmc_diagnostics,
     add_mcse,
@@ -206,15 +206,15 @@ class TestMcmcHelpers:
         assert any("bulk" in msg and "alpha" in msg for msg in ess_messages)
         assert any("tail" in msg and "beta" in msg for msg in ess_messages)
 
-    def test_emit_record_warnings_handles_missing_and_none_warning_fields(self):
+    def test_emit_payload_warnings_handles_missing_and_none_warning_fields(self):
         class _NoWarnings:
             def __getitem__(self, key):
                 raise KeyError(key)
 
-        _emit_record_warnings(_NoWarnings())
-        _emit_record_warnings({"kind": "test", "warnings": None})
+        _emit_payload_warnings(_NoWarnings())
+        _emit_payload_warnings({"kind": "test", "warnings": None})
 
-    def test_write_mcmc_record_handles_composite_and_unknown_records(self, posterior):
+    def test_write_mcmc_payload_handles_composite_and_unknown_records(self, posterior):
         child = {
             "kind": "rhat",
             "values": {"alpha": 1.0},
@@ -222,19 +222,19 @@ class TestMcmcHelpers:
         }
         composite = {"kind": "mcmc", "records": {"rhat": child}}
 
-        _write_mcmc_record(posterior, composite)
+        _write_mcmc_payload(posterior, composite)
 
         assert _mcmc_has_field(posterior, "rhat")
 
         with pytest.raises(ValueError, match="Unknown MCMC"):
-            _write_mcmc_record(posterior, {"kind": "bogus"})
+            _write_mcmc_payload(posterior, {"kind": "bogus"})
 
         class _MissingKind:
             def __getitem__(self, key):
                 raise KeyError(key)
 
         with pytest.raises(ValueError, match="missing required key"):
-            _write_mcmc_record(posterior, _MissingKind())
+            _write_mcmc_payload(posterior, _MissingKind())
 
 
 # ---------------------------------------------------------------------------
