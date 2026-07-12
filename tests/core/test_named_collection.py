@@ -59,11 +59,12 @@ class TestPathKeyedConstruction:
         with pytest.raises(TypeError):
             Record("r", {42: 1.0})
 
-    def test_mapping_value_is_rejected_as_leaf(self):
+    def test_mapping_value_materializes_as_subtree(self):
         # Mappings are never leaves: a mapping value denotes tree structure,
-        # so the constructor rejects it rather than storing an opaque leaf.
-        with pytest.raises(TypeError, match="never leaves"):
-            Record("r", meta={"seed": 0}, x=1.0)
+        # so the constructor materialises it into a nested subtree rather than
+        # storing an opaque leaf.
+        r = Record("r", meta={"seed": 0}, x=1.0)
+        assert tuple(r.keys()) == ("meta/seed", "x")
 
 
 # ---------------------------------------------------------------------------

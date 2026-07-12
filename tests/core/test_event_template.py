@@ -802,10 +802,11 @@ class TestOpaqueSpecIsValid:
         assert not OpaqueSpec().is_valid(MappingProxyType({"a": 1}))
 
     def test_record_layer_agrees_mappings_are_never_leaves(self):
-        # The record layer enforces the same rule as the spec: a mapping
-        # value denotes tree structure, so storing one as a leaf raises.
-        with pytest.raises(TypeError, match="never leaves"):
-            Record("r", x={"a": 1})
+        # The record layer honours the same rule as the spec: a mapping value
+        # denotes tree structure, so it is materialised into a subtree rather
+        # than stored as an opaque leaf.
+        r = Record("r", x={"a": 1})
+        assert tuple(r.keys()) == ("x/a",)
 
     def test_meta_not_checked(self):
         assert OpaqueSpec(meta="tag").is_valid("anything")

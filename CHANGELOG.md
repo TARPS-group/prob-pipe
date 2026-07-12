@@ -18,10 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `with_path_names(old=new, ...)` — rename leaves or whole subtrees by path,
   or by bare name when unique in the tree. Each family declares its leaf type
   (`ValueSpec` for templates; arbitrary values for records), checked at
-  construction, and **a `Mapping` is never a leaf**: nested dicts always
-  decompose into nested subtrees, and storing a mapping as a field value
-  raises `TypeError`. Diagnostics payloads, previously carried as Records
-  with dict-valued fields, are now plain dicts.
+  construction, and **a `Mapping` is never a leaf**: a dict field value is
+  always materialised into a nested subtree, never stored as an opaque leaf.
+  Diagnostics payloads, previously carried as Records with dict-valued fields,
+  are now plain dicts.
 
 - **`Tracked` / `Annotated` identity-and-metadata mixins (#336).** New
   `probpipe.core.tracked` module defining the shared identity attributes and methods every

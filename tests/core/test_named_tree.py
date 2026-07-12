@@ -162,18 +162,34 @@ class TestWithPathNames:
 
 
 class TestMappingsAreNeverLeaves:
-    def test_constructor_rejects_mapping_leaf(self):
-        with pytest.raises(TypeError, match="never leaves"):
-            Record("r", meta={"seed": 0})
+    def test_all_numeric_mapping_value_materializes_and_promotes(self):
+        # A dict field value is nested structure, not a leaf. When every leaf
+        # beneath it is numeric the result promotes to NumericRecord and the
+        # leaves coerce to jax arrays (same as any all-numeric construction).
+        r = Record("r", cfg={"a": 1.0, "b": 2.0}, x=3.0)
+        assert type(r) is NumericRecord
+        assert tuple(r.keys()) == ("cfg/a", "cfg/b", "x")
+        assert isinstance(r["cfg/a"], jnp.ndarray)
+        assert isinstance(r.at_path("cfg"), NumericRecord)
 
-    def test_nested_constructor_rejects_mapping_leaf(self):
-        with pytest.raises(TypeError, match="never leaves"):
-            Record("r", g=Record("r", meta={"seed": 0}))
+    def test_mapping_value_with_opaque_leaf_stays_plain(self):
+        # A non-numeric leaf beneath the materialised subtree keeps the record a
+        # plain Record and stores that leaf verbatim (no coercion).
+        r = Record("r", cfg={"label": "horseshoe", "scale": 1.0})
+        assert type(r) is Record
+        assert tuple(r.keys()) == ("cfg/label", "cfg/scale")
+        assert r["cfg/label"] == "horseshoe"  # opaque leaf, stored as-is
+        assert isinstance(r.at_path("cfg"), Record)
 
-    def test_replace_rejects_mapping_leaf(self):
+    def test_multi_level_nested_mapping_materializes(self):
+        # Nesting recurses to arbitrary depth.
+        r = Record("r", a={"b": {"c": 1.0}}, x=2.0)
+        assert tuple(r.keys()) == ("a/b/c", "x")
+
+    def test_replace_materializes_mapping_value(self):
         r = Record("r", a=1.0)
-        with pytest.raises(TypeError, match="never leaves"):
-            r.replace(a={"seed": 0})
+        r2 = r.replace(a={"seed": 0})
+        assert tuple(r2.keys()) == ("a/seed",)
 
     def test_from_nested_dict_reads_mappings_as_structure(self):
         r = Record.from_nested_dict("r", {"a": {"b": 1.0}, "c": 2.0})

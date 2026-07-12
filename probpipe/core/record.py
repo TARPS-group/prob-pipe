@@ -46,7 +46,7 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from .event_template import EventTemplate, NumericEventTemplate, _full_array_shape_or_none
-from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _PathSubtree, _unflatten_paths
+from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
 from .tracked import Annotated, Tracked
 
 if TYPE_CHECKING:
@@ -72,9 +72,9 @@ def _is_numeric_field_value(value: Any) -> bool:
     ``NumericRecord(...)``). A nested record counts iff it is a
     ``NumericRecord``; a batched child never is.
     """
-    if isinstance(value, _PathSubtree):
-        # Structural nesting from path-keyed construction: numeric iff every
-        # value beneath it is.
+    if isinstance(value, Mapping):
+        # A mapping value is nested structure (materialised into a child):
+        # numeric iff every value beneath it is.
         return bool(value) and all(_is_numeric_field_value(v) for v in value.values())
     if isinstance(value, Record):
         from ._numeric_record import NumericRecord
@@ -273,7 +273,9 @@ class Record(NamedTree, Tracked, Annotated):
         Named values, stored unchanged: ``jax`` / ``numpy`` arrays, Python
         scalars, strings, ``xarray`` / ``pandas`` objects, nested ``Record``s,
         or any opaque object. At least one field is required. A nested record
-        takes its name from the field key it sits under.
+        takes its name from the field key it sits under. A ``Mapping`` value
+        (e.g. a ``dict``) is never a leaf — it is materialised into a nested
+        subtree.
     name_is_auto : bool, optional
         ``True`` when *name* was derived by the producing operation rather
         than supplied by the user. Defaults to ``False``.
@@ -292,8 +294,7 @@ class Record(NamedTree, Tracked, Annotated):
         keyword fields are passed, or a supplied ``event_template`` does not
         match the field names.
     TypeError
-        If a field value is a ``Mapping`` — mappings denote tree structure
-        and are never leaves.
+        If a field key is not a string.
 
     Notes
     -----
@@ -405,7 +406,9 @@ class Record(NamedTree, Tracked, Annotated):
                 if isinstance(template_child, EventTemplate):
                     sub_template = template_child
             try:
-                if isinstance(value, _PathSubtree):
+                if isinstance(value, Mapping):
+                    # A mapping value is nested tree structure, never a leaf:
+                    # materialise it into a child collection.
                     field_map[field_name] = type(self)(
                         field_name, value, event_template=sub_template, name_is_auto=True
                     )

@@ -19,9 +19,10 @@ The standardized terminology, shared by every family built on this class:
 - The **canonical order** of a tree is a depth-first walk visiting children in
   insertion order.
 
-Mappings are never leaves: a mapping value denotes tree structure, so
-construction rejects a mapping-valued leaf and :meth:`NamedTree.from_nested_dict`
-reads every mapping as a subtree — the two agree, and serialization round-trips.
+Mappings are never leaves: a mapping value denotes tree structure, so both
+construction and :meth:`NamedTree.from_nested_dict` materialise a mapping
+value into a nested subtree — never a single opaque leaf — and serialization
+round-trips.
 """
 
 from __future__ import annotations
@@ -48,17 +49,6 @@ def _check_no_path_sep(name: str) -> None:
         )
 
 
-class _PathSubtree(dict):
-    """Marker for a nested mapping produced by path-key unflattening.
-
-    A ``_PathSubtree`` is the structural nesting that ``/``-delimited keys
-    denote, so a constructor materialises it into a child collection. It is
-    tagged so it is distinguishable from a plain ``dict`` passed as a field
-    value — which is never a leaf and is rejected at construction (mappings
-    denote tree structure).
-    """
-
-
 def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
     """Explode a path-keyed mapping into a nested ordered mapping.
 
@@ -66,9 +56,8 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
     denotes nesting (``{"a/b": x}`` becomes ``{"a": {"b": x}}``). Keys are read
     in order; the result preserves the **first-appearance order** of each
     distinct leading segment (recursively), which is the canonical field order.
-    Structural nesting is tagged with :class:`_PathSubtree` so a constructor can
-    tell it apart from a plain ``dict`` field value (which is never a leaf and
-    is rejected at construction).
+    Nesting is a plain nested ``dict``; a constructor materialises any mapping
+    value into a child collection (a mapping is never a leaf).
 
     Raises
     ------
@@ -109,7 +98,7 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
             is_prefix[head] = False
     result: dict[str, Any] = {}
     for head, val in groups.items():
-        result[head] = _PathSubtree(_unflatten_paths(val)) if is_prefix[head] else val
+        result[head] = _unflatten_paths(val) if is_prefix[head] else val
     return result
 
 
@@ -212,11 +201,11 @@ class NamedTree:
     def _check_leaf(cls, path: str, value: Any) -> None:
         """Validate one leaf at construction time.
 
-        Enforces the two substrate-level leaf rules: a mapping is never a
-        leaf (a mapping value denotes tree structure, so storing one as a
-        field would break the ``from_nested_dict`` / ``to_nested_dict``
-        round-trip), and the leaf must be an instance of the family's
-        declared :meth:`_leaf_type`.
+        Checks that the leaf is an instance of the family's declared
+        :meth:`_leaf_type`. A mapping is never reached here: it denotes tree
+        structure, so a constructor materialises any mapping value into a
+        child collection before leaf validation (see the constructors and
+        :meth:`from_nested_dict`).
 
         Parameters
         ----------
@@ -228,15 +217,8 @@ class NamedTree:
         Raises
         ------
         TypeError
-            If *value* is a ``Mapping``, or does not satisfy
-            :meth:`_leaf_type`.
+            If *value* does not satisfy :meth:`_leaf_type`.
         """
-        if isinstance(value, Mapping):
-            raise TypeError(
-                f"field {path!r} is a mapping ({type(value).__name__}); mappings "
-                f"denote tree structure and are never leaves — nest the entries "
-                f"as fields (e.g. via from_nested_dict) instead"
-            )
         leaf_type = cls._leaf_type()
         if leaf_type is not object and not isinstance(value, leaf_type):
             raise TypeError(
@@ -767,8 +749,8 @@ class NamedTree:
 
         Every ``Mapping`` level becomes a subtree and every other value a
         leaf — mappings are never leaves, so this agrees with the constructor
-        (which rejects a mapping-valued leaf) and the export/import pair
-        round-trips faithfully.
+        (which materialises a mapping value into a subtree) and the
+        export/import pair round-trips faithfully.
 
         Parameters
         ----------

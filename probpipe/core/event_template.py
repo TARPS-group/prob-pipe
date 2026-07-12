@@ -62,7 +62,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from math import prod
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
@@ -73,12 +73,8 @@ from .named_tree import (
     _PATH_SEP,
     NamedTree,
     _check_no_path_sep,
-    _PathSubtree,
     _unflatten_paths,
 )
-
-if TYPE_CHECKING:
-    pass
 
 __all__ = [
     "ArraySpec",
@@ -237,9 +233,9 @@ class OpaqueSpec(ValueSpec):
 
         Notes
         -----
-        The record layer enforces the same rule: mappings are never leaves,
-        so :class:`~probpipe.Record` construction rejects a mapping-valued
-        field and ``from_nested_dict`` reads every mapping as a subtree.
+        The record layer honours the same rule: mappings are never leaves, so
+        :class:`~probpipe.Record` construction materialises a mapping field
+        value into a nested subtree (as ``from_nested_dict`` does).
         """
         return not isinstance(value, Mapping)
 
@@ -390,11 +386,12 @@ def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
 def _is_numeric_spec(spec: Any) -> bool:
     """A numeric leaf: an :class:`ArraySpec` or a (nested) :class:`NumericEventTemplate`.
 
-    A ``_PathSubtree`` (structural nesting from path-key unflattening, not yet
-    materialised) counts as numeric iff all of its own values are — so
-    auto-promotion sees through nesting introduced by ``/``-keys.
+    A mapping spec (nested structure, not yet materialised into a nested
+    template) counts as numeric iff all of its own values are — so
+    auto-promotion sees through nesting introduced by ``/``-keys or a nested
+    ``dict``.
     """
-    if isinstance(spec, _PathSubtree):
+    if isinstance(spec, Mapping):
         return _all_numeric(spec.values())
     return isinstance(spec, (ArraySpec, NumericEventTemplate))
 
@@ -589,7 +586,8 @@ class EventTemplate(NamedTree):
             raise ValueError(f"{type(self).__name__} requires at least one field")
         specs: dict[str, _FieldSpec] = {}
         for name, spec in nested.items():
-            if isinstance(spec, _PathSubtree):
+            if isinstance(spec, Mapping):
+                # A mapping spec is nested structure: materialise a subtree.
                 specs[name] = EventTemplate(spec)
             else:
                 try:

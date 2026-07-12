@@ -233,12 +233,11 @@ Two surfaces are documented exceptions, each pending its own follow-up:
   of one draw.
 
 **Mappings are never leaves.** A `Mapping` value denotes tree
-structure: nested dicts decompose into nested subtrees at
-construction (`from_nested_dict` recurses into every `Mapping`), and
-storing a mapping *as* a leaf raises `TypeError` — it would break the
-`from_nested_dict` / `to_nested_dict` round-trip. Code that needs to
-carry an opaque payload dict should pass the dict itself, not wrap it
-in a `Record`.
+structure: a dict field value is always materialised into a nested
+subtree, never stored as a single opaque leaf (both direct construction
+and `from_nested_dict` recurse into every `Mapping`). There is no way to
+carry an opaque payload dict inside a `Record`; use a non-mapping
+container if you need one leaf.
 
 **Renaming fields.** `with_path_names(old=new, ...)` returns a
 same-family tree with the given nodes (leaves or whole subtrees)
@@ -248,9 +247,9 @@ when the tree contains it more than once. It renames fields *within*
 the tree; renaming the object itself is `with_name`.
 
 When adding new Record-based containers, follow these conventions:
-preserve first-appearance order, reject `/` in field names, reject
-mappings as leaf values, key the mapping by leaf path, and accept the
-slash-delimited form in any string-keyed lookup.
+preserve first-appearance order, reject `/` in field names, materialize
+a mapping value into a nested subtree (never a leaf), key the mapping by
+leaf path, and accept the slash-delimited form in any string-keyed lookup.
 
 ### 1.11 Distribution iteration
 

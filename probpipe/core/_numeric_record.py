@@ -43,7 +43,7 @@ import numpy as np
 from ..custom_types import Array, ArrayLike
 from ._array_backend import aux_for
 from .event_template import EventTemplate, NumericEventTemplate, _is_numeric_dtype
-from .named_tree import _check_no_path_sep, _PathSubtree, _unflatten_paths
+from .named_tree import _check_no_path_sep, _unflatten_paths
 from .record import Record, _auto_record, _record_flatten
 
 __all__ = ["NumericRecord", "_is_numeric_leaf"]
@@ -218,7 +218,8 @@ class NumericRecord(Record):
         # keying aux by a "/"-path the storage tree cannot see would orphan it.
         raw_fields: dict[str, Any] = {}
         for field_name, value in raw_inputs.items():
-            if isinstance(value, _PathSubtree):
+            if isinstance(value, Mapping):
+                # A mapping value is nested structure: materialise the child.
                 sub_template: EventTemplate | None = None
                 if event_template is not None:
                     child = event_template.children.get(field_name)
