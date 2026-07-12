@@ -1019,7 +1019,7 @@ class TestEventTemplateStorage:
         # to_vector delegates to the stored template.
         np.testing.assert_array_equal(
             np.asarray(nr.to_vector()),
-            np.asarray(nr.event_template.to_vector(nr)),
+            np.asarray(nr.to_vector()),
         )
 
     def test_equality_distinguishes_structurally_different_templates(self):

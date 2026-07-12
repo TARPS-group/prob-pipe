@@ -548,19 +548,19 @@ class NumericRecordArray(RecordArray):
     def to_vector(self) -> jnp.ndarray:
         """Serialize each batch element to its 1-D vector.
 
-        Instance-level convenience for the numeric 1-D serialization whose
-        structural definition lives on :meth:`NumericEventTemplate.to_vector`:
-        delegates to this array's :attr:`template`. Returns a matrix of shape
-        ``(*batch_shape, vector_size)`` — one raveled vector per batch element,
-        leaves visited in canonical leaf order (insertion order, depth-first
-        into nested records). The inverse,
-        :meth:`NumericEventTemplate.from_vector`, reconstructs the batch.
+        Returns a matrix of shape ``(*batch_shape, vector_size)`` — one raveled
+        vector per batch element, leaves visited in canonical leaf order
+        (insertion order, depth-first into nested records). The inverse is
+        :meth:`from_vector`.
 
         Distinct from ``list(record.values())`` (which keeps each batched leaf
         whole); ``to_vector`` ravels and concatenates each element's event
         dimensions into a dense matrix.
         """
-        return self.template.to_vector(self)
+        leaves = [self[key] for key in self.event_template]
+        return jnp.concatenate(
+            [jnp.reshape(leaf, (*self.batch_shape, -1)) for leaf in leaves], axis=-1
+        )
 
     # -- Reductions ---------------------------------------------------------
 

@@ -238,7 +238,7 @@ class TestKeys:
         tpl = EventTemplate.infer_from(v)
         assert tuple(tpl.keys()) == ("x", "nested/a", "nested/b")
         # to_vector concatenates leaves in keys() order: x(2) | a(1) | b(2).
-        np.testing.assert_allclose(tpl.to_vector(v), [1.0, 2.0, 3.0, 4.0, 5.0])
+        np.testing.assert_allclose(v.to_vector(), [1.0, 2.0, 3.0, 4.0, 5.0])
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +363,14 @@ class TestInferFrom:
         assert tpl.fields == ("a", "b")
         assert tpl["a"] == ArraySpec(())
         assert tpl["b"] == ArraySpec(())
+
+    def test_nested_mapping_is_structure_not_opaque(self):
+        # A mapping is never a leaf: a nested dict value is inferred as a
+        # nested template (structure), not an opaque leaf spec — otherwise the
+        # inferred OpaqueSpec would reject the very dict it came from.
+        tpl = EventTemplate.infer_from({"cfg": {"lr": 0.1}, "x": 2.0})
+        assert tuple(tpl.keys()) == ("cfg/lr", "x")
+        assert not isinstance(tpl["cfg/lr"], OpaqueSpec)
 
     def test_mapping_input_inferred_field_by_field(self):
         # The non-Record branch: a bare mapping is inferred field by field
@@ -1210,76 +1218,68 @@ class TestNumericSubset:
 
 
 class TestToVector:
+    def test_to_vector_is_value_only_not_on_template(self):
+        # ``to_vector`` (value → vector) is a value operation per the design
+        # contract; the template must not carry it (that would make the
+        # template layer depend on the value type). ``from_vector`` — the
+        # template-driven reconstruction — stays on the template.
+        assert not hasattr(NumericEventTemplate, "to_vector")
+        assert hasattr(NumericEventTemplate, "from_vector")
+        nr = NumericRecord("nr", x=1.0, y=jnp.arange(3.0))
+        assert nr.event_template.from_vector(nr.to_vector()) == nr
+
     def test_scalar_value(self):
         v = NumericRecord("nr", x=1.5)
-        tpl = EventTemplate.infer_from(v)
-        vec = tpl.to_vector(v)
+        vec = v.to_vector()
         assert vec.shape == (1,)
         assert jnp.array_equal(vec, jnp.asarray([1.5]))
 
     def test_vector_value(self):
         v = NumericRecord("nr", y=jnp.arange(3.0))
-        tpl = EventTemplate.infer_from(v)
-        vec = tpl.to_vector(v)
+        vec = v.to_vector()
         assert vec.shape == (3,)
         assert jnp.array_equal(vec, jnp.arange(3.0))
 
     def test_multi_field_value(self):
         v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
-        tpl = EventTemplate.infer_from(v)
-        vec = tpl.to_vector(v)
+        vec = v.to_vector()
         assert vec.shape == (1 + 3 + 8,)
 
     def test_to_vector_shape_is_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,), z=(2, 4))
         v = NumericRecord("nr", x=0.0, y=jnp.zeros(3), z=jnp.zeros((2, 4)))
-        assert tpl.to_vector(v).shape == (tpl.vector_size,)
-
-    def test_order_and_value_match_instance_to_vector(self):
-        # The template-level to_vector must agree with the instance-level
-        # NumericRecord.to_vector (same canonical leaf order), so the two are
-        # interchangeable.
-        v = NumericRecord(
-            "nr", x=1.0, y=jnp.arange(3.0), nested=NumericRecord("nr", a=2.0, b=jnp.arange(2.0))
-        )
-        tpl = EventTemplate.infer_from(v)
-        assert jnp.array_equal(tpl.to_vector(v), v.to_vector())
+        assert v.to_vector().shape == (tpl.vector_size,)
 
     def test_batched_shape_is_batch_shape_plus_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,))
         flat = jnp.arange(2 * 5 * tpl.vector_size, dtype=float).reshape(2, 5, tpl.vector_size)
         v = tpl.from_vector(flat)
         assert isinstance(v, NumericRecordArray)
-        assert tpl.to_vector(v).shape == (2, 5, tpl.vector_size)
-
-    def test_non_record_value_raises(self):
-        tpl = EventTemplate(x=())
-        with pytest.raises(TypeError, match="NumericRecord"):
-            tpl.to_vector(jnp.asarray([1.0]))
+        assert v.to_vector().shape == (2, 5, tpl.vector_size)
 
 
 class TestFromVectorRoundTripSingle:
     def test_scalar(self):
         v = NumericRecord("nr", x=1.5)
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert tpl.from_vector(v.to_vector()) == v
 
     def test_vector(self):
         v = NumericRecord("nr", y=jnp.arange(3.0))
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert tpl.from_vector(v.to_vector()) == v
 
     def test_multi_field(self):
         v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert tpl.from_vector(v.to_vector()) == v
 
     def test_nested(self):
         v = NumericRecord(
             "nr", x=1.0, y=jnp.arange(3.0), nested=NumericRecord("nr", a=2.0, b=jnp.arange(2.0))
         )
         tpl = EventTemplate.infer_from(v)
-        round_tripped = tpl.from_vector(tpl.to_vector(v))
+        round_tripped = tpl.from_vector(v.to_vector())
         assert isinstance(round_tripped, NumericRecord)
         assert round_tripped == v
 
@@ -1303,7 +1303,7 @@ class TestFromVectorRoundTripBatched:
         v = tpl.from_vector(flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (4,)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert tpl.from_vector(v.to_vector()) == v
 
     def test_multi_axis_batch_shape(self):
         # batch_shape=(2, 3) catches trailing-axis split / reshape bugs.
@@ -1312,8 +1312,8 @@ class TestFromVectorRoundTripBatched:
         v = tpl.from_vector(flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (2, 3)
-        assert jnp.array_equal(tpl.to_vector(v), flat)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert jnp.array_equal(v.to_vector(), flat)
+        assert tpl.from_vector(v.to_vector()) == v
 
     def test_nested_multi_axis_batch_shape(self):
         # Nested numeric subtree + multi-axis batch: from_vector builds a nested
@@ -1325,7 +1325,7 @@ class TestFromVectorRoundTripBatched:
         assert v.batch_shape == (2, 3)
         assert isinstance(v.at_path("nested"), NumericRecordArray)
         assert v["nested/b"].shape == (2, 3, 2)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert tpl.from_vector(v.to_vector()) == v
 
 
 class TestFromVectorErrors:

@@ -51,10 +51,11 @@ def _check_no_path_sep(name: str) -> None:
 class _PathSubtree(dict):
     """Marker for a nested mapping produced by path-key unflattening.
 
-    A plain ``dict`` *value* is opaque leaf data and is never treated as
-    structure; a ``_PathSubtree`` is the structural nesting that ``/``-delimited
-    keys denote, so a constructor materialises it into a child collection while
-    leaving plain-``dict`` values alone.
+    A ``_PathSubtree`` is the structural nesting that ``/``-delimited keys
+    denote, so a constructor materialises it into a child collection. It is
+    tagged so it is distinguishable from a plain ``dict`` passed as a field
+    value — which is never a leaf and is rejected at construction (mappings
+    denote tree structure).
     """
 
 
@@ -66,7 +67,8 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
     in order; the result preserves the **first-appearance order** of each
     distinct leading segment (recursively), which is the canonical field order.
     Structural nesting is tagged with :class:`_PathSubtree` so a constructor can
-    tell it apart from a plain-``dict`` leaf value.
+    tell it apart from a plain ``dict`` field value (which is never a leaf and
+    is rejected at construction).
 
     Raises
     ------

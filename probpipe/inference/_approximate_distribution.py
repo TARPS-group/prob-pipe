@@ -24,8 +24,8 @@ def _spec_size(spec: ArraySpec | EventTemplate) -> int:
     """Number of scalar elements one field contributes to a flat vector.
 
     Given the spec of a single field of an :class:`EventTemplate`, return how
-    many scalars that field occupies in the dense
-    :meth:`NumericEventTemplate.to_vector` layout: ``prod(shape)`` for an
+    many scalars that field occupies in the dense 1-D vector layout (see
+    :meth:`~probpipe.NumericRecord.to_vector`): ``prod(shape)`` for an
     :class:`ArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
     nested :class:`NumericEventTemplate`. Summing this over a template's fields
     gives the template's own ``vector_size``; it is used here to size each

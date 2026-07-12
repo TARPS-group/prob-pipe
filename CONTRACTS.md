@@ -73,13 +73,15 @@ if it were user-guide reference text.
      *may* note that as an explicit, clearly-labeled **interim implementation detail** — but never
      let it define the contract or blur a distinction the plan draws.
    - In particular, keep the plan's **vocabulary distinctions** intact even before the code that
-     enforces them lands. *Example:* `to_vector`/`from_vector` (on `NumericEventTemplate`, with the value-level
-     counterparts `NumericRecord.to_vector`/`NumericRecord.from_vector`) are the
+     enforces them lands. *Example:* `to_vector` (a **value** method —
+     `NumericRecord.to_vector` / `NumericRecordArray.to_vector`; the template does not
+     serialize values) and `from_vector` (reconstruction on `NumericEventTemplate`, with
+     the value-level classmethod `NumericRecord.from_vector`) are the
      **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
      `is_numeric`). The **general** (de)composition keeps each leaf whole (any type): export with
      `list(record.values())` and reconstruct with `Record.from_field_values`, visited at the
      **template's** granularity in canonical `keys()` order. Both treat a container-valued opaque
-     leaf (tuple/dict/namedtuple) as **one** leaf; JAX's `jax.tree_util.tree_flatten` is the finer
+     leaf (tuple/namedtuple; a dict is never a leaf) as **one** leaf; JAX's `jax.tree_util.tree_flatten` is the finer
      pytree view that descends into it (`Record` is a registered pytree, but `flatten`/`unflatten`
      are **not** `Record` methods — use `jax.tree_util` directly). Do not describe these as
      interchangeable.

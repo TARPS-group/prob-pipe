@@ -50,8 +50,10 @@ Numeric vs. Mixed
 When every field is an ``ArraySpec`` the template is all-numeric, and
 ``EventTemplate(...)`` auto-promotes to :class:`NumericEventTemplate` — the
 specialization describing a value that is a PyTree of arrays. That subclass
-adds the flat-vector layout (``vector_size`` / ``to_vector`` / ``from_vector``);
-see its docstring for details.
+adds the flat-vector layout — ``vector_size`` and :meth:`from_vector`
+reconstruction; the ``to_vector`` serialization is a value method on
+:class:`~probpipe.NumericRecord` / :class:`~probpipe.NumericRecordArray`. See
+its docstring for details.
 """
 
 from __future__ import annotations
@@ -67,7 +69,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from ..custom_types import Array, ArrayLike
+from ..custom_types import ArrayLike
 from .constraints import Constraint
 from .named_tree import (
     _PATH_SEP,
@@ -494,7 +496,8 @@ class EventTemplate(NamedTree):
       depth-first, following each level's insertion order. This is the single
       ordering every leaf-wise operation uses. :meth:`keys` is its canonical
       definition — it returns the key (path) of every leaf in this order;
-      :meth:`to_vector` / :meth:`from_vector` lay out and read leaves in it, and
+      the value-level ``to_vector`` and :meth:`from_vector` lay out and read
+      leaves in it, and
       :attr:`~NumericEventTemplate.leaf_shapes` is keyed by it.
 
     JAX pytree contract
@@ -511,8 +514,9 @@ class EventTemplate(NamedTree):
     ``jax.tree_util.tree_leaves(v)`` returns the leaves in :meth:`keys`
     order. The one place the template's leaves and JAX's diverge is an
     :class:`OpaqueSpec` leaf whose value is *itself* a JAX container (a ``tuple``
-    / ``list`` / ``dict``): the template counts it as a single leaf while JAX
-    descends into it. See :class:`~probpipe.Record` for the full statement.
+    / ``list``; a ``dict`` is never a leaf — mappings denote tree structure):
+    the template counts it as a single leaf while JAX descends into it. See
+    :class:`~probpipe.Record` for the full statement.
 
     Parameters
     ----------
@@ -809,6 +813,11 @@ class EventTemplate(NamedTree):
         def _leaf_spec(val: Any) -> _FieldSpecInput:
             if isinstance(val, Record):
                 return val.event_template
+            # A mapping is never a leaf: it denotes tree structure, so infer a
+            # nested template from it rather than an (invalid) opaque-leaf spec
+            # — matching ``from_nested_dict`` and the workflow-output wrap.
+            if isinstance(val, Mapping):
+                return cls.infer_from(val)
             # A backend-typed leaf (xarray / pandas) is stored verbatim in a
             # plain ``Record`` — coercing it to a bare array is lossy — so it
             # is opaque here, keeping the inferred template non-numeric and in
@@ -935,69 +944,26 @@ class NumericEventTemplate(EventTemplate):
         """Length of the per-element 1-D vector (``to_vector`` / ``from_vector``).
 
         The total number of scalar elements across all numeric leaves — the
-        trailing-axis length of :meth:`~NumericEventTemplate.to_vector`'s
-        output. A single value serializes to shape ``(vector_size,)``; a batch
-        serializes to a matrix ``(*batch_shape, vector_size)``, not a single
-        vector.
+        trailing-axis length of a value's
+        :meth:`~probpipe.NumericRecord.to_vector` output. A single value
+        serializes to shape ``(vector_size,)``; a batch serializes to a matrix
+        ``(*batch_shape, vector_size)``, not a single vector.
         """
         return self._vector_size
 
     # -- 1-D numeric (de)serialization --------------------------------------
-
-    def to_vector(self, value: NumericRecord | NumericRecordArray) -> Array:
-        """Serialize *value*'s arrays into its flat 1-D vector representation.
-
-        ``to_vector`` / :meth:`from_vector` convert between the structured and
-        flat representations of a numeric value (a PyTree of arrays). A single
-        :class:`~probpipe.NumericRecord` serializes to shape ``(vector_size,)``;
-        a batched :class:`~probpipe.NumericRecordArray` with ``batch_shape == B``
-        serializes to ``(*B, vector_size)``. Leaves are raveled and concatenated
-        in this template's canonical leaf order (:meth:`~EventTemplate.keys`).
-
-        This differs from ``list(record.values())`` (which keeps each leaf whole, any
-        type): ``to_vector`` is numeric-only and ravels the leaves into a single
-        dense vector.
-
-        Parameters
-        ----------
-        value : NumericRecord or NumericRecordArray
-            The value to serialize; its structure must match this template.
-
-        Returns
-        -------
-        jax.Array
-            The concatenated, raveled numeric leaves: shape ``(vector_size,)``
-            for a single value, ``(*B, vector_size)`` for a batch.
-
-        Raises
-        ------
-        TypeError
-            If *value* is not a ``NumericRecord`` / ``NumericRecordArray``.
-
-        See Also
-        --------
-        from_vector : Reconstruct a value from a flat vector (the inverse).
-        """
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
-
-        if isinstance(value, NumericRecordArray):
-            batch_shape = value.batch_shape
-        elif isinstance(value, NumericRecord):
-            batch_shape = ()
-        else:
-            raise TypeError(
-                f"to_vector expects a NumericRecord (single) or "
-                f"NumericRecordArray (batched), got {type(value).__name__}."
-            )
-        # The value's leaves in canonical leaf order (each kept whole).
-        leaves = [value[key] for key in self.keys()]
-        return jnp.concatenate([jnp.reshape(leaf, (*batch_shape, -1)) for leaf in leaves], axis=-1)
+    #
+    # ``to_vector`` (value → vector) is a *value* operation and lives on the
+    # value types (:meth:`probpipe.NumericRecord.to_vector` /
+    # :meth:`probpipe.NumericRecordArray.to_vector`), not here — a template
+    # describes structure and must not depend on the value type. ``from_vector``
+    # (vector → value) is the template-driven reconstruction below.
 
     def from_vector(self, vec: ArrayLike) -> NumericRecord | NumericRecordArray:
         """Reconstruct a numeric value from its flat 1-D vector representation.
 
-        The inverse of :meth:`to_vector`: splits *vec* along its trailing axis
+        The inverse of :meth:`~probpipe.NumericRecord.to_vector`: splits *vec*
+        along its trailing axis
         into this template's leaves (canonical leaf order), reshapes each chunk
         to its event shape, and rebuilds the structured value. The **rank** of
         *vec* selects single vs. batched — a vector of shape ``(vector_size,)``
@@ -1028,12 +994,13 @@ class NumericEventTemplate(EventTemplate):
 
         Notes
         -----
-        Round-trip: ``self.from_vector(self.to_vector(v)) == v`` for any numeric
+        Round-trip: ``self.from_vector(v.to_vector()) == v`` for any numeric
         value ``v`` matching this template.
 
         See Also
         --------
-        to_vector : Serialize a value to a flat vector (the inverse).
+        probpipe.NumericRecord.to_vector : Serialize a value to a flat vector
+            (the inverse).
         """
         vec = jnp.asarray(vec)
         if vec.ndim == 0:

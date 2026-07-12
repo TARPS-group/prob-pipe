@@ -297,20 +297,17 @@ class NumericRecord(Record):
     def to_vector(self) -> jnp.ndarray:
         """Serialize to the dense 1-D vector of shape ``(vector_size,)``.
 
-        Instance-level convenience for the numeric 1-D serialization whose
-        structural definition lives on :meth:`NumericEventTemplate.to_vector`:
-        delegates to this record's authoritative :attr:`~Record.event_template`
-        (``nr.to_vector() == nr.event_template.to_vector(nr)``). Leaves are
-        visited in canonical leaf order (insertion order, depth-first into nested
-        records) and raveled before concatenation. The inverse,
-        :meth:`NumericEventTemplate.from_vector`, reconstructs the record from
-        such a vector.
+        The numeric 1-D serialization: the record's numeric leaves, visited in
+        canonical leaf order (:meth:`~probpipe.core.named_tree.NamedTree.keys` —
+        insertion order, depth-first into nested records), each raveled and
+        concatenated into one dense vector. The inverse is :meth:`from_vector`.
 
         This is distinct from ``list(record.values())``, which keeps each leaf
         whole (any type); ``to_vector`` ravels and concatenates the numeric
         leaves into a single dense vector.
         """
-        return self.event_template.to_vector(self)
+        leaves = [self[key] for key in self.event_template]
+        return jnp.concatenate([jnp.reshape(leaf, -1) for leaf in leaves])
 
     @classmethod
     def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecord:

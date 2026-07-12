@@ -299,12 +299,14 @@ class Record(NamedTree, Tracked, Annotated):
     -----
     A ``Record`` is a registered JAX PyTree, but the tree from JAX's perspective
     may differ from the tree from ProbPipe's perspective. ProbPipe only allows
-    nested ``Record``s to be internal nodes, while JAX also allows objects like
-    tuples and dictionaries (which are viewed as leaves by ``Record``). This
+    nested ``Record``s to be internal nodes, while JAX also descends into
+    container leaves like tuples and lists (which ``Record`` views as single
+    opaque leaves). A ``dict`` is never a leaf — a mapping denotes tree
+    structure — so it does not arise as a container leaf here. This
     implies that JAX sees a tree with finer structure, so that methods like
     ``jax.tree_util.tree_flatten`` / ``tree_leaves`` / ``tree_map``
     (and ``jit`` / ``vmap`` / ``grad``) descend into nested
-    ``Record``\\s *and* into container leaves like tuples and dictionaries.
+    ``Record``\\s *and* into container leaves like tuples and lists.
     It is thus typically best practice to use the custom `Record` functionality
     for traversing the fields. The above JAX functions will work, but users must
     be aware that they will traverse the finer tree. The two notions of the tree

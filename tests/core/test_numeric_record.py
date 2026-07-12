@@ -163,7 +163,7 @@ class TestConstruction:
             "nr", x=jnp.ones(3, dtype=jnp.bfloat16), y=jnp.zeros((), dtype=jnp.bfloat16)
         )
         tpl = nr.event_template
-        vec = tpl.to_vector(nr)
+        vec = nr.to_vector()
         assert vec.shape == (4,)
         assert vec.dtype == jnp.bfloat16
         assert tpl.from_vector(vec) == nr
