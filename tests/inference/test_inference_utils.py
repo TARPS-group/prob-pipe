@@ -12,6 +12,7 @@ import pytest
 
 from probpipe import (
     Normal,
+    NumericRecord,
     ProductDistribution,
     SimpleModel,
 )
@@ -79,7 +80,7 @@ class TestBuildTargetLogProbFlat:
         )
         # Round-trip: unflatten the flat init back to a Record and confirm
         # the two callables agree.
-        record_init = template.from_vector(flat_init)
+        record_init = NumericRecord.from_vector("nr", template, flat_init)
         np.testing.assert_allclose(
             float(target_flat(flat_init)),
             float(target_record(record_init)),

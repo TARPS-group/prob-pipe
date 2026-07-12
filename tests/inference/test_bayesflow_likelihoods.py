@@ -25,6 +25,7 @@ from probpipe import (
     BayesFlowLikelihood,
     ConditionallyIndependentLikelihood,
     Normal,
+    NumericRecord,
     ProductDistribution,
     SimpleModel,
     condition_on,
@@ -189,7 +190,7 @@ class TestSurrogateContract:
         """Structured per-draw records and flat vectors give identical scores
         (the MCMC helper passes flat vectors; predictive paths pass records)."""
         flat = jnp.array([0.4, -0.3])
-        record = _prior().event_template.from_vector(flat)
+        record = NumericRecord.from_vector("nr", _prior().event_template, flat)
         y_row = jnp.array([0.6, -0.1])
         np.testing.assert_allclose(
             float(nle.log_likelihood(flat, y_row)),

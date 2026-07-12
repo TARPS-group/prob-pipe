@@ -297,7 +297,11 @@ class _RecordDistributionView(Distribution):
         draws = self._parent.draws()
         if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])
-        result = self._parent.event_template.from_vector(jnp.asarray(draws))
+        from ._numeric_record import _reconstruct_from_vector
+
+        result = _reconstruct_from_vector(
+            self._parent.name, self._parent.event_template, jnp.asarray(draws), name_is_auto=True
+        )
         return jnp.asarray(result[self._key])
 
     def __repr__(self) -> str:

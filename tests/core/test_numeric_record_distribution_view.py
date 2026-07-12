@@ -127,12 +127,13 @@ class TestSampling:
         assert draws["slope"].shape == (5, 3)
 
     def test_sample_roundtrip_with_flat(self, mvn4, split_template):
-        """Same seed: lifted-view sample equals split_template.from_vector(flat_sample)."""
+        """Same seed: lifted-view sample equals
+        ``NumericRecord.from_vector("nr", split_template, flat_sample)``."""
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(7)
         rec_draw = rec._sample(key)
         flat_draw = mvn4._sample(key)
-        ref = split_template.from_vector(flat_draw)
+        ref = NumericRecord.from_vector("nr", split_template, flat_draw)
         np.testing.assert_allclose(
             jnp.asarray(rec_draw["intercept"]), jnp.asarray(ref["intercept"])
         )
@@ -174,7 +175,7 @@ class TestLogProb:
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(3)
         flat_x = mvn4._sample(key)
-        rec_x = split_template.from_vector(flat_x)
+        rec_x = NumericRecord.from_vector("nr", split_template, flat_x)
 
         lp_rec = float(log_prob(rec, rec_x))
         lp_flat = float(log_prob(mvn4, flat_x))
@@ -185,7 +186,7 @@ class TestLogProb:
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(5)
         flat_xs = mvn4._sample(key, sample_shape=(10,))
-        rec_xs = split_template.from_vector(flat_xs)
+        rec_xs = NumericRecordArray.from_vector("nra", split_template, flat_xs)
         lp_rec = jnp.asarray(log_prob(rec, rec_xs))
         lp_flat = jnp.asarray(log_prob(mvn4, flat_xs))
         np.testing.assert_allclose(lp_rec, lp_flat, rtol=1e-5)

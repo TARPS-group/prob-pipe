@@ -22,6 +22,7 @@ from probpipe import (
     ApproximateDistribution,
     EventTemplate,
     Normal,
+    NumericRecord,
     ProductDistribution,
     condition_on,
     learn_amortized_posterior,
@@ -230,7 +231,7 @@ def _nested_observe(r, m, c, seed):
     """Observe ``_NestedLikelihood`` at a given (r, m, c) by building the nested
     per-draw record via ``from_vector`` (leaf order ``[r, m, c]``) -- the same
     structured object the offline simulator passes the simulator at train time."""
-    rec = _nested_prior().event_template.from_vector(jnp.array([r, m, c]))
+    rec = NumericRecord.from_vector("nr", _nested_prior().event_template, jnp.array([r, m, c]))
     return _NestedLikelihood().generate_data(rec, 1, key=jax.random.PRNGKey(seed))[0]
 
 

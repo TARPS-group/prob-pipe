@@ -542,9 +542,11 @@ class NumericRecordDistribution(RecordDistribution):
         """
         flat = jnp.asarray(flat)
         if template is not None and len(template.fields) > 1:
-            # ``from_vector`` selects single (NumericRecord) vs batched
-            # (NumericRecordArray) from the rank of ``flat``.
-            return template.from_vector(flat)
+            from ._numeric_record import _reconstruct_from_vector
+
+            # ``_reconstruct_from_vector`` selects single (NumericRecord) vs
+            # batched (NumericRecordArray) from the rank of ``flat``.
+            return _reconstruct_from_vector("value", template, flat, name_is_auto=True)
         # Single-field path
         if template is None or not template.fields:
             return flat[..., 0]
@@ -1037,10 +1039,12 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 base_sample,
                 event_shape=self._base.event_shape,
             )
-            # ``from_vector`` selects single (NumericRecord, flat is 1-D) vs
-            # batched (NumericRecordArray, batch_shape == sample_shape) from the
-            # rank of ``flat``.
-            return self.event_template.from_vector(flat)
+            from ._numeric_record import _reconstruct_from_vector
+
+            # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
+            # is 1-D) vs batched (NumericRecordArray, batch_shape ==
+            # sample_shape) from the rank of ``flat``.
+            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
 
         extra_methods["_sample"] = _sample
 
@@ -1064,11 +1068,13 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         extra_bases.append(SupportsMean)
 
         def _mean(self):
+            from ._numeric_record import _reconstruct_from_vector
+
             flat = self._base.flatten_value(
                 self._base._mean(),
                 event_shape=self._base.event_shape,
             )
-            return self.event_template.from_vector(flat)
+            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
 
         extra_methods["_mean"] = _mean
 
@@ -1076,11 +1082,13 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         extra_bases.append(SupportsVariance)
 
         def _variance(self):
+            from ._numeric_record import _reconstruct_from_vector
+
             flat = self._base.flatten_value(
                 self._base._variance(),
                 event_shape=self._base.event_shape,
             )
-            return self.event_template.from_vector(flat)
+            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
 
         extra_methods["_variance"] = _variance
 
@@ -1121,9 +1129,12 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 event_shape=self._base.event_shape,
             )
             template = self.event_template
+            dist_name = self.name
 
             def _f_on_flat(flat_row):
-                return f(template.from_vector(flat_row))
+                from ._numeric_record import _reconstruct_from_vector
+
+                return f(_reconstruct_from_vector(dist_name, template, flat_row, name_is_auto=True))
 
             evals = jax.vmap(_f_on_flat)(flat_samples)
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST

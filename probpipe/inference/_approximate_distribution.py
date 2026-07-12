@@ -400,9 +400,13 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # historical behaviour of single-field auto-wrap empiricals
         # under the previous numeric-array hierarchy.
         if getattr(self, "_user_template", False):
-            # ``from_vector`` infers batch_shape from the leading axes of the
-            # concatenated draws (a matrix ``(n, vector_size)``).
-            return self.event_template.from_vector(samples)
+            # Reconstruct: batch_shape is inferred from the leading axes of
+            # the concatenated draws (a matrix ``(n, vector_size)``).
+            from ..core._numeric_record import _reconstruct_from_vector
+
+            return _reconstruct_from_vector(
+                self.name, self.event_template, samples, name_is_auto=True
+            )
         return samples
 
     def __repr__(self) -> str:

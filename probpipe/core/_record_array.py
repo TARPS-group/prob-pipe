@@ -3,7 +3,7 @@
 A ``RecordArray`` stores a batch of Records with consistent field structure.
 Each field has shape ``(*batch_shape, *leaf_shape)``.  ``NumericRecordArray``
 adds numeric operations: ``to_vector`` (1-D serialization, inverse
-``NumericEventTemplate.from_vector``), ``mean``, ``var``.
+``NumericRecordArray.from_vector``), ``mean``, ``var``.
 """
 
 from __future__ import annotations
@@ -473,8 +473,7 @@ class NumericRecordArray(RecordArray):
     Notes
     -----
     The **canonical** storage for a nested top-level field is a nested
-    ``NumericRecordArray`` (what :meth:`NumericEventTemplate.from_vector`
-    builds). Construction also *accepts* the field as a ``NumericRecord``
+    ``NumericRecordArray`` (what :meth:`from_vector` builds). Construction also *accepts* the field as a ``NumericRecord``
     whose leaves carry the batch shape, but the two forms have different JAX
     pytree treedefs and compare unequal — prefer the canonical form when
     building batches by hand.
@@ -561,6 +560,48 @@ class NumericRecordArray(RecordArray):
         return jnp.concatenate(
             [jnp.reshape(leaf, (*self.batch_shape, -1)) for leaf in leaves], axis=-1
         )
+
+    @classmethod
+    def from_vector(cls, name: str, template: EventTemplate, vec: Array) -> NumericRecordArray:
+        """Reconstruct a batched value from its flat 1-D vectors.
+
+        The batched inverse of :meth:`to_vector`: splits *vec* along its
+        trailing axis into *template*'s leaves (canonical leaf order), reshapes
+        each to its event shape, and rebuilds a ``NumericRecordArray`` with
+        ``batch_shape == vec.shape[:-1]`` under the user-given *name*.
+
+        Parameters
+        ----------
+        name : str
+            Name for the reconstructed batch (user-given).
+        template : NumericEventTemplate
+            The flat layout supplying field names, shapes, and order.
+        vec : Array
+            A matrix of shape ``(*batch_shape, template.vector_size)``.
+
+        Returns
+        -------
+        NumericRecordArray
+            The reconstructed batch, with ``batch.to_vector()`` equal to *vec*.
+
+        Raises
+        ------
+        TypeError
+            If *vec* has no batch axis (1-D) — use
+            :meth:`NumericRecord.from_vector` for a single value.
+        ValueError
+            If the trailing axis is not ``template.vector_size``.
+        """
+        from ._numeric_record import _reconstruct_from_vector
+
+        vec = jnp.asarray(vec)
+        if vec.ndim < 2:
+            raise TypeError(
+                f"NumericRecordArray.from_vector expects a batched matrix "
+                f"(shape (*batch_shape, vector_size)); got shape {tuple(vec.shape)}. "
+                f"Reconstruct a single value with NumericRecord.from_vector."
+            )
+        return _reconstruct_from_vector(name, template, vec, name_is_auto=False)
 
     # -- Reductions ---------------------------------------------------------
 

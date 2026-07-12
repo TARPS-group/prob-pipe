@@ -14,8 +14,8 @@ Because every leaf is a JAX array, a ``NumericRecord`` is an ordinary JAX PyTree
 of arrays. It passes through ``jit`` / ``vmap`` / ``grad`` unchanged, and JAX's
 view of the tree coincides with ProbPipe's — unlike a general ``Record``, where
 the two can differ. It also has a flat one-dimensional vector form
-(:meth:`~NumericRecord.to_vector` and its structural inverse
-:meth:`NumericEventTemplate.from_vector`), providing compatibility with inference
+(:meth:`~NumericRecord.to_vector` and its inverse
+:meth:`~NumericRecord.from_vector`), providing compatibility with inference
 algorithms that assume parameters are represented as 1-D arrays. A
 ``NumericRecord`` stores a :class:`NumericEventTemplate` describing its structure.
 
@@ -33,6 +33,7 @@ backend type.
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import prod
 from typing import Any
 
 import jax
@@ -43,7 +44,7 @@ from ..custom_types import Array, ArrayLike
 from ._array_backend import aux_for
 from .event_template import EventTemplate, NumericEventTemplate, _is_numeric_dtype
 from .named_tree import _check_no_path_sep, _PathSubtree, _unflatten_paths
-from .record import Record, _record_flatten
+from .record import Record, _auto_record, _record_flatten
 
 __all__ = ["NumericRecord", "_is_numeric_leaf"]
 
@@ -122,7 +123,7 @@ class NumericRecord(Record):
     Because every leaf is numeric, the whole value can be flattened into a single
     dense 1-D array. :meth:`to_vector` ravels and concatenates the leaves, in
     canonical leaf order (depth-first, insertion order), into a vector of length
-    :attr:`vector_size`; :meth:`NumericEventTemplate.from_vector` rebuilds the
+    :attr:`vector_size`; :meth:`from_vector` rebuilds the
     record from such a vector. Note that this is different from
     ``list(record.values())``, which returns the ordered list of fields and is
     supported by any ``Record``. :meth:`to_vector`, supported only by the numeric
@@ -315,10 +316,8 @@ class NumericRecord(Record):
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
         template's per-field blocks, reshapes each to its ``ArraySpec`` shape
-        in canonical order, and returns a ``NumericRecord`` carrying
+        in canonical leaf order, and returns a ``NumericRecord`` carrying
         *template* as its authoritative schema under the user-given *name*.
-        The structural definition lives on
-        :meth:`NumericEventTemplate.from_vector`, which this delegates to.
 
         Parameters
         ----------
@@ -340,9 +339,8 @@ class NumericRecord(Record):
         ------
         TypeError
             If *vec* carries leading batch axes — batched reconstruction is
-            the batch type's concern; use
-            :meth:`NumericEventTemplate.from_vector` directly for a batched
-            matrix.
+            the batch type's concern; use :meth:`NumericRecordArray.from_vector`
+            for a batched matrix.
         ValueError
             If the vector length does not equal ``template.vector_size``.
         """
@@ -351,12 +349,9 @@ class NumericRecord(Record):
             raise TypeError(
                 f"NumericRecord.from_vector expects a 1-D vector (one value); "
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
-                f"NumericEventTemplate.from_vector."
+                f"NumericRecordArray.from_vector."
             )
-        record = template.from_vector(vec)
-        object.__setattr__(record, "_name", name)
-        object.__setattr__(record, "_name_is_auto", False)
-        return record
+        return _reconstruct_from_vector(name, template, vec, name_is_auto=False)
 
     # -- Conversion back to native backends --------------------------------
 
@@ -484,6 +479,95 @@ class NumericRecord(Record):
     def ndim(self) -> int:
         leaf = self._single_numeric_leaf()
         return int(getattr(leaf, "ndim", 0))
+
+
+# ---------------------------------------------------------------------------
+# 1-D vector reconstruction (value-level; the template supplies only layout)
+# ---------------------------------------------------------------------------
+
+
+def _value_treedef(
+    template: NumericEventTemplate, batch_shape: tuple[int, ...]
+) -> jax.tree_util.PyTreeDef:
+    """PyTreeDef of the value :func:`_reconstruct_from_vector` builds.
+
+    A throwaway ``NumericRecord`` / ``NumericRecordArray`` skeleton mirroring
+    *template*; its structure (field names, nesting, ``batch_shape``, template)
+    is all the treedef needs, so the placeholder leaves are cheap zero-stride
+    broadcasts. Pairing this treedef with the real ordered leaves in
+    ``tree_unflatten`` assembles the value in one place.
+    """
+    numeric_fill = jnp.zeros((), dtype=jnp.float32)
+
+    def _build(tpl: NumericEventTemplate) -> NumericRecord:
+        fields: dict[str, Any] = {}
+        for name, spec in tpl.children.items():
+            if isinstance(spec, NumericEventTemplate):
+                fields[name] = _build(spec)
+            else:
+                fields[name] = jnp.broadcast_to(numeric_fill, (*batch_shape, *spec.shape))
+        if batch_shape:
+            from ._record_array import NumericRecordArray
+
+            return NumericRecordArray(fields, batch_shape=batch_shape, template=tpl)
+        # A template carries no name; the caller renames the reconstructed value.
+        return _auto_record("value", fields, event_template=tpl)
+
+    return jax.tree_util.tree_structure(_build(template))
+
+
+def _reconstruct_from_vector(
+    name: str, template: NumericEventTemplate, vec: Array, *, name_is_auto: bool
+) -> NumericRecord | Any:
+    """Reconstruct a numeric value from its flat vector, under *name*.
+
+    Splits *vec* along its trailing axis into *template*'s leaves (canonical
+    leaf order), reshapes each to its event shape, and rebuilds the structured
+    value: a single :class:`NumericRecord` when *vec* is 1-D, a batched
+    :class:`~probpipe.NumericRecordArray` (``batch_shape == vec.shape[:-1]``)
+    otherwise. This is the value-level machinery behind
+    :meth:`NumericRecord.from_vector` / :meth:`NumericRecordArray.from_vector`;
+    the template supplies only the leaf layout (shapes, order), never
+    constructing the value itself.
+
+    Raises
+    ------
+    ValueError
+        If *vec* is 0-dimensional, or its trailing axis is not
+        ``template.vector_size``.
+    """
+    vec = jnp.asarray(vec)
+    if vec.ndim == 0:
+        raise ValueError(
+            f"from_vector: vec must have a trailing axis of size "
+            f"vector_size={template.vector_size}; got a 0-d scalar."
+        )
+    if vec.shape[-1] != template.vector_size:
+        raise ValueError(
+            f"from_vector: vec trailing axis is {vec.shape[-1]}, expected "
+            f"vector_size={template.vector_size}."
+        )
+    batch_shape = tuple(vec.shape[:-1])
+
+    offset = 0
+    leaves: list[Any] = []
+
+    def _collect(tpl: NumericEventTemplate) -> None:
+        nonlocal offset
+        for spec in tpl.children.values():
+            if isinstance(spec, NumericEventTemplate):
+                _collect(spec)
+            else:
+                size = prod(spec.shape) if spec.shape else 1
+                chunk = vec[..., offset : offset + size]
+                offset += size
+                leaves.append(jnp.reshape(chunk, (*batch_shape, *spec.shape)))
+
+    _collect(template)
+    value = jax.tree_util.tree_unflatten(_value_treedef(template, batch_shape), leaves)
+    object.__setattr__(value, "_name", name)
+    object.__setattr__(value, "_name_is_auto", name_is_auto)
+    return value
 
 
 # ---------------------------------------------------------------------------

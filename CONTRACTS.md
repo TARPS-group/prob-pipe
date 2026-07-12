@@ -73,10 +73,13 @@ if it were user-guide reference text.
      *may* note that as an explicit, clearly-labeled **interim implementation detail** — but never
      let it define the contract or blur a distinction the plan draws.
    - In particular, keep the plan's **vocabulary distinctions** intact even before the code that
-     enforces them lands. *Example:* `to_vector` (a **value** method —
-     `NumericRecord.to_vector` / `NumericRecordArray.to_vector`; the template does not
-     serialize values) and `from_vector` (reconstruction on `NumericEventTemplate`, with
-     the value-level classmethod `NumericRecord.from_vector`) are the
+     enforces them lands. *Example:* `to_vector` / `from_vector` are **value**
+     operations — a template describes structure and does not depend on the value
+     type, so it carries neither. `to_vector` is `NumericRecord.to_vector` /
+     `NumericRecordArray.to_vector`; `from_vector(name, template, vec)` is the
+     classmethod pair `NumericRecord.from_vector` (single) /
+     `NumericRecordArray.from_vector` (batched), each taking the template as an
+     argument. These are the
      **numeric** 1-D (de)serialization — they ravel and concatenate numeric leaves (require
      `is_numeric`). The **general** (de)composition keeps each leaf whole (any type): export with
      `list(record.values())` and reconstruct with `Record.from_field_values`, visited at the

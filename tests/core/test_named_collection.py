@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, NumericRecord, Record
+from probpipe import EventTemplate, NumericRecord, NumericRecordArray, Record
 from probpipe.core.event_template import ArraySpec, NumericEventTemplate, OpaqueSpec
 
 # ---------------------------------------------------------------------------
@@ -400,7 +400,7 @@ class TestBoundaryRules:
 class TestBatchFieldNav:
     def _nested_array(self):
         tpl = EventTemplate(outer=EventTemplate(a=(), b=()), m=())
-        return tpl.from_vector(jnp.arange(15.0).reshape(5, 3))
+        return NumericRecordArray.from_vector("nra", tpl, jnp.arange(15.0).reshape(5, 3))
 
     def test_string_index_is_leaf_only(self):
         nra = self._nested_array()
@@ -444,7 +444,7 @@ class TestBatchFieldNav:
 
         nra = self._nested_array()
         tpl = nra.template
-        assert tpl.from_vector(nra.to_vector()) == nra
+        assert NumericRecordArray.from_vector("nra", tpl, nra.to_vector()) == nra
         assert pickle.loads(pickle.dumps(nra)) == nra
 
     def test_edits_unsupported_on_batch(self):

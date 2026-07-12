@@ -327,6 +327,8 @@ class TestNestedSampleFlatten:
         assert s["grp/sub/force"].shape == (4,)
 
     def test_batched_nested_flatten_roundtrip(self, nested):
+        from probpipe.core._record_array import NumericRecordArray
+
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
         leaves = list(nested.event_template.leaf_shapes)
         flat = s.to_vector()
@@ -338,7 +340,7 @@ class TestNestedSampleFlatten:
         for i, leaf in enumerate(leaves):
             np.testing.assert_allclose(flat[:, i], s[leaf], atol=1e-6)
         # Secondary: the columns round-trip back to the same leaves via unflatten.
-        rec = nested.event_template.from_vector(flat)
+        rec = NumericRecordArray.from_vector("nra", nested.event_template, flat)
         for leaf in leaves:
             np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
 

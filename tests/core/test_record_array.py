@@ -280,14 +280,14 @@ class TestNumericRecordArrayFlatten:
             template=tpl,
         )
         flat = nra.to_vector()
-        nra2 = tpl.from_vector(flat)
+        nra2 = NumericRecordArray.from_vector("nra2", tpl, flat)
         np.testing.assert_allclose(nra2["x"], nra["x"])
         np.testing.assert_allclose(nra2["y"], nra["y"])
 
     def test_unflatten_infers_batch(self):
         tpl = EventTemplate(a=(), b=(2,))
         flat = jnp.zeros((8, 3))
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         assert nra.batch_shape == (8,)
         assert nra["a"].shape == (8,)
         assert nra["b"].shape == (8, 2)
@@ -295,7 +295,7 @@ class TestNumericRecordArrayFlatten:
     def test_unflatten_explicit_batch(self):
         tpl = EventTemplate(a=(), b=(2,))
         flat = jnp.zeros((4, 5, 3))
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         assert nra.batch_shape == (4, 5)
         assert nra["a"].shape == (4, 5)
         assert nra["b"].shape == (4, 5, 2)
@@ -303,7 +303,7 @@ class TestNumericRecordArrayFlatten:
     def test_unflatten_scalar_fields(self):
         tpl = EventTemplate(a=(), b=(), c=())
         flat = jnp.array([[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]])
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         np.testing.assert_allclose(nra["a"], [1.0, 4.0])
         np.testing.assert_allclose(nra["b"], [2.0, 5.0])
         np.testing.assert_allclose(nra["c"], [3.0, 6.0])
@@ -327,7 +327,7 @@ class TestNumericRecordArrayNested:
         # NumericRecordArray (exercises the RecordArray branch).
         tpl = self._nested_tpl()
         flat = jnp.arange(15.0).reshape(5, 3)  # columns = outer/a, outer/b, m
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(nra.at_path("outer"), NumericRecordArray)
         np.testing.assert_allclose(nra.to_vector(), flat)  # round-trips exactly
 
@@ -355,7 +355,7 @@ class TestNumericRecordArrayNested:
     def test_flatten_nested_depth2_roundtrip(self):
         tpl = EventTemplate(outer=EventTemplate(deep=EventTemplate(g=(), h=()), a=()), m=())
         flat = jnp.arange(20.0).reshape(5, 4)  # outer/deep/g, outer/deep/h, outer/a, m
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         np.testing.assert_allclose(nra.to_vector(), flat)
         np.testing.assert_allclose(nra["outer/deep/g"], flat[:, 0])
 
@@ -364,7 +364,7 @@ class TestNumericRecordArrayNested:
         # at the leaf's event size, in canonical leaf order, and round-trips.
         tpl = EventTemplate(outer=EventTemplate(a=(2,), b=()), m=())
         flat = jnp.arange(20.0).reshape(5, 4)  # outer/a (2), outer/b (1), m (1)
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         assert np.asarray(nra["outer/a"]).shape == (5, 2)
         np.testing.assert_allclose(nra["outer/a"], flat[:, 0:2])
         np.testing.assert_allclose(nra["outer/b"], flat[:, 2])
@@ -373,7 +373,7 @@ class TestNumericRecordArrayNested:
 
     def test_getitem_slash_path(self):
         tpl = self._nested_tpl()
-        nra = tpl.from_vector(jnp.arange(15.0).reshape(5, 3))
+        nra = NumericRecordArray.from_vector("nra", tpl, jnp.arange(15.0).reshape(5, 3))
         np.testing.assert_allclose(nra["outer/a"], nra.at_path("outer")["a"])
         with pytest.raises(KeyError):
             nra["outer/missing"]  # leaf missing inside the sub-record
@@ -386,7 +386,7 @@ class TestNumericRecordArrayNested:
         # Integer indexing of a nested record array descends into the nested
         # field, returning a (nested) record element — not an indexing error.
         tpl = self._nested_tpl()
-        nra = tpl.from_vector(jnp.arange(15.0).reshape(5, 3))
+        nra = NumericRecordArray.from_vector("nra", tpl, jnp.arange(15.0).reshape(5, 3))
         elem = nra[2]
         assert isinstance(elem, Record)
         np.testing.assert_allclose(elem["outer/a"], nra.at_path("outer")["a"][2])
@@ -394,7 +394,7 @@ class TestNumericRecordArrayNested:
 
     def test_getitem_int_nested_multidim_batch(self):
         tpl = self._nested_tpl()
-        nra = tpl.from_vector(jnp.arange(24.0).reshape(2, 4, 3))
+        nra = NumericRecordArray.from_vector("nra", tpl, jnp.arange(24.0).reshape(2, 4, 3))
         elem = nra[5]  # flat index into the (2, 4) batch
         np.testing.assert_allclose(
             elem["outer/a"], np.asarray(nra.at_path("outer")["a"]).reshape(-1)[5]
@@ -464,7 +464,7 @@ class TestNumericRecordArrayReductions:
                 [2.0, 2.0, 3.0, 12.0],
             ]
         )
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         m = nra.mean(axis=0)
         assert isinstance(m, NumericRecord)
         assert isinstance(m.at_path("outer"), NumericRecord)
@@ -481,7 +481,7 @@ class TestNumericRecordArrayReductions:
                 [2.0, 2.0, 3.0, 12.0],
             ]
         )
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         v = nra.var(axis=0)
         assert isinstance(v, NumericRecord)
         assert isinstance(v.at_path("outer"), NumericRecord)
@@ -519,7 +519,7 @@ class TestNumericRecordArrayReductions:
     def test_mean_nested_records_multidim_batch(self):
         tpl = EventTemplate(outer=EventTemplate(a=()), m=())
         flat = jnp.arange(12.0).reshape(2, 3, tpl.vector_size)
-        nra = tpl.from_vector(flat)
+        nra = NumericRecordArray.from_vector("nra", tpl, flat)
         m = nra.mean(axis=0)
         assert isinstance(m, NumericRecordArray)
         assert isinstance(m.at_path("outer"), NumericRecordArray)

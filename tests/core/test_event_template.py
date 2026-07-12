@@ -1218,15 +1218,15 @@ class TestNumericSubset:
 
 
 class TestToVector:
-    def test_to_vector_is_value_only_not_on_template(self):
-        # ``to_vector`` (value → vector) is a value operation per the design
-        # contract; the template must not carry it (that would make the
-        # template layer depend on the value type). ``from_vector`` — the
-        # template-driven reconstruction — stays on the template.
+    def test_to_vector_and_from_vector_are_value_only_not_on_template(self):
+        # Both ``to_vector`` (value → vector) and ``from_vector`` (vector →
+        # value) are value operations per the design contract; the template
+        # must not carry either (that would make the template layer depend
+        # on the value type).
         assert not hasattr(NumericEventTemplate, "to_vector")
-        assert hasattr(NumericEventTemplate, "from_vector")
+        assert not hasattr(NumericEventTemplate, "from_vector")
         nr = NumericRecord("nr", x=1.0, y=jnp.arange(3.0))
-        assert nr.event_template.from_vector(nr.to_vector()) == nr
+        assert NumericRecord.from_vector("nr", nr.event_template, nr.to_vector()) == nr
 
     def test_scalar_value(self):
         v = NumericRecord("nr", x=1.5)
@@ -1253,7 +1253,7 @@ class TestToVector:
     def test_batched_shape_is_batch_shape_plus_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,))
         flat = jnp.arange(2 * 5 * tpl.vector_size, dtype=float).reshape(2, 5, tpl.vector_size)
-        v = tpl.from_vector(flat)
+        v = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(v, NumericRecordArray)
         assert v.to_vector().shape == (2, 5, tpl.vector_size)
 
@@ -1262,74 +1262,75 @@ class TestFromVectorRoundTripSingle:
     def test_scalar(self):
         v = NumericRecord("nr", x=1.5)
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(v.to_vector()) == v
+        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_vector(self):
         v = NumericRecord("nr", y=jnp.arange(3.0))
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(v.to_vector()) == v
+        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_multi_field(self):
         v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(v.to_vector()) == v
+        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_nested(self):
         v = NumericRecord(
             "nr", x=1.0, y=jnp.arange(3.0), nested=NumericRecord("nr", a=2.0, b=jnp.arange(2.0))
         )
         tpl = EventTemplate.infer_from(v)
-        round_tripped = tpl.from_vector(v.to_vector())
+        round_tripped = NumericRecord.from_vector("nr", tpl, v.to_vector())
         assert isinstance(round_tripped, NumericRecord)
         assert round_tripped == v
 
     def test_returns_single_for_1d_vec(self):
         tpl = EventTemplate(x=(), y=(3,))
-        v = tpl.from_vector(jnp.arange(4.0))
+        v = NumericRecord.from_vector("nr", tpl, jnp.arange(4.0))
         assert isinstance(v, NumericRecord)
 
-    def test_zero_d_vec_raises_value_error(self):
-        # A 0-d scalar has no trailing axis; raise the documented ValueError
-        # rather than an IndexError from indexing ``vec.shape[-1]``.
+    def test_zero_d_vec_raises_type_error(self):
+        # A 0-d scalar is not a 1-D vector; ``NumericRecord.from_vector`` raises
+        # the documented TypeError rather than an IndexError from indexing
+        # ``vec.shape[-1]``.
         tpl = EventTemplate(x=())
-        with pytest.raises(ValueError, match="0-d scalar"):
-            tpl.from_vector(5.0)
+        with pytest.raises(TypeError, match="1-D vector"):
+            NumericRecord.from_vector("nr", tpl, 5.0)
 
 
 class TestFromVectorRoundTripBatched:
     def test_single_batch_axis(self):
         tpl = EventTemplate(x=(), y=(3,))
         flat = jnp.arange(4 * tpl.vector_size, dtype=float).reshape(4, tpl.vector_size)
-        v = tpl.from_vector(flat)
+        v = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (4,)
-        assert tpl.from_vector(v.to_vector()) == v
+        assert NumericRecordArray.from_vector("nra", tpl, v.to_vector()) == v
 
     def test_multi_axis_batch_shape(self):
         # batch_shape=(2, 3) catches trailing-axis split / reshape bugs.
         tpl = EventTemplate(x=(), y=(3,), z=(2, 2))
         flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
-        v = tpl.from_vector(flat)
+        v = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (2, 3)
         assert jnp.array_equal(v.to_vector(), flat)
-        assert tpl.from_vector(v.to_vector()) == v
+        assert NumericRecordArray.from_vector("nra", tpl, v.to_vector()) == v
 
     def test_nested_multi_axis_batch_shape(self):
         # Nested numeric subtree + multi-axis batch: from_vector builds a nested
         # NumericRecordArray as a field of the outer NumericRecordArray.
         tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(2,)), y=(3,))
         flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
-        v = tpl.from_vector(flat)
+        v = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (2, 3)
         assert isinstance(v.at_path("nested"), NumericRecordArray)
         assert v["nested/b"].shape == (2, 3, 2)
-        assert tpl.from_vector(v.to_vector()) == v
+        assert NumericRecordArray.from_vector("nra", tpl, v.to_vector()) == v
 
 
 class TestFromVectorErrors:
     def test_wrong_trailing_size_raises(self):
         tpl = EventTemplate(x=(), y=(3,))
         with pytest.raises(ValueError, match="vector_size"):
-            tpl.from_vector(jnp.zeros(5))
+            NumericRecord.from_vector("nr", tpl, jnp.zeros(5))

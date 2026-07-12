@@ -166,7 +166,7 @@ class TestConstruction:
         vec = nr.to_vector()
         assert vec.shape == (4,)
         assert vec.dtype == jnp.bfloat16
-        assert tpl.from_vector(vec) == nr
+        assert NumericRecord.from_vector("nr", tpl, vec) == nr
 
 
 # ---------------------------------------------------------------------------
@@ -195,7 +195,7 @@ class TestToVectorFromVector:
     def test_unflatten_with_event_template(self):
         tpl = EventTemplate(a=(), b=(3,))
         flat = jnp.array([1.0, 2.0, 3.0, 4.0])
-        nr = tpl.from_vector(flat)
+        nr = NumericRecord.from_vector("nr", tpl, flat)
         assert isinstance(nr, NumericRecord)
         np.testing.assert_allclose(nr["a"], 1.0)
         np.testing.assert_allclose(nr["b"], [2.0, 3.0, 4.0])
@@ -204,7 +204,7 @@ class TestToVectorFromVector:
         tpl = EventTemplate(r=(), K=(), phi=())
         nr = NumericRecord("nr", r=1.8, K=70.0, phi=10.0)
         flat = nr.to_vector()
-        nr2 = tpl.from_vector(flat)
+        nr2 = NumericRecord.from_vector("nr2", tpl, flat)
         np.testing.assert_allclose(float(nr2["r"]), 1.8)
         np.testing.assert_allclose(float(nr2["K"]), 70.0)
         np.testing.assert_allclose(float(nr2["phi"]), 10.0)
@@ -215,7 +215,7 @@ class TestToVectorFromVector:
         inner_tpl = NumericEventTemplate(x=(), y=(2,))
         outer_tpl = NumericEventTemplate(params=inner_tpl, z=(3,))
         flat = jnp.arange(6.0)  # x=0, y=[1,2], z=[3,4,5]
-        nr = outer_tpl.from_vector(flat)
+        nr = NumericRecord.from_vector("nr", outer_tpl, flat)
         assert isinstance(nr.at_path("params"), NumericRecord)
         np.testing.assert_allclose(nr["params/x"], 0.0)
         np.testing.assert_allclose(nr["params/y"], [1.0, 2.0])

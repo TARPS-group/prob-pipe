@@ -64,12 +64,10 @@ from dataclasses import dataclass
 from math import prod
 from typing import TYPE_CHECKING, Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from ..custom_types import ArrayLike
 from .constraints import Constraint
 from .named_tree import (
     _PATH_SEP,
@@ -80,8 +78,7 @@ from .named_tree import (
 )
 
 if TYPE_CHECKING:
-    from ._numeric_record import NumericRecord
-    from ._record_array import NumericRecordArray
+    pass
 
 __all__ = [
     "ArraySpec",
@@ -861,7 +858,7 @@ class NumericEventTemplate(EventTemplate):
     :attr:`vector_size` and :attr:`leaf_shapes` meaningful:
     ``vector_size`` is the length of the per-element 1-D vector — the total
     number of scalar elements across every numeric leaf — and
-    :meth:`~NumericEventTemplate.from_vector` requires a template of this class
+    :meth:`~probpipe.NumericRecord.from_vector` takes a template of this class
     so that every field can be reconstructed from a slice of that vector. A
     *batch* of such values is a matrix of shape ``(*batch_shape, vector_size)``,
     not a single vector.
@@ -951,133 +948,11 @@ class NumericEventTemplate(EventTemplate):
         """
         return self._vector_size
 
-    # -- 1-D numeric (de)serialization --------------------------------------
-    #
-    # ``to_vector`` (value → vector) is a *value* operation and lives on the
-    # value types (:meth:`probpipe.NumericRecord.to_vector` /
-    # :meth:`probpipe.NumericRecordArray.to_vector`), not here — a template
-    # describes structure and must not depend on the value type. ``from_vector``
-    # (vector → value) is the template-driven reconstruction below.
-
-    def from_vector(self, vec: ArrayLike) -> NumericRecord | NumericRecordArray:
-        """Reconstruct a numeric value from its flat 1-D vector representation.
-
-        The inverse of :meth:`~probpipe.NumericRecord.to_vector`: splits *vec*
-        along its trailing axis
-        into this template's leaves (canonical leaf order), reshapes each chunk
-        to its event shape, and rebuilds the structured value. The **rank** of
-        *vec* selects single vs. batched — a vector of shape ``(vector_size,)``
-        rebuilds a single :class:`~probpipe.NumericRecord`; a matrix of shape
-        ``(*batch_shape, vector_size)`` rebuilds a
-        :class:`~probpipe.NumericRecordArray` with that ``batch_shape``.
-
-        This differs from :meth:`Record.from_field_values` (which rebuilds from whole
-        leaves, any type): ``from_vector`` is numeric-only and rebuilds from a
-        dense vector alone, using this template's leaf shapes.
-
-        Parameters
-        ----------
-        vec : array-like
-            The flat numeric vector; its trailing axis must have length
-            :attr:`vector_size`.
-
-        Returns
-        -------
-        NumericRecord or NumericRecordArray
-            Single when *vec* is 1-D, batched otherwise.
-
-        Raises
-        ------
-        ValueError
-            If *vec* is 0-dimensional, or its trailing axis is not
-            :attr:`vector_size`.
-
-        Notes
-        -----
-        Round-trip: ``self.from_vector(v.to_vector()) == v`` for any numeric
-        value ``v`` matching this template.
-
-        See Also
-        --------
-        probpipe.NumericRecord.to_vector : Serialize a value to a flat vector
-            (the inverse).
-        """
-        vec = jnp.asarray(vec)
-        if vec.ndim == 0:
-            raise ValueError(
-                f"{type(self).__name__}.from_vector: vec must have a trailing "
-                f"axis of size vector_size={self.vector_size}; got a 0-d scalar."
-            )
-        if vec.shape[-1] != self.vector_size:
-            raise ValueError(
-                f"{type(self).__name__}.from_vector: vec trailing axis is "
-                f"{vec.shape[-1]}, expected vector_size={self.vector_size}."
-            )
-        batch_shape = tuple(vec.shape[:-1])
-
-        offset = 0
-        leaves: list[Any] = []
-
-        def _collect(template: NumericEventTemplate) -> None:
-            nonlocal offset
-            for spec in template._tree.values():
-                if isinstance(spec, NumericEventTemplate):
-                    _collect(spec)
-                else:
-                    size = prod(spec.shape) if spec.shape else 1
-                    chunk = vec[..., offset : offset + size]
-                    offset += size
-                    leaves.append(jnp.reshape(chunk, (*batch_shape, *spec.shape)))
-
-        _collect(self)
-        treedef = _value_treedef(self, batch_shape)
-        return jax.tree_util.tree_unflatten(treedef, leaves)
-
-
-# ---------------------------------------------------------------------------
-# Template walking helpers
-# ---------------------------------------------------------------------------
-
-
-def _value_treedef(
-    template: NumericEventTemplate,
-    batch_shape: tuple[int, ...],
-) -> jax.tree_util.PyTreeDef:
-    """PyTreeDef of the value :meth:`NumericEventTemplate.from_vector` reconstructs.
-
-    Builds a throwaway ``NumericRecord`` (or ``NumericRecordArray`` when
-    ``batch_shape`` is non-empty) skeleton mirroring *template* and returns its
-    ``jax.tree_util.tree_structure``. The treedef depends only on the container
-    structure (field names, nesting, ``batch_shape``, template), not on leaf
-    values, so its placeholder leaves are cheap zero-stride broadcast arrays.
-    Pairing this treedef with the real ordered leaves in
-    :func:`jax.tree_util.tree_unflatten` lets ``from_vector`` delegate the value
-    assembly to one place.
-    """
-    from ._record_array import NumericRecordArray
-
-    numeric_fill = jnp.zeros((), dtype=jnp.float32)
-
-    def _build(tpl: NumericEventTemplate) -> NumericRecord:
-        fields: dict[str, Any] = {}
-        for name, spec in tpl.children.items():
-            if isinstance(spec, NumericEventTemplate):
-                fields[name] = _build(spec)
-            else:
-                # ``_post_validate`` guarantees a non-nested spec is an ArraySpec.
-                fields[name] = jnp.broadcast_to(numeric_fill, (*batch_shape, *spec.shape))
-        if batch_shape:
-            return NumericRecordArray(fields, batch_shape=batch_shape, template=tpl)
-        # Thread the real template: the pytree aux carries it, so the treedef
-        # this skeleton produces must match a value built from *tpl*, not from
-        # a template re-inferred off the placeholder leaves.
-        from .record import _auto_record
-
-        # A template carries no name; ``from_vector`` reconstructs "a value"
-        # of it (a caller such as ``NumericRecord.from_vector`` renames it).
-        return _auto_record("value", fields, event_template=tpl)
-
-    return jax.tree_util.tree_structure(_build(template))
+    # 1-D numeric (de)serialization is a value operation and lives on the
+    # value types: ``to_vector`` on :class:`~probpipe.NumericRecord` /
+    # :class:`~probpipe.NumericRecordArray`, and their ``from_vector``
+    # classmethods (which take a template). A template describes structure
+    # and does not depend on the value type, so it carries neither.
 
 
 # ---------------------------------------------------------------------------
