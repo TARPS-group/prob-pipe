@@ -400,6 +400,105 @@ class NumericRecord(Record):
                 fields[field_name] = hooks.restore(val, blob)
         return Record(self._name, fields, name_is_auto=self._name_is_auto)
 
+    # -- Immutable updates: carry backend aux across structural transforms --
+    #
+    # ``without`` / ``merge`` / ``replace`` / ``with_path_names`` rebuild the
+    # record from its (mostly reused-by-reference) leaves. Backend aux lives
+    # per ``NumericRecord`` level, keyed by field name, so a *rebuilt* level
+    # would otherwise lose it: a top-level ``xarray`` / ``pandas`` leaf came
+    # back bare from ``to_native`` after an edit, while a nested one — reused
+    # verbatim as a whole child — survived. These overrides re-attach the aux
+    # of every surviving leaf by object identity, at whatever level it now
+    # sits, so the result is consistent regardless of nesting depth. A leaf
+    # whose *value* changed (``replace`` with a new value, or ``map``) is a new
+    # object, is not matched, and correctly loses its stale aux. A JAX pytree
+    # round-trip still drops aux — see the class docstring.
+
+    def without(self, *paths: str) -> Record:
+        """See :meth:`Record.without`.
+
+        Backend (``xarray`` / ``pandas``) aux for leaves that survive the edit
+        is carried onto the result, so ``to_native`` still restores them.
+        """
+        return self._carry_aux(super().without(*paths), (self,))
+
+    def merge(self, other: Record) -> Record:
+        """See :meth:`Record.merge`.
+
+        Backend aux from both operands' surviving leaves is carried onto the
+        merged result.
+        """
+        return self._carry_aux(super().merge(other), (self, other))
+
+    def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Record:
+        """See :meth:`Record.replace`.
+
+        Backend aux for untouched leaves is carried onto the result; a replaced
+        leaf takes its new value's aux (captured fresh) or none.
+        """
+        return self._carry_aux(super().replace(_updates, **updates), (self,))
+
+    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Record:
+        """See :meth:`Record.with_path_names`.
+
+        Backend aux follows each renamed leaf to its new key, at any nesting
+        depth, so ``to_native`` still restores them.
+        """
+        return self._carry_aux(super().with_path_names(mapping, **kwargs), (self,))
+
+    @staticmethod
+    def _carry_aux(result: Record, sources: tuple[Record, ...]) -> Record:
+        """Re-attach backend aux carried (by leaf identity) from *sources* onto *result*."""
+        if not isinstance(result, NumericRecord):
+            return result
+        by_id: dict[int, tuple[Any, Any]] = {}
+        for src in sources:
+            if isinstance(src, NumericRecord):
+                by_id.update(src._backend_aux_by_leaf_id())
+        if by_id:
+            result._reattach_backend_aux(by_id)
+        return result
+
+    def _backend_aux_by_leaf_id(self) -> dict[int, tuple[Any, Any]]:
+        """Map ``id(leaf) -> (hooks, blob)`` across this record and its nested levels.
+
+        Aux is stored per level, keyed by that level's field name; keying by
+        the leaf object's identity instead lets a structural transform
+        re-associate each surviving leaf's aux with its (possibly renamed or
+        re-nested) position in the rebuilt tree.
+        """
+        by_id: dict[int, tuple[Any, Any]] = {}
+        if self._aux:
+            for field_name, entry in self._aux.items():
+                leaf = self._tree.get(field_name)
+                if leaf is not None:
+                    by_id[id(leaf)] = entry
+        for child in self._tree.values():
+            if isinstance(child, NumericRecord):
+                by_id.update(child._backend_aux_by_leaf_id())
+        return by_id
+
+    def _reattach_backend_aux(self, by_id: dict[int, tuple[Any, Any]]) -> None:
+        """Recursively re-attach carried aux to this record and its nested levels.
+
+        A level's own freshly captured aux (e.g. a value newly ``replace``d
+        with a backend object) is kept; carried entries only *add* the aux for
+        leaves reused verbatim from the source, matched by object identity. The
+        keys-subset guard skips the write when nothing new is carried, so a
+        subtree reused verbatim from the source is never mutated.
+        """
+        carried: dict[str, tuple[Any, Any]] = {}
+        for field_name, leaf in self._tree.items():
+            if isinstance(leaf, NumericRecord):
+                leaf._reattach_backend_aux(by_id)
+            else:
+                entry = by_id.get(id(leaf))
+                if entry is not None:
+                    carried[field_name] = entry
+        current = self._aux or {}
+        if carried and not (set(carried) <= set(current)):
+            object.__setattr__(self, "_aux", {**carried, **current})
+
     # -- Single-field scalar-like coercion ---------------------------------
     #
     # When a NumericRecord has exactly one numeric field, it behaves like

@@ -658,9 +658,7 @@ class Record(NamedTree, Tracked, Annotated):
         keep their order and their authoritative specs; an untouched child is
         reused verbatim (class and metadata preserved), and a subtree a path
         reaches into is edited recursively. Dropping every leaf under a child
-        prunes that child entirely. Backend (``xarray`` / ``pandas``) aux
-        metadata is not carried across the rebuild, so ``to_native`` on the
-        result returns bare arrays.
+        prunes that child entirely.
         """
         norms = [self._norm_path(p) for p in paths]
         for p in norms:
@@ -703,9 +701,7 @@ class Record(NamedTree, Tracked, Annotated):
         The merge is by field key, so subtrees sharing a top-level name merge
         recursively; a child present on one side only is reused verbatim (class
         and metadata preserved). Both records' authoritative specs are carried
-        into the merged ``event_template``. Backend (``xarray`` / ``pandas``)
-        aux metadata is not carried across the rebuild, so ``to_native`` on
-        the result returns bare arrays.
+        into the merged ``event_template``.
         """
         self._leaves_merged(other)  # validates: overlapping field keys raise
         new_children: dict[str, Any] = {}
@@ -738,9 +734,7 @@ class Record(NamedTree, Tracked, Annotated):
         verbatim — class and metadata preserved); a replaced field takes its
         new value's inferred spec; a nested update edits the nested child
         recursively. Overlapping update paths (one an ancestor of another)
-        raise ``ValueError``. Backend (``xarray`` / ``pandas``) aux metadata is
-        not carried across the rebuild, so ``to_native`` on the result returns
-        bare arrays.
+        raise ``ValueError``.
         """
         resolved = self._resolve_replace_updates(_updates, updates)
         if not resolved:

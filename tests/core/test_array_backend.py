@@ -341,7 +341,7 @@ class TestNonCoercibleLeavesRaise:
 
 
 # ---------------------------------------------------------------------------
-# Transforms drop aux
+# Value / pytree transforms drop aux (structural edits preserve — see below)
 # ---------------------------------------------------------------------------
 
 
@@ -358,11 +358,11 @@ class TestTransformsDropAux:
         out = nr.map(jnp.log)
         assert out.aux is None
 
-    def test_replace_drops_aux(self, da_zero_indexed):
-        nr = NumericRecord("nr", x=da_zero_indexed, y=jnp.array(1.5))
-        assert nr.aux is not None
-        out = nr.replace(y=jnp.array(2.0))
-        assert out.aux is None
+    def test_identity_map_drops_aux(self, da_zero_indexed):
+        # ``map`` is a value transform and never carries aux — even an identity
+        # map (unchanged leaf objects) drops it, unlike a structural edit.
+        nr = NumericRecord("nr", x=da_zero_indexed)
+        assert nr.map(lambda v: v).aux is None
 
     def test_jax_tree_map_drops_aux(self, da_zero_indexed):
         nr = NumericRecord("nr", x=da_zero_indexed)
@@ -411,3 +411,73 @@ class TestPytreeRoundTrip:
         # leaves are now jax.Array, so no aux is recaptured.
         assert isinstance(out, NumericRecord)
         assert out.aux is None
+
+
+# ---------------------------------------------------------------------------
+# Backend aux survives structural transforms (issue #353)
+# ---------------------------------------------------------------------------
+
+
+class TestBackendAuxSurvivesStructuralTransforms:
+    """A structural edit (`without` / `merge` / `replace` / `with_path_names`)
+    carries the backend aux of every surviving leaf, so `to_native` restores
+    the native type consistently — whether the leaf is top-level or nested. A
+    replaced leaf takes its new value's aux (or none), and the source record is
+    never mutated. (Value/pytree transforms still drop aux — see
+    ``TestTransformsDropAux`` / ``TestPytreeRoundTrip``.)
+    """
+
+    def test_without_preserves_top_level_native_leaf(self, da):
+        nr = NumericRecord("r", temps=da, extra=jnp.array(1.0))
+        back = nr.without("extra").to_native()
+        assert back["temps"].dims == ("t",)
+        np.testing.assert_array_equal(back["temps"].coords["t"].values, [10, 20, 30])
+
+    def test_without_preserves_nested_native_leaf(self, da):
+        outer = NumericRecord("outer", grp=NumericRecord("grp", temps=da), extra=jnp.array(1.0))
+        back = outer.without("extra").to_native()
+        assert back.at_path("grp/temps").dims == ("t",)
+        np.testing.assert_array_equal(back.at_path("grp/temps").coords["t"].values, [10, 20, 30])
+
+    def test_replace_preserves_untouched_native_leaf(self, da):
+        nr = NumericRecord("r", temps=da, other=jnp.array(5.0))
+        back = nr.replace(other=jnp.array(9.0)).to_native()
+        assert back["temps"].dims == ("t",)  # untouched -> aux carried
+        np.testing.assert_array_equal(np.asarray(back["other"]), 9.0)
+
+    def test_replace_with_bare_value_drops_old_aux(self, da):
+        nr = NumericRecord("r", temps=da, extra=jnp.array(1.0))
+        back = nr.replace(temps=jnp.array([9.0, 9.0, 9.0])).to_native()
+        # The replaced leaf is a new (bare) value: the old aux must not follow
+        # it, so ``to_native`` returns a bare array for that field.
+        assert isinstance(back["temps"], jax.Array)
+        np.testing.assert_array_equal(np.asarray(back["temps"]), [9.0, 9.0, 9.0])
+
+    def test_merge_preserves_native_leaves_from_both_sides(self, da):
+        xr = pytest.importorskip("xarray")
+        da2 = xr.DataArray([7.0, 8.0], dims=["s"], coords={"s": [0, 1]})
+        back = NumericRecord("a", temps=da).merge(NumericRecord("b", speeds=da2)).to_native()
+        assert back["temps"].dims == ("t",)
+        assert back["speeds"].dims == ("s",)
+
+    def test_with_path_names_preserves_top_level_native_leaf(self, da):
+        back = NumericRecord("r", temps=da).with_path_names(temps="temperature").to_native()
+        assert back["temperature"].dims == ("t",)
+        np.testing.assert_array_equal(back["temperature"].coords["t"].values, [10, 20, 30])
+
+    def test_with_path_names_preserves_nested_native_leaf(self, da):
+        # The hard case: with_path_names rebuilds the nested tree from a flat
+        # renamed leaf-map, so the nested record object is not reused — the aux
+        # is re-associated by leaf identity at its new path.
+        outer = NumericRecord("outer", grp=NumericRecord("grp", temps=da))
+        back = outer.with_path_names({"grp/temps": "temperature"}).to_native()
+        assert back.at_path("grp/temperature").dims == ("t",)
+        np.testing.assert_array_equal(
+            back.at_path("grp/temperature").coords["t"].values, [10, 20, 30]
+        )
+
+    def test_source_record_unchanged_after_transform(self, da):
+        # The carry must not mutate the source: its own aux still round-trips.
+        nr = NumericRecord("r", temps=da, extra=jnp.array(1.0))
+        _ = nr.without("extra")
+        assert nr.to_native()["temps"].dims == ("t",)
