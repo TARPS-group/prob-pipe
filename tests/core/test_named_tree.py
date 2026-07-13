@@ -40,6 +40,29 @@ class TestPublicSubstrate:
             NamedTree()
 
 
+class TestErrorPaths:
+    def test_at_path_rejects_non_string_segment(self):
+        r = Record("r", a=jnp.array(1.0))
+        with pytest.raises(TypeError):
+            r.at_path(123)
+
+    def test_replace_rejects_positional_and_keyword(self):
+        r = Record("r", a=jnp.array(1.0), b=jnp.array(2.0))
+        with pytest.raises(ValueError, match="both"):
+            r.replace({"a": jnp.array(3.0)}, b=jnp.array(4.0))
+
+    def test_replace_no_op_returns_self(self):
+        r = Record("r", a=jnp.array(1.0))
+        assert r.replace() is r
+
+    def test_with_path_names_field_vs_prefix_collision(self):
+        # Renaming a leaf onto a name already used as a path prefix (here the
+        # subtree ``n``) is the field-versus-prefix collision.
+        r = Record("r", m=jnp.array(1.0), n=Record("n", b=jnp.array(2.0)))
+        with pytest.raises(ValueError, match="field and as a path prefix"):
+            r.with_path_names(m="n")
+
+
 # ===========================================================================
 # 2. is_multi_field (substrate-level, so Record has it too)
 # ===========================================================================
@@ -263,6 +286,9 @@ class TestPytreeAuxSplit:
         batched = NumericRecord("nr", x=jnp.ones((4, 3)), g=NumericRecord("nr", y=jnp.ones(4)))
         out = jax.vmap(lambda rec: rec["x"].sum() + rec["g/y"])(batched)
         assert out.shape == (4,)
+        # Each x row sums to 3.0 and g/y is 1.0, so every element is 4.0; the
+        # value check would catch an x/g-y transpose that preserves shape.
+        assert [float(v) for v in out] == [4.0, 4.0, 4.0, 4.0]
 
     def test_treedefs_equal_iff_templates_equal(self):
         import jax

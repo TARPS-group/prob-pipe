@@ -1229,6 +1229,9 @@ class TestToVector:
         v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
         vec = v.to_vector()
         assert vec.shape == (1 + 3 + 8,)
+        # Exact concatenation in canonical field order (x, y, z) — also pins
+        # the ordering, which a shape-only check would miss.
+        np.testing.assert_array_equal(np.asarray(vec), np.array([1.0, 0.0, 1.0, 2.0, *([1.0] * 8)]))
 
     def test_to_vector_shape_is_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,), z=(2, 4))

@@ -206,11 +206,16 @@ class NamedTree:
     def _check_leaf(cls, path: str, value: Any) -> None:
         """Validate one leaf at construction time.
 
-        Checks that the leaf is an instance of the family's declared
-        :meth:`_leaf_type`. A mapping is never reached here: it denotes tree
-        structure, so a constructor materialises any mapping value into a
-        child collection before leaf validation (see the constructors and
-        :meth:`from_nested_dict`).
+        Enforces two rules. First, the substrate-wide invariant that a
+        **mapping is never a leaf**: a mapping denotes tree structure, so a
+        constructor is expected to materialise any mapping value into a child
+        collection *before* leaf validation (see the constructors and
+        :meth:`from_nested_dict`); a mapping reaching this method is therefore a
+        contract violation and raises. Second, the leaf must be an instance of
+        the family's declared :meth:`_leaf_type`. Codifying the mapping rule
+        here keeps it in one place rather than re-derived by each family; how a
+        constructor materialises a mapping into the node type stays the family's
+        own concern.
 
         Parameters
         ----------
@@ -222,8 +227,14 @@ class NamedTree:
         Raises
         ------
         TypeError
-            If *value* does not satisfy :meth:`_leaf_type`.
+            If *value* is a mapping, or does not satisfy :meth:`_leaf_type`.
         """
+        if isinstance(value, Mapping):
+            raise TypeError(
+                f"field {path!r} is a mapping ({type(value).__name__}); a mapping "
+                f"denotes tree structure and is never a leaf — materialise it into a "
+                f"nested collection (e.g. via from_nested_dict) instead"
+            )
         leaf_type = cls._leaf_type()
         if leaf_type is not object and not isinstance(value, leaf_type):
             raise TypeError(

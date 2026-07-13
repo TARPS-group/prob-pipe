@@ -365,11 +365,14 @@ class TestBoundaryRules:
     def test_map_preserves_class_and_reinfers_template(self):
         # map on a NumericRecord returns a NumericRecord, nested children
         # included; the result's template reflects the mapped leaf shapes.
-        nr = NumericRecord("nr", physics=NumericRecord("nr", force=jnp.zeros(3), mass=1.0), obs=2.0)
+        nr = NumericRecord("nr", physics=NumericRecord("nr", force=jnp.ones(3), mass=1.0), obs=2.0)
         doubled = nr.map(lambda x: 2 * x)
         assert isinstance(doubled, NumericRecord)
         assert isinstance(doubled.at_path("physics"), NumericRecord)
-        np.testing.assert_allclose(doubled["physics/force"], jnp.zeros(3))
+        # Non-zero inputs so the map is observable (2*0 == 0 would pass a no-op).
+        np.testing.assert_allclose(doubled["physics/force"], 2.0 * jnp.ones(3))
+        assert float(doubled["physics/mass"]) == 2.0
+        assert float(doubled["obs"]) == 4.0
         # Shape-changing map re-infers the template to the new shapes.
         summed = nr.map(jnp.sum)
         assert summed.event_template.at_path("physics/force").shape == ()
