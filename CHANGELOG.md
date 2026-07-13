@@ -214,9 +214,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     value-model entry above — not template methods.)
   - **Added** leaf-keyed (de)composition: the mapping protocol
     (`keys` / `values` / `items` / `__iter__`) enumerates every leaf by its
-    canonical `/`-path, and `EventTemplate.from_field_values` rebuilds a
-    value from a leaf list in that order. (See the leaf-keyed surface entry
-    below for the final shape.)
+    canonical `/`-path. Reconstruction from a leaf list is now
+    `Record.from_field_values` (the former `EventTemplate.from_field_values`
+    was removed; see the value-model entry above).
 
 - **User Guide notebooks moved from the former examples section.** The docs nav
   and grouped overview now list all 11 User Guide notebooks under
