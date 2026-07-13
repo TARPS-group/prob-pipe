@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import Any, Self
 
 __all__ = ["NamedTree"]
 
@@ -91,7 +91,7 @@ def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-class NamedTree:
+class NamedTree[L]:
     """The named, ordered tree addressed by path — the shared collection substrate.
 
     A ``NamedTree`` is a named, ordered collection of **fields** stored in a
@@ -119,7 +119,12 @@ class NamedTree:
     A child is an interior node if and only if it is an instance of the
     family's own node class (the hook :meth:`_node_type`); every other value
     is a leaf, validated against the family's declared :meth:`_leaf_type` at
-    construction. Mappings are never leaves: a mapping value denotes tree
+    construction. The static counterpart of that leaf type is the class type
+    parameter ``L`` — :class:`~probpipe.core.event_template.EventTemplate`
+    binds :class:`~probpipe.core.event_template.ValueSpec`, :class:`~probpipe.Record`
+    binds ``Any`` — which the leaf-trafficking accessors (``[]``,
+    :meth:`values`, :meth:`items`, :meth:`map`) carry through to typed
+    consumers. Mappings are never leaves: a mapping value denotes tree
     structure (see :meth:`_check_leaf` and :meth:`from_nested_dict`).
     Navigation yields views into the same storage; the structure-preserving
     transforms (:meth:`map`, :meth:`replace`, :meth:`merge`, :meth:`without`,
@@ -132,7 +137,7 @@ class NamedTree:
 
     __slots__ = ()
 
-    def __new__(cls, *args: Any, **kwargs: Any) -> NamedTree:
+    def __new__(cls, *args: Any, **kwargs: Any) -> Self:
         # Abstract substrate: an instance only ever exists as a concrete
         # family (``Record`` / ``EventTemplate`` / the batch types). A direct
         # ``NamedTree()`` would build an object with no ``_tree`` store, so
@@ -259,15 +264,15 @@ class NamedTree:
         """
         return tuple(path for path, _ in self._walk_leaves())
 
-    def values(self) -> tuple[Any, ...]:
+    def values(self) -> tuple[L, ...]:
         """The field objects (one per leaf), in canonical order (materialised)."""
         return tuple(leaf for _, leaf in self._walk_leaves())
 
-    def items(self) -> tuple[tuple[str, Any], ...]:
+    def items(self) -> tuple[tuple[str, L], ...]:
         """``(key, field_object)`` pairs, in canonical order (materialised)."""
         return tuple(self._walk_leaves())
 
-    def __getitem__(self, key: str | tuple[str, ...]) -> Any:
+    def __getitem__(self, key: str | tuple[str, ...]) -> L:
         """Return the field object at *key* — leaf access only.
 
         *key* is a field key: a ``/``-delimited string or a tuple of names
@@ -302,7 +307,7 @@ class NamedTree:
 
     # -- Tree structure -----------------------------------------------------
 
-    def at_path(self, *path: Any) -> Any:
+    def at_path(self, *path: Any) -> L | Self:
         """Return the object at *path* — a field object, or an interior subtree.
 
         *path* addresses a position in the storage tree and may be written as a
@@ -343,7 +348,7 @@ class NamedTree:
         return node
 
     @property
-    def children(self) -> Mapping[str, Any]:
+    def children(self) -> Mapping[str, L | Self]:
         """Read-only one-level view of this node — ``local_name -> child``.
 
         Each value is an immediate child: a field object (leaf) or a subtree (a
@@ -395,7 +400,7 @@ class NamedTree:
 
     # -- Leaf traversal primitives ------------------------------------------
 
-    def _walk_leaves(self) -> Iterator[tuple[str, Any]]:
+    def _walk_leaves(self) -> Iterator[tuple[str, L]]:
         """Yield ``(path, leaf_object)`` for every field, in canonical order.
 
         Canonical order is the depth-first, insertion-order traversal (§ the
@@ -456,7 +461,7 @@ class NamedTree:
 
     # -- Structural transforms ----------------------------------------------
 
-    def map(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    def map(self, f: Callable[..., L], /, *args: Any, **kwargs: Any) -> Self:
         """Apply *f* to every field object, returning a same-shape collection.
 
         Returns a new collection of the **same structure** (identical names and
@@ -485,7 +490,7 @@ class NamedTree:
             f(leaf, *args, **kwargs) for _, leaf in self._walk_leaves()
         )
 
-    def map_with_keys(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    def map_with_keys(self, f: Callable[..., L], /, *args: Any, **kwargs: Any) -> Self:
         """Like :meth:`map`, but *f* also receives each field's key (path).
 
         *f* is called as ``f(key, field_object, *args, **kwargs)``, where *key* is
@@ -519,7 +524,7 @@ class NamedTree:
             raise ValueError("Cannot remove all fields from a collection")
         return kept
 
-    def without(self, *paths: str) -> Any:
+    def without(self, *paths: str) -> Self:
         """Return a new collection with the fields/subtrees at *paths* removed.
 
         Each path is a key (drop one leaf) or a partial path (drop a whole
@@ -537,7 +542,7 @@ class NamedTree:
             raise ValueError(f"Overlapping field keys: {sorted(overlap)}")
         return {**left, **right}
 
-    def merge(self, other: Any) -> Any:
+    def merge(self, other: Any) -> Self:
         """Return the union of two collections, merged by leaf key (deep).
 
         The merge is by field key: ``{"a/x": ...}`` and ``{"a/y": ...}`` combine
@@ -599,7 +604,7 @@ class NamedTree:
             flat = rebuilt
         return flat
 
-    def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Any:
+    def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Self:
         """Return a new collection with the objects at the given paths replaced.
 
         Updates are given as a path-keyed positional mapping
@@ -700,7 +705,7 @@ class NamedTree:
             out[_PATH_SEP.join(segments)] = leaf
         return out
 
-    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Any:
+    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
         """Return a same-family tree with the given nodes renamed, ``old -> new``.
 
         Renames **fields within** the tree (leaves or whole subtrees); it does
@@ -760,7 +765,7 @@ class NamedTree:
         return flat
 
     @classmethod
-    def from_nested_dict(cls, data: Mapping[str, Any]) -> Any:
+    def from_nested_dict(cls, data: Mapping[str, Any]) -> Self:
         """Build a collection from a **nested** mapping — the inverse of :meth:`to_nested_dict`.
 
         Every ``Mapping`` level becomes a subtree and every other value a

@@ -101,7 +101,7 @@ def _derived_record_name(field_keys: Iterable[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
-class Record(NamedTree, Tracked, Annotated):
+class Record(NamedTree[Any], Tracked, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection
