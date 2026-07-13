@@ -1,28 +1,17 @@
-"""NamedTree — the named, ordered tree substrate.
+"""The named, ordered tree substrate shared by ProbPipe's structured objects.
 
 Values and schemas in ProbPipe are represented as **named, ordered trees**:
-nested objects with a unique string path to each leaf. :class:`NamedTree` is
-the shared substrate those families are built on. It owns the leaf-keyed
-mapping contract, tree navigation, and the structure-preserving transforms,
-defined once and reused by :class:`~probpipe.core.event_template.EventTemplate`
-(a tree of value specs) and :class:`~probpipe.Record` (a tree of values).
+nested objects with a unique string path to each leaf. This module provides
+:class:`NamedTree`, the shared substrate those families are built on — the one
+place the leaf-keyed mapping contract, tree navigation, and the
+structure-preserving transforms are defined. It is reused by
+:class:`~probpipe.core.event_template.EventTemplate` (a tree of value specs)
+and :class:`~probpipe.Record` (a tree of values), so the type- and value-level
+structures cannot drift apart on how a field is named or a path is resolved.
 
-The standardized terminology, shared by every family built on this class:
-
-- A **field** is one named leaf — a single object in the collection. The leaf
-  value is nameless on its own; the name the tree gives it makes it a field.
-- A **path** is a ``/``-joined sequence which can address either a field or an
-  interior node.
-- A **key** is a path that addresses a *field*. Every key is a path, but a
-  path to an interior node is not a key.
-- A **child** of a node is an entry directly under that node.
-- The **canonical order** of a tree is a depth-first walk visiting children in
-  insertion order.
-
-Mappings are never leaves: a mapping value denotes tree structure, so both
-construction and :meth:`NamedTree.from_nested_dict` materialise a mapping
-value into a nested subtree — never a single opaque leaf — and serialization
-round-trips.
+See :class:`NamedTree` for the specifics: the field/path/key terminology, the
+mapping contract and navigation surface, the leaf-versus-node rule, and the
+transforms.
 """
 
 from __future__ import annotations

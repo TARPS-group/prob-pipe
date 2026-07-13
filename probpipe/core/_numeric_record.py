@@ -1,33 +1,18 @@
-"""NumericRecord — the numeric, all-array :class:`Record`.
+"""The numeric, all-array specialization of :class:`~probpipe.Record`.
 
-A :class:`NumericRecord` is a :class:`~probpipe.Record` in which every field is a
-numeric ``jax.Array``. It is the specialization of ``Record`` that gives access
-to all of the standard, efficient array-based computation offered by JAX
-(e.g., batched operations, JIT compilation, and automatic differentiation). A
-plain ``Record`` may hold arbitrary Python objects; a ``NumericRecord`` narrows
-that to numbers, and in return gains array-native features a general record
-cannot offer.
+This module provides :class:`NumericRecord`, the :class:`~probpipe.Record`
+whose every field is a numeric ``jax.Array``. It is where a structured value
+meets JAX's array-native machinery: because a ``NumericRecord`` is an ordinary
+PyTree of arrays it passes through ``jit`` / ``vmap`` / ``grad`` unchanged and
+gains a flat 1-D vector form, so it is the value type inference algorithms and
+other compute-heavy paths consume, while a plain ``Record`` remains the general
+boundary wrapper for arbitrary Python objects. Numeric leaves may be supplied
+from several array backends (``jax`` / ``numpy`` / ``xarray`` / ``pandas``),
+whose metadata round-trips through :meth:`NumericRecord.to_native`.
 
-What the numeric restriction buys
----------------------------------
-Because every leaf is a JAX array, a ``NumericRecord`` is an ordinary JAX PyTree
-of arrays. It passes through ``jit`` / ``vmap`` / ``grad`` unchanged, and JAX's
-view of the tree coincides with ProbPipe's — unlike a general ``Record``, where
-the two can differ. It also has a flat one-dimensional vector form
-(:meth:`~NumericRecord.to_vector` and its inverse
-:meth:`~NumericRecord.from_vector`), providing compatibility with inference
-algorithms that assume parameters are represented as 1-D arrays. A
-``NumericRecord`` stores a :class:`NumericEventTemplate` describing its structure.
-
-Backends and round-tripping
----------------------------
-A ``NumericRecord`` accepts numeric leaves from several array backends (``jax``,
-``numpy``, ``xarray``, ``pandas``) and coerces each to a ``jax.Array`` at
-construction. Metadata those backends carry that a bare array cannot — an
-``xarray`` array's dimensions, coordinates, and attributes, or a ``pandas``
-object's index, columns, and dtypes — is captured and stored so that
-:meth:`~NumericRecord.to_native` can later restore each leaf to its original
-backend type.
+See :class:`NumericRecord` for the specifics: the numeric-leaf invariant, the
+flat-vector layout (``to_vector`` / ``from_vector``), backend-metadata capture
+and restoration, and the single-field scalar coercion.
 """
 
 from __future__ import annotations
