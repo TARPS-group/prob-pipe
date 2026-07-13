@@ -522,6 +522,19 @@ class NumericRecord(Record):
     # ---------------------------------------------------------------------
 
     def __reduce__(self):
+        # A record carrying backend aux (xarray / pandas metadata) round-trips
+        # through its native form: the backend objects pickle themselves and
+        # aux is re-captured on load. This keeps ``to_native`` faithful across a
+        # pickle round-trip without pickling the aux hook closures (which are
+        # not stdlib-picklable). Aux-free records take the direct path over the
+        # bare arrays; a nested aux-carrying child is handled by its own
+        # ``__reduce__`` when this record is pickled through that path.
+        if self._aux:
+            native = dict(self.to_native())
+            return (
+                _unpickle_numeric_record_native,
+                (native, self._name, self._name_is_auto, self._provenance),
+            )
         return (
             _unpickle_numeric_record,
             (dict(self._tree), self._name, self._name_is_auto, self._provenance),
@@ -680,6 +693,16 @@ def _unpickle_numeric_record(
     store: dict, name: str, name_is_auto: bool, provenance
 ) -> NumericRecord:
     nr = NumericRecord(name, store)
+    return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+
+
+def _unpickle_numeric_record_native(
+    native: dict, name: str, name_is_auto: bool, provenance
+) -> NumericRecord:
+    # Inverse of the aux-carrying ``__reduce__`` branch: ``native`` is the
+    # path-keyed mapping of restored backend leaves, so rebuilding a
+    # ``NumericRecord`` from it re-captures the backend aux at every level.
+    nr = NumericRecord(name, native)
     return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 

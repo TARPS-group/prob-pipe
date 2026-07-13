@@ -219,3 +219,63 @@ def test_bootstrap_replicate_pickle():
     # Verify it round-tripped as the right type and is callable
     assert type(brd2).__name__ == "RecordBootstrapReplicateDistribution"
     assert "replicate_size=3" in repr(brd2)
+
+
+# ---------------------------------------------------------------------------
+# Backend aux survives a pickle round-trip (issue #353)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def xr_da():
+    xr = pytest.importorskip("xarray")
+    return xr.DataArray(
+        [1.0, 2.0, 3.0],
+        dims=["t"],
+        coords={"t": [10, 20, 30]},
+        attrs={"units": "meters"},
+        name="temps",
+    )
+
+
+def _coord_ints(leaf):
+    return [int(v) for v in leaf.coords["t"].values]
+
+
+class TestNumericRecordAuxPickle:
+    """A NumericRecord carrying backend metadata round-trips it through pickle
+    (and cloudpickle, for Ray transport): the aux-carrying ``__reduce__`` branch
+    pickles the native form, so ``to_native`` stays faithful after unpickling.
+    """
+
+    def test_pickle_preserves_top_level_xarray_aux(self, xr_da):
+        nr = NumericRecord("nr", temps=xr_da, extra=jnp.array(1.0))
+        restored = roundtrip(nr)
+        assert restored.aux is not None
+        back = restored.to_native()
+        assert back["temps"].dims == ("t",)
+        assert _coord_ints(back["temps"]) == [10, 20, 30]
+        assert back["temps"].attrs == {"units": "meters"}
+
+    def test_pickle_preserves_nested_xarray_aux(self, xr_da):
+        # The root has no top-level aux; the nested record carries it and is
+        # restored through its own ``__reduce__`` when the root pickles the
+        # fast-path store.
+        outer = NumericRecord("outer", grp=NumericRecord("grp", temps=xr_da))
+        back = roundtrip(outer).to_native()
+        assert back.at_path("grp/temps").dims == ("t",)
+        assert _coord_ints(back.at_path("grp/temps")) == [10, 20, 30]
+
+    def test_cloudpickle_preserves_xarray_aux(self, xr_da):
+        # Ray ships task arguments via cloudpickle.
+        back = cloudpickle_roundtrip(NumericRecord("nr", temps=xr_da)).to_native()
+        assert back["temps"].dims == ("t",)
+        assert _coord_ints(back["temps"]) == [10, 20, 30]
+
+    def test_pickle_aux_free_record_takes_fast_path(self):
+        # No aux -> the direct bare-array path; still round-trips, aux stays None.
+        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))
+        back = roundtrip(nr)
+        assert back.aux is None
+        assert [float(v) for v in back["x"]] == [1.0, 2.0]
+        assert float(back["y"]) == pytest.approx(3.0)

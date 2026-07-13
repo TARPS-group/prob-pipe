@@ -1468,8 +1468,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   conversion to / from ProbPipe's native JAX-array form, with metadata
   round-trip via the aux registry. Backend metadata survives the structural
   edits (`without` / `merge` / `replace` / `with_path_names`) for leaves they
-  leave unchanged, at any nesting depth; a value transform (`map`) or a JAX
-  pytree round-trip drops it.
+  leave unchanged, at any nesting depth, and a pickle round-trip (an
+  aux-carrying record pickles through its native form, so `to_native` stays
+  faithful across `pickle` / Ray transport); a value transform (`map`) or a
+  JAX pytree round-trip drops it.
 - **`probpipe.AuxHooks` / `register_aux(...)` / `aux_for(...)` /
   `aux_registry`** in :mod:`probpipe.core._array_backend` — a registry
   of ``(capture, restore)`` hooks for round-tripping backend-specific
