@@ -169,7 +169,7 @@ class TestDefaultFallback:
             """Sum across all leaves of the Record."""
 
             def log_likelihood(self, params, data):
-                # data is Record(X=..., y=...) with shape (n, ...) leaves
+                # data is Record("datum", X=..., y=...) with shape (n, ...) leaves
                 return jnp.sum(jnp.asarray(data["X"])) + jnp.sum(jnp.asarray(data["y"]))
 
         lkl = _RecordLikelihood()

@@ -143,6 +143,22 @@ class NamedTree:
 
     __slots__ = ()
 
+    def __new__(cls, *args: Any, **kwargs: Any) -> NamedTree:
+        # Abstract substrate: an instance only ever exists as a concrete
+        # family (``Record`` / ``EventTemplate`` / the batch types). A direct
+        # ``NamedTree()`` would build an object with no ``_tree`` store, so
+        # every later method would fail with a cryptic ``AttributeError``;
+        # fail loudly here instead. Concrete families define their own
+        # ``__new__`` (calling ``object.__new__`` directly) or inherit this
+        # pass-through, so the guard only trips a literal ``NamedTree(...)``.
+        if cls is NamedTree:
+            raise TypeError(
+                "NamedTree is an abstract substrate and cannot be instantiated "
+                "directly; construct a concrete family such as Record or "
+                "EventTemplate."
+            )
+        return super().__new__(cls)
+
     @classmethod
     def _node_type(cls) -> type:
         """The type whose instances are internal nodes of this tree (hook).

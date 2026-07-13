@@ -184,8 +184,9 @@ class NumericRecord(Record):
     the two views coincide, and it passes through ``jit`` / ``vmap`` / ``grad``
     unchanged. As on :class:`Record`, the PyTree aux carries the
     ``(event_template, name, name_is_auto)`` triple, so the template and name
-    survive a flatten/unflatten round-trip; :attr:`provenance` and
-    :attr:`annotations` do not cross a JAX transform boundary.
+    survive a flatten/unflatten round-trip; :attr:`provenance`,
+    :attr:`annotations`, and backend (``xarray`` / ``pandas``) aux metadata
+    do not cross a JAX transform boundary.
     """
 
     __slots__ = ("_aux", "_vector_size")

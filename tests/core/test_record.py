@@ -1016,11 +1016,11 @@ class TestEventTemplateStorage:
 
         nr = Record("r", a=1.0, b=jnp.zeros(3)).to_numeric()
         assert isinstance(nr.event_template, NumericEventTemplate)
-        # to_vector delegates to the stored template.
-        np.testing.assert_array_equal(
-            np.asarray(nr.to_vector()),
-            np.asarray(nr.to_vector()),
-        )
+        # to_vector ravels and concatenates the leaves in canonical order:
+        # a (scalar) then b (length 3), so the flat vector is [a, b0, b1, b2].
+        vec = nr.to_vector()
+        np.testing.assert_array_equal(np.asarray(vec), np.asarray([1.0, 0.0, 0.0, 0.0]))
+        assert vec.shape[0] == nr.event_template.vector_size
 
     def test_equality_distinguishes_structurally_different_templates(self):
         from probpipe.core.event_template import ArraySpec, EventTemplate

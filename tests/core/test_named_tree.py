@@ -33,6 +33,12 @@ class TestPublicSubstrate:
         with pytest.raises(TypeError):
             EventTemplate(a=object())
 
+    def test_substrate_is_not_directly_instantiable(self):
+        # ``NamedTree`` is the abstract substrate; only concrete families
+        # (Record / EventTemplate / batch types) own a ``_tree`` store.
+        with pytest.raises(TypeError, match="abstract substrate"):
+            NamedTree()
+
 
 # ===========================================================================
 # 2. is_multi_field (substrate-level, so Record has it too)

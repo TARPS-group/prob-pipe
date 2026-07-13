@@ -130,18 +130,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NumericRecord`; passing an explicit non-numeric `event_template=` pins a
   plain `Record`. Structural transforms (`without` / `merge` / `replace` /
   `with_path_names`) re-derive the numeric axis the same way, and a nested
-  record stored as a field is renamed to its field key. Operations that
-  assemble records internally still auto-derive the `record(<field-keys>)`
-  name and mark it `name_is_auto=True`. The pytree registration now carries
+  record stored as a field is renamed to its field key. An operation that
+  assembles a record supplies a meaningful, deterministic name derived from
+  its inputs (the producing distribution's or model's name, or a domain term
+  such as `"observed"` / `"data"`) and marks it `name_is_auto=True`. The
+  pytree registration now carries
   the event template and identity in the treedef aux data, so
   `jax.tree_util.tree_map` over a `Record` preserves its template, name, and
   auto flag. Value-level (de)serialization entry points moved onto the value
   types: `Record.from_field_values(name, template, values)` replaces
   `EventTemplate.from_field_values(values)` (removed), and
-  `NumericRecord.from_vector(name, template, vec)` joins
-  `NumericEventTemplate.from_vector` as the classmethod inverse of
-  `NumericRecord.to_vector`. `Record.from_nested_dict` / `from_dict` likewise
-  take the name first.
+  `NumericRecord.from_vector(name, template, vec)` replaces
+  `NumericEventTemplate.from_vector` (removed) as the classmethod inverse of
+  the value-level `NumericRecord.to_vector`. `Record.from_nested_dict` /
+  `from_dict` likewise take the name first.
 
 - **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
   breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
@@ -206,9 +208,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Renamed** `EventTemplate.from_record` → `EventTemplate.infer_from`
     (best-effort, lossy inference). The value upcast is consolidated to
     `Record.to_numeric()`.
-  - **Moved** `to_vector` / `from_vector` and `leaf_shapes` onto
-    `NumericEventTemplate`; `from_vector`'s `non_numeric` argument is dropped.
-    `numeric_leaf_shapes` is consolidated into `leaf_shapes`.
+  - **Moved** `leaf_shapes` onto `NumericEventTemplate`; `numeric_leaf_shapes`
+    is consolidated into `leaf_shapes`. (`to_vector` / `from_vector` are now
+    value-level methods on `NumericRecord` / `NumericRecordArray` — see the
+    value-model entry above — not template methods.)
   - **Added** leaf-keyed (de)composition: the mapping protocol
     (`keys` / `values` / `items` / `__iter__`) enumerates every leaf by its
     canonical `/`-path, and `EventTemplate.from_field_values` rebuilds a

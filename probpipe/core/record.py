@@ -183,9 +183,9 @@ class Record(NamedTree, Tracked, Annotated):
     arguments or as a single positional mapping, but not both. The
     :meth:`from_nested_dict` alternate constructor instead takes a nested
     dictionary. Mappings are never leaves: a mapping value denotes tree
-    structure, so passing a plain ``dict`` as a field value raises
-    ``TypeError`` — nest the entries as fields (via :meth:`from_nested_dict`
-    or a nested ``Record``) instead. When every leaf is a numeric array (so
+    structure, so a plain ``dict`` passed as a field value is materialised
+    into a nested subtree — never stored as a leaf — exactly as
+    :meth:`from_nested_dict` reads it. When every leaf is a numeric array (so
     the carried template is a :class:`NumericEventTemplate`), ``Record(...)``
     **auto-promotes** to :class:`NumericRecord`, mirroring the
     ``EventTemplate`` promotion; the numeric axis is re-derived whenever a
@@ -296,9 +296,10 @@ class Record(NamedTree, Tracked, Annotated):
     The PyTree registration's children are the field values and its static aux
     data is the ``(event_template, name, name_is_auto)`` triple, so the
     template and name survive a ``tree_flatten`` / ``tree_unflatten``
-    round-trip. :attr:`provenance` and :attr:`annotations` do **not** cross a
-    JAX transform boundary; re-attach provenance on the reconstructed Record
-    if you need to preserve the chain.
+    round-trip. :attr:`provenance`, :attr:`annotations`, and backend
+    (``xarray`` / ``pandas``) aux metadata do **not** cross a JAX transform
+    boundary; re-attach provenance on the reconstructed Record if you need to
+    preserve the chain.
     """
 
     __slots__ = (
@@ -657,7 +658,9 @@ class Record(NamedTree, Tracked, Annotated):
         keep their order and their authoritative specs; an untouched child is
         reused verbatim (class and metadata preserved), and a subtree a path
         reaches into is edited recursively. Dropping every leaf under a child
-        prunes that child entirely.
+        prunes that child entirely. Backend (``xarray`` / ``pandas``) aux
+        metadata is not carried across the rebuild, so ``to_native`` on the
+        result returns bare arrays.
         """
         norms = [self._norm_path(p) for p in paths]
         for p in norms:
@@ -700,7 +703,9 @@ class Record(NamedTree, Tracked, Annotated):
         The merge is by field key, so subtrees sharing a top-level name merge
         recursively; a child present on one side only is reused verbatim (class
         and metadata preserved). Both records' authoritative specs are carried
-        into the merged ``event_template``.
+        into the merged ``event_template``. Backend (``xarray`` / ``pandas``)
+        aux metadata is not carried across the rebuild, so ``to_native`` on
+        the result returns bare arrays.
         """
         self._leaves_merged(other)  # validates: overlapping field keys raise
         new_children: dict[str, Any] = {}
@@ -733,7 +738,9 @@ class Record(NamedTree, Tracked, Annotated):
         verbatim — class and metadata preserved); a replaced field takes its
         new value's inferred spec; a nested update edits the nested child
         recursively. Overlapping update paths (one an ancestor of another)
-        raise ``ValueError``.
+        raise ``ValueError``. Backend (``xarray`` / ``pandas``) aux metadata is
+        not carried across the rebuild, so ``to_native`` on the result returns
+        bare arrays.
         """
         resolved = self._resolve_replace_updates(_updates, updates)
         if not resolved:
@@ -1012,9 +1019,9 @@ class Record(NamedTree, Tracked, Annotated):
     # -- Call-forwarding shim for single-field Records ----------------------
     #
     # When a WorkflowFunction wraps a callable return as
-    # ``Record({fn_name: callable})``, the caller can keep invoking it via
-    # ``result(args)``. Multi-field records raise — unwrapping one of many
-    # fields would be ambiguous.
+    # ``Record(fn_name, {fn_name: callable}, name_is_auto=True)``, the caller
+    # can keep invoking it via ``result(args)``. Multi-field records raise —
+    # unwrapping one of many fields would be ambiguous.
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
         if len(self._tree) != 1:
             raise TypeError(
@@ -1161,7 +1168,8 @@ def _record_flatten(v: Record) -> tuple[list, tuple[EventTemplate, str, bool]]:
     become pytree leaves themselves. The static aux data is the
     ``(event_template, name, name_is_auto)`` triple — the template and name
     survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
-    provenance and annotations do not cross a JAX transform boundary.
+    provenance, annotations, and backend (``xarray`` / ``pandas``) aux
+    metadata do not cross a JAX transform boundary.
     """
     # Emit children in the template's field order so they realign with the
     # aux template on unflatten. ``_tree`` order normally matches, but a

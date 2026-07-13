@@ -17,7 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array
-from .event_template import ArraySpec, EventTemplate, _is_numeric_dtype
+from .event_template import ArraySpec, EventTemplate, NumericEventTemplate, _is_numeric_dtype
 from .record import Record
 from .tracked import auto_name
 
@@ -566,7 +566,9 @@ class NumericRecordArray(RecordArray):
         )
 
     @classmethod
-    def from_vector(cls, name: str, template: EventTemplate, vec: Array) -> NumericRecordArray:
+    def from_vector(
+        cls, name: str, template: NumericEventTemplate, vec: Array
+    ) -> NumericRecordArray:
         """Reconstruct a batched value from its flat 1-D vectors.
 
         The batched inverse of :meth:`to_vector`: splits *vec* along its

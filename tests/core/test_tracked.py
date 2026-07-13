@@ -107,7 +107,11 @@ class TestNameIsAuto:
         assert r.name_is_auto is False
 
     def test_constructor_requires_name(self):
-        with pytest.raises(TypeError):
+        # The name guard fires in ``Record.__new__`` before promotion picks a
+        # class, so a name-less call reports ``Record`` and its custom message
+        # — not the promoted ``NumericRecord`` nor the bare Python "missing
+        # positional argument" a reverted guard would leave.
+        with pytest.raises(TypeError, match="Record requires its name"):
             Record(a=1.0)
 
     def test_operation_derived_record_is_auto(self):
