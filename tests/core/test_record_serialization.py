@@ -300,6 +300,56 @@ class TestNumericRecordAuxPickle:
         assert list(back["vals"].index) == ["p", "q"]
         assert back["vals"].name == "w"
 
+
+# ---------------------------------------------------------------------------
+# Pickle preserves an explicit (non-inferred) event_template
+# ---------------------------------------------------------------------------
+
+
+class TestPicklePreservesTemplate:
+    """An explicit template that ``infer_from`` cannot reconstruct — a leaf
+    ``support`` or an ``OpaqueSpec.meta`` — must survive pickling. Otherwise the
+    transported record would silently re-infer a weaker schema and compare
+    unequal to its origin (a Ray / cloudpickle schema-drift hazard).
+    """
+
+    def test_plain_record_template_survives(self):
+        from probpipe.core.constraints import positive
+
+        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive), tag=OpaqueSpec(meta="units"))
+        r = Record("r", {"x": jnp.ones(3), "tag": "meters"}, event_template=tpl)
+        assert not isinstance(r, NumericRecord)  # opaque leaf keeps it a plain Record
+        back = roundtrip(r)
+        assert back.event_template == r.event_template
+        assert back == r
+
+    def test_numeric_record_template_survives(self):
+        from probpipe.core.constraints import positive
+
+        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
+        back = roundtrip(nr)
+        assert back.event_template == nr.event_template
+        assert back == nr
+
+    def test_cloudpickle_preserves_template(self):
+        from probpipe.core.constraints import positive
+
+        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
+        assert cloudpickle_roundtrip(nr).event_template == nr.event_template
+
+    def test_aux_native_path_template_survives(self):
+        xr = pytest.importorskip("xarray")
+        from probpipe.core.constraints import positive
+
+        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
+        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        nr = NumericRecord("nr", {"x": da}, event_template=tpl)
+        back = roundtrip(nr)
+        assert back.event_template == nr.event_template  # explicit template survived
+        assert back.to_native()["x"].dims == ("t",)  # aux still restores on the native path
+
     def test_pickle_aux_free_record_takes_fast_path(self):
         # No aux -> the direct bare-array path; still round-trips, aux stays None.
         nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))

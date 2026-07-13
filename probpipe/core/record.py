@@ -539,9 +539,19 @@ class Record(NamedTree, Tracked, Annotated):
         raise AttributeError("Record is immutable")
 
     def __reduce__(self):
+        # Serialize the authoritative template so a pickled record keeps its
+        # exact schema (and equality) instead of re-inferring a weaker one on
+        # load — an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta`` is
+        # not recoverable by ``infer_from``.
         return (
             _unpickle_record,
-            (dict(self._tree), self._name, self._name_is_auto, self._provenance),
+            (
+                dict(self._tree),
+                self._name,
+                self._name_is_auto,
+                self._provenance,
+                self._event_template,
+            ),
         )
 
     # -- Tree structure -----------------------------------------------------
@@ -1143,8 +1153,12 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance) -> Record:
-    r = Record(name, store)
+def _unpickle_record(
+    store: dict, name: str, name_is_auto: bool, provenance, event_template=None
+) -> Record:
+    # ``event_template`` defaults to None so an in-flight pickle from before the
+    # template was serialized still loads (falling back to inference).
+    r = Record(name, store, event_template=event_template)
     return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 

@@ -533,11 +533,23 @@ class NumericRecord(Record):
             native = dict(self.to_native())
             return (
                 _unpickle_numeric_record_native,
-                (native, self._name, self._name_is_auto, self._provenance),
+                (
+                    native,
+                    self._name,
+                    self._name_is_auto,
+                    self._provenance,
+                    self._event_template,
+                ),
             )
         return (
             _unpickle_numeric_record,
-            (dict(self._tree), self._name, self._name_is_auto, self._provenance),
+            (
+                dict(self._tree),
+                self._name,
+                self._name_is_auto,
+                self._provenance,
+                self._event_template,
+            ),
         )
 
     def _single_numeric_leaf(self):
@@ -690,19 +702,24 @@ def _reconstruct_from_vector(
 
 
 def _unpickle_numeric_record(
-    store: dict, name: str, name_is_auto: bool, provenance
+    store: dict, name: str, name_is_auto: bool, provenance, event_template=None
 ) -> NumericRecord:
-    nr = NumericRecord(name, store)
+    # ``event_template`` defaults to None for in-flight pickles predating the
+    # template being serialized; the threaded template preserves the exact
+    # schema instead of re-inferring a weaker one.
+    nr = NumericRecord(name, store, event_template=event_template)
     return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
 def _unpickle_numeric_record_native(
-    native: dict, name: str, name_is_auto: bool, provenance
+    native: dict, name: str, name_is_auto: bool, provenance, event_template=None
 ) -> NumericRecord:
     # Inverse of the aux-carrying ``__reduce__`` branch: ``native`` is the
     # path-keyed mapping of restored backend leaves, so rebuilding a
     # ``NumericRecord`` from it re-captures the backend aux at every level.
-    nr = NumericRecord(name, native)
+    # The authoritative template is threaded back so an explicit (non-inferred)
+    # schema survives the round-trip rather than being re-inferred.
+    nr = NumericRecord(name, native, event_template=event_template)
     return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
