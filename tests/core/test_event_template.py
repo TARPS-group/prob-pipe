@@ -265,7 +265,7 @@ class TestFlatSize:
         assert tpl.vector_size == 1
 
     def test_rejects_opaque_leaf(self):
-        with pytest.raises(TypeError, match="opaque"):
+        with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(label=None, x=(3,))
 
     def test_rejects_non_numeric_nested(self):
@@ -1044,15 +1044,15 @@ class TestAutoPromotionSpecs:
         assert type(tpl) is EventTemplate
 
     def test_numeric_rejects_opaque_spec(self):
-        with pytest.raises(TypeError, match="opaque"):
+        with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(x=(), label=OpaqueSpec())
 
     def test_numeric_rejects_distribution_spec(self):
-        with pytest.raises(TypeError, match="non-numeric"):
+        with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(x=(), d=DistributionSpec(event_template=EventTemplate(a=())))
 
     def test_numeric_rejects_function_spec(self):
-        with pytest.raises(TypeError, match="non-numeric"):
+        with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(
                 x=(),
                 f=FunctionSpec(

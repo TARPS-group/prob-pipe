@@ -878,18 +878,11 @@ class NumericEventTemplate(EventTemplate):
                     f"{type(spec).__name__}; nested sub-templates must "
                     f"themselves be NumericEventTemplate."
                 )
-            if isinstance(spec, OpaqueSpec):
-                raise TypeError(
-                    f"NumericEventTemplate: field {name!r} is opaque "
-                    f"(OpaqueSpec); opaque leaves are not allowed — use "
-                    f"EventTemplate if you need a mixed template."
-                )
-            # DistributionSpec / FunctionSpec — non-array leaves.
+            # Any non-array leaf — OpaqueSpec, DistributionSpec, or FunctionSpec.
             raise TypeError(
-                f"NumericEventTemplate: field {name!r} has a non-numeric leaf "
-                f"({type(spec).__name__}); only ArraySpec leaves (or nested "
-                f"NumericEventTemplate) are allowed — use EventTemplate if you "
-                f"need a mixed template."
+                f"NumericEventTemplate: field {name!r} is a {type(spec).__name__}; "
+                f"only ArraySpec leaves (or a nested NumericEventTemplate) are "
+                f"allowed — use EventTemplate if you need a mixed template."
             )
 
     def __init__(
