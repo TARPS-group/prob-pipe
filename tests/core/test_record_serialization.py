@@ -222,7 +222,7 @@ def test_bootstrap_replicate_pickle():
 
 
 # ---------------------------------------------------------------------------
-# Backend aux survives a pickle round-trip (issue #353)
+# Backend aux survives a pickle round-trip
 # ---------------------------------------------------------------------------
 
 
@@ -271,6 +271,34 @@ class TestNumericRecordAuxPickle:
         back = cloudpickle_roundtrip(NumericRecord("nr", temps=xr_da)).to_native()
         assert back["temps"].dims == ("t",)
         assert _coord_ints(back["temps"]) == [10, 20, 30]
+
+    def test_pickle_preserves_pandas_series_aux(self):
+        pd = pytest.importorskip("pandas")
+        s = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"], name="obs")
+        back = roundtrip(NumericRecord("nr", vals=s)).to_native()
+        restored = back["vals"]
+        assert isinstance(restored, pd.Series)
+        assert list(restored.index) == ["a", "b", "c"]
+        assert restored.name == "obs"
+        assert restored.dtype == s.dtype
+        assert [float(v) for v in restored] == [1.0, 2.0, 3.0]
+
+    def test_pickle_preserves_pandas_dataframe_aux(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
+        back = roundtrip(NumericRecord("nr", table=df)).to_native()
+        restored = back["table"]
+        assert isinstance(restored, pd.DataFrame)
+        assert list(restored.columns) == ["x", "y"]
+        assert list(restored.index) == ["r0", "r1"]
+        assert [float(v) for v in restored["x"]] == [1.0, 2.0]
+
+    def test_cloudpickle_preserves_pandas_series_aux(self):
+        pd = pytest.importorskip("pandas")
+        s = pd.Series([4.0, 5.0], index=["p", "q"], name="w")
+        back = cloudpickle_roundtrip(NumericRecord("nr", vals=s)).to_native()
+        assert list(back["vals"].index) == ["p", "q"]
+        assert back["vals"].name == "w"
 
     def test_pickle_aux_free_record_takes_fast_path(self):
         # No aux -> the direct bare-array path; still round-trips, aux stays None.

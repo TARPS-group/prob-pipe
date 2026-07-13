@@ -414,7 +414,7 @@ class TestPytreeRoundTrip:
 
 
 # ---------------------------------------------------------------------------
-# Backend aux survives structural transforms (issue #353)
+# Backend aux survives structural transforms
 # ---------------------------------------------------------------------------
 
 
