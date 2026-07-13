@@ -17,7 +17,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array
-from .event_template import ArraySpec, EventTemplate, NumericEventTemplate, _is_numeric_dtype
+from ._array_backend import to_jax_array
+from .event_template import (
+    ArraySpec,
+    EventTemplate,
+    NumericEventTemplate,
+    _full_array_shape_or_none,
+    _is_numeric_dtype,
+)
 from .record import Record
 from .tracked import auto_name
 
@@ -353,7 +360,14 @@ class RecordArray(Record):
             raise TypeError("RecordArray.stack does not yet support nested templates.")
         fields: dict[str, Any] = {}
         for name in template.children:
-            field_vals = [r[name] for r in records]
+            # The batch stays eagerly coerced: a native leaf (xarray / pandas
+            # / registered backend) converts per element through the array
+            # backend's to_jax at this boundary. Native batch columns are a
+            # batch-rework question.
+            field_vals = [
+                to_jax_array(v) if _full_array_shape_or_none(v) is not None else v
+                for v in (r[name] for r in records)
+            ]
             fields[name] = jnp.stack(field_vals, axis=0)
         return cls(fields, batch_shape=(len(records),), template=template)
 

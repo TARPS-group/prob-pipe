@@ -18,6 +18,10 @@ Supported types
   hashes samples + weights; ``Weights`` are hashed by content
 - ``WorkflowFunction`` — user-function bytecode, referenced names, and
   captured/default values
+- Native numeric containers (``xarray`` / ``pandas`` / registered array
+  backends) — concrete type + materialised shape + dtype + bytes (container
+  metadata such as coords / index is not part of the digest; a lazy leaf
+  materialises when fingerprinted)
 - Everything else — ``repr()`` (may be process-dependent for opaque types)
 
 All imports of ProbPipe types are deferred to call time so this module can
@@ -163,6 +167,17 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
             _update(h, v, depth + 1, max_array_bytes)
     elif _is_tfp_object(obj):
         _update_tfp_object(h, obj, depth, max_array_bytes)
+    elif (native := _native_numeric_array(obj)) is not None:
+        # A native numeric container (xarray / pandas / a registered array
+        # backend): hash by concrete type plus materialised content, so the
+        # digest is content-stable across processes rather than falling to
+        # ``repr`` (truncated and library-version-dependent for frames).
+        # Container metadata (coords / index) is not part of the digest —
+        # the fingerprint covers type, shape, dtype, and values.
+        h.update(b"native:")
+        h.update(type(obj).__qualname__.encode())
+        h.update(b":")
+        _update_array(h, native, max_array_bytes)
     else:
         # Last resort. ``repr`` may embed a memory address for objects with the
         # default ``__repr__`` (making the digest process-dependent); the
@@ -178,6 +193,28 @@ def _subdigest(obj: Any, depth: int, max_array_bytes: int | None) -> bytes:
     sub = hashlib.sha256()
     _update(sub, obj, depth, max_array_bytes)
     return sub.digest()
+
+
+def _native_numeric_array(obj: Any) -> Any | None:
+    """Materialise a native numeric container to ``np.ndarray``, or ``None``.
+
+    Registry-first: a registered :class:`~probpipe.ArrayBackend` supplies the
+    materialisation (``to_numpy``); a duck-typed container with a numeric
+    numpy ``dtype`` / ``shape`` falls to ``np.asarray``. Anything else — the
+    bare array types handled earlier, scalars, genuinely opaque objects —
+    reports ``None``. Materialisation is the documented cost of
+    fingerprinting a lazy / disk-backed leaf.
+    """
+    from ._array_backend import array_backend_for
+    from .event_template import _is_numeric_dtype
+
+    backend = array_backend_for(obj)
+    if backend is not None:
+        return backend.to_numpy(obj) if backend.is_numeric(obj) else None
+    dtype = getattr(obj, "dtype", None)
+    if dtype is not None and hasattr(obj, "shape") and _is_numeric_dtype(dtype):
+        return _np.asarray(obj)
+    return None
 
 
 # ---------------------------------------------------------------------------

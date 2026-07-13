@@ -120,6 +120,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`NumericRecord` stores native-form leaves; conversion is lazy at the
+  compute boundary (breaking).** Leaves are no longer coerced to `jax.Array`
+  at construction: a numeric array or container (`jax` / `numpy` /
+  `xarray.DataArray` / `pandas` / registered backends) is stored **verbatim**,
+  validated from container metadata only, and converted at the compute
+  boundary (JAX pytree flatten, `to_vector`, the single-field scalar shim)
+  through a set-once per-leaf cache — so a lazy or disk-backed leaf is not
+  materialised at construction, and `record["x"]` returns the native leaf
+  (previously always a `jax.Array`). Backend metadata now survives structural
+  transforms and pickling because data and metadata never separate;
+  `to_native()` and `to_numeric()` are identities on a `NumericRecord`
+  (`to_numeric()` validates rather than converts). All-numeric records holding
+  native containers **auto-promote** to `NumericRecord` (the previous
+  backend-leaf exclusion is removed), and `EventTemplate.infer_from` infers
+  `ArraySpec` for them. Native leaves are stored by reference (no defensive
+  copies); equality, hashing, and fingerprints materialise lazy leaves on
+  demand. The capture/restore aux machinery is retired: `AuxHooks` /
+  `register_aux` / `aux_for` and `NumericRecord.aux` are **removed**, replaced
+  by the recognition/conversion registry `ArrayBackend` /
+  `register_array_backend` / `array_backend_for` — one registration makes a
+  new container type recognised, validated, promoted, converted (including at
+  the eager batch-stacking boundary), and content-fingerprinted everywhere at
+  once. `fingerprint()` hashes native containers by type + materialised
+  content instead of falling to the process-dependent `repr` tier.
+
 - **`Record` / `NumericRecord` construction is name-first, and all-numeric
   records auto-promote (#338, breaking).** The constructors are now
   `Record(name, fields=None, /, *, event_template=None, name_is_auto=False,

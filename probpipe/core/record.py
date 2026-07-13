@@ -67,14 +67,12 @@ type _FieldValue = Any
 def _is_numeric_field_value(value: Any) -> bool:
     """Whether a raw field value triggers the ``NumericRecord`` promotion.
 
-    A value counts iff coercing it to a ``jax.Array`` loses nothing: a bare
-    numeric array (jax / numpy) or a numeric Python scalar. A backend-typed
-    numeric leaf — one the aux registry knows how to capture, e.g. an
-    ``xarray.DataArray`` or a ``pandas`` object — does **not** trigger
-    promotion, so it stays stored verbatim in a plain ``Record`` and the
-    caller opts into the coercion explicitly (``to_numeric()`` /
-    ``NumericRecord(...)``). A nested record counts iff it is a
-    ``NumericRecord``; a batched child never is.
+    A value counts iff it is numeric: a numeric Python scalar, a bare numeric
+    array (jax / numpy), or a native numeric container — ``xarray`` /
+    ``pandas`` / any registered array backend. Leaves are stored in native
+    form and converted only at the compute boundary, so promotion loses
+    nothing. A nested record counts iff it is a ``NumericRecord``; a batched
+    child never is.
     """
     if isinstance(value, Mapping):
         # A mapping value is nested structure (materialised into a child):
@@ -84,10 +82,6 @@ def _is_numeric_field_value(value: Any) -> bool:
         from ._numeric_record import NumericRecord
 
         return isinstance(value, NumericRecord)
-    from ._array_backend import aux_for
-
-    if aux_for(value) is not None:
-        return False
     return _full_array_shape_or_none(value) is not None
 
 
@@ -300,10 +294,11 @@ class Record(NamedTree, Tracked, Annotated):
     The PyTree registration's children are the field values and its static aux
     data is the ``(event_template, name, name_is_auto)`` triple, so the
     template and name survive a ``tree_flatten`` / ``tree_unflatten``
-    round-trip. :attr:`provenance`, :attr:`annotations`, and backend
-    (``xarray`` / ``pandas``) aux metadata do **not** cross a JAX transform
-    boundary; re-attach provenance on the reconstructed Record if you need to
-    preserve the chain.
+    round-trip. :attr:`provenance` and :attr:`annotations` do **not** cross a
+    JAX transform boundary; re-attach provenance on the reconstructed Record
+    if you need to preserve the chain. On a :class:`NumericRecord`, the
+    flatten boundary is also where native leaves convert to ``jax.Array``, so
+    a value that crosses a JAX transform comes back with bare-array leaves.
     """
 
     __slots__ = (
@@ -343,13 +338,11 @@ class Record(NamedTree, Tracked, Annotated):
                 source = {
                     k: v for k, v in kwargs.items() if k not in ("event_template", "name_is_auto")
                 }
-            # Promote only when every field coerces to a bare array with
-            # nothing lost (the value probe) *and* no explicit non-numeric
-            # template vetoes it. A backend-typed leaf (xarray / pandas)
-            # fails the probe, so a plain ``Record`` carrying one stays plain
-            # even when its numeric template is threaded back in — by a
-            # structural edit or ``from_field_values`` — rather than silently
-            # coercing the leaf and breaking the ``to_native`` round-trip.
+            # Promote when every field is numeric (the value probe — bare
+            # arrays, numeric scalars, and native backend containers alike)
+            # and no explicit non-numeric template vetoes it. Leaves are
+            # stored in native form, so promotion never coerces or loses
+            # anything.
             template_allows = event_template is None or isinstance(
                 event_template, NumericEventTemplate
             )
@@ -410,7 +403,7 @@ class Record(NamedTree, Tracked, Annotated):
                         # The child already carries this exact template object
                         # (e.g. built by ``from_field_values`` or threaded from
                         # the producing generator) — reuse it verbatim, keeping
-                        # its provenance / backend aux. Identity, not ``==``:
+                        # its provenance and native leaves. Identity, not ``==``:
                         # the point is to adopt the *supplied* template object,
                         # and an equal-but-distinct child template must still be
                         # rebuilt through it.
@@ -456,7 +449,7 @@ class Record(NamedTree, Tracked, Annotated):
 
         A nested object takes its name from its field key. When the child
         already carries that name it is stored as-is; otherwise a shallow
-        identity copy (fields, template, aux shared) is stored under the key
+        identity copy (fields and template shared) is stored under the key
         name, marked auto — the name follows the key, so a later rename of
         the field re-derives it.
         """
@@ -649,7 +642,7 @@ class Record(NamedTree, Tracked, Annotated):
     # ``NamedTree``, overridden here as recursive child surgery: untouched
     # children — leaf values and whole subtrees — are reused **verbatim**,
     # preserving their concrete class (a nested ``NumericRecord`` stays
-    # numeric) and their metadata (name, provenance, backend aux); only the
+    # numeric), their metadata, and their native leaf form; only the
     # children a path actually touches are rebuilt, recursively. The
     # authoritative ``event_template`` is assembled from the surviving
     # children's own templates, so the subtree lock-step invariant holds by
@@ -870,26 +863,21 @@ class Record(NamedTree, Tracked, Annotated):
         return result
 
     def to_numeric(self) -> NumericRecord:
-        """Convert to a :class:`NumericRecord` with every leaf a ``jax.Array``.
+        """Return this value as a :class:`NumericRecord`, validating — not converting.
 
-        Per-field metadata that ``jnp.asarray`` would drop (xarray
-        dims / coords / attrs, pandas index / columns / dtypes) is
-        captured via the aux registry in
-        :mod:`probpipe.core._array_backend` and stored on the resulting
-        ``NumericRecord``. Calling :meth:`NumericRecord.to_native`
-        on the result reverses the conversion, restoring each leaf to
-        its original backend type. Nested ``Record`` children recurse
-        — every level becomes a ``NumericRecord``.
-
-        This is the single entry point for the ``Record`` → ``NumericRecord``
-        conversion; constructing ``NumericRecord(record.name,
-        **record.select_all())`` runs the same coercion and aux-capture path.
+        Every leaf must be numeric (a numeric scalar, a bare jax / numpy
+        array, or a native container such as an ``xarray`` / ``pandas``
+        object). Leaves are stored **in native form** — nothing is coerced;
+        conversion to ``jax.Array`` happens lazily at the compute boundary.
+        Nested ``Record`` children recurse — every level becomes a
+        ``NumericRecord``. On a value that is already a ``NumericRecord``
+        this is the identity (returns ``self``).
 
         Raises
         ------
         TypeError
-            If any leaf is not coercible via ``jnp.asarray`` (e.g.
-            strings, opaque Python objects).
+            If any leaf is not numeric (e.g. strings, opaque Python
+            objects).
         """
         # Lazy import to avoid the module-level circular dep:
         # _numeric_record.py imports Record from this module.
@@ -1194,12 +1182,13 @@ def _record_flatten(v: Record) -> tuple[list, tuple[EventTemplate, str, bool]]:
 
     The children are the stored field values exactly as-is; JAX further
     traverses any nested ``Record`` children because ``Record`` is a
-    registered pytree type, and non-pytree objects (strings, opaque objects)
-    become pytree leaves themselves. The static aux data is the
-    ``(event_template, name, name_is_auto)`` triple — the template and name
-    survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
-    provenance, annotations, and backend (``xarray`` / ``pandas``) aux
-    metadata do not cross a JAX transform boundary.
+    registered pytree type, and non-pytree objects (strings, opaque objects,
+    native containers) become pytree leaves themselves. The static aux data
+    is the ``(event_template, name, name_is_auto)`` triple — the template and
+    name survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
+    provenance and annotations do not cross a JAX transform boundary.
+    (``NumericRecord`` registers its own flatten, which converts native
+    leaves to ``jax.Array`` at this boundary.)
     """
     # Emit children in the template's field order so they realign with the
     # aux template on unflatten. ``_tree`` order normally matches, but a

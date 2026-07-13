@@ -10,9 +10,9 @@ first whose `check()` reports a feasible conversion. Built-ins cover:
 - TFP ↔ ProbPipe (bidirectional)
 - scipy.stats ↔ ProbPipe (bidirectional, optional dependency)
 
-For `Record`-side metadata interop — preserving xarray `dims` / `coords`
-or pandas `index` / `columns` through a `NumericRecord` round-trip — see
-the [auxiliary-metadata registry](records.md#auxiliary-metadata-registry)
+For `Record`-side metadata interop — xarray `dims` / `coords` or pandas
+`index` / `columns` leaves held natively by a `NumericRecord` — see
+the [array-backend registry](records.md#array-backend-registry)
 instead. That's a separate, simpler registry; this page is only about
 distribution-to-distribution conversion.
 
