@@ -92,10 +92,6 @@ A polymorphic template is checked by **unification** rather than per-leaf compar
 
 As the *type layer*, an `EventTemplate` is the explicit structure that travels with a value and with the producers and consumers of values (`D5 – Explicit, carried structure`). It separates the structure of one event from the orthogonal axes of *multiplicity* and *identity*, keeping those distinctions explicit (`D1 – Mathematical fidelity`). A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
 
-### Open points
-
-- *Validation scope.* Whether construction performs structural validation only, with opt-in deep (shape/dtype) checks, is open.
-
 ---
 
 ## III.2 — `FunctionBatch` and `OpaqueBatch`
@@ -179,6 +175,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 - *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays and its static aux data is the template and the identity pair (`name`, `name_is_auto`) only, so provenance, annotations, and backend metadata do not survive a JAX transform boundary; lineage instead rides on the computation layer, which records the transform itself.
 
 - *Single-field presentation.* A single-field `NumericRecord` forwards the explicit coercion entry points to its sole leaf — `float` / `int` / `bool`, `np.asarray` / `jnp.asarray`, and the `.shape` / `.dtype` / `.ndim` attributes — and a single-field `Record` holding a callable forwards `__call__`. The shim is deliberately narrow: no arithmetic, reductions, or slicing, and a multi-field record raises and points at explicit field access, since unwrapping one field of many would be ambiguous.
+- *Construction validation.* Construction enforces the trace-safe part of each leaf's spec: an `ArraySpec`'s shape and dtype — a cross-kind dtype (e.g. a float value against an integer spec) raises, a within-kind narrowing warns, following `numpy.can_cast` — and the other specs' full `is_valid`. The data-dependent `support` check is *not* enforced at construction: it reduces to a Python `bool`, so it cannot run under `jax.jit` tracing, where construction also happens (pytree unflatten reconstructs a value inside the trace, with transform-relative leaf shapes). Invariant 2 therefore holds for shape and dtype, while `support` conformance is descriptive.
 
 ## III.4 — `RecordBatch` and `NumericRecordBatch`
 

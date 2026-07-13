@@ -199,6 +199,7 @@ class NumericRecord(Record):
         *,
         event_template: EventTemplate | None = None,
         name_is_auto: bool = False,
+        _validate_leaves: bool = True,
         **fields: ArrayLike | NumericRecord,
     ):
         # Build the validated + coerced field dict *before* Record's
@@ -232,7 +233,13 @@ class NumericRecord(Record):
             else:
                 raw_fields[field_name] = value
         validated, aux = self._validate_and_coerce(raw_fields)
-        super().__init__(name, validated, event_template=event_template, name_is_auto=name_is_auto)
+        super().__init__(
+            name,
+            validated,
+            event_template=event_template,
+            name_is_auto=name_is_auto,
+            _validate_leaves=_validate_leaves,
+        )
         # Cache vector_size — leaves are immutable arrays after construction.
         total = 0
         for val in self._tree.values():
@@ -733,7 +740,12 @@ def _numeric_record_unflatten(
 ) -> NumericRecord:
     """Unflatten NumericRecord from JAX pytree traversal, threading the aux template."""
     template, name, name_is_auto = aux
-    nr = NumericRecord(name, dict(zip(tuple(template.children), children)), event_template=template)
+    nr = NumericRecord(
+        name,
+        dict(zip(tuple(template.children), children)),
+        event_template=template,
+        _validate_leaves=False,
+    )
     return nr._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 

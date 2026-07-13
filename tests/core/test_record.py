@@ -1025,17 +1025,45 @@ class TestEventTemplateStorage:
     def test_equality_distinguishes_structurally_different_templates(self):
         from probpipe.core.event_template import ArraySpec, EventTemplate
 
-        data = {"x": jnp.asarray(1.0)}
+        # float32 data is same-kind valid against both a float32 spec (exact)
+        # and a float64 spec (a widening), so both records construct; their
+        # templates differ, so the records are unequal despite identical data.
+        data = {"x": jnp.asarray(1.0, dtype=jnp.float32)}
         r_f32 = Record(
             "r", dict(data), event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float32))
         )
-        r_i32 = Record(
-            "r", dict(data), event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32))
+        r_f64 = Record(
+            "r", dict(data), event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float64))
         )
-        # Identical bytes, structurally different schemas -> unequal.
-        assert r_f32 != r_i32
+        assert r_f32 != r_f64
         # Same data, both inferred -> equal templates -> equal records.
         assert Record("r", x=jnp.asarray(1.0)) == Record("r", x=jnp.asarray(1.0))
+
+    def test_construction_enforces_leaf_shape_and_dtype(self):
+        from probpipe.core.event_template import ArraySpec, EventTemplate, OpaqueSpec
+
+        # Cross-kind dtype (a float value against an int-dtype spec) is an
+        # unsafe conversion -> construction raises.
+        with pytest.raises(ValueError, match=r"cross-kind|castable"):
+            Record(
+                "r",
+                {"x": jnp.asarray(1.0, dtype=jnp.float32)},
+                event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32)),
+            )
+        # A shape mismatch also raises.
+        with pytest.raises(ValueError, match="shape"):
+            Record("r", {"x": jnp.zeros(3)}, event_template=EventTemplate(x=ArraySpec(shape=(2,))))
+        # A within-kind narrowing (float64 value, float32 spec) is allowed but
+        # warns. Kept a plain Record (opaque sibling) so the float64 leaf is
+        # stored verbatim rather than pre-coerced by the numeric path.
+        with pytest.warns(UserWarning, match="narrowing"):
+            Record(
+                "r",
+                {"x": np.asarray([1.0, 2.0], dtype=np.float64), "tag": "keep-plain"},
+                event_template=EventTemplate(
+                    x=ArraySpec(shape=(2,), dtype=jnp.float32), tag=OpaqueSpec()
+                ),
+            )
 
     def test_pytree_roundtrip_reinfers_template(self):
         r = Record("r", x=jnp.asarray(1.0), y=jnp.zeros(2))

@@ -58,6 +58,7 @@ its docstring for details.
 
 from __future__ import annotations
 
+import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
@@ -179,8 +180,11 @@ class ArraySpec(ValueSpec):
         Checks, in order: *value* is a numeric array-like (a numeric Python
         scalar, or an object with a numeric ``dtype`` and a ``shape``) whose
         shape equals ``shape`` exactly (a numeric scalar has shape ``()``);
-        its dtype equals ``dtype`` when set (a bare Python scalar reports the
-        dtype ``np.asarray`` gives it); and every element satisfies
+        its dtype is **same-kind castable** to ``dtype`` when set — a widening
+        promotion (e.g. ``float32`` for a ``float64`` spec) or a within-kind
+        narrowing both pass, while a cross-kind conversion (e.g. a float where
+        an integer dtype is declared) does not (a bare Python scalar reports
+        the dtype ``np.asarray`` gives it); and every element satisfies
         ``support.check`` when ``support`` is set. Strings, mappings, Python
         lists/tuples, and non-numeric arrays are invalid. Never raises on a
         mismatched value — a value the spec does not describe returns
@@ -203,11 +207,54 @@ class ArraySpec(ValueSpec):
             actual = getattr(value, "dtype", None)
             if actual is None:
                 actual = np.asarray(value).dtype
-            if np.dtype(actual) != self.dtype:
+            # A same-kind cast (a widening promotion or a within-kind
+            # narrowing) matches; a cross-kind cast (e.g. float where an int
+            # dtype is declared) does not.
+            if not np.can_cast(np.dtype(actual), self.dtype, casting="same_kind"):
                 return False
         if self.support is not None:
             return bool(jnp.all(self.support.check(value)))
         return True
+
+
+def _check_leaf_at_construction(spec: ValueSpec, value: Any, path: str) -> None:
+    """Trace-safe leaf conformance check, run at ``Record`` construction.
+
+    Enforces the parts of ``spec.is_valid`` that are safe under ``jax.jit``
+    tracing: an :class:`ArraySpec`'s ``shape`` and ``dtype``, and the full
+    (already trace-safe) ``is_valid`` of the other specs. The data-dependent
+    ``support`` check is *not* run here — it reduces to a Python ``bool`` and
+    so cannot run under tracing, where construction also happens (pytree
+    unflatten). Dtype conformance follows :func:`numpy.can_cast`: an exact or
+    value-preserving (``safe``) cast is silently accepted, a within-kind
+    narrowing is accepted with a warning, and a cross-kind (``unsafe``) cast
+    raises. Raises ``ValueError`` naming *path* on a shape or cross-kind
+    mismatch.
+    """
+    if isinstance(spec, ArraySpec):
+        shape = _full_array_shape_or_none(value)
+        if shape is None or shape != spec.shape:
+            raise ValueError(
+                f"value at {path!r}: expected an array of shape {spec.shape}, got {shape!r}"
+            )
+        if spec.dtype is not None:
+            actual = getattr(value, "dtype", None)
+            actual = np.dtype(actual) if actual is not None else np.asarray(value).dtype
+            if not np.can_cast(actual, spec.dtype, casting="safe"):
+                if np.can_cast(actual, spec.dtype, casting="same_kind"):
+                    warnings.warn(
+                        f"value at {path!r} has dtype {actual}, a narrowing cast to the "
+                        f"declared dtype {spec.dtype} (possible precision loss)",
+                        stacklevel=2,
+                    )
+                else:
+                    raise ValueError(
+                        f"value at {path!r}: dtype {actual} is not castable to the declared "
+                        f"dtype {spec.dtype} (an unsafe, cross-kind conversion)"
+                    )
+        return
+    if not spec.is_valid(value):
+        raise ValueError(f"value at {path!r} does not satisfy {type(spec).__name__}")
 
 
 @dataclass(frozen=True)

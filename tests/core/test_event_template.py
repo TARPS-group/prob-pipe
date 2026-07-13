@@ -694,7 +694,11 @@ class TestArraySpecIsValid:
     def test_dtype_checked_when_set(self):
         spec = ArraySpec((2,), dtype=jnp.float32)
         assert spec.is_valid(jnp.ones(2, dtype=jnp.float32))
-        assert not spec.is_valid(jnp.ones(2, dtype=jnp.int32))
+        # A same-kind cast satisfies the spec (numpy treats int->float as
+        # same_kind); a cross-kind cast (a float value against an int-dtype
+        # spec) does not.
+        assert spec.is_valid(jnp.ones(2, dtype=jnp.int32))
+        assert not ArraySpec((2,), dtype=jnp.int32).is_valid(jnp.ones(2, dtype=jnp.float32))
 
     def test_dtype_unset_accepts_any_numeric_dtype(self):
         spec = ArraySpec((2,))
@@ -708,7 +712,10 @@ class TestArraySpecIsValid:
         bf16 = jnp.ones(2, dtype=jnp.bfloat16)
         assert ArraySpec((2,)).is_valid(bf16)
         assert ArraySpec((2,), dtype=jnp.bfloat16).is_valid(bf16)
-        assert not ArraySpec((2,), dtype=jnp.float32).is_valid(bf16)
+        # bf16 -> float32 is a safe widening (same-kind), so it satisfies a
+        # float32 spec; a cross-kind int spec does not.
+        assert ArraySpec((2,), dtype=jnp.float32).is_valid(bf16)
+        assert not ArraySpec((2,), dtype=jnp.int32).is_valid(bf16)
         f8 = jnp.ones((), dtype=jnp.float8_e4m3fn)
         assert ArraySpec(()).is_valid(f8)
 
@@ -754,9 +761,16 @@ class TestArraySpecIsValid:
         from probpipe.core.constraints import positive
 
         spec = ArraySpec((2,), dtype=jnp.float32, support=positive)
+        # exact dtype + in-support -> valid
         assert spec.is_valid(jnp.asarray([1.0, 2.0], dtype=jnp.float32))
-        # np, not jnp: JAX without x64 would silently downcast to float32.
-        assert not spec.is_valid(np.asarray([1.0, 2.0], dtype=np.float64))
+        # same-kind dtype (float64 -> float32) is accepted at the is_valid
+        # level; the in-support values still pass.
+        assert spec.is_valid(np.asarray([1.0, 2.0], dtype=np.float64))
+        # a cross-kind dtype is rejected regardless of support ...
+        assert not ArraySpec((2,), dtype=jnp.int32, support=positive).is_valid(
+            jnp.asarray([1.0, 2.0], dtype=jnp.float32)
+        )
+        # ... and a dtype-OK but support-violated value is rejected too
         assert not spec.is_valid(jnp.asarray([1.0, -2.0], dtype=jnp.float32))
 
     def test_shape_dtype_path_is_jit_traceable(self):

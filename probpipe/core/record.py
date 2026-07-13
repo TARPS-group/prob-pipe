@@ -45,7 +45,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from .event_template import EventTemplate, NumericEventTemplate, _full_array_shape_or_none
+from .event_template import (
+    EventTemplate,
+    NumericEventTemplate,
+    _check_leaf_at_construction,
+    _full_array_shape_or_none,
+)
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
 from .tracked import Annotated, Tracked
 
@@ -366,6 +371,7 @@ class Record(NamedTree, Tracked, Annotated):
         *,
         event_template: EventTemplate | None = None,
         name_is_auto: bool = False,
+        _validate_leaves: bool = True,
         **fields: _FieldValue,
     ):
         if _fields is not None:
@@ -431,7 +437,7 @@ class Record(NamedTree, Tracked, Annotated):
         if event_template is None:
             event_template = EventTemplate.infer_from(field_map)
         else:
-            self._validate_event_template(event_template)
+            self._validate_event_template(event_template, check_leaf_values=_validate_leaves)
             # Store fields in the template's field order so iteration,
             # ``values()``, ``from_field_values``, and pytree unflatten all
             # agree on one canonical order (the template is authoritative).
@@ -462,14 +468,19 @@ class Record(NamedTree, Tracked, Annotated):
         object.__setattr__(renamed, "_name_is_auto", True)
         return renamed
 
-    def _validate_event_template(self, event_template: EventTemplate) -> None:
+    def _validate_event_template(
+        self, event_template: EventTemplate, *, check_leaf_values: bool = True
+    ) -> None:
         """Check that an explicitly-supplied template matches this record's structure.
 
         Validates the **whole tree**, recursively: at every level the field-name
         sets must match, a nested ``Record`` must align with a nested
         ``EventTemplate`` (both internal nodes), and a non-``Record`` leaf must
-        align with a value spec. Per-leaf shape / dtype / kind conformance is the
-        producing generator's responsibility and is *not* checked here.
+        align with a value spec, whose trace-safe conformance is enforced per
+        leaf: an ``ArraySpec``'s shape and dtype (a cross-kind dtype raises, a
+        within-kind narrowing warns), and the other specs' full ``is_valid``.
+        The data-dependent ``support`` check is deferred — it cannot run under
+        ``jax.jit`` tracing, where construction also happens (pytree unflatten).
 
         Raises ``ValueError`` naming the ``/``-path of the first mismatch.
         """
@@ -496,7 +507,14 @@ class Record(NamedTree, Tracked, Annotated):
                         f"template has a {'nested template' if spec_is_node else 'value spec'} "
                         f"but record has a {'nested Record' if value_is_node else 'leaf value'}"
                     )
-                # both leaves -> OK (leaf-content conformance is not checked here)
+                elif check_leaf_values:
+                    # Both leaves: enforce trace-safe leaf conformance (shape +
+                    # dtype for arrays; the data-dependent support check is
+                    # deferred). Skipped on the pytree-unflatten path, where a
+                    # leaf's shape is transform-relative (e.g. ``vmap`` strips
+                    # the mapped axis) and the record was already validated when
+                    # first built.
+                    _check_leaf_at_construction(spec, value, path)
 
         _check(self, event_template, "")
 
@@ -974,7 +992,10 @@ class Record(NamedTree, Tracked, Annotated):
         ------
         ValueError
             If the number of *values* is not the number of fields
-            (``len(template)``).
+            (``len(template)``), or a value does not conform to its field's
+            spec at construction — a shape mismatch, or a cross-kind dtype (a
+            within-kind narrowing warns rather than raises; the data-dependent
+            ``support`` check is not run here).
         """
         values = list(values)
         if len(values) != len(template):
@@ -1198,7 +1219,12 @@ def _record_unflatten(aux: tuple[EventTemplate, str, bool], children: list) -> R
     """
     template, name, name_is_auto = aux
     r = object.__new__(Record)
-    r.__init__(name, dict(zip(tuple(template.children), children)), event_template=template)
+    r.__init__(
+        name,
+        dict(zip(tuple(template.children), children)),
+        event_template=template,
+        _validate_leaves=False,
+    )
     return r._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 
