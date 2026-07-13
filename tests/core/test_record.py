@@ -1040,30 +1040,26 @@ class TestEventTemplateStorage:
         assert Record("r", x=jnp.asarray(1.0)) == Record("r", x=jnp.asarray(1.0))
 
     def test_construction_enforces_leaf_shape_and_dtype(self):
-        from probpipe.core.event_template import ArraySpec, EventTemplate, OpaqueSpec
+        from probpipe.core.event_template import ArraySpec, EventTemplate
 
-        # Cross-kind dtype (a float value against an int-dtype spec) is an
-        # unsafe conversion -> construction raises.
-        with pytest.raises(ValueError, match=r"cross-kind|castable"):
+        # A cross-kind dtype (a float value against an int-dtype spec) fails the
+        # spec's is_valid -> construction raises.
+        with pytest.raises(ValueError, match="does not conform"):
             Record(
                 "r",
                 {"x": jnp.asarray(1.0, dtype=jnp.float32)},
                 event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32)),
             )
         # A shape mismatch also raises.
-        with pytest.raises(ValueError, match="shape"):
+        with pytest.raises(ValueError, match="does not conform"):
             Record("r", {"x": jnp.zeros(3)}, event_template=EventTemplate(x=ArraySpec(shape=(2,))))
-        # A within-kind narrowing (float64 value, float32 spec) is allowed but
-        # warns. Kept a plain Record (opaque sibling) so the float64 leaf is
-        # stored verbatim rather than pre-coerced by the numeric path.
-        with pytest.warns(UserWarning, match="narrowing"):
-            Record(
-                "r",
-                {"x": np.asarray([1.0, 2.0], dtype=np.float64), "tag": "keep-plain"},
-                event_template=EventTemplate(
-                    x=ArraySpec(shape=(2,), dtype=jnp.float32), tag=OpaqueSpec()
-                ),
-            )
+        # A same-kind cast (int value against a float spec) satisfies is_valid,
+        # so construction succeeds.
+        Record(
+            "r",
+            {"x": jnp.ones(2, dtype=jnp.int32)},
+            event_template=EventTemplate(x=ArraySpec(shape=(2,), dtype=jnp.float32)),
+        )
 
     def test_pytree_roundtrip_reinfers_template(self):
         r = Record("r", x=jnp.asarray(1.0), y=jnp.zeros(2))

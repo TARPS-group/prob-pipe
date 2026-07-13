@@ -48,7 +48,6 @@ from ..custom_types import ArrayLike
 from .event_template import (
     EventTemplate,
     NumericEventTemplate,
-    _check_leaf_at_construction,
     _full_array_shape_or_none,
 )
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
@@ -476,11 +475,11 @@ class Record(NamedTree, Tracked, Annotated):
         Validates the **whole tree**, recursively: at every level the field-name
         sets must match, a nested ``Record`` must align with a nested
         ``EventTemplate`` (both internal nodes), and a non-``Record`` leaf must
-        align with a value spec, whose trace-safe conformance is enforced per
-        leaf: an ``ArraySpec``'s shape and dtype (a cross-kind dtype raises, a
-        within-kind narrowing warns), and the other specs' full ``is_valid``.
-        The data-dependent ``support`` check is deferred — it cannot run under
-        ``jax.jit`` tracing, where construction also happens (pytree unflatten).
+        satisfy its value spec's ``is_valid`` (structure: shape and dtype; an
+        ``ArraySpec``'s ``support`` is descriptive and not part of ``is_valid``).
+        Leaf validation is skipped on the pytree-unflatten path, where a leaf's
+        shape is transform-relative (e.g. ``vmap`` strips the mapped axis) and
+        the record was already validated when first built.
 
         Raises ``ValueError`` naming the ``/``-path of the first mismatch.
         """
@@ -507,14 +506,16 @@ class Record(NamedTree, Tracked, Annotated):
                         f"template has a {'nested template' if spec_is_node else 'value spec'} "
                         f"but record has a {'nested Record' if value_is_node else 'leaf value'}"
                     )
-                elif check_leaf_values:
-                    # Both leaves: enforce trace-safe leaf conformance (shape +
-                    # dtype for arrays; the data-dependent support check is
-                    # deferred). Skipped on the pytree-unflatten path, where a
-                    # leaf's shape is transform-relative (e.g. ``vmap`` strips
-                    # the mapped axis) and the record was already validated when
-                    # first built.
-                    _check_leaf_at_construction(spec, value, path)
+                elif check_leaf_values and not spec.is_valid(value):
+                    # Both leaves: each value must satisfy its spec's is_valid
+                    # (structural shape + dtype; an ArraySpec's support is
+                    # descriptive and not part of is_valid). Skipped on the
+                    # pytree-unflatten path, where a leaf's shape is
+                    # transform-relative (e.g. vmap strips the mapped axis) and
+                    # the record was already validated when first built.
+                    raise ValueError(
+                        f"value at {path!r} does not conform to its field spec ({spec!r})"
+                    )
 
         _check(self, event_template, "")
 
@@ -992,10 +993,10 @@ class Record(NamedTree, Tracked, Annotated):
         ------
         ValueError
             If the number of *values* is not the number of fields
-            (``len(template)``), or a value does not conform to its field's
-            spec at construction — a shape mismatch, or a cross-kind dtype (a
-            within-kind narrowing warns rather than raises; the data-dependent
-            ``support`` check is not run here).
+            (``len(template)``), or a value fails its field spec's structural
+            ``is_valid`` at construction — a shape mismatch, or a cross-kind
+            dtype (an ``ArraySpec``'s ``support`` is descriptive and not
+            checked).
         """
         values = list(values)
         if len(values) != len(template):

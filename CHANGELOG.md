@@ -144,10 +144,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NumericEventTemplate.from_vector` (removed) as the classmethod inverse of
   the value-level `NumericRecord.to_vector`. `Record.from_nested_dict` /
   `from_dict` likewise take the name first. Construction now validates each
-  leaf against its field spec: a shape mismatch or a cross-kind dtype raises,
-  and a within-kind narrowing warns (following `numpy.can_cast`); the
-  data-dependent `support` check is not run at construction (it is not
-  `jax.jit`-traceable).
+  leaf against its field spec's `is_valid` (structure only: shape and dtype,
+  the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). An
+  `ArraySpec`'s `support` is descriptive metadata and is not checked by
+  `is_valid` — a data-dependent check that is not `jax.jit`-traceable.
 
 - **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
   breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`

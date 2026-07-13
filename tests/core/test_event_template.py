@@ -736,60 +736,30 @@ class TestArraySpecIsValid:
         assert ArraySpec((), dtype=np.asarray(1.0).dtype).is_valid(1.0)
         assert not ArraySpec((), dtype=jnp.int32).is_valid(1.0)
 
-    def test_support_checked_when_set(self):
+    def test_support_not_checked_by_is_valid(self):
+        # ``support`` is descriptive metadata on the spec; ``is_valid`` validates
+        # structure only (shape + dtype), so an out-of-support value still
+        # passes. (Support is a data-dependent check that isn't jit-traceable,
+        # and is_valid runs at Record construction, which happens under trace.)
         from probpipe.core.constraints import positive
 
         spec = ArraySpec((2,), support=positive)
+        assert spec.support is positive  # still stored on the spec
         assert spec.is_valid(jnp.asarray([1.0, 2.0]))
-        assert not spec.is_valid(jnp.asarray([1.0, -2.0]))
+        assert spec.is_valid(jnp.asarray([1.0, -2.0]))  # support not enforced
 
-    def test_support_checked_on_python_scalar(self):
+    def test_is_valid_is_jit_traceable(self):
+        # is_valid reads only static shape/dtype (no data-dependent support
+        # check), so it runs under jax.jit for any spec — including one that
+        # carries a support — returning rather than concretizing. (jit wraps the
+        # Python bool as a scalar Array, hence bool(...).)
         from probpipe.core.constraints import positive
 
-        spec = ArraySpec((), support=positive)
-        assert spec.is_valid(2.0)
-        assert not spec.is_valid(-2.0)
-
-    def test_support_vacuous_on_empty_array(self):
-        from probpipe.core.constraints import positive
-
-        assert ArraySpec((0,), support=positive).is_valid(jnp.ones(0))
-
-    def test_dtype_and_support_together(self):
-        # The checks compose: shape, then dtype, then support — each can
-        # independently reject.
-        from probpipe.core.constraints import positive
-
-        spec = ArraySpec((2,), dtype=jnp.float32, support=positive)
-        # exact dtype + in-support -> valid
-        assert spec.is_valid(jnp.asarray([1.0, 2.0], dtype=jnp.float32))
-        # same-kind dtype (float64 -> float32) is accepted at the is_valid
-        # level; the in-support values still pass.
-        assert spec.is_valid(np.asarray([1.0, 2.0], dtype=np.float64))
-        # a cross-kind dtype is rejected regardless of support ...
-        assert not ArraySpec((2,), dtype=jnp.int32, support=positive).is_valid(
-            jnp.asarray([1.0, 2.0], dtype=jnp.float32)
-        )
-        # ... and a dtype-OK but support-violated value is rejected too
-        assert not spec.is_valid(jnp.asarray([1.0, -2.0], dtype=jnp.float32))
-
-    def test_shape_dtype_path_is_jit_traceable(self):
-        # The Notes claim: shape/dtype checks read only static (shape, dtype)
-        # attributes, so a support-less spec runs under jax.jit without forcing
-        # concretization — it returns rather than raising. (jit wraps the
-        # Python bool result as a scalar Array, hence bool(...).)
         spec = ArraySpec((3,), dtype=jnp.float32)
         assert bool(jax.jit(spec.is_valid)(jnp.ones(3, dtype=jnp.float32))) is True
         assert bool(jax.jit(spec.is_valid)(jnp.ones(2, dtype=jnp.float32))) is False
-
-    def test_support_path_not_jit_traceable(self):
-        # The counter-claim: a support-carrying spec forces concretization of
-        # a traced value (bool(jnp.all(...))), so it cannot run under trace.
-        from probpipe.core.constraints import positive
-
-        spec = ArraySpec((3,), support=positive)
-        with pytest.raises(jax.errors.TracerBoolConversionError):
-            jax.jit(spec.is_valid)(jnp.ones(3))
+        # even with a support set, no concretization is forced:
+        assert bool(jax.jit(ArraySpec((3,), support=positive).is_valid)(jnp.ones(3))) is True
 
 
 class TestOpaqueSpecIsValid:
