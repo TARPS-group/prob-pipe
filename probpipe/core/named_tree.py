@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Iterator, Mapping
 from types import MappingProxyType
-from typing import Any, Self
+from typing import Any, Self, cast
 
 __all__ = ["NamedTree"]
 
@@ -286,7 +286,9 @@ class NamedTree[L]:
         node = self.at_path(key)
         if isinstance(node, self._node_type()):
             raise KeyError(f"{key!r} is a subtree, not a field; use at_path() to navigate to it")
-        return node
+        # Past the node-type guard the value is a leaf; ``_node_type()`` is a
+        # runtime ``type`` a checker cannot use to narrow the ``L | Self`` union.
+        return cast(L, node)
 
     def __contains__(self, key: object) -> bool:
         """Whether *key* is a field key (a leaf). Partial paths are not members."""
