@@ -403,6 +403,15 @@ class TestDistributionView:
         view = joint_xz["z"]
         np.testing.assert_allclose(mean(view), mean(mvn_z), atol=1e-6)
 
+    def test_mean_variance_named_after_distribution(self):
+        # Regression: the _map_components loop variable must not shadow the
+        # threaded name, or mean/variance come back named after the last
+        # component ("y") instead of the product distribution.
+        prod = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        assert mean(prod).name == prod.name
+        assert variance(prod).name == prod.name
+        assert mean(prod).name != "y"
+
     def test_parent_reference(self, joint_xy):
         view = joint_xy["x"]
         assert view._parent is joint_xy

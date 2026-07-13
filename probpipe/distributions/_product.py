@@ -542,17 +542,17 @@ def _sample_nested(name: str, components: dict, key, sample_shape, template=None
     names = list(components.keys())
     keys = jax.random.split(key, len(names))
     fields: dict = {}
-    for subkey, name in zip(keys, names):
-        comp = components[name]
+    for subkey, field_name in zip(keys, names):
+        comp = components[field_name]
         if isinstance(comp, dict):
             # ``children`` (not ``[]``): the sub-template is an interior node,
             # and template ``[]`` is leaf-only.
-            sub_template = template.children[name] if template is not None else None
-            fields[name] = _sample_nested(
-                name, comp, subkey, sample_shape, template=sub_template, numeric=numeric
+            sub_template = template.children[field_name] if template is not None else None
+            fields[field_name] = _sample_nested(
+                field_name, comp, subkey, sample_shape, template=sub_template, numeric=numeric
             )
         else:
-            fields[name] = comp._sample(subkey, sample_shape)
+            fields[field_name] = comp._sample(subkey, sample_shape)
     if sample_shape and template is not None:
         from ..core._record_array import NumericRecordArray, RecordArray
 
@@ -564,11 +564,11 @@ def _sample_nested(name: str, components: dict, key, sample_shape, template=None
 def _map_components(name: str, components: dict, fn) -> Record:
     """Apply fn to each leaf distribution, returning nested Record."""
     fields: dict = {}
-    for name, comp in components.items():
+    for field_name, comp in components.items():
         if isinstance(comp, dict):
-            fields[name] = _map_components(name, comp, fn)
+            fields[field_name] = _map_components(field_name, comp, fn)
         else:
-            fields[name] = fn(comp)
+            fields[field_name] = fn(comp)
     return Record(name, fields, name_is_auto=True)
 
 

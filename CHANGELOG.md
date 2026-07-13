@@ -152,10 +152,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
   breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
   now subclass a common `ValueSpec` ABC, and every spec implements
-  `is_valid(value) -> bool` — the check that a concrete value matches the spec
-  (shape / dtype / support for arrays; `OpaqueSpec` accepts any non-mapping
-  value; a `DistributionSpec` requires a `Distribution` carrying an equal
-  `event_template`; `FunctionSpec` requires a callable). A non-matching value
+  `is_valid(value) -> bool` — a structural check that a concrete value matches
+  the spec (shape and dtype for arrays — an `ArraySpec`'s `support` is
+  descriptive metadata and is **not** checked by `is_valid`, being
+  data-dependent and not `jax.jit`-traceable; `OpaqueSpec` accepts any
+  non-mapping value; a `DistributionSpec` requires a `Distribution` carrying an
+  equal `event_template`; `FunctionSpec` requires a callable). A non-matching
+  value
   returns `False` rather than raising, but an unexpected error from inspecting
   a malformed value is left to propagate rather than masked as invalid. The
   `LeafSpec` type alias is **removed**; use `ValueSpec` (exported from

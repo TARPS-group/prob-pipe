@@ -168,6 +168,24 @@ class TestConstruction:
         assert vec.dtype == jnp.bfloat16
         assert NumericRecord.from_vector("nr", tpl, vec) == nr
 
+    def test_dtype_pinned_vector_round_trip(self):
+        # A dtype-pinned (int32) field must round-trip: to_vector promotes to a
+        # common float across the mixed-dtype fields, and from_vector casts each
+        # block back to its declared dtype. Before the cast + skeleton fix, the
+        # int32 template made from_vector raise on the float32 placeholder.
+        from probpipe.core.event_template import ArraySpec, EventTemplate
+
+        tpl = EventTemplate(
+            k=ArraySpec(shape=(3,), dtype=jnp.int32), x=ArraySpec(shape=(2,), dtype=jnp.float32)
+        )
+        nr = NumericRecord(
+            "nr", k=jnp.array([1, 2, 3], dtype=jnp.int32), x=jnp.zeros(2), event_template=tpl
+        )
+        back = NumericRecord.from_vector("nr", nr.event_template, nr.to_vector())
+        assert back["k"].dtype == jnp.int32
+        assert list(np.asarray(back["k"])) == [1, 2, 3]
+        assert back == nr
+
 
 # ---------------------------------------------------------------------------
 # to_vector / from_vector (numeric 1-D serialization)

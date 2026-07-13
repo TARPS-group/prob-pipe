@@ -628,8 +628,14 @@ def _value_treedef(
             from ._record_array import NumericRecordArray
 
             return NumericRecordArray(fields, batch_shape=batch_shape, template=tpl)
-        # A template carries no name; the caller renames the reconstructed value.
-        return Record("value", fields, event_template=tpl, name_is_auto=True)
+        # A template carries no name; the caller renames the reconstructed
+        # value. Skip leaf validation: the placeholder fill is float32 and the
+        # template may pin another dtype (int32 / bool) — this skeleton exists
+        # only to capture the treedef structure, and the real leaves are cast
+        # to the field dtype in ``_reconstruct_from_vector``.
+        return Record(
+            "value", fields, event_template=tpl, name_is_auto=True, _validate_leaves=False
+        )
 
     return jax.tree_util.tree_structure(_build(template))
 
@@ -679,7 +685,14 @@ def _reconstruct_from_vector(
                 size = prod(spec.shape) if spec.shape else 1
                 chunk = vec[..., offset : offset + size]
                 offset += size
-                leaves.append(jnp.reshape(chunk, (*batch_shape, *spec.shape)))
+                leaf = jnp.reshape(chunk, (*batch_shape, *spec.shape))
+                # Cast back to the field's declared dtype so a dtype-pinned
+                # template (e.g. int32 / bool) round-trips faithfully — the flat
+                # vector is typically float (``to_vector`` concatenates, which
+                # promotes across mixed-dtype fields).
+                if spec.dtype is not None:
+                    leaf = leaf.astype(spec.dtype)
+                leaves.append(leaf)
 
     _collect(template)
     value = jax.tree_util.tree_unflatten(_value_treedef(template, batch_shape), leaves)
