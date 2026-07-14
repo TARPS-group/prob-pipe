@@ -440,7 +440,11 @@ def _is_numeric_dtype(dtype: Any) -> bool:
     """
     try:
         np_dtype = np.dtype(dtype)
-    except TypeError:
+    except (TypeError, ValueError):
+        # ``np.dtype`` raises ``TypeError`` for a pandas extension / masked
+        # dtype and ``ValueError`` for an object it cannot interpret at all
+        # (e.g. a mock). Either way it is not a dense numpy dtype, so not
+        # numeric.
         return False
     kind = np_dtype.kind
     if kind in _NUMERIC_KINDS:

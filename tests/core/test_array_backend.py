@@ -551,6 +551,17 @@ class TestNullableDtypeNotNumeric:
         assert not _is_numeric_dtype(pd.Int64Dtype())
         assert _is_numeric_dtype(np.dtype("int64"))
 
+    def test_is_numeric_dtype_returns_false_on_uninterpretable(self):
+        # np.dtype(x) raises ValueError (not TypeError) for some objects — e.g.
+        # a mock stand-in flowed through a numeric gate. The predicate must
+        # return False, not propagate. (Regression for the stan-suite mock.)
+        from unittest.mock import MagicMock
+
+        from probpipe.core.event_template import _full_array_shape_or_none, _is_numeric_dtype
+
+        assert _is_numeric_dtype(MagicMock()) is False
+        assert _full_array_shape_or_none(MagicMock()) is None
+
 
 class TestNativeMetadataInIdentity:
     """Option A: native-container metadata (coords / index) is part of a

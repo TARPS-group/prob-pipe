@@ -73,7 +73,7 @@ def _safe_numpy_dtype(dtype: Any) -> np.dtype | None:
     """
     try:
         return np.dtype(dtype)
-    except TypeError:
+    except (TypeError, ValueError):
         return None
 
 
