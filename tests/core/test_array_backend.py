@@ -99,14 +99,15 @@ class TestRegistryLookup:
         register_array_backend(Base, backend)
         assert array_backend_for(Sub()) is backend
 
-    def test_reregister_overwrites_silently(self, clean_registry):
+    def test_reregister_warns_and_overwrites(self, clean_registry):
         class Box:
             pass
 
         first = ArrayBackend(event_shape=lambda b: (1,))
         second = ArrayBackend(event_shape=lambda b: (2,))
         register_array_backend(Box, first)
-        register_array_backend(Box, second)
+        with pytest.warns(UserWarning, match="overwriting the existing ArrayBackend"):
+            register_array_backend(Box, second)
         assert array_backend_for(Box()) is second
 
 

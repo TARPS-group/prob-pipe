@@ -40,6 +40,7 @@ field layout keeps that addition non-breaking for existing registrations.
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -127,8 +128,15 @@ def register_array_backend(leaf_type: type, backend: ArrayBackend) -> None:
     Notes
     -----
     Re-registering an existing ``leaf_type`` overwrites the previous
-    registration silently.
+    registration and issues a ``UserWarning``, so an accidental double
+    registration (e.g. two libraries claiming the same type) is visible.
     """
+    if leaf_type in _backend_registry:
+        warnings.warn(
+            f"register_array_backend: overwriting the existing ArrayBackend "
+            f"registration for {leaf_type.__name__}.",
+            stacklevel=2,
+        )
     _backend_registry[leaf_type] = backend
 
 
