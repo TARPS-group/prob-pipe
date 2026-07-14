@@ -17,6 +17,15 @@ strings index nested paths: `record["params/intercept"]`.
 
 ::: probpipe.NumericEventTemplate
 
+## The tree substrate
+
+`Record` and `EventTemplate` are both built on `NamedTree`, the shared
+named, ordered tree that owns the leaf-keyed mapping interface, path
+navigation, the structure-preserving edits (`merge` / `without` /
+`replace` / `with_path_names`), and nested-dict (de)construction.
+
+::: probpipe.NamedTree
+
 ## Record arrays
 
 ::: probpipe.RecordArray

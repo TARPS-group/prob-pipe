@@ -144,42 +144,42 @@ def da():
 
 class TestXarrayRoundTrip:
     def test_to_numeric_then_to_native_preserves_dims(self, da):
-        back = Record(temps=da).to_numeric().to_native()
+        back = Record("r", temps=da).to_numeric().to_native()
         assert back["temps"].dims == ("t",)
 
     def test_to_numeric_then_to_native_preserves_coords(self, da):
-        back = Record(temps=da).to_numeric().to_native()
+        back = Record("r", temps=da).to_numeric().to_native()
         np.testing.assert_array_equal(back["temps"].coords["t"].values, [10, 20, 30])
 
     def test_to_numeric_then_to_native_preserves_attrs(self, da):
-        back = Record(temps=da).to_numeric().to_native()
+        back = Record("r", temps=da).to_numeric().to_native()
         assert back["temps"].attrs == {"units": "meters"}
 
     def test_to_numeric_then_to_native_preserves_name(self, da):
-        back = Record(temps=da).to_numeric().to_native()
+        back = Record("r", temps=da).to_numeric().to_native()
         assert back["temps"].name == "temps"
 
     def test_direct_numeric_record_construction_preserves_metadata(self, da):
         # The "no to_numeric() detour" path must produce identical results.
-        back = NumericRecord(temps=da).to_native()
+        back = NumericRecord("nr", temps=da).to_native()
         assert back["temps"].dims == ("t",)
         np.testing.assert_array_equal(back["temps"].coords["t"].values, [10, 20, 30])
 
     def test_to_native_returns_plain_record_not_numeric(self, da):
-        nr = NumericRecord(temps=da)
+        nr = NumericRecord("nr", temps=da)
         back = nr.to_native()
         assert isinstance(back, Record)
         assert not isinstance(back, NumericRecord)
 
     def test_values_round_trip_within_dtype_tolerance(self, da):
-        back = NumericRecord(temps=da).to_native()
+        back = NumericRecord("nr", temps=da).to_native()
         np.testing.assert_allclose(np.asarray(back["temps"]), [1.0, 2.0, 3.0])
 
     def test_nested_numeric_record_round_trips_xarray(self, da):
         """Aux on a nested ``NumericRecord`` round-trips: ``to_native``
         recurses into nested children (``_numeric_record.py:286-289``).
         """
-        outer = NumericRecord(inner=NumericRecord(temps=da))
+        outer = NumericRecord("nr", inner=NumericRecord("nr", temps=da))
         back = outer.to_native()
         # Outer is a permissive Record after to_native (restored leaves
         # may not satisfy the NumericRecord invariant). The inner gets
@@ -209,7 +209,7 @@ class TestXarrayRoundTrip:
                 "area": xr.DataArray(area, dims=("x", "t")),
             },
         )
-        back = NumericRecord(field=da_md).to_native()["field"]
+        back = NumericRecord("nr", field=da_md).to_native()["field"]
         assert back.coords["t"].dims == ("t",)
         assert back.coords["t"].attrs == {"unit": "s"}
         assert back.coords["area"].dims == ("x", "t")
@@ -240,24 +240,24 @@ def datetime_series(pd_module):
 
 class TestPandasRoundTrip:
     def test_series_round_trip_preserves_index(self, pd_module, datetime_series):
-        back = NumericRecord(counts=datetime_series).to_native()
+        back = NumericRecord("nr", counts=datetime_series).to_native()
         assert isinstance(back["counts"], pd_module.Series)
         np.testing.assert_array_equal(back["counts"].index, datetime_series.index)
 
     def test_series_round_trip_preserves_name(self, datetime_series):
-        back = NumericRecord(counts=datetime_series).to_native()
+        back = NumericRecord("nr", counts=datetime_series).to_native()
         assert back["counts"].name == "counts"
 
     def test_dataframe_round_trip_preserves_columns(self, pd_module):
         df = pd_module.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
-        back = NumericRecord(data=df).to_native()
+        back = NumericRecord("nr", data=df).to_native()
         assert isinstance(back["data"], pd_module.DataFrame)
         assert list(back["data"].columns) == ["x", "y"]
 
     def test_dataframe_round_trip_preserves_index(self, pd_module):
         idx = pd_module.Index(["a", "b", "c"], name="row")
         df = pd_module.DataFrame({"v": [1.0, 2.0, 3.0]}, index=idx)
-        back = NumericRecord(data=df).to_native()
+        back = NumericRecord("nr", data=df).to_native()
         np.testing.assert_array_equal(back["data"].index.values, ["a", "b", "c"])
         assert back["data"].index.name == "row"
 
@@ -273,7 +273,7 @@ class TestMixedBackendRecord:
         pd = pytest.importorskip("pandas")
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
         s = pd.Series([10, 20, 30], name="cs")
-        r = Record(temp=da, counts=s, intercept=1.5)
+        r = Record("r", temp=da, counts=s, intercept=1.5)
         back = r.to_numeric().to_native()
         assert isinstance(back["temp"], xr.DataArray)
         assert isinstance(back["counts"], pd.Series)
@@ -294,23 +294,23 @@ def da_simple():
 
 class TestPathEquivalence:
     def test_aux_keys_match(self, da_simple):
-        nr_direct = NumericRecord(x=da_simple, y=jnp.array(1.5))
-        nr_via_to_numeric = Record(x=da_simple, y=jnp.array(1.5)).to_numeric()
+        nr_direct = NumericRecord("nr", x=da_simple, y=jnp.array(1.5))
+        nr_via_to_numeric = Record("r", x=da_simple, y=jnp.array(1.5)).to_numeric()
         keys_direct = set((nr_direct.aux or {}).keys())
         keys_via = set((nr_via_to_numeric.aux or {}).keys())
         assert keys_direct == keys_via == {"x"}
 
     def test_store_arrays_bitwise_equal(self, da_simple):
-        nr_direct = NumericRecord(x=da_simple, y=2.5)
-        nr_via_to_numeric = Record(x=da_simple, y=2.5).to_numeric()
+        nr_direct = NumericRecord("nr", x=da_simple, y=2.5)
+        nr_via_to_numeric = Record("r", x=da_simple, y=2.5).to_numeric()
         for f in nr_direct.fields:
             np.testing.assert_array_equal(
                 np.asarray(nr_direct[f]), np.asarray(nr_via_to_numeric[f])
             )
 
     def test_to_native_results_match(self, da_simple):
-        b1 = NumericRecord(x=da_simple, y=2.5).to_native()
-        b2 = Record(x=da_simple, y=2.5).to_numeric().to_native()
+        b1 = NumericRecord("nr", x=da_simple, y=2.5).to_native()
+        b2 = Record("r", x=da_simple, y=2.5).to_numeric().to_native()
         # xarray fields restored identically (dims + coord values).
         assert b1["x"].dims == b2["x"].dims
         np.testing.assert_array_equal(b1["x"].coords["t"].values, b2["x"].coords["t"].values)
@@ -325,24 +325,23 @@ class TestPathEquivalence:
 
 class TestNonCoercibleLeavesRaise:
     def test_numeric_record_string_raises(self):
-        # ``name=`` is the Record-name kwarg, so use a different field.
         with pytest.raises(TypeError, match="numeric"):
-            NumericRecord(label="alice")
+            NumericRecord("nr", label="alice")
 
     def test_to_numeric_string_raises(self):
         with pytest.raises(TypeError, match="numeric"):
-            Record(label="alice").to_numeric()
+            Record("r", label="alice").to_numeric()
 
     def test_to_numeric_opaque_raises(self):
         class Opaque:
             pass
 
         with pytest.raises(TypeError, match="numeric"):
-            Record(thing=Opaque()).to_numeric()
+            Record("r", thing=Opaque()).to_numeric()
 
 
 # ---------------------------------------------------------------------------
-# Transforms drop aux
+# Value / pytree transforms drop aux (structural edits preserve — see below)
 # ---------------------------------------------------------------------------
 
 
@@ -354,19 +353,19 @@ def da_zero_indexed():
 
 class TestTransformsDropAux:
     def test_map_drops_aux(self, da_zero_indexed):
-        nr = NumericRecord(x=da_zero_indexed)
+        nr = NumericRecord("nr", x=da_zero_indexed)
         assert nr.aux is not None
         out = nr.map(jnp.log)
         assert out.aux is None
 
-    def test_replace_drops_aux(self, da_zero_indexed):
-        nr = NumericRecord(x=da_zero_indexed, y=jnp.array(1.5))
-        assert nr.aux is not None
-        out = nr.replace(y=jnp.array(2.0))
-        assert out.aux is None
+    def test_identity_map_drops_aux(self, da_zero_indexed):
+        # ``map`` is a value transform and never carries aux — even an identity
+        # map (unchanged leaf objects) drops it, unlike a structural edit.
+        nr = NumericRecord("nr", x=da_zero_indexed)
+        assert nr.map(lambda v: v).aux is None
 
     def test_jax_tree_map_drops_aux(self, da_zero_indexed):
-        nr = NumericRecord(x=da_zero_indexed)
+        nr = NumericRecord("nr", x=da_zero_indexed)
         out = jax.tree.map(lambda v: v + 1, nr)
         assert isinstance(out, NumericRecord)
         assert out.aux is None
@@ -383,7 +382,8 @@ class TestRecordArrayStackDropsAux:
         # Build per-row NumericRecords carrying xarray leaves so the
         # source records *do* carry aux.
         records = [
-            NumericRecord(x=xr.DataArray([float(i), float(i + 1)], dims=["t"])) for i in range(3)
+            NumericRecord("nr", x=xr.DataArray([float(i), float(i + 1)], dims=["t"]))
+            for i in range(3)
         ]
         # Each source record has aux for ``x``.
         assert all(r.aux is not None for r in records)
@@ -404,10 +404,80 @@ class TestPytreeRoundTrip:
     def test_flatten_unflatten_drops_aux(self):
         xr = pytest.importorskip("xarray")
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
-        nr = NumericRecord(x=da)
+        nr = NumericRecord("nr", x=da)
         leaves, treedef = jax.tree_util.tree_flatten(nr)
         out = jax.tree_util.tree_unflatten(treedef, leaves)
         # Aux is reconstructed from leaf types after unflatten, and the
         # leaves are now jax.Array, so no aux is recaptured.
         assert isinstance(out, NumericRecord)
         assert out.aux is None
+
+
+# ---------------------------------------------------------------------------
+# Backend aux survives structural transforms
+# ---------------------------------------------------------------------------
+
+
+class TestBackendAuxSurvivesStructuralTransforms:
+    """A structural edit (`without` / `merge` / `replace` / `with_path_names`)
+    carries the backend aux of every surviving leaf, so `to_native` restores
+    the native type consistently — whether the leaf is top-level or nested. A
+    replaced leaf takes its new value's aux (or none), and the source record is
+    never mutated. (Value/pytree transforms still drop aux — see
+    ``TestTransformsDropAux`` / ``TestPytreeRoundTrip``.)
+    """
+
+    def test_without_preserves_top_level_native_leaf(self, da):
+        nr = NumericRecord("r", temps=da, extra=jnp.array(1.0))
+        back = nr.without("extra").to_native()
+        assert back["temps"].dims == ("t",)
+        np.testing.assert_array_equal(back["temps"].coords["t"].values, [10, 20, 30])
+
+    def test_without_preserves_nested_native_leaf(self, da):
+        outer = NumericRecord("outer", grp=NumericRecord("grp", temps=da), extra=jnp.array(1.0))
+        back = outer.without("extra").to_native()
+        assert back.at_path("grp/temps").dims == ("t",)
+        np.testing.assert_array_equal(back.at_path("grp/temps").coords["t"].values, [10, 20, 30])
+
+    def test_replace_preserves_untouched_native_leaf(self, da):
+        nr = NumericRecord("r", temps=da, other=jnp.array(5.0))
+        back = nr.replace(other=jnp.array(9.0)).to_native()
+        assert back["temps"].dims == ("t",)  # untouched -> aux carried
+        np.testing.assert_array_equal(np.asarray(back["other"]), 9.0)
+
+    def test_replace_with_bare_value_drops_old_aux(self, da):
+        nr = NumericRecord("r", temps=da, extra=jnp.array(1.0))
+        back = nr.replace(temps=jnp.array([9.0, 9.0, 9.0])).to_native()
+        # The replaced leaf is a new (bare) value: the old aux must not follow
+        # it, so ``to_native`` returns a bare array for that field.
+        assert isinstance(back["temps"], jax.Array)
+        np.testing.assert_array_equal(np.asarray(back["temps"]), [9.0, 9.0, 9.0])
+
+    def test_merge_preserves_native_leaves_from_both_sides(self, da):
+        xr = pytest.importorskip("xarray")
+        da2 = xr.DataArray([7.0, 8.0], dims=["s"], coords={"s": [0, 1]})
+        back = NumericRecord("a", temps=da).merge(NumericRecord("b", speeds=da2)).to_native()
+        assert back["temps"].dims == ("t",)
+        assert back["speeds"].dims == ("s",)
+
+    def test_with_path_names_preserves_top_level_native_leaf(self, da):
+        back = NumericRecord("r", temps=da).with_path_names(temps="temperature").to_native()
+        assert back["temperature"].dims == ("t",)
+        np.testing.assert_array_equal(back["temperature"].coords["t"].values, [10, 20, 30])
+
+    def test_with_path_names_preserves_nested_native_leaf(self, da):
+        # The hard case: with_path_names rebuilds the nested tree from a flat
+        # renamed leaf-map, so the nested record object is not reused — the aux
+        # is re-associated by leaf identity at its new path.
+        outer = NumericRecord("outer", grp=NumericRecord("grp", temps=da))
+        back = outer.with_path_names({"grp/temps": "temperature"}).to_native()
+        assert back.at_path("grp/temperature").dims == ("t",)
+        np.testing.assert_array_equal(
+            back.at_path("grp/temperature").coords["t"].values, [10, 20, 30]
+        )
+
+    def test_source_record_unchanged_after_transform(self, da):
+        # The carry must not mutate the source: its own aux still round-trips.
+        nr = NumericRecord("r", temps=da, extra=jnp.array(1.0))
+        _ = nr.without("extra")
+        assert nr.to_native()["temps"].dims == ("t",)

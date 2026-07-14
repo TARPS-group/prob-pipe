@@ -357,6 +357,7 @@ class TestCanonicalConvenience:
                 # This stub returns zero placeholders sized from the
                 # template's per-field event shapes.
                 return NumericRecord(
+                    "nr",
                     a=jnp.zeros(sample_shape),
                     b=jnp.zeros((*sample_shape, 2)),
                 )
@@ -441,6 +442,7 @@ class TestCanonicalConvenience:
                 from probpipe import NumericRecord
 
                 return NumericRecord(
+                    "nr",
                     a=jnp.zeros(sample_shape),
                     b=jnp.zeros(sample_shape),
                     c=jnp.zeros(sample_shape),
@@ -479,6 +481,7 @@ class TestCanonicalConvenience:
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 return NumericRecord(
+                    "nr",
                     s1=jnp.zeros(sample_shape),
                     s2=jnp.zeros(sample_shape),
                 )
@@ -498,6 +501,7 @@ class TestCanonicalConvenience:
 
             def _sample(self, key, sample_shape=()):  # pragma: no cover
                 return NumericRecord(
+                    "nr",
                     t1=jnp.zeros(sample_shape),
                     t2=jnp.zeros(sample_shape),
                 )
@@ -560,6 +564,7 @@ class TestCanonicalConvenience:
                 from probpipe import NumericRecord
 
                 return NumericRecord(
+                    "nr",
                     a=jnp.zeros(sample_shape),
                     b=jnp.zeros(sample_shape),
                 )
@@ -573,12 +578,17 @@ class TestCanonicalConvenience:
         assert scalar_normal.treedef == jax.tree.structure(None)
 
     def test_treedef_record_for_multi_leaf(self, multi_leaf_dist):
-        """Multi-leaf: ``treedef`` matches a ``NumericRecord`` skeleton
-        with the same field names — locks the relationship between
-        ``event_template`` and the sample pytree."""
-        from probpipe import NumericRecord
+        """Multi-leaf: ``treedef`` matches an operation-derived
+        ``NumericRecord`` skeleton with the same field names — locks the
+        relationship between ``event_template`` and the sample pytree.
+        The pytree aux carries the record identity, so the skeleton must
+        use the distribution's own name (``"two_field"``), which the
+        treedef derives and marks auto."""
+        from probpipe.core.record import Record
 
-        expected = jax.tree.structure(NumericRecord(a=jnp.zeros(()), b=jnp.zeros((2,))))
+        expected = jax.tree.structure(
+            Record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))}, name_is_auto=True)
+        )
         assert multi_leaf_dist.treedef == expected
 
     def test_treedef_is_cached(self, multi_leaf_dist):

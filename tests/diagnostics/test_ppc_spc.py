@@ -7,12 +7,12 @@ import pytest
 import xarray as xr
 
 from probpipe.diagnostics._ppc_spc import (
-    _dataset_from_record,
+    _dataset_from_payload,
     _observed_data_to_dataset,
     _ppc_op,
     _replicated_data_to_dataset,
     _replicated_statistics_summary,
-    _write_ppc_record,
+    _write_ppc_payload,
     add_ppc,
 )
 from probpipe.diagnostics._views import DiagnosticsView, PPCView
@@ -326,7 +326,7 @@ class TestAddPpc:
         assert view.ppc.exists
 
     def test_keyed_likelihood_uses_batched_path(self, posterior):
-        record = _ppc_op(
+        payload = _ppc_op(
             posterior,
             _mean,
             observed_data=np.ones(5),
@@ -334,27 +334,23 @@ class TestAddPpc:
             n_replications=4,
         )
 
-        ds = _dataset_from_record(record)
+        ds = _dataset_from_payload(payload)
         assert "p_value" in ds
 
-    def test_dataset_from_record_rejects_non_dataset(self):
-        from probpipe.core.record import Record
+    def test_dataset_from_payload_rejects_non_dataset(self):
 
         with pytest.raises(TypeError, match=r"xarray\.Dataset"):
-            _dataset_from_record(Record(name="bad", dataset="not-a-dataset"))
+            _dataset_from_payload({"dataset": "not-a-dataset"})
 
-    def test_write_ppc_record_stores_optional_predictive_group(self, posterior):
-        from probpipe.core.record import Record
-
+    def test_write_ppc_payload_stores_optional_predictive_group(self, posterior):
         run_ds = xr.Dataset({"p_value": xr.DataArray([0.5], dims=["test_fn"])})
         pred_ds = xr.Dataset({"y": xr.DataArray(np.ones((1, 2)), dims=["chain", "draw"])})
-        record = Record(
-            name="ppc",
-            posterior_predictive_dataset=pred_ds,
-            observed_data_dataset=None,
-            dataset=run_ds,
-        )
+        payload = {
+            "posterior_predictive_dataset": pred_ds,
+            "observed_data_dataset": None,
+            "dataset": run_ds,
+        }
 
-        _write_ppc_record(posterior, record)
+        _write_ppc_payload(posterior, payload)
 
         assert "posterior_predictive" in posterior._annotations["arviz"].children

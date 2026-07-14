@@ -50,30 +50,31 @@ Numeric vs. Mixed
 When every field is an ``ArraySpec`` the template is all-numeric, and
 ``EventTemplate(...)`` auto-promotes to :class:`NumericEventTemplate` — the
 specialization describing a value that is a PyTree of arrays. That subclass
-adds the flat-vector layout (``vector_size`` / ``to_vector`` / ``from_vector``);
-see its docstring for details.
+adds the flat-vector layout — ``vector_size`` and :meth:`from_vector`
+reconstruction; the ``to_vector`` serialization is a value method on
+:class:`~probpipe.NumericRecord` / :class:`~probpipe.NumericRecordArray`. See
+its docstring for details.
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Iterable, Iterator, Mapping
+from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from math import prod
-from types import MappingProxyType
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-import jax
 import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from ..custom_types import Array, ArrayLike
 from .constraints import Constraint
-
-if TYPE_CHECKING:
-    from ._numeric_record import NumericRecord
-    from ._record_array import NumericRecordArray
+from .named_tree import (
+    _PATH_SEP,
+    NamedTree,
+    _check_no_path_sep,
+    _unflatten_paths,
+)
 
 __all__ = [
     "ArraySpec",
@@ -84,579 +85,6 @@ __all__ = [
     "OpaqueSpec",
     "ValueSpec",
 ]
-
-# Separator for nested leaf paths (``"outer/inner"``). The path convention is
-# shared between a template and the values it describes; :mod:`probpipe.core.record`
-# imports these from here so the constant has a single home. Docstrings spell the
-# separator literally as ``/``; if it ever changes, update them (a guard test
-# pins this value so the change can't pass silently).
-_PATH_SEP = "/"
-
-
-def _check_no_path_sep(name: str) -> None:
-    if _PATH_SEP in name:
-        raise ValueError(
-            f"Field name {name!r} must not contain {_PATH_SEP!r} "
-            f"(reserved as the nested-path separator)."
-        )
-
-
-class _PathSubtree(dict):
-    """Marker for a nested mapping produced by path-key unflattening.
-
-    A plain ``dict`` *value* is opaque leaf data and is never treated as
-    structure; a ``_PathSubtree`` is the structural nesting that ``/``-delimited
-    keys denote, so a constructor materialises it into a child collection while
-    leaving plain-``dict`` values alone.
-    """
-
-
-def _unflatten_paths(source: Mapping[str, Any]) -> dict[str, Any]:
-    """Explode a path-keyed mapping into a nested ordered mapping.
-
-    Each key is a field key that may be *path-shaped* — a ``/``-delimited string
-    denotes nesting (``{"a/b": x}`` becomes ``{"a": {"b": x}}``). Keys are read
-    in order; the result preserves the **first-appearance order** of each
-    distinct leading segment (recursively), which is the canonical field order.
-    Structural nesting is tagged with :class:`_PathSubtree` so a constructor can
-    tell it apart from a plain-``dict`` leaf value.
-
-    Raises
-    ------
-    TypeError
-        If a key is not a string.
-    ValueError
-        If a key is empty or has an empty segment (``""``, ``"a/"``, ``"/a"``,
-        ``"a//b"``), or if one leading segment is used **both** as a complete key
-        and as the prefix of a longer key (the field-versus-prefix collision).
-    """
-    groups: dict[str, Any] = {}
-    is_prefix: dict[str, bool] = {}
-    for key, value in source.items():
-        if not isinstance(key, str):
-            raise TypeError(f"field key must be a string, got {type(key).__name__}")
-        if not key:
-            raise ValueError("field key must be a non-empty string")
-        segments = key.split(_PATH_SEP)
-        if any(seg == "" for seg in segments):
-            raise ValueError(
-                f"malformed path key {key!r}: empty path segment "
-                f"(no leading/trailing/doubled {_PATH_SEP!r})"
-            )
-        head, rest = segments[0], _PATH_SEP.join(segments[1:])
-        if rest:
-            if head in groups and not is_prefix[head]:
-                raise ValueError(f"name {head!r} is used both as a field and as a path prefix")
-            is_prefix[head] = True
-            groups.setdefault(head, {})[rest] = value
-        else:
-            if head in groups:
-                raise ValueError(
-                    f"name {head!r} is used both as a field and as a path prefix"
-                    if is_prefix.get(head)
-                    else f"duplicate field key {head!r}"
-                )
-            groups[head] = value
-            is_prefix[head] = False
-    result: dict[str, Any] = {}
-    for head, val in groups.items():
-        result[head] = _PathSubtree(_unflatten_paths(val)) if is_prefix[head] else val
-    return result
-
-
-class _NamedTree:
-    """Mixin for named, ordered collection of fields with nested structure.
-
-    A mixin for functionality that enables an object to be treated as a named,
-    ordered collection of fields, where the fields may be stored in a nested,
-    tree-like structure. In other words, the fields are the leaves of the tree.
-    This allows the object to be treated as a standard Python dictionary, with
-    the keys corresponding to the unique string paths identifying each field.
-    The key paths reserve ``/`` as the field path separator. Therefore,
-    `x["a/b/c"]` selects a field, ``len(x)`` gives the number of fields,
-    `"a/b/c" in x` checks a field exists,
-    ``x.keys()``/``x.values()``/``x.items()`` give the set of key
-    paths/field values/path-value tuples. Iterating over the object iterates
-    over the keys in insertion order, following the convention of a Python
-    dictionary. Field selection using tuples is equivalent, so that
-    `x["a/b/c"] == x["a", "b", "c"]`.
-
-    While this API allows the object to be treated as a flat dictionary, the
-    object is in general allowed to have nested structure. :class:`_NamedTree`
-    differentiates between leaves and non-leaf nodes by defining the latter
-    as an object of the class defined by :meth:`_node_type`; a
-    child is an interior node if and only if it is an instance of that type.
-    All other objects are treated as leaves. All nodes (including leaves) can
-    be accessed via :meth:`at_path`. In particular,
-    `x.at_path("a/b/c")` will return either a field, a sub-tree, or raise
-    an error if the path does not exist. The attribute :attr:`children`
-    gives local access to the immediate children of the node.
-
-    This mixin does not provide constructor logic; it leaves this up to
-    inheriting sub-classes.
-    """
-
-    __slots__ = ()
-
-    @classmethod
-    def _node_type(cls) -> type:
-        """The type whose instances are internal nodes of this tree (hook).
-
-        A field value is an internal node iff it is an instance of this type;
-        every other value is a leaf. Each concrete family **narrows** this to
-        itself, so a tree descends only into nodes of its own family and never
-        into a value of another. Subclasses must override this (and supply the
-        ``_tree`` storage attribute); the base returns ``_NamedTree`` only as a
-        safe default.
-        """
-        return _NamedTree
-
-    @classmethod
-    def _rebuild_class(cls) -> type:
-        """The class the structural rebuilds construct through (hook).
-
-        ``without`` / ``merge`` / ``replace`` / ``map`` build their results by
-        calling this class. The default is ``cls`` itself, so a family whose
-        concrete class is chosen *explicitly* (``Record`` vs ``NumericRecord``)
-        keeps it through an edit. A family whose base constructor **selects**
-        the concrete class (auto-promotion) overrides this with that base
-        class, so an edit re-decides the promotion instead of forcing the
-        result into the original subclass — e.g. replacing an array spec with
-        an opaque one turns a ``NumericEventTemplate`` into a mixed
-        ``EventTemplate``, and removing the last opaque spec promotes.
-        """
-        return cls
-
-    # -- Mapping API (leaf-keyed) -------------------------------------------
-
-    def __len__(self) -> int:
-        return sum(1 for _ in self._walk_leaves())
-
-    def __iter__(self) -> Iterator[str]:
-        return (path for path, _ in self._walk_leaves())
-
-    def keys(self) -> tuple[str, ...]:
-        """The field keys (``/``-paths to the leaves), in canonical order.
-
-        Returns a reusable (materialised) tuple, matching the dict-like
-        contract; iteration over the collection yields the same keys.
-        """
-        return tuple(path for path, _ in self._walk_leaves())
-
-    def values(self) -> tuple[Any, ...]:
-        """The field objects (one per leaf), in canonical order (materialised)."""
-        return tuple(leaf for _, leaf in self._walk_leaves())
-
-    def items(self) -> tuple[tuple[str, Any], ...]:
-        """``(key, field_object)`` pairs, in canonical order (materialised)."""
-        return tuple(self._walk_leaves())
-
-    def __getitem__(self, key: str | tuple[str, ...]) -> Any:
-        """Return the field object at *key* — leaf access only.
-
-        *key* is a field key: a ``/``-delimited string or a tuple of names
-        (``obj["a/b"]`` == ``obj["a", "b"]``). It must address a leaf; a missing
-        key, or a partial path that stops at a subtree, raises ``KeyError`` (use
-        :meth:`at_path` to reach a subtree). A non-str/tuple key raises
-        ``TypeError``.
-        """
-        if not isinstance(key, (str, tuple)):
-            raise TypeError(f"key must be str or tuple[str, ...], got {type(key).__name__}")
-        node = self.at_path(key)
-        if isinstance(node, self._node_type()):
-            raise KeyError(f"{key!r} is a subtree, not a field; use at_path() to navigate to it")
-        return node
-
-    def __contains__(self, key: object) -> bool:
-        """Whether *key* is a field key (a leaf). Partial paths are not members."""
-        if not isinstance(key, (str, tuple)):
-            return False
-        return self.is_field(key)
-
-    @property
-    def fields(self) -> tuple[str, ...]:
-        """Top-level field names, in insertion order — ``tuple(self.children)``.
-
-        Temporary, retained during the migration to the collection vocabulary;
-        new code should use :attr:`children` (one-level mapping) or :meth:`keys`
-        (leaf keys). It is scheduled for removal once that vocabulary is carried
-        onto the distribution layer, and should not be relied on in new code.
-        """
-        return tuple(self._tree.keys())
-
-    # -- Tree structure -----------------------------------------------------
-
-    def at_path(self, *path: Any) -> Any:
-        """Return the object at *path* — a field object, or an interior subtree.
-
-        *path* addresses a position in the storage tree and may be written as a
-        ``/``-delimited string, separate string segments, or a single tuple of
-        names — these are equivalent::
-
-            obj.at_path("physics/mass")
-            obj.at_path("physics", "mass")
-            obj.at_path(("physics", "mass"))
-
-        A *key* (a path that ends at a leaf) returns the field object. A
-        *partial path* (one that stops at an interior node) returns the subtree
-        rooted there, a collection of the same class.
-
-        This is the one operator that reaches interior nodes; the mapping
-        operators (``[]`` / ``in`` / iteration) range only over fields.
-
-        Raises
-        ------
-        KeyError
-            If the path reaches nothing, or tries to descend through a leaf.
-        TypeError
-            If a path segment is not a string.
-        """
-        segments = self._split_path(path)
-        node: Any = self
-        node_type = self._node_type()
-        for i, name in enumerate(segments):
-            if i > 0 and not isinstance(node, node_type):
-                raise KeyError(
-                    f"path {_PATH_SEP.join(segments)!r} descends through non-tree "
-                    f"leaf {type(node).__name__} at {_PATH_SEP.join(segments[:i])!r}"
-                )
-            field_map = node._tree
-            if name not in field_map:
-                raise KeyError(_PATH_SEP.join(segments))
-            node = field_map[name]
-        return node
-
-    @property
-    def children(self) -> Mapping[str, Any]:
-        """Read-only one-level view of this node — ``local_name -> child``.
-
-        Each value is an immediate child: a field object (leaf) or a subtree (a
-        nested collection of the same class). Insertion-ordered. This is the
-        labelled top-level view; the top-level names are ``tuple(obj.children)``.
-        Unlike the leaf-keyed field view, ``children.values()`` includes
-        subtrees.
-        """
-        # Instances are immutable after construction, so the proxy can wrap
-        # the storage dict directly (no per-access copy).
-        return MappingProxyType(self._tree)
-
-    def is_field(self, *path: Any) -> bool:
-        """Whether *path* resolves to a field (a leaf), not an interior subtree.
-
-        Returns ``True`` only when *path* is navigable **and** ends at a leaf.
-        Accepts the same path forms as :meth:`at_path`.
-        """
-        try:
-            node = self.at_path(*path)
-        except (KeyError, TypeError):
-            return False
-        return not isinstance(node, self._node_type())
-
-    def to_nested_dict(self) -> dict[str, Any]:
-        """Return a nested ``dict`` mirroring the storage tree.
-
-        Each interior node becomes a nested ``dict``; each leaf maps to its
-        field object. This is the tree-shaped export, distinct from the flat
-        ``dict(obj)`` view that is keyed by full path.
-        """
-        node_type = self._node_type()
-        result: dict[str, Any] = {}
-        for name, child in self._tree.items():
-            result[name] = child.to_nested_dict() if isinstance(child, node_type) else child
-        return result
-
-    # -- Leaf traversal primitives ------------------------------------------
-
-    def _walk_leaves(self) -> Iterator[tuple[str, Any]]:
-        """Yield ``(path, leaf_object)`` for every field, in canonical order.
-
-        Canonical order is the depth-first, insertion-order traversal (§ the
-        class docstring). This is the single traversal that the field-wise
-        operations (the field mapping, ``map``, vector serialization, equality)
-        are expressed on.
-        """
-        node_type = self._node_type()
-        for name, child in self._tree.items():
-            if isinstance(child, node_type):
-                for sub_path, leaf in child._walk_leaves():
-                    yield f"{name}{_PATH_SEP}{sub_path}", leaf
-            else:
-                yield name, child
-
-    def _rebuild_from_leaves(self, values: Iterable[Any]) -> Any:
-        """Build a new collection of the same nested shape, with new leaf objects.
-
-        *values* supplies the field objects in canonical order (one per leaf,
-        the order of :meth:`_walk_leaves`); the structure (names and nesting) is
-        taken from ``self``. Each interior node is rebuilt by constructing a new
-        same-class collection, so whatever normalisation that constructor applies
-        to its leaves is re-applied here.
-
-        Raises
-        ------
-        ValueError
-            If *values* does not supply exactly one object per leaf.
-        """
-        it = iter(values)
-        node_type = self._node_type()
-        sentinel = object()
-
-        def build(node: Any, prefix: str) -> Any:
-            new_children: dict[str, Any] = {}
-            for name, child in node._tree.items():
-                path = f"{prefix}{name}"
-                if isinstance(child, node_type):
-                    new_children[name] = build(child, f"{path}{_PATH_SEP}")
-                else:
-                    nxt = next(it, sentinel)
-                    if nxt is sentinel:
-                        raise ValueError("_rebuild_from_leaves got fewer values than leaves")
-                    if isinstance(nxt, node_type):
-                        raise ValueError(
-                            f"cannot place a {node_type.__name__} at field {path!r}: "
-                            f"that would introduce nesting and change the structure"
-                        )
-                    new_children[name] = nxt
-            return node._rebuild_class()(new_children)
-
-        result = build(self, "")
-        if next(it, sentinel) is not sentinel:
-            raise ValueError("_rebuild_from_leaves got more values than leaves")
-        return result
-
-    # -- Structural transforms ----------------------------------------------
-
-    def map(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
-        """Apply *f* to every field object, returning a same-shape collection.
-
-        Returns a new collection of the **same structure** (identical names and
-        nesting) whose fields are ``f``'s outputs, rebuilt through the class's
-        constructor via :meth:`_rebuild_class` — for the value types this is the
-        same class; a base ``EventTemplate`` may auto-promote to (or demote
-        from) :class:`NumericEventTemplate` when the mapped specs change
-        numericness. *f* is
-        called as ``f(field_object, *args, **kwargs)`` for each field in canonical
-        order. Any extra *args* / *kwargs* are forwarded to *f* unchanged and are
-        **constant across fields** (not varied per field).
-
-        The structure is preserved exactly. *f* must return a leaf object, not an
-        instance of the node type (the class returned by :meth:`_node_type`); such
-        a return would introduce nesting and raises ``ValueError`` naming the
-        field. Each output is placed back through the subclass's own construction,
-        so whatever normalisation that constructor applies to a leaf applies here
-        too (see the concrete class's docstring).
-
-        Raises
-        ------
-        ValueError
-            If *f* returns a node-type instance at any field.
-        """
-        return self._rebuild_from_leaves(
-            f(leaf, *args, **kwargs) for _, leaf in self._walk_leaves()
-        )
-
-    def map_with_keys(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
-        """Like :meth:`map`, but *f* also receives each field's key (path).
-
-        *f* is called as ``f(key, field_object, *args, **kwargs)``, where *key* is
-        the field's full ``/``-path. Everything else — structure preservation,
-        the node-type-return guard, per-class result handling — matches :meth:`map`.
-        """
-        return self._rebuild_from_leaves(
-            f(key, leaf, *args, **kwargs) for key, leaf in self._walk_leaves()
-        )
-
-    # -- Structural edits ---------------------------------------------------
-    #
-    # The leaf-map computations below are pure structure: they read the storage
-    # tree and return a new flat ``path -> object`` mapping, with no knowledge of
-    # value specs or an authoritative template. ``without`` / ``merge`` / ``replace``
-    # rebuild ``type(self)`` from that map (correct for a tree of specs, where the
-    # edited specs *are* the schema); a value type that carries a separate
-    # authoritative schema overrides those three to thread it, reusing these helpers.
-
-    def _leaves_without(self, paths: tuple[str, ...]) -> dict[str, Any]:
-        """Flat leaf-map with the fields/subtrees at *paths* dropped."""
-        for path in paths:
-            self.at_path(path)  # KeyError if the path does not exist
-        drops = [self._norm_path(p) for p in paths]
-
-        def is_dropped(key: str) -> bool:
-            return any(key == d or key.startswith(f"{d}{_PATH_SEP}") for d in drops)
-
-        kept = {key: leaf for key, leaf in self._walk_leaves() if not is_dropped(key)}
-        if not kept:
-            raise ValueError("Cannot remove all fields from a collection")
-        return kept
-
-    def without(self, *paths: str) -> Any:
-        """Return a new collection with the fields/subtrees at *paths* removed.
-
-        Each path is a key (drop one leaf) or a partial path (drop a whole
-        subtree). A missing path raises ``KeyError``; removing every field raises
-        ``ValueError``. Surviving fields keep their order and their specs.
-        """
-        return self._rebuild_class()(self._leaves_without(paths))
-
-    def _leaves_merged(self, other: Any) -> dict[str, Any]:
-        """Flat leaf-map unioning ``self``'s then *other*'s leaves, keyed by path."""
-        left = dict(self._walk_leaves())
-        right = dict(other._walk_leaves())
-        overlap = set(left) & set(right)
-        if overlap:
-            raise ValueError(f"Overlapping field keys: {sorted(overlap)}")
-        return {**left, **right}
-
-    def merge(self, other: Any) -> Any:
-        """Return the union of two collections, merged by leaf key (deep).
-
-        The merge is by field key: ``{"a/x": ...}`` and ``{"a/y": ...}`` combine
-        under a shared ``a``. A field key present in both, or a field-versus-prefix
-        clash between them, raises ``ValueError``. ``self``'s fields come first,
-        then ``other``'s.
-        """
-        return self._rebuild_class()(self._leaves_merged(other))
-
-    @staticmethod
-    def _resolve_replace_updates(
-        _updates: Mapping[str, Any] | None, updates: Mapping[str, Any]
-    ) -> dict[str, Any]:
-        """Normalise ``replace``'s positional-mapping XOR keyword inputs to one dict."""
-        if _updates is not None:
-            if updates:
-                raise ValueError("Cannot pass both positional mapping and keyword arguments")
-            return dict(_updates)
-        return dict(updates)
-
-    def _leaves_replaced(self, resolved: Mapping[str, Any]) -> dict[str, Any]:
-        """Flat leaf-map with the object at each path replaced *in place*.
-
-        Each old leaf (or whole subtree) at a path is dropped and *new_value* put
-        where the first of those leaves was, so a replaced subtree keeps its
-        position (canonical order is part of the collection's identity).
-
-        Raises
-        ------
-        KeyError
-            If a path does not exist.
-        ValueError
-            If one update path is an ancestor of another — applying the
-            ancestor first would silently swallow the descendant's update, so
-            overlapping paths are rejected outright.
-        """
-        for path in resolved:
-            self.at_path(path)  # KeyError if the path does not exist
-        norms = [self._norm_path(p) for p in resolved]
-        for i, a in enumerate(norms):
-            for b in norms[i + 1 :]:
-                if a == b or a.startswith(f"{b}{_PATH_SEP}") or b.startswith(f"{a}{_PATH_SEP}"):
-                    raise ValueError(
-                        f"replace() update paths overlap: {a!r} and {b!r} address "
-                        f"the same subtree; replace the enclosing path once instead"
-                    )
-        flat = dict(self._walk_leaves())
-        for path, new_value in resolved.items():
-            norm = self._norm_path(path)
-            rebuilt: dict[str, Any] = {}
-            placed = False
-            for key, leaf in flat.items():
-                if key == norm or key.startswith(f"{norm}{_PATH_SEP}"):
-                    if not placed:
-                        rebuilt[norm] = new_value
-                        placed = True
-                else:
-                    rebuilt[key] = leaf
-            flat = rebuilt
-        return flat
-
-    def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Any:
-        """Return a new collection with the objects at the given paths replaced.
-
-        Updates are given as a path-keyed positional mapping
-        (``r.replace({"physics/mass": m})``) or flat keywords (``r.replace(obs=y)``),
-        not both. Every path must already exist (``KeyError`` otherwise — ``replace``
-        edits, it does not add). A partial path replaces a whole subtree. Untouched
-        fields keep their specs; a replaced field takes the new value's spec.
-        """
-        resolved = self._resolve_replace_updates(_updates, updates)
-        if not resolved:
-            return self
-        return self._rebuild_class()(self._leaves_replaced(resolved))
-
-    # -- Construction from a nested mapping ---------------------------------
-
-    @staticmethod
-    def _flatten_paths(
-        data: Mapping[str, Any],
-        recurse_into: Callable[[str], bool] | None = None,
-    ) -> dict[str, Any]:
-        """Flatten a nested mapping into a flat ``path -> value`` map.
-
-        A ``Mapping`` value denotes nesting and is recursed into; every other value
-        is a leaf. When *recurse_into* is given it is consulted (with the value's
-        full ``/``-path) for each ``Mapping`` value and may veto the recursion,
-        keeping that mapping as an opaque leaf.
-        """
-        flat: dict[str, Any] = {}
-
-        def walk(sub: Mapping[str, Any], prefix: str) -> None:
-            for name, val in sub.items():
-                path = f"{prefix}{_PATH_SEP}{name}" if prefix else name
-                structural = isinstance(val, Mapping)
-                if structural and recurse_into is not None:
-                    structural = recurse_into(path)
-                if structural:
-                    walk(val, path)
-                else:
-                    flat[path] = val
-
-        walk(data, "")
-        return flat
-
-    @classmethod
-    def from_nested_dict(cls, data: Mapping[str, Any]) -> Any:
-        """Build a collection from a **nested** ``dict`` — the inverse of :meth:`to_nested_dict`.
-
-        Each nested ``dict`` level becomes a subtree and every other value a leaf.
-        This is the opt-in way to read a nested ``dict`` as structure; the bare
-        constructor instead treats a ``dict`` value as an opaque leaf.
-
-        Parameters
-        ----------
-        data
-            A nested mapping of field names to values (or sub-mappings).
-
-        Returns
-        -------
-        A new collection of this class.
-        """
-        return cls(cls._flatten_paths(data))
-
-    # -- Internal utilities -------------------------------------------------
-
-    @staticmethod
-    def _split_path(path: tuple[Any, ...]) -> tuple[str, ...]:
-        """Normalise a path argument to a tuple of single-name segments.
-
-        Accepts the forms used across the surface: a ``/``-delimited string
-        (``"a/b"``), separate string segments (``"a", "b"``), or a single tuple
-        of names (``("a", "b")``). Every segment must be a string; a non-string
-        segment raises ``TypeError``.
-        """
-        if len(path) == 1 and isinstance(path[0], tuple):
-            parts: tuple[Any, ...] = path[0]
-        else:
-            parts = path
-        segments: list[str] = []
-        for part in parts:
-            if not isinstance(part, str):
-                raise TypeError(f"path segments must be strings, got {type(part).__name__}")
-            segments.extend(part.split(_PATH_SEP) if _PATH_SEP in part else [part])
-        return tuple(segments)
-
-    def _norm_path(self, path: Any) -> str:
-        """Normalise a path argument to its canonical ``/``-string form."""
-        return _PATH_SEP.join(self._split_path((path,)))
 
 
 class ValueSpec(ABC):
@@ -748,25 +176,24 @@ class ArraySpec(ValueSpec):
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a numeric array (or scalar) matching this spec.
 
-        Checks, in order: *value* is a numeric array-like (a numeric Python
-        scalar, or an object with a numeric ``dtype`` and a ``shape``) whose
-        shape equals ``shape`` exactly (a numeric scalar has shape ``()``);
-        its dtype equals ``dtype`` when set (a bare Python scalar reports the
-        dtype ``np.asarray`` gives it); and every element satisfies
-        ``support.check`` when ``support`` is set. Strings, mappings, Python
+        Checks that *value* is a numeric array-like (a numeric Python scalar,
+        or an object with a numeric ``dtype`` and a ``shape``) whose shape
+        equals ``shape`` exactly (a numeric scalar has shape ``()``), and whose
+        dtype is **same-kind castable** to ``dtype`` when set — a widening
+        promotion (e.g. ``float32`` for a ``float64`` spec) or a within-kind
+        narrowing both pass, while a cross-kind conversion (e.g. a float where
+        an integer dtype is declared) does not (a bare Python scalar reports
+        the dtype ``np.asarray`` gives it). Strings, mappings, Python
         lists/tuples, and non-numeric arrays are invalid. Never raises on a
         mismatched value — a value the spec does not describe returns
         ``False``.
 
-        Notes
-        -----
-        The ``support`` check delegates to ``Constraint.check`` and reduces
-        the result to a Python ``bool``, so a spec with ``support`` set
-        cannot be validated under ``jax.jit`` tracing (the shape and dtype
-        checks can). Constraints compare in the value's own dtype, and JAX
-        orders complex values lexicographically rather than rejecting them,
-        so a real-ordering constraint does not exclude complex inputs on its
-        own — set ``dtype`` to pin the input to a real dtype.
+        ``support`` is **not** checked here. Unlike shape and dtype it is a
+        data-dependent, element-wise check that cannot run under ``jax.jit``
+        tracing, and ``is_valid`` is the check ``Record`` construction runs
+        (which happens inside traces). ``support`` is therefore descriptive
+        metadata on the spec; :meth:`is_valid` validates structure only and so
+        runs under ``jax.jit`` unchanged.
         """
         shape = _full_array_shape_or_none(value)
         if shape is None or shape != self.shape:
@@ -775,10 +202,11 @@ class ArraySpec(ValueSpec):
             actual = getattr(value, "dtype", None)
             if actual is None:
                 actual = np.asarray(value).dtype
-            if np.dtype(actual) != self.dtype:
+            # A same-kind cast (a widening promotion or a within-kind
+            # narrowing) matches; a cross-kind cast (e.g. float where an int
+            # dtype is declared) does not.
+            if not np.can_cast(np.dtype(actual), self.dtype, casting="same_kind"):
                 return False
-        if self.support is not None:
-            return bool(jnp.all(self.support.check(value)))
         return True
 
 
@@ -805,11 +233,9 @@ class OpaqueSpec(ValueSpec):
 
         Notes
         -----
-        Interim divergence: :class:`~probpipe.Record` and
-        :meth:`EventTemplate.infer_from` currently still store a plain
-        ``dict`` value as an opaque leaf; such a value does not satisfy this
-        spec, since a mapping is structure. This method states the target
-        contract, and the record layer is scheduled to align with it.
+        The record layer honours the same rule: mappings are never leaves, so
+        :class:`~probpipe.Record` construction materialises a mapping field
+        value into a nested subtree (as ``from_nested_dict`` does).
         """
         return not isinstance(value, Mapping)
 
@@ -960,11 +386,12 @@ def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
 def _is_numeric_spec(spec: Any) -> bool:
     """A numeric leaf: an :class:`ArraySpec` or a (nested) :class:`NumericEventTemplate`.
 
-    A ``_PathSubtree`` (structural nesting from path-key unflattening, not yet
-    materialised) counts as numeric iff all of its own values are — so
-    auto-promotion sees through nesting introduced by ``/``-keys.
+    A mapping spec (nested structure, not yet materialised into a nested
+    template) counts as numeric iff all of its own values are — so
+    auto-promotion sees through nesting introduced by ``/``-keys or a nested
+    ``dict``.
     """
-    if isinstance(spec, _PathSubtree):
+    if isinstance(spec, Mapping):
         return _all_numeric(spec.values())
     return isinstance(spec, (ArraySpec, NumericEventTemplate))
 
@@ -1021,7 +448,7 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
 # ---------------------------------------------------------------------------
 
 
-class EventTemplate(_NamedTree):
+class EventTemplate(NamedTree):
     """Structural description of a value: its named, possibly-nested leaf structure.
 
     An ``EventTemplate`` describes the **structure** of a value as a **named
@@ -1063,7 +490,8 @@ class EventTemplate(_NamedTree):
       depth-first, following each level's insertion order. This is the single
       ordering every leaf-wise operation uses. :meth:`keys` is its canonical
       definition — it returns the key (path) of every leaf in this order;
-      :meth:`to_vector` / :meth:`from_vector` lay out and read leaves in it, and
+      the value-level ``to_vector`` and :meth:`from_vector` lay out and read
+      leaves in it, and
       :attr:`~NumericEventTemplate.leaf_shapes` is keyed by it.
 
     JAX pytree contract
@@ -1080,8 +508,9 @@ class EventTemplate(_NamedTree):
     ``jax.tree_util.tree_leaves(v)`` returns the leaves in :meth:`keys`
     order. The one place the template's leaves and JAX's diverge is an
     :class:`OpaqueSpec` leaf whose value is *itself* a JAX container (a ``tuple``
-    / ``list`` / ``dict``): the template counts it as a single leaf while JAX
-    descends into it. See :class:`~probpipe.Record` for the full statement.
+    / ``list``; a ``dict`` is never a leaf — mappings denote tree structure):
+    the template counts it as a single leaf while JAX descends into it. See
+    :class:`~probpipe.Record` for the full statement.
 
     Parameters
     ----------
@@ -1157,13 +586,17 @@ class EventTemplate(_NamedTree):
             raise ValueError(f"{type(self).__name__} requires at least one field")
         specs: dict[str, _FieldSpec] = {}
         for name, spec in nested.items():
-            if isinstance(spec, _PathSubtree):
+            if isinstance(spec, Mapping):
+                # A mapping spec is nested structure: materialise a subtree.
                 specs[name] = EventTemplate(spec)
             else:
                 try:
-                    specs[name] = _to_spec(spec)
+                    converted = _to_spec(spec)
                 except TypeError as exc:
                     raise TypeError(f"Field {name!r}: {exc}") from None
+                if not isinstance(converted, EventTemplate):
+                    self._check_leaf(name, converted)
+                specs[name] = converted
         self._post_validate(specs)
         object.__setattr__(self, "_tree", specs)
 
@@ -1184,13 +617,21 @@ class EventTemplate(_NamedTree):
 
     # -- Tree structure -----------------------------------------------------
     #
-    # The mapping / navigation surface is inherited from :class:`_NamedTree`.
-    # A leaf here is a :class:`ValueSpec`; an internal node is a nested
-    # ``EventTemplate``.
+    # The mapping and path-navigation methods (``keys`` / ``values`` /
+    # ``items`` / ``[]`` / ``at_path`` / ``children``) are inherited from
+    # :class:`~probpipe.core.named_tree.NamedTree`. A leaf here is a
+    # :class:`ValueSpec`; an internal node is a nested ``EventTemplate``.
 
     @classmethod
     def _node_type(cls) -> type:
         return EventTemplate
+
+    @classmethod
+    def _leaf_type(cls) -> type:
+        # Every leaf of a template is a value spec; construction converts
+        # the shorthand forms (shapes, None, ...) via ``_to_spec`` first,
+        # so the substrate check validates the converted leaf.
+        return ValueSpec
 
     @classmethod
     def _rebuild_class(cls) -> type:
@@ -1234,26 +675,6 @@ class EventTemplate(_NamedTree):
             # Opaque / distribution / function leaf — not numeric.
             return False
         return True
-
-    @property
-    def is_multi_field(self) -> bool:
-        """Whether this template describes more than one leaf.
-
-        Counts *reachable* leaves recursively (descending into nested
-        sub-templates), not top-level fields — so a single top-level field that
-        nests several leaves is multi-field. For example
-        ``EventTemplate(a=EventTemplate(b=(), c=()))`` has leaves ``a/b`` and
-        ``a/c`` and is multi-field, whereas ``EventTemplate(a=EventTemplate(b=()))``
-        describes the single leaf ``a/b`` and is not. Equivalent to
-        ``len(self) > 1``.
-
-        Returns
-        -------
-        bool
-            ``True`` iff the template has more than one leaf; ``False`` iff it
-            describes exactly one leaf.
-        """
-        return len(self) > 1
 
     def numeric_subset(self) -> NumericEventTemplate:
         """Project to the :class:`ArraySpec`-leaf sub-template.
@@ -1310,51 +731,6 @@ class EventTemplate(_NamedTree):
                 f"ArraySpec leaves survive. Dropped non-numeric fields: {dropped}."
             )
         return NumericEventTemplate(specs)
-
-    # -- Leaf-list (de)serialization (general; leaves kept whole) -----------
-
-    def from_field_values(self, values: Iterable[Any]) -> Any:
-        """Reconstruct a value from an ordered sequence of field values.
-
-        *values* supplies one object per leaf field, in canonical leaf order (the
-        order of :meth:`keys`); the names and tree shape are taken from this template, so
-        the result mirrors it — a nested template builds a nested
-        :class:`~probpipe.Record`, a :class:`NumericEventTemplate` builds a
-        :class:`~probpipe.NumericRecord`. The result carries this template as its
-        **authoritative** :attr:`~probpipe.Record.event_template` (nothing is
-        inferred), so the round-trip is faithful:
-        ``tpl.from_field_values(list(r.values())) == r`` when
-        ``r.event_template == tpl``. The export side is just ``list(r.values())``.
-
-        Single (unbatched) values only; batched reconstruction arrives with the
-        batch abstractions. Per-leaf shape/dtype is not checked (only the count).
-
-        Raises
-        ------
-        ValueError
-            If the number of *values* is not the number of fields (``len(self)``).
-        """
-        values = list(values)
-        n_leaves = len(self)
-        if len(values) != n_leaves:
-            raise ValueError(
-                f"{type(self).__name__}.from_field_values: got {len(values)} values, "
-                f"expected {n_leaves} (one per field)."
-            )
-        leaf_iter = iter(values)
-
-        def _build(template: EventTemplate) -> Any:
-            from ._numeric_record import NumericRecord
-            from .record import Record
-
-            fields = {
-                name: (_build(spec) if isinstance(spec, EventTemplate) else next(leaf_iter))
-                for name, spec in template._tree.items()
-            }
-            cls = NumericRecord if isinstance(template, NumericEventTemplate) else Record
-            return cls(fields, event_template=template)
-
-        return _build(self)
 
     # -- Equality and hashing -----------------------------------------------
 
@@ -1419,6 +795,7 @@ class EventTemplate(_NamedTree):
         ValueError
             If *value* is an empty mapping (a template needs at least one field).
         """
+        from ._array_backend import aux_for
         from .record import Record
 
         if isinstance(value, Record):
@@ -1427,11 +804,25 @@ class EventTemplate(_NamedTree):
             raise TypeError(
                 f"infer_from expects a Record or a mapping of fields, got {type(value).__name__}."
             )
-        specs: dict[str, _FieldSpecInput] = {}
-        for name, val in value.items():
-            specs[name] = (
-                val.event_template if isinstance(val, Record) else _full_array_shape_or_none(val)
-            )
+
+        def _leaf_spec(val: Any) -> _FieldSpecInput:
+            if isinstance(val, Record):
+                return val.event_template
+            # A mapping is never a leaf: it denotes tree structure, so infer a
+            # nested template from it rather than an (invalid) opaque-leaf spec
+            # — matching ``from_nested_dict`` and the workflow-output wrap.
+            if isinstance(val, Mapping):
+                return cls.infer_from(val)
+            # A backend-typed leaf (xarray / pandas) is stored verbatim in a
+            # plain ``Record`` — coercing it to a bare array is lossy — so it
+            # is opaque here, keeping the inferred template non-numeric and in
+            # step with the value's own class (a numeric-looking shape/dtype
+            # would otherwise mislabel it as an ``ArraySpec``).
+            if aux_for(val) is not None:
+                return None
+            return _full_array_shape_or_none(val)
+
+        specs: dict[str, _FieldSpecInput] = {name: _leaf_spec(val) for name, val in value.items()}
         return EventTemplate(specs)
 
     # -- Repr ---------------------------------------------------------------
@@ -1465,7 +856,7 @@ class NumericEventTemplate(EventTemplate):
     :attr:`vector_size` and :attr:`leaf_shapes` meaningful:
     ``vector_size`` is the length of the per-element 1-D vector — the total
     number of scalar elements across every numeric leaf — and
-    :meth:`~NumericEventTemplate.from_vector` requires a template of this class
+    :meth:`~probpipe.NumericRecord.from_vector` takes a template of this class
     so that every field can be reconstructed from a slice of that vector. A
     *batch* of such values is a matrix of shape ``(*batch_shape, vector_size)``,
     not a single vector.
@@ -1487,18 +878,11 @@ class NumericEventTemplate(EventTemplate):
                     f"{type(spec).__name__}; nested sub-templates must "
                     f"themselves be NumericEventTemplate."
                 )
-            if isinstance(spec, OpaqueSpec):
-                raise TypeError(
-                    f"NumericEventTemplate: field {name!r} is opaque "
-                    f"(OpaqueSpec); opaque leaves are not allowed — use "
-                    f"EventTemplate if you need a mixed template."
-                )
-            # DistributionSpec / FunctionSpec — non-array leaves.
+            # Any non-array leaf — OpaqueSpec, DistributionSpec, or FunctionSpec.
             raise TypeError(
-                f"NumericEventTemplate: field {name!r} has a non-numeric leaf "
-                f"({type(spec).__name__}); only ArraySpec leaves (or nested "
-                f"NumericEventTemplate) are allowed — use EventTemplate if you "
-                f"need a mixed template."
+                f"NumericEventTemplate: field {name!r} is a {type(spec).__name__}; "
+                f"only ArraySpec leaves (or a nested NumericEventTemplate) are "
+                f"allowed — use EventTemplate if you need a mixed template."
             )
 
     def __init__(
@@ -1548,170 +932,18 @@ class NumericEventTemplate(EventTemplate):
         """Length of the per-element 1-D vector (``to_vector`` / ``from_vector``).
 
         The total number of scalar elements across all numeric leaves — the
-        trailing-axis length of :meth:`~NumericEventTemplate.to_vector`'s
-        output. A single value serializes to shape ``(vector_size,)``; a batch
-        serializes to a matrix ``(*batch_shape, vector_size)``, not a single
-        vector.
+        trailing-axis length of a value's
+        :meth:`~probpipe.NumericRecord.to_vector` output. A single value
+        serializes to shape ``(vector_size,)``; a batch serializes to a matrix
+        ``(*batch_shape, vector_size)``, not a single vector.
         """
         return self._vector_size
 
-    # -- 1-D numeric (de)serialization --------------------------------------
-
-    def to_vector(self, value: NumericRecord | NumericRecordArray) -> Array:
-        """Serialize *value*'s arrays into its flat 1-D vector representation.
-
-        ``to_vector`` / :meth:`from_vector` convert between the structured and
-        flat representations of a numeric value (a PyTree of arrays). A single
-        :class:`~probpipe.NumericRecord` serializes to shape ``(vector_size,)``;
-        a batched :class:`~probpipe.NumericRecordArray` with ``batch_shape == B``
-        serializes to ``(*B, vector_size)``. Leaves are raveled and concatenated
-        in this template's canonical leaf order (:meth:`~EventTemplate.keys`).
-
-        This differs from ``list(record.values())`` (which keeps each leaf whole, any
-        type): ``to_vector`` is numeric-only and ravels the leaves into a single
-        dense vector.
-
-        Parameters
-        ----------
-        value : NumericRecord or NumericRecordArray
-            The value to serialize; its structure must match this template.
-
-        Returns
-        -------
-        jax.Array
-            The concatenated, raveled numeric leaves: shape ``(vector_size,)``
-            for a single value, ``(*B, vector_size)`` for a batch.
-
-        Raises
-        ------
-        TypeError
-            If *value* is not a ``NumericRecord`` / ``NumericRecordArray``.
-
-        See Also
-        --------
-        from_vector : Reconstruct a value from a flat vector (the inverse).
-        """
-        from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
-
-        if isinstance(value, NumericRecordArray):
-            batch_shape = value.batch_shape
-        elif isinstance(value, NumericRecord):
-            batch_shape = ()
-        else:
-            raise TypeError(
-                f"to_vector expects a NumericRecord (single) or "
-                f"NumericRecordArray (batched), got {type(value).__name__}."
-            )
-        # The value's leaves in canonical leaf order (each kept whole).
-        leaves = [value[key] for key in self.keys()]
-        return jnp.concatenate([jnp.reshape(leaf, (*batch_shape, -1)) for leaf in leaves], axis=-1)
-
-    def from_vector(self, vec: ArrayLike) -> NumericRecord | NumericRecordArray:
-        """Reconstruct a numeric value from its flat 1-D vector representation.
-
-        The inverse of :meth:`to_vector`: splits *vec* along its trailing axis
-        into this template's leaves (canonical leaf order), reshapes each chunk
-        to its event shape, and rebuilds the structured value. The **rank** of
-        *vec* selects single vs. batched — a vector of shape ``(vector_size,)``
-        rebuilds a single :class:`~probpipe.NumericRecord`; a matrix of shape
-        ``(*batch_shape, vector_size)`` rebuilds a
-        :class:`~probpipe.NumericRecordArray` with that ``batch_shape``.
-
-        This differs from :meth:`from_field_values` (which rebuilds from whole
-        leaves, any type): ``from_vector`` is numeric-only and rebuilds from a
-        dense vector alone, using this template's leaf shapes.
-
-        Parameters
-        ----------
-        vec : array-like
-            The flat numeric vector; its trailing axis must have length
-            :attr:`vector_size`.
-
-        Returns
-        -------
-        NumericRecord or NumericRecordArray
-            Single when *vec* is 1-D, batched otherwise.
-
-        Raises
-        ------
-        ValueError
-            If *vec*'s trailing axis is not :attr:`vector_size`.
-
-        Notes
-        -----
-        Round-trip: ``self.from_vector(self.to_vector(v)) == v`` for any numeric
-        value ``v`` matching this template.
-
-        See Also
-        --------
-        to_vector : Serialize a value to a flat vector (the inverse).
-        """
-        vec = jnp.asarray(vec)
-        if vec.shape[-1] != self.vector_size:
-            raise ValueError(
-                f"{type(self).__name__}.from_vector: vec trailing axis is "
-                f"{vec.shape[-1]}, expected vector_size={self.vector_size}."
-            )
-        batch_shape = tuple(vec.shape[:-1])
-
-        offset = 0
-        leaves: list[Any] = []
-
-        def _collect(template: NumericEventTemplate) -> None:
-            nonlocal offset
-            for spec in template._tree.values():
-                if isinstance(spec, NumericEventTemplate):
-                    _collect(spec)
-                else:
-                    size = prod(spec.shape) if spec.shape else 1
-                    chunk = vec[..., offset : offset + size]
-                    offset += size
-                    leaves.append(jnp.reshape(chunk, (*batch_shape, *spec.shape)))
-
-        _collect(self)
-        treedef = _value_treedef(self, batch_shape)
-        return jax.tree_util.tree_unflatten(treedef, leaves)
-
-
-# ---------------------------------------------------------------------------
-# Template walking helpers
-# ---------------------------------------------------------------------------
-
-
-def _value_treedef(
-    template: NumericEventTemplate,
-    batch_shape: tuple[int, ...],
-) -> jax.tree_util.PyTreeDef:
-    """PyTreeDef of the value :meth:`NumericEventTemplate.from_vector` reconstructs.
-
-    Builds a throwaway ``NumericRecord`` (or ``NumericRecordArray`` when
-    ``batch_shape`` is non-empty) skeleton mirroring *template* and returns its
-    ``jax.tree_util.tree_structure``. The treedef depends only on the container
-    structure (field names, nesting, ``batch_shape``, template), not on leaf
-    values, so its placeholder leaves are cheap zero-stride broadcast arrays.
-    Pairing this treedef with the real ordered leaves in
-    :func:`jax.tree_util.tree_unflatten` lets ``from_vector`` delegate the value
-    assembly to one place.
-    """
-    from ._numeric_record import NumericRecord
-    from ._record_array import NumericRecordArray
-
-    numeric_fill = jnp.zeros((), dtype=jnp.float32)
-
-    def _build(tpl: NumericEventTemplate) -> NumericRecord:
-        fields: dict[str, Any] = {}
-        for name, spec in tpl.children.items():
-            if isinstance(spec, NumericEventTemplate):
-                fields[name] = _build(spec)
-            else:
-                # ``_post_validate`` guarantees a non-nested spec is an ArraySpec.
-                fields[name] = jnp.broadcast_to(numeric_fill, (*batch_shape, *spec.shape))
-        if batch_shape:
-            return NumericRecordArray(fields, batch_shape=batch_shape, template=tpl)
-        return NumericRecord(fields)
-
-    return jax.tree_util.tree_structure(_build(template))
+    # 1-D numeric (de)serialization is a value operation and lives on the
+    # value types: ``to_vector`` on :class:`~probpipe.NumericRecord` /
+    # :class:`~probpipe.NumericRecordArray`, and their ``from_vector``
+    # classmethods (which take a template). A template describes structure
+    # and does not depend on the value type, so it carries neither.
 
 
 # ---------------------------------------------------------------------------

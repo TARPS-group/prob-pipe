@@ -114,7 +114,7 @@ class TestFieldAccess:
 
 
 class TestNamedTreeSurfaceOnEventTemplate:
-    """EventTemplate gained the shared ``_NamedTree`` collection protocol:
+    """EventTemplate gained the shared ``NamedTree`` collection protocol:
     ``/``-path and tuple indexing, path membership, iteration, and
     ``keys``/``values``/``items`` — over its value specs, keyed by leaf path.
     Exercised on a *nested* template (the flat case is covered above).
@@ -231,13 +231,14 @@ class TestKeys:
     def test_order_matches_flatten_and_to_vector(self):
         # The canonical leaf order is the order flatten() / to_vector() use.
         v = NumericRecord(
+            "nr",
             x=jnp.array([1.0, 2.0]),
-            nested=NumericRecord(a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
+            nested=NumericRecord("nr", a=jnp.array(3.0), b=jnp.array([4.0, 5.0])),
         )
         tpl = EventTemplate.infer_from(v)
         assert tuple(tpl.keys()) == ("x", "nested/a", "nested/b")
         # to_vector concatenates leaves in keys() order: x(2) | a(1) | b(2).
-        np.testing.assert_allclose(tpl.to_vector(v), [1.0, 2.0, 3.0, 4.0, 5.0])
+        np.testing.assert_allclose(v.to_vector(), [1.0, 2.0, 3.0, 4.0, 5.0])
 
 
 # ---------------------------------------------------------------------------
@@ -264,7 +265,7 @@ class TestFlatSize:
         assert tpl.vector_size == 1
 
     def test_rejects_opaque_leaf(self):
-        with pytest.raises(TypeError, match="opaque"):
+        with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(label=None, x=(3,))
 
     def test_rejects_non_numeric_nested(self):
@@ -357,17 +358,25 @@ class TestEqualityAndHashing:
 
 class TestInferFrom:
     def test_scalar_fields(self):
-        r = Record(a=1.0, b=2.0)
+        r = Record("r", a=1.0, b=2.0)
         tpl = EventTemplate.infer_from(r)
         assert tpl.fields == ("a", "b")
         assert tpl["a"] == ArraySpec(())
         assert tpl["b"] == ArraySpec(())
 
+    def test_nested_mapping_is_structure_not_opaque(self):
+        # A mapping is never a leaf: a nested dict value is inferred as a
+        # nested template (structure), not an opaque leaf spec — otherwise the
+        # inferred OpaqueSpec would reject the very dict it came from.
+        tpl = EventTemplate.infer_from({"cfg": {"lr": 0.1}, "x": 2.0})
+        assert tuple(tpl.keys()) == ("cfg/lr", "x")
+        assert not isinstance(tpl["cfg/lr"], OpaqueSpec)
+
     def test_mapping_input_inferred_field_by_field(self):
         # The non-Record branch: a bare mapping is inferred field by field
         # (a nested Record contributes its own event_template).
         tpl = EventTemplate.infer_from(
-            {"a": 1.0, "x": jnp.zeros(3), "params": Record(m=jnp.zeros(2))}
+            {"a": 1.0, "x": jnp.zeros(3), "params": Record("r", m=jnp.zeros(2))}
         )
         assert tuple(tpl.children) == ("a", "x", "params")
         assert tpl["a"] == ArraySpec(())
@@ -380,14 +389,14 @@ class TestInferFrom:
             EventTemplate.infer_from({})
 
     def test_array_fields(self):
-        r = Record(x=jnp.zeros(5), y=jnp.zeros((2, 3)))
+        r = Record("r", x=jnp.zeros(5), y=jnp.zeros((2, 3)))
         tpl = EventTemplate.infer_from(r)
         assert tpl["x"] == ArraySpec((5,))
         assert tpl["y"] == ArraySpec((2, 3))
 
     def test_nested_record(self):
-        inner = Record(x=1.0, y=jnp.zeros(3))
-        outer = Record(params=inner, z=2.0)
+        inner = Record("r", x=1.0, y=jnp.zeros(3))
+        outer = Record("r", params=inner, z=2.0)
         tpl = EventTemplate.infer_from(outer)
         assert isinstance(tpl.at_path("params"), EventTemplate)
         assert tpl["params/x"] == ArraySpec(())
@@ -397,7 +406,7 @@ class TestInferFrom:
     def test_roundtrip_vector_size(self):
         from probpipe.core._numeric_record import NumericRecord
 
-        r = NumericRecord(a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
+        r = NumericRecord("nr", a=1.0, b=jnp.zeros(4), c=jnp.zeros((2, 3)))
         tpl = EventTemplate.infer_from(r)
         # Auto-promoted to NumericEventTemplate because the input was a
         # NumericRecord, so ``vector_size`` is reachable.
@@ -412,7 +421,7 @@ class TestInferFrom:
         to name the subclass explicitly."""
         from probpipe.core._numeric_record import NumericRecord
 
-        r = NumericRecord(a=1.0, b=jnp.zeros(2))
+        r = NumericRecord("nr", a=1.0, b=jnp.zeros(2))
         tpl = EventTemplate.infer_from(r)
         assert isinstance(tpl, NumericEventTemplate)
 
@@ -420,7 +429,7 @@ class TestInferFrom:
         """A plain ``Record`` with a non-numeric leaf can't be promoted —
         the result is a plain :class:`EventTemplate` with an opaque
         slot."""
-        r = Record(x=1.0, label="tag")
+        r = Record("r", x=1.0, label="tag")
         tpl = EventTemplate.infer_from(r)
         assert type(tpl) is EventTemplate
         assert tpl["label"] == OpaqueSpec()
@@ -431,7 +440,7 @@ class TestInferFrom:
         Users should wrap lists in np.asarray/jnp.asarray for a numeric
         template entry — this test pins down that behavior so the
         documented guidance stays in sync with the implementation."""
-        r = Record(xs=[1.0, 2.0, 3.0])
+        r = Record("r", xs=[1.0, 2.0, 3.0])
         tpl = EventTemplate.infer_from(r)
         assert tpl["xs"] == OpaqueSpec()
 
@@ -439,7 +448,7 @@ class TestInferFrom:
         """The opposite end of the list-leaf story: wrapping the list
         in ``np.asarray`` produces a numeric template entry."""
 
-        r = Record(xs=np.asarray([1.0, 2.0, 3.0]))
+        r = Record("r", xs=np.asarray([1.0, 2.0, 3.0]))
         tpl = EventTemplate.infer_from(r)
         assert tpl["xs"] == ArraySpec((3,))
 
@@ -685,7 +694,11 @@ class TestArraySpecIsValid:
     def test_dtype_checked_when_set(self):
         spec = ArraySpec((2,), dtype=jnp.float32)
         assert spec.is_valid(jnp.ones(2, dtype=jnp.float32))
-        assert not spec.is_valid(jnp.ones(2, dtype=jnp.int32))
+        # A same-kind cast satisfies the spec (numpy treats int->float as
+        # same_kind); a cross-kind cast (a float value against an int-dtype
+        # spec) does not.
+        assert spec.is_valid(jnp.ones(2, dtype=jnp.int32))
+        assert not ArraySpec((2,), dtype=jnp.int32).is_valid(jnp.ones(2, dtype=jnp.float32))
 
     def test_dtype_unset_accepts_any_numeric_dtype(self):
         spec = ArraySpec((2,))
@@ -699,7 +712,10 @@ class TestArraySpecIsValid:
         bf16 = jnp.ones(2, dtype=jnp.bfloat16)
         assert ArraySpec((2,)).is_valid(bf16)
         assert ArraySpec((2,), dtype=jnp.bfloat16).is_valid(bf16)
-        assert not ArraySpec((2,), dtype=jnp.float32).is_valid(bf16)
+        # bf16 -> float32 is a safe widening (same-kind), so it satisfies a
+        # float32 spec; a cross-kind int spec does not.
+        assert ArraySpec((2,), dtype=jnp.float32).is_valid(bf16)
+        assert not ArraySpec((2,), dtype=jnp.int32).is_valid(bf16)
         f8 = jnp.ones((), dtype=jnp.float8_e4m3fn)
         assert ArraySpec(()).is_valid(f8)
 
@@ -720,53 +736,30 @@ class TestArraySpecIsValid:
         assert ArraySpec((), dtype=np.asarray(1.0).dtype).is_valid(1.0)
         assert not ArraySpec((), dtype=jnp.int32).is_valid(1.0)
 
-    def test_support_checked_when_set(self):
+    def test_support_not_checked_by_is_valid(self):
+        # ``support`` is descriptive metadata on the spec; ``is_valid`` validates
+        # structure only (shape + dtype), so an out-of-support value still
+        # passes. (Support is a data-dependent check that isn't jit-traceable,
+        # and is_valid runs at Record construction, which happens under trace.)
         from probpipe.core.constraints import positive
 
         spec = ArraySpec((2,), support=positive)
+        assert spec.support is positive  # still stored on the spec
         assert spec.is_valid(jnp.asarray([1.0, 2.0]))
-        assert not spec.is_valid(jnp.asarray([1.0, -2.0]))
+        assert spec.is_valid(jnp.asarray([1.0, -2.0]))  # support not enforced
 
-    def test_support_checked_on_python_scalar(self):
+    def test_is_valid_is_jit_traceable(self):
+        # is_valid reads only static shape/dtype (no data-dependent support
+        # check), so it runs under jax.jit for any spec — including one that
+        # carries a support — returning rather than concretizing. (jit wraps the
+        # Python bool as a scalar Array, hence bool(...).)
         from probpipe.core.constraints import positive
 
-        spec = ArraySpec((), support=positive)
-        assert spec.is_valid(2.0)
-        assert not spec.is_valid(-2.0)
-
-    def test_support_vacuous_on_empty_array(self):
-        from probpipe.core.constraints import positive
-
-        assert ArraySpec((0,), support=positive).is_valid(jnp.ones(0))
-
-    def test_dtype_and_support_together(self):
-        # The checks compose: shape, then dtype, then support — each can
-        # independently reject.
-        from probpipe.core.constraints import positive
-
-        spec = ArraySpec((2,), dtype=jnp.float32, support=positive)
-        assert spec.is_valid(jnp.asarray([1.0, 2.0], dtype=jnp.float32))
-        # np, not jnp: JAX without x64 would silently downcast to float32.
-        assert not spec.is_valid(np.asarray([1.0, 2.0], dtype=np.float64))
-        assert not spec.is_valid(jnp.asarray([1.0, -2.0], dtype=jnp.float32))
-
-    def test_shape_dtype_path_is_jit_traceable(self):
-        # The Notes claim: shape/dtype checks read only static (shape, dtype)
-        # attributes, so a support-less spec runs under jax.jit without forcing
-        # concretization — it returns rather than raising. (jit wraps the
-        # Python bool result as a scalar Array, hence bool(...).)
         spec = ArraySpec((3,), dtype=jnp.float32)
         assert bool(jax.jit(spec.is_valid)(jnp.ones(3, dtype=jnp.float32))) is True
         assert bool(jax.jit(spec.is_valid)(jnp.ones(2, dtype=jnp.float32))) is False
-
-    def test_support_path_not_jit_traceable(self):
-        # The counter-claim: a support-carrying spec forces concretization of
-        # a traced value (bool(jnp.all(...))), so it cannot run under trace.
-        from probpipe.core.constraints import positive
-
-        spec = ArraySpec((3,), support=positive)
-        with pytest.raises(jax.errors.TracerBoolConversionError):
-            jax.jit(spec.is_valid)(jnp.ones(3))
+        # even with a support set, no concretization is forced:
+        assert bool(jax.jit(ArraySpec((3,), support=positive).is_valid)(jnp.ones(3))) is True
 
 
 class TestOpaqueSpecIsValid:
@@ -792,15 +785,12 @@ class TestOpaqueSpecIsValid:
 
         assert not OpaqueSpec().is_valid(MappingProxyType({"a": 1}))
 
-    def test_dict_leaf_divergence_is_deliberate(self):
-        # Interim divergence, pinned on purpose: Record still stores a plain
-        # dict value as an opaque leaf, so the spec inferred FROM such a value
-        # does not validate it. is_valid states the target contract (mappings
-        # are structure, never leaves); the record layer aligns later.
-        r = Record(x={"a": 1})
-        spec = r.event_template["x"]
-        assert spec == OpaqueSpec()
-        assert not spec.is_valid(r["x"])
+    def test_record_layer_agrees_mappings_are_never_leaves(self):
+        # The record layer honours the same rule as the spec: a mapping value
+        # denotes tree structure, so it is materialised into a subtree rather
+        # than stored as an opaque leaf.
+        r = Record("r", x={"a": 1})
+        assert tuple(r.keys()) == ("x/a",)
 
     def test_meta_not_checked(self):
         assert OpaqueSpec(meta="tag").is_valid("anything")
@@ -1054,15 +1044,15 @@ class TestAutoPromotionSpecs:
         assert type(tpl) is EventTemplate
 
     def test_numeric_rejects_opaque_spec(self):
-        with pytest.raises(TypeError, match="opaque"):
+        with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(x=(), label=OpaqueSpec())
 
     def test_numeric_rejects_distribution_spec(self):
-        with pytest.raises(TypeError, match="non-numeric"):
+        with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(x=(), d=DistributionSpec(event_template=EventTemplate(a=())))
 
     def test_numeric_rejects_function_spec(self):
-        with pytest.raises(TypeError, match="non-numeric"):
+        with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(
                 x=(),
                 f=FunctionSpec(
@@ -1213,115 +1203,122 @@ class TestNumericSubset:
 
 
 class TestToVector:
+    def test_to_vector_and_from_vector_are_value_only_not_on_template(self):
+        # Both ``to_vector`` (value → vector) and ``from_vector`` (vector →
+        # value) are value operations per the design contract; the template
+        # must not carry either (that would make the template layer depend
+        # on the value type).
+        assert not hasattr(NumericEventTemplate, "to_vector")
+        assert not hasattr(NumericEventTemplate, "from_vector")
+        nr = NumericRecord("nr", x=1.0, y=jnp.arange(3.0))
+        assert NumericRecord.from_vector("nr", nr.event_template, nr.to_vector()) == nr
+
     def test_scalar_value(self):
-        v = NumericRecord(x=1.5)
-        tpl = EventTemplate.infer_from(v)
-        vec = tpl.to_vector(v)
+        v = NumericRecord("nr", x=1.5)
+        vec = v.to_vector()
         assert vec.shape == (1,)
         assert jnp.array_equal(vec, jnp.asarray([1.5]))
 
     def test_vector_value(self):
-        v = NumericRecord(y=jnp.arange(3.0))
-        tpl = EventTemplate.infer_from(v)
-        vec = tpl.to_vector(v)
+        v = NumericRecord("nr", y=jnp.arange(3.0))
+        vec = v.to_vector()
         assert vec.shape == (3,)
         assert jnp.array_equal(vec, jnp.arange(3.0))
 
     def test_multi_field_value(self):
-        v = NumericRecord(x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
-        tpl = EventTemplate.infer_from(v)
-        vec = tpl.to_vector(v)
+        v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.ones((2, 4)))
+        vec = v.to_vector()
         assert vec.shape == (1 + 3 + 8,)
+        # Exact concatenation in canonical field order (x, y, z) — also pins
+        # the ordering, which a shape-only check would miss.
+        np.testing.assert_array_equal(np.asarray(vec), np.array([1.0, 0.0, 1.0, 2.0, *([1.0] * 8)]))
 
     def test_to_vector_shape_is_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,), z=(2, 4))
-        v = NumericRecord(x=0.0, y=jnp.zeros(3), z=jnp.zeros((2, 4)))
-        assert tpl.to_vector(v).shape == (tpl.vector_size,)
-
-    def test_order_and_value_match_instance_to_vector(self):
-        # The template-level to_vector must agree with the instance-level
-        # NumericRecord.to_vector (same canonical leaf order), so the two are
-        # interchangeable.
-        v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
-        tpl = EventTemplate.infer_from(v)
-        assert jnp.array_equal(tpl.to_vector(v), v.to_vector())
+        v = NumericRecord("nr", x=0.0, y=jnp.zeros(3), z=jnp.zeros((2, 4)))
+        assert v.to_vector().shape == (tpl.vector_size,)
 
     def test_batched_shape_is_batch_shape_plus_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,))
         flat = jnp.arange(2 * 5 * tpl.vector_size, dtype=float).reshape(2, 5, tpl.vector_size)
-        v = tpl.from_vector(flat)
+        v = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(v, NumericRecordArray)
-        assert tpl.to_vector(v).shape == (2, 5, tpl.vector_size)
-
-    def test_non_record_value_raises(self):
-        tpl = EventTemplate(x=())
-        with pytest.raises(TypeError, match="NumericRecord"):
-            tpl.to_vector(jnp.asarray([1.0]))
+        assert v.to_vector().shape == (2, 5, tpl.vector_size)
 
 
 class TestFromVectorRoundTripSingle:
     def test_scalar(self):
-        v = NumericRecord(x=1.5)
+        v = NumericRecord("nr", x=1.5)
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_vector(self):
-        v = NumericRecord(y=jnp.arange(3.0))
+        v = NumericRecord("nr", y=jnp.arange(3.0))
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_multi_field(self):
-        v = NumericRecord(x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
+        v = NumericRecord("nr", x=1.0, y=jnp.arange(3.0), z=jnp.arange(8.0).reshape(2, 4))
         tpl = EventTemplate.infer_from(v)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert NumericRecord.from_vector("nr", tpl, v.to_vector()) == v
 
     def test_nested(self):
-        v = NumericRecord(x=1.0, y=jnp.arange(3.0), nested=NumericRecord(a=2.0, b=jnp.arange(2.0)))
+        v = NumericRecord(
+            "nr", x=1.0, y=jnp.arange(3.0), nested=NumericRecord("nr", a=2.0, b=jnp.arange(2.0))
+        )
         tpl = EventTemplate.infer_from(v)
-        round_tripped = tpl.from_vector(tpl.to_vector(v))
+        round_tripped = NumericRecord.from_vector("nr", tpl, v.to_vector())
         assert isinstance(round_tripped, NumericRecord)
         assert round_tripped == v
 
     def test_returns_single_for_1d_vec(self):
         tpl = EventTemplate(x=(), y=(3,))
-        v = tpl.from_vector(jnp.arange(4.0))
+        v = NumericRecord.from_vector("nr", tpl, jnp.arange(4.0))
         assert isinstance(v, NumericRecord)
+
+    def test_zero_d_vec_raises_type_error(self):
+        # A 0-d scalar is not a 1-D vector; ``NumericRecord.from_vector`` raises
+        # the documented TypeError rather than an IndexError from indexing
+        # ``vec.shape[-1]``.
+        tpl = EventTemplate(x=())
+        with pytest.raises(TypeError, match="1-D vector"):
+            NumericRecord.from_vector("nr", tpl, 5.0)
 
 
 class TestFromVectorRoundTripBatched:
     def test_single_batch_axis(self):
         tpl = EventTemplate(x=(), y=(3,))
         flat = jnp.arange(4 * tpl.vector_size, dtype=float).reshape(4, tpl.vector_size)
-        v = tpl.from_vector(flat)
+        v = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (4,)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert NumericRecordArray.from_vector("nra", tpl, v.to_vector()) == v
 
     def test_multi_axis_batch_shape(self):
         # batch_shape=(2, 3) catches trailing-axis split / reshape bugs.
         tpl = EventTemplate(x=(), y=(3,), z=(2, 2))
         flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
-        v = tpl.from_vector(flat)
+        v = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (2, 3)
-        assert jnp.array_equal(tpl.to_vector(v), flat)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert jnp.array_equal(v.to_vector(), flat)
+        assert NumericRecordArray.from_vector("nra", tpl, v.to_vector()) == v
 
     def test_nested_multi_axis_batch_shape(self):
         # Nested numeric subtree + multi-axis batch: from_vector builds a nested
         # NumericRecordArray as a field of the outer NumericRecordArray.
         tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(2,)), y=(3,))
         flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
-        v = tpl.from_vector(flat)
+        v = NumericRecordArray.from_vector("nra", tpl, flat)
         assert isinstance(v, NumericRecordArray)
         assert v.batch_shape == (2, 3)
         assert isinstance(v.at_path("nested"), NumericRecordArray)
         assert v["nested/b"].shape == (2, 3, 2)
-        assert tpl.from_vector(tpl.to_vector(v)) == v
+        assert NumericRecordArray.from_vector("nra", tpl, v.to_vector()) == v
 
 
 class TestFromVectorErrors:
     def test_wrong_trailing_size_raises(self):
         tpl = EventTemplate(x=(), y=(3,))
         with pytest.raises(ValueError, match="vector_size"):
-            tpl.from_vector(jnp.zeros(5))
+            NumericRecord.from_vector("nr", tpl, jnp.zeros(5))

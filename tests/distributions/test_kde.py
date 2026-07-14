@@ -129,7 +129,7 @@ class TestLogProbDualInput:
             event_template=two_field_template,
             name="post",
         )
-        nr = NumericRecord(intercept=jnp.array(0.5), slope=jnp.array(-0.3))
+        nr = NumericRecord("nr", intercept=jnp.array(0.5), slope=jnp.array(-0.3))
         lp_struct = kde._log_prob(nr)
         lp_flat = kde._log_prob(jnp.array([0.5, -0.3]))
         assert jnp.allclose(lp_struct, lp_flat)
@@ -141,7 +141,7 @@ class TestLogProbDualInput:
             event_template=two_field_template,
             name="post",
         )
-        rec = Record(intercept=jnp.array(0.5), slope=jnp.array(-0.3))
+        rec = Record("r", intercept=jnp.array(0.5), slope=jnp.array(-0.3))
         lp = kde._log_prob(rec)
         assert jnp.isfinite(lp)
 
@@ -183,6 +183,7 @@ class TestFromEmpirical:
     def test_multi_field_record_empirical(self, two_field_template):
         n = 200
         rec = Record(
+            "r",
             intercept=jax.random.normal(jax.random.PRNGKey(0), (n,)),
             slope=jax.random.normal(jax.random.PRNGKey(1), (n,)),
         )

@@ -99,7 +99,11 @@ def _index_record(record_data: Record, idx) -> NumericRecord:
     ``__jax_array__`` / ``__float__`` shims at downstream call sites.
     Leaf-keyed, so nested structure is preserved through the indexing.
     """
-    return NumericRecord({k: jnp.asarray(v)[idx] for k, v in record_data.items()})
+    return Record(
+        record_data.name,
+        {k: jnp.asarray(v)[idx] for k, v in record_data.items()},
+        name_is_auto=True,
+    )
 
 
 def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
@@ -110,7 +114,9 @@ def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
     ``float(result)`` directly via the existing single-field shims.
     Leaf-keyed, so nested structure is preserved.
     """
-    return NumericRecord({k: op(jnp.asarray(v)) for k, v in record_data.items()})
+    return Record(
+        record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()}, name_is_auto=True
+    )
 
 
 def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:
@@ -172,7 +178,7 @@ def _wrap_numeric_array_as_record(
             f"{role} from a numeric array requires a non-empty name=, "
             f"so the auto-wrapped Record has a meaningful field name. "
             f"Pass name='theta' (or similar), or wrap the array yourself: "
-            f"Record(theta=arr)."
+            f"Record('theta', theta=arr)."
         )
     arr = _as_float_array(arr)
     if arr.ndim == 0:
@@ -190,7 +196,7 @@ def _wrap_numeric_array_as_record(
         n = prod(sample_shape)
         event_shape = arr.shape[n_sample_dims:]
         arr = arr.reshape(n, *event_shape)
-    return Record({name: arr}), name
+    return Record(name, {name: arr}, name_is_auto=True), name
 
 
 def _validate_record_samples(record_data: Record) -> int:
@@ -249,8 +255,8 @@ class EmpiricalDistribution[T](
 
     - ``samples`` is a :class:`Record` (each field stacked along axis 0),
     - or ``samples`` is a numeric JAX/numpy array and ``name=...`` is
-      passed (the array auto-wraps as a single-field ``Record({name:
-      arr})``).
+      passed (the array auto-wraps as a single-field record keyed by
+      ``name``).
 
     Otherwise, the generic base is returned and stores ``samples`` as a
     numpy object array.
@@ -402,7 +408,8 @@ class RecordEmpiricalDistribution(
 
     Each *sample* is a row of the stored Record: if the data has fields
     ``X`` of shape ``(n, p)`` and ``y`` of shape ``(n,)``, then a single
-    draw is ``Record(X=array(p,), y=scalar)``. Joint row indexing
+    draw is a record with field ``X`` of shape ``(p,)`` and scalar field
+    ``y``. Joint row indexing
     preserves per-observation correlation across fields during sampling
     and resampling.
 
@@ -421,7 +428,8 @@ class RecordEmpiricalDistribution(
     ----------
     samples : Record | array-like
         Sample data. A Record's fields each stack along axis 0; a
-        numeric array auto-wraps as ``Record({name: arr})``.
+        numeric array auto-wraps as a single-field record keyed by
+        ``name``.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalised internally). Mutually
         exclusive with *log_weights*.
@@ -512,7 +520,11 @@ class RecordEmpiricalDistribution(
         # to that rule.
         cached = getattr(self, "_samples_record", None)
         if cached is None:
-            cached = NumericRecord({k: jnp.asarray(v) for k, v in self._record_data.items()})
+            cached = Record(
+                self.name,
+                {k: jnp.asarray(v) for k, v in self._record_data.items()},
+                name_is_auto=True,
+            )
             object.__setattr__(self, "_samples_record", cached)
         return cached
 
@@ -644,7 +656,7 @@ class RecordEmpiricalDistribution(
         # or calls ``flatten_value`` (which handles both types).
         # Single-field consumers still get the shape shim via the
         # NumericRecord coercion path.
-        return NumericRecord(fields)
+        return Record(self.name, fields, name_is_auto=True)
 
     # -- moments ------------------------------------------------------------
 
@@ -1245,7 +1257,7 @@ class RecordBootstrapReplicateDistribution(
         for f in self._record_data.fields:
             arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
             stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
-        return NumericRecord(stacked)
+        return Record(self.name, stacked, name_is_auto=True)
 
     def _unwrap_dataset(self, dataset: Any) -> Any:
         """Unwrap a single-field auto-wrap dataset to its bare array.

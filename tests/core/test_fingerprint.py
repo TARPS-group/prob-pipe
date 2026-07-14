@@ -178,33 +178,33 @@ class TestDepthGuard:
 
 class TestRecordHashing:
     def test_same_record_stable(self):
-        r1 = Record(x=jnp.array(1.0), y=jnp.array(2.0))
-        r2 = Record(x=jnp.array(1.0), y=jnp.array(2.0))
+        r1 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
+        r2 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
         assert fingerprint(r1) == fingerprint(r2)
 
     def test_different_values_differ(self):
-        r1 = Record(x=jnp.array(1.0))
-        r2 = Record(x=jnp.array(9.0))
+        r1 = Record("r", x=jnp.array(1.0))
+        r2 = Record("r", x=jnp.array(9.0))
         assert fingerprint(r1) != fingerprint(r2)
 
     def test_different_fields_differ(self):
-        r1 = Record(x=jnp.array(1.0))
-        r2 = Record(y=jnp.array(1.0))
+        r1 = Record("r", x=jnp.array(1.0))
+        r2 = Record("r", y=jnp.array(1.0))
         assert fingerprint(r1) != fingerprint(r2)
 
     def test_extra_field_differs(self):
-        r1 = Record(x=jnp.array(1.0))
-        r2 = Record(x=jnp.array(1.0), y=jnp.array(2.0))
+        r1 = Record("r", x=jnp.array(1.0))
+        r2 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
         assert fingerprint(r1) != fingerprint(r2)
 
     def test_multi_field_stable(self):
-        r1 = Record(a=jnp.array([1.0, 2.0]), b=jnp.array(3.0), c="label")
-        r2 = Record(a=jnp.array([1.0, 2.0]), b=jnp.array(3.0), c="label")
+        r1 = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array(3.0), c="label")
+        r2 = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array(3.0), c="label")
         assert fingerprint(r1) == fingerprint(r2)
 
     def test_string_field_differs(self):
-        r1 = Record(label="a")
-        r2 = Record(label="b")
+        r1 = Record("r", label="a")
+        r2 = Record("r", label="b")
         assert fingerprint(r1) != fingerprint(r2)
 
 
@@ -530,13 +530,13 @@ class TestFloatCanonicalization:
 
 class TestNestedRecordHashing:
     def test_nested_record_stable(self):
-        r1 = Record(outer=Record(a=1.0, b=2.0), m=3.0)
-        r2 = Record(outer=Record(a=1.0, b=2.0), m=3.0)
+        r1 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
+        r2 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
         assert fingerprint(r1) == fingerprint(r2)
 
     def test_nested_leaf_change_differs(self):
-        r1 = Record(outer=Record(a=1.0, b=2.0), m=3.0)
-        r2 = Record(outer=Record(a=1.0, b=9.0), m=3.0)
+        r1 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
+        r2 = Record("r", outer=Record("r", a=1.0, b=9.0), m=3.0)
         assert fingerprint(r1) != fingerprint(r2)
 
 

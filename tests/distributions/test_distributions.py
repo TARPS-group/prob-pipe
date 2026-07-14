@@ -320,7 +320,7 @@ class TestEmpiricalValidationMessages:
         """First field is 0-D → message names the field and shape."""
         from probpipe import Record
 
-        rec = Record(x=jnp.array(1.0))
+        rec = Record("r", x=jnp.array(1.0))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
         msg = str(exc.value)
@@ -332,7 +332,7 @@ class TestEmpiricalValidationMessages:
         and the reference field."""
         from probpipe import Record
 
-        rec = Record(x=jnp.zeros(5), y=jnp.array(2.0))
+        rec = Record("r", x=jnp.zeros(5), y=jnp.array(2.0))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
         msg = str(exc.value)
@@ -346,7 +346,7 @@ class TestEmpiricalValidationMessages:
         names the field, its full shape, and the reference field."""
         from probpipe import Record
 
-        rec = Record(x=jnp.zeros(5), y=jnp.zeros(7))
+        rec = Record("r", x=jnp.zeros(5), y=jnp.zeros(7))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
         msg = str(exc.value)
@@ -399,6 +399,7 @@ class TestFlatSamples:
         from probpipe import Record
 
         rec = Record(
+            "r",
             mu=jnp.arange(8.0),
             log_sigma=jnp.arange(8.0) + 100.0,
         )
@@ -416,6 +417,7 @@ class TestFlatSamples:
         from probpipe import Record
 
         rec = Record(
+            "r",
             mu=jnp.arange(10.0),
             beta=jnp.arange(30.0).reshape(10, 3),
         )
@@ -431,8 +433,8 @@ class TestFlatSamples:
         # Insertion-order rule: flat_samples columns follow `dist.fields`.
         from probpipe import Record
 
-        rec1 = Record(z=jnp.zeros(5), a=jnp.ones(5))
-        rec2 = Record(a=jnp.ones(5), z=jnp.zeros(5))
+        rec1 = Record("r", z=jnp.zeros(5), a=jnp.ones(5))
+        rec2 = Record("r", a=jnp.ones(5), z=jnp.zeros(5))
         ed1 = RecordEmpiricalDistribution(rec1)
         ed2 = RecordEmpiricalDistribution(rec2)
         # Different insertion order → different flat_samples column order.
@@ -457,6 +459,7 @@ class TestFlatSamples:
         from probpipe import Record
 
         rec = Record(
+            "r",
             empty=jnp.zeros((10, 0)),
             real=jnp.arange(30.0).reshape(10, 3),
         )

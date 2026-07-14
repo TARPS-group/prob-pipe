@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`NamedTree` — the public name-keyed tree substrate (#338).** New
+  `probpipe.core.named_tree` module holding the ordered, immutable,
+  `/`-path-navigable tree that `EventTemplate` and `Record` now share as their
+  common base (previously the private `_NamedTree`). The substrate owns the
+  leaf-keyed mapping interface, nested-dict (de)construction, and the
+  structural edits `merge` / `without` / `replace`, and gains
+  `with_path_names(old=new, ...)` — rename leaves or whole subtrees by path,
+  or by bare name when unique in the tree. Each family declares its leaf type
+  (`ValueSpec` for templates; arbitrary values for records), checked at
+  construction, and **a `Mapping` is never a leaf**: a dict field value is
+  always materialised into a nested subtree, never stored as an opaque leaf.
+  Diagnostics payloads, previously carried as Records with dict-valued fields,
+  are now plain dicts.
+
 - **`Tracked` / `Annotated` identity-and-metadata mixins (#336).** New
   `probpipe.core.tracked` module defining the shared identity attributes and methods every
   ProbPipe object carries: `Tracked` (a `name`, a `name_is_auto` flag, and a
@@ -106,13 +120,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`Record` / `NumericRecord` construction is name-first, and all-numeric
+  records auto-promote (#338, breaking).** The constructors are now
+  `Record(name, fields=None, /, *, event_template=None, name_is_auto=False,
+  **kw_fields)` — the
+  record's name is a required first positional argument, and the old `name=`
+  keyword and nameless forms are removed. `Record(...)` whose fields are all
+  numeric (bare arrays and scalars, no backend metadata) returns a
+  `NumericRecord`; passing an explicit non-numeric `event_template=` pins a
+  plain `Record`. Structural transforms (`without` / `merge` / `replace` /
+  `with_path_names`) re-derive the numeric axis the same way, and a nested
+  record stored as a field is renamed to its field key. An operation that
+  assembles a record supplies a meaningful, deterministic name derived from
+  its inputs (the producing distribution's or model's name, or a domain term
+  such as `"observed"` / `"data"`) and marks it `name_is_auto=True`. The
+  pytree registration now carries
+  the event template and identity in the treedef aux data, so
+  `jax.tree_util.tree_map` over a `Record` preserves its template, name, and
+  auto flag. Value-level (de)serialization entry points moved onto the value
+  types: `Record.from_field_values(name, template, values)` replaces
+  `EventTemplate.from_field_values(values)` (removed), and
+  `NumericRecord.from_vector(name, template, vec)` replaces
+  `NumericEventTemplate.from_vector` (removed) as the classmethod inverse of
+  the value-level `NumericRecord.to_vector`. `Record.from_nested_dict` /
+  `from_dict` likewise take the name first. Construction now validates each
+  leaf against its field spec's `is_valid` (structure only: shape and dtype,
+  the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). An
+  `ArraySpec`'s `support` is descriptive metadata and is not checked by
+  `is_valid` — a data-dependent check that is not `jax.jit`-traceable.
+
 - **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
   breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
   now subclass a common `ValueSpec` ABC, and every spec implements
-  `is_valid(value) -> bool` — the check that a concrete value matches the spec
-  (shape / dtype / support for arrays; `OpaqueSpec` accepts any non-mapping
-  value; a `DistributionSpec` requires a `Distribution` carrying an equal
-  `event_template`; `FunctionSpec` requires a callable). A non-matching value
+  `is_valid(value) -> bool` — a structural check that a concrete value matches
+  the spec (shape and dtype for arrays — an `ArraySpec`'s `support` is
+  descriptive metadata and is **not** checked by `is_valid`, being
+  data-dependent and not `jax.jit`-traceable; `OpaqueSpec` accepts any
+  non-mapping value; a `DistributionSpec` requires a `Distribution` carrying an
+  equal `event_template`; `FunctionSpec` requires a callable). A non-matching
+  value
   returns `False` rather than raising, but an unexpected error from inspecting
   a malformed value is left to propagate rather than masked as invalid. The
   `LeafSpec` type alias is **removed**; use `ValueSpec` (exported from
@@ -169,14 +215,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Renamed** `EventTemplate.from_record` → `EventTemplate.infer_from`
     (best-effort, lossy inference). The value upcast is consolidated to
     `Record.to_numeric()`.
-  - **Moved** `to_vector` / `from_vector` and `leaf_shapes` onto
-    `NumericEventTemplate`; `from_vector`'s `non_numeric` argument is dropped.
-    `numeric_leaf_shapes` is consolidated into `leaf_shapes`.
+  - **Moved** `leaf_shapes` onto `NumericEventTemplate`; `numeric_leaf_shapes`
+    is consolidated into `leaf_shapes`. (`to_vector` / `from_vector` are now
+    value-level methods on `NumericRecord` / `NumericRecordArray` — see the
+    value-model entry above — not template methods.)
   - **Added** leaf-keyed (de)composition: the mapping protocol
     (`keys` / `values` / `items` / `__iter__`) enumerates every leaf by its
-    canonical `/`-path, and `EventTemplate.from_field_values` rebuilds a
-    value from a leaf list in that order. (See the leaf-keyed surface entry
-    below for the final shape.)
+    canonical `/`-path. Reconstruction from a leaf list is now
+    `Record.from_field_values` (the former `EventTemplate.from_field_values`
+    was removed; see the value-model entry above).
 
 - **User Guide notebooks moved from the former examples section.** The docs nav
   and grouped overview now list all 11 User Guide notebooks under
@@ -1426,7 +1473,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
   conversion to / from ProbPipe's native JAX-array form, with metadata
-  round-trip via the aux registry.
+  round-trip via the aux registry. Backend metadata survives the structural
+  edits (`without` / `merge` / `replace` / `with_path_names`) for leaves they
+  leave unchanged, at any nesting depth, and a pickle round-trip (an
+  aux-carrying record pickles through its native form, so `to_native` stays
+  faithful across `pickle` / Ray transport); a value transform (`map`) or a
+  JAX pytree round-trip drops it.
 - **`probpipe.AuxHooks` / `register_aux(...)` / `aux_for(...)` /
   `aux_registry`** in :mod:`probpipe.core._array_backend` — a registry
   of ``(capture, restore)`` hooks for round-tripping backend-specific

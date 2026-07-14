@@ -176,7 +176,9 @@ def _simulate_offline(
         theta_flat = jnp.asarray(theta.to_vector()).reshape(num_simulations, -1)
     else:
         theta_flat = jnp.asarray(theta).reshape(num_simulations, -1)
-    record = template.from_vector(theta_flat)
+    from ..core._numeric_record import _reconstruct_from_vector
+
+    record = _reconstruct_from_vector(prior.name, template, theta_flat, name_is_auto=True)
     # Invert before flattening: matrix-valued bijectors (positive-definite) require
     # the leaf's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
@@ -191,7 +193,9 @@ def _simulate_offline(
         # Per-draw structured params (named-field access), per the
         # GenerativeLikelihood contract. ``flat_row`` is 1-D, so from_vector
         # rebuilds a single NumericRecord.
-        params = template.from_vector(flat_row)
+        from ..core._numeric_record import _reconstruct_from_vector
+
+        params = _reconstruct_from_vector("params", template, flat_row, name_is_auto=True)
         return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
 
     if sim_backend == "jax":

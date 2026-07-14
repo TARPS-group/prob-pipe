@@ -232,10 +232,24 @@ Two surfaces are documented exceptions, each pending its own follow-up:
   value-model work. Use `dist.event_template.keys()` for the leaf paths
   of one draw.
 
+**Mappings are never leaves.** A `Mapping` value denotes tree
+structure: a dict field value is always materialised into a nested
+subtree, never stored as a single opaque leaf (both direct construction
+and `from_nested_dict` recurse into every `Mapping`). There is no way to
+carry an opaque payload dict inside a `Record`; use a non-mapping
+container if you need one leaf.
+
+**Renaming fields.** `with_path_names(old=new, ...)` returns a
+same-family tree with the given nodes (leaves or whole subtrees)
+renamed. Keys are node paths, or bare names when unambiguous — a bare
+name resolves to the unique node so named and raises `ValueError`
+when the tree contains it more than once. It renames fields *within*
+the tree; renaming the object itself is `with_name`.
+
 When adding new Record-based containers, follow these conventions:
-preserve first-appearance order, reject `/` in field names, key the
-mapping by leaf path, and accept the slash-delimited form in any
-string-keyed lookup.
+preserve first-appearance order, reject `/` in field names, materialize
+a mapping value into a nested subtree (never a leaf), key the mapping by
+leaf path, and accept the slash-delimited form in any string-keyed lookup.
 
 ### 1.11 Distribution iteration
 
@@ -339,7 +353,7 @@ from probpipe.core.record import Record
 ```
 
 A handful of `core/` and `distributions/` modules fit this profile —
-`protocols.py`, `record.py`, `distribution.py`, `ops.py`,
+`protocols.py`, `named_tree.py`, `record.py`, `distribution.py`, `ops.py`,
 `constraints.py`, `provenance.py`, `tracked.py`, `transition.py`, `node.py`,
 `continuous.py`, `discrete.py`, `multivariate.py`, `transformed.py`.
 Everything else in those subpackages (the `_*.py` files) is an

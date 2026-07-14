@@ -58,7 +58,10 @@ When every leaf is an `ArraySpec` then all values are numeric and construction a
 
 ```python
 class EventTemplate(NamedTree[ValueSpec]):
-    def __init__(self, **fields: ValueSpec | EventTemplate) -> None: ...
+    def __init__(self, field_specs: Mapping[str, Any] | None = None, /,
+                 **fields: ValueSpec | EventTemplate | tuple[int, ...] | None) -> None: ...
+    # sugar: a bare shape tuple means ArraySpec(shape) and None means OpaqueSpec();
+    # the positional mapping form accepts "/"-path keys and names that collide with keywords
 
     @classmethod
     def infer_from(cls, value: Any) -> EventTemplate: ...   # best-effort, possibly lossy
@@ -83,15 +86,11 @@ class NumericEventTemplate(EventTemplate):
 
 **Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer. `ArraySpec(shape=("obs", "features"))` fixes the rank and gives each dimension an identity while deferring its size, and within one template a name refers to one dimension: a template with fields `X: ("obs", "features")` and `coefficients: ("features",)` states that the second dimension of `X` and the length of `coefficients` are the same dimension, an equality no pair of concrete integers can express. A template with any symbolic entry is **polymorphic**, with `is_concrete` false and `free_dims` listing the unbound names. Templates carry no scope object beyond the names themselves, so they serialize as plain data.
 
-A polymorphic template is checked by **unification** rather than per-leaf comparison. Validating values against it runs one pass over all fields: each occurrence of a name must resolve to a single size, a conflict raises, and a name, once bound, never rebinds. The per-leaf `is_valid` covers rank, dtype, and support, and leaves size consistency to that one pass. Binding produces a new template, so refinement is monotone and nothing mutates. The flat layout of a `NumericEventTemplate` is defined only when the template is concrete, and anything that needs sizes raises with the free dimensions named.
+A polymorphic template is checked by **unification** rather than per-leaf comparison. Validating values against it runs one pass over all fields: each occurrence of a name must resolve to a single size, a conflict raises, and a name, once bound, never rebinds. The per-leaf `is_valid` covers rank and dtype (an `ArraySpec`'s `support` is descriptive metadata, not checked by `is_valid`), and leaves size consistency to that one pass. Binding produces a new template, so refinement is monotone and nothing mutates. The flat layout of a `NumericEventTemplate` is defined only when the template is concrete, and anything that needs sizes raises with the free dimensions named.
 
 ### Rationale
 
 As the *type layer*, an `EventTemplate` is the explicit structure that travels with a value and with the producers and consumers of values (`D5 – Explicit, carried structure`). It separates the structure of one event from the orthogonal axes of *multiplicity* and *identity*, keeping those distinctions explicit (`D1 – Mathematical fidelity`). A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
-
-### Open points
-
-- *Validation scope.* Whether construction performs structural validation only, with opt-in deep (shape/dtype) checks, is open.
 
 ---
 
@@ -134,8 +133,10 @@ Two records are equal when they share a class, an `event_template`, and field-by
 class Record(NamedTree[Any], Tracked, Annotated):
     def __init__(self, name: str, fields: Mapping[str, Any] | None = None, /, *,
                  event_template: EventTemplate | None = None,
+                 name_is_auto: bool = False,
                  **kw_fields: Any) -> None: ...
         # name is the required first argument (semantic identity)
+        # name_is_auto marks an operation-derived name (II.2); user constructions leave it False
         # a nested sub-record's name is its field key; a mapping-valued field is a subtree, never a leaf.
         # Binds to event_template if given (structural validation);
         # Otherwise, infers it once via EventTemplate.infer_from.
@@ -147,9 +148,16 @@ class Record(NamedTree[Any], Tracked, Annotated):
     @classmethod
     def from_field_values(cls, name: str, template: EventTemplate, values: Sequence[Any]) -> Record: ...
     # reconstruct from values in the template's canonical order; ValueError on count/shape mismatch
+
+    def select(self, *fields: str, **mapping: str) -> dict[str, Any]: ...
+    # fields into a plain dict for **-splatting into a computation call;
+    # keywords remap: select(x="r") == {"x": self["r"]}
+    def select_all(self) -> dict[str, Any]: ...   # every top-level field, ready to splat
 ```
 
-When every leaf is a numeric array, a `Record` is a `NumericRecord`, which is itself a pytree of arrays (its children the field values, its `event_template` static metadata). It adds flat vectorization, reading the necessary information (`leaf_shapes`, `vector_size`, and canonical order) from the template. Because a `NumericRecord` is a bare array pytree, it passes through `grad` / `vmap` / `jit` unchanged. Passing through means leaf transport only: a JAX transform maps the leaves and never promotes a `Record` to a `RecordBatch`. Flattening is deliberately numeric-only, which is why `NamedTree` itself has no `flatten`.
+`select` resolves each argument with `at_path`, so a key reaches a leaf and a partial path a subtree view, and returns a plain `dict` carrying no schema; its purpose is `**`-splatting a value's parts into a computation call (Part IV), with `select_all` the whole-record form over the top-level children.
+
+When every leaf is a numeric array, a `Record` is a `NumericRecord`, which is itself a pytree of arrays (its children the field values, its `event_template` static metadata). Construction auto-promotes exactly when every leaf coerces to a bare numeric array with nothing lost and no explicit non-numeric template vetoes it; a backend-typed leaf (an `xarray` or `pandas` value held verbatim) keeps the record a plain `Record` rather than silently coercing away its native form. As for `EventTemplate` (III.1), the promotion is re-derived whenever a transform constructs a new record — an edit that removes the last non-numeric leaf promotes the result, and one that introduces a non-numeric leaf demotes it — so the numeric axis is an invariant of the current leaves, not of the object's history. It adds flat vectorization, reading the necessary information (`leaf_shapes`, `vector_size`, and canonical order) from the template. Because a `NumericRecord` is a bare array pytree, it passes through `grad` / `vmap` / `jit` unchanged. Passing through means leaf transport only: a JAX transform maps the leaves and never promotes a `Record` to a `RecordBatch`. Flattening is deliberately numeric-only, which is why `NamedTree` itself has no `flatten`.
 
 ```python
 class NumericRecord(Record):
@@ -164,11 +172,10 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Notes
 
-- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays and its static aux data is the template and name only, so provenance and annotations do not survive a JAX transform boundary; lineage instead rides on the computation layer, which records the transform itself.
+- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays and its static aux data is the template and the identity pair (`name`, `name_is_auto`) only, so provenance, annotations, and backend metadata do not survive a JAX transform boundary; lineage instead rides on the computation layer, which records the transform itself.
 
-### Open points
-
-- *Single-value coercion.* How a single-field `Record` presents is unresolved. For example, in the array case, it could present as a bare scalar/array (coercion via `float` / `jnp.asarray`, a `.shape` shim, or a dedicated single-value wrapper). Or, in the function case, it could support `__call__`.
+- *Single-field presentation.* A single-field `NumericRecord` forwards the explicit coercion entry points to its sole leaf — `float` / `int` / `bool`, `np.asarray` / `jnp.asarray`, and the `.shape` / `.dtype` / `.ndim` attributes — and a single-field `Record` holding a callable forwards `__call__`. The shim is deliberately narrow: no arithmetic, reductions, or slicing, and a multi-field record raises and points at explicit field access, since unwrapping one field of many would be ambiguous.
+- *Construction validation.* Construction checks each leaf against its spec's `is_valid`, which validates structure only — for an `ArraySpec`, shape and dtype (dtype by `numpy.can_cast` same-kind: a widening promotion or a within-kind narrowing passes, a cross-kind conversion raises). An `ArraySpec`'s `support` is **not** part of `is_valid`: it is a data-dependent, element-wise check that reduces to a Python `bool` and so cannot run under `jax.jit` tracing, where construction also happens (pytree unflatten reconstructs a value inside the trace). `support` is therefore descriptive metadata, and invariant 2 (`is_valid`) covers shape and dtype. Leaf validation is skipped on the unflatten path, where a leaf's shape is transform-relative.
 
 ## III.4 — `RecordBatch` and `NumericRecordBatch`
 

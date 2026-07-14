@@ -19,7 +19,9 @@ from probpipe.core._workflow_plan import build_broadcast_plan
 
 
 def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
-    return NumericRecordArray.stack([NumericRecord(**{field: float(value)}) for value in values])
+    return NumericRecordArray.stack(
+        [NumericRecord("nr", **{field: float(value)}) for value in values]
+    )
 
 
 def _unexpected_distribution_broadcast(*args, **kwargs):
@@ -33,7 +35,7 @@ def _require_not_called(*args, **kwargs):
 class TestSliceSweepValues:
     def test_views_from_same_parent_zip(self):
         parent = NumericRecordArray.stack(
-            [NumericRecord(x=float(i), y=float(10 + i)) for i in range(3)]
+            [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)]
         )
         values = {"x": parent.view("x"), "y": parent.view("y")}
         plan = build_broadcast_plan(values=values, hints={})

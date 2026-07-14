@@ -69,7 +69,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         # batch peels correctly; path-keyed construction rebuilds nesting.
         if isinstance(samples, RecordArray):
             template = samples.template
-            samples = Record({k: samples[k] for k in template})
+            samples = Record(samples.name, {k: samples[k] for k in template}, name_is_auto=True)
         else:
             template = None
         # Default field name for bare-array outputs (the WF marginal

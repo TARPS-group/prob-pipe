@@ -458,7 +458,6 @@ def _broadcast_sample(
 
 def _index_sample(s: Any, i: int) -> Any:
     """Index row ``i`` of a per-argument sample batch."""
-    from ._numeric_record import NumericRecord
     from .record import Record
 
     if isinstance(s, Record):
@@ -467,5 +466,5 @@ def _index_sample(s: Any, i: int) -> Any:
         leaf_paths = tuple(s.event_template.keys())
         if len(leaf_paths) == 1:
             return s[leaf_paths[0]][i]
-        return NumericRecord({p: s[p][i] for p in leaf_paths})
+        return Record(s.name, {p: s[p][i] for p in leaf_paths}, name_is_auto=True)
     return s[i]

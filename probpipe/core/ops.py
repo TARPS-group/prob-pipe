@@ -124,7 +124,7 @@ def _resolve_value(
     A distribution field whose name collides with the op's own ``value`` or
     ``dist`` parameter cannot be addressed by the keyword form (it binds to the
     parameter). For a multi-field distribution, pass a positional ``Record``
-    (``log_prob(d, Record(value=...))``); for a single-field one, pass the bare
+    (``log_prob(d, Record("v", value=...))``); for a single-field one, pass the bare
     positional value (``log_prob(d, v)`` — a scalar ``_log_prob`` does not
     accept a ``Record``). This mirrors ``condition_on``'s ``observed``.
     """
@@ -426,7 +426,7 @@ def condition_on(
         # Positional (backward compatible):
         condition_on(model, y_obs)
 
-        # Named data kwargs — bundled into Record(X=..., y=...):
+        # Named data kwargs — bundled into a record with fields X and y:
         condition_on.with_options(n_broadcast_samples=16)(
             model, X=bootstrap["X"], y=bootstrap["y"],
         )
@@ -477,7 +477,7 @@ def condition_on(
                     "Cannot provide both positional `observed` and named "
                     f"data kwargs ({', '.join(data_kwargs)})"
                 )
-            observed = Record(data_kwargs)
+            observed = Record("observed", data_kwargs, name_is_auto=True)
         return inference_method_registry.execute(dist, observed, method=method, **inference_kwargs)
 
     # Exact conditioning (conjugate updates, joint marginalization, etc.)
@@ -494,7 +494,7 @@ def condition_on(
                 "Cannot provide both positional `observed` and named "
                 f"data kwargs ({', '.join(data_kwargs)})"
             )
-        observed = Record(data_kwargs)
+        observed = Record("observed", data_kwargs, name_is_auto=True)
     return inference_method_registry.execute(dist, observed, **inference_kwargs)
 
 

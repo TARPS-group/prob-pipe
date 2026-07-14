@@ -331,7 +331,7 @@ class SequentialJointDistribution(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return Record(fields)
+        return Record(self.name, fields, name_is_auto=True)
 
     def _eval_log_prob(self, value, *, components: str) -> Array:
         """Evaluate log-density over selected components.
@@ -414,11 +414,17 @@ class SequentialJointDistribution(
         samples.  This returns the prototype (prior-evaluated) means
         as an approximation.
         """
-        return Record({k: v._mean() for k, v in self._proto_components.items()})
+        return Record(
+            self.name, {k: v._mean() for k, v in self._proto_components.items()}, name_is_auto=True
+        )
 
     def _variance(self) -> Record:
         """Per-component variances (approximate --- uses prototype components)."""
-        return Record({k: v._variance() for k, v in self._proto_components.items()})
+        return Record(
+            self.name,
+            {k: v._variance() for k, v in self._proto_components.items()},
+            name_is_auto=True,
+        )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(

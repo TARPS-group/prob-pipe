@@ -62,22 +62,22 @@ class TestKwargFormRecord:
 
     def test_product_distribution(self):
         p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
-        assert jnp.allclose(log_prob(p, a=0.5, b=0.4), log_prob(p, Record(a=0.5, b=0.4)))
+        assert jnp.allclose(log_prob(p, a=0.5, b=0.4), log_prob(p, Record("r", a=0.5, b=0.4)))
 
     def test_field_order_independent(self):
         # Distinguishable components (Normal vs Beta) so a field swap would
         # change the result — a symmetric pair could not detect mis-routing.
         p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
         out_of_order = log_prob(p, b=0.4, a=0.5)
-        baseline = log_prob(p, Record(a=0.5, b=0.4))
+        baseline = log_prob(p, Record("r", a=0.5, b=0.4))
         assert jnp.allclose(out_of_order, baseline)
         # Mis-pairing the values genuinely differs, so the above is a real check.
-        assert not jnp.allclose(out_of_order, log_prob(p, Record(a=0.4, b=0.5)))
+        assert not jnp.allclose(out_of_order, log_prob(p, Record("r", a=0.4, b=0.5)))
 
     def test_joint_gaussian(self):
         jg = JointGaussian(mean=jnp.zeros(3), cov=jnp.eye(3), u=2, v=1)
         u, v = jnp.array([0.1, 0.2]), jnp.array([0.3])
-        assert jnp.allclose(log_prob(jg, u=u, v=v), log_prob(jg, Record(u=u, v=v)))
+        assert jnp.allclose(log_prob(jg, u=u, v=v), log_prob(jg, Record("r", u=u, v=v)))
 
 
 class TestKwargFormSimpleModel:
@@ -96,8 +96,8 @@ class TestKwargFormSimpleModel:
     def test_kwarg_matches_record_and_tuple(self):
         model, X, y = self._glm_model()
         kw = log_prob(model, intercept=0.3, slope=0.5, X=X, y=y)
-        rec = log_prob(model, Record(intercept=0.3, slope=0.5, X=X, y=y))
-        tup = model._log_prob((Record(intercept=0.3, slope=0.5), Record(X=X, y=y)))
+        rec = log_prob(model, Record("r", intercept=0.3, slope=0.5, X=X, y=y))
+        tup = model._log_prob((Record("r", intercept=0.3, slope=0.5), Record("r", X=X, y=y)))
         assert jnp.allclose(kw, rec)
         assert jnp.allclose(kw, tup)
 
@@ -114,7 +114,7 @@ class TestKwargFormSimpleModel:
         with pytest.raises(TypeError, match="no named data fields"):
             log_prob(model, a=0.5, b=0.5)
         # The (params, data) tuple form remains available for such models.
-        lp = model._log_prob((Record(a=0.5, b=0.5), jnp.zeros(3)))
+        lp = model._log_prob((Record("r", a=0.5, b=0.5), jnp.zeros(3)))
         assert jnp.isfinite(lp)
 
     def test_single_field_prior_packs_to_bare_array(self):
@@ -131,8 +131,8 @@ class TestKwargFormSimpleModel:
         model = SimpleModel(Normal(0.0, 1.0, name="theta"), _ScalarLikelihood(), name="m")
         y = jnp.array([0.2, -0.1, 0.4])
         kw = log_prob(model, theta=0.5, y=y)
-        rec = log_prob(model, Record(theta=0.5, y=y))
-        tup = model._log_prob((0.5, Record(y=y)))  # single-field prior → bare scalar
+        rec = log_prob(model, Record("r", theta=0.5, y=y))
+        tup = model._log_prob((0.5, Record("r", y=y)))  # single-field prior → bare scalar
         assert jnp.allclose(kw, rec)
         assert jnp.allclose(kw, tup)
 
@@ -219,13 +219,13 @@ class TestProbAndUnnormalizedKwargForm:
 
     def test_prob_multifield_kwarg_matches_record(self):
         p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
-        assert jnp.allclose(prob(p, a=0.5, b=0.4), prob(p, Record(a=0.5, b=0.4)))
+        assert jnp.allclose(prob(p, a=0.5, b=0.4), prob(p, Record("r", a=0.5, b=0.4)))
 
     def test_unnormalized_prob_multifield_kwarg_matches_record(self):
         p = ProductDistribution(Normal(0.0, 1.0, name="a"), Beta(2.0, 3.0, name="b"))
         assert jnp.allclose(
             unnormalized_prob(p, a=0.5, b=0.4),
-            unnormalized_prob(p, Record(a=0.5, b=0.4)),
+            unnormalized_prob(p, Record("r", a=0.5, b=0.4)),
         )
 
 
@@ -306,7 +306,7 @@ class TestSequentialJointKwargForm:
             x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         kw = log_prob(joint, z=0.2, x=0.1)
-        pos = log_prob(joint, Record(z=0.2, x=0.1))
+        pos = log_prob(joint, Record("r", z=0.2, x=0.1))
         assert jnp.allclose(kw, pos)
 
 
@@ -342,7 +342,7 @@ class TestRandomMeasureKwargForm:
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
         prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
         lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-        return MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2)
+        return MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
 
     def test_value_omitted_returns_callable_with_options(self):
         m = self._measure()
@@ -387,12 +387,12 @@ class TestFieldNameCollision:
         with pytest.raises(TypeError, match="not both"):
             log_prob(p, value=0.5, b=0.4)
         # escape hatch for a multi-field distribution: the positional Record
-        assert jnp.isfinite(log_prob(p, Record(value=0.5, b=0.4)))
+        assert jnp.isfinite(log_prob(p, Record("r", value=0.5, b=0.4)))
 
     def test_singlefield_value_field_via_bare_positional(self):
         d = Normal(0.0, 1.0, name="value")
         # bare positional works (and equals value=, which binds to the param):
         assert jnp.allclose(log_prob(d, 1.5), log_prob(d, value=1.5))
-        # the positional Record does NOT work for a single-field distribution:
-        with pytest.raises(TypeError):
-            log_prob(d, Record(value=1.5))
+        # a positional single-field Record promotes to NumericRecord, whose
+        # scalar shim coerces to the bare value — so it agrees too:
+        assert jnp.allclose(log_prob(d, Record("r", value=1.5)), log_prob(d, 1.5))

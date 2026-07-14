@@ -41,12 +41,12 @@ class TestMixinMembership:
         assert isinstance(n, Annotated)
 
     def test_record_is_tracked_and_annotated(self):
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         assert isinstance(r, Tracked)
         assert isinstance(r, Annotated)
 
     def test_numeric_record_is_tracked_and_annotated(self):
-        nr = NumericRecord(a=jnp.array(1.0))
+        nr = NumericRecord("nr", a=jnp.array(1.0))
         assert isinstance(nr, Tracked)
         assert isinstance(nr, Annotated)
 
@@ -102,13 +102,23 @@ class TestNameIsAuto:
         assert n.name_is_auto is False
 
     def test_user_named_record_is_not_auto(self):
-        r = Record(a=1.0, name="mine")
+        r = Record("mine", a=1.0)
         assert r.name == "mine"
         assert r.name_is_auto is False
 
-    def test_unnamed_record_is_auto(self):
-        r = Record(a=1.0, b=2.0)
-        assert r.name == "record(a,b)"
+    def test_constructor_requires_name(self):
+        # The name guard fires in ``Record.__new__`` before promotion picks a
+        # class, so a name-less call reports ``Record`` and its custom message
+        # — not the promoted ``NumericRecord`` nor the bare Python "missing
+        # positional argument" a reverted guard would leave.
+        with pytest.raises(TypeError, match="Record requires its name"):
+            Record(a=1.0)
+
+    def test_operation_derived_record_is_auto(self):
+        # ``Record(..., name_is_auto=True)`` is the operation-side constructor: the
+        # op supplies a name and the record is marked auto-derived.
+        r = Record("sample", {"a": 1.0, "b": 2.0}, name_is_auto=True)
+        assert r.name == "sample"
         assert r.name_is_auto is True
 
     def test_unnamed_record_array_is_auto(self):
@@ -148,9 +158,47 @@ class TestNameIsAuto:
         assert emp.name == "empirical"
         assert emp.name_is_auto is True
 
+    def test_structural_edits_rederive_auto_names(self):
+        # An auto-derived name describes the current field keys, so a
+        # transform that changes the field set must re-derive it — the same
+        # rule ``map`` follows. Keeping the pre-edit name would advertise
+        # fields that no longer exist.
+        r = Record("record(a,b)", {"a": jnp.array(1.0), "b": jnp.array(2.0)}, name_is_auto=True)
+        assert r.without("b").name == "record(a)"
+        assert r.map(lambda x: x).name == "record(a,b)"
+        merged = Record("record(a)", {"a": jnp.array(1.0)}, name_is_auto=True).merge(
+            Record("record(c)", {"c": jnp.array(3.0)}, name_is_auto=True)
+        )
+        assert merged.name == "record(a,c)"
+        assert r.with_path_names(a="z").name == "record(z,b)"
+
+    def test_structural_edits_preserve_user_names(self):
+        # A user-given name is the object's identity, not a field summary,
+        # so structural edits keep it verbatim and never flip name_is_auto.
+        r = Record("mine", a=jnp.array(1.0), b=jnp.array(2.0))
+        for edited in (
+            r.without("b"),
+            r.merge(Record("o", c=jnp.array(3.0))),
+            r.with_path_names(a="z"),
+        ):
+            assert edited.name == "mine"
+            assert edited.name_is_auto is False
+
+    def test_nested_auto_name_derives_from_top_level_keys(self):
+        # The derived name uses top-level field keys (not full leaf paths),
+        # so every transform agrees regardless of nesting depth.
+        nested = Record(
+            "record(a)",
+            {"a": Record("a", {"b": jnp.array(1.0), "c": jnp.array(2.0)}, name_is_auto=True)},
+            name_is_auto=True,
+        )
+        assert nested.name == "record(a)"
+        assert nested.with_path_names({"a/b": "z"}).name == "record(a)"
+        assert nested.map(lambda x: x).name == "record(a)"
+
     def test_name_is_auto_survives_record_pickle(self):
-        auto = Record(a=1.0)
-        named = Record(a=1.0, name="mine")
+        auto = Record("record(a)", {"a": 1.0}, name_is_auto=True)
+        named = Record("mine", a=1.0)
         assert pickle.loads(pickle.dumps(auto)).name_is_auto is True
         assert pickle.loads(pickle.dumps(named)).name_is_auto is False
 
@@ -169,7 +217,7 @@ class TestWithName:
         assert n.name == "x"
 
     def test_with_name_clears_auto_flag(self):
-        r = Record(a=1.0)  # auto-named
+        r = Record("record(a)", {"a": 1.0}, name_is_auto=True)  # operation-derived (auto) name
         assert r.name_is_auto is True
         r2 = r.with_name("mine")
         assert r2.name == "mine"
@@ -186,7 +234,7 @@ class TestWithName:
         assert m.provenance.parents[0].name == "x"
 
     def test_with_name_on_immutable_record(self):
-        r = Record(a=jnp.array(1.0), b=jnp.array(2.0), name="orig")
+        r = Record("orig", a=jnp.array(1.0), b=jnp.array(2.0))
         r2 = r.with_name("new")
         assert r2.name == "new"
         # shallow copy: field data is shared, not copied
@@ -347,10 +395,12 @@ class TestFlagPropagation:
         y = jnp.array([1.0, 0.0, 1.0, 0.0])
         prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
         lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-        m = MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2)
+        m = MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
         assert m.name == "MinibatchedDistribution(batch_size=2)"
         assert m.name_is_auto is True
-        named = MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2, name="mine")
+        named = MinibatchedDistribution(
+            prior, lik, Record("r", X=X, y=y), batch_size=2, name="mine"
+        )
         assert named.name_is_auto is False
 
     def test_product_conditioning_mirrors_flag(self):
@@ -397,17 +447,17 @@ class TestFlagPropagation:
 
 class TestWithProvenance:
     def test_returns_self_for_chaining(self):
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         assert r.with_provenance(Provenance("op")) is r
         assert r.provenance.operation == "op"
 
     def test_none_is_noop(self):
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         assert r.with_provenance(None) is r
         assert r.provenance is None
 
     def test_write_once_raises(self):
-        for obj in (Record(a=1.0), Normal(loc=0.0, scale=1.0, name="x")):
+        for obj in (Record("r", a=1.0), Normal(loc=0.0, scale=1.0, name="x")):
             obj.with_provenance(Provenance("first"))
             with pytest.raises(RuntimeError, match="write-once"):
                 obj.with_provenance(Provenance("second"))
@@ -420,7 +470,7 @@ class TestWithProvenance:
 
 class TestAnnotated:
     def test_annotations_default_none(self):
-        assert Record(a=1.0).annotations is None
+        assert Record("r", a=1.0).annotations is None
         assert Normal(loc=0.0, scale=1.0, name="x").annotations is None
 
     def test_annotations_accepts_plain_mapping(self):
@@ -437,7 +487,7 @@ class TestAnnotated:
     def test_annotations_on_record_via_object_setattr(self):
         # Record is immutable; the annotations channel is written by
         # framework code via object.__setattr__.
-        r = Record(a=1.0)
+        r = Record("r", a=1.0)
         object.__setattr__(r, "_annotations", {"k": 1})
         assert r.annotations == {"k": 1}
 

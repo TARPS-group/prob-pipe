@@ -109,7 +109,11 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     """
     if isinstance(data, Record):
         # Covers Record and RecordArray (the latter via subclass).
-        return Record({f: jnp.asarray(child)[indices] for f, child in data.children.items()})
+        return Record(
+            data.name,
+            {f: jnp.asarray(child)[indices] for f, child in data.children.items()},
+            name_is_auto=True,
+        )
     return jnp.asarray(data)[indices]
 
 

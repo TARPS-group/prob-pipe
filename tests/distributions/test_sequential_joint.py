@@ -176,7 +176,7 @@ class TestLogProb:
         )
         z_val = jnp.array(1.0)
         x_val = jnp.array(1.5)
-        value = Record(z=z_val, x=x_val)
+        value = Record("r", z=z_val, x=x_val)
         lp = log_prob(joint, value)
 
         # Independent baseline: scipy.stats.norm.logpdf
@@ -192,7 +192,7 @@ class TestLogProb:
             y=lambda z, x: Normal(loc=z + x, scale=0.1, name="y"),
         )
         z_val, x_val, y_val = 0.5, 0.8, 1.2
-        value = Record(z=jnp.array(z_val), x=jnp.array(x_val), y=jnp.array(y_val))
+        value = Record("r", z=jnp.array(z_val), x=jnp.array(x_val), y=jnp.array(y_val))
         lp = log_prob(joint, value)
 
         # Independent baseline: scipy.stats.norm.logpdf
@@ -344,7 +344,7 @@ class TestConditionOn:
         )
         # Condition on root z — x's conditional p(x|z=2) is normalized
         cond = condition_on(joint, z=jnp.array(2.0))
-        value = Record(x=jnp.array(1.5))
+        value = Record("r", x=jnp.array(1.5))
         lp = log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should equal log p(x=1.5 | z=2.0) = log N(1.5; 2.0, 0.5)
@@ -358,7 +358,7 @@ class TestConditionOn:
             x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(joint, x=jnp.array(1.0))
-        value = Record(z=jnp.array(0.0))
+        value = Record("r", z=jnp.array(0.0))
         with pytest.raises(NotImplementedError, match="unnormalized_log_prob"):
             log_prob(cond, value)
 
@@ -370,7 +370,7 @@ class TestConditionOn:
         )
         cond = condition_on(joint, x=jnp.array(1.0))
         # Only z is unconditioned; input is Record with just z
-        value = Record(z=jnp.array(0.0))
+        value = Record("r", z=jnp.array(0.0))
         lp = unnormalized_log_prob(cond, value)
         assert jnp.isfinite(lp)
         # Should be log p(z=0) + log p(x=1|z=0) (unnormalized conditional)

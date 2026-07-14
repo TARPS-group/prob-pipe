@@ -66,7 +66,7 @@ class TestProvenanceBasics:
         """with_provenance(None) leaves a Record unchanged."""
         from probpipe import Record
 
-        r = Record({"x": jnp.array(1.0)})
+        r = Record("r", {"x": jnp.array(1.0)})
         result = r.with_provenance(None)
         assert result is r
         assert r.provenance is None

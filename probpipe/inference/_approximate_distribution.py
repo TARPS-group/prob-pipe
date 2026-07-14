@@ -24,8 +24,8 @@ def _spec_size(spec: ArraySpec | EventTemplate) -> int:
     """Number of scalar elements one field contributes to a flat vector.
 
     Given the spec of a single field of an :class:`EventTemplate`, return how
-    many scalars that field occupies in the dense
-    :meth:`NumericEventTemplate.to_vector` layout: ``prod(shape)`` for an
+    many scalars that field occupies in the dense 1-D vector layout (see
+    :meth:`~probpipe.NumericRecord.to_vector`): ``prod(shape)`` for an
     :class:`ArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
     nested :class:`NumericEventTemplate`. Summing this over a template's fields
     gives the template's own ``vector_size``; it is used here to size each
@@ -257,7 +257,11 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     shape = spec.shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
-            super().__init__(Record(fields), weights=weights, name=name or "posterior")
+            super().__init__(
+                Record(name or "posterior", fields, name_is_auto=True),
+                weights=weights,
+                name=name or "posterior",
+            )
             self._event_template = event_template
         else:
             # Single-field path: ``name`` (default ``"posterior"``)
@@ -398,9 +402,13 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # historical behaviour of single-field auto-wrap empiricals
         # under the previous numeric-array hierarchy.
         if getattr(self, "_user_template", False):
-            # ``from_vector`` infers batch_shape from the leading axes of the
-            # concatenated draws (a matrix ``(n, vector_size)``).
-            return self.event_template.from_vector(samples)
+            # Reconstruct: batch_shape is inferred from the leading axes of
+            # the concatenated draws (a matrix ``(n, vector_size)``).
+            from ..core._numeric_record import _reconstruct_from_vector
+
+            return _reconstruct_from_vector(
+                self.name, self.event_template, samples, name_is_auto=True
+            )
         return samples
 
     def __repr__(self) -> str:

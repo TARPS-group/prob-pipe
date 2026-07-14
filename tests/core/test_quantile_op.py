@@ -72,7 +72,7 @@ class TestQuantileOp:
         key = jax.random.PRNGKey(2)
         a = jax.random.normal(key, (1000,))
         b = jax.random.normal(jax.random.PRNGKey(3), (1000,)) + 5.0
-        emp = EmpiricalDistribution(Record(a=a, b=b))
+        emp = EmpiricalDistribution(Record("r", a=a, b=b))
         res = quantile(emp, 0.5)
         assert float(np.asarray(res["a"])) == pytest.approx(float(jnp.median(a)), abs=1e-5)
         assert float(np.asarray(res["b"])) == pytest.approx(float(jnp.median(b)), abs=1e-5)

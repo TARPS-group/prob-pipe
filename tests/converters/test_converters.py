@@ -742,6 +742,7 @@ class TestProtocolConversion:
 
         n = 200
         rec = Record(
+            "r",
             mu=jax.random.normal(jax.random.PRNGKey(2), (n,)),
             log_sigma=jax.random.normal(jax.random.PRNGKey(3), (n,)),
         )
@@ -859,6 +860,7 @@ class TestProtocolConversion:
 
         n = 200
         rec = Record(
+            "r",
             intercept=jax.random.normal(jax.random.PRNGKey(0), (n,)),
             slope=jax.random.normal(jax.random.PRNGKey(1), (n,)),
         )

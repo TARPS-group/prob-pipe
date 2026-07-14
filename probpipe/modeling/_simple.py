@@ -219,7 +219,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
                     f"positionally instead."
                 )
             params = self._prior._pack_value(**{f: value[f] for f in self._prior_fields})
-            data = Record(**{f: value[f] for f in data_fields})
+            data = Record("data", {f: value[f] for f in data_fields}, name_is_auto=True)
             return params, data
         raise TypeError(
             f"SimpleModel._log_prob expects a Record over {self.fields} or a "

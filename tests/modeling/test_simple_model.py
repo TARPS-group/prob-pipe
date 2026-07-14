@@ -323,7 +323,7 @@ class TestSimpleModelWithValues:
 
     def test_condition_on_with_record_data(self, prior_with_template, likelihood):
         model = SimpleModel(prior_with_template, likelihood)
-        data = Record(obs=jnp.array([[1.0, 2.0], [1.5, 2.5]]))
+        data = Record("r", obs=jnp.array([[1.0, 2.0], [1.5, 2.5]]))
         result = condition_on(
             model,
             data,
@@ -376,7 +376,7 @@ class TestSimpleModelWithValues:
         class _DataTemplateLikelihood(_ValuesAwareLikelihood):
             @property
             def data_template(self):
-                return Record(obs=jnp.zeros(0))
+                return Record("r", obs=jnp.zeros(0))
 
         lik = _DataTemplateLikelihood()
         model = SimpleModel(prior_with_template, lik)
@@ -388,7 +388,7 @@ class TestSimpleModelWithValues:
         class _DataTemplateLikelihood(_ValuesAwareLikelihood):
             @property
             def data_template(self):
-                return Record(obs=jnp.zeros(0))
+                return Record("r", obs=jnp.zeros(0))
 
         model = SimpleModel(prior_with_template, _DataTemplateLikelihood())
         with pytest.raises(ValueError, match="Cannot provide both"):
