@@ -414,11 +414,14 @@ def _is_numeric_dtype(dtype: Any) -> bool:
     the ml_dtypes extension types JAX registers (``bfloat16``, the
     ``float8_*`` family, ``int4`` / ``uint4``), which numpy reports as kind
     ``"V"``. A dtype that is **not** ``numpy.dtype``-coercible — a pandas
-    extension / masked dtype such as ``Int64Dtype`` — is **not** numeric
-    here: it reports a numpy ``kind`` but is not a dense numpy dtype, so a
-    container using it is not a plain numeric array (it carries NA / masking
-    semantics ``jax`` cannot represent) and must not promote to a
-    ``NumericRecord``. Structured (record) dtypes are likewise not numeric.
+    extension / masked dtype such as ``Int64Dtype`` — is **not** numeric on
+    this generic (duck-typing) path: it is not a dense numpy dtype, so a bare
+    value carrying one is not treated as a plain numeric array. A registered
+    :class:`~probpipe.ArrayBackend` may still recognise its own masked dtypes
+    and convert them — the built-in pandas backend accepts nullable numeric
+    columns and encodes each NA as ``NaN`` at the compute boundary — so this
+    predicate governs only the duck path, not the registry. Structured
+    (record) dtypes are likewise not numeric.
     Every place that decides "is this array numeric?" — template inference,
     spec validation, and the ``NumericRecord`` / ``NumericRecordArray`` leaf
     gates — routes through this predicate so the sites cannot drift apart.

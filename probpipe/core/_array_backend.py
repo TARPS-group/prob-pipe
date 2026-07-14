@@ -28,10 +28,15 @@ conversion cache, batch stacking, and ``fingerprint()`` — resolves
 new array type recognised, validated, promoted, converted, and fingerprinted
 everywhere at once.
 
-Built-in registration: ``pandas.DataFrame`` (the ``.dtypes``-but-no-``.dtype``
-shape the duck path misses). ``numpy`` / ``jax`` arrays, ``xarray.DataArray``,
-and ``pandas.Series`` are deliberately unregistered — the duck path covers
-them.
+Built-in registrations: ``xarray.DataArray`` and ``pandas.Series`` /
+``pandas.DataFrame``. They are registered (not left to the duck path) both to
+expose their identity-bearing metadata — dims / coords / attrs / name, or
+index / columns — through the ``metadata`` hook, and, for pandas, to handle
+nullable / masked numeric columns (``Int64``, ``Float64``, ``boolean``): the
+generic duck path cannot see those as numeric, but the pandas backend accepts
+them and converts through ``float64``, encoding each NA as ``NaN``. Bare
+``numpy`` / ``jax`` arrays stay unregistered — the duck path covers them and
+they carry no metadata beyond their values.
 
 Batch stacking hooks (a per-backend native ``stack`` / ``element``) are
 expected to join this registry with the batch-axis rework; the keyword-only
@@ -259,7 +264,17 @@ def _register_pandas() -> None:
     A ``Series`` speaks the numpy protocol but carries an index and name; a
     ``DataFrame`` additionally has no single ``.dtype`` (per-column ``.dtypes``
     the duck path cannot read). Both answer shape / dtype / numericness from
-    metadata without materialising values. No-op without pandas.
+    metadata without materialising values.
+
+    Nullable / masked numeric columns (``Int64``, ``Float64``, ``boolean``,
+    pyarrow numerics) are accepted as numeric even though the generic gate
+    rejects their dtype: such a column has no dense numpy view, so the whole
+    container converts through ``float64`` with each NA encoded as ``NaN`` —
+    the only missing-value representation ``jax`` offers. The native leaf is
+    stored verbatim, so the validity mask survives at rest; NA becomes NaN
+    only at the compute boundary. Integer / boolean columns therefore promote
+    to float. Categorical / string / datetime extension dtypes are not numeric
+    and leave the container a plain ``Record``. No-op without pandas.
     """
     try:
         import pandas as pd
@@ -268,32 +283,63 @@ def _register_pandas() -> None:
 
     from .event_template import _is_numeric_dtype
 
+    def _is_nullable_numeric(dtype: Any) -> bool:
+        # A masked / extension *numeric* dtype: numeric, but with a validity
+        # mask and no dense numpy view. Excludes categorical / string /
+        # datetime, which are extension dtypes yet not numeric.
+        is_ext = pd.api.types.is_extension_array_dtype(dtype)
+        return is_ext and pd.api.types.is_numeric_dtype(dtype)
+
+    def _column_numeric(dtype: Any) -> bool:
+        # A column ProbPipe can turn into a dense numeric array: a plain numpy
+        # numeric dtype (generic gate), or a nullable numeric one (NA -> NaN).
+        return _is_numeric_dtype(dtype) or _is_nullable_numeric(dtype)
+
+    def _dense(obj: Any, dtypes: Any) -> np.ndarray:
+        # Any masked column forces the whole result through float64, encoding
+        # each NA as NaN; otherwise the native numpy view is used unchanged.
+        if any(_is_nullable_numeric(d) for d in dtypes):
+            return obj.to_numpy(dtype="float64", na_value=np.nan)
+        return obj.to_numpy()
+
     def _series_metadata(s: pd.Series) -> Any:
         return {"index": np.asarray(s.index), "name": s.name}
+
+    def _series_numpy_dtype(s: pd.Series) -> np.dtype | None:
+        # A nullable column converts through float64 (see _dense), so that —
+        # not the masked dtype, which has no dense numpy form — is the leaf's
+        # dtype. This depends on the dtype, not on whether NAs are present.
+        if _is_nullable_numeric(s.dtype):
+            return np.dtype("float64")
+        return _safe_numpy_dtype(s.dtype)
 
     register_array_backend(
         pd.Series,
         ArrayBackend(
             event_shape=lambda s: tuple(s.shape),
-            numpy_dtype=lambda s: _safe_numpy_dtype(s.dtype),
-            is_numeric=lambda s: _is_numeric_dtype(s.dtype),
-            to_jax=lambda s: jnp.asarray(s.to_numpy()),
-            to_numpy=lambda s: s.to_numpy(),
+            numpy_dtype=_series_numpy_dtype,
+            is_numeric=lambda s: _column_numeric(s.dtype),
+            to_jax=lambda s: jnp.asarray(_dense(s, (s.dtype,))),
+            to_numpy=lambda s: _dense(s, (s.dtype,)),
             metadata=_series_metadata,
         ),
     )
 
     def _frame_is_numeric(df: pd.DataFrame) -> bool:
         dtypes = df.dtypes
-        return len(dtypes) > 0 and all(_is_numeric_dtype(d) for d in dtypes)
+        return len(dtypes) > 0 and all(_column_numeric(d) for d in dtypes)
 
     def _frame_numpy_dtype(df: pd.DataFrame) -> np.dtype | None:
-        # A numeric frame densifies (to_numpy / to_jax) to one dense array whose
-        # dtype is its columns' common promotion — e.g. int64 + float64 ->
-        # float64 — so report that for an all-numeric frame rather than None.
-        # ``None`` only when a column has no dense numpy dtype (a non-numpy /
-        # extension column), so no single dense dtype exists.
-        numpy_dtypes = [_safe_numpy_dtype(d) for d in df.dtypes]
+        # A masked / nullable numeric column has no dense numpy view, so the
+        # whole frame converts through float64 (NA -> NaN). Otherwise a numeric
+        # frame densifies (to_numpy / to_jax) to one dense array whose dtype is
+        # its columns' common promotion — e.g. int64 + float64 -> float64 — so
+        # report that rather than None. ``None`` only when a column has no dense
+        # numpy dtype (a non-numpy, non-nullable extension column).
+        dtypes = df.dtypes
+        if any(_is_nullable_numeric(d) for d in dtypes):
+            return np.dtype("float64")
+        numpy_dtypes = [_safe_numpy_dtype(d) for d in dtypes]
         if not numpy_dtypes or any(nd is None for nd in numpy_dtypes):
             return None
         return np.result_type(*numpy_dtypes)
@@ -311,8 +357,8 @@ def _register_pandas() -> None:
             event_shape=lambda df: tuple(df.shape),
             numpy_dtype=_frame_numpy_dtype,
             is_numeric=_frame_is_numeric,
-            to_jax=lambda df: jnp.asarray(df.to_numpy()),
-            to_numpy=lambda df: df.to_numpy(),
+            to_jax=lambda df: jnp.asarray(_dense(df, df.dtypes)),
+            to_numpy=lambda df: _dense(df, df.dtypes),
             metadata=_frame_metadata,
         ),
     )
