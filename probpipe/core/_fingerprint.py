@@ -19,9 +19,10 @@ Supported types
 - ``WorkflowFunction`` — user-function bytecode, referenced names, and
   captured/default values
 - Numeric containers (``xarray`` / ``pandas`` / registered array backends)
-  — concrete type + materialised shape + dtype + bytes (container metadata
-  such as coords / index is not part of the digest; a lazy leaf materialises
-  when fingerprinted)
+  — concrete type + materialised shape + dtype + bytes **and** the
+  container's identity-bearing metadata (coords / index / dims / attrs, via
+  the backend's ``metadata`` hook), so equal values under different coords
+  hash differently; a lazy leaf materialises when fingerprinted
 - Everything else — ``repr()`` (may be process-dependent for opaque types)
 
 All imports of ProbPipe types are deferred to call time so this module can
@@ -169,15 +170,22 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
         _update_tfp_object(h, obj, depth, max_array_bytes)
     elif (content := _numeric_container_to_numpy(obj)) is not None:
         # A numeric container (xarray / pandas / a registered array backend):
-        # hash by concrete type plus materialised content, so the digest is
-        # content-stable across processes rather than falling to ``repr``
-        # (truncated and library-version-dependent for frames). Container
-        # metadata (coords / index) is not part of the digest — the
-        # fingerprint covers type, shape, dtype, and values.
+        # hash by concrete type, materialised values, AND the container's
+        # identity-bearing metadata (coords / index / dims / attrs), so the
+        # digest is a complete content identifier — two containers with equal
+        # values but different coords fingerprint differently — and is
+        # content-stable across processes rather than falling to ``repr``.
         h.update(b"container:")
         h.update(type(obj).__qualname__.encode())
         h.update(b":")
         _update_array(h, content, max_array_bytes)
+        from ._array_backend import array_backend_for
+
+        backend = array_backend_for(obj)
+        metadata = backend.metadata(obj) if backend is not None else None
+        if metadata is not None:
+            h.update(b":meta:")
+            _update(h, metadata, depth + 1, max_array_bytes)
     else:
         # Last resort. ``repr`` may embed a memory address for objects with the
         # default ``__repr__`` (making the digest process-dependent); the

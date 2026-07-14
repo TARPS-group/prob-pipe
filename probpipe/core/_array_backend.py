@@ -64,6 +64,19 @@ def _default_to_numpy(obj: Any) -> np.ndarray:
     return np.asarray(obj)
 
 
+def _safe_numpy_dtype(dtype: Any) -> np.dtype | None:
+    """``np.dtype(dtype)`` or ``None`` when the dtype is not numpy-coercible.
+
+    A pandas extension / masked dtype (``Int64Dtype`` etc.) reports a numpy
+    ``kind`` but raises on ``np.dtype(...)``; such a container has no single
+    dense numpy dtype, so this returns ``None`` rather than propagating.
+    """
+    try:
+        return np.dtype(dtype)
+    except TypeError:
+        return None
+
+
 @dataclass(frozen=True)
 class ArrayBackend:
     """Recognition and conversion hooks for one native array-container type.
@@ -91,15 +104,27 @@ class ArrayBackend:
     to_numpy : callable, optional
         ``to_numpy(obj) -> np.ndarray`` — the fingerprint materialisation.
         Defaults to ``np.asarray(obj)``.
+    metadata : callable, optional
+        ``metadata(obj) -> Any`` — the container's **identity-bearing
+        metadata beyond its values** (an ``xarray`` array's dims / coords /
+        attrs / name, a ``pandas`` object's index / columns), as a
+        fingerprint-able structure (nested tuples / dicts / arrays / scalars).
+        Values are *not* included (they are covered by ``to_numpy``). This is
+        what makes the metadata part of a record's identity: ``fingerprint``
+        folds it into the digest and ``Record.__eq__`` compares it, so two
+        containers with equal values but different coords are distinct.
+        Defaults to ``None`` — a container with no identity-bearing metadata
+        (a bare array, zarr, dask), whose identity is its values alone.
     """
 
     event_shape: Callable[[Any], tuple[int, ...]] = field(kw_only=True)
     numpy_dtype: Callable[[Any], np.dtype | None] = field(
-        kw_only=True, default=lambda obj: np.dtype(obj.dtype)
+        kw_only=True, default=lambda obj: _safe_numpy_dtype(obj.dtype)
     )
     is_numeric: Callable[[Any], bool] = field(kw_only=True, default=lambda obj: True)
     to_jax: Callable[[Any], jax.Array] = field(kw_only=True, default=_default_to_jax)
     to_numpy: Callable[[Any], np.ndarray] = field(kw_only=True, default=_default_to_numpy)
+    metadata: Callable[[Any], Any] = field(kw_only=True, default=lambda obj: None)
 
 
 # Registry keyed by leaf type. Walk via ``array_backend_for`` rather than
@@ -187,45 +212,106 @@ def _to_jax_array(value: Any) -> jax.Array:
 # ---------------------------------------------------------------------------
 # Built-in registrations (gated on import availability)
 # ---------------------------------------------------------------------------
+#
+# ``xarray`` and ``pandas`` containers are registered (not left to the
+# numpy-protocol duck path) so their identity-bearing metadata — coords /
+# dims / attrs / name, or index / columns — is available to ``fingerprint``
+# and ``Record.__eq__`` via the ``metadata`` hook. The duck path remains for
+# containers whose identity is their values alone (bare numpy / jax arrays,
+# zarr, dask), which need no registration and carry no ``metadata``.
 
 
-def _register_pandas_frame() -> None:
-    """Register the built-in ``pandas.DataFrame`` backend.
+def _register_xarray() -> None:
+    """Register the built-in ``xarray.DataArray`` backend. No-op without xarray."""
+    try:
+        import xarray as xr
+    except ImportError:
+        return
 
-    A frame exposes per-column ``.dtypes`` but no single ``.dtype``, so the
-    duck path cannot see it; the registration answers the shape / dtype /
-    numericness questions from column metadata without materialising
-    values. No-op when pandas isn't importable.
+    from .event_template import _is_numeric_dtype
+
+    def _metadata(da: xr.DataArray) -> Any:
+        # Everything that distinguishes the container beyond its values: the
+        # named dims, each coord's values, free-form attrs, and the name.
+        return {
+            "dims": tuple(da.dims),
+            "coords": {str(k): np.asarray(v.values) for k, v in da.coords.items()},
+            "attrs": dict(da.attrs),
+            "name": da.name,
+        }
+
+    register_array_backend(
+        xr.DataArray,
+        ArrayBackend(
+            event_shape=lambda da: tuple(da.shape),
+            numpy_dtype=lambda da: _safe_numpy_dtype(da.dtype),
+            is_numeric=lambda da: _is_numeric_dtype(da.dtype),
+            to_jax=lambda da: jnp.asarray(da.values),
+            to_numpy=lambda da: np.asarray(da.values),
+            metadata=_metadata,
+        ),
+    )
+
+
+def _register_pandas() -> None:
+    """Register the built-in ``pandas.Series`` / ``pandas.DataFrame`` backends.
+
+    A ``Series`` speaks the numpy protocol but carries an index and name; a
+    ``DataFrame`` additionally has no single ``.dtype`` (per-column ``.dtypes``
+    the duck path cannot read). Both answer shape / dtype / numericness from
+    metadata without materialising values. No-op without pandas.
     """
     try:
         import pandas as pd
     except ImportError:
         return
 
-    def _is_numeric(df: pd.DataFrame) -> bool:
-        # Lazy import: this module is imported by event_template, which owns
-        # the shared dtype predicate — resolve it at call time, post-load.
-        from .event_template import _is_numeric_dtype
+    from .event_template import _is_numeric_dtype
 
+    def _series_metadata(s: pd.Series) -> Any:
+        return {"index": np.asarray(s.index), "name": s.name}
+
+    register_array_backend(
+        pd.Series,
+        ArrayBackend(
+            event_shape=lambda s: tuple(s.shape),
+            numpy_dtype=lambda s: _safe_numpy_dtype(s.dtype),
+            is_numeric=lambda s: _is_numeric_dtype(s.dtype),
+            to_jax=lambda s: jnp.asarray(s.to_numpy()),
+            to_numpy=lambda s: s.to_numpy(),
+            metadata=_series_metadata,
+        ),
+    )
+
+    def _frame_is_numeric(df: pd.DataFrame) -> bool:
         dtypes = df.dtypes
         return len(dtypes) > 0 and all(_is_numeric_dtype(d) for d in dtypes)
 
-    def _numpy_dtype(df: pd.DataFrame) -> np.dtype | None:
+    def _frame_numpy_dtype(df: pd.DataFrame) -> np.dtype | None:
         dtypes = set(df.dtypes)
         if len(dtypes) == 1:
-            return np.dtype(dtypes.pop())
+            return _safe_numpy_dtype(dtypes.pop())
         return None  # heterogeneous columns: no single dtype
+
+    def _frame_metadata(df: pd.DataFrame) -> Any:
+        return {
+            "index": np.asarray(df.index),
+            "columns": np.asarray(df.columns),
+            "dtypes": tuple(str(d) for d in df.dtypes),
+        }
 
     register_array_backend(
         pd.DataFrame,
         ArrayBackend(
             event_shape=lambda df: tuple(df.shape),
-            numpy_dtype=_numpy_dtype,
-            is_numeric=_is_numeric,
+            numpy_dtype=_frame_numpy_dtype,
+            is_numeric=_frame_is_numeric,
             to_jax=lambda df: jnp.asarray(df.to_numpy()),
             to_numpy=lambda df: df.to_numpy(),
+            metadata=_frame_metadata,
         ),
     )
 
 
-_register_pandas_frame()
+_register_xarray()
+_register_pandas()

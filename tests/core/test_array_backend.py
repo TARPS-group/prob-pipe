@@ -58,10 +58,22 @@ class TestRegistryLookup:
     def test_python_scalar_unregistered(self):
         assert array_backend_for(1.5) is None
 
-    def test_xarray_and_series_unregistered(self):
-        # Numpy-protocol citizens with a numpy dtype need no registration.
-        assert array_backend_for(xr.DataArray(np.zeros(2))) is None
-        assert array_backend_for(pd.Series([1.0, 2.0])) is None
+    def test_xarray_and_series_registered_for_metadata(self):
+        # xarray / pandas are registered (not left to the duck path) so their
+        # identity-bearing metadata (coords / index) is available to
+        # fingerprint and __eq__ via the metadata hook.
+        da_backend = array_backend_for(xr.DataArray(np.zeros(2)))
+        s_backend = array_backend_for(pd.Series([1.0, 2.0]))
+        assert da_backend is not None and s_backend is not None
+        # metadata carries the identity-bearing container attributes
+        da = xr.DataArray(np.zeros(2), dims=["t"], coords={"t": [0, 1]})
+        assert "coords" in da_backend.metadata(da)
+        assert "index" in s_backend.metadata(pd.Series([1.0, 2.0]))
+
+    def test_bare_arrays_have_no_metadata(self):
+        # An unregistered numpy-protocol leaf carries no identity metadata:
+        # its identity is its values alone.
+        assert array_backend_for(np.zeros(2)) is None
 
     def test_dataframe_registered_builtin(self):
         backend = array_backend_for(pd.DataFrame({"a": [1.0]}))
@@ -457,3 +469,108 @@ class TestBackendRegistrationEndToEnd:
         assert isinstance(ra["t"], jnp.ndarray)
         assert ra["t"].shape == (3, 2)
         assert all(r["t"].to_jax_calls == 1 for r in records)
+
+
+class TestRegisteredBackendIdentity:
+    """A registered non-numpy backend (a container the duck path cannot see or
+    convert) must be first-class on the identity / conversion paths too — not
+    just construction and to_vector. Regression for the review-round finding
+    that __eq__ / to_numpy bypassed the registry.
+    """
+
+    @pytest.fixture
+    def box_backend(self, clean_registry):
+        class Box:
+            def __init__(self, vals):
+                self._v = np.asarray(vals, dtype=float)
+
+        register_array_backend(
+            Box,
+            ArrayBackend(
+                event_shape=lambda b: b._v.shape,
+                numpy_dtype=lambda b: b._v.dtype,
+                to_jax=lambda b: jnp.asarray(b._v),
+                to_numpy=lambda b: b._v,
+            ),
+        )
+        return Box
+
+    def test_eq_routes_through_registry(self, box_backend):
+        Box = box_backend
+        a = NumericRecord("r", x=Box([1.0, 2.0]))
+        b = NumericRecord("r", x=Box([1.0, 2.0]))
+        assert (a.to_vector() == b.to_vector()).all()
+        assert a == b  # was False when __eq__ used raw jnp.asarray
+        assert a != NumericRecord("r", x=Box([1.0, 9.0]))
+
+    def test_to_numpy_routes_through_registry(self, box_backend):
+        Box = box_backend
+        out = NumericRecord("r", x=Box([1.0, 2.0])).to_numpy()["x"]
+        np.testing.assert_array_equal(out, [1.0, 2.0])  # not a 0-d object array
+        assert out.dtype == np.float64
+
+    def test_hash_does_not_materialise_registered_leaf(self, box_backend):
+        # __hash__ is structural (shape + dtype from metadata); it must not
+        # call the backend's to_jax/to_numpy.
+        class Counting(box_backend):
+            def __init__(self, vals):
+                super().__init__(vals)
+                self.converted = 0
+
+            def __array__(self, dtype=None, copy=None):
+                self.converted += 1
+                return self._v
+
+        leaf = Counting([1.0, 2.0])
+        hash(NumericRecord("r", x=leaf))
+        assert leaf.converted == 0
+
+
+class TestNullableDtypeNotNumeric:
+    """pandas nullable / masked dtypes report a numpy kind but are not
+    np.dtype-coercible; a frame using them must stay a plain Record rather
+    than promoting into a form jax cannot hold (which crashed on
+    dtype / is_valid / to_vector). Regression for the review-round finding.
+    """
+
+    def test_nullable_frame_does_not_promote(self):
+        df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64")})
+        r = Record("r", m=df)
+        assert type(r) is Record  # not NumericRecord
+        assert not isinstance(r.event_template, NumericEventTemplate)
+
+    def test_numpy_backed_frame_still_promotes(self):
+        df = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
+        r = Record("r", m=df)
+        assert type(r) is NumericRecord
+        np.testing.assert_allclose(r.to_vector(), [1.0, 3.0, 2.0, 4.0])
+
+    def test_is_numeric_dtype_rejects_extension_dtype(self):
+        from probpipe.core.event_template import _is_numeric_dtype
+
+        assert not _is_numeric_dtype(pd.Int64Dtype())
+        assert _is_numeric_dtype(np.dtype("int64"))
+
+
+class TestNativeMetadataInIdentity:
+    """Option A: native-container metadata (coords / index) is part of a
+    record's identity — __eq__ distinguishes it, matching fingerprint().
+    """
+
+    def test_eq_distinguishes_coords(self, da):
+        other = xr.DataArray(
+            np.array([1.0, 2.0, 3.0]),
+            dims=["t"],
+            coords={"t": [99, 98, 97]},  # different coords, same values
+            attrs={"units": "meters"},
+            name="temps",
+        )
+        r1 = NumericRecord("r", temps=da)
+        r2 = NumericRecord("r", temps=other)
+        assert (r1.to_vector() == r2.to_vector()).all()
+        assert r1 != r2  # coords are identity-bearing
+
+    def test_eq_equal_when_coords_match(self, da):
+        r1 = NumericRecord("r", temps=da)
+        r2 = NumericRecord("r", temps=da)
+        assert r1 == r2

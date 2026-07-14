@@ -428,15 +428,24 @@ def _is_numeric_dtype(dtype: Any) -> bool:
     Covers the standard numpy kinds (bool, int, uint, float, complex) plus
     the ml_dtypes extension types JAX registers (``bfloat16``, the
     ``float8_*`` family, ``int4`` / ``uint4``), which numpy reports as kind
-    ``"V"``. Structured (record) dtypes are not numeric. Every place that
-    decides "is this array numeric?" — template inference, spec validation,
-    and the ``NumericRecord`` / ``NumericRecordArray`` leaf gates — routes
-    through this predicate so the sites cannot drift apart.
+    ``"V"``. A dtype that is **not** ``numpy.dtype``-coercible — a pandas
+    extension / masked dtype such as ``Int64Dtype`` — is **not** numeric
+    here: it reports a numpy ``kind`` but is not a dense numpy dtype, so a
+    container using it is not a plain numeric array (it carries NA / masking
+    semantics ``jax`` cannot represent) and must not promote to a
+    ``NumericRecord``. Structured (record) dtypes are likewise not numeric.
+    Every place that decides "is this array numeric?" — template inference,
+    spec validation, and the ``NumericRecord`` / ``NumericRecordArray`` leaf
+    gates — routes through this predicate so the sites cannot drift apart.
     """
-    kind = getattr(dtype, "kind", None)
+    try:
+        np_dtype = np.dtype(dtype)
+    except TypeError:
+        return False
+    kind = np_dtype.kind
     if kind in _NUMERIC_KINDS:
         return True
-    return kind == "V" and jnp.issubdtype(dtype, jnp.number)
+    return kind == "V" and jnp.issubdtype(np_dtype, jnp.number)
 
 
 def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:

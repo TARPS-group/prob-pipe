@@ -22,7 +22,7 @@ as a record.
 The ``Record`` family
 ---------------------
 - :class:`Record`: represents a single value, which may contain multiple fields.
-- :class:`~probpipe.NumericRecord`: a subclass in which all fields are JAX arrays.
+- :class:`~probpipe.NumericRecord`: a subclass in which all fields are numeric, stored in native form (converted to JAX arrays lazily, at the compute boundary).
 - :class:`~probpipe.RecordArray`: batch of ``Record``s sharing one ``EventTemplate``.
 - :class:`~probpipe.NumericRecordArray`: batch of ``NumericRecord``s sharing one ``EventTemplate``.
 
@@ -45,6 +45,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
+from ._array_backend import _to_jax_array, array_backend_for
 from .event_template import (
     EventTemplate,
     NumericEventTemplate,
@@ -88,6 +89,55 @@ def _is_numeric_field_value(value: Any) -> bool:
 def _derived_record_name(field_keys: Iterable[str]) -> str:
     """The deterministic name an operation derives for a record it produces."""
     return "record(" + ",".join(field_keys) + ")"
+
+
+def _leaf_values_equal(a: Any, b: Any) -> bool:
+    """Whether two numeric leaves have equal values, routed through the registry.
+
+    Both leaves convert to ``jax.Array`` via the array-backend registry (so a
+    native or registered-backend container compares by its values, not object
+    identity) and are compared with ``jnp.array_equal``.
+    """
+    return bool(jnp.array_equal(_to_jax_array(a), _to_jax_array(b)))
+
+
+def _leaf_metadata_key(leaf: Any) -> Any:
+    """A comparable key for a leaf's native-container metadata, or ``None``.
+
+    A registered backend's ``metadata`` (coords / index / ...) is reduced to a
+    content digest so array-bearing metadata compares by value; an unregistered
+    leaf, or one whose metadata is ``None`` (a bare array), keys as ``None``.
+    """
+    backend = array_backend_for(leaf)
+    if backend is None:
+        return None
+    meta = backend.metadata(leaf)
+    if meta is None:
+        return None
+    from ._fingerprint import fingerprint
+
+    return fingerprint(meta)
+
+
+def _canonical_dtype_str(leaf: Any) -> str:
+    """The leaf's compute-boundary dtype as a string, without materialising it.
+
+    Reads the native numpy dtype (registry-first, else ``.dtype``, else the
+    numpy dtype of a bare scalar) and canonicalizes it the way a
+    ``jax.Array`` conversion would (applying JAX's x64 policy), so the value
+    matches what ``__eq__`` compares. ``"none"`` for a container with no
+    single dtype (a heterogeneous numeric frame).
+    """
+    backend = array_backend_for(leaf)
+    if backend is not None:
+        nd = backend.numpy_dtype(leaf)
+    else:
+        nd = getattr(leaf, "dtype", None)
+        if nd is None:
+            nd = np.asarray(leaf).dtype
+    if nd is None:
+        return "none"
+    return str(jax.dtypes.canonicalize_dtype(np.dtype(nd)))
 
 
 # ---------------------------------------------------------------------------
@@ -856,6 +906,13 @@ class Record(NamedTree, Tracked, Annotated):
         for name, val in self._tree.items():
             if isinstance(val, Record):
                 result[name] = val.to_numpy()
+                continue
+            backend = array_backend_for(val)
+            if backend is not None:
+                # A registered container (incl. non-numpy-protocol backends)
+                # materialises through its own hook, not a raw ``np.asarray``
+                # that would box the object.
+                result[name] = backend.to_numpy(val)
             elif hasattr(val, "shape") or isinstance(val, (int, float, complex)):
                 result[name] = np.asarray(val)
             else:
@@ -1058,10 +1115,15 @@ class Record(NamedTree, Tracked, Annotated):
         Concretely, equality requires (1) the same concrete type, (2) equal
         :attr:`event_template` (so two values with structurally distinct schemas
         — e.g. differing ``support`` on a numeric leaf — are unequal even with
-        identical bytes), and (3) field-by-field equal values (arrays compared
-        with ``jnp.array_equal``, nested records recursively, opaque leaves with
-        ``==``). Self-identity short-circuits to ``True`` so a record equals
-        itself even when a leaf contains ``NaN``.
+        identical bytes), and (3) field-by-field equal values. A numeric leaf
+        is compared on its **converted array values** (via the array-backend
+        registry, so a native container is not compared object-by-object)
+        **and** on its native-container metadata (an ``xarray`` leaf's coords /
+        dims / attrs, a ``pandas`` leaf's index / columns): two leaves with
+        equal values but different coords are unequal, because that metadata is
+        observable content. Nested records compare recursively; opaque leaves
+        compare with ``==``. Self-identity short-circuits to ``True`` so a
+        record equals itself even when a leaf contains ``NaN``.
 
         Whether two records with equal data compare equal therefore turns on
         their templates. Built from equal data *without* an explicit template,
@@ -1071,9 +1133,9 @@ class Record(NamedTree, Tracked, Annotated):
         since :meth:`EventTemplate.infer_from` is lossy (it cannot recover an
         ``ArraySpec``'s ``dtype`` / ``support``, etc.).
 
-        :meth:`__hash__` is consistent with this: it hashes the per-field
-        shape / dtype structure, so equal records (equal data ⟹ equal shapes)
-        always hash equal.
+        :meth:`__hash__` is a coarser, structural hash (shape only, never the
+        values or metadata), so equal records always hash equal while records
+        that differ only in values or coords legitimately collide.
         """
         # Identity fast-path: self-equality must return True even when
         # leaves contain NaN (``jnp.array_equal`` treats NaN != NaN).
@@ -1092,34 +1154,45 @@ class Record(NamedTree, Tracked, Annotated):
                     return False
             elif isinstance(a, Record) or isinstance(b, Record):
                 return False
-            elif hasattr(a, "shape") or hasattr(b, "shape"):
+            elif (
+                _full_array_shape_or_none(a) is not None or _full_array_shape_or_none(b) is not None
+            ):
+                # A numeric leaf (native container or bare array): compare the
+                # converted values through the registry, then the
+                # native-container metadata (coords / index / ...).
                 try:
-                    if not jnp.array_equal(jnp.asarray(a), jnp.asarray(b)):
+                    if not _leaf_values_equal(a, b):
                         return False
                 except Exception:
                     if a is not b and a != b:
                         return False
+                    continue
+                if _leaf_metadata_key(a) != _leaf_metadata_key(b):
+                    return False
             else:
                 if a != b:
                     return False
         return True
 
     def __hash__(self) -> int:
-        # Structural hash over class, field names, and per-field shape+dtype.
-        # Numeric leaves are coerced via ``jnp.asarray`` so a scalar and its
-        # array wrapping hash alike (they compare equal under ``__eq__``);
-        # opaque leaves fall back to ``type(val)``.
+        # Coarse structural hash over class, field names, and per-field shape
+        # + canonicalized dtype — never the values or the native-container
+        # metadata, so it does not materialise a lazy / disk-backed leaf. The
+        # dtype is the one a compute-boundary conversion would produce
+        # (``jax.dtypes.canonicalize_dtype`` on the native numpy dtype), so it
+        # stays consistent with ``__eq__``'s converted-value comparison. Two
+        # records that differ only in values or coords hash equal (a legal
+        # collision); equal records always hash equal.
         parts: list[Any] = [type(self).__name__]
         for name, val in self._tree.items():
             if isinstance(val, Record):
                 parts.append((name, hash(val)))
                 continue
-            try:
-                arr = jnp.asarray(val)
-            except (TypeError, ValueError):
+            shape = _full_array_shape_or_none(val)
+            if shape is None:
                 parts.append((name, "opaque", type(val).__name__))
                 continue
-            parts.append((name, tuple(arr.shape), str(arr.dtype)))
+            parts.append((name, shape, _canonical_dtype_str(val)))
         return hash(tuple(parts))
 
 

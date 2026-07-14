@@ -97,7 +97,8 @@ class NumericRecord(Record):
     Conversion to ``jax.Array`` happens at the compute boundary — the JAX
     pytree flatten that ``jit`` / ``vmap`` / ``grad`` traverse,
     :meth:`to_vector`, and the single-field scalar shim — through a set-once
-    per-leaf cache, so each leaf materialises at most once. A JAX transform
+    per-leaf cache, so each leaf materialises at most once **per record
+    instance**. A JAX transform
     therefore returns a record with bare ``jax.Array`` leaves (unflatten
     cannot rebuild native containers); structural transforms
     (:meth:`~Record.without` / :meth:`~Record.merge` / :meth:`~Record.replace`
@@ -117,9 +118,13 @@ class NumericRecord(Record):
 
     Equality, hashing, and lazy leaves
     ----------------------------------
-    :meth:`~Record.__eq__`, :meth:`~Record.__hash__`, and content
-    fingerprints compare converted values, so computing them on a record
-    with lazy / disk-backed leaves forces materialisation on demand.
+    :meth:`~Record.__eq__` and content fingerprints compare converted values
+    (and native-container metadata such as coords / index), so computing them
+    on a record with lazy / disk-backed leaves forces materialisation on
+    demand. :meth:`~Record.__hash__` is a coarser **structural** hash over
+    shape and dtype only — it reads container metadata, never the values, so
+    hashing a lazy leaf does *not* materialise it (records differing only in
+    values or coords hash equal, a legal collision).
 
     The flat vector form
     --------------------

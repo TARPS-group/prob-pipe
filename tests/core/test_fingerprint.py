@@ -601,30 +601,38 @@ class TestNumericContainerHashing:
         assert fingerprint(a) == fingerprint(b)
         assert fingerprint(a) != fingerprint(c)
 
-    def test_dataarray_coords_not_in_digest(self):
-        # Equal values, different coords -> equal fingerprint (the docstring's
-        # explicit claim: container metadata is outside the digest).
+    def test_dataarray_coords_in_digest(self):
+        # Equal values, different coords -> DIFFERENT fingerprint: the
+        # container's metadata is identity-bearing content (a workflow may
+        # read coords), so it is folded into the digest.
         xr = pytest.importorskip("xarray")
         a = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [0, 1]})
         b = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
-        assert fingerprint(a) == fingerprint(b)
+        c = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [0, 1]})
+        assert fingerprint(a) != fingerprint(b)
+        assert fingerprint(a) == fingerprint(c)  # equal values AND coords
 
-    def test_series_hashes_by_content_not_index(self):
+    def test_series_index_and_values_in_digest(self):
         pd = pytest.importorskip("pandas")
         a = pd.Series([1.0, 2.0], index=["a", "b"])
-        b = pd.Series([1.0, 2.0], index=["x", "y"])  # different index, same values
-        c = pd.Series([1.0, 9.0], index=["a", "b"])
-        assert fingerprint(a) == fingerprint(b)
+        b = pd.Series([1.0, 2.0], index=["x", "y"])  # different index (metadata)
+        c = pd.Series([1.0, 9.0], index=["a", "b"])  # different values
+        d = pd.Series([1.0, 2.0], index=["a", "b"])  # identical
+        assert fingerprint(a) != fingerprint(b)  # index is identity-bearing
         assert fingerprint(a) != fingerprint(c)
+        assert fingerprint(a) == fingerprint(d)
 
-    def test_dataframe_builtin_backend_hashes_by_content(self):
-        # The built-in DataFrame registration routes through to_numpy.
+    def test_dataframe_builtin_backend_hashes_by_content_and_metadata(self):
+        # The built-in DataFrame registration routes values through to_numpy
+        # and folds index/columns/dtypes into the digest.
         pd = pytest.importorskip("pandas")
         a = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
         b = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
         c = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 5.0]})
-        assert fingerprint(a) == fingerprint(b)  # index outside the digest
-        assert fingerprint(a) != fingerprint(c)
+        d = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
+        assert fingerprint(a) != fingerprint(b)  # index is identity-bearing
+        assert fingerprint(a) != fingerprint(c)  # values differ
+        assert fingerprint(a) == fingerprint(d)
 
     def test_distinct_container_types_differ(self):
         # The concrete type is part of the digest, so equal values in

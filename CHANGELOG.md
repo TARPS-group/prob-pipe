@@ -137,15 +137,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   native containers **auto-promote** to `NumericRecord` (the previous
   backend-leaf exclusion is removed), and `EventTemplate.infer_from` infers
   `ArraySpec` for them. Native leaves are stored by reference (no defensive
-  copies); equality, hashing, and fingerprints materialise lazy leaves on
-  demand. The capture/restore aux machinery is retired: `AuxHooks` /
-  `register_aux` / `aux_for` and `NumericRecord.aux` are **removed**, replaced
-  by the recognition/conversion registry `ArrayBackend` /
-  `register_array_backend` / `array_backend_for` — one registration makes a
-  new container type recognised, validated, promoted, converted (including at
-  the eager batch-stacking boundary), and content-fingerprinted everywhere at
-  once. `fingerprint()` hashes native containers by type + materialised
-  content instead of falling to the process-dependent `repr` tier.
+  copies). A native container's metadata (an `xarray` leaf's coords / dims /
+  attrs, a `pandas` leaf's index / columns) is **part of a record's identity**:
+  `Record.__eq__` and `fingerprint()` distinguish it, so two records with equal
+  values but different coords are unequal and fingerprint differently.
+  `Record.__eq__`, `to_numpy()`, and content fingerprints route through the
+  array-backend registry (so a registered non-numpy container is compared and
+  materialised by its own hooks) and materialise lazy leaves on demand;
+  `Record.__hash__` stays a coarse structural hash (shape + dtype, no values or
+  metadata) that does not materialise. The capture/restore aux machinery is
+  retired: `AuxHooks` / `register_aux` / `aux_for` and `NumericRecord.aux` are
+  **removed**, replaced by the recognition/conversion registry `ArrayBackend` /
+  `register_array_backend` / `array_backend_for` (with hooks
+  `event_shape` / `numpy_dtype` / `is_numeric` / `to_jax` / `to_numpy` /
+  `metadata`) — one registration makes a new container type recognised,
+  validated, promoted, converted (including at the eager batch-stacking
+  boundary), and content-fingerprinted everywhere at once. `fingerprint()`
+  hashes native containers by type + materialised values + identity metadata
+  instead of falling to the process-dependent `repr` tier. A pandas
+  nullable / masked dtype (`Int64Dtype` etc.) is **not** treated as numeric
+  (it is not a dense numpy dtype), so a frame using one stays a plain `Record`
+  rather than promoting into a form `jax` cannot hold.
 
 - **`Record` / `NumericRecord` construction is name-first, and all-numeric
   records auto-promote (#338, breaking).** The constructors are now
