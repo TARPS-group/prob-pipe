@@ -292,7 +292,7 @@ class DistributionSpec(ValueSpec):
         return template == self.event_template
 
 
-@dataclass(frozen=True, init=False)
+@dataclass(frozen=True)
 class FunctionSpec(ValueSpec):
     """A value spec for a callable, optionally typed by its input/output structure.
 
@@ -305,46 +305,31 @@ class FunctionSpec(ValueSpec):
     so a bare ``FunctionSpec()`` describes *any* callable — the natural spec
     for a function of unknown or variable signature.
 
-    As a convenience, either side may be given as a bare :class:`ValueSpec`,
-    which is wrapped in a single-field template (field ``"input"`` or
-    ``"output"`` respectively) — so ``FunctionSpec(ArraySpec(()), ArraySpec(()))``
-    types a scalar-to-scalar function by the same convention that presents a
-    scalar value as a single field. After construction each attribute is an
-    :class:`EventTemplate` or ``None``.
+    Each specified side must be an :class:`EventTemplate`; a single-field
+    signature is written out explicitly, e.g.
+    ``FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))``, rather than
+    passed as a bare :class:`ValueSpec` — so a function's field names are
+    always caller-chosen and meaningful, not a fixed ``"input"`` / ``"output"``
+    placeholder. This matches :class:`DistributionSpec`, which likewise takes an
+    explicit template.
 
     Raises
     ------
     TypeError
-        If either side is not ``None``, an :class:`EventTemplate`, or a
-        :class:`ValueSpec`.
+        If either side is not ``None`` or an :class:`EventTemplate`.
     """
 
-    input_template: EventTemplate | None
-    output_template: EventTemplate | None
+    input_template: EventTemplate | None = None
+    output_template: EventTemplate | None = None
 
-    # Hand-written so the constructor accepts the bare-spec convenience while
-    # the fields keep the stored (post-normalisation) type; the generated
-    # ``__eq__`` / ``__hash__`` / ``__repr__`` come from the field list above.
-    def __init__(
-        self,
-        input_template: EventTemplate | ValueSpec | None = None,
-        output_template: EventTemplate | ValueSpec | None = None,
-    ) -> None:
-        sides = (
-            ("input_template", "input", input_template),
-            ("output_template", "output", output_template),
-        )
-        for attr, wrap_name, template in sides:
-            if template is None or isinstance(template, EventTemplate):
-                pass
-            elif isinstance(template, ValueSpec):
-                template = EventTemplate(**{wrap_name: template})
-            else:
+    def __post_init__(self) -> None:
+        for attr in ("input_template", "output_template"):
+            template = getattr(self, attr)
+            if template is not None and not isinstance(template, EventTemplate):
                 raise TypeError(
-                    f"FunctionSpec.{attr} must be None, an EventTemplate, or a "
-                    f"bare ValueSpec, got {type(template).__name__}"
+                    f"FunctionSpec.{attr} must be None or an EventTemplate, "
+                    f"got {type(template).__name__}"
                 )
-            object.__setattr__(self, attr, template)
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.

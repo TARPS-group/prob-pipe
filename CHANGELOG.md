@@ -120,6 +120,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`FunctionSpec` requires explicit input/output `EventTemplate`s (#357, breaking).**
+  Neither side accepts a bare `ValueSpec` anymore (previously wrapped into a
+  single-field template keyed `"input"` / `"output"`); pass an `EventTemplate`
+  or `None`, writing a single-field signature out explicitly —
+  `FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))`. This removes the
+  `FunctionSpec` / `DistributionSpec` constructor asymmetry (both now take an
+  explicit template) and keeps a function's field names caller-chosen rather
+  than a fixed placeholder. `LinOp`'s design is aligned in the same spirit
+  (its input/output templates carry meaningful names), with the deliberate
+  exception that a self-adjoint operator's two sides may share one name.
+
 - **`Record` / `NumericRecord` construction is name-first, and all-numeric
   records auto-promote (#338, breaking).** The constructors are now
   `Record(name, fields=None, /, *, event_template=None, name_is_auto=False,
