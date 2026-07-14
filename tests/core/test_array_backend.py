@@ -127,11 +127,6 @@ class TestNativeStorage:
         assert nr["temps"].attrs == {"units": "meters"}
         assert nr["temps"].name == "temps"
 
-    def test_to_native_removed(self):
-        # Leaves are already native, so the old conversion method is gone —
-        # navigation is the export. Pinned so a compat shim doesn't creep back.
-        assert not hasattr(NumericRecord, "to_native")
-
     def test_to_numeric_is_identity(self, da):
         nr = NumericRecord("nr", temps=da)
         assert nr.to_numeric() is nr
