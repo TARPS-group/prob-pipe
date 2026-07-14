@@ -220,9 +220,13 @@ class TestTransformsPreserveNativeLeaves:
         assert renamed["warmth"] is da
 
     def test_identity_map_preserves_native_leaf(self, da):
-        # map stores whatever f returns: an identity f keeps the native leaf.
+        # map rebuilds the record but stores whatever f returns verbatim — it
+        # does not coerce the leaf — so an identity f yields a *new* record
+        # whose leaf is the same native object.
         nr = NumericRecord("nr", temps=da)
-        assert nr.map(lambda x: x)["temps"] is da
+        mapped = nr.map(lambda x: x)
+        assert mapped is not nr
+        assert mapped["temps"] is da
 
     def test_map_through_native_arithmetic_stays_native(self, da):
         # xarray arithmetic returns a DataArray, so the mapped record keeps a

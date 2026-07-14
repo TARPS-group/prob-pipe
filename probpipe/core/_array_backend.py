@@ -149,9 +149,12 @@ def array_backend_for(obj: Any) -> ArrayBackend | None:
 
     Notes
     -----
-    Exact-type lookup is checked before the MRO walk so the common
-    ``np.ndarray`` / ``jax.Array`` leaves on construction and
-    pytree-flatten hot paths skip a multi-step MRO traversal.
+    Exact-type lookup is checked before the MRO walk, so a registered type
+    resolves in one dict probe and only a subclass of a registered type pays
+    for the walk. Unregistered leaves (bare ``np.ndarray`` / ``jax.Array``,
+    the common case) miss the exact probe and walk their MRO, but that is
+    short and off the hot path — ``_as_jax`` fast-returns a ``jax.Array``
+    leaf before this is ever called.
     """
     if not _backend_registry:
         return None
@@ -166,7 +169,7 @@ def array_backend_for(obj: Any) -> ArrayBackend | None:
     return None
 
 
-def to_jax_array(value: Any) -> jax.Array:
+def _to_jax_array(value: Any) -> jax.Array:
     """Convert a native numeric leaf to ``jax.Array`` — the compute-boundary step.
 
     Uses the registered backend's ``to_jax`` when *value*'s type is

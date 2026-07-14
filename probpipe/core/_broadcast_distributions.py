@@ -20,7 +20,7 @@ import numpy as np
 
 from .._weights import Weights
 from ..custom_types import Array
-from ._array_backend import to_jax_array
+from ._array_backend import _to_jax_array
 from ._distribution_base import Distribution
 from ._empirical import (
     EmpiricalDistribution,
@@ -547,7 +547,7 @@ def _make_stack(
                     # boundary, through the array backend's to_jax.
                     stacked = jnp.stack(
                         [
-                            to_jax_array(v) if _full_array_shape_or_none(v) is not None else v
+                            _to_jax_array(v) if _full_array_shape_or_none(v) is not None else v
                             for v in values
                         ],
                         axis=0,

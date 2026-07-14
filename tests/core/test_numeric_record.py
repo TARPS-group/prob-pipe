@@ -290,11 +290,19 @@ class TestPyTree:
         assert len(leaves) == 2
 
     def test_roundtrip(self):
-        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))
+        # NumericRecord uses its own pytree registration (separate from the
+        # base Record's), so pin that a flatten/unflatten round-trip
+        # preserves the leaf values, the template, and the full identity
+        # pair (name + name_is_auto) — not just the field names.
+        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0), name_is_auto=True)
         leaves, treedef = jax.tree.flatten(nr)
         nr2 = jax.tree.unflatten(treedef, leaves)
         assert isinstance(nr2, NumericRecord)
         assert nr2.fields == nr.fields
+        assert nr2 == nr  # structural equality: template + field values
+        np.testing.assert_allclose(np.asarray(nr2["x"]), [1.0, 2.0])
+        assert nr2.name == "nr"
+        assert nr2.name_is_auto is True
 
     def test_jit(self):
         nr = NumericRecord("nr", a=1.0, b=2.0)

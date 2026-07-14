@@ -27,7 +27,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array, ArrayLike
-from ._array_backend import array_backend_for, to_jax_array
+from ._array_backend import _to_jax_array, array_backend_for
 from .event_template import EventTemplate, NumericEventTemplate, _is_numeric_dtype
 from .named_tree import _PATH_SEP, _check_no_path_sep, _unflatten_paths
 from .record import Record
@@ -309,7 +309,7 @@ class NumericRecord(Record):
         cache = self._jax_cache
         arr = cache.get(field_name)
         if arr is None:
-            arr = to_jax_array(val)
+            arr = _to_jax_array(val)
             cache[field_name] = arr
         return arr
 
@@ -488,13 +488,18 @@ class NumericRecord(Record):
 
     @property
     def dtype(self):
+        """The sole leaf's dtype, or ``None`` when it has no single dtype.
+
+        A registered backend reports the leaf's dtype (``None`` for a
+        heterogeneous container such as a mixed-column frame); a bare
+        array-like forwards its own ``.dtype``. A leaf that exposes no single
+        dtype yields ``None`` rather than a stand-in.
+        """
         leaf = self._tree[self._single_numeric_field()]
         backend = array_backend_for(leaf)
         if backend is not None:
-            resolved = backend.numpy_dtype(leaf)
-            if resolved is not None:
-                return resolved
-        return getattr(leaf, "dtype", type(leaf))
+            return backend.numpy_dtype(leaf)
+        return getattr(leaf, "dtype", None)
 
     @property
     def ndim(self) -> int:

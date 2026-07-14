@@ -8,6 +8,7 @@ import textwrap
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from probpipe import Normal, Record
 from probpipe.core._fingerprint import fingerprint
@@ -582,3 +583,87 @@ class TestParentInfoIdentity:
         b = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
         assert a == b
         assert hash(a) == hash(b)
+
+
+class TestNumericContainerHashing:
+    """The ``container:`` tier — native numeric containers (xarray / pandas /
+    registered backends) hash by concrete type + materialised content, so
+    they are content-stable across processes rather than falling to the
+    process-dependent ``repr`` last resort. Container metadata (coords /
+    index / column labels) is deliberately *not* part of the digest.
+    """
+
+    def test_dataarray_hashes_by_content_not_repr(self):
+        xr = pytest.importorskip("xarray")
+        a = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"])
+        b = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"])
+        c = xr.DataArray(np.array([1.0, 2.0, 4.0]), dims=["t"])
+        assert fingerprint(a) == fingerprint(b)
+        assert fingerprint(a) != fingerprint(c)
+
+    def test_dataarray_coords_not_in_digest(self):
+        # Equal values, different coords -> equal fingerprint (the docstring's
+        # explicit claim: container metadata is outside the digest).
+        xr = pytest.importorskip("xarray")
+        a = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [0, 1]})
+        b = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
+        assert fingerprint(a) == fingerprint(b)
+
+    def test_series_hashes_by_content_not_index(self):
+        pd = pytest.importorskip("pandas")
+        a = pd.Series([1.0, 2.0], index=["a", "b"])
+        b = pd.Series([1.0, 2.0], index=["x", "y"])  # different index, same values
+        c = pd.Series([1.0, 9.0], index=["a", "b"])
+        assert fingerprint(a) == fingerprint(b)
+        assert fingerprint(a) != fingerprint(c)
+
+    def test_dataframe_builtin_backend_hashes_by_content(self):
+        # The built-in DataFrame registration routes through to_numpy.
+        pd = pytest.importorskip("pandas")
+        a = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
+        b = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
+        c = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 5.0]})
+        assert fingerprint(a) == fingerprint(b)  # index outside the digest
+        assert fingerprint(a) != fingerprint(c)
+
+    def test_distinct_container_types_differ(self):
+        # The concrete type is part of the digest, so equal values in
+        # different containers do not collide.
+        xr = pytest.importorskip("xarray")
+        pd = pytest.importorskip("pandas")
+        vals = np.array([1.0, 2.0, 3.0])
+        prints = {
+            fingerprint(xr.DataArray(vals)),
+            fingerprint(pd.Series(vals)),
+        }
+        assert len(prints) == 2
+
+    def test_string_column_frame_not_container_tier(self):
+        # A non-numeric container is not numeric, so it must not reach the
+        # container tier — it falls to the repr last resort and still hashes
+        # stably within a process.
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"a": ["x", "y"]})
+        assert fingerprint(df) == fingerprint(df)
+
+    def test_native_container_stable_across_processes(self):
+        """A record with a native (xarray) leaf fingerprints identically in a
+        fresh interpreter — the property the future cache_key_fn relies on.
+        """
+        pytest.importorskip("xarray")
+        script = textwrap.dedent("""
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            import numpy as np
+            import xarray as xr
+            from probpipe import Record
+            from probpipe.core._fingerprint import fingerprint
+            da = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"], coords={"t": [10, 20, 30]})
+            print(fingerprint(Record("r", counts=da)))
+        """)
+        site = str(next(p for p in sys.path if "site-packages" in p))
+
+        def run():
+            return subprocess.check_output([sys.executable, "-c", script, site], text=True).strip()
+
+        assert run() == run()

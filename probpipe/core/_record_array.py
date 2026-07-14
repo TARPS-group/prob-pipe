@@ -17,7 +17,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array
-from ._array_backend import to_jax_array
+from ._array_backend import _to_jax_array
 from .event_template import (
     ArraySpec,
     EventTemplate,
@@ -365,7 +365,7 @@ class RecordArray(Record):
             # backend's to_jax at this boundary. Native batch columns are a
             # batch-rework question.
             field_vals = [
-                to_jax_array(v) if _full_array_shape_or_none(v) is not None else v
+                _to_jax_array(v) if _full_array_shape_or_none(v) is not None else v
                 for v in (r[name] for r in records)
             ]
             fields[name] = jnp.stack(field_vals, axis=0)
