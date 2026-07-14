@@ -63,11 +63,11 @@ _NP_ARRAY_TYPE = _np.ndarray
 # pattern a computation happened to produce.
 _CANONICAL_NAN = struct.pack(">d", float("nan"))
 
-# Default cap: arrays up to 1 MB are hashed in full (zero-copy via
+# Default cap: arrays up to 256 MB are hashed in full (zero-copy via
 # memoryview).  Arrays beyond this are sampled at evenly-spaced offsets so
 # large posteriors are still discriminated without a full buffer read.
 # Pass ``max_array_bytes=None`` to always hash the full buffer.
-_DEFAULT_MAX_ARRAY_BYTES: int = 1 << 20  # 1 MB
+_DEFAULT_MAX_ARRAY_BYTES: int = 256 << 20  # 256 MB
 
 
 def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BYTES) -> str:
@@ -86,7 +86,7 @@ def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BY
         Arrays whose byte size is at or below this threshold are hashed in
         full (zero-copy via ``memoryview``).  Larger arrays are sampled at
         evenly-spaced offsets.  Pass ``None`` to always hash the full buffer.
-        Default: 1 MB.
+        Default: 256 MB.
 
     Returns
     -------

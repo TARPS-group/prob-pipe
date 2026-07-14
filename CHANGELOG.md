@@ -107,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameters for TFP-backed distributions, field-by-field content for Records,
   and actual user-function bytecode for WorkflowFunctions (not the Prefect
   wrapper closure, so changes to the function body are detected reliably).
-  Large arrays (> 1 MB) are sampled at evenly-spaced offsets rather than read
+  Large arrays (> 256 MB) are sampled at evenly-spaced offsets rather than read
   in full.  The fingerprint is visible in `to_dict()` output and is the
   foundation for a future Prefect `cache_key_fn` that will enable cross-run
   task caching and failure recovery.
