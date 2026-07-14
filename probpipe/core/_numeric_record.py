@@ -394,19 +394,6 @@ class NumericRecord(Record):
             )
         return _reconstruct_from_vector(name, template, vec, name_is_auto=False)
 
-    # -- Native form ---------------------------------------------------------
-
-    def to_native(self) -> Record:
-        """Return the record with every leaf in its native form — the identity.
-
-        Leaves are already stored natively (an ``xarray`` / ``pandas`` /
-        registered-backend leaf was never converted; a bare array is its own
-        native form), so this returns ``self``. It exists as the named
-        counterpart to :meth:`~Record.to_numeric` and for call sites written
-        against the conversion boundary.
-        """
-        return self
-
     def to_numeric(self) -> NumericRecord:
         """Return ``self`` — a ``NumericRecord`` is already numeric (identity)."""
         return self

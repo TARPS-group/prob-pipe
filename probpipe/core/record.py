@@ -848,9 +848,9 @@ class Record(NamedTree, Tracked, Annotated):
 
         Each numeric leaf is converted via ``np.asarray``. Non-numeric
         leaves (strings, opaque objects) are returned as-is. Backend
-        metadata (xarray dims / coords, pandas index) is stripped — use
-        :meth:`to_numeric` followed by :meth:`NumericRecord.to_native`
-        if you need a metadata-preserving round-trip.
+        metadata (xarray dims / coords, pandas index) is stripped by this
+        export — the record itself keeps its leaves in native form, so
+        read the fields directly when you need the original containers.
         """
         result: dict[str, Any] = {}
         for name, val in self._tree.items():

@@ -130,8 +130,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   materialised at construction, and `record["x"]` returns the native leaf
   (previously always a `jax.Array`). Backend metadata now survives structural
   transforms and pickling because data and metadata never separate;
-  `to_native()` and `to_numeric()` are identities on a `NumericRecord`
-  (`to_numeric()` validates rather than converts). All-numeric records holding
+  `NumericRecord.to_native()` is **removed** (leaves are already native —
+  navigation is the export), and `to_numeric()` is the identity on a
+  `NumericRecord` (on a plain `Record` it validates rather than
+  converts). All-numeric records holding
   native containers **auto-promote** to `NumericRecord` (the previous
   backend-leaf exclusion is removed), and `EventTemplate.infer_from` infers
   `ArraySpec` for them. Native leaves are stored by reference (no defensive

@@ -637,10 +637,11 @@ class TestConversion:
         assert nr.fields == ("a", "b")
         np.testing.assert_array_equal(np.asarray(nr["b"]), [2.0, 3.0])
 
-    def test_to_numeric_to_native_round_trip_xarray(self):
-        """xarray dims / coords / attrs survive the ``Record`` round-trip
-        via the aux registry (the migration replacement for the old
-        ``to_datatree`` / ``from_datatree`` pair).
+    def test_xarray_metadata_kept_natively(self):
+        """xarray dims / coords / attrs never leave the record: the leaf is
+        stored natively (the migration replacement for the old
+        ``to_datatree`` / ``from_datatree`` pair), and ``to_numeric()`` is
+        validation, not conversion.
         """
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
@@ -649,7 +650,8 @@ class TestConversion:
             coords={"time": [10, 20, 30]},
             attrs={"units": "m"},
         )
-        back = Record("r", y=da).to_numeric().to_native()
+        back = Record("r", y=da).to_numeric()
+        assert back["y"] is da
         assert back["y"].dims == ("time",)
         np.testing.assert_array_equal(back["y"].coords["time"].values, [10, 20, 30])
         assert back["y"].attrs == {"units": "m"}

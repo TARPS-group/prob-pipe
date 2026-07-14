@@ -335,12 +335,12 @@ class TestRecordAutoPromotion:
         da = xr.DataArray(np.arange(3.0), dims=["t"])
         r = Record("r", a=da)
         # A native backend leaf is first-class numeric: the record promotes
-        # and the leaf is stored verbatim — to_native is the identity.
+        # and the leaf is stored verbatim — navigation returns it directly.
         from probpipe import NumericRecord
 
         assert type(r) is NumericRecord
         assert r["a"] is da
-        assert type(r.to_native()["a"]) is xr.DataArray
+        assert type(r["a"]) is xr.DataArray
 
     def test_edits_rederive_promotion_and_demotion(self):
         mixed = Record("r", a=1.0, label="tag")

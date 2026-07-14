@@ -127,9 +127,10 @@ class TestNativeStorage:
         assert nr["temps"].attrs == {"units": "meters"}
         assert nr["temps"].name == "temps"
 
-    def test_to_native_is_identity(self, da):
-        nr = NumericRecord("nr", temps=da)
-        assert nr.to_native() is nr
+    def test_to_native_removed(self):
+        # Leaves are already native, so the old conversion method is gone —
+        # navigation is the export. Pinned so a compat shim doesn't creep back.
+        assert not hasattr(NumericRecord, "to_native")
 
     def test_to_numeric_is_identity(self, da):
         nr = NumericRecord("nr", temps=da)
@@ -191,7 +192,7 @@ class TestTransformsPreserveNativeLeaves:
         nr = NumericRecord("nr", temps=da, extra=jnp.array(1.0))
         edited = nr.without("extra")
         assert edited["temps"] is da
-        assert type(edited.to_native()["temps"]) is xr.DataArray
+        assert type(edited["temps"]) is xr.DataArray
 
     def test_without_preserves_nested_native_leaf(self, da):
         outer = NumericRecord("outer", grp=NumericRecord("grp", temps=da), extra=jnp.array(1.0))
