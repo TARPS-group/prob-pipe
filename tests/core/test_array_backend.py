@@ -645,6 +645,51 @@ class TestNullableNumericMissingData:
         assert type(r) is NumericRecord
         np.testing.assert_allclose(r.to_vector(), [1.0, 3.0, 2.0, 4.0])
 
+    def test_nullable_beside_complex_preserves_imaginary(self):
+        # A nullable column beside a complex column must not truncate the
+        # imaginary parts: the frame densifies to the columns' common promotion
+        # (complex128), not float64. numpy_dtype reports the same dtype the
+        # conversion produces.
+        df = pd.DataFrame({"a": pd.array([1, None], dtype="Int64"), "b": [1 + 2j, 3 + 4j]})
+        backend = array_backend_for(df)
+        assert backend.numpy_dtype(df) == np.dtype("complex128")
+        out = backend.to_numpy(df)
+        assert out.dtype == np.dtype("complex128")
+        assert out[0, 1] == 1 + 2j and out[1, 1] == 3 + 4j  # imaginary parts kept
+        assert out[0, 0] == 1 + 0j and np.isnan(out[1, 0])  # NA -> nan
+
+    def test_nullable_beside_complex_promotes_and_vectorizes(self):
+        df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64"), "b": [1 + 2j, 3 + 4j]})
+        r = Record("r", m=df)
+        assert type(r) is NumericRecord
+        v = np.asarray(r.to_vector())
+        assert np.issubdtype(v.dtype, np.complexfloating)
+        # row-major flatten of [[1+0j, 1+2j], [2+0j, 3+4j]]
+        np.testing.assert_array_equal(v, [1 + 0j, 1 + 2j, 2 + 0j, 3 + 4j])
+
+    def test_nullable_float_keeps_its_own_width(self):
+        # A nullable float column contributes its own width, not a float64 floor.
+        f32 = pd.DataFrame({"a": pd.array([1.0, None], dtype="Float32")})
+        assert array_backend_for(f32).numpy_dtype(f32) == np.dtype("float32")
+        f64 = pd.DataFrame({"a": pd.array([1.0, None], dtype="Float64")})
+        assert array_backend_for(f64).numpy_dtype(f64) == np.dtype("float64")
+
+    def test_nullable_complex_equality_and_fingerprint(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        def mk(imag):
+            return Record(
+                "r",
+                m=pd.DataFrame({"a": pd.array([1, None], dtype="Int64"), "b": [1 + 2j, imag]}),
+            )
+
+        # Identical (including the NA position) -> equal and fingerprint-equal.
+        assert mk(3 + 4j) == mk(3 + 4j)
+        assert fingerprint(mk(3 + 4j)) == fingerprint(mk(3 + 4j))
+        # Differing only in an imaginary part -> unequal and fingerprint-different.
+        assert mk(3 + 4j) != mk(3 + 5j)
+        assert fingerprint(mk(3 + 4j)) != fingerprint(mk(3 + 5j))
+
 
 class TestNativeMetadataInIdentity:
     """Option A: native-container metadata (coords / index) is part of a

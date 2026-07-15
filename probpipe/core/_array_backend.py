@@ -35,8 +35,8 @@ for two reasons. The first is to expose their identity-bearing metadata (an
 columns) through the ``metadata`` hook. The second, for pandas, is to handle
 nullable / masked numeric columns (``Int64``, ``Float64``, ``boolean``). The
 generic duck path cannot see those columns as numeric, but the pandas backend
-accepts them and converts through ``float64``, encoding each NA as ``NaN``. Bare
-``numpy`` / ``jax`` arrays stay unregistered — the duck path covers them and
+accepts them, encoding each NA as ``NaN`` in the columns' common dense dtype.
+Bare ``numpy`` / ``jax`` arrays stay unregistered — the duck path covers them and
 they carry no metadata beyond their values.
 
 Batch stacking hooks (a per-backend native ``stack`` / ``element``) are
@@ -296,23 +296,45 @@ def _register_pandas() -> None:
         # numeric dtype (generic gate), or a nullable numeric one (NA -> NaN).
         return _is_numeric_dtype(dtype) or _is_nullable_numeric(dtype)
 
+    def _dense_dtype(dtypes: Any) -> np.dtype | None:
+        # The single dense numpy dtype a Series / DataFrame of these column
+        # dtypes densifies to (via to_numpy / to_jax), or None when a column has
+        # no dense numpy dtype. A masked numeric column has no dense numpy view
+        # and must hold NA as NaN, so it contributes a float: a nullable float
+        # keeps its own width (Float32 -> float32), a nullable integer / boolean
+        # promotes to float64. Every other column contributes its own dtype. The
+        # result is their common promotion, so a complex column yields complex128
+        # rather than being truncated to float.
+        contribs: list[np.dtype] = []
+        for d in dtypes:
+            if _is_nullable_numeric(d):
+                nd = getattr(d, "numpy_dtype", None)
+                if nd is not None and np.issubdtype(nd, np.floating):
+                    contribs.append(np.dtype(nd))
+                else:
+                    contribs.append(np.dtype("float64"))
+            else:
+                nd = _safe_numpy_dtype(d)
+                if nd is None:
+                    return None
+                contribs.append(nd)
+        return np.result_type(*contribs) if contribs else None
+
     def _dense(obj: Any, dtypes: Any) -> np.ndarray:
-        # Any masked column forces the whole result through float64, encoding
-        # each NA as NaN; otherwise the native numpy view is used unchanged.
+        # A masked column has no dense numpy view; converting with an explicit
+        # target dtype encodes each NA as NaN and keeps complex columns complex
+        # (see _dense_dtype). Otherwise the native numpy view is used unchanged.
         if any(_is_nullable_numeric(d) for d in dtypes):
-            return obj.to_numpy(dtype="float64", na_value=np.nan)
+            return obj.to_numpy(dtype=_dense_dtype(dtypes), na_value=np.nan)
         return obj.to_numpy()
 
     def _series_metadata(s: pd.Series) -> Any:
         return {"index": np.asarray(s.index), "name": s.name}
 
     def _series_numpy_dtype(s: pd.Series) -> np.dtype | None:
-        # A nullable column converts through float64 (see _dense), so float64
-        # is the leaf's dtype — not the masked dtype, which has no dense numpy
-        # form. This depends on the dtype, not on whether NAs are present.
-        if _is_nullable_numeric(s.dtype):
-            return np.dtype("float64")
-        return _safe_numpy_dtype(s.dtype)
+        # Report the single dense dtype the series densifies to (see
+        # _dense_dtype), so numpy_dtype matches what to_numpy / to_jax produce.
+        return _dense_dtype((s.dtype,))
 
     register_array_backend(
         pd.Series,
@@ -331,19 +353,9 @@ def _register_pandas() -> None:
         return len(dtypes) > 0 and all(_column_numeric(d) for d in dtypes)
 
     def _frame_numpy_dtype(df: pd.DataFrame) -> np.dtype | None:
-        # A masked / nullable numeric column has no dense numpy view, so the
-        # whole frame converts through float64 (NA -> NaN). Otherwise a numeric
-        # frame densifies (to_numpy / to_jax) to one dense array whose dtype is
-        # its columns' common promotion — e.g. int64 + float64 -> float64 — so
-        # report that rather than None. ``None`` only when a column has no dense
-        # numpy dtype (a non-numpy, non-nullable extension column).
-        dtypes = df.dtypes
-        if any(_is_nullable_numeric(d) for d in dtypes):
-            return np.dtype("float64")
-        numpy_dtypes = [_safe_numpy_dtype(d) for d in dtypes]
-        if not numpy_dtypes or any(nd is None for nd in numpy_dtypes):
-            return None
-        return np.result_type(*numpy_dtypes)
+        # Report the single dense dtype the frame densifies to (see
+        # _dense_dtype), so numpy_dtype matches what to_numpy / to_jax produce.
+        return _dense_dtype(df.dtypes)
 
     def _frame_metadata(df: pd.DataFrame) -> Any:
         return {
