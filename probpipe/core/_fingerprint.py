@@ -179,10 +179,9 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
         h.update(type(obj).__qualname__.encode())
         h.update(b":")
         _update_array(h, content, max_array_bytes)
-        from ._array_backend import array_backend_for
+        from ._array_backend import _metadata_of
 
-        backend = array_backend_for(obj)
-        metadata = backend.metadata(obj) if backend is not None else None
+        metadata = _metadata_of(obj)
         if metadata is not None:
             h.update(b":meta:")
             _update(h, metadata, depth + 1, max_array_bytes)
@@ -217,8 +216,7 @@ def _numeric_container_to_numpy(obj: Any) -> _np.ndarray | None:
     ``None``. Materialisation is the documented cost of fingerprinting a
     lazy / disk-backed leaf.
     """
-    from ._array_backend import array_backend_for
-    from .event_template import _is_numeric_dtype
+    from ._array_backend import _is_numeric_dtype, array_backend_for
 
     backend = array_backend_for(obj)
     if backend is not None:

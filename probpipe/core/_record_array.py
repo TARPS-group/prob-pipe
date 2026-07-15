@@ -17,13 +17,12 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array
-from ._array_backend import _to_jax_array
+from ._array_backend import _is_numeric_dtype, _to_jax_array
 from .event_template import (
     ArraySpec,
     EventTemplate,
     NumericEventTemplate,
     _full_array_shape_or_none,
-    _is_numeric_dtype,
 )
 from .record import Record
 from .tracked import auto_name

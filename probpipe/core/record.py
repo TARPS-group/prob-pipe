@@ -44,7 +44,7 @@ import jax
 import numpy as np
 
 from ..custom_types import ArrayLike
-from ._array_backend import array_backend_for
+from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
 from .event_template import (
     EventTemplate,
     NumericEventTemplate,
@@ -90,33 +90,19 @@ def _derived_record_name(field_keys: Iterable[str]) -> str:
     return "record(" + ",".join(field_keys) + ")"
 
 
-def _leaf_to_numpy(leaf: Any) -> np.ndarray:
-    """Materialise a numeric leaf to numpy on its native basis (registry-first).
-
-    Uses the registered backend's ``to_numpy`` (native dtype and full
-    precision) when *leaf*'s type is registered, else ``np.asarray`` — the same
-    basis :func:`fingerprint` hashes on, so a value comparison built on it
-    agrees with the content fingerprint.
-    """
-    backend = array_backend_for(leaf)
-    if backend is not None:
-        return np.asarray(backend.to_numpy(leaf))
-    return np.asarray(leaf)
-
-
 def _leaf_values_equal(a: Any, b: Any) -> bool:
     """Whether two numeric leaves have equal values, on their native basis.
 
-    Both leaves materialise to numpy through the array-backend registry — the
-    same native, full-precision basis :func:`fingerprint` uses — rather than
+    Both leaves materialise to numpy through :func:`_to_numpy_array` — the same
+    native, full-precision basis :func:`fingerprint` uses — rather than
     converting to ``jax.Array`` first. So ``__eq__`` agrees with the content
     fingerprint instead of comparing at the lossy compute-boundary precision (a
     sub-``float32`` difference is not silently equated under JAX's default x32
     policy), and ``NaN`` positions compare equal (``equal_nan``) for floating
     data, so a record with a ``NaN`` leaf equals an independent copy of itself.
     """
-    a_np = _leaf_to_numpy(a)
-    b_np = _leaf_to_numpy(b)
+    a_np = _to_numpy_array(a)
+    b_np = _to_numpy_array(b)
     equal_nan = np.issubdtype(a_np.dtype, np.inexact) and np.issubdtype(b_np.dtype, np.inexact)
     return bool(np.array_equal(a_np, b_np, equal_nan=equal_nan))
 
@@ -134,10 +120,7 @@ def _leaf_metadata_key(leaf: Any) -> Any:
     Metadata is normally small; a rare oversized coordinate array is fully
     materialised only when such records are actually compared.
     """
-    backend = array_backend_for(leaf)
-    if backend is None:
-        return None
-    meta = backend.metadata(leaf)
+    meta = _metadata_of(leaf)
     if meta is None:
         return None
     from ._fingerprint import fingerprint
@@ -154,13 +137,7 @@ def _canonical_dtype_str(leaf: Any) -> str:
     JAX would unify hash together, keeping :meth:`__hash__` a stable coarse
     key. ``"none"`` when the leaf has no single dense dtype.
     """
-    backend = array_backend_for(leaf)
-    if backend is not None:
-        nd = backend.numpy_dtype(leaf)
-    else:
-        nd = getattr(leaf, "dtype", None)
-        if nd is None:
-            nd = np.asarray(leaf).dtype
+    nd = _numpy_dtype_of(leaf)
     if nd is None:
         return "none"
     return str(jax.dtypes.canonicalize_dtype(np.dtype(nd)))
