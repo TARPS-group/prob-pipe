@@ -68,7 +68,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
-from ._array_backend import array_backend_for
+from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
 from .constraints import Constraint
 from .named_tree import (
     _PATH_SEP,
@@ -200,18 +200,11 @@ class ArraySpec(ValueSpec):
         if shape is None or shape != self.shape:
             return False
         if self.dtype is not None:
-            backend = array_backend_for(value)
-            if backend is not None:
-                # A registered container answers from metadata; ``None``
-                # means it has no single dtype (a heterogeneous frame), which
-                # cannot match a dtype-pinned spec.
-                actual = backend.numpy_dtype(value)
-                if actual is None:
-                    return False
-            else:
-                actual = getattr(value, "dtype", None)
-                if actual is None:
-                    actual = np.asarray(value).dtype
+            # ``None`` means the value has no single dtype (a heterogeneous
+            # frame), which cannot match a dtype-pinned spec.
+            actual = _numpy_dtype_of(value)
+            if actual is None:
+                return False
             # A same-kind cast (a widening promotion or a within-kind
             # narrowing) matches; a cross-kind cast (e.g. float where an int
             # dtype is declared) does not.
@@ -451,14 +444,7 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
     Strings, object arrays, Python lists/tuples, and any remaining value
     without a numeric ``dtype`` / ``shape`` report ``None``.
     """
-    if isinstance(val, (bool, int, float, complex, np.integer, np.floating, np.bool_)):
-        return ()
-    backend = array_backend_for(val)
-    if backend is not None:
-        return tuple(backend.event_shape(val)) if backend.is_numeric(val) else None
-    if hasattr(val, "shape") and hasattr(val, "dtype") and _is_numeric_dtype(val.dtype):
-        return tuple(val.shape)
-    return None
+    return _event_shape_of(val) if _is_numeric_leaf(val) else None
 
 
 # ---------------------------------------------------------------------------

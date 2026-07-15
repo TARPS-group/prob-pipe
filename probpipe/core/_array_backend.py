@@ -216,6 +216,98 @@ def _to_jax_array(value: Any) -> jax.Array:
 
 
 # ---------------------------------------------------------------------------
+# Leaf resolvers: registry-first, duck-typing fallback
+# ---------------------------------------------------------------------------
+#
+# Every numeric gate asks one of a few questions about a leaf — is it numeric?
+# what is its shape / dtype? materialise it to numpy — and each resolves the
+# same way: the registered backend's hook if the leaf's type is registered,
+# else the numpy-protocol duck path. These helpers hold that one resolution
+# (mirroring ``_to_jax_array`` for ``to_jax``) so each question's duck fallback
+# lives in one place and cannot drift between call sites.
+
+# Numeric Python scalars. A bare scalar leaf is normalised to a 0-d
+# ``jax.Array`` at ``NumericRecord`` construction, but it still counts as
+# numeric everywhere the raw value is inspected.
+_NUMERIC_SCALARS = (bool, int, float, complex, np.integer, np.floating, np.bool_)
+
+
+def _is_numeric_leaf(value: Any) -> bool:
+    """Whether *value* is a numeric leaf — the shared numeric predicate.
+
+    Registry-first: a registered container answers through its ``is_numeric``
+    hook; a numeric Python scalar counts; everything else duck-types on a
+    numeric ``dtype`` / ``shape``. Strings, object arrays, and opaque types are
+    not numeric. Every "is this leaf numeric?" site shares this one decision,
+    so promotion, ``_full_array_shape_or_none``, and spec validation cannot
+    drift apart on what counts.
+    """
+    if isinstance(value, (str, bytes)):
+        return False
+    if isinstance(value, _NUMERIC_SCALARS):
+        return True
+    backend = array_backend_for(value)
+    if backend is not None:
+        return backend.is_numeric(value)
+    from .event_template import _is_numeric_dtype
+
+    return hasattr(value, "dtype") and hasattr(value, "shape") and _is_numeric_dtype(value.dtype)
+
+
+def _event_shape_of(value: Any) -> tuple[int, ...]:
+    """The numeric leaf's event shape — registry ``event_shape``, else ``.shape``.
+
+    Reads container metadata only, never the values. A scalar reports ``()``.
+    Assumes *value* is numeric (see :func:`_is_numeric_leaf`).
+    """
+    backend = array_backend_for(value)
+    if backend is not None:
+        return tuple(backend.event_shape(value))
+    return tuple(getattr(value, "shape", ()))
+
+
+def _numpy_dtype_of(value: Any) -> np.dtype | None:
+    """The leaf's single numpy dtype, or ``None`` when it has none.
+
+    Registry-first (``None`` for a heterogeneous container with no single
+    dtype); else the value's own ``.dtype``, else the numpy dtype of a
+    materialised copy. Reads metadata only except on that last fallback.
+    """
+    backend = array_backend_for(value)
+    if backend is not None:
+        return backend.numpy_dtype(value)
+    nd = getattr(value, "dtype", None)
+    if nd is None:
+        nd = np.asarray(value).dtype
+    return nd
+
+
+def _to_numpy_array(value: Any) -> np.ndarray:
+    """Materialise a numeric leaf to numpy on its native basis.
+
+    The registered backend's ``to_numpy`` (native dtype and full precision)
+    when *value*'s type is registered, else ``np.asarray`` — the basis
+    :func:`fingerprint` hashes on and ``Record.__eq__`` compares. The numpy
+    counterpart of :func:`_to_jax_array`.
+    """
+    backend = array_backend_for(value)
+    if backend is not None:
+        return np.asarray(backend.to_numpy(value))
+    return np.asarray(value)
+
+
+def _metadata_of(value: Any) -> Any:
+    """The leaf's identity-bearing container metadata, or ``None``.
+
+    A registered backend's ``metadata`` (an ``xarray`` array's dims / coords /
+    attrs, a ``pandas`` object's index / columns); ``None`` for a bare array or
+    an unregistered leaf, whose identity is its values alone.
+    """
+    backend = array_backend_for(value)
+    return backend.metadata(value) if backend is not None else None
+
+
+# ---------------------------------------------------------------------------
 # Built-in registrations (gated on import availability)
 # ---------------------------------------------------------------------------
 #

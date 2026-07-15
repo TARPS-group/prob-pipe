@@ -27,42 +27,20 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import Array, ArrayLike
-from ._array_backend import _to_jax_array, array_backend_for
-from .event_template import EventTemplate, NumericEventTemplate, _is_numeric_dtype
+from ._array_backend import (
+    _NUMERIC_SCALARS,
+    _event_shape_of,
+    _is_numeric_leaf,
+    _numpy_dtype_of,
+    _to_jax_array,
+)
+from .event_template import EventTemplate, NumericEventTemplate
 from .named_tree import _PATH_SEP, _check_no_path_sep, _unflatten_paths
 from .record import Record
 
+# ``_is_numeric_leaf`` is defined in ``_array_backend`` (the shared leaf
+# resolvers) and re-exported here, its historical home.
 __all__ = ["NumericRecord", "_is_numeric_leaf"]
-
-
-# Scalar types accepted as numeric leaves. ``bool`` is intentionally
-# included: JAX treats it as dtype ``bool_`` and numpy arrays of bools
-# participate in arithmetic as 0/1.
-_NUMERIC_SCALARS = (bool, int, float, complex, np.integer, np.floating, np.bool_)
-
-
-def _is_numeric_leaf(val: Any) -> bool:
-    """True if *val* is a numeric array, numeric container, or numeric scalar.
-
-    Resolution is registry-first: a value whose type has a registered
-    :class:`~probpipe.ArrayBackend` answers through its ``is_numeric`` hook
-    (so e.g. a ``pandas.DataFrame`` counts iff every column is numeric);
-    everything else duck-types on a numeric ``dtype`` / ``shape``. Rejects
-    object-dtype arrays, string-like scalars, and opaque types. Dtype
-    numericness is decided by the shared ``_is_numeric_dtype`` predicate, so
-    this gate, ``NumericRecordArray._validate_fields``, and template
-    inference agree on what counts as numeric.
-    """
-    if isinstance(val, (str, bytes)):
-        return False
-    if isinstance(val, _NUMERIC_SCALARS):
-        return True
-    backend = array_backend_for(val)
-    if backend is not None:
-        return backend.is_numeric(val)
-    if hasattr(val, "dtype") and hasattr(val, "shape"):
-        return _is_numeric_dtype(val.dtype)
-    return False
 
 
 class NumericRecord(Record):
@@ -252,9 +230,7 @@ class NumericRecord(Record):
             if isinstance(val, NumericRecord):
                 total += val.vector_size
             else:
-                backend = array_backend_for(val)
-                shape = backend.event_shape(val) if backend is not None else val.shape
-                total += int(prod(shape))
+                total += int(prod(_event_shape_of(val)))
         object.__setattr__(self, "_vector_size", total)
         # The set-once converted-leaf cache backing the compute boundary.
         # Mutable by design (an internal memo, not value state); shallow
@@ -472,11 +448,7 @@ class NumericRecord(Record):
     # Multi-field raises ``TypeError`` (loud, not silent).
     @property
     def shape(self) -> tuple[int, ...]:
-        leaf = self._tree[self._single_numeric_field()]
-        backend = array_backend_for(leaf)
-        if backend is not None:
-            return tuple(backend.event_shape(leaf))
-        return tuple(getattr(leaf, "shape", ()))
+        return _event_shape_of(self._tree[self._single_numeric_field()])
 
     @property
     def dtype(self):
@@ -487,11 +459,7 @@ class NumericRecord(Record):
         array-like forwards its own ``.dtype``. A leaf that exposes no single
         dtype yields ``None`` rather than a stand-in.
         """
-        leaf = self._tree[self._single_numeric_field()]
-        backend = array_backend_for(leaf)
-        if backend is not None:
-            return backend.numpy_dtype(leaf)
-        return getattr(leaf, "dtype", None)
+        return _numpy_dtype_of(self._tree[self._single_numeric_field()])
 
     @property
     def ndim(self) -> int:

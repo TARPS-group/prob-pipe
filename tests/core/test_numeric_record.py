@@ -146,19 +146,30 @@ class TestConstruction:
             assert nr["x"] is arr, f"failed for dtype {dt}"
 
     def test_numeric_dtype_predicate_shared(self):
-        """Every numeric gate — ``NumericRecord``, ``NumericRecordArray``,
-        template inference, the broadcast-template builder, and the ``Design``
-        marginals probe — must agree on which dtypes are numeric. Duplicated
-        literals would let the sites drift silently — this test pins down that
-        they consume the one shared predicate."""
-        from probpipe.core import _broadcast_distributions, _numeric_record, _record_array
+        """Every numeric gate must agree on what counts as numeric by consuming
+        a shared predicate rather than duplicating the logic. Two levels are
+        shared: the dtype-level ``_is_numeric_dtype`` (used directly where only
+        a dtype is in hand — ``NumericRecordArray``, the broadcast-template
+        builder, the ``Design`` marginals probe) and the leaf-level
+        ``_is_numeric_leaf`` (the registry-first resolver that wraps it,
+        consumed by ``NumericRecord`` and template inference)."""
+        from probpipe.core import (
+            _array_backend,
+            _broadcast_distributions,
+            _numeric_record,
+            _record_array,
+            event_template,
+        )
         from probpipe.core.event_template import _is_numeric_dtype
         from probpipe.record import design
 
-        assert _numeric_record._is_numeric_dtype is _is_numeric_dtype
+        # dtype-level predicate: consumed directly where only a dtype is checked
         assert _record_array._is_numeric_dtype is _is_numeric_dtype
         assert _broadcast_distributions._is_numeric_dtype is _is_numeric_dtype
         assert design._is_numeric_dtype is _is_numeric_dtype
+        # leaf-level predicate: one resolver shared by the record gate and inference
+        assert _numeric_record._is_numeric_leaf is _array_backend._is_numeric_leaf
+        assert event_template._is_numeric_leaf is _array_backend._is_numeric_leaf
 
     def test_bfloat16_leaf_accepted(self):
         # ml_dtypes numerics (kind "V") are numeric leaves.
