@@ -7,15 +7,20 @@ assemble inputs and interpret outputs outside this module.
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ._fingerprint import environment_salt, fingerprint
+
 try:
     from prefect import flow, task
+    from prefect.cache_policies import CacheKeyFnPolicy
 except ImportError:
     task = flow = None
+    CacheKeyFnPolicy = None
 
 WorkflowExecutionMode = Literal[
     "sequential",
@@ -33,6 +38,21 @@ class WorkflowExecutionConfig:
     max_workers: int | None = None
     name: str = "workflow"
     prefect_task_runner: Any | None = None
+    func_fingerprint: str | None = None
+    """Content fingerprint of the wrapped user function, or ``None``.
+
+    Populated only on the Prefect paths when caching is enabled; it identifies
+    the user-function body for the cache key so a change to the function
+    invalidates cached results even though the task wrapper source is
+    unchanged.  ``None`` disables caching for this execution.
+    """
+    cache_result_storage: Any | None = None
+    """Shared storage for persisted cache results and cache-key records.
+
+    ``None`` uses Prefect's local default (single-machine).  When set, it is
+    passed to both the task's ``result_storage`` and the cache policy's
+    ``key_storage`` so other workers see both the result and its key record.
+    """
 
 
 @dataclass(frozen=True)
@@ -72,6 +92,46 @@ def execute_many_threaded(request: WorkflowExecutionRequest) -> list[Any]:
         return list(pool.map(lambda kwargs: request.func(**kwargs), request.call_value_list))
 
 
+def _cache_task_options(execution: WorkflowExecutionConfig) -> dict[str, Any]:
+    """Return Prefect ``@task`` caching options for this execution.
+
+    Caching is active exactly when ``func_fingerprint`` is set — ``node.py``
+    populates it only on the Prefect paths under an opted-in ``CacheMode`` — so
+    an empty dict here means "no caching", leaving the task decorated exactly as
+    before.
+
+    The cache key combines three parts so a change to any of them is a cache
+    *miss* rather than a stale *hit*:
+
+    - the user-function fingerprint (detects a changed function body, which the
+      generic ``run_func`` wrapper source would otherwise hide),
+    - the environment salt (probpipe/jax versions + x64 flag), and
+    - a content fingerprint of the per-row inputs.
+
+    Prefect binds a ``**kwargs`` task's arguments as ``{"kwargs": {...}}``, and
+    ``fingerprint`` hashes dict keys order-independently, so the whole
+    ``parameters`` mapping is fingerprinted directly.
+    """
+    func_fp = execution.func_fingerprint
+    if func_fp is None:
+        return {}
+
+    salt = environment_salt()
+    storage = execution.cache_result_storage
+
+    def cache_key_fn(context: Any, parameters: dict[str, Any]) -> str:
+        material = f"{func_fp}|{salt}|{fingerprint(parameters)}"
+        return hashlib.sha256(material.encode()).hexdigest()
+
+    options: dict[str, Any] = {
+        "cache_policy": CacheKeyFnPolicy(cache_key_fn=cache_key_fn, key_storage=storage),
+        "persist_result": True,
+    }
+    if storage is not None:
+        options["result_storage"] = storage
+    return options
+
+
 def map_task(
     request: WorkflowExecutionRequest,
     *,
@@ -85,7 +145,10 @@ def map_task(
 
     func = request.func
 
-    @task(name=task_name or request.execution.name)
+    @task(
+        name=task_name or request.execution.name,
+        **_cache_task_options(request.execution),
+    )
     def run_func(**kwargs):
         return func(**kwargs)
 

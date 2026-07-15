@@ -32,6 +32,7 @@ from . import (
     _workflow_result,
     _workflow_sweep,
 )
+from ._fingerprint import fingerprint
 from ._record_array import RecordArray
 from .provenance import Provenance
 
@@ -294,6 +295,7 @@ class WorkflowFunction(Node):
         self._key = jax.random.PRNGKey(seed)
         self._include_inputs = include_inputs
         self._resolved_dispatch: str | None = None  # cached auto-detection result
+        self._func_fingerprint: str | None = None  # cached fingerprint(self) for caching
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
         b = dict(bind or {})
@@ -332,6 +334,16 @@ class WorkflowFunction(Node):
 
         return kind
 
+    def _func_fingerprint_value(self) -> str:
+        """Return the wrapped user function's content fingerprint (memoized).
+
+        Stable for the instance's lifetime — the wrapped function, its defaults,
+        and its closure do not change — so it is computed once and cached.
+        """
+        if self._func_fingerprint is None:
+            self._func_fingerprint = fingerprint(self)
+        return self._func_fingerprint
+
     def _make_execution_config(
         self,
         *,
@@ -359,11 +371,23 @@ class WorkflowFunction(Node):
                 stacklevel=2,
             )
 
+        # Caching applies only on the Prefect paths and only when opted in.
+        # ``func_fingerprint`` carries the user-function identity down to the
+        # task wrapper so cache keying can detect body changes, and
+        # ``cache_result_storage`` is the shared target for both persisted
+        # results and cache-key records. Both stay ``None`` off the caching
+        # path, keeping the non-caching paths byte-identical to before.
+        caching = is_prefect and prefect_config.caching_enabled
+        func_fingerprint = self._func_fingerprint_value() if caching else None
+        cache_result_storage = prefect_config.resolve_cache_storage() if caching else None
+
         return _workflow_execution.WorkflowExecutionConfig(
             mode=mode,
             max_workers=self._max_workers if mode == "thread" else None,
             name=self._name,
             prefect_task_runner=(prefect_config.resolve_task_runner() if is_prefect else None),
+            func_fingerprint=func_fingerprint,
+            cache_result_storage=cache_result_storage,
         )
 
     def with_options(

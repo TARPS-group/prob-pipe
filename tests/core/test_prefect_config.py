@@ -9,6 +9,8 @@ Exercises:
 - Strict WorkflowFunction / Module workflow_kind validation
 - Module inherits global config
 - PROBPIPE_WORKFLOW_KIND environment-variable override
+- CacheMode enum, cache_mode / cache_result_storage settings, and the
+  PROBPIPE_CACHE_MODE environment-variable override
 """
 
 from __future__ import annotations
@@ -20,10 +22,13 @@ import types
 import pytest
 
 from probpipe.core.config import (
+    _CACHE_MODE_ENV_VAR,
     _WORKFLOW_KIND_ENV_VAR,
+    CacheMode,
     PrefectConfig,
     WorkflowKind,
     _auto_detect_task_runner,
+    _initial_cache_mode,
     prefect_config,
 )
 
@@ -501,3 +506,180 @@ class TestEnvVarOverride:
         pc.workflow_kind = WorkflowKind.OFF
         pc.reset()
         assert pc.workflow_kind is WorkflowKind.TASK
+
+
+# ---------------------------------------------------------------------------
+# CacheMode enum
+# ---------------------------------------------------------------------------
+
+
+class TestCacheModeEnum:
+    """Verify the enum has the expected members and values."""
+
+    def test_members(self):
+        assert set(CacheMode) == {CacheMode.OFF, CacheMode.FINGERPRINT}
+
+    def test_values(self):
+        assert CacheMode.OFF.value == "off"
+        assert CacheMode.FINGERPRINT.value == "fingerprint"
+
+    def test_construct_from_string(self):
+        assert CacheMode("off") is CacheMode.OFF
+        assert CacheMode("fingerprint") is CacheMode.FINGERPRINT
+
+    def test_invalid_string_raises(self):
+        with pytest.raises(ValueError):
+            CacheMode("banana")
+
+
+# ---------------------------------------------------------------------------
+# cache_mode / caching_enabled / cache_result_storage on PrefectConfig
+# ---------------------------------------------------------------------------
+
+
+class TestCacheModeDefaults:
+    """Verify default values and reset behavior for the caching settings."""
+
+    def test_default_cache_mode_is_off(self, monkeypatch):
+        monkeypatch.delenv(_CACHE_MODE_ENV_VAR, raising=False)
+        pc = PrefectConfig()
+        assert pc.cache_mode is CacheMode.OFF
+
+    def test_default_caching_disabled(self, monkeypatch):
+        monkeypatch.delenv(_CACHE_MODE_ENV_VAR, raising=False)
+        pc = PrefectConfig()
+        assert pc.caching_enabled is False
+
+    def test_default_cache_result_storage_is_none(self):
+        pc = PrefectConfig()
+        assert pc.cache_result_storage is None
+
+    def test_reset_restores_defaults(self, monkeypatch):
+        monkeypatch.delenv(_CACHE_MODE_ENV_VAR, raising=False)
+        pc = PrefectConfig()
+        pc.cache_mode = CacheMode.FINGERPRINT
+        pc.cache_result_storage = "s3://bucket"
+        pc.reset()
+        assert pc.cache_mode is CacheMode.OFF
+        assert pc.cache_result_storage is None
+
+
+class TestCachingEnabled:
+    """caching_enabled tracks cache_mode both ways."""
+
+    def test_off_is_disabled(self):
+        pc = PrefectConfig()
+        pc.cache_mode = CacheMode.OFF
+        assert pc.caching_enabled is False
+
+    def test_fingerprint_is_enabled(self):
+        pc = PrefectConfig()
+        pc.cache_mode = CacheMode.FINGERPRINT
+        assert pc.caching_enabled is True
+
+
+class TestCacheModeValidation:
+    """The cache_mode setter rejects non-enum values."""
+
+    def test_rejects_string(self):
+        pc = PrefectConfig()
+        with pytest.raises(TypeError, match="CacheMode enum member"):
+            pc.cache_mode = "fingerprint"
+
+    def test_rejects_none(self):
+        pc = PrefectConfig()
+        with pytest.raises(TypeError, match="CacheMode enum member"):
+            pc.cache_mode = None
+
+    def test_rejects_int(self):
+        pc = PrefectConfig()
+        with pytest.raises(TypeError, match="CacheMode enum member"):
+            pc.cache_mode = 1
+
+    def test_accepts_enum(self):
+        pc = PrefectConfig()
+        for mode in CacheMode:
+            pc.cache_mode = mode
+            assert pc.cache_mode is mode
+
+
+class TestCacheResultStorage:
+    """cache_result_storage stores and resolves an opaque target."""
+
+    def test_setter_stores_value(self):
+        pc = PrefectConfig()
+        sentinel = object()
+        pc.cache_result_storage = sentinel
+        assert pc.cache_result_storage is sentinel
+
+    def test_resolve_returns_configured_target(self):
+        pc = PrefectConfig()
+        sentinel = object()
+        pc.cache_result_storage = sentinel
+        assert pc.resolve_cache_storage() is sentinel
+
+    def test_resolve_defaults_to_none(self):
+        pc = PrefectConfig()
+        assert pc.resolve_cache_storage() is None
+
+
+# ---------------------------------------------------------------------------
+# PROBPIPE_CACHE_MODE environment variable
+# ---------------------------------------------------------------------------
+
+
+class TestCacheModeEnvVar:
+    """The ``PROBPIPE_CACHE_MODE`` env var sets the initial cache_mode."""
+
+    def test_unset_defaults_to_off(self, monkeypatch):
+        monkeypatch.delenv(_CACHE_MODE_ENV_VAR, raising=False)
+        assert _initial_cache_mode() is CacheMode.OFF
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            ("off", CacheMode.OFF),
+            ("fingerprint", CacheMode.FINGERPRINT),
+        ],
+    )
+    def test_valid_value_sets_initial_mode(self, monkeypatch, value, expected):
+        monkeypatch.setenv(_CACHE_MODE_ENV_VAR, value)
+        pc = PrefectConfig()
+        assert pc.cache_mode is expected
+
+    def test_case_insensitive(self, monkeypatch):
+        monkeypatch.setenv(_CACHE_MODE_ENV_VAR, "FingerPrint")
+        assert _initial_cache_mode() is CacheMode.FINGERPRINT
+
+    def test_invalid_value_raises(self, monkeypatch):
+        monkeypatch.setenv(_CACHE_MODE_ENV_VAR, "banana")
+        with pytest.raises(ValueError, match="PROBPIPE_CACHE_MODE"):
+            _initial_cache_mode()
+
+    def test_invalid_value_fails_at_import(self):
+        """A bad env var should fail loudly at ``import probpipe`` time."""
+        import subprocess
+
+        result = subprocess.run(
+            [sys.executable, "-c", "import probpipe"],
+            env={**os.environ, _CACHE_MODE_ENV_VAR: "banana"},
+            capture_output=True,
+            text=True,
+        )
+        assert result.returncode != 0
+        assert "banana" in result.stderr
+        assert "PROBPIPE_CACHE_MODE" in result.stderr
+
+    def test_explicit_assignment_overrides_env(self, monkeypatch):
+        monkeypatch.setenv(_CACHE_MODE_ENV_VAR, "fingerprint")
+        pc = PrefectConfig()
+        assert pc.cache_mode is CacheMode.FINGERPRINT
+        pc.cache_mode = CacheMode.OFF
+        assert pc.cache_mode is CacheMode.OFF
+
+    def test_reset_re_reads_env(self, monkeypatch):
+        monkeypatch.setenv(_CACHE_MODE_ENV_VAR, "fingerprint")
+        pc = PrefectConfig()
+        pc.cache_mode = CacheMode.OFF
+        pc.reset()
+        assert pc.cache_mode is CacheMode.FINGERPRINT

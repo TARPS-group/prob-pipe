@@ -10,7 +10,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from probpipe import Normal, Record
-from probpipe.core._fingerprint import fingerprint
+from probpipe.core._fingerprint import environment_salt, fingerprint
 from probpipe.core.node import WorkflowFunction
 from probpipe.core.provenance import ParentInfo, Provenance
 
@@ -582,3 +582,48 @@ class TestParentInfoIdentity:
         b = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
         assert a == b
         assert hash(a) == hash(b)
+
+
+# ===========================================================================
+# Environment salt (folded into the cache key so env drift is a cache miss)
+# ===========================================================================
+
+
+class TestEnvironmentSalt:
+    def test_returns_string(self):
+        assert isinstance(environment_salt(), str)
+
+    def test_deterministic(self):
+        # Same environment → identical salt across calls.
+        assert environment_salt() == environment_salt()
+
+    def test_contains_all_components(self):
+        salt = environment_salt()
+        assert "probpipe=" in salt
+        assert "jax=" in salt
+        assert "x64=" in salt
+
+    def test_reflects_real_jax_version(self):
+        # Compared against an independent read of jax.__version__, so this fails
+        # if the salt hard-coded or dropped the version rather than reading it.
+        import jax
+
+        assert f"jax={jax.__version__}" in environment_salt()
+
+    def test_x64_flag_changes_salt(self):
+        # The load-bearing property: toggling jax_enable_x64 must change the salt
+        # (same code + inputs under x64 on/off produce different array dtypes, so
+        # they must key differently). Restored in finally to avoid leaking state.
+        import jax
+
+        original = jax.config.jax_enable_x64
+        try:
+            jax.config.update("jax_enable_x64", False)
+            salt_false = environment_salt()
+            jax.config.update("jax_enable_x64", True)
+            salt_true = environment_salt()
+        finally:
+            jax.config.update("jax_enable_x64", original)
+        assert salt_false != salt_true
+        assert "x64=False" in salt_false
+        assert "x64=True" in salt_true
