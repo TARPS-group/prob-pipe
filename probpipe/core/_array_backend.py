@@ -314,14 +314,14 @@ def _register_pandas() -> None:
 
     def _dense_dtype(dtypes: Any) -> np.dtype | None:
         # The single dense numpy dtype a Series / DataFrame of these column
-        # dtypes densifies to (via to_numpy / to_jax), or None when a column has
-        # no dense numpy dtype. A masked / extension numeric column has no dense
-        # numpy view and must hold NA as NaN, so it contributes its underlying
-        # dense dtype when that already holds NaN — a float or complex, kept at
-        # its own width (Float32 -> float32, Sparse[complex128] -> complex128) —
-        # and float64 otherwise (integer / boolean have no NaN). Every other
-        # column contributes its own dtype. The result is their common
-        # promotion, so a complex column is never truncated to float.
+        # dtypes densifies to, or None when a column has no dense numpy dtype.
+        # A masked / extension numeric column has no dense numpy view and must
+        # hold NA as NaN. It contributes its underlying dtype when that already
+        # holds NaN, so a nullable float keeps its width and a complex column
+        # stays complex; an integer or boolean underlying promotes to float64
+        # instead. Every other column contributes its own dtype, and the result
+        # is their common promotion, so a complex column is never truncated to a
+        # float.
         contribs: list[np.dtype] = []
         for d in dtypes:
             if _is_nullable_numeric(d):
