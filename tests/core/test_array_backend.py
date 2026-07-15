@@ -598,3 +598,13 @@ class TestNativeMetadataInIdentity:
         r1 = NumericRecord("r", temps=da)
         r2 = NumericRecord("r", temps=da)
         assert r1 == r2
+
+    def test_metadata_key_hashes_in_full(self, da):
+        # The __eq__ metadata key is the FULL (uncapped) fingerprint of the
+        # backend metadata — never windowed — so metadata comparison stays
+        # exact even for an oversized coordinate array.
+        from probpipe.core._fingerprint import fingerprint
+        from probpipe.core.record import _leaf_metadata_key
+
+        meta = array_backend_for(da).metadata(da)
+        assert _leaf_metadata_key(da) == fingerprint(meta, max_array_bytes=None)

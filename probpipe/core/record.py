@@ -127,6 +127,12 @@ def _leaf_metadata_key(leaf: Any) -> Any:
     A registered backend's ``metadata`` (coords / index / ...) is reduced to a
     content digest so array-bearing metadata compares by value; an unregistered
     leaf, or one whose metadata is ``None`` (a bare array), keys as ``None``.
+    The metadata is hashed **in full** (``max_array_bytes=None``): unlike a
+    value fingerprint it is never windowed above the size cap, so two leaves
+    whose metadata differs only in a region a window would skip are still
+    distinguished — ``__eq__`` metadata comparison is exact, not sampled.
+    Metadata is normally small; a rare oversized coordinate array is fully
+    materialised only when such records are actually compared.
     """
     backend = array_backend_for(leaf)
     if backend is None:
@@ -136,7 +142,7 @@ def _leaf_metadata_key(leaf: Any) -> Any:
         return None
     from ._fingerprint import fingerprint
 
-    return fingerprint(meta)
+    return fingerprint(meta, max_array_bytes=None)
 
 
 def _canonical_dtype_str(leaf: Any) -> str:

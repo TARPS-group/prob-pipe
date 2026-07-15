@@ -569,6 +569,23 @@ class TestArrayEdgeCases:
             jnp.asarray(changed), max_array_bytes=1000
         )
 
+    def test_over_cap_windowing_is_deterministic(self):
+        # Above the cap the digest is a deterministic function of the array
+        # (evenly-spaced windows + byte count), never random: same array, same
+        # digest across calls.
+        a = np.arange(100_000, dtype=np.float64)
+        assert fingerprint(a, max_array_bytes=1000) == fingerprint(a, max_array_bytes=1000)
+
+    def test_full_hash_catches_interior_change_windowing_can_miss(self):
+        # Windowing over the cap is lossy: an interior change between windows
+        # can collide. Hashing in full (max_array_bytes=None) always
+        # distinguishes it — which is why __eq__ metadata comparison uses the
+        # full hash (see record._leaf_metadata_key).
+        base = np.zeros(100_000, dtype=np.float64)
+        changed = base.copy()
+        changed[50_000] = 1.0  # a lone interior element, between window offsets
+        assert fingerprint(base, max_array_bytes=None) != fingerprint(changed, max_array_bytes=None)
+
     def test_object_dtype_array_stable_by_content(self):
         a = np.array(["x", "y", "z"], dtype=object)
         b = np.array(["x", "y", "z"], dtype=object)
