@@ -242,40 +242,39 @@ def _coord_ints(leaf):
     return [int(v) for v in leaf.coords["t"].values]
 
 
-class TestNumericRecordAuxPickle:
-    """A NumericRecord carrying backend metadata round-trips it through pickle
-    (and cloudpickle, for Ray transport): the aux-carrying ``__reduce__`` branch
-    pickles the native form, so ``to_native`` stays faithful after unpickling.
+class TestNumericRecordNativePickle:
+    """A NumericRecord's native leaves round-trip through pickle (and
+    cloudpickle, for Ray transport) verbatim: the backend objects pickle
+    themselves, so metadata survives at every nesting level with no capture
+    or restore step.
     """
 
-    def test_pickle_preserves_top_level_xarray_aux(self, xr_da):
+    def test_pickle_preserves_top_level_xarray_native(self, xr_da):
         nr = NumericRecord("nr", temps=xr_da, extra=jnp.array(1.0))
         restored = roundtrip(nr)
-        assert restored.aux is not None
-        back = restored.to_native()
-        assert back["temps"].dims == ("t",)
-        assert _coord_ints(back["temps"]) == [10, 20, 30]
-        assert back["temps"].attrs == {"units": "meters"}
+        # Native leaves pickle themselves: the restored field IS a DataArray.
+        assert restored["temps"].dims == ("t",)
+        assert _coord_ints(restored["temps"]) == [10, 20, 30]
+        assert restored["temps"].attrs == {"units": "meters"}
+        assert type(restored["temps"]).__name__ == "DataArray"
 
-    def test_pickle_preserves_nested_xarray_aux(self, xr_da):
-        # The root has no top-level aux; the nested record carries it and is
-        # restored through its own ``__reduce__`` when the root pickles the
-        # fast-path store.
+    def test_pickle_preserves_nested_xarray_native(self, xr_da):
+        # A nested native leaf pickles through the nested record verbatim.
         outer = NumericRecord("outer", grp=NumericRecord("grp", temps=xr_da))
-        back = roundtrip(outer).to_native()
+        back = roundtrip(outer)
         assert back.at_path("grp/temps").dims == ("t",)
         assert _coord_ints(back.at_path("grp/temps")) == [10, 20, 30]
 
-    def test_cloudpickle_preserves_xarray_aux(self, xr_da):
+    def test_cloudpickle_preserves_xarray_native(self, xr_da):
         # Ray ships task arguments via cloudpickle.
-        back = cloudpickle_roundtrip(NumericRecord("nr", temps=xr_da)).to_native()
+        back = cloudpickle_roundtrip(NumericRecord("nr", temps=xr_da))
         assert back["temps"].dims == ("t",)
         assert _coord_ints(back["temps"]) == [10, 20, 30]
 
-    def test_pickle_preserves_pandas_series_aux(self):
+    def test_pickle_preserves_pandas_series_native(self):
         pd = pytest.importorskip("pandas")
         s = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"], name="obs")
-        back = roundtrip(NumericRecord("nr", vals=s)).to_native()
+        back = roundtrip(NumericRecord("nr", vals=s))
         restored = back["vals"]
         assert isinstance(restored, pd.Series)
         assert list(restored.index) == ["a", "b", "c"]
@@ -283,20 +282,20 @@ class TestNumericRecordAuxPickle:
         assert restored.dtype == s.dtype
         assert [float(v) for v in restored] == [1.0, 2.0, 3.0]
 
-    def test_pickle_preserves_pandas_dataframe_aux(self):
+    def test_pickle_preserves_pandas_dataframe_native(self):
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
-        back = roundtrip(NumericRecord("nr", table=df)).to_native()
+        back = roundtrip(NumericRecord("nr", table=df))
         restored = back["table"]
         assert isinstance(restored, pd.DataFrame)
         assert list(restored.columns) == ["x", "y"]
         assert list(restored.index) == ["r0", "r1"]
         assert [float(v) for v in restored["x"]] == [1.0, 2.0]
 
-    def test_cloudpickle_preserves_pandas_series_aux(self):
+    def test_cloudpickle_preserves_pandas_series_native(self):
         pd = pytest.importorskip("pandas")
         s = pd.Series([4.0, 5.0], index=["p", "q"], name="w")
-        back = cloudpickle_roundtrip(NumericRecord("nr", vals=s)).to_native()
+        back = cloudpickle_roundtrip(NumericRecord("nr", vals=s))
         assert list(back["vals"].index) == ["p", "q"]
         assert back["vals"].name == "w"
 
@@ -348,12 +347,12 @@ class TestPicklePreservesTemplate:
         nr = NumericRecord("nr", {"x": da}, event_template=tpl)
         back = roundtrip(nr)
         assert back.event_template == nr.event_template  # explicit template survived
-        assert back.to_native()["x"].dims == ("t",)  # aux still restores on the native path
+        assert back["x"].dims == ("t",)  # the native leaf survived verbatim
 
-    def test_pickle_aux_free_record_takes_fast_path(self):
-        # No aux -> the direct bare-array path; still round-trips, aux stays None.
+    def test_pickle_bare_array_record(self):
+        # Bare jax leaves are their own native form; the single pickle path
+        # round-trips them directly.
         nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))
         back = roundtrip(nr)
-        assert back.aux is None
         assert [float(v) for v in back["x"]] == [1.0, 2.0]
         assert float(back["y"]) == pytest.approx(3.0)

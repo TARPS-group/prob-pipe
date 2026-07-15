@@ -384,14 +384,14 @@ class TestBoundaryRules:
         assert pickle.loads(pickle.dumps(nr)) == nr
         assert pickle.loads(pickle.dumps(r)) == r
 
-    def test_path_keyed_numeric_construction_preserves_backend_aux(self):
-        # Backend metadata on a nested leaf survives path-keyed construction:
-        # aux is captured by the nested record that owns the leaf, so
-        # to_native() restores the original type at its /-path.
+    def test_path_keyed_numeric_construction_keeps_native_leaf(self):
+        # A nested leaf built through a path key is stored natively by the
+        # nested record that owns it — the original type is read back at
+        # its /-path with no restore step.
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(jnp.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
         nr = NumericRecord("nr", {"a/b": da, "c": 3.0})
-        restored = nr.to_native().at_path("a/b")
+        restored = nr.at_path("a/b")
         assert isinstance(restored, xr.DataArray)
         assert restored.dims == ("t",)
 

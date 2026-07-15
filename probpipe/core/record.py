@@ -22,7 +22,7 @@ as a record.
 The ``Record`` family
 ---------------------
 - :class:`Record`: represents a single value, which may contain multiple fields.
-- :class:`~probpipe.NumericRecord`: a subclass in which all fields are JAX arrays.
+- :class:`~probpipe.NumericRecord`: a subclass in which all fields are numeric, stored in native form (converted to JAX arrays lazily, at the compute boundary).
 - :class:`~probpipe.RecordArray`: batch of ``Record``s sharing one ``EventTemplate``.
 - :class:`~probpipe.NumericRecordArray`: batch of ``NumericRecord``s sharing one ``EventTemplate``.
 
@@ -41,10 +41,10 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
+from ._array_backend import array_backend_for
 from .event_template import (
     EventTemplate,
     NumericEventTemplate,
@@ -67,14 +67,12 @@ type _FieldValue = Any
 def _is_numeric_field_value(value: Any) -> bool:
     """Whether a raw field value triggers the ``NumericRecord`` promotion.
 
-    A value counts iff coercing it to a ``jax.Array`` loses nothing: a bare
-    numeric array (jax / numpy) or a numeric Python scalar. A backend-typed
-    numeric leaf — one the aux registry knows how to capture, e.g. an
-    ``xarray.DataArray`` or a ``pandas`` object — does **not** trigger
-    promotion, so it stays stored verbatim in a plain ``Record`` and the
-    caller opts into the coercion explicitly (``to_numeric()`` /
-    ``NumericRecord(...)``). A nested record counts iff it is a
-    ``NumericRecord``; a batched child never is.
+    A value counts iff it is numeric: a numeric Python scalar, a bare numeric
+    array (jax / numpy), or a native numeric container — ``xarray`` /
+    ``pandas`` / any registered array backend. Leaves are stored in native
+    form and converted only at the compute boundary, so promotion loses
+    nothing. A nested record counts iff it is a ``NumericRecord``; a batched
+    child never is.
     """
     if isinstance(value, Mapping):
         # A mapping value is nested structure (materialised into a child):
@@ -84,10 +82,6 @@ def _is_numeric_field_value(value: Any) -> bool:
         from ._numeric_record import NumericRecord
 
         return isinstance(value, NumericRecord)
-    from ._array_backend import aux_for
-
-    if aux_for(value) is not None:
-        return False
     return _full_array_shape_or_none(value) is not None
 
 
@@ -96,12 +90,88 @@ def _derived_record_name(field_keys: Iterable[str]) -> str:
     return "record(" + ",".join(field_keys) + ")"
 
 
+def _leaf_to_numpy(leaf: Any) -> np.ndarray:
+    """Materialise a numeric leaf to numpy on its native basis (registry-first).
+
+    Uses the registered backend's ``to_numpy`` (native dtype and full
+    precision) when *leaf*'s type is registered, else ``np.asarray`` — the same
+    basis :func:`fingerprint` hashes on, so a value comparison built on it
+    agrees with the content fingerprint.
+    """
+    backend = array_backend_for(leaf)
+    if backend is not None:
+        return np.asarray(backend.to_numpy(leaf))
+    return np.asarray(leaf)
+
+
+def _leaf_values_equal(a: Any, b: Any) -> bool:
+    """Whether two numeric leaves have equal values, on their native basis.
+
+    Both leaves materialise to numpy through the array-backend registry — the
+    same native, full-precision basis :func:`fingerprint` uses — rather than
+    converting to ``jax.Array`` first. So ``__eq__`` agrees with the content
+    fingerprint instead of comparing at the lossy compute-boundary precision (a
+    sub-``float32`` difference is not silently equated under JAX's default x32
+    policy), and ``NaN`` positions compare equal (``equal_nan``) for floating
+    data, so a record with a ``NaN`` leaf equals an independent copy of itself.
+    """
+    a_np = _leaf_to_numpy(a)
+    b_np = _leaf_to_numpy(b)
+    equal_nan = np.issubdtype(a_np.dtype, np.inexact) and np.issubdtype(b_np.dtype, np.inexact)
+    return bool(np.array_equal(a_np, b_np, equal_nan=equal_nan))
+
+
+def _leaf_metadata_key(leaf: Any) -> Any:
+    """A comparable key for a leaf's native-container metadata, or ``None``.
+
+    A registered backend's ``metadata`` (coords / index / ...) is reduced to a
+    content digest so array-bearing metadata compares by value; an unregistered
+    leaf, or one whose metadata is ``None`` (a bare array), keys as ``None``.
+    The metadata is hashed **in full** (``max_array_bytes=None``): unlike a
+    value fingerprint it is never windowed above the size cap, so two leaves
+    whose metadata differs only in a region a window would skip are still
+    distinguished — ``__eq__`` metadata comparison is exact, not sampled.
+    Metadata is normally small; a rare oversized coordinate array is fully
+    materialised only when such records are actually compared.
+    """
+    backend = array_backend_for(leaf)
+    if backend is None:
+        return None
+    meta = backend.metadata(leaf)
+    if meta is None:
+        return None
+    from ._fingerprint import fingerprint
+
+    return fingerprint(meta, max_array_bytes=None)
+
+
+def _canonical_dtype_str(leaf: Any) -> str:
+    """The leaf's structural dtype as a string, without materialising it.
+
+    Reads the native numpy dtype (registry-first, else ``.dtype``, else the
+    numpy dtype of a bare scalar) and canonicalizes it
+    (``jax.dtypes.canonicalize_dtype``, applying JAX's x64 policy) so widths
+    JAX would unify hash together, keeping :meth:`__hash__` a stable coarse
+    key. ``"none"`` when the leaf has no single dense dtype.
+    """
+    backend = array_backend_for(leaf)
+    if backend is not None:
+        nd = backend.numpy_dtype(leaf)
+    else:
+        nd = getattr(leaf, "dtype", None)
+        if nd is None:
+            nd = np.asarray(leaf).dtype
+    if nd is None:
+        return "none"
+    return str(jax.dtypes.canonicalize_dtype(np.dtype(nd)))
+
+
 # ---------------------------------------------------------------------------
 # Record
 # ---------------------------------------------------------------------------
 
 
-class Record(NamedTree, Tracked, Annotated):
+class Record(NamedTree[Any], Tracked, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection
@@ -300,10 +370,11 @@ class Record(NamedTree, Tracked, Annotated):
     The PyTree registration's children are the field values and its static aux
     data is the ``(event_template, name, name_is_auto)`` triple, so the
     template and name survive a ``tree_flatten`` / ``tree_unflatten``
-    round-trip. :attr:`provenance`, :attr:`annotations`, and backend
-    (``xarray`` / ``pandas``) aux metadata do **not** cross a JAX transform
-    boundary; re-attach provenance on the reconstructed Record if you need to
-    preserve the chain.
+    round-trip. :attr:`provenance` and :attr:`annotations` do **not** cross a
+    JAX transform boundary; re-attach provenance on the reconstructed Record
+    if you need to preserve the chain. On a :class:`NumericRecord`, the
+    flatten boundary is also where native leaves convert to ``jax.Array``, so
+    a value that crosses a JAX transform comes back with bare-array leaves.
     """
 
     __slots__ = (
@@ -343,13 +414,11 @@ class Record(NamedTree, Tracked, Annotated):
                 source = {
                     k: v for k, v in kwargs.items() if k not in ("event_template", "name_is_auto")
                 }
-            # Promote only when every field coerces to a bare array with
-            # nothing lost (the value probe) *and* no explicit non-numeric
-            # template vetoes it. A backend-typed leaf (xarray / pandas)
-            # fails the probe, so a plain ``Record`` carrying one stays plain
-            # even when its numeric template is threaded back in — by a
-            # structural edit or ``from_field_values`` — rather than silently
-            # coercing the leaf and breaking the ``to_native`` round-trip.
+            # Promote when every field is numeric (the value probe — bare
+            # arrays, numeric scalars, and native backend containers alike)
+            # and no explicit non-numeric template vetoes it. Leaves are
+            # stored in native form, so promotion never coerces or loses
+            # anything.
             template_allows = event_template is None or isinstance(
                 event_template, NumericEventTemplate
             )
@@ -410,7 +479,7 @@ class Record(NamedTree, Tracked, Annotated):
                         # The child already carries this exact template object
                         # (e.g. built by ``from_field_values`` or threaded from
                         # the producing generator) — reuse it verbatim, keeping
-                        # its provenance / backend aux. Identity, not ``==``:
+                        # its provenance and native leaves. Identity, not ``==``:
                         # the point is to adopt the *supplied* template object,
                         # and an equal-but-distinct child template must still be
                         # rebuilt through it.
@@ -456,7 +525,7 @@ class Record(NamedTree, Tracked, Annotated):
 
         A nested object takes its name from its field key. When the child
         already carries that name it is stored as-is; otherwise a shallow
-        identity copy (fields, template, aux shared) is stored under the key
+        identity copy (fields and template shared) is stored under the key
         name, marked auto — the name follows the key, so a later rename of
         the field re-derives it.
         """
@@ -649,7 +718,7 @@ class Record(NamedTree, Tracked, Annotated):
     # ``NamedTree``, overridden here as recursive child surgery: untouched
     # children — leaf values and whole subtrees — are reused **verbatim**,
     # preserving their concrete class (a nested ``NumericRecord`` stays
-    # numeric) and their metadata (name, provenance, backend aux); only the
+    # numeric), their metadata, and their native leaf form; only the
     # children a path actually touches are rebuilt, recursively. The
     # authoritative ``event_template`` is assembled from the surviving
     # children's own templates, so the subtree lock-step invariant holds by
@@ -855,14 +924,21 @@ class Record(NamedTree, Tracked, Annotated):
 
         Each numeric leaf is converted via ``np.asarray``. Non-numeric
         leaves (strings, opaque objects) are returned as-is. Backend
-        metadata (xarray dims / coords, pandas index) is stripped — use
-        :meth:`to_numeric` followed by :meth:`NumericRecord.to_native`
-        if you need a metadata-preserving round-trip.
+        metadata (xarray dims / coords, pandas index) is stripped by this
+        export — the record itself keeps its leaves in native form, so
+        read the fields directly when you need the original containers.
         """
         result: dict[str, Any] = {}
         for name, val in self._tree.items():
             if isinstance(val, Record):
                 result[name] = val.to_numpy()
+                continue
+            backend = array_backend_for(val)
+            if backend is not None:
+                # A registered container (incl. non-numpy-protocol backends)
+                # materialises through its own hook, not a raw ``np.asarray``
+                # that would box the object.
+                result[name] = backend.to_numpy(val)
             elif hasattr(val, "shape") or isinstance(val, (int, float, complex)):
                 result[name] = np.asarray(val)
             else:
@@ -870,26 +946,21 @@ class Record(NamedTree, Tracked, Annotated):
         return result
 
     def to_numeric(self) -> NumericRecord:
-        """Convert to a :class:`NumericRecord` with every leaf a ``jax.Array``.
+        """Return this value as a :class:`NumericRecord`, validating — not converting.
 
-        Per-field metadata that ``jnp.asarray`` would drop (xarray
-        dims / coords / attrs, pandas index / columns / dtypes) is
-        captured via the aux registry in
-        :mod:`probpipe.core._array_backend` and stored on the resulting
-        ``NumericRecord``. Calling :meth:`NumericRecord.to_native`
-        on the result reverses the conversion, restoring each leaf to
-        its original backend type. Nested ``Record`` children recurse
-        — every level becomes a ``NumericRecord``.
-
-        This is the single entry point for the ``Record`` → ``NumericRecord``
-        conversion; constructing ``NumericRecord(record.name,
-        **record.select_all())`` runs the same coercion and aux-capture path.
+        Every leaf must be numeric (a numeric scalar, a bare jax / numpy
+        array, or a native container such as an ``xarray`` / ``pandas``
+        object). Leaves are stored **in native form** — nothing is coerced;
+        conversion to ``jax.Array`` happens lazily at the compute boundary.
+        Nested ``Record`` children recurse — every level becomes a
+        ``NumericRecord``. On a value that is already a ``NumericRecord``
+        this is the identity (returns ``self``).
 
         Raises
         ------
         TypeError
-            If any leaf is not coercible via ``jnp.asarray`` (e.g.
-            strings, opaque Python objects).
+            If any leaf is not numeric (e.g. strings, opaque Python
+            objects).
         """
         # Lazy import to avoid the module-level circular dep:
         # _numeric_record.py imports Record from this module.
@@ -1070,10 +1141,16 @@ class Record(NamedTree, Tracked, Annotated):
         Concretely, equality requires (1) the same concrete type, (2) equal
         :attr:`event_template` (so two values with structurally distinct schemas
         — e.g. differing ``support`` on a numeric leaf — are unequal even with
-        identical bytes), and (3) field-by-field equal values (arrays compared
-        with ``jnp.array_equal``, nested records recursively, opaque leaves with
-        ``==``). Self-identity short-circuits to ``True`` so a record equals
-        itself even when a leaf contains ``NaN``.
+        identical bytes), and (3) field-by-field equal values. A numeric leaf
+        is compared on its **native values** (materialised through the
+        array-backend registry — the same basis :func:`fingerprint` uses, so
+        equality and the content fingerprint agree) **and** on its
+        native-container metadata (an ``xarray`` leaf's coords / dims / attrs,
+        a ``pandas`` leaf's index / columns): two leaves with equal values but
+        different coords are unequal, because that metadata is observable
+        content. ``NaN`` positions compare equal (``equal_nan``), so a record
+        with a ``NaN`` leaf equals an independent copy of itself. Nested
+        records compare recursively; opaque leaves compare with ``==``.
 
         Whether two records with equal data compare equal therefore turns on
         their templates. Built from equal data *without* an explicit template,
@@ -1083,12 +1160,13 @@ class Record(NamedTree, Tracked, Annotated):
         since :meth:`EventTemplate.infer_from` is lossy (it cannot recover an
         ``ArraySpec``'s ``dtype`` / ``support``, etc.).
 
-        :meth:`__hash__` is consistent with this: it hashes the per-field
-        shape / dtype structure, so equal records (equal data ⟹ equal shapes)
-        always hash equal.
+        :meth:`__hash__` is a coarser, structural hash (shape only, never the
+        values or metadata), so equal records always hash equal while records
+        that differ only in values or coords legitimately collide.
         """
-        # Identity fast-path: self-equality must return True even when
-        # leaves contain NaN (``jnp.array_equal`` treats NaN != NaN).
+        # Identity fast-path — a cheap short-circuit before the field walk
+        # (NaN leaves also compare equal across independent copies, via the
+        # ``equal_nan`` comparison in ``_leaf_values_equal``).
         if self is other:
             return True
         if type(self) is not type(other):
@@ -1104,34 +1182,45 @@ class Record(NamedTree, Tracked, Annotated):
                     return False
             elif isinstance(a, Record) or isinstance(b, Record):
                 return False
-            elif hasattr(a, "shape") or hasattr(b, "shape"):
+            elif (
+                _full_array_shape_or_none(a) is not None or _full_array_shape_or_none(b) is not None
+            ):
+                # A numeric leaf (native container or bare array): compare the
+                # native values (the fingerprint basis), then the
+                # native-container metadata (coords / index / ...).
                 try:
-                    if not jnp.array_equal(jnp.asarray(a), jnp.asarray(b)):
+                    if not _leaf_values_equal(a, b):
                         return False
                 except Exception:
                     if a is not b and a != b:
                         return False
+                    continue
+                if _leaf_metadata_key(a) != _leaf_metadata_key(b):
+                    return False
             else:
                 if a != b:
                     return False
         return True
 
     def __hash__(self) -> int:
-        # Structural hash over class, field names, and per-field shape+dtype.
-        # Numeric leaves are coerced via ``jnp.asarray`` so a scalar and its
-        # array wrapping hash alike (they compare equal under ``__eq__``);
-        # opaque leaves fall back to ``type(val)``.
+        # Coarse structural hash over class, field names, and per-field shape
+        # + canonicalized dtype — never the values or the native-container
+        # metadata, so it does not materialise a lazy / disk-backed leaf. The
+        # dtype is canonicalized (``jax.dtypes.canonicalize_dtype`` on the
+        # native numpy dtype) so widths JAX would unify hash together, keeping
+        # equal records hashing equal. Two records that differ only in values
+        # or coords hash equal (a legal collision); equal records always hash
+        # equal.
         parts: list[Any] = [type(self).__name__]
         for name, val in self._tree.items():
             if isinstance(val, Record):
                 parts.append((name, hash(val)))
                 continue
-            try:
-                arr = jnp.asarray(val)
-            except (TypeError, ValueError):
+            shape = _full_array_shape_or_none(val)
+            if shape is None:
                 parts.append((name, "opaque", type(val).__name__))
                 continue
-            parts.append((name, tuple(arr.shape), str(arr.dtype)))
+            parts.append((name, shape, _canonical_dtype_str(val)))
         return hash(tuple(parts))
 
 
@@ -1194,12 +1283,13 @@ def _record_flatten(v: Record) -> tuple[list, tuple[EventTemplate, str, bool]]:
 
     The children are the stored field values exactly as-is; JAX further
     traverses any nested ``Record`` children because ``Record`` is a
-    registered pytree type, and non-pytree objects (strings, opaque objects)
-    become pytree leaves themselves. The static aux data is the
-    ``(event_template, name, name_is_auto)`` triple — the template and name
-    survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
-    provenance, annotations, and backend (``xarray`` / ``pandas``) aux
-    metadata do not cross a JAX transform boundary.
+    registered pytree type, and non-pytree objects (strings, opaque objects,
+    native containers) become pytree leaves themselves. The static aux data
+    is the ``(event_template, name, name_is_auto)`` triple — the template and
+    name survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
+    provenance and annotations do not cross a JAX transform boundary.
+    (``NumericRecord`` registers its own flatten, which converts native
+    leaves to ``jax.Array`` at this boundary.)
     """
     # Emit children in the template's field order so they realign with the
     # aux template on unflatten. ``_tree`` order normally matches, but a

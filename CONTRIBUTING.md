@@ -538,7 +538,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `Tracked` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `Tracked` carries `name`, `name_is_auto`, and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Distribution` and `Record` mix in both; the batch types are tracked terms through their bases. |
 | `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and the `Tracked` / `Annotated` identity attributes |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for workflow function splatting |
-| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
+| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
 | `RecordArray` | Batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array |
 | `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `to_vector` / `mean` / `var` |
 | `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, template, vec)` / `NumericRecordArray.from_vector(...)` rebuild a numeric value from its 1-D vector given a template, without an example instance |
@@ -633,28 +633,38 @@ When adding a new converter, choose a priority that reflects its
 specificity – higher priority means it is tried first. Protocol-level
 converters should be above concrete-type converters.
 
-### Aux registry
+### Array-backend registry
 
-The `aux_registry` in `probpipe.core._array_backend` is a flat
-`dict[type, AuxHooks]` mapping a leaf type to a `(capture, restore)`
-pair. It is used only for round-tripping backend-specific metadata
-across the `Record` ↔ `NumericRecord` boundary — `jnp.asarray` drops
-xarray dims/coords/attrs and pandas index/columns/dtypes, and the
-aux registry restores them.
+The backend registry in `probpipe.core._array_backend` is a flat
+`dict[type, ArrayBackend]` mapping a native container type to its
+recognition/conversion hooks. `NumericRecord` stores leaves in native
+form, so most containers need no support code: anything exposing a
+numeric numpy `dtype` / `shape` is recognised by duck-typing and
+converted with `jnp.asarray` at the compute boundary. Register a
+backend for containers the duck path cannot see or convert — a
+non-numpy dtype, a device tensor needing custom conversion, a
+frames-style container:
 
 ```python
-from probpipe import register_aux
+from probpipe import ArrayBackend, register_array_backend
 
-register_aux(
-    MyArrayLike,
-    capture=lambda leaf: {"label": leaf.label},
-    restore=lambda arr, aux: MyArrayLike(arr, label=aux["label"]),
+register_array_backend(
+    MyTensor,
+    ArrayBackend(
+        event_shape=lambda t: tuple(t.shape),
+        numpy_dtype=lambda t: np.dtype("float32"),
+        to_jax=lambda t: jnp.asarray(t.numpy()),
+        to_numpy=lambda t: t.numpy(),
+    ),
 )
 ```
 
-Built-in registrations cover `xarray.DataArray`, `pandas.Series`,
-and `pandas.DataFrame`. Lookup walks the MRO of `type(obj)`, so
-registering a base class also covers its subclasses.
+One registration makes the type recognised everywhere at once:
+template inference and `ArraySpec.is_valid`, `NumericRecord`
+promotion, boundary conversion, batch stacking, and `fingerprint()`.
+The built-in registration covers `pandas.DataFrame` (per-column
+`.dtypes`, no single `.dtype`). Lookup walks the MRO of `type(obj)`,
+so registering a base class also covers its subclasses.
 
 This registry is **not** a behavioural-dispatch hierarchy — it has
 no priority system, no feasibility check, no `execute()`. Use a

@@ -8,6 +8,7 @@ import textwrap
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from probpipe import Normal, Record
 from probpipe.core._fingerprint import fingerprint
@@ -568,6 +569,23 @@ class TestArrayEdgeCases:
             jnp.asarray(changed), max_array_bytes=1000
         )
 
+    def test_over_cap_windowing_is_deterministic(self):
+        # Above the cap the digest is a deterministic function of the array
+        # (evenly-spaced windows + byte count), never random: same array, same
+        # digest across calls.
+        a = np.arange(100_000, dtype=np.float64)
+        assert fingerprint(a, max_array_bytes=1000) == fingerprint(a, max_array_bytes=1000)
+
+    def test_full_hash_catches_interior_change_windowing_can_miss(self):
+        # Windowing over the cap is lossy: an interior change between windows
+        # can collide. Hashing in full (max_array_bytes=None) always
+        # distinguishes it — which is why __eq__ metadata comparison uses the
+        # full hash (see record._leaf_metadata_key).
+        base = np.zeros(100_000, dtype=np.float64)
+        changed = base.copy()
+        changed[50_000] = 1.0  # a lone interior element, between window offsets
+        assert fingerprint(base, max_array_bytes=None) != fingerprint(changed, max_array_bytes=None)
+
     def test_object_dtype_array_stable_by_content(self):
         a = np.array(["x", "y", "z"], dtype=object)
         b = np.array(["x", "y", "z"], dtype=object)
@@ -582,3 +600,95 @@ class TestParentInfoIdentity:
         b = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
         assert a == b
         assert hash(a) == hash(b)
+
+
+class TestNumericContainerHashing:
+    """The ``container:`` tier — native numeric containers (xarray / pandas /
+    registered backends) hash by concrete type + materialised content, so
+    they are content-stable across processes rather than falling to the
+    process-dependent ``repr`` last resort. Container metadata (coords /
+    index / column labels) is deliberately *not* part of the digest.
+    """
+
+    def test_dataarray_hashes_by_content_not_repr(self):
+        xr = pytest.importorskip("xarray")
+        a = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"])
+        b = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"])
+        c = xr.DataArray(np.array([1.0, 2.0, 4.0]), dims=["t"])
+        assert fingerprint(a) == fingerprint(b)
+        assert fingerprint(a) != fingerprint(c)
+
+    def test_dataarray_coords_in_digest(self):
+        # Equal values, different coords -> DIFFERENT fingerprint: the
+        # container's metadata is identity-bearing content (a workflow may
+        # read coords), so it is folded into the digest.
+        xr = pytest.importorskip("xarray")
+        a = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [0, 1]})
+        b = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
+        c = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [0, 1]})
+        assert fingerprint(a) != fingerprint(b)
+        assert fingerprint(a) == fingerprint(c)  # equal values AND coords
+
+    def test_series_index_and_values_in_digest(self):
+        pd = pytest.importorskip("pandas")
+        a = pd.Series([1.0, 2.0], index=["a", "b"])
+        b = pd.Series([1.0, 2.0], index=["x", "y"])  # different index (metadata)
+        c = pd.Series([1.0, 9.0], index=["a", "b"])  # different values
+        d = pd.Series([1.0, 2.0], index=["a", "b"])  # identical
+        assert fingerprint(a) != fingerprint(b)  # index is identity-bearing
+        assert fingerprint(a) != fingerprint(c)
+        assert fingerprint(a) == fingerprint(d)
+
+    def test_dataframe_builtin_backend_hashes_by_content_and_metadata(self):
+        # The built-in DataFrame registration routes values through to_numpy
+        # and folds index/columns/dtypes into the digest.
+        pd = pytest.importorskip("pandas")
+        a = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
+        b = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
+        c = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 5.0]})
+        d = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
+        assert fingerprint(a) != fingerprint(b)  # index is identity-bearing
+        assert fingerprint(a) != fingerprint(c)  # values differ
+        assert fingerprint(a) == fingerprint(d)
+
+    def test_distinct_container_types_differ(self):
+        # The concrete type is part of the digest, so equal values in
+        # different containers do not collide.
+        xr = pytest.importorskip("xarray")
+        pd = pytest.importorskip("pandas")
+        vals = np.array([1.0, 2.0, 3.0])
+        prints = {
+            fingerprint(xr.DataArray(vals)),
+            fingerprint(pd.Series(vals)),
+        }
+        assert len(prints) == 2
+
+    def test_string_column_frame_not_container_tier(self):
+        # A non-numeric container is not numeric, so it must not reach the
+        # container tier — it falls to the repr last resort and still hashes
+        # stably within a process.
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"a": ["x", "y"]})
+        assert fingerprint(df) == fingerprint(df)
+
+    def test_native_container_stable_across_processes(self):
+        """A record with a native (xarray) leaf fingerprints identically in a
+        fresh interpreter — the property the future cache_key_fn relies on.
+        """
+        pytest.importorskip("xarray")
+        script = textwrap.dedent("""
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            import numpy as np
+            import xarray as xr
+            from probpipe import Record
+            from probpipe.core._fingerprint import fingerprint
+            da = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"], coords={"t": [10, 20, 30]})
+            print(fingerprint(Record("r", counts=da)))
+        """)
+        site = str(next(p for p in sys.path if "site-packages" in p))
+
+        def run():
+            return subprocess.check_output([sys.executable, "-c", script, site], text=True).strip()
+
+        assert run() == run()
