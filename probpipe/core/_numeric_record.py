@@ -78,7 +78,7 @@ class NumericRecord(Record):
 
     The numeric-leaf invariant, and native storage
     ----------------------------------------------
-    Every field (a leaf) must be numeric — a numeric array or container from
+    Every field must be numeric — a numeric array or container from
     any supported backend (``jax.numpy``, ``numpy``, ``xarray.DataArray``, a
     ``pandas`` object with numeric dtypes, or any type registered via
     :func:`~probpipe.register_array_backend`), or a numeric Python scalar
@@ -109,12 +109,11 @@ class NumericRecord(Record):
     ---------------------
     Native leaves are stored **by reference**, exactly as a plain
     :class:`Record` stores opaque leaves. Mutating a passed-in container in
-    place after construction therefore reaches the record — and, after the
-    leaf has crossed a compute boundary, additionally desynchronises the
-    cached converted array from the native view (navigation shows the
-    mutation, compute uses the snapshot taken at first conversion). Records
-    assume their data is not externally mutated mid-pipeline; no defensive
-    copies are made.
+    place after construction therefore reaches the record. Once the leaf has
+    crossed a compute boundary, navigation and compute can disagree:
+    navigation reflects the mutation, but compute reuses the ``jax.Array``
+    snapshot cached at first conversion. Records assume their data is not
+    externally mutated mid-pipeline; no defensive copies are made.
 
     Equality, hashing, and lazy leaves
     ----------------------------------
@@ -130,10 +129,9 @@ class NumericRecord(Record):
     --------------------
     Because every leaf is numeric, the whole value can be flattened into a
     single dense 1-D array. :meth:`to_vector` converts and ravels the leaves,
-    in canonical leaf order (depth-first, insertion order), into a vector of
-    length :attr:`vector_size`; :meth:`from_vector` rebuilds the record from
-    such a vector (with bare ``jax.Array`` leaves — a reconstructed value has
-    no native provenance to restore). Note that this is different from
+    in canonical order, into a vector of length :attr:`vector_size`;
+    :meth:`from_vector` rebuilds the record from such a vector (with bare
+    ``jax.Array`` leaves). Note that this is different from
     ``list(record.values())``, which returns the ordered list of native
     fields and is supported by any ``Record``.
 
@@ -142,9 +140,8 @@ class NumericRecord(Record):
     A ``NumericRecord`` with exactly one field behaves like a thin wrapper
     around that field's value: ``float(r)``, ``int(r)``, ``bool(r)``,
     ``np.asarray(r)``, ``jnp.asarray(r)``, and the ``r.shape`` / ``r.dtype``
-    / ``r.ndim`` attributes all forward to the sole leaf (the value
-    coercions convert; the shape / dtype / ndim attributes read container
-    metadata without materialising). A record with more than one field, or
+    / ``r.ndim`` attributes all forward to the sole leaf (only the value
+    coercions materialise it). A record with more than one field, or
     whose single child is a nested record — an interior node, not a field —
     raises ``TypeError`` from these conversions, since unwrapping one field of
     several would be ambiguous; access a specific field explicitly in that
@@ -275,7 +272,7 @@ class NumericRecord(Record):
         stored verbatim.
 
         Raises ``TypeError`` on non-numeric input with a message that
-        names the offending field and its type.
+        names the offending field or child and its type.
         """
         cls_name = cls.__name__
         out: dict[str, Any] = {}
@@ -304,9 +301,9 @@ class NumericRecord(Record):
     # -- The compute boundary: lazy, cached conversion -----------------------
 
     def _child_field_as_jax(self, field_name: str) -> jnp.ndarray:
-        """The converted ``jax.Array`` for a direct-child leaf field (cached).
+        """The converted ``jax.Array`` for a direct-child field (cached).
 
-        *field_name* must name a field one level down — a leaf, not an
+        *field_name* must name a direct child that is a field, not an
         interior node. This is the single conversion point every compute
         boundary routes through. A leaf stored as a ``jax.Array`` (including a
         tracer inside a JAX transform) passes through untouched; a native
@@ -324,12 +321,11 @@ class NumericRecord(Record):
         return arr
 
     def _field_as_jax(self, key: str) -> jnp.ndarray:
-        """The converted ``jax.Array`` for the field (leaf) at *key* (any depth).
+        """The converted ``jax.Array`` for the field at *key*, at any depth.
 
-        *key* is a ``/``-path that must resolve to a field (a leaf); a path
-        naming an interior node is not valid input. Each path component
-        descends one level, delegating the final hop to
-        :meth:`_child_field_as_jax`.
+        *key* must address a field; a path to an interior node is not a key
+        and is not valid input. Each path component descends one level,
+        delegating the final hop to :meth:`_child_field_as_jax`.
         """
         child_name, sep, descendant_key = key.partition(_PATH_SEP)
         if sep:
@@ -415,7 +411,6 @@ class NumericRecord(Record):
         return self
 
     # -- Single-field scalar-like coercion ---------------------------------
-    # (See the class docstring's "Single-field records as scalars" section.)
 
     def __reduce__(self):
         # Native leaves pickle themselves, so one branch suffices: the stored
