@@ -8,14 +8,16 @@ from probpipe import EmpiricalDistribution, ProvenanceMode
 
 
 @pytest.fixture(autouse=True)
-def _reset_provenance_config():
-    """Always restore provenance_config to defaults after each test.
+def _reset_global_config():
+    """Always restore provenance_config and prefect_config to defaults.
 
-    Under pytest-xdist, a test that sets the mode and raises before its own
-    cleanup would otherwise leak the mode into subsequent tests on that worker.
+    Under pytest-xdist, a test that sets a global (provenance mode, cache mode,
+    workflow kind) and raises before its own cleanup would otherwise leak that
+    setting into subsequent tests on that worker.
     """
     yield
     probpipe.provenance_config.reset()
+    probpipe.prefect_config.reset()
 
 
 @pytest.fixture

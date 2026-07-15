@@ -42,6 +42,7 @@ a 3.13 one for the same source.
 from __future__ import annotations
 
 import hashlib
+import importlib.metadata as _metadata
 import math
 import struct
 from typing import Any
@@ -49,7 +50,7 @@ from typing import Any
 import jax as _jax
 import numpy as _np
 
-__all__ = ["fingerprint"]
+__all__ = ["environment_salt", "fingerprint"]
 
 # JAX is a hard dependency of probpipe, so ``jax.Array`` is always importable.
 _JAX_ARRAY_TYPE = _jax.Array
@@ -92,6 +93,39 @@ def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BY
     h = hashlib.sha256()
     _update(h, obj, depth=0, max_array_bytes=max_array_bytes)
     return h.hexdigest()[:16]
+
+
+def environment_salt() -> str:
+    """Return a stable string identifying the fingerprint-relevant environment.
+
+    :func:`fingerprint` hashes user bytecode and input *content*, but not the
+    surrounding runtime.  Folding this salt into a cache key ensures that an
+    environment change is a cache **miss** rather than a stale **hit** on an
+    otherwise-identical content digest.  It captures:
+
+    - the ProbPipe version,
+    - the JAX version, and
+    - the ``jax_enable_x64`` flag — it changes array dtypes, and therefore the
+      dtype recorded in every array fingerprint, so the same values under
+      ``x64=True`` and ``x64=False`` must key differently.
+
+    The Python minor version is not included explicitly: it changes the
+    ``WorkflowFunction`` bytecode digest (already part of the cache key), so a
+    Python upgrade already invalidates keys for the function component.
+
+    Returns
+    -------
+    str
+        A human-readable, deterministic salt such as
+        ``"probpipe=0.1.0;jax=0.4.38;x64=False"``.
+    """
+    try:
+        probpipe_version = _metadata.version("probpipe")
+    except _metadata.PackageNotFoundError:
+        probpipe_version = "unknown"
+    return (
+        f"probpipe={probpipe_version};jax={_jax.__version__};x64={bool(_jax.config.jax_enable_x64)}"
+    )
 
 
 # ---------------------------------------------------------------------------

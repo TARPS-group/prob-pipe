@@ -40,7 +40,13 @@ from probpipe.core._array_backend import (
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import NumericRecordArray, RecordArray
-from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
+from probpipe.core.config import (
+    CacheMode,
+    ProvenanceMode,
+    WorkflowKind,
+    prefect_config,
+    provenance_config,
+)
 from probpipe.core.constraints import (
     Constraint,
     boolean,
@@ -212,6 +218,7 @@ __all__ = [
     "BootstrapDistribution",
     "BootstrapReplicateDistribution",
     "BroadcastDistribution",
+    "CacheMode",
     "Categorical",
     "Cauchy",
     "ConditionallyIndependentLikelihood",

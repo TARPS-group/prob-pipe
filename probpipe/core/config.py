@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 
 __all__ = [
+    "CacheMode",
     "PrefectConfig",
     "ProvenanceConfig",
     "ProvenanceMode",
@@ -115,6 +116,59 @@ def _auto_detect_task_runner() -> Any:
 
 
 # ---------------------------------------------------------------------------
+# CacheMode enum
+# ---------------------------------------------------------------------------
+
+
+class CacheMode(Enum):
+    """Controls whether Prefect task results are cached across runs.
+
+    Caching is opt-in and only takes effect when Prefect orchestration is
+    active (``WorkflowKind.TASK`` / ``FLOW``).
+
+    Members
+    -------
+    OFF
+        No caching.  Tasks always execute; behaviour is identical to not
+        configuring caching at all.  This is the default.
+    FINGERPRINT
+        Cache task results keyed by a stable content fingerprint of the user
+        function, its inputs, and the runtime environment.  A re-run with the
+        same function, inputs, and environment reuses the persisted result
+        instead of re-executing the task.
+    """
+
+    OFF = "off"
+    FINGERPRINT = "fingerprint"
+
+
+# ---------------------------------------------------------------------------
+# Environment-variable override for CacheMode
+# ---------------------------------------------------------------------------
+
+_CACHE_MODE_ENV_VAR = "PROBPIPE_CACHE_MODE"
+
+
+def _initial_cache_mode() -> CacheMode:
+    """Resolve the initial ``cache_mode`` from the environment.
+
+    Reads ``PROBPIPE_CACHE_MODE`` (case-insensitive).  Unset → ``OFF``.
+    Unknown values raise ``ValueError`` so deployment-config typos surface
+    loudly rather than silently disabling caching.
+    """
+    raw = os.environ.get(_CACHE_MODE_ENV_VAR)
+    if raw is None:
+        return CacheMode.OFF
+    try:
+        return CacheMode(raw.lower())
+    except ValueError as e:
+        valid = ", ".join(repr(m.value) for m in CacheMode)
+        raise ValueError(
+            f"{_CACHE_MODE_ENV_VAR}={raw!r} is not a valid CacheMode. Expected one of: {valid}."
+        ) from e
+
+
+# ---------------------------------------------------------------------------
 # PrefectConfig singleton
 # ---------------------------------------------------------------------------
 
@@ -140,6 +194,15 @@ class PrefectConfig:
         ``prefect-ray`` is installed, then ``DaskTaskRunner`` if
         ``prefect-dask`` is installed, otherwise Prefect's built-in
         default.
+    cache_mode : CacheMode
+        Cross-run task caching mode.  ``OFF`` (default) disables caching;
+        ``FINGERPRINT`` caches task results keyed by a content fingerprint.
+        Initial value comes from ``PROBPIPE_CACHE_MODE`` if set.  Only takes
+        effect under ``WorkflowKind.TASK`` / ``FLOW``.
+    cache_result_storage : object or None
+        Where cached results and cache-key records are stored.  ``None``
+        (default) uses Prefect's built-in local storage (single-machine only);
+        set a shared Prefect storage target to cache across workers/machines.
     """
 
     def __init__(self) -> None:
@@ -148,9 +211,11 @@ class PrefectConfig:
     # -- Public API ---------------------------------------------------------
 
     def reset(self) -> None:
-        """Restore all settings to defaults (re-reading the env var)."""
+        """Restore all settings to defaults (re-reading the env vars)."""
         self._workflow_kind: WorkflowKind = _initial_workflow_kind()
         self._task_runner: Any = None
+        self._cache_mode: CacheMode = _initial_cache_mode()
+        self._cache_result_storage: Any = None
 
     @property
     def workflow_kind(self) -> WorkflowKind:
@@ -186,6 +251,49 @@ class PrefectConfig:
         if self._task_runner is not None:
             return self._task_runner
         return _auto_detect_task_runner()
+
+    # -- Caching ------------------------------------------------------------
+
+    @property
+    def cache_mode(self) -> CacheMode:
+        """Current cross-run task caching mode (default ``OFF``)."""
+        return self._cache_mode
+
+    @cache_mode.setter
+    def cache_mode(self, value: CacheMode) -> None:
+        if not isinstance(value, CacheMode):
+            raise TypeError(
+                f"cache_mode must be a CacheMode enum member, got {type(value).__name__}"
+            )
+        self._cache_mode = value
+
+    @property
+    def caching_enabled(self) -> bool:
+        """Whether caching is active (``cache_mode`` is not ``OFF``)."""
+        return self._cache_mode is not CacheMode.OFF
+
+    @property
+    def cache_result_storage(self) -> Any:
+        """Storage target for persisted cache results and cache-key records.
+
+        ``None`` (default) uses Prefect's built-in local storage, which is
+        single-machine only.  Set a shared Prefect storage target to cache
+        across workers/machines; the same target is used for both the task's
+        ``result_storage`` and the cache policy's ``key_storage``.
+        """
+        return self._cache_result_storage
+
+    @cache_result_storage.setter
+    def cache_result_storage(self, value: Any) -> None:
+        self._cache_result_storage = value
+
+    def resolve_cache_storage(self) -> Any:
+        """Return the configured cache storage target, or ``None`` for local.
+
+        The value is passed to both Prefect's ``result_storage`` and the cache
+        policy's ``key_storage``.  ``None`` means use Prefect's local default.
+        """
+        return self._cache_result_storage
 
 
 # Module-level singleton
