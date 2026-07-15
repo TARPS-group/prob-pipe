@@ -171,7 +171,7 @@ def _canonical_dtype_str(leaf: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-class Record(NamedTree, Tracked, Annotated):
+class Record(NamedTree[Any], Tracked, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection

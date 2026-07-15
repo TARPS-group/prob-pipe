@@ -478,7 +478,7 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
 # ---------------------------------------------------------------------------
 
 
-class EventTemplate(NamedTree):
+class EventTemplate(NamedTree[ValueSpec]):
     """Structural description of a value: its named, possibly-nested leaf structure.
 
     An ``EventTemplate`` describes the **structure** of a value as a **named

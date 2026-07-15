@@ -120,6 +120,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`NamedTree` is generic over its leaf type — `NamedTree[L]` (#356).** The
+  shared tree substrate now carries its leaf type as a type parameter, so
+  `py.typed` consumers see the real leaf type rather than `Any` on the
+  leaf-trafficking surface: `EventTemplate` binds `NamedTree[ValueSpec]` (so
+  `template["x"]` type-checks as a `ValueSpec`) while `Record` binds
+  `NamedTree[Any]`. The leaf accessors (`[]`, `values`, `items`, `map`) carry
+  `L`, and the structure-preserving transforms (`without` / `merge` /
+  `replace` / `with_path_names` / `map`) and `from_nested_dict` return `Self`.
+  Annotations only — no runtime behavior change.
+
 - **`NumericRecord` stores native-form leaves; conversion is lazy at the
   compute boundary (breaking).** Leaves are no longer coerced to `jax.Array`
   at construction: a numeric array or container (`jax` / `numpy` /
