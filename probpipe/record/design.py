@@ -22,8 +22,9 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._array_backend import _is_numeric_dtype
 from ..core._record_array import RecordArray
-from ..core.event_template import EventTemplate, _is_numeric_dtype
+from ..core.event_template import EventTemplate
 
 __all__ = ["Design", "FullFactorialDesign"]
 

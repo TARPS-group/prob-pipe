@@ -20,14 +20,14 @@ import numpy as np
 
 from .._weights import Weights
 from ..custom_types import Array
-from ._array_backend import _to_jax_array
+from ._array_backend import _is_numeric_dtype, _to_jax_array
 from ._distribution_base import Distribution
 from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
 from ._record_array import RecordArray
-from .event_template import EventTemplate, _full_array_shape_or_none, _is_numeric_dtype
+from .event_template import EventTemplate, _full_array_shape_or_none
 from .protocols import (
     SupportsLogProb,
     SupportsMean,

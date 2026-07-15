@@ -549,7 +549,7 @@ class TestGenericGateRejectsExtensionDtype:
     """
 
     def test_is_numeric_dtype_rejects_extension_dtype(self):
-        from probpipe.core.event_template import _is_numeric_dtype
+        from probpipe.core._array_backend import _is_numeric_dtype
 
         assert not _is_numeric_dtype(pd.Int64Dtype())
         assert _is_numeric_dtype(np.dtype("int64"))
@@ -560,7 +560,8 @@ class TestGenericGateRejectsExtensionDtype:
         # return False, not propagate. (Regression for the stan-suite mock.)
         from unittest.mock import MagicMock
 
-        from probpipe.core.event_template import _full_array_shape_or_none, _is_numeric_dtype
+        from probpipe.core._array_backend import _is_numeric_dtype
+        from probpipe.core.event_template import _full_array_shape_or_none
 
         assert _is_numeric_dtype(MagicMock()) is False
         assert _full_array_shape_or_none(MagicMock()) is None

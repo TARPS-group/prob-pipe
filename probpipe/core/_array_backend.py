@@ -83,6 +83,43 @@ def _safe_numpy_dtype(dtype: Any) -> np.dtype | None:
         return None
 
 
+# dtype.kind codes for numeric arrays: b=bool, i=int, u=uint, f=float, c=complex.
+_NUMERIC_KINDS = frozenset("biufc")
+
+
+def _is_numeric_dtype(dtype: Any) -> bool:
+    """Whether *dtype* is a numeric dtype — the shared numeric-gate predicate.
+
+    Covers the standard numpy kinds (bool, int, uint, float, complex) plus
+    the ml_dtypes extension types JAX registers (``bfloat16``, the
+    ``float8_*`` family, ``int4`` / ``uint4``), which numpy reports as kind
+    ``"V"``. A dtype that is **not** ``numpy.dtype``-coercible — a pandas
+    extension / masked dtype such as ``Int64Dtype`` — is **not** numeric on
+    this generic (duck-typing) path: it is not a dense numpy dtype, so a bare
+    value carrying one is not treated as a plain numeric array. A registered
+    :class:`~probpipe.ArrayBackend` may still recognise its own masked dtypes
+    and convert them: the built-in pandas backend accepts nullable numeric
+    columns, encoding each NA as ``NaN`` at the compute boundary. So this
+    predicate governs only the duck path, not the registry. Structured
+    (record) dtypes are likewise not numeric.
+    Every place that decides "is this array numeric?" — template inference,
+    spec validation, and the ``NumericRecord`` / ``NumericRecordArray`` leaf
+    gates — routes through this predicate so the sites cannot drift apart.
+    """
+    try:
+        np_dtype = np.dtype(dtype)
+    except (TypeError, ValueError):
+        # ``np.dtype`` raises ``TypeError`` for a pandas extension / masked
+        # dtype and ``ValueError`` for an object it cannot interpret at all
+        # (e.g. a mock). Either way it is not a dense numpy dtype, so not
+        # numeric.
+        return False
+    kind = np_dtype.kind
+    if kind in _NUMERIC_KINDS:
+        return True
+    return kind == "V" and jnp.issubdtype(np_dtype, jnp.number)
+
+
 @dataclass(frozen=True)
 class ArrayBackend:
     """Recognition and conversion hooks for one native array-container type.
@@ -249,8 +286,6 @@ def _is_numeric_leaf(value: Any) -> bool:
     backend = array_backend_for(value)
     if backend is not None:
         return backend.is_numeric(value)
-    from .event_template import _is_numeric_dtype
-
     return hasattr(value, "dtype") and hasattr(value, "shape") and _is_numeric_dtype(value.dtype)
 
 
@@ -326,8 +361,6 @@ def _register_xarray() -> None:
     except ImportError:
         return
 
-    from .event_template import _is_numeric_dtype
-
     def _metadata(da: xr.DataArray) -> Any:
         # Everything that distinguishes the container beyond its values: the
         # named dims, each coord's values, free-form attrs, and the name.
@@ -376,8 +409,6 @@ def _register_pandas() -> None:
         import pandas as pd
     except ImportError:
         return
-
-    from .event_template import _is_numeric_dtype
 
     def _is_nullable_numeric(dtype: Any) -> bool:
         # A masked / extension *numeric* dtype: numeric, but with a validity

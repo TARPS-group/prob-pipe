@@ -64,7 +64,6 @@ from dataclasses import dataclass
 from math import prod
 from typing import Any
 
-import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
@@ -394,43 +393,6 @@ def _all_numeric(specs: Iterable[Any]) -> bool:
     (``__init__`` rejects the latter).
     """
     return all(isinstance(s, tuple) or _is_numeric_spec(s) for s in specs)
-
-
-# dtype.kind codes for numeric arrays: b=bool, i=int, u=uint, f=float, c=complex.
-_NUMERIC_KINDS = frozenset("biufc")
-
-
-def _is_numeric_dtype(dtype: Any) -> bool:
-    """Whether *dtype* is a numeric dtype — the shared numeric-gate predicate.
-
-    Covers the standard numpy kinds (bool, int, uint, float, complex) plus
-    the ml_dtypes extension types JAX registers (``bfloat16``, the
-    ``float8_*`` family, ``int4`` / ``uint4``), which numpy reports as kind
-    ``"V"``. A dtype that is **not** ``numpy.dtype``-coercible — a pandas
-    extension / masked dtype such as ``Int64Dtype`` — is **not** numeric on
-    this generic (duck-typing) path: it is not a dense numpy dtype, so a bare
-    value carrying one is not treated as a plain numeric array. A registered
-    :class:`~probpipe.ArrayBackend` may still recognise its own masked dtypes
-    and convert them: the built-in pandas backend accepts nullable numeric
-    columns, encoding each NA as ``NaN`` at the compute boundary. So this
-    predicate governs only the duck path, not the registry. Structured
-    (record) dtypes are likewise not numeric.
-    Every place that decides "is this array numeric?" — template inference,
-    spec validation, and the ``NumericRecord`` / ``NumericRecordArray`` leaf
-    gates — routes through this predicate so the sites cannot drift apart.
-    """
-    try:
-        np_dtype = np.dtype(dtype)
-    except (TypeError, ValueError):
-        # ``np.dtype`` raises ``TypeError`` for a pandas extension / masked
-        # dtype and ``ValueError`` for an object it cannot interpret at all
-        # (e.g. a mock). Either way it is not a dense numpy dtype, so not
-        # numeric.
-        return False
-    kind = np_dtype.kind
-    if kind in _NUMERIC_KINDS:
-        return True
-    return kind == "V" and jnp.issubdtype(np_dtype, jnp.number)
 
 
 def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:

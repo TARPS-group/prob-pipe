@@ -160,13 +160,13 @@ class TestConstruction:
             _record_array,
             event_template,
         )
-        from probpipe.core.event_template import _is_numeric_dtype
         from probpipe.record import design
 
-        # dtype-level predicate: consumed directly where only a dtype is checked
-        assert _record_array._is_numeric_dtype is _is_numeric_dtype
-        assert _broadcast_distributions._is_numeric_dtype is _is_numeric_dtype
-        assert design._is_numeric_dtype is _is_numeric_dtype
+        # dtype-level predicate (lives in _array_backend): imported directly from
+        # there wherever only a dtype is in hand
+        assert _record_array._is_numeric_dtype is _array_backend._is_numeric_dtype
+        assert _broadcast_distributions._is_numeric_dtype is _array_backend._is_numeric_dtype
+        assert design._is_numeric_dtype is _array_backend._is_numeric_dtype
         # leaf-level predicate: one resolver shared by the record gate and inference
         assert _numeric_record._is_numeric_leaf is _array_backend._is_numeric_leaf
         assert event_template._is_numeric_leaf is _array_backend._is_numeric_leaf

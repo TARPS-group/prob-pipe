@@ -216,8 +216,7 @@ def _numeric_container_to_numpy(obj: Any) -> _np.ndarray | None:
     ``None``. Materialisation is the documented cost of fingerprinting a
     lazy / disk-backed leaf.
     """
-    from ._array_backend import array_backend_for
-    from .event_template import _is_numeric_dtype
+    from ._array_backend import _is_numeric_dtype, array_backend_for
 
     backend = array_backend_for(obj)
     if backend is not None:
