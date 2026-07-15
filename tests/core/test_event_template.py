@@ -641,7 +641,7 @@ class TestValueSpecs:
             x=ArraySpec((2,), dtype="float32"),
             label=OpaqueSpec(meta="tag"),
             d=DistributionSpec(event_template=EventTemplate(a=())),
-            f=FunctionSpec(ArraySpec(()), ArraySpec(())),
+            f=FunctionSpec(EventTemplate(inp=ArraySpec(())), EventTemplate(out=ArraySpec(()))),
         )
         restored = pickle.loads(pickle.dumps(tpl))
         assert restored == tpl
@@ -890,44 +890,30 @@ class TestFunctionSpecIsValid:
 
 
 # ---------------------------------------------------------------------------
-# FunctionSpec — bare-spec convenience
+# FunctionSpec — input/output must be explicit EventTemplates
 # ---------------------------------------------------------------------------
 
 
-class TestFunctionSpecBareSpec:
-    def test_bare_specs_wrap_in_single_field_templates(self):
-        spec = FunctionSpec(ArraySpec(()), ArraySpec((2,)))
-        assert spec.input_template == EventTemplate(input=ArraySpec(()))
-        assert spec.output_template == EventTemplate(output=ArraySpec((2,)))
-        # The stored attributes are always EventTemplates, whatever the
-        # constructor input form.
-        assert isinstance(spec.input_template, EventTemplate)
-        assert isinstance(spec.output_template, EventTemplate)
-
-    def test_bare_spec_on_one_side_only(self):
-        out = EventTemplate(y=(), z=(3,))
-        spec = FunctionSpec(OpaqueSpec(), out)
-        assert spec.input_template == EventTemplate(input=OpaqueSpec())
-        assert spec.output_template is out
-
-    def test_templates_pass_through_unwrapped(self):
+class TestFunctionSpecTemplatesRequired:
+    def test_explicit_templates_stored_as_is(self):
         inp, out = EventTemplate(a=()), EventTemplate(b=())
         spec = FunctionSpec(inp, out)
         assert spec.input_template is inp
         assert spec.output_template is out
 
-    def test_invalid_side_rejected(self):
-        with pytest.raises(TypeError, match="input_template"):
-            FunctionSpec((3,), EventTemplate(b=()))  # type: ignore[arg-type]
-        with pytest.raises(TypeError, match="output_template"):
-            FunctionSpec(EventTemplate(a=()), "not a template")  # type: ignore[arg-type]
+    def test_bare_value_spec_rejected(self):
+        # A single-field signature is written out as an EventTemplate; a bare
+        # ValueSpec is not wrapped into one.
+        with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
+            FunctionSpec(ArraySpec(()), EventTemplate(b=()))  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="output_template must be None or an EventTemplate"):
+            FunctionSpec(EventTemplate(a=()), OpaqueSpec())  # type: ignore[arg-type]
 
-    def test_wrapped_spec_equality_and_hash(self):
-        # The wrapped form and the explicit single-field form are one spec.
-        a = FunctionSpec(ArraySpec(()), ArraySpec(()))
-        b = FunctionSpec(EventTemplate(input=ArraySpec(())), EventTemplate(output=ArraySpec(())))
-        assert a == b
-        assert hash(a) == hash(b)
+    def test_non_spec_rejected(self):
+        with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
+            FunctionSpec((3,), EventTemplate(b=()))  # type: ignore[arg-type]
+        with pytest.raises(TypeError, match="output_template must be None or an EventTemplate"):
+            FunctionSpec(EventTemplate(a=()), "not a template")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -945,15 +931,15 @@ class TestFunctionSpecOptionalTemplates:
         assert not spec.is_valid(3.0)
 
     def test_one_side_specified(self):
-        spec = FunctionSpec(output_template=ArraySpec(()))
+        spec = FunctionSpec(output_template=EventTemplate(out=ArraySpec(())))
         assert spec.input_template is None
-        assert spec.output_template == EventTemplate(output=ArraySpec(()))
+        assert spec.output_template == EventTemplate(out=ArraySpec(()))
 
     def test_none_specs_are_hashable_and_equal(self):
         assert FunctionSpec() == FunctionSpec()
         assert hash(FunctionSpec()) == hash(FunctionSpec())
         # A template-less spec differs from a typed one.
-        assert FunctionSpec() != FunctionSpec(ArraySpec(()), ArraySpec(()))
+        assert FunctionSpec() != FunctionSpec(EventTemplate(inp=()), EventTemplate(out=()))
 
     def test_none_spec_usable_as_template_leaf(self):
         # A FunctionSpec leaf (with unspecified signature) lives in a template
