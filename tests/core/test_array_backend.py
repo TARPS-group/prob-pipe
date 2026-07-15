@@ -568,10 +568,12 @@ class TestGenericGateRejectsExtensionDtype:
 
 class TestNullableNumericMissingData:
     """pandas nullable / masked numeric columns (``Int64``, ``Float64``,
-    ``boolean``) are first-class numeric leaves: stored verbatim (mask intact
-    at rest) and converted to jax through ``float64`` with each NA encoded as
-    ``NaN`` at the compute boundary — the only missing-value representation
-    jax offers.
+    ``boolean``, Sparse / pyarrow numerics) are first-class numeric leaves:
+    stored verbatim (mask intact at rest) and converted to jax at the compute
+    boundary through the columns' common dense dtype, with each NA encoded as
+    ``NaN`` — the only missing-value representation jax offers. That dtype keeps
+    a nullable float at its own width and a complex column complex; a nullable
+    integer / boolean promotes to ``float64``.
     """
 
     def test_nullable_frame_promotes(self):
@@ -689,6 +691,31 @@ class TestNullableNumericMissingData:
         # Differing only in an imaginary part -> unequal and fingerprint-different.
         assert mk(3 + 4j) != mk(3 + 5j)
         assert fingerprint(mk(3 + 4j)) != fingerprint(mk(3 + 5j))
+
+    def test_sparse_complex_extension_preserves_imaginary(self):
+        # A Sparse[complex128] column is a complex *extension* dtype whose dense
+        # type is exposed as .subtype (not .numpy_dtype). It must densify to
+        # complex128, not float64 — the imaginary parts (and NA -> nan) survive.
+        sd = pd.SparseDtype("complex128", np.nan)
+        s = pd.Series([1 + 2j, np.nan, 3 + 4j], dtype=sd)
+        backend = array_backend_for(s)
+        assert backend.numpy_dtype(s) == np.dtype("complex128")
+        out = backend.to_numpy(s)
+        assert out.dtype == np.dtype("complex128")
+        assert out[0] == 1 + 2j and out[2] == 3 + 4j  # imaginary parts kept
+        assert np.isnan(out[1])  # NA -> nan
+
+    def test_sparse_complex_promotes_and_round_trips(self):
+        sd = pd.SparseDtype("complex128", np.nan)
+        r1 = Record("r", m=pd.Series([1 + 2j, 3 + 4j], dtype=sd))
+        r2 = Record("r", m=pd.Series([1 + 2j, 3 + 4j], dtype=sd))
+        assert type(r1) is NumericRecord
+        v = np.asarray(r1.to_vector())
+        assert np.issubdtype(v.dtype, np.complexfloating)
+        np.testing.assert_array_equal(v, [1 + 2j, 3 + 4j])
+        # equality/fingerprint see the imaginary parts
+        assert r1 == r2
+        assert r1 != Record("r", m=pd.Series([1 + 2j, 3 + 9j], dtype=sd))
 
 
 class TestNativeMetadataInIdentity:

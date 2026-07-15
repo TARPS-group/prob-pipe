@@ -268,14 +268,17 @@ def _register_pandas() -> None:
     metadata without materialising values.
 
     Nullable / masked numeric columns (``Int64``, ``Float64``, ``boolean``,
-    pyarrow numerics) are accepted as numeric even though the generic gate
-    rejects their dtype: such a column has no dense numpy view, so the whole
-    container converts through ``float64`` with each NA encoded as ``NaN`` —
-    the only missing-value representation ``jax`` offers. The native leaf is
-    stored verbatim, so the validity mask survives at rest; NA becomes NaN
-    only at the compute boundary. Integer / boolean columns therefore promote
-    to float. Categorical / string / datetime extension dtypes are not numeric
-    and leave the container a plain ``Record``. No-op without pandas.
+    pyarrow / Sparse numerics) are accepted as numeric even though the generic
+    gate rejects their dtype: such a column has no dense numpy view, so the
+    container converts to its columns' **common dense dtype** (see
+    ``_dense_dtype``) with each NA encoded as ``NaN`` — the only missing-value
+    representation ``jax`` offers. That common dtype keeps a nullable float at
+    its own width (``Float32 -> float32``) and a complex column complex
+    (``Sparse[complex128] -> complex128``); a nullable integer / boolean
+    promotes to ``float64`` (no integer NaN). The native leaf is stored
+    verbatim, so the validity mask survives at rest; NA becomes NaN only at the
+    compute boundary. Categorical / string / datetime extension dtypes are not
+    numeric and leave the container a plain ``Record``. No-op without pandas.
     """
     try:
         import pandas as pd
@@ -296,23 +299,36 @@ def _register_pandas() -> None:
         # numeric dtype (generic gate), or a nullable numeric one (NA -> NaN).
         return _is_numeric_dtype(dtype) or _is_nullable_numeric(dtype)
 
+    def _extension_dense_dtype(dtype: Any) -> np.dtype | None:
+        # The underlying dense numpy dtype of a masked / extension numeric
+        # dtype: pandas masked dtypes expose it as ``.numpy_dtype``, a
+        # ``SparseDtype`` as ``.subtype``. ``None`` if neither is readable.
+        for attr in ("numpy_dtype", "subtype"):
+            nd = getattr(dtype, attr, None)
+            if nd is not None:
+                try:
+                    return np.dtype(nd)
+                except (TypeError, ValueError):
+                    pass
+        return None
+
     def _dense_dtype(dtypes: Any) -> np.dtype | None:
         # The single dense numpy dtype a Series / DataFrame of these column
         # dtypes densifies to (via to_numpy / to_jax), or None when a column has
-        # no dense numpy dtype. A masked numeric column has no dense numpy view
-        # and must hold NA as NaN, so it contributes a float: a nullable float
-        # keeps its own width (Float32 -> float32), a nullable integer / boolean
-        # promotes to float64. Every other column contributes its own dtype. The
-        # result is their common promotion, so a complex column yields complex128
-        # rather than being truncated to float.
+        # no dense numpy dtype. A masked / extension numeric column has no dense
+        # numpy view and must hold NA as NaN, so it contributes its underlying
+        # dense dtype when that already holds NaN — a float or complex, kept at
+        # its own width (Float32 -> float32, Sparse[complex128] -> complex128) —
+        # and float64 otherwise (integer / boolean have no NaN). Every other
+        # column contributes its own dtype. The result is their common
+        # promotion, so a complex column is never truncated to float.
         contribs: list[np.dtype] = []
         for d in dtypes:
             if _is_nullable_numeric(d):
-                nd = getattr(d, "numpy_dtype", None)
-                if nd is not None and np.issubdtype(nd, np.floating):
-                    contribs.append(np.dtype(nd))
-                else:
-                    contribs.append(np.dtype("float64"))
+                sub = _extension_dense_dtype(d)
+                contribs.append(
+                    sub if sub is not None and sub.kind in "fc" else np.dtype("float64")
+                )
             else:
                 nd = _safe_numpy_dtype(d)
                 if nd is None:
