@@ -20,13 +20,14 @@ import numpy as np
 
 from .._weights import Weights
 from ..custom_types import Array
+from ._array_backend import _to_jax_array
 from ._distribution_base import Distribution
 from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
 from ._record_array import RecordArray
-from .event_template import EventTemplate, _is_numeric_dtype
+from .event_template import EventTemplate, _full_array_shape_or_none, _is_numeric_dtype
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -542,7 +543,15 @@ def _make_stack(
             for fname in first.children:
                 values = [o[fname] for o in outs]
                 try:
-                    stacked = jnp.stack(values, axis=0)
+                    # Native leaves convert per element at this eager batch
+                    # boundary, through the array backend's to_jax.
+                    stacked = jnp.stack(
+                        [
+                            _to_jax_array(v) if _full_array_shape_or_none(v) is not None else v
+                            for v in values
+                        ],
+                        axis=0,
+                    )
                     fields[fname] = stacked.reshape(batch_shape + stacked.shape[1:])
                 except (TypeError, ValueError):
                     arr = np.asarray(values, dtype=object)

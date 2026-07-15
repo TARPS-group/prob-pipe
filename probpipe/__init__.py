@@ -33,9 +33,9 @@ from probpipe.converters import (
     converter_registry,
 )
 from probpipe.core._array_backend import (
-    AuxHooks,
-    aux_for,
-    register_aux,
+    ArrayBackend,
+    array_backend_for,
+    register_array_backend,
 )
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._numeric_record import NumericRecord
@@ -198,10 +198,10 @@ __all__ = [
     "Annotated",
     # Inference
     "ApproximateDistribution",
+    "ArrayBackend",
     "ArrayRandomFunction",
     "ArraySpec",
-    # Array backend / aux registry
-    "AuxHooks",
+    # Array-backend registry
     "BayesFlowLikelihood",
     "BayesFlowModel",
     "BayesFlowRatio",
@@ -319,7 +319,7 @@ __all__ = [
     # Configuration
     "WorkflowKind",
     "abstract_workflow_method",
-    "aux_for",
+    "array_backend_for",
     "bijector_for",
     "boolean",
     "condition_on_nutpie",
@@ -347,7 +347,7 @@ __all__ = [
     "provenance_config",
     "provenance_dag",
     "real",
-    "register_aux",
+    "register_array_backend",
     "register_bijector",
     "rwmh",
     "simplex",

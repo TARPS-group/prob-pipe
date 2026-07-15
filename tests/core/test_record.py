@@ -55,10 +55,10 @@ class TestConstruction:
 
         arr = np.array([1.0, 2.0, 3.0])
         v = Record("r", x=arr)
-        # All-numeric construction promotes to NumericRecord, whose invariant
-        # coerces bare numeric leaves to jax.Array.
+        # All-numeric construction promotes to NumericRecord; leaves are
+        # stored in native form (nothing is coerced at construction).
         assert type(v) is NumericRecord
-        assert isinstance(v["x"], jnp.ndarray)
+        assert v["x"] is arr
 
     def test_mixed_record_stores_values_verbatim(self):
         arr = np.array([1.0, 2.0, 3.0])
@@ -277,12 +277,12 @@ class TestStorage:
     these assertions will be the first to fail.
     """
 
-    def test_numpy_coerced_by_promotion(self):
+    def test_numpy_stored_verbatim(self):
         arr = np.array([1.0, 2.0])
         v = Record("r", x=arr)
-        # Promotion coerces a bare numpy leaf to jax.Array; a mixed record
-        # keeps it verbatim.
-        assert isinstance(v["x"], jnp.ndarray)
+        # Native storage: promotion never coerces — the numpy leaf is stored
+        # verbatim on the promoted and the mixed record alike.
+        assert v["x"] is arr
         mixed = Record("r", x=arr, label="tag")
         assert mixed["x"] is arr
 
@@ -328,23 +328,24 @@ class TestStorage:
         xr = pytest.importorskip("xarray")
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
         v = Record("r", y=da, z=jnp.array(1.0))
-        # A structural edit re-threads the (numeric) template but must keep
-        # the backend leaf verbatim rather than promoting and coercing it.
+        # Backend leaves are first-class numeric: the record promotes, and a
+        # structural edit keeps the native leaf verbatim.
+        assert isinstance(v, NumericRecord)
         edited = v.without("z")
-        assert not isinstance(edited, NumericRecord)
+        assert isinstance(edited, NumericRecord)
         assert edited["y"] is da
-        assert not isinstance(v.replace(z=jnp.array(2.0)), NumericRecord)
+        assert v.replace(z=jnp.array(2.0))["y"] is da
 
-    def test_backend_leaf_gives_non_numeric_template(self):
-        # A verbatim backend leaf is opaque to inference, so a plain Record
-        # holding one carries a plain (non-numeric) template — the template's
-        # numericness stays in step with the record's own class.
-        from probpipe.core.event_template import NumericEventTemplate
+    def test_backend_leaf_gives_numeric_template(self):
+        # A native backend leaf infers an ArraySpec, so the template is
+        # numeric and stays in step with the record's promoted class.
+        from probpipe.core.event_template import ArraySpec, NumericEventTemplate
 
         xr = pytest.importorskip("xarray")
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"])
         v = Record("r", y=da)
-        assert not isinstance(v.event_template, NumericEventTemplate)
+        assert isinstance(v.event_template, NumericEventTemplate)
+        assert v.event_template["y"] == ArraySpec((3,))
 
 
 class TestNumericAPIOnRecord:
@@ -407,21 +408,21 @@ class TestGeneralDecomposition:
         v = Record("r", x=jnp.array([1.0, 2.0]), label="horseshoe", count=3)
         assert Record.from_field_values(v.name, v.event_template, v.values()) == v
 
-    def test_roundtrip_with_backend_leaf_stays_plain(self):
-        # A verbatim backend leaf (xarray) keeps its plain-Record class and a
-        # non-numeric template across the round-trip: re-threading the template
-        # must not promote and coerce the leaf (that would change the concrete
-        # type and break equality).
+    def test_roundtrip_with_backend_leaf(self):
+        # A native backend leaf (xarray) round-trips through
+        # from_field_values with its class, template, and native leaf intact:
+        # nothing is coerced, so the round-trip is exact.
         from probpipe import NumericRecord
         from probpipe.core.event_template import NumericEventTemplate
 
         xr = pytest.importorskip("xarray")
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [0, 1, 2]})
         v = Record("obs", x=da)
-        assert not isinstance(v, NumericRecord)
-        assert not isinstance(v.event_template, NumericEventTemplate)
+        assert isinstance(v, NumericRecord)
+        assert isinstance(v.event_template, NumericEventTemplate)
         rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
         assert type(rebuilt) is type(v)
+        assert rebuilt["x"] is da
         assert rebuilt == v
 
     def test_roundtrip_with_out_of_order_template(self):
@@ -636,10 +637,11 @@ class TestConversion:
         assert nr.fields == ("a", "b")
         np.testing.assert_array_equal(np.asarray(nr["b"]), [2.0, 3.0])
 
-    def test_to_numeric_to_native_round_trip_xarray(self):
-        """xarray dims / coords / attrs survive the ``Record`` round-trip
-        via the aux registry (the migration replacement for the old
-        ``to_datatree`` / ``from_datatree`` pair).
+    def test_xarray_metadata_kept_natively(self):
+        """xarray dims / coords / attrs never leave the record: the leaf is
+        stored natively (the migration replacement for the old
+        ``to_datatree`` / ``from_datatree`` pair), and ``to_numeric()`` is
+        validation, not conversion.
         """
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
@@ -648,7 +650,8 @@ class TestConversion:
             coords={"time": [10, 20, 30]},
             attrs={"units": "m"},
         )
-        back = Record("r", y=da).to_numeric().to_native()
+        back = Record("r", y=da).to_numeric()
+        assert back["y"] is da
         assert back["y"].dims == ("time",)
         np.testing.assert_array_equal(back["y"].coords["time"].values, [10, 20, 30])
         assert back["y"].attrs == {"units": "m"}
@@ -869,9 +872,12 @@ class TestReprAndEquality:
         assert r1 == r2
         assert hash(r1) == hash(r2)
 
-    # Regression for (f-ii): self-equality must hold even when leaves
-    # contain NaN. ``jnp.array_equal`` treats NaN != NaN, so we need an
-    # identity fast-path.
+    # NaN leaves: equality is reflexive across INDEPENDENT copies, not only via
+    # the identity fast-path. ``__eq__`` compares native values with
+    # ``equal_nan`` (the same basis as the content fingerprint), so two
+    # separately built records with a NaN leaf are equal and hash the same.
+    # Regression for the /code-review finding that NaN leaves made ``__eq__``
+    # non-reflexive across copies (``jnp.array_equal`` treats NaN != NaN).
 
     def test_self_equality_with_nan(self):
         r = Record("r", x=jnp.array([jnp.nan, 1.0, jnp.nan]))
@@ -880,6 +886,41 @@ class TestReprAndEquality:
     def test_self_equality_with_nan_nested(self):
         r = Record("r", inner=Record("r", x=jnp.array([jnp.nan])), y=jnp.nan)
         assert r == r
+
+    def test_independent_copies_equal_with_nan(self):
+        r1 = Record("r", x=jnp.array([jnp.nan, 1.0, jnp.nan]))
+        r2 = Record("r", x=jnp.array([jnp.nan, 1.0, jnp.nan]))
+        assert r1 is not r2
+        assert r1 == r2
+        assert hash(r1) == hash(r2)
+
+    def test_independent_copies_equal_with_nan_nested(self):
+        def mk():
+            return Record("r", inner=Record("r", x=jnp.array([jnp.nan])), y=jnp.nan)
+
+        assert mk() == mk()
+
+    def test_nan_differs_from_finite(self):
+        # equal_nan aligns NaN positions; a NaN vs a finite value at the same
+        # position is still unequal.
+        assert Record("r", x=jnp.array([jnp.nan, 1.0])) != Record("r", x=jnp.array([2.0, 1.0]))
+
+    def test_eq_agrees_with_fingerprint(self):
+        # ``__eq__`` and ``fingerprint()`` share one native, full-precision
+        # basis, so they agree in both directions: NaN copies are equal *and*
+        # fingerprint-equal; a sub-float32 difference in float64 is unequal
+        # *and* fingerprint-different (not silently equated under x32).
+        from probpipe.core._fingerprint import fingerprint
+
+        nan1 = Record("r", x=np.array([1.0, np.nan]))
+        nan2 = Record("r", x=np.array([1.0, np.nan]))
+        assert (nan1 == nan2) is True
+        assert fingerprint(nan1) == fingerprint(nan2)
+
+        near1 = Record("r", x=np.array([1.0]))
+        near2 = Record("r", x=np.array([1.0 + 1e-9]))
+        assert (near1 == near2) == (fingerprint(near1) == fingerprint(near2))
+        assert near1 != near2
 
 
 # ---------------------------------------------------------------------------
