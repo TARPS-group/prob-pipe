@@ -176,12 +176,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hashes native containers by type + materialised values + identity metadata
   instead of falling to the process-dependent `repr` tier. A pandas
   nullable / masked *numeric* column (`Int64`, `Float64`, `boolean`) is a
-  first-class numeric leaf: it is stored verbatim so its validity mask is
-  intact at rest, and converted through `float64` with each NA encoded as
-  `NaN` at the compute boundary — the only missing-value form `jax` offers —
-  so missing data round-trips as `NaN` (integer / boolean columns therefore
-  promote to float). The generic duck-typing gate still rejects a *bare*
-  extension dtype (it is not a dense numpy dtype); the pandas backend is what
+  first-class numeric leaf. It is stored verbatim, so its validity mask stays
+  intact at rest. At the compute boundary it converts to `float64` with each
+  NA encoded as `NaN` — the only missing-value form `jax` offers — so missing
+  data round-trips as `NaN`. Integer and boolean columns therefore promote to
+  float. The generic duck-typing gate still rejects a *bare*
+  extension dtype (it is not a dense numpy dtype); the pandas backend
   recognises its own masked dtypes. Non-numeric extension dtypes (categorical /
   string / datetime) are not numeric and leave the container a plain `Record`.
 

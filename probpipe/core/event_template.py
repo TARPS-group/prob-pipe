@@ -418,8 +418,8 @@ def _is_numeric_dtype(dtype: Any) -> bool:
     this generic (duck-typing) path: it is not a dense numpy dtype, so a bare
     value carrying one is not treated as a plain numeric array. A registered
     :class:`~probpipe.ArrayBackend` may still recognise its own masked dtypes
-    and convert them — the built-in pandas backend accepts nullable numeric
-    columns and encodes each NA as ``NaN`` at the compute boundary — so this
+    and convert them: the built-in pandas backend accepts nullable numeric
+    columns, encoding each NA as ``NaN`` at the compute boundary. So this
     predicate governs only the duck path, not the registry. Structured
     (record) dtypes are likewise not numeric.
     Every place that decides "is this array numeric?" — template inference,

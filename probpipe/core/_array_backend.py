@@ -29,12 +29,13 @@ new array type recognised, validated, promoted, converted, and fingerprinted
 everywhere at once.
 
 Built-in registrations: ``xarray.DataArray`` and ``pandas.Series`` /
-``pandas.DataFrame``. They are registered (not left to the duck path) both to
-expose their identity-bearing metadata — dims / coords / attrs / name, or
-index / columns — through the ``metadata`` hook, and, for pandas, to handle
-nullable / masked numeric columns (``Int64``, ``Float64``, ``boolean``): the
-generic duck path cannot see those as numeric, but the pandas backend accepts
-them and converts through ``float64``, encoding each NA as ``NaN``. Bare
+``pandas.DataFrame``. They are registered rather than left to the duck path
+for two reasons. The first is to expose their identity-bearing metadata (an
+``xarray`` array's dims / coords / attrs / name, a ``pandas`` object's index /
+columns) through the ``metadata`` hook. The second, for pandas, is to handle
+nullable / masked numeric columns (``Int64``, ``Float64``, ``boolean``). The
+generic duck path cannot see those columns as numeric, but the pandas backend
+accepts them and converts through ``float64``, encoding each NA as ``NaN``. Bare
 ``numpy`` / ``jax`` arrays stay unregistered — the duck path covers them and
 they carry no metadata beyond their values.
 
@@ -306,9 +307,9 @@ def _register_pandas() -> None:
         return {"index": np.asarray(s.index), "name": s.name}
 
     def _series_numpy_dtype(s: pd.Series) -> np.dtype | None:
-        # A nullable column converts through float64 (see _dense), so that —
-        # not the masked dtype, which has no dense numpy form — is the leaf's
-        # dtype. This depends on the dtype, not on whether NAs are present.
+        # A nullable column converts through float64 (see _dense), so float64
+        # is the leaf's dtype — not the masked dtype, which has no dense numpy
+        # form. This depends on the dtype, not on whether NAs are present.
         if _is_nullable_numeric(s.dtype):
             return np.dtype("float64")
         return _safe_numpy_dtype(s.dtype)
