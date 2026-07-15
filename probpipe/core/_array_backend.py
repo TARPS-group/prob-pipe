@@ -178,8 +178,8 @@ def array_backend_for(obj: Any) -> ArrayBackend | None:
     resolves in one dict probe and only a subclass of a registered type pays
     for the walk. Unregistered leaves (bare ``np.ndarray`` / ``jax.Array``,
     the common case) miss the exact probe and walk their MRO, but that is
-    short and off the hot path — ``_as_jax`` fast-returns a ``jax.Array``
-    leaf before this is ever called.
+    short and off the hot path — ``_child_field_as_jax`` fast-returns a
+    ``jax.Array`` leaf before this is ever called.
     """
     if not _backend_registry:
         return None
