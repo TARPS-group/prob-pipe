@@ -77,9 +77,15 @@ class TestConstruction:
         assert isinstance(nr["a"], jnp.ndarray)
         assert isinstance(nr["b"], jnp.ndarray)
 
-    def test_coerces_numpy_to_jax_array(self):
-        nr = NumericRecord("nr", x=np.array([1.0, 2.0]))
-        assert isinstance(nr["x"], jnp.ndarray)
+    def test_numpy_stored_native_converted_at_boundary(self):
+        arr = np.array([1.0, 2.0])
+        nr = NumericRecord("nr", x=arr)
+        # Native storage: navigation returns the numpy leaf verbatim; the
+        # compute boundary (to_vector) converts to jax.
+        assert nr["x"] is arr
+        vec = nr.to_vector()
+        assert isinstance(vec, jnp.ndarray)
+        np.testing.assert_allclose(vec, [1.0, 2.0])
 
     def test_jax_array_passthrough(self):
         """An existing jnp.ndarray is stored without conversion or copy."""
@@ -87,11 +93,10 @@ class TestConstruction:
         nr = NumericRecord("nr", x=arr)
         assert nr["x"] is arr
 
-    def test_xarray_accepted_and_coerced(self):
-        """xarray.DataArray wraps numeric data and is accepted, but it is
-        coerced to ``jnp.ndarray`` at construction — labels / coords are
-        dropped. Use a plain ``Record`` if you need to preserve xarray
-        metadata."""
+    def test_xarray_accepted_and_stored_native(self):
+        """xarray.DataArray wraps numeric data and is accepted **verbatim**:
+        the leaf keeps its dims / coords, and conversion to ``jnp.ndarray``
+        happens only at the compute boundary."""
         xr = pytest.importorskip("xarray")
         da = xr.DataArray(
             [1.0, 2.0, 3.0],
@@ -99,8 +104,9 @@ class TestConstruction:
             coords={"time": [10, 20, 30]},
         )
         nr = NumericRecord("nr", y=da)
-        assert isinstance(nr["y"], jnp.ndarray)
-        np.testing.assert_allclose(nr["y"], [1.0, 2.0, 3.0])
+        assert nr["y"] is da
+        assert nr["y"].dims == ("time",)
+        np.testing.assert_allclose(nr.to_vector(), [1.0, 2.0, 3.0])
 
     # Regression: previous ``_is_numeric_leaf`` short-circuited True on
     # ``isinstance(val, np.ndarray)`` without checking ``val.dtype.kind``,
@@ -136,7 +142,8 @@ class TestConstruction:
         for dt in dtypes:
             arr = np.array([1, 2, 3]).astype(dt)
             nr = NumericRecord("nr", x=arr)
-            assert isinstance(nr["x"], jnp.ndarray), f"failed for dtype {dt}"
+            # Stored verbatim (native form); the boundary converts on demand.
+            assert nr["x"] is arr, f"failed for dtype {dt}"
 
     def test_numeric_dtype_predicate_shared(self):
         """Every numeric gate — ``NumericRecord``, ``NumericRecordArray``,
@@ -283,11 +290,19 @@ class TestPyTree:
         assert len(leaves) == 2
 
     def test_roundtrip(self):
-        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))
+        # NumericRecord uses its own pytree registration (separate from the
+        # base Record's), so pin that a flatten/unflatten round-trip
+        # preserves the leaf values, the template, and the full identity
+        # pair (name + name_is_auto) — not just the field names.
+        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0), name_is_auto=True)
         leaves, treedef = jax.tree.flatten(nr)
         nr2 = jax.tree.unflatten(treedef, leaves)
         assert isinstance(nr2, NumericRecord)
         assert nr2.fields == nr.fields
+        assert nr2 == nr  # structural equality: template + field values
+        np.testing.assert_allclose(np.asarray(nr2["x"]), [1.0, 2.0])
+        assert nr2.name == "nr"
+        assert nr2.name_is_auto is True
 
     def test_jit(self):
         nr = NumericRecord("nr", a=1.0, b=2.0)

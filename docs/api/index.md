@@ -32,7 +32,7 @@ for known-name lookups.
   functions.
 - **[Records and data](records.md)** — `Record`, `NumericRecord`, the
   `RecordArray` family, `Weights`, parameter-sweep `Design`s, and the
-  auxiliary-metadata registry.
+  array-backend registry.
 - **[Modeling and inference](inference.md)** — model and likelihood
   classes, the inference-method registry and built-ins, iterative
   transformations, predictive checks.

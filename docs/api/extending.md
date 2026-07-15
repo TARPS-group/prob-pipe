@@ -12,7 +12,7 @@ the section on this page that covers it in detail.
 | New inference method (custom sampler, optimiser, ...) | Subclass of `InferenceMethod` declaring `supported_types`, `priority`, `check()`, and `execute()` | `inference_method_registry.register(...)` — see [Custom inference methods](#custom-inference-methods) |
 | New distribution-to-distribution converter | Subclass of `Converter` with `check()` / `convert()` | `converter_registry.register(...)` — see [Custom converters](#custom-converters) |
 | New canonical bijector for a `Constraint` | A factory returning a TFP bijector | `register_bijector(constraint_or_class, factory)` — see [Custom bijectors](#custom-bijectors) |
-| New auxiliary-metadata adapter (custom array-like) | `capture` and `restore` callables | `register_aux(leaf_type, capture, restore)` — see [Custom auxiliary metadata](#custom-auxiliary-metadata) |
+| New array backend (custom array-like leaf type) | An `ArrayBackend` (shape / dtype / conversion hooks) | `register_array_backend(leaf_type, backend)` — see [Custom array backends](#custom-array-backends) |
 
 The two remaining sections — [Broadcasting internals](#broadcasting-internals-exposed-for-extension)
 and the [Internals](internals.md) page — document classes that an
@@ -184,11 +184,12 @@ registry handle itself are documented under
 `bijector_for(c)` for a given `Constraint` instance or class. See
 [Constraints → Bijectors](constraints.md#bijectors-for-unconstrained-reparameterization).
 
-## Custom auxiliary metadata
+## Custom array backends
 
-`register_aux` extends the `Record` ↔ `NumericRecord` round-trip to a
-new array-like type. See
-[Records → Auxiliary-metadata registry](records.md#auxiliary-metadata-registry).
+`register_array_backend` makes a new array-like container a first-class
+numeric leaf: recognised, promoted, converted at the compute boundary, and
+fingerprinted. See
+[Records → Array-backend registry](records.md#array-backend-registry).
 
 ## Broadcasting internals (exposed for extension)
 

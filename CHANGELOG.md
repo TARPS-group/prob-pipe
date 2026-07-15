@@ -107,7 +107,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   parameters for TFP-backed distributions, field-by-field content for Records,
   and actual user-function bytecode for WorkflowFunctions (not the Prefect
   wrapper closure, so changes to the function body are detected reliably).
-  Large arrays (> 1 MB) are sampled at evenly-spaced offsets rather than read
+  Large arrays (> 256 MB) are sampled at evenly-spaced offsets rather than read
   in full.  The fingerprint is visible in `to_dict()` output and is the
   foundation for a future Prefect `cache_key_fn` that will enable cross-run
   task caching and failure recovery.
@@ -129,6 +129,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `L`, and the structure-preserving transforms (`without` / `merge` /
   `replace` / `with_path_names` / `map`) and `from_nested_dict` return `Self`.
   Annotations only — no runtime behavior change.
+
+- **`NumericRecord` stores native-form leaves; conversion is lazy at the
+  compute boundary (breaking).** Leaves are no longer coerced to `jax.Array`
+  at construction: a numeric array or container (`jax` / `numpy` /
+  `xarray.DataArray` / `pandas` / registered backends) is stored **verbatim**,
+  validated from container metadata only, and converted at the compute
+  boundary (JAX pytree flatten, `to_vector`, the single-field scalar shim)
+  through a set-once per-leaf cache — so a lazy or disk-backed leaf is not
+  materialised at construction, and `record["x"]` returns the native leaf
+  (previously always a `jax.Array`). Backend metadata now survives structural
+  transforms and pickling because data and metadata never separate;
+  `NumericRecord.to_native()` is **removed** (leaves are already native —
+  navigation is the export), and `to_numeric()` is the identity on a
+  `NumericRecord` (on a plain `Record` it validates rather than
+  converts). All-numeric records holding
+  native containers **auto-promote** to `NumericRecord` (the previous
+  backend-leaf exclusion is removed), and `EventTemplate.infer_from` infers
+  `ArraySpec` for them. Native leaves are stored by reference (no defensive
+  copies). A native container's metadata (an `xarray` leaf's coords / dims /
+  attrs, a `pandas` leaf's index / columns) is **part of a record's identity**:
+  `Record.__eq__` and `fingerprint()` distinguish it, so two records with equal
+  values but different coords are unequal and fingerprint differently.
+  `Record.__eq__`, `to_numpy()`, and content fingerprints route through the
+  array-backend registry (so a registered non-numpy container is compared and
+  materialised by its own hooks) and materialise lazy leaves on demand;
+  `Record.__hash__` stays a coarse structural hash (shape + dtype, no values or
+  metadata) that does not materialise. The capture/restore aux machinery is
+  retired: `AuxHooks` / `register_aux` / `aux_for` and `NumericRecord.aux` are
+  **removed**, replaced by the recognition/conversion registry `ArrayBackend` /
+  `register_array_backend` / `array_backend_for` (with hooks
+  `event_shape` / `numpy_dtype` / `is_numeric` / `to_jax` / `to_numpy` /
+  `metadata`) — one registration makes a new container type recognised,
+  validated, promoted, converted (including at the eager batch-stacking
+  boundary), and content-fingerprinted everywhere at once. `fingerprint()`
+  hashes native containers by type + materialised values + identity metadata
+  instead of falling to the process-dependent `repr` tier. A pandas
+  nullable / masked dtype (`Int64Dtype` etc.) is **not** treated as numeric
+  (it is not a dense numpy dtype), so a frame using one stays a plain `Record`
+  rather than promoting into a form `jax` cannot hold.
 
 - **`Record` / `NumericRecord` construction is name-first, and all-numeric
   records auto-promote (#338, breaking).** The constructors are now

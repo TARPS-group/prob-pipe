@@ -68,6 +68,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpy.typing as npt
 
+from ._array_backend import array_backend_for
 from .constraints import Constraint
 from .named_tree import (
     _PATH_SEP,
@@ -199,9 +200,18 @@ class ArraySpec(ValueSpec):
         if shape is None or shape != self.shape:
             return False
         if self.dtype is not None:
-            actual = getattr(value, "dtype", None)
-            if actual is None:
-                actual = np.asarray(value).dtype
+            backend = array_backend_for(value)
+            if backend is not None:
+                # A registered container answers from metadata; ``None``
+                # means it has no single dtype (a heterogeneous frame), which
+                # cannot match a dtype-pinned spec.
+                actual = backend.numpy_dtype(value)
+                if actual is None:
+                    return False
+            else:
+                actual = getattr(value, "dtype", None)
+                if actual is None:
+                    actual = np.asarray(value).dtype
             # A same-kind cast (a widening promotion or a within-kind
             # narrowing) matches; a cross-kind cast (e.g. float where an int
             # dtype is declared) does not.
@@ -418,26 +428,46 @@ def _is_numeric_dtype(dtype: Any) -> bool:
     Covers the standard numpy kinds (bool, int, uint, float, complex) plus
     the ml_dtypes extension types JAX registers (``bfloat16``, the
     ``float8_*`` family, ``int4`` / ``uint4``), which numpy reports as kind
-    ``"V"``. Structured (record) dtypes are not numeric. Every place that
-    decides "is this array numeric?" — template inference, spec validation,
-    and the ``NumericRecord`` / ``NumericRecordArray`` leaf gates — routes
-    through this predicate so the sites cannot drift apart.
+    ``"V"``. A dtype that is **not** ``numpy.dtype``-coercible — a pandas
+    extension / masked dtype such as ``Int64Dtype`` — is **not** numeric
+    here: it reports a numpy ``kind`` but is not a dense numpy dtype, so a
+    container using it is not a plain numeric array (it carries NA / masking
+    semantics ``jax`` cannot represent) and must not promote to a
+    ``NumericRecord``. Structured (record) dtypes are likewise not numeric.
+    Every place that decides "is this array numeric?" — template inference,
+    spec validation, and the ``NumericRecord`` / ``NumericRecordArray`` leaf
+    gates — routes through this predicate so the sites cannot drift apart.
     """
-    kind = getattr(dtype, "kind", None)
+    try:
+        np_dtype = np.dtype(dtype)
+    except (TypeError, ValueError):
+        # ``np.dtype`` raises ``TypeError`` for a pandas extension / masked
+        # dtype and ``ValueError`` for an object it cannot interpret at all
+        # (e.g. a mock). Either way it is not a dense numpy dtype, so not
+        # numeric.
+        return False
+    kind = np_dtype.kind
     if kind in _NUMERIC_KINDS:
         return True
-    return kind == "V" and jnp.issubdtype(dtype, jnp.number)
+    return kind == "V" and jnp.issubdtype(np_dtype, jnp.number)
 
 
 def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
     """Return the shape of a numeric array-like value, or ``None``.
 
     A numeric scalar reports shape ``()`` and a numeric array reports its
-    ``shape``. Anything else — strings, object arrays, Python lists/tuples, and
-    any value without a numeric ``dtype`` / ``shape`` — reports ``None``.
+    ``shape``. Resolution is registry-first: a value whose type has a
+    registered :class:`~probpipe.ArrayBackend` answers through its
+    ``is_numeric`` / ``event_shape`` hooks (container metadata only — values
+    are not touched); everything else falls to the numpy-protocol duck path.
+    Strings, object arrays, Python lists/tuples, and any remaining value
+    without a numeric ``dtype`` / ``shape`` report ``None``.
     """
     if isinstance(val, (bool, int, float, complex, np.integer, np.floating, np.bool_)):
         return ()
+    backend = array_backend_for(val)
+    if backend is not None:
+        return tuple(backend.event_shape(val)) if backend.is_numeric(val) else None
     if hasattr(val, "shape") and hasattr(val, "dtype") and _is_numeric_dtype(val.dtype):
         return tuple(val.shape)
     return None
@@ -795,7 +825,6 @@ class EventTemplate(NamedTree[ValueSpec]):
         ValueError
             If *value* is an empty mapping (a template needs at least one field).
         """
-        from ._array_backend import aux_for
         from .record import Record
 
         if isinstance(value, Record):
@@ -813,13 +842,10 @@ class EventTemplate(NamedTree[ValueSpec]):
             # — matching ``from_nested_dict`` and the workflow-output wrap.
             if isinstance(val, Mapping):
                 return cls.infer_from(val)
-            # A backend-typed leaf (xarray / pandas) is stored verbatim in a
-            # plain ``Record`` — coercing it to a bare array is lossy — so it
-            # is opaque here, keeping the inferred template non-numeric and in
-            # step with the value's own class (a numeric-looking shape/dtype
-            # would otherwise mislabel it as an ``ArraySpec``).
-            if aux_for(val) is not None:
-                return None
+            # Any numeric array-like — bare arrays and native containers
+            # (xarray / pandas / registered backends) alike — infers an
+            # ``ArraySpec``; leaves are stored in native form, so nothing is
+            # lost by classing them numeric.
             return _full_array_shape_or_none(val)
 
         specs: dict[str, _FieldSpecInput] = {name: _leaf_spec(val) for name, val in value.items()}

@@ -45,15 +45,18 @@ per-field marginals as a sweep-ready `RecordArray`.
 
 ::: probpipe.FullFactorialDesign
 
-## Auxiliary-metadata registry
+## Array-backend registry
 
-`Record` → `NumericRecord` conversion drops backend-specific metadata
-(xarray `dims` / `coords` / `attrs`, pandas `index` / `columns` /
-`dtypes`); the auxiliary registry round-trips it so `to_native()`
-reproduces the original container.
+`NumericRecord` stores each leaf in its native form (an `xarray.DataArray`
+keeps its dims / coords / attrs, a `pandas` object its index / columns /
+dtypes) and converts to `jax.Array` lazily at the compute boundary.
+Containers speaking the numpy protocol need no registration; registering an
+`ArrayBackend` makes any other container type a first-class numeric leaf —
+recognised by template inference and `ArraySpec.is_valid`, promoted,
+converted at the boundary, and fingerprinted by content.
 
-::: probpipe.register_aux
+::: probpipe.register_array_backend
 
-::: probpipe.aux_for
+::: probpipe.array_backend_for
 
-::: probpipe.AuxHooks
+::: probpipe.ArrayBackend
