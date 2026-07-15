@@ -539,24 +539,14 @@ class TestRegisteredBackendIdentity:
         assert leaf.converted == 0
 
 
-class TestNullableDtypeNotNumeric:
-    """pandas nullable / masked dtypes report a numpy kind but are not
-    np.dtype-coercible; a frame using them must stay a plain Record rather
-    than promoting into a form jax cannot hold (which crashed on
-    dtype / is_valid / to_vector). Regression for the review-round finding.
+class TestGenericGateRejectsExtensionDtype:
+    """The generic numeric gate (``_is_numeric_dtype``, the duck path) stays
+    strict: a pandas extension / masked dtype is not ``np.dtype``-coercible,
+    so a *bare* value carrying one is not numeric there. The pandas backend
+    handles its own masked dtypes separately (see
+    :class:`TestNullableNumericMissingData`) — conservative duck path, backend
+    that knows its own types.
     """
-
-    def test_nullable_frame_does_not_promote(self):
-        df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64")})
-        r = Record("r", m=df)
-        assert type(r) is Record  # not NumericRecord
-        assert not isinstance(r.event_template, NumericEventTemplate)
-
-    def test_numpy_backed_frame_still_promotes(self):
-        df = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
-        r = Record("r", m=df)
-        assert type(r) is NumericRecord
-        np.testing.assert_allclose(r.to_vector(), [1.0, 3.0, 2.0, 4.0])
 
     def test_is_numeric_dtype_rejects_extension_dtype(self):
         from probpipe.core.event_template import _is_numeric_dtype
@@ -574,6 +564,158 @@ class TestNullableDtypeNotNumeric:
 
         assert _is_numeric_dtype(MagicMock()) is False
         assert _full_array_shape_or_none(MagicMock()) is None
+
+
+class TestNullableNumericMissingData:
+    """pandas nullable / masked numeric columns (``Int64``, ``Float64``,
+    ``boolean``, Sparse / pyarrow numerics) are first-class numeric leaves:
+    stored verbatim (mask intact at rest) and converted to jax at the compute
+    boundary through the columns' common dense dtype, with each NA encoded as
+    ``NaN`` — the only missing-value representation jax offers. That dtype keeps
+    a nullable float at its own width and a complex column complex; a nullable
+    integer / boolean promotes to ``float64``.
+    """
+
+    def test_nullable_frame_promotes(self):
+        df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64")})
+        r = Record("r", m=df)
+        assert type(r) is NumericRecord
+        assert isinstance(r.event_template, NumericEventTemplate)
+
+    def test_na_encoded_as_nan_at_boundary(self):
+        df = pd.DataFrame({"a": pd.array([1, None, 3], dtype="Int64")})
+        v = np.asarray(Record("r", m=df).to_vector())
+        assert v[0] == 1.0 and v[2] == 3.0
+        assert np.isnan(v[1])
+
+    def test_mask_preserved_at_rest(self):
+        # Native storage keeps the pandas object verbatim: the validity mask
+        # survives construction. NA -> NaN happens only at the jax boundary,
+        # never at rest.
+        df = pd.DataFrame({"a": pd.array([1, None], dtype="Int64")})
+        stored = Record("r", m=df)["m"]
+        assert isinstance(stored, pd.DataFrame)
+        assert stored["a"].isna().tolist() == [False, True]
+
+    def test_series_nullable_promotes_and_converts(self):
+        s = pd.Series(pd.array([1.5, None, 3.0], dtype="Float64"), name="x")
+        r = Record("r", m=s)
+        assert type(r) is NumericRecord
+        v = np.asarray(r.to_vector())
+        assert v[0] == 1.5 and v[2] == 3.0 and np.isnan(v[1])
+
+    def test_boolean_nullable_converts_to_float(self):
+        s = pd.Series(pd.array([True, None, False], dtype="boolean"))
+        v = np.asarray(Record("r", m=s).to_vector())
+        np.testing.assert_array_equal(np.isnan(v), [False, True, False])
+        assert v[0] == 1.0 and v[2] == 0.0
+
+    def test_mixed_nullable_and_plain_columns(self):
+        df = pd.DataFrame({"a": pd.array([1, None], dtype="Int64"), "b": [3.0, 4.0]})
+        r = Record("r", m=df)
+        assert type(r) is NumericRecord
+        v = np.asarray(r.to_vector())  # row-major flatten: [1, 3, nan, 4]
+        np.testing.assert_array_equal(np.isnan(v), [False, False, True, False])
+
+    def test_numpy_dtype_is_float64_for_nullable(self):
+        df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64")})
+        assert array_backend_for(df).numpy_dtype(df) == np.dtype("float64")
+        s = pd.Series(pd.array([1, 2], dtype="Int64"))
+        assert array_backend_for(s).numpy_dtype(s) == np.dtype("float64")
+
+    def test_complete_nullable_still_converts_through_float(self):
+        # No missing values, but a nullable integer dtype still promotes to
+        # floating point: the leaf dtype is predictable from the dtype, not
+        # from whether NAs happen to be present. (Float width follows jax's
+        # x64 config; the backend numpy_dtype is float64 either way, checked
+        # in test_numpy_dtype_is_float64_for_nullable.)
+        df = pd.DataFrame({"a": pd.array([1, 2, 3], dtype="Int64")})
+        v = np.asarray(Record("r", m=df).to_vector())
+        assert np.issubdtype(v.dtype, np.floating)
+
+    def test_categorical_and_string_stay_opaque(self):
+        # Non-numeric extension dtypes are not swept in: the container stays a
+        # plain Record.
+        cat = pd.DataFrame({"a": pd.Categorical([1, 2, 1])})
+        assert type(Record("r", m=cat)) is Record
+        text = pd.DataFrame({"a": pd.array(["a", "b"], dtype="string")})
+        assert type(Record("r", m=text)) is Record
+
+    def test_numpy_backed_frame_still_promotes(self):
+        df = pd.DataFrame({"a": [1.0, 2.0], "b": [3.0, 4.0]})
+        r = Record("r", m=df)
+        assert type(r) is NumericRecord
+        np.testing.assert_allclose(r.to_vector(), [1.0, 3.0, 2.0, 4.0])
+
+    def test_nullable_beside_complex_preserves_imaginary(self):
+        # A nullable column beside a complex column must not truncate the
+        # imaginary parts: the frame densifies to the columns' common promotion
+        # (complex128), not float64. numpy_dtype reports the same dtype the
+        # conversion produces.
+        df = pd.DataFrame({"a": pd.array([1, None], dtype="Int64"), "b": [1 + 2j, 3 + 4j]})
+        backend = array_backend_for(df)
+        assert backend.numpy_dtype(df) == np.dtype("complex128")
+        out = backend.to_numpy(df)
+        assert out.dtype == np.dtype("complex128")
+        assert out[0, 1] == 1 + 2j and out[1, 1] == 3 + 4j  # imaginary parts kept
+        assert out[0, 0] == 1 + 0j and np.isnan(out[1, 0])  # NA -> nan
+
+    def test_nullable_beside_complex_promotes_and_vectorizes(self):
+        df = pd.DataFrame({"a": pd.array([1, 2], dtype="Int64"), "b": [1 + 2j, 3 + 4j]})
+        r = Record("r", m=df)
+        assert type(r) is NumericRecord
+        v = np.asarray(r.to_vector())
+        assert np.issubdtype(v.dtype, np.complexfloating)
+        # row-major flatten of [[1+0j, 1+2j], [2+0j, 3+4j]]
+        np.testing.assert_array_equal(v, [1 + 0j, 1 + 2j, 2 + 0j, 3 + 4j])
+
+    def test_nullable_float_keeps_its_own_width(self):
+        # A nullable float column contributes its own width, not a float64 floor.
+        f32 = pd.DataFrame({"a": pd.array([1.0, None], dtype="Float32")})
+        assert array_backend_for(f32).numpy_dtype(f32) == np.dtype("float32")
+        f64 = pd.DataFrame({"a": pd.array([1.0, None], dtype="Float64")})
+        assert array_backend_for(f64).numpy_dtype(f64) == np.dtype("float64")
+
+    def test_nullable_complex_equality_and_fingerprint(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        def mk(imag):
+            return Record(
+                "r",
+                m=pd.DataFrame({"a": pd.array([1, None], dtype="Int64"), "b": [1 + 2j, imag]}),
+            )
+
+        # Identical (including the NA position) -> equal and fingerprint-equal.
+        assert mk(3 + 4j) == mk(3 + 4j)
+        assert fingerprint(mk(3 + 4j)) == fingerprint(mk(3 + 4j))
+        # Differing only in an imaginary part -> unequal and fingerprint-different.
+        assert mk(3 + 4j) != mk(3 + 5j)
+        assert fingerprint(mk(3 + 4j)) != fingerprint(mk(3 + 5j))
+
+    def test_sparse_complex_extension_preserves_imaginary(self):
+        # A Sparse[complex128] column is a complex *extension* dtype whose dense
+        # type is exposed as .subtype (not .numpy_dtype). It must densify to
+        # complex128, not float64 — the imaginary parts (and NA -> nan) survive.
+        sd = pd.SparseDtype("complex128", np.nan)
+        s = pd.Series([1 + 2j, np.nan, 3 + 4j], dtype=sd)
+        backend = array_backend_for(s)
+        assert backend.numpy_dtype(s) == np.dtype("complex128")
+        out = backend.to_numpy(s)
+        assert out.dtype == np.dtype("complex128")
+        assert out[0] == 1 + 2j and out[2] == 3 + 4j  # imaginary parts kept
+        assert np.isnan(out[1])  # NA -> nan
+
+    def test_sparse_complex_promotes_and_round_trips(self):
+        sd = pd.SparseDtype("complex128", np.nan)
+        r1 = Record("r", m=pd.Series([1 + 2j, 3 + 4j], dtype=sd))
+        r2 = Record("r", m=pd.Series([1 + 2j, 3 + 4j], dtype=sd))
+        assert type(r1) is NumericRecord
+        v = np.asarray(r1.to_vector())
+        assert np.issubdtype(v.dtype, np.complexfloating)
+        np.testing.assert_array_equal(v, [1 + 2j, 3 + 4j])
+        # equality/fingerprint see the imaginary parts
+        assert r1 == r2
+        assert r1 != Record("r", m=pd.Series([1 + 2j, 3 + 9j], dtype=sd))
 
 
 class TestNativeMetadataInIdentity:
