@@ -80,12 +80,25 @@ class TestRegistryLookup:
         assert backend is not None
         assert backend.event_shape(pd.DataFrame({"a": [1.0, 2.0]})) == (2, 1)
 
-    def test_dataframe_numpy_dtype_homogeneous_and_mixed(self):
+    def test_dataframe_numpy_dtype_promotes_mixed_numeric(self):
         backend = array_backend_for(pd.DataFrame({"a": [1.0]}))
         homo = pd.DataFrame({"a": [1.0], "b": [2.0]})
-        mixed = pd.DataFrame({"a": [1.0], "b": [2]})
+        mixed = pd.DataFrame({"a": [1.0], "b": [2]})  # float64 + int64
         assert backend.numpy_dtype(homo) == np.dtype("float64")
-        assert backend.numpy_dtype(mixed) is None  # no single dtype
+        # A mixed-but-all-numeric frame densifies (to_numpy / to_jax) to its
+        # columns' common promotion — the dtype the leaf is actually built as —
+        # not None, so a dtype-pinned ArraySpec does not over-reject it.
+        assert backend.numpy_dtype(mixed) == np.dtype("float64")
+        # No single dense dtype (an empty frame) still reports None.
+        assert backend.numpy_dtype(pd.DataFrame()) is None
+
+    def test_dataframe_mixed_numeric_validates_against_pinned_spec(self):
+        # Regression: an int64 + float64 frame validates against a float64-pinned
+        # NumericEventTemplate (previously rejected because numpy_dtype was None).
+        df = pd.DataFrame({"a": [1, 2], "b": [3.0, 4.0]})
+        tpl = NumericEventTemplate({"x": ArraySpec((2, 2), dtype=np.dtype("float64"))})
+        nr = NumericRecord("r", x=df, event_template=tpl)
+        assert nr["x"] is df
 
     def test_dataframe_is_numeric_per_instance(self):
         backend = array_backend_for(pd.DataFrame({"a": [1.0]}))

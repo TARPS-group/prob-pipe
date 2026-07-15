@@ -872,9 +872,12 @@ class TestReprAndEquality:
         assert r1 == r2
         assert hash(r1) == hash(r2)
 
-    # Regression for (f-ii): self-equality must hold even when leaves
-    # contain NaN. ``jnp.array_equal`` treats NaN != NaN, so we need an
-    # identity fast-path.
+    # NaN leaves: equality is reflexive across INDEPENDENT copies, not only via
+    # the identity fast-path. ``__eq__`` compares native values with
+    # ``equal_nan`` (the same basis as the content fingerprint), so two
+    # separately built records with a NaN leaf are equal and hash the same.
+    # Regression for the /code-review finding that NaN leaves made ``__eq__``
+    # non-reflexive across copies (``jnp.array_equal`` treats NaN != NaN).
 
     def test_self_equality_with_nan(self):
         r = Record("r", x=jnp.array([jnp.nan, 1.0, jnp.nan]))
@@ -883,6 +886,41 @@ class TestReprAndEquality:
     def test_self_equality_with_nan_nested(self):
         r = Record("r", inner=Record("r", x=jnp.array([jnp.nan])), y=jnp.nan)
         assert r == r
+
+    def test_independent_copies_equal_with_nan(self):
+        r1 = Record("r", x=jnp.array([jnp.nan, 1.0, jnp.nan]))
+        r2 = Record("r", x=jnp.array([jnp.nan, 1.0, jnp.nan]))
+        assert r1 is not r2
+        assert r1 == r2
+        assert hash(r1) == hash(r2)
+
+    def test_independent_copies_equal_with_nan_nested(self):
+        def mk():
+            return Record("r", inner=Record("r", x=jnp.array([jnp.nan])), y=jnp.nan)
+
+        assert mk() == mk()
+
+    def test_nan_differs_from_finite(self):
+        # equal_nan aligns NaN positions; a NaN vs a finite value at the same
+        # position is still unequal.
+        assert Record("r", x=jnp.array([jnp.nan, 1.0])) != Record("r", x=jnp.array([2.0, 1.0]))
+
+    def test_eq_agrees_with_fingerprint(self):
+        # ``__eq__`` and ``fingerprint()`` share one native, full-precision
+        # basis, so they agree in both directions: NaN copies are equal *and*
+        # fingerprint-equal; a sub-float32 difference in float64 is unequal
+        # *and* fingerprint-different (not silently equated under x32).
+        from probpipe.core._fingerprint import fingerprint
+
+        nan1 = Record("r", x=np.array([1.0, np.nan]))
+        nan2 = Record("r", x=np.array([1.0, np.nan]))
+        assert (nan1 == nan2) is True
+        assert fingerprint(nan1) == fingerprint(nan2)
+
+        near1 = Record("r", x=np.array([1.0]))
+        near2 = Record("r", x=np.array([1.0 + 1e-9]))
+        assert (near1 == near2) == (fingerprint(near1) == fingerprint(near2))
+        assert near1 != near2
 
 
 # ---------------------------------------------------------------------------

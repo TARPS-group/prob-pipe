@@ -41,11 +41,10 @@ from collections.abc import Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 
 import jax
-import jax.numpy as jnp
 import numpy as np
 
 from ..custom_types import ArrayLike
-from ._array_backend import _to_jax_array, array_backend_for
+from ._array_backend import array_backend_for
 from .event_template import (
     EventTemplate,
     NumericEventTemplate,
@@ -91,14 +90,35 @@ def _derived_record_name(field_keys: Iterable[str]) -> str:
     return "record(" + ",".join(field_keys) + ")"
 
 
-def _leaf_values_equal(a: Any, b: Any) -> bool:
-    """Whether two numeric leaves have equal values, routed through the registry.
+def _leaf_to_numpy(leaf: Any) -> np.ndarray:
+    """Materialise a numeric leaf to numpy on its native basis (registry-first).
 
-    Both leaves convert to ``jax.Array`` via the array-backend registry (so a
-    native or registered-backend container compares by its values, not object
-    identity) and are compared with ``jnp.array_equal``.
+    Uses the registered backend's ``to_numpy`` (native dtype and full
+    precision) when *leaf*'s type is registered, else ``np.asarray`` — the same
+    basis :func:`fingerprint` hashes on, so a value comparison built on it
+    agrees with the content fingerprint.
     """
-    return bool(jnp.array_equal(_to_jax_array(a), _to_jax_array(b)))
+    backend = array_backend_for(leaf)
+    if backend is not None:
+        return np.asarray(backend.to_numpy(leaf))
+    return np.asarray(leaf)
+
+
+def _leaf_values_equal(a: Any, b: Any) -> bool:
+    """Whether two numeric leaves have equal values, on their native basis.
+
+    Both leaves materialise to numpy through the array-backend registry — the
+    same native, full-precision basis :func:`fingerprint` uses — rather than
+    converting to ``jax.Array`` first. So ``__eq__`` agrees with the content
+    fingerprint instead of comparing at the lossy compute-boundary precision (a
+    sub-``float32`` difference is not silently equated under JAX's default x32
+    policy), and ``NaN`` positions compare equal (``equal_nan``) for floating
+    data, so a record with a ``NaN`` leaf equals an independent copy of itself.
+    """
+    a_np = _leaf_to_numpy(a)
+    b_np = _leaf_to_numpy(b)
+    equal_nan = np.issubdtype(a_np.dtype, np.inexact) and np.issubdtype(b_np.dtype, np.inexact)
+    return bool(np.array_equal(a_np, b_np, equal_nan=equal_nan))
 
 
 def _leaf_metadata_key(leaf: Any) -> Any:
@@ -120,13 +140,13 @@ def _leaf_metadata_key(leaf: Any) -> Any:
 
 
 def _canonical_dtype_str(leaf: Any) -> str:
-    """The leaf's compute-boundary dtype as a string, without materialising it.
+    """The leaf's structural dtype as a string, without materialising it.
 
     Reads the native numpy dtype (registry-first, else ``.dtype``, else the
-    numpy dtype of a bare scalar) and canonicalizes it the way a
-    ``jax.Array`` conversion would (applying JAX's x64 policy), so the value
-    matches what ``__eq__`` compares. ``"none"`` for a container with no
-    single dtype (a heterogeneous numeric frame).
+    numpy dtype of a bare scalar) and canonicalizes it
+    (``jax.dtypes.canonicalize_dtype``, applying JAX's x64 policy) so widths
+    JAX would unify hash together, keeping :meth:`__hash__` a stable coarse
+    key. ``"none"`` when the leaf has no single dense dtype.
     """
     backend = array_backend_for(leaf)
     if backend is not None:
@@ -1116,14 +1136,15 @@ class Record(NamedTree, Tracked, Annotated):
         :attr:`event_template` (so two values with structurally distinct schemas
         — e.g. differing ``support`` on a numeric leaf — are unequal even with
         identical bytes), and (3) field-by-field equal values. A numeric leaf
-        is compared on its **converted array values** (via the array-backend
-        registry, so a native container is not compared object-by-object)
-        **and** on its native-container metadata (an ``xarray`` leaf's coords /
-        dims / attrs, a ``pandas`` leaf's index / columns): two leaves with
-        equal values but different coords are unequal, because that metadata is
-        observable content. Nested records compare recursively; opaque leaves
-        compare with ``==``. Self-identity short-circuits to ``True`` so a
-        record equals itself even when a leaf contains ``NaN``.
+        is compared on its **native values** (materialised through the
+        array-backend registry — the same basis :func:`fingerprint` uses, so
+        equality and the content fingerprint agree) **and** on its
+        native-container metadata (an ``xarray`` leaf's coords / dims / attrs,
+        a ``pandas`` leaf's index / columns): two leaves with equal values but
+        different coords are unequal, because that metadata is observable
+        content. ``NaN`` positions compare equal (``equal_nan``), so a record
+        with a ``NaN`` leaf equals an independent copy of itself. Nested
+        records compare recursively; opaque leaves compare with ``==``.
 
         Whether two records with equal data compare equal therefore turns on
         their templates. Built from equal data *without* an explicit template,
@@ -1137,8 +1158,9 @@ class Record(NamedTree, Tracked, Annotated):
         values or metadata), so equal records always hash equal while records
         that differ only in values or coords legitimately collide.
         """
-        # Identity fast-path: self-equality must return True even when
-        # leaves contain NaN (``jnp.array_equal`` treats NaN != NaN).
+        # Identity fast-path — a cheap short-circuit before the field walk
+        # (NaN leaves also compare equal across independent copies, via the
+        # ``equal_nan`` comparison in ``_leaf_values_equal``).
         if self is other:
             return True
         if type(self) is not type(other):
@@ -1158,7 +1180,7 @@ class Record(NamedTree, Tracked, Annotated):
                 _full_array_shape_or_none(a) is not None or _full_array_shape_or_none(b) is not None
             ):
                 # A numeric leaf (native container or bare array): compare the
-                # converted values through the registry, then the
+                # native values (the fingerprint basis), then the
                 # native-container metadata (coords / index / ...).
                 try:
                     if not _leaf_values_equal(a, b):
@@ -1178,11 +1200,11 @@ class Record(NamedTree, Tracked, Annotated):
         # Coarse structural hash over class, field names, and per-field shape
         # + canonicalized dtype — never the values or the native-container
         # metadata, so it does not materialise a lazy / disk-backed leaf. The
-        # dtype is the one a compute-boundary conversion would produce
-        # (``jax.dtypes.canonicalize_dtype`` on the native numpy dtype), so it
-        # stays consistent with ``__eq__``'s converted-value comparison. Two
-        # records that differ only in values or coords hash equal (a legal
-        # collision); equal records always hash equal.
+        # dtype is canonicalized (``jax.dtypes.canonicalize_dtype`` on the
+        # native numpy dtype) so widths JAX would unify hash together, keeping
+        # equal records hashing equal. Two records that differ only in values
+        # or coords hash equal (a legal collision); equal records always hash
+        # equal.
         parts: list[Any] = [type(self).__name__]
         for name, val in self._tree.items():
             if isinstance(val, Record):

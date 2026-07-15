@@ -288,10 +288,15 @@ def _register_pandas() -> None:
         return len(dtypes) > 0 and all(_is_numeric_dtype(d) for d in dtypes)
 
     def _frame_numpy_dtype(df: pd.DataFrame) -> np.dtype | None:
-        dtypes = set(df.dtypes)
-        if len(dtypes) == 1:
-            return _safe_numpy_dtype(dtypes.pop())
-        return None  # heterogeneous columns: no single dtype
+        # A numeric frame densifies (to_numpy / to_jax) to one dense array whose
+        # dtype is its columns' common promotion — e.g. int64 + float64 ->
+        # float64 — so report that for an all-numeric frame rather than None.
+        # ``None`` only when a column has no dense numpy dtype (a non-numpy /
+        # extension column), so no single dense dtype exists.
+        numpy_dtypes = [_safe_numpy_dtype(d) for d in df.dtypes]
+        if not numpy_dtypes or any(nd is None for nd in numpy_dtypes):
+            return None
+        return np.result_type(*numpy_dtypes)
 
     def _frame_metadata(df: pd.DataFrame) -> Any:
         return {
