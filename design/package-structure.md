@@ -8,7 +8,7 @@ This document uses the **`Function`** vocabulary. A `Function` is the universal 
 
 - **One package per layer.** Packages mirror the reference's parts in dependency order, and a module realizes one section or one coherent piece of one.
 - **Imports point downward.** Each package imports only from packages above it in the tree below. There are no import cycles, and no lazy imports to dodge one.
-- **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register pushforward rules and converters, and the inference methods register themselves. Capability reaches the operations without the operations importing their providers.
+- **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register evaluation rules and converters, and the inference methods register themselves. Capability reaches the operations without the operations importing their providers.
 - **A spec lives with the type it admits.** `ArraySpec`, `OpaqueSpec`, and `FunctionSpec` live in the value layer with the value kinds they describe, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The same placement rule covers each type's batch form.
 - **Modules are private, packages are public.** Every module is underscore-prefixed. A package's `__init__` exports its public names, and the top-level `probpipe` namespace re-exports the curated user surface, which is the only import a user needs.
 - **Tests mirror the tree**, as `tests/<package>/test_<module>.py`.
@@ -72,7 +72,7 @@ probpipe/
 │   ├── _density.py            #   log_prob, unnormalized_log_prob (V.3)
 │   ├── _condition.py          #   condition_on, predictive, the inference registry (V.4)
 │   ├── _joint.py              #   joint (V.5)
-│   ├── _pushforward.py        #   pushforward and its rule registry (V.6)
+│   ├── _evaluate.py           #   evaluate and its rule registry (V.6)
 │   └── _marginal.py           #   marginal, factor (V.7)
 ├── families/                  # Part VI — the distribution catalog
 │   ├── _backend.py            #   TFPDistribution, the backend adapter (VI.1)
@@ -81,7 +81,7 @@ probpipe/
 │   ├── _multivariate.py       #   MultivariateNormal, Dirichlet, … (VI.1)
 │   ├── _resampling.py         #   bootstrap forms, KDE and its kernels (VI.2)
 │   ├── _mixture.py            #   MixtureDistribution (VI.3)
-│   ├── _transformed.py        #   the pushforward-result families (VI.4)
+│   ├── _transformed.py        #   the evaluation-result families (VI.4)
 │   ├── _random_functions.py   #   RandomFunction, RandomMeasure (VI.5)
 │   ├── _gaussian.py           #   the Gaussian algebra (VI.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VI.8)
@@ -98,8 +98,8 @@ probpipe/
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
 - **`functions/`** is the `Function` engine, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
-- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per Part V section. The registries the operations own are defined here and populated from above: the inference-method registry with `condition_on`, and the rule registry with `pushforward`.
-- **`families/`** implements the catalog: constructors and capability implementations, registering its pushforward rules and converters upward at import.
+- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per Part V section. The registries the operations own are defined here and populated from above: the inference-method registry with `condition_on`, and the rule registry with `evaluate`.
+- **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
 
 A handful of private helper modules (dtypes, array utilities) support the packages and carry no design contract.

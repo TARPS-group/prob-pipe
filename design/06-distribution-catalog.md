@@ -9,9 +9,9 @@ Parts III and V fixed what a distribution *is* and what the operations do to one
 | VI.1  | parametric (`Normal`, …)          | one array field, or a fixed record     | no                                 | closed form throughout                              | constructor                                            |
 | VI.2  | empirical, bootstrap, KDE         | any                                    | no                                 | sampling, sample moments, exact marginals           | constructor, or as a sampling result                   |
 | VI.3  | mixture                           | the components' shared event           | no                                 | what the components jointly support                 | `predictive`, dependent marginals, or constructor      |
-| VI.4  | pushforward results               | the map's output template              | no                                 | per rule: exact density, exact moments, or sampling | `pushforward`                                          |
+| VI.4  | evaluation results                | the map's output template              | no                                 | per rule: exact density, exact moments, or sampling | `evaluate`                                             |
 | VI.5  | random functions, random measures | a `FunctionSpec` or `DistributionSpec` leaf | no                             | mean function / marginalized law, sampling          | constructor                                            |
-| VI.6  | the Gaussian algebra              | numeric                                | yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `pushforward` |
+| VI.6  | the Gaussian algebra              | numeric                                | yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `evaluate`    |
 | VI.7  | inference-produced                | any                                    | as realized                        | whatever the realizing family supports              | `condition_on` (inference)                             |
 | VI.8  | conditional families              | (given, event) template pairs          | some                               | the conditional capabilities                        | constructor or composition                             |
 
@@ -44,7 +44,7 @@ An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any
 
 Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap (an empirical source, resampled) and the parametric bootstrap (a fitted law, redrawn) in one interface, with `replicate_size` defaulting to the source's atom count when the source is empirical and required otherwise.
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in `T`'s batch form.
-- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is a pushforward, `pushforward(stat, ...)`, of whichever form the statistic reads, a replicate dataset or a replicate measure.
+- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure.
 
 A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never touches kernel-specific parameters. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, and is resolved before the copies are built. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only.
 
@@ -104,11 +104,11 @@ class MixtureDistribution(Distribution[T]):
 
 A mixture supports an operation exactly when its components do, the same intersection rule the factored classes use (`D3 – Capability-based operations`).
 
-## VI.4 — Pushforward results
+## VI.4 — Evaluation results
 
 ### Contract
 
-Each pushforward rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy carrier for `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws. Whatever the rule, a linear map's result delegates `mean` and `cov` exactly.
+Each evaluation rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy carrier for `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws. Whatever the rule, a linear map's result delegates `mean` and `cov` exactly.
 
 ```python
 class LinearPushforwardDistribution(Distribution):
@@ -126,21 +126,21 @@ class BijectorTransformedDistribution(Distribution[T]):
 
 ### Rationale
 
-Typing pushforward results as catalog families keeps the operation closed and its outputs operable (`D4 – Closed system of objects under operations`).
+Typing evaluation results as catalog families keeps the operation closed and its outputs operable (`D4 – Closed system of objects under operations`).
 
 ### Open points
 
-- *Lazy sampling pushforwards.* The sampling rule materializes an `EmpiricalDistribution` with a fixed atom count. A lazy alternative that remains exactly samplable, drawing an input and applying the map on demand, would suit unbounded resampling such as bootstrap statistics; whether that is the sampling rule's result or an opt-in form is open.
+- *Lazy sampling results.* The sampling rule materializes an `EmpiricalDistribution` with a fixed atom count. A lazy alternative that remains exactly samplable, drawing an input and applying the map on demand, would suit unbounded resampling such as bootstrap statistics; whether that is the sampling rule's result or an opt-in form is open.
 
 ## VI.5 — Random functions and random measures
 
 ### Contract
 
-A `RandomFunction` is a distribution whose event is a `FunctionSpec` leaf: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point is the evaluation pushforward, a distribution over outputs. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random, so `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member.
+A `RandomFunction` is a distribution whose event is a `FunctionSpec` leaf: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point returns a distribution over outputs, the law of `f(x)` for `f` drawn from the random function. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random, so `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member.
 
 ```python
 class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
-    def __call__(self, x: X) -> Distribution: ...       # the evaluation pushforward at x
+    def __call__(self, x: X) -> Distribution: ...       # the distribution over outputs at x
 
 class RandomMeasure[T](Distribution[Distribution[T]]):
     def _random_log_prob(self) -> RandomFunction: ...   # the law of x ↦ log D(x) for D ~ M
@@ -164,7 +164,7 @@ class FactoredMultivariateGaussian(FactoredNumericDistribution): ...
 # log_prob, moments, sampling, conditioning, and marginals are all exact
 ```
 
-**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction`, the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form pushforward rules.
+**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction`, the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
 
 ```python
 class GaussianRandomFunction(RandomFunction[Array, Array], ABC):
