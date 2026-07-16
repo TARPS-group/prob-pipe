@@ -30,7 +30,7 @@ Each object also has an indexed-collection form (a batch), and every operation l
 
 ### Contents
 
-The document has six parts plus one more planned:
+The document has six parts, a package-structure companion, and one more part planned:
 
 - **[Part I — Design Principles](01-design-principles.md)** — the high-level commitments that drive every downstream design decision. They are deliberately stated without reference to any specific class, type, or API.
 - **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic machinery the rest of the library is built on: the named-tree abstraction, identity, provenance, metadata, batching, and the dispatch registries.
@@ -39,6 +39,7 @@ The document has six parts plus one more planned:
 - **[Part V — Operations](05-operations.md)** — precise contracts for the core operations: moments, sampling, density evaluation, conditioning, composition, pushforward, and batched operations.
 - **[Part VI — The Distribution Catalog](06-distribution-catalog.md)** — the concrete families placed on the hierarchy's axes: parametric, empirical, mixtures, pushforward results, the Gaussian algebra, random functions and measures, inference-produced distributions, and the conditional families, including GLM likelihoods.
 - **Part VII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow.
+- **[Package Structure](package-structure.md)** — the target package and module layout realizing the parts: the layered import graph, upward registration, and the public-API conventions.
 
 ### Conventions
 
