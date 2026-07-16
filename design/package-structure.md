@@ -33,7 +33,7 @@ probpipe/
 │   ├── _constraints.py        #   Constraint and the constraint factories (III.1)
 │   ├── _specs.py              #   ValueSpec, ArraySpec, OpaqueSpec (III.1)
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (III.1)
-│   ├── _function.py           #   the function kind's base: what a FunctionSpec admits,
+│   ├── _function_base.py      #   the function kind's base: what a FunctionSpec admits,
 │   │                          #     FunctionSpec itself, and function capabilities (invertibility, …)
 │   ├── _function_batch.py     #   FunctionBatch (III.2)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
