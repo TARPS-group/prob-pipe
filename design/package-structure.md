@@ -35,7 +35,8 @@ probpipe/
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (III.1)
 │   ├── _function.py           #   the function value kind: the base a FunctionSpec admits,
 │   │                          #     FunctionSpec, and function capabilities (invertibility, …)
-│   ├── _value_batches.py      #   FunctionBatch, OpaqueBatch (III.2)
+│   ├── _function_batch.py     #   FunctionBatch (III.2)
+│   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
 │   ├── _record.py             #   Record, NumericRecord (III.3)
 │   └── _record_batch.py       #   RecordBatch, NumericRecordBatch (III.4)
 ├── linalg/                    # LinOp, the linear Function subtype (III.5)
