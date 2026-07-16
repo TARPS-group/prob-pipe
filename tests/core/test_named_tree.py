@@ -221,13 +221,13 @@ class TestMappingsAreNeverLeaves:
         r2 = r.replace(a={"seed": 0})
         assert tuple(r2.keys()) == ("a/seed",)
 
-    def test_from_nested_dict_reads_mappings_as_structure(self):
-        r = Record.from_nested_dict("r", {"a": {"b": 1.0}, "c": 2.0})
+    def test_constructor_reads_positional_nested_dict(self):
+        r = Record("r", {"a": {"b": 1.0}, "c": 2.0})
         assert tuple(r.keys()) == ("a/b", "c")
 
     def test_serialization_round_trips(self):
         r = Record("r", g=Record("r", a=1.0, b=2.0), c=3.0)
-        back = Record.from_nested_dict("r", r.to_nested_dict())
+        back = Record("r", r.to_nested_dict())
         assert tuple(back.keys()) == tuple(r.keys())
         assert back == r
 

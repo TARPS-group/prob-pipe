@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `probpipe.core.named_tree` module holding the ordered, immutable,
   `/`-path-navigable tree that `EventTemplate` and `Record` now share as their
   common base (previously the private `_NamedTree`). The substrate owns the
-  leaf-keyed mapping interface, nested-dict (de)construction, and the
+  leaf-keyed mapping interface, nested-dict export (`to_nested_dict`) that the
+  constructor reads back, and the
   structural edits `merge` / `without` / `replace`, and gains
   `with_path_names(old=new, ...)` — rename leaves or whole subtrees by path,
   or by bare name when unique in the tree. Each family declares its leaf type
@@ -120,6 +121,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **`from_nested_dict` and `_flatten_paths` removed — the constructor reads a
+  nested mapping directly (breaking).** Under the *"a mapping is never a leaf"*
+  invariant, `Record(name, data)` already materialises every nested mapping
+  value into a subtree, so `Record.from_nested_dict` /
+  `NamedTree.from_nested_dict` (and the private `NamedTree._flatten_paths`)
+  added nothing the constructor lacked. Build from a nested mapping with
+  `Record(name, data)` and round-trip via `Record(name, r.to_nested_dict())`.
+  This also **tightens validation**: an input mixing a `/`-path key with a
+  nested-dict value under the same prefix (e.g. `{"y/a": 1.0, "y": {"b": 2.0}}`)
+  now raises, where `from_nested_dict` silently reshaped it. `Record.ensure`
+  and the workflow-output wrap, which used `_flatten_paths` internally, are
+  unaffected.
+
 - **`FunctionSpec` requires explicit input/output `EventTemplate`s (#357, breaking).**
   Neither side accepts a bare `ValueSpec` anymore (previously wrapped into a
   single-field template keyed `"input"` / `"output"`); pass an `EventTemplate`
@@ -137,7 +151,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `template["x"]` type-checks as a `ValueSpec`) while `Record` binds
   `NamedTree[Any]`. The leaf accessors (`[]`, `values`, `items`, `map`) carry
   `L`, and the structure-preserving transforms (`without` / `merge` /
-  `replace` / `with_path_names` / `map`) and `from_nested_dict` return `Self`.
+  `replace` / `with_path_names` / `map`) return `Self`.
   Annotations only — no runtime behavior change.
 
 - **`NumericRecord` stores native-form leaves; conversion is lazy at the
@@ -210,8 +224,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `EventTemplate.from_field_values(values)` (removed), and
   `NumericRecord.from_vector(name, template, vec)` replaces
   `NumericEventTemplate.from_vector` (removed) as the classmethod inverse of
-  the value-level `NumericRecord.to_vector`. `Record.from_nested_dict` /
-  `from_dict` likewise take the name first. Construction now validates each
+  the value-level `NumericRecord.to_vector`. `Record.from_dict` likewise takes
+  the name first. Construction now validates each
   leaf against its field spec's `is_valid` (structure only: shape and dtype,
   the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). An
   `ArraySpec`'s `support` is descriptive metadata and is not checked by

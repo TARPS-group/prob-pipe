@@ -237,7 +237,7 @@ class OpaqueSpec(ValueSpec):
         -----
         The record layer honours the same rule: mappings are never leaves, so
         :class:`~probpipe.Record` construction materialises a mapping field
-        value into a nested subtree (as ``from_nested_dict`` does).
+        value into a nested subtree.
         """
         return not isinstance(value, Mapping)
 
@@ -775,7 +775,7 @@ class EventTemplate(NamedTree[ValueSpec]):
                 return val.event_template
             # A mapping is never a leaf: it denotes tree structure, so infer a
             # nested template from it rather than an (invalid) opaque-leaf spec
-            # — matching ``from_nested_dict`` and the workflow-output wrap.
+            # — matching the constructor and the workflow-output wrap.
             if isinstance(val, Mapping):
                 return cls.infer_from(val)
             # Any numeric array-like — bare arrays and native containers

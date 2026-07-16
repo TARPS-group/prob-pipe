@@ -231,12 +231,11 @@ class Record(NamedTree[Any], Tracked, Annotated):
     Construction and validation
     ---------------------------
     A record is built from a flat mapping of key/field pairs — either as keyword
-    arguments or as a single positional mapping, but not both. The
-    :meth:`from_nested_dict` alternate constructor instead takes a nested
-    dictionary. Mappings are never leaves: a mapping value denotes tree
-    structure, so a plain ``dict`` passed as a field value is materialised
-    into a nested subtree — never stored as a leaf — exactly as
-    :meth:`from_nested_dict` reads it. When every leaf is a numeric array (so
+    arguments or as a single positional mapping, but not both. Mappings are
+    never leaves: a mapping value denotes tree structure, so a plain ``dict``
+    passed as a field value is materialised into a nested subtree — never
+    stored as a leaf — whether it appears as a keyword value or nested inside a
+    positional mapping. When every leaf is a numeric array (so
     the carried template is a :class:`NumericEventTemplate`), ``Record(...)``
     **auto-promotes** to :class:`NumericRecord`, mirroring the
     ``EventTemplate`` promotion; the numeric axis is re-derived whenever a
@@ -248,7 +247,7 @@ class Record(NamedTree[Any], Tracked, Annotated):
         # All three build the same record:
         Record("r", x=1.5, y=Record("y", a=0.0, b=2.0))
         Record("r", {"x": 1.5, "y/a": 0.0, "y/b": 2.0})
-        Record.from_nested_dict("r", {"x": 1.5, "y": {"a": 0.0, "b": 2.0}})
+        Record("r", {"x": 1.5, "y": {"a": 0.0, "b": 2.0}})
 
     When an ``event_template`` is supplied it is validated against the value's
     structure, and any mismatch in tree shape or field/spec kind raises
@@ -969,13 +968,11 @@ class Record(NamedTree[Any], Tracked, Annotated):
         if isinstance(x, cls):
             return x
         if isinstance(x, dict):
-            fields = cls._flatten_paths(x)
-            derived = _derived_record_name(x)
+            fields = x
         else:
             fields = {"data": x}
-            derived = _derived_record_name(fields)
         if name is None:
-            return cls(derived, fields, name_is_auto=True)
+            return cls(_derived_record_name(fields), fields, name_is_auto=True)
         return cls(name, fields)
 
     # -- Constructors -------------------------------------------------------
@@ -984,29 +981,6 @@ class Record(NamedTree[Any], Tracked, Annotated):
     def from_dict(cls, name: str, d: dict[str, ArrayLike | Record]) -> Record:
         """Construct a Record named *name* from a dict of arrays."""
         return cls(name, d)
-
-    @classmethod
-    def from_nested_dict(
-        cls,
-        name: str,
-        data: Mapping[str, Any],
-        /,
-        *,
-        event_template: EventTemplate | None = None,
-    ) -> Record:
-        """Build a Record named *name* from a **nested** mapping.
-
-        Every ``Mapping`` level becomes a nested sub-record and every other
-        value a field — mappings are never leaves (see
-        :meth:`NamedTree.from_nested_dict`, whose signature this extends
-        with the record's required name). With *event_template* given, the
-        template is validated against that structure and carried onto the
-        result exactly as in normal construction.
-        """
-        flat = cls._flatten_paths(data)
-        if event_template is None:
-            return cls(name, flat)
-        return cls(name, flat, event_template=event_template)
 
     @classmethod
     def from_field_values(cls, name: str, template: EventTemplate, values: Iterable[Any]) -> Record:

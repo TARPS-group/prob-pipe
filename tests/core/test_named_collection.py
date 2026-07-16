@@ -154,22 +154,30 @@ class TestSubtreeTemplateInvariant:
 
 
 class TestConvenienceConstructors:
-    def test_from_nested_dict_round_trips_structure(self):
+    def test_constructor_round_trips_nested_dict(self):
+        # ``to_nested_dict`` -> constructor round-trips: a mapping is never a
+        # leaf, so the constructor rebuilds the tree the export produced.
         r = Record("r", physics=Record("r", force=1.0, mass=2.0), obs=3.0)
-        assert Record.from_nested_dict("r", r.to_nested_dict()) == r
+        assert Record("r", r.to_nested_dict()) == r
 
-    def test_from_nested_dict_reads_every_dict_as_structure(self):
-        r = Record.from_nested_dict("r", {"physics": {"force": 1.0}, "obs": 2.0})
+    def test_constructor_reads_every_dict_as_structure(self):
+        r = Record("r", {"physics": {"force": 1.0}, "obs": 2.0})
         assert tuple(r.keys()) == ("physics/force", "obs")
 
-    def test_from_nested_dict_reads_every_mapping_as_structure(self):
+    def test_constructor_reads_every_mapping_as_structure(self):
         # Mappings are never leaves: every mapping level becomes a subtree,
         # even where a template proposes a leaf there — the mismatch raises.
         tpl = EventTemplate(meta=OpaqueSpec(), x=())
         with pytest.raises(ValueError):
-            Record.from_nested_dict("r", {"meta": {"seed": 0}, "x": 1.0}, event_template=tpl)
-        r = Record.from_nested_dict("r", {"meta": {"seed": 0}, "x": 1.0})
+            Record("r", {"meta": {"seed": 0}, "x": 1.0}, event_template=tpl)
+        r = Record("r", {"meta": {"seed": 0}, "x": 1.0})
         assert tuple(r.keys()) == ("meta/seed", "x")
+
+    def test_constructor_rejects_path_prefix_collision(self):
+        # A ``/``-path key and a nested-dict value under the same prefix name
+        # the same node two ways; that contradiction raises at construction.
+        with pytest.raises(ValueError, match="both as a field and as a path prefix"):
+            Record("r", {"y/a": 1.0, "y": {"b": 2.0}})
 
     def test_to_nested_dict_distinct_from_flat_dict(self):
         r = Record("r", physics=Record("r", force=1.0, mass=2.0), obs=3.0)
@@ -463,10 +471,6 @@ class TestBatchFieldNav:
             nra.map(lambda x: x)
         with pytest.raises(NotImplementedError):
             nra.map_with_keys(lambda k, x: x)
-        with pytest.raises(NotImplementedError):
-            # The batch override keeps its own (data-only) signature and
-            # rejects the operation outright.
-            type(nra).from_nested_dict({"a": jnp.zeros(3)})
 
     def test_stack_nested_records_raises_clearly(self):
         # Stacking nested records into a batch needs nested-batch construction

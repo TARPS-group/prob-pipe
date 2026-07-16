@@ -372,12 +372,12 @@ class RecordArray(Record):
 
     # -- Structural transforms & edits (deferred for the batch types) --------
     #
-    # ``replace`` / ``merge`` / ``without`` / ``map`` / ``map_with_keys`` /
-    # ``from_nested_dict`` are defined on ``NamedTree`` for the single
-    # value/spec collections and rebuild through single-value construction. On
-    # a batch their semantics (which axis they act on, how the batch shape
-    # composes) are not yet defined, so they all raise ``NotImplementedError``
-    # rather than dying inside the batch constructor.
+    # ``replace`` / ``merge`` / ``without`` / ``map`` / ``map_with_keys`` are
+    # defined on ``NamedTree`` for the single value/spec collections and rebuild
+    # through single-value construction. On a batch their semantics (which axis
+    # they act on, how the batch shape composes) are not yet defined, so they
+    # all raise ``NotImplementedError`` rather than dying inside the batch
+    # constructor.
 
     def replace(self, *args: Any, **kwargs: Any) -> Any:
         raise NotImplementedError(
@@ -404,13 +404,6 @@ class RecordArray(Record):
         raise NotImplementedError(
             "with_path_names() is not supported on a batched record yet; it is "
             "part of the batch-axis rework."
-        )
-
-    @classmethod
-    def from_nested_dict(cls, *args: Any, **kwargs: Any) -> Any:
-        raise NotImplementedError(
-            "from_nested_dict() is not supported on a batched record; construct "
-            "with batch_shape= and template= directly."
         )
 
     # -- Equality / hash ----------------------------------------------------

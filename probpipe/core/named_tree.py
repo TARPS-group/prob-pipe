@@ -125,7 +125,7 @@ class NamedTree[L]:
     binds ``Any`` — which the leaf-trafficking accessors (``[]``,
     :meth:`values`, :meth:`items`, :meth:`map`) carry through to typed
     consumers. Mappings are never leaves: a mapping value denotes tree
-    structure (see :meth:`_check_leaf` and :meth:`from_nested_dict`).
+    structure (see :meth:`_check_leaf`).
     Navigation yields views into the same storage; the structure-preserving
     transforms (:meth:`map`, :meth:`replace`, :meth:`merge`, :meth:`without`,
     :meth:`with_path_names`) return a tree of the same family, rebuilt through
@@ -214,8 +214,8 @@ class NamedTree[L]:
         Enforces two rules. First, the substrate-wide invariant that a
         **mapping is never a leaf**: a mapping denotes tree structure, so a
         constructor is expected to materialise any mapping value into a child
-        collection *before* leaf validation (see the constructors and
-        :meth:`from_nested_dict`); a mapping reaching this method is therefore a
+        collection *before* leaf validation (see the constructors); a mapping
+        reaching this method is therefore a
         contract violation and raises. Second, the leaf must be an instance of
         the family's declared :meth:`_leaf_type`. Codifying the mapping rule
         here keeps it in one place rather than re-derived by each family; how a
@@ -237,8 +237,8 @@ class NamedTree[L]:
         if isinstance(value, Mapping):
             raise TypeError(
                 f"field {path!r} is a mapping ({type(value).__name__}); a mapping "
-                f"denotes tree structure and is never a leaf — materialise it into a "
-                f"nested collection (e.g. via from_nested_dict) instead"
+                f"denotes tree structure and is never a leaf — pass it as a nested "
+                f"mapping so the constructor materialises it into a subtree instead"
             )
         leaf_type = cls._leaf_type()
         if leaf_type is not object and not isinstance(value, leaf_type):
@@ -743,48 +743,6 @@ class NamedTree[L]:
             return self._rebuild_node(renamed, node_name=None)
         except ValueError as error:  # field-vs-prefix collisions from construction
             raise ValueError(f"with_path_names() produced an invalid tree: {error}") from None
-
-    # -- Construction from a nested mapping ---------------------------------
-
-    @staticmethod
-    def _flatten_paths(data: Mapping[str, Any]) -> dict[str, Any]:
-        """Flatten a nested mapping into a flat ``path -> value`` map.
-
-        A ``Mapping`` value denotes nesting and is always recursed into —
-        mappings are never leaves — and every other value is a leaf.
-        """
-        flat: dict[str, Any] = {}
-
-        def walk(sub: Mapping[str, Any], prefix: str) -> None:
-            for name, val in sub.items():
-                path = f"{prefix}{_PATH_SEP}{name}" if prefix else name
-                if isinstance(val, Mapping):
-                    walk(val, path)
-                else:
-                    flat[path] = val
-
-        walk(data, "")
-        return flat
-
-    @classmethod
-    def from_nested_dict(cls, data: Mapping[str, Any]) -> Self:
-        """Build a collection from a **nested** mapping — the inverse of :meth:`to_nested_dict`.
-
-        Every ``Mapping`` level becomes a subtree and every other value a
-        leaf — mappings are never leaves, so this agrees with the constructor
-        (which materialises a mapping value into a subtree) and the
-        export/import pair round-trips faithfully.
-
-        Parameters
-        ----------
-        data
-            A nested mapping of field names to values (or sub-mappings).
-
-        Returns
-        -------
-        A new collection of this class.
-        """
-        return cls(cls._flatten_paths(data))
 
     # -- Internal utilities -------------------------------------------------
 
