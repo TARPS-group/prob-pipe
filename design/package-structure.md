@@ -2,20 +2,20 @@
 
 The package layout realizes the design reference as an import architecture: one package per layer of the reference, imports pointing strictly downward, and registries carrying capability upward. Like the rest of the reference, it describes the target state, but its module boundaries follow the seams the implementation already has, so the layout is reachable by moving modules rather than rewriting them.
 
-This document uses the **`Function`** vocabulary: the universal function representation, a tracked term carrying an input and an output template, of which `LinOp` is the linear subtype and invertibility is a capability. A `FunctionSpec` admits a `Function` and a `FunctionBatch` holds them. Its detailed contract is unsettled (see Open points); this document fixes only where its pieces live.
+This document uses the **`Function`** vocabulary. A `Function` is the universal function representation: a tracked term carrying an input and an output template. `LinOp` is its linear subtype, invertibility is a capability, a `FunctionSpec` admits it, and a `FunctionBatch` holds them. Its detailed contract is unsettled (see Open points); this document fixes only where its pieces live.
 
 ### Principles
 
 - **One package per layer.** Packages mirror the reference's parts in dependency order, and a module realizes one section or one coherent piece of one.
 - **Imports point downward.** Each package imports only from packages above it in the tree below. There are no import cycles, and no lazy imports to dodge one.
-- **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register pushforward rules and converters, and the inference methods register themselves, so capability reaches the operations without the operations importing their providers.
+- **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register pushforward rules and converters, and the inference methods register themselves. Capability reaches the operations without the operations importing their providers.
 - **A spec lives with the type it admits.** `ArraySpec`, `OpaqueSpec`, and `FunctionSpec` live in the value layer with the value kinds they describe, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The same placement rule covers each type's batch form.
 - **Modules are private, packages are public.** Every module is underscore-prefixed. A package's `__init__` exports its public names, and the top-level `probpipe` namespace re-exports the curated user surface, which is the only import a user needs.
 - **Tests mirror the tree**, as `tests/<package>/test_<module>.py`.
 
 ### Rationale
 
-The layout makes the reference's dependency order mechanical: what a part may depend on is what its package may import, so the document and the code cannot drift on layering. Upward registration is `D2 – Generality first` in the import graph, since the supported set grows by adding a provider package rather than by widening a lower layer. The single curated namespace serves `C3 – Computational detail hidden by default, available on demand`: module paths stay free to change, and a user's imports do not. Keeping the module boundaries on the implementation's existing seams keeps the reorganization honest, since each target module names work that is already one coherent unit.
+The layout makes the reference's dependency order mechanical: what a part may depend on is what its package may import, so the document and the code cannot drift on layering. Upward registration is `D2 – Generality first` in the import graph, since the supported set grows by adding a provider package rather than by widening a lower layer. The single curated namespace serves `C3 – Computational detail hidden by default, available on demand`: module paths stay free to change, and a user's imports do not. Module boundaries on the implementation's existing seams keep the reorganization honest: each target module names work that is already one coherent unit.
 
 ### The tree
 
@@ -33,8 +33,8 @@ probpipe/
 │   ├── _constraints.py        #   Constraint and the constraint factories (III.1)
 │   ├── _specs.py              #   ValueSpec, ArraySpec, OpaqueSpec (III.1)
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (III.1)
-│   ├── _function.py           #   the function value kind: the base a FunctionSpec admits,
-│   │                          #     FunctionSpec, and function capabilities (invertibility, …)
+│   ├── _function.py           #   the function kind's base: what a FunctionSpec admits,
+│   │                          #     FunctionSpec itself, and function capabilities (invertibility, …)
 │   ├── _function_batch.py     #   FunctionBatch (III.2)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
 │   ├── _record.py             #   Record, NumericRecord (III.3)
@@ -94,11 +94,11 @@ probpipe/
 ### The layers
 
 - **`core/`** is Part II verbatim: generic, type-agnostic, and importable by everything.
-- **`values/`** is the value layer of Part III, covering every leaf value kind. The function value kind lives here: the base class a `FunctionSpec` admits and a `FunctionBatch` holds, with its capability protocols. What lives here is the *representation* — templates, identity, plain evaluation — because `LinOp` subclasses it and the spec must reference it below the distribution layer.
+- **`values/`** is the value layer of Part III, covering every leaf kind. The function kind's base lives here: the class a `FunctionSpec` admits and a `FunctionBatch` holds, together with its capability protocols. The base carries the *representation* only: templates, identity, and plain evaluation. `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
-- **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged; only the module placement differs from the part-per-package rule, and it is the single such exception.
-- **`functions/`** is the `Function` engine, one package because it is one machine: argument classification, broadcast planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of a single call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results. The engine's stages are exactly the seams the implementation already has, so this package is a move, not a rewrite.
-- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per Part V section. The registries the operations own are defined here — the inference-method registry with `condition_on`, the rule registry with `pushforward` — and populated from above. Defining the inference registry here also fixes today's one inverted edge, where the operation imports its registry from the inference package.
+- **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
+- **`functions/`** is the `Function` engine, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per Part V section. The registries the operations own are defined here and populated from above: the inference-method registry with `condition_on`, and the rule registry with `pushforward`.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its pushforward rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
 
@@ -118,12 +118,15 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `core/_workflow_execution.py` | `functions/_execution.py` |
 | `core/_workflow_result.py`, `core/_workflow_distribution_normalization.py` | `functions/_result.py` |
 | `core/ops.py` | `operations/`, split by Part V section |
+| `core/distribution.py`, `core/_distribution_base.py` | `distributions/_distribution.py` |
+| `core/protocols.py` | `distributions/_capabilities.py` |
+| `core/_distribution_array.py`, `core/_broadcast_distributions.py` | `distributions/_batches.py` |
 | `core/_empirical.py` | `distributions/_empirical.py` |
-| `inference/_registry.py` (the registry object) | `operations/_condition.py`; the methods stay in `inference/` |
-| `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py`, `core/_registry_catalog.py` | `core/`, one module per II section |
+| `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
+| `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
 | `core/event_template.py`, `core/record.py`, `core/constraints.py`, `core/_record_array.py` | `values/`, one module per III section |
 
 ### Open points
 
-- *The `Function` contract.* The decorator, the call behavior, the base class's name and exact surface, and how the engine attaches to it are fixed by the forthcoming `Function` design. This document constrains only placement: the value-kind base in `values/`, the engine in `functions/`.
+- *The `Function` contract.* The decorator, the call behavior, the base class's name and exact surface, and how the engine attaches to it are fixed by the forthcoming `Function` design. This document constrains only placement: the base in `values/`, the engine in `functions/`.
 - *Model-construction helpers.* The GLM assembly lands in the catalog; whether the remaining model-building conveniences earn a package is settled by the catalog consolidation.
