@@ -54,10 +54,8 @@ class NamedTree[L]:
     def merge(self, other: Self) -> Self: ...              # a key collision raises
     def without(self, path: str | tuple[str, ...]) -> Self: ...
 
-    # (de)serialization
+    # serialization (export; the constructor reads a nested mapping back)
     def to_nested_dict(self) -> dict[str, Any]: ...
-    @classmethod
-    def from_nested_dict(cls, d: Mapping[str, Any]) -> Self: ...
 
     @classmethod
     def _node_type(cls) -> type[Self]: ...         # the family's own node type
@@ -73,7 +71,7 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 - *Same-family closure.* Every navigator and transform returns the same family, enforced by `_node_type()`.
 - *Leaf type versus node type.* The parameter `L` declares the leaf type, the only axis on which tree families differ: it is what `values()`, `[]`, and `map` traffic in. The node type is not a second parameter, since interior nodes are always instances of the family's own class, which is what `_node_type()` reports. The runtime partition therefore uses the node type alone: a field value is an interior node when it is an instance of `_node_type()`, and a leaf otherwise. Validation is handled once in `NamedTree` rather than by each family: construction checks every leaf against the family's declared leaf type, reported by `_leaf_type()`, so a malformed tree fails at construction rather than at first navigation. A family whose leaves are arbitrary values declares `object`, making the check vacuous.
 - *Navigation yields views.* `children`, `at_path`, and `[]` return a subtree or leaf that is a *view* into the same underlying store, derived on demand rather than copied out.
-- *Mappings are never leaves.* Construction materializes a mapping-valued leaf into a subtree, exactly as `from_nested_dict` reads every mapping as a subtree, so the two agree and serialization round-trips faithfully.
+- *Mappings are never leaves.* Construction materializes a mapping-valued field into a subtree, so a nested mapping and its `to_nested_dict` export round-trip faithfully through the constructor — there is no separate nested-dict reader.
 - *Mapping protocol, not `Mapping` ABC.* `NamedTree` implements the `Mapping` interface but is deliberately **not** a `collections.abc.Mapping` instance: construction detects tree structure with `isinstance(value, Mapping)`, which must capture a mapping-valued leaf to materialize while leaving a nested tree to nest as a child.
 - *Abstract substrate.* `NamedTree` provides no constructor logic and is not directly instantiable; each concrete family's constructor owns storage and validation policy.
 - *Bare-name reference.* `with_path_names` renames by `old="new"` pairs, where a key may be a bare name instead of a full path: a bare name resolves to the unique node so named and raises when the tree contains it more than once. Keyword pairs therefore cover the common case, while the positional mapping form addresses any path, as in `with_path_names({"group1/mu": "loc"})`. The `Mapping` interface itself is untouched, with `[]` and `keys()` keyed by full path.

@@ -234,10 +234,10 @@ Two surfaces are documented exceptions, each pending its own follow-up:
 
 **Mappings are never leaves.** A `Mapping` value denotes tree
 structure: a dict field value is always materialised into a nested
-subtree, never stored as a single opaque leaf (both direct construction
-and `from_nested_dict` recurse into every `Mapping`). There is no way to
-carry an opaque payload dict inside a `Record`; use a non-mapping
-container if you need one leaf.
+subtree, never stored as a single opaque leaf (construction recurses
+into every `Mapping`, whether passed as a keyword value or nested inside
+a positional mapping). There is no way to carry an opaque payload dict
+inside a `Record`; use a non-mapping container if you need one leaf.
 
 **Renaming fields.** `with_path_names(old=new, ...)` returns a
 same-family tree with the given nodes (leaves or whole subtrees)

@@ -55,9 +55,7 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     if isinstance(value, (Distribution, Record)):
         return value
     if isinstance(value, dict) and value:
-        # Explode nested dicts into subtrees (mappings are never leaves); the
-        # name follows the top-level keys the caller wrote.
-        return Record(field_name, Record._flatten_paths(value), name_is_auto=True)
+        return Record(field_name, value, name_is_auto=True)
     if isinstance(value, (list, tuple)) and value:
         try:
             return _make_stack(list(value), n=len(value), field_name=field_name)
