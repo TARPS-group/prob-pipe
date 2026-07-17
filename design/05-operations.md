@@ -127,34 +127,34 @@ Composition is written as an expression so that a model is *built* rather than d
 
 - *The `align` contract.* The precise realignment semantics of `joint`, including freshness and injectivity requirements on the new names and which operand's fields may be realigned, is deliberately deferred: the question is subtle, and implementation experience should inform the decision.
 
-## V.6 — `pushforward`
+## V.6 — `evaluate`
 
 ### Contract
 
-`pushforward(f, d)` returns the law of `f(X)` for `X ~ d`. The map `f` may be a plain function or a `Computation`, a `Bijector`, or a `LinOp`, and `d`'s `event_template` must conform to the map's input, unifying any symbolic dimensions, with the result carrying the map's output template under the resulting substitution. For a `LinOp`, `A @ d` is operator sugar for `pushforward(A, d)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and pushes a distribution forward.
+`evaluate(f, v)` is the call `f(v)` with the rule registry layered on top. The built-in `Computation` call already covers every operand kind: a plain call for a native value, the elementwise sweep for a batch, and the sampling lift for a distribution. `evaluate` consults the registry first and falls back to exactly that call when no rule applies, so the two differ only where a registered rule improves on sampling. For a distribution operand the result is the law of `f(X)` for `X ~ v`, the pushforward `f♯v`. The map `f` may be a plain function or a `Computation`, a `Bijector`, or a `LinOp`, and `v`'s template must conform to the map's input, unifying any symbolic dimensions, with the result carrying the map's output template under the resulting substitution. For a `LinOp`, `A @ v` is operator sugar for `evaluate(A, v)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and evaluates the map on any other operand.
 
-A map with more than one parameter is pushed forward over exactly one of them, with `fixed_args` supplying the rest by name, as in `pushforward(predict, posterior, fixed_args={"x": X_new})`. `fixed_args` must leave exactly one parameter free, the one `d` maps to; leaving two unbound is an error. The registry keys on the map's own type and the fixed arguments pass through to each rule's feasibility check, so binding side arguments neither wraps the map nor loses its registered identity, and the single mapping parameter keeps the operation's controls separate from the map's arguments.
+A map with more than one parameter is evaluated over exactly one of them, with `fixed_args` supplying the rest by name, as in `evaluate(predict, posterior, fixed_args={"x": X_new})`. `fixed_args` must leave exactly one parameter free, the one the operand maps to; leaving two unbound is an error. The registry keys on the map's own type and the fixed arguments pass through to each rule's feasibility check, so binding side arguments neither wraps the map nor loses its registered identity, and the single mapping parameter keeps the operation's controls separate from the map's arguments.
 
-**The pushforward registry.** The operation is dispatched through a `BinaryDispatchRegistry` keyed on the map's and the distribution's types, whose methods are **pushforward rules**. Auto-selection tries the rules in priority order:
+**The evaluation registry.** For a distribution operand the operation dispatches through a `BinaryDispatchRegistry` keyed on the map's and the distribution's types, whose methods are **evaluation rules**. Auto-selection tries the rules in priority order:
 - **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
 - **Change of variables** applies when the map is an invertible `Bijector`, returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
-- **The sampling fallback** always applies, and it *is* the computation lift: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls. `pushforward` is therefore the computation lift with a registry layered on top. When no rule matches, `pushforward(f, d)` returns exactly what the lifted call `f(d)` returns, and a matching rule adds a closed form on top of that base.
+- **The sampling fallback** always applies, and it *is* the computation lift: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls.
 
-The result records which rule produced it, mirroring the converter registry's recorded fidelity, and `method="..."` forces a rule by name. New rules join by registration, so an exact pushforward for a new pair of types is added without touching the operation.
+The result records which rule produced it, mirroring the converter registry's recorded fidelity, and `method="..."` forces a rule by name. New rules join by registration, so an exact evaluation for a new pair of types is added without touching the operation.
 
 **Linear maps push moments exactly.** Whatever rule realizes `A @ d`, the result's `mean` and `cov` delegate exactly whenever `d` supports them, since `E[A X] = A E[X]` and `Cov(A X) = A Cov(X) Aᵀ`. An approximate linear pushforward therefore still reports exact first and second moments.
 
-Applied to a `ConditionalDistribution`, the pushforward acts on the event side, giving the kernel `s ↦ f♯K(s, ·)` with the same given template.
+Applied to a `ConditionalDistribution`, evaluation acts on the event side, giving the kernel `s ↦ f♯K(s, ·)` with the same given template.
 
-The result is a tracked term: its `provenance` records `pushforward`, the map, and the source distribution, and its `name` is auto-derived.
+The result is a tracked term: its `provenance` records `evaluate`, the map, and the operand, and its `name` is auto-derived.
 
 ### Rationale
 
-`pushforward` is `C4 – Function lifting via pushforward` in operation form: replacing a function's argument by a distribution over it is well-defined, and this operation returns that law directly. Dispatching over pairs of map and distribution types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form gets it automatically and every other pair still answers by sampling. Recording the producing rule keeps the approximation honest (`D1 – Mathematical fidelity`), registration grows the exact set without changing call sites (`D2 – Generality first`), and the result is a distribution that composes further (`D4 – Closed system of objects under operations`).
+`evaluate` is `C4 – Function lifting via pushforward` in operation form: applying a map is one act whatever the operand kind, and replacing a value by a distribution over it leaves that act well-defined, with this operation returning the resulting law directly. Dispatching over pairs of map and distribution types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form gets it automatically and every other pair still answers by sampling. Recording the producing rule keeps the approximation honest (`D1 – Mathematical fidelity`), registration grows the exact set without changing call sites (`D2 – Generality first`), and the result is a tracked term that composes further (`D4 – Closed system of objects under operations`). The operation is named for what it does across every operand kind, with *pushforward* reserved for mathematical statements, as *kernel* is for `ConditionalDistribution`.
 
 ### Open points
 
-- *A first-class transport map.* The maps `pushforward` accepts (functions, bijectors, and linear operators) are separate kinds dispatched by type. Whether they should be unified under a first-class transport-map base, carrying evaluation and pushforward as one interface, is left open.
+- *A first-class transport map.* The maps `evaluate` accepts (functions, bijectors, and linear operators) are separate kinds dispatched by type. Whether they should be unified under a first-class transport-map base, carrying evaluation and pushforward as one interface, is left open.
 
 ## V.7 — `marginal` and `factor`
 
@@ -179,7 +179,7 @@ Every operation lifts to a `Batch` by mapping over its elements, which is the co
 - `sample` over a `DistributionBatch` returns a **nested** batch, the outer level ranging over the laws and the inner over each law's draws: `sample(d_batch, key, sample_shape=(S,))` has `axis_groups` `(d_batch.batch_shape, (S,))` and appends an inner draw level, named `draw` or the first free `draw2`, `draw3`, … when `d_batch` already carries one so that level names stay unique, so iterating it visits one law's `RecordBatch` of draws at a time. `log_prob` maps elementwise to the batched densities, with the batch axes preserved.
 - A moment over a `DistributionBatch` returns a batch of the corresponding values, such as a `LinOpBatch` for `cov`. A multi-level query nests the same way: `quantile(d_batch, q)` keeps the laws on the outer level and adds an inner level named `quantile` for the levels of `q`.
 - **Alignment.** A binary operation matches the operands' levels **by name**: a level in both must have broadcast-compatible shapes, with size-1 broadcasting; a level in only one operand broadcasts across the other; and an outer product is requested by explicit reshaping rather than implied. Because every level is named, there is no positional fallback, and two levels meant to correspond under different names are lined up by renaming one with `with_level_names` first, exactly as `joint` realigns fields for composition. So a flat batch of values on a `laws` level scores against the `laws` level of a nested sampling result. `given=` accepts a `RecordBatch` and yields the `DistributionBatch` of conditioned laws.
-- Two operands are exempt from batch lifting: the factors of composition (`*` and `joint`) and the map operand of `pushforward`, which are consumed as objects rather than swept.
+- Two operands are exempt from batch lifting: the factors of composition (`*` and `joint`) and the map operand of `evaluate`, which are consumed as objects rather than swept.
 - When the elements are array-backed, the map is a single vectorized call rather than a Python loop, which is the batched-backend optimization.
 - An operation applied to a batch whose elements lack the required capability raises the same capability error a single element would.
 
