@@ -150,12 +150,12 @@ class Record(NamedTree[Any], Tracked, Annotated):
     # reconstruct from values in the template's canonical order; ValueError on count/shape mismatch
 
     def select(self, *fields: str, **mapping: str) -> dict[str, Any]: ...
-    # fields into a plain dict for **-splatting into a computation call;
+    # fields into a plain dict for **-splatting into a `Function` call;
     # keywords remap: select(x="r") == {"x": self["r"]}
     def select_all(self) -> dict[str, Any]: ...   # every top-level field, ready to splat
 ```
 
-`select` resolves each argument with `at_path`, so a key reaches a leaf and a partial path a subtree view, and returns a plain `dict` carrying no schema; its purpose is `**`-splatting a value's parts into a computation call (Part IV), with `select_all` the whole-record form over the top-level children.
+`select` resolves each argument with `at_path`, so a key reaches a leaf and a partial path a subtree view, and returns a plain `dict` carrying no schema; its purpose is `**`-splatting a value's parts into a `Function` call (Part IV), with `select_all` the whole-record form over the top-level children.
 
 When every leaf is numeric, a `Record` is a `NumericRecord`. Leaves are stored in native form — a bare array, an `xarray` / `pandas` container, or any registered array backend — and convert to `jax.Array` only at the compute boundary (the pytree flatten that `grad` / `vmap` / `jit` traverse, and `to_vector`), each leaf at most once. Because promotion changes no data, construction auto-promotes exactly when every leaf is numeric and no explicit non-numeric template vetoes it, and every transform re-derives the promotion from the current leaves — removing the last non-numeric leaf promotes, introducing one demotes — exactly as for `EventTemplate`. Flat vectorization reads its layout (`leaf_shapes`, `vector_size`, canonical order) from the template. At the boundary a `NumericRecord` presents a bare array pytree, so it passes through `grad` / `vmap` / `jit` unchanged and a JAX round-trip returns bare-array leaves; passing through means leaf transport only — a transform never promotes a `Record` to a `RecordBatch`. Flattening is deliberately numeric-only, which is why `NamedTree` itself has no `flatten`.
 
@@ -172,7 +172,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Notes
 
-- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays (a `NumericRecord`'s native leaves convert at this boundary) and its static aux data is the template and the identity pair (`name`, `name_is_auto`) only, so provenance, annotations, and native container types do not survive a JAX transform boundary; lineage instead rides on the computation layer, which records the transform itself.
+- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays (a `NumericRecord`'s native leaves convert at this boundary) and its static aux data is the template and the identity pair (`name`, `name_is_auto`) only, so provenance, annotations, and native container types do not survive a JAX transform boundary; lineage instead rides on the function layer, which records the transform itself.
 
 - *Single-field presentation.* A single-field `NumericRecord` forwards the explicit coercion entry points to its sole leaf — `float` / `int` / `bool`, `np.asarray` / `jnp.asarray`, and the `.shape` / `.dtype` / `.ndim` attributes — and a single-field `Record` holding a callable forwards `__call__`. The shim is deliberately narrow: no arithmetic, reductions, or slicing, and a multi-field record raises and points at explicit field access, since unwrapping one field of many would be ambiguous.
 - *Construction validation.* Construction checks each leaf against its spec's `is_valid`, which validates structure only — for an `ArraySpec`, shape and dtype (dtype by `numpy.can_cast` same-kind: a widening promotion or a within-kind narrowing passes, a cross-kind conversion raises). An `ArraySpec`'s `support` is **not** part of `is_valid`: it is a data-dependent, element-wise check that reduces to a Python `bool` and so cannot run under `jax.jit` tracing, where construction also happens (pytree unflatten reconstructs a value inside the trace). `support` is therefore descriptive metadata, and invariant 2 (`is_valid`) covers shape and dtype. Leaf validation is skipped on the unflatten path, where a leaf's shape is transform-relative.
@@ -181,7 +181,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Contract
 
-A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTemplate`. It is the batched value a computation produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `Tracked` but not `Annotated`, and it is a *collection* of records rather than itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
+A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTemplate`. It is the batched value a `Function` produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `Tracked` but not `Annotated`, and it is a *collection* of records rather than itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
 
 ```python
 class RecordBatch(Batch[Record]):
