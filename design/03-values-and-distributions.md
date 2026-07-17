@@ -644,21 +644,18 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 
 ### Contract
 
-Gradient-based and Hamiltonian inference work in an unconstrained space, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a bijector that takes `ℝⁿ` onto that support. `bijector_for(constraint)` returns the canonical bijector, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
+Gradient-based and Hamiltonian inference work in an unconstrained space, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims `SupportsInverse`. Invertibility with a tractable Jacobian is a capability rather than a class — a `Function` claims `SupportsInverse` by providing the inverse map and the forward log-determinant of its Jacobian, with its own `apply` serving as the forward map. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
 
 ```python
-class Bijector(ABC):                    # an invertible map with a tractable Jacobian
-    @abstractmethod
-    def forward(self, x: Array) -> Array: ...
-    @abstractmethod
-    def inverse(self, y: Array) -> Array: ...
-    @abstractmethod
-    def forward_log_det_jacobian(self, x: Array) -> Array: ...
+@runtime_checkable
+class SupportsInverse(Protocol):            # an invertible map with a tractable Jacobian
+    def _inverse(self, y: Array) -> Array: ...
+    def _forward_log_det_jacobian(self, x: Array) -> Array: ...
 
-def bijector_for(constraint: Constraint) -> Bijector: ...    # the canonical map ℝⁿ → support(constraint)
+def bijector_for(constraint: Constraint) -> Function: ...    # a SupportsInverse map ℝⁿ → support(constraint)
 def register_bijector(
     key: type[Constraint] | Constraint,
-    factory: Callable[[Constraint], Bijector],
+    factory: Callable[[Constraint], Function],
 ) -> None: ...
 ```
 
@@ -666,7 +663,7 @@ The factory keys on constraint instances and types rather than dispatching on ar
 
 ### Rationale
 
-A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which serves `D6 – Differentiability as a capability`. Keeping the map open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
+A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which serves `D6 – Differentiability as a capability`. Making invertibility a capability rather than a `Bijector` class is `D3 – Capability-based operations`: an invertible map is an ordinary `Function` that additionally claims `SupportsInverse`, so it evaluates, composes, and pushes forward like any other, with *bijector* reserved for the mathematical statement. Keeping the factory open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
 
 ### Open points
 

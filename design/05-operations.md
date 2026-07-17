@@ -131,13 +131,13 @@ Composition is written as an expression so that a model is *built* rather than d
 
 ### Contract
 
-`evaluate(f, v)` applies the map `f` to `v` at whatever multiplicity `v` carries: to a value it returns `f(v)`; to a distribution it returns the law of `f(X)` for `X ~ v`, the pushforward `f♯v`; to a batch, the elementwise result. It is computed exactly where a registered rule applies, and otherwise by the built-in `Function` call — a plain call for a value, the sampling lift for a distribution, the sweep for a batch — so `evaluate` differs from that call only where a rule improves on sampling. The map `f` may be a plain callable or a `Function`, a `Bijector`, or a `LinOp`, and `v`'s template must conform to the map's input, unifying any symbolic dimensions, with the result carrying the map's output template under the resulting substitution. For a `LinOp`, `A @ v` is operator sugar for `evaluate(A, v)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and evaluates the map on any other operand.
+`evaluate(f, v)` applies the map `f` to `v` at whatever multiplicity `v` carries: to a value it returns `f(v)`; to a distribution it returns the law of `f(X)` for `X ~ v`, the pushforward `f♯v`; to a batch, the elementwise result. It is computed exactly where a registered rule applies, and otherwise by the built-in `Function` call — a plain call for a value, the sampling lift for a distribution, the sweep for a batch — so `evaluate` differs from that call only where a rule improves on sampling. The map `f` may be a plain callable, a `Function` (invertible ones claim `SupportsInverse`), or a `LinOp`, and `v`'s template must conform to the map's input, unifying any symbolic dimensions, with the result carrying the map's output template under the resulting substitution. For a `LinOp`, `A @ v` is operator sugar for `evaluate(A, v)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and evaluates the map on any other operand.
 
 A map with more than one parameter is evaluated over exactly one of them, with `fixed_args` supplying the rest by name, as in `evaluate(predict, posterior, fixed_args={"x": X_new})`. `fixed_args` must leave exactly one parameter free, the one the operand maps to; leaving two unbound is an error. The registry keys on the map's own type and the fixed arguments pass through to each rule's feasibility check, so binding side arguments neither wraps the map nor loses its registered identity, and the single mapping parameter keeps the operation's controls separate from the map's arguments.
 
 **The evaluation registry.** For a distribution operand the operation dispatches through a `BinaryDispatchRegistry` keyed on the map's and the distribution's types, whose methods are **evaluation rules**. Auto-selection tries the rules in priority order:
 - **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
-- **Change of variables** applies when the map is an invertible `Bijector`, returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
+- **Change of variables** applies when the map claims `SupportsInverse` (an invertible map with a tractable Jacobian), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
 - **The sampling fallback** always applies, and it *is* the built-in lift: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls.
 
 The result records which rule produced it, mirroring the converter registry's recorded fidelity, and `method="..."` forces a rule by name. New rules join by registration, so an exact evaluation for a new pair of types is added without touching the operation.
@@ -154,7 +154,7 @@ The result is a tracked term: its `provenance` records `evaluate`, the map, and 
 
 ### Open points
 
-- *A first-class transport map.* The maps `evaluate` accepts (functions, bijectors, and linear operators) are separate kinds dispatched by type. Whether they should be unified under a first-class transport-map base, carrying evaluation and pushforward as one interface, is left open.
+- *A first-class transport map.* `evaluate` accepts a `Function` (with invertible ones claiming `SupportsInverse`) or a `LinOp`, still separate kinds dispatched by type. Whether they should be unified under a first-class transport-map base, carrying evaluation and pushforward as one interface, is left open.
 
 ## V.7 — `marginal` and `factor`
 

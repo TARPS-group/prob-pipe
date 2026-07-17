@@ -119,7 +119,7 @@ class LinearPushforwardDistribution(Distribution):
     # _log_prob only when op is invertible, by change of variables
 
 class BijectorTransformedDistribution(Distribution[T]):
-    def __init__(self, name: str, base: Distribution, bijector: Bijector) -> None: ...
+    def __init__(self, name: str, base: Distribution, bijector: Function) -> None: ...   # a SupportsInverse Function
     # _sample pushes base draws through the bijector;
     # _log_prob(y) is the base log-density at the preimage minus the log-Jacobian determinant
 ```
@@ -219,7 +219,7 @@ class LinearGaussianConditional(ConditionalDistribution):
     # s ↦ N(A @ s + b, cov); given and event templates derived from A's input and output templates
 
 class GLMFamily(ABC):                     # a mean-parameterized response family
-    canonical_link: Bijector
+    canonical_link: Function              # a SupportsInverse Function
     has_dispersion: bool                  # whether build takes a dispersion, e.g. a Gaussian scale
     @abstractmethod
     def build(self, name: str, mean: Array, dispersion: ArrayLike | None = None) -> Distribution: ...
@@ -229,7 +229,7 @@ class GaussianFamily(GLMFamily): ...      # canonical link: identity; dispersion
 class BernoulliFamily(GLMFamily): ...     # canonical link: logit; no dispersion
 class PoissonFamily(GLMFamily): ...       # canonical link: log; no dispersion
 
-def glm_likelihood(name: str, family: GLMFamily, link: Bijector | None = None,
+def glm_likelihood(name: str, family: GLMFamily, link: Function | None = None,
                    *, X: Array | None = None, dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
     # given fields X ("obs", "features"), β ("features",), and the dispersion when the family has one;
     # the event is the response y ("obs",), with law family.build(link⁻¹(X @ β), dispersion) and link
@@ -239,4 +239,4 @@ def glm_likelihood(name: str, family: GLMFamily, link: Bijector | None = None,
 
 ### Rationale
 
-Assembling conditional families from uniform pieces is `D2 – Generality first`: a mean-parameterized family, a link `Bijector`, and a linear predictor compose into an entire model class with nothing new defined.
+Assembling conditional families from uniform pieces is `D2 – Generality first`: a mean-parameterized family, a link `Function` (a bijector), and a linear predictor compose into an entire model class with nothing new defined.
