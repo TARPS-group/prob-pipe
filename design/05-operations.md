@@ -140,7 +140,7 @@ A map with more than one parameter is evaluated over exactly one of them, with `
 - **Change of variables** applies when the map claims `SupportsInverse` (an invertible map with a tractable Jacobian), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
 - **The sampling fallback** always applies, and it *is* the built-in lift: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls.
 
-The result records which rule produced it, mirroring the converter registry's recorded fidelity, and `method="..."` forces a rule by name. New rules join by registration, so an exact evaluation for a new pair of types is added without touching the operation.
+The result records which rule produced it, mirroring the converter registry's recorded fidelity, and `method="..."` forces a rule by name. Rules need not be exact: an approximate scheme — quadrature, an unscented transform, quasi-Monte Carlo — registers at its recorded fidelity and ranks between the exact rules and the sampling floor. New rules join by registration, so an evaluation route for a new pair of types, exact or approximate, is added without touching the operation.
 
 **Linear maps push moments exactly.** Whatever rule realizes `A @ d`, the result's `mean` and `cov` delegate exactly whenever `d` supports them, since `E[A X] = A E[X]` and `Cov(A X) = A Cov(X) Aᵀ`. An approximate linear pushforward therefore still reports exact first and second moments.
 
