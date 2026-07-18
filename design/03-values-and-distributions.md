@@ -98,16 +98,22 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ### Contract
 
-The function kind's base type lives here, beside the spec that admits it. A `Function` is a tracked term wrapping exactly one Python callable, and it carries what the representation needs and nothing more: a `name`, `provenance`, and an input and an output `EventTemplate`, the two sides of its `FunctionSpec`. Its own call is **plain evaluation**: apply the wrapped callable to concrete values and return the result. Everything else a call can mean — lifting over distributions and batches, controls, dispatch, and orchestration — is the engine of Part IV, which the `functions` package installs on the base at import, the same upward registration by which families register converters and inference methods register themselves. `LinOp` (III.5) subclasses it, and nothing in this part depends on the engine.
+The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map — a `name`, `provenance`, and an input and an output `EventTemplate`, the two sides of its `FunctionSpec`, either side optional exactly as in the spec — and construction fixes all of it. Calling a `Function` delegates to an installable **call path**, and the base installs plain evaluation: apply the wrapped callable to concrete values and return its result. The call path is the base's one extension point. It is replaced once, at import, by the engine layer (Part IV), so richer call semantics reach every `Function` while the base stays fixed.
 
 ```python
 class Function(Tracked):
+    def __init__(self, name: str, fn: Callable, *,
+                 input_template: EventTemplate | None = None,
+                 output_template: EventTemplate | None = None) -> None: ...
     @property
     def input_template(self) -> EventTemplate | None: ...
     @property
     def output_template(self) -> EventTemplate | None: ...
-    # its own call is plain evaluation of the wrapped callable; the lifted
-    # call semantics are installed by Part IV's engine at import
+    def __call__(self, *args, **kwargs) -> Any: ...
+    # delegates to the installed call path; the base installs plain evaluation
+
+def install_call_engine(engine: Callable[..., Any]) -> None: ...
+    # replaces the call path, once, at import time; until then calls evaluate plainly
 ```
 
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.
