@@ -4,7 +4,7 @@ Part III introduces the value and distribution objects a user constructs and ope
 
 ## III.0 — Overview: the layer map
 
-The sections build in the order below, each depending only on those above it and on the shared abstractions of Part II:
+The sections build in the order below, each depending only on those above it and on the shared abstractions of Part II — with one stated forward reference, `LinOp` subclassing the `Function` of Part IV:
 
 | §      | Layer                       | Contents                                                                                              | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -12,7 +12,7 @@ The sections build in the order below, each depending only on those above it and
 | III.2  | Values                      | `FunctionBatch` / `OpaqueBatch`                                                                                       | Batches of function-valued and opaque values, giving every value spec a batch form.                             |
 | III.3  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
 | III.4  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
-| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map typed by numeric event templates, and the carrier of covariances.                          |
+| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map — the linear `Function` subtype (Part IV) — typed by numeric event templates, and the carrier of covariances.                          |
 | III.6  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an `event_template` for its draws.                           |
 | III.7  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
 | III.8  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
@@ -214,12 +214,12 @@ A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side:
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces, and it is `Tracked`. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (Part IV), so it is `Tracked` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
 
 Its templates are always concrete, and construction from a template with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
 ```python
-class LinOp(Tracked, ABC):
+class LinOp(Function, ABC):        # the linear Function subtype; Function is fixed in Part IV
     @property
     @abstractmethod
     def shape(self) -> tuple[int, int]: ...    # (output_template.vector_size, input_template.vector_size)

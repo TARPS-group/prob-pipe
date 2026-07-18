@@ -29,7 +29,7 @@ def predict(theta, x): ...
 
 Calling it runs the wrapped function and returns a `Tracked` result: the output is wrapped as a value or distribution carrying `Provenance` that records this `Function` and its tracked inputs. A call whose arguments are all ordinary values is one invocation of `f` followed by that wrap. A distribution- or batch-valued argument triggers lifting instead.
 
-A `Function` is a node in a directed graph: arguments that are themselves tracked terms become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse. A `Function` may also belong to a *module* that supplies some of its inputs and dependencies, but the unit of execution is always the single wrapped function.
+A `Function` is a node in a directed graph: arguments that are themselves tracked terms become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse. A `Function` may also belong to a *module* that supplies some of its inputs and dependencies, but the unit of execution is always the single wrapped function. `LinOp` (III.5) is the linear subtype: the map it wraps is the operator's action, and the operator algebra and structured queries are what linearity adds.
 
 ### Rationale
 

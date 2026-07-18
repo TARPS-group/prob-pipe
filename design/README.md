@@ -12,7 +12,7 @@ ProbPipe is built around five kinds of mathematical objects and the operations t
 | probability measure | `μ ∈ P(X)` | `Distribution` |
 | probability kernel | `K : S → P(T)` | `ConditionalDistribution` |
 | function | `f : X → Y` | `Function` |
-| linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp` |
+| linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp`, a `Function` subtype |
 
 Each object also has an indexed-collection form (a batch), and every operation lifts to batches elementwise. Values, distributions, and conditional distributions additionally have **numeric** specializations (`NumericRecord`, `NumericDistribution`, …) covering the all-array case: they identify the event space with a flat vector space, where `LinOp` acts and differentiation applies.
 
