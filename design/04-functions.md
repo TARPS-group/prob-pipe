@@ -13,6 +13,19 @@ Wrapping a callable `f` layers four things on top of calling `f`, each defined i
 | IV.3  | controls vs. arguments   | ProbPipe controls (sample count, seed, …) are kept in a namespace separate from that of the arguments to `f`.                                                                                            |
 | IV.4  | dispatch & orchestration | *how* the per-draw calls run computationally and *whether* they are traced for lineage.                                                                                                                 |
 
+Each concern has one home, and only two things are open for extension — the engine slot and the `evaluate` rule registry:
+
+| Piece | Lives in | Extension status |
+| --- | --- | --- |
+| identity (`name`, `provenance`) and the templates | the base (III.2) | fixed at construction |
+| plain evaluation | the base (III.2) | the call path before the engine installs |
+| the engine itself | this part, installed into the base's call path | one slot, filled once at import; cataloged like the converter and bijector factories |
+| lifting trigger, planning and co-sampling groups, the lift and the sweep, key splitting, result wrapping, provenance | the engine (IV.1–IV.2) | internal machinery; nothing to register |
+| the `@function` decorator, the controls, `with_options` | the engine (IV.3) | controls, a namespace apart from the arguments |
+| execution dispatch and orchestration | the engine (IV.4) | modes selected by a control; neither is a registry |
+| invertibility, differentiability | capabilities the object claims (III.14, III.2) | claims, never registrations; consumed by `evaluate`'s change-of-variables rule and by `auto` dispatch |
+| closed-form evaluation rules | the `evaluate` registry (V.6) | registered upward by the families; consulted by `evaluate`, never by the direct call |
+
 ## IV.1 — `Function`
 
 ### Contract
@@ -30,6 +43,8 @@ def predict(theta, x): ...
 Calling it runs the wrapped function and returns a `Tracked` result: the output is wrapped as a value or distribution carrying `Provenance` that records this `Function` and its tracked inputs. A call whose arguments are all ordinary values is one invocation of `f` followed by that wrap. A distribution- or batch-valued argument triggers lifting instead. The engine is installed on the III.2 base at import; imports still point strictly downward.
 
 A `Function` is a node in a directed graph: arguments that are themselves tracked terms become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse. A `Function` may also belong to a *module* that supplies some of its inputs and dependencies, but the unit of execution is always the single wrapped function.
+
+**The engine contract.** The engine is one callable installed into the base's call path (III.2), once, at import. On a call it receives the `Function` and its arguments, reads the controls of IV.3, runs the machinery of IV.2 and IV.4, and returns a `Tracked` result. Two obligations align it with the operation model of Part V. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance, so installing the engine never changes an answer the base gives. And it is the built-in call that `evaluate` (V.6) falls back to: the rule registry is consulted by the operation, never by the direct call, so a direct call and `evaluate` agree wherever no registered rule applies, and this layer stays below the operations. The engine is itself no operation — the operations are `Function`s built on it — so the operation model's capability dispatch and fallback structure apply one level up, with `evaluate` as the call's operation form.
 
 ### Rationale
 
@@ -116,7 +131,7 @@ A `Function` must wrap an *ordinary* function with no naming restrictions (`C5 �
 
 Two orthogonal computational concerns sit beneath a lifted call, both with defaults so a user need not touch them:
 
-- **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is differentiable end-to-end, and dispatch never changes the result beyond floating-point effects of evaluation order. Because each unit's PRNG key is fixed by its index rather than taken from a shared counter, the result is identical across `jax`, `sequential`, and `thread`, and parallel execution contends for no mutable random state: nothing is locked, and no key is drawn twice.
+- **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` picks `jax` for a `Function` that claims differentiability (`D6 – Differentiability as a capability`, the `SupportsDifferentiability` claim of III.2), and `sequential` otherwise. Under `jax`, a lifted call is differentiable end-to-end, and dispatch never changes the result beyond floating-point effects of evaluation order. Because each unit's PRNG key is fixed by its index rather than taken from a shared counter, the result is identical across `jax`, `sequential`, and `thread`, and parallel execution contends for no mutable random state: nothing is locked, and no key is drawn twice.
 - **Orchestration — *whether* the call is traced.** Off by default. A computation can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result.
 
 ### Rationale
