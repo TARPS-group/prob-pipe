@@ -60,6 +60,8 @@ probpipe/
 │   ├── _function.py           #   the engine installed on Function at import; the wrapping decorator
 │   ├── _call.py               #   argument classification: the lifting trigger (IV.2)
 │   ├── _plan.py               #   broadcast planning, root-ancestor grouping (IV.2)
+│   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
+│   │                          #     populated upward by the families (V.6)
 │   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (IV.2)
 │   ├── _sweep.py              #   the batch sweep (IV.2)
 │   ├── _keys.py               #   the structural key split from seed (IV.3)
@@ -98,7 +100,7 @@ probpipe/
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
 - **`functions/`** is the `Function` engine, installed on the III.2 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
-- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per operation section (V.1–V.7). V.0's operation model is the wrapping itself, and V.8's batching is the engine's sweep, so neither is a module here. The registries the operations own are defined here and populated from above: the inference-method registry with `condition_on`, and the rule registry with `evaluate`.
+- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per operation section (V.1–V.7). V.0's operation model is the wrapping itself, and V.8's batching is the engine's sweep, so neither is a module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
 

@@ -25,7 +25,7 @@ Each concern has one home, and only two things are open for extension — the en
 | the `@function` decorator and the control semantics | the engine (IV.3–IV.4) | controls, a namespace apart from the arguments |
 | execution dispatch and orchestration | the engine (IV.4) | modes selected by a control; neither is a registry |
 | invertibility, differentiation | capabilities the object claims (III.14, III.2) | claims declared at construction, never registrations; `SupportsInverse` feeds `evaluate`'s change-of-variables rule, `SupportsDifferentiation` whatever requires gradients (`D6`) |
-| evaluation rules, exact and approximate | the `evaluate` registry (V.6) | registered upward, ranked by fidelity above the sampling floor; consulted by `evaluate`, never by the direct call |
+| evaluation rules, exact and approximate | the rule registry, defined beside the engine (V.6) | registered upward, ranked by fidelity above the sampling lift, the rule at the generic pair; consulted by the engine at each single-distribution application, `evaluate` the operation form |
 
 ## IV.1 — `Function`
 
@@ -47,7 +47,7 @@ Calling it runs the wrapped function and returns a `Tracked` result: the output 
 
 A `Function` is a node in a directed graph: arguments that are themselves tracked terms become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse. A `Function` may also belong to a *module* that supplies some of its inputs and dependencies, but the unit of execution is always the single wrapped function.
 
-**The engine contract.** The engine is one callable installed into the base's call path (III.2), once, at import. On a call it receives the `Function` and its arguments, reads the controls the object carries (III.2, IV.3), runs the machinery of IV.2 and IV.4, and returns a `Tracked` result. Two obligations align it with the operation model of Part V. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance, so installing the engine never changes an answer the base gives. And it is the built-in call that `evaluate` (V.6) falls back to: the rule registry is consulted by the operation, never by the direct call, so a direct call and `evaluate` agree wherever no registered rule applies, and this layer stays below the operations. The split is deliberate. The lift's by-sampling semantics stay uniform whatever the function (IV.2), so registering a rule can never change what calling a function does, and method selection — exact or approximate — is the operation's concern. The engine is itself no operation — the operations are `Function`s built on it — so the operation model's capability dispatch and fallback structure apply one level up, with `evaluate` as the call's operation form.
+**The engine contract.** The engine is one callable installed into the base's call path (III.2), once, at import. On a call it receives the `Function` and its arguments, reads the controls the object carries (III.2, IV.3), runs the machinery of IV.2 and IV.4, and returns a `Tracked` result. Two obligations align it with the operation model of Part V. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance, so installing the engine never changes an answer the base gives. And it consults the evaluation-rule registry at each single-distribution application (IV.2, V.6), the sampling lift registered at the generic pair as its floor, so the direct call and `evaluate` take the same route and agree; `evaluate` is the operation form, adding `method=` selection and the operation's provenance record. The registry is defined beside the engine and populated upward by the families, so this layer stays below the operations. The engine is itself no operation — the operations are `Function`s built on it — so the operation model's capability dispatch and fallback structure apply one level up, with `evaluate` as the call's operation form.
 
 ### Rationale
 
@@ -57,7 +57,7 @@ This makes `C1 – Uniform interface to distributions and values` and `C4 – Fu
 
 ### Contract
 
-A `Function` compares each argument against the type its function expects, and lifts where they differ. Lifting always proceeds by **sampling**, whatever the function.
+A `Function` compares each argument against the type its function expects, and lifts where they differ. A single-distribution application resolves through the evaluation-rule registry (V.6), where the sampling lift is the rule registered at the generic pair: a plain callable therefore lifts by **sampling**, and a typed map takes its registered rule. Grouped, multi-distribution lifts always take the sampling path, which is what co-sampling requires.
 
 **The trigger.** A parameter that is unannotated, or annotated with a value type, expects a value, so a distribution passed in that position is lifted. A parameter annotated `Distribution`, `Distribution[...]`, or any `Supports*` protocol declares that the function consumes the distribution itself, which then passes through unlifted. Per draw, the function receives what `sample` returns, the draw's `Record`.
 
