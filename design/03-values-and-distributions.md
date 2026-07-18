@@ -104,7 +104,8 @@ The function kind's base type is `Function`: a tracked term wrapping exactly one
 class Function(Tracked):
     def __init__(self, name: str, fn: Callable, *,
                  input_template: EventTemplate | None = None,
-                 output_template: EventTemplate | None = None) -> None: ...
+                 output_template: EventTemplate | None = None,
+                 differentiable: bool = False) -> None: ...
     @property
     def input_template(self) -> EventTemplate | None: ...
     @property
@@ -122,8 +123,8 @@ def install_call_engine(engine: Callable[..., Any]) -> None: ...
 
 @runtime_checkable
 class SupportsDifferentiation(Protocol):
-    _differentiable: ClassVar[bool]   # declared, e.g. @function(differentiable=True):
-                                      #   calls differentiate end-to-end (D6)
+    _differentiable: ClassVar[bool]   # set by the differentiable flag (False by
+                                      #   default): calls differentiate end-to-end (D6)
 ```
 
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.

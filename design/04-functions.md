@@ -41,7 +41,7 @@ def predict(theta, x): ...                    # an ordinary callable over concre
 def predict(theta, x): ...
 ```
 
-Construction may also declare claims: `@function(differentiable=True)` marks the call as differentiating end-to-end, so the object claims `SupportsDifferentiation` (`D6 – Differentiability as a capability`).
+Construction may also declare claims. The decorator's `differentiable` flag, `False` by default, asserts that the wrapped callable differentiates end-to-end — array-native, with no gradient-breaking operations — and the constructed `Function` then claims `SupportsDifferentiation` (`D6 – Differentiability as a capability`), consumed wherever gradients are required. Like the templates, the flag is fixed at construction: a declaration, not a control.
 
 Calling it runs the wrapped function and returns a `Tracked` result: the output is wrapped as a value or distribution carrying `Provenance` that records this `Function` and its tracked inputs. A call whose arguments are all ordinary values is one invocation of `f` followed by that wrap. A distribution- or batch-valued argument triggers lifting instead. The engine is installed on the III.2 base at import; imports still point strictly downward.
 
@@ -134,7 +134,7 @@ A `Function` must wrap an *ordinary* function with no naming restrictions (`C5 �
 
 Two orthogonal computational concerns sit beneath a lifted call, both with defaults so a user need not touch them:
 
-- **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`; traceability is what `jit` and `vmap` need, and is independent of the `SupportsDifferentiation` claim. Under `jax`, a lifted call is differentiable end-to-end, and dispatch never changes the result beyond floating-point effects of evaluation order. Because each unit's PRNG key is fixed by its index rather than taken from a shared counter, the result is identical across `jax`, `sequential`, and `thread`, and parallel execution contends for no mutable random state: nothing is locked, and no key is drawn twice.
+- **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is traced end-to-end, and it differentiates end-to-end when the `Function` claims `SupportsDifferentiation`; dispatch never changes the result beyond floating-point effects of evaluation order. Because each unit's PRNG key is fixed by its index rather than taken from a shared counter, the result is identical across `jax`, `sequential`, and `thread`, and parallel execution contends for no mutable random state: nothing is locked, and no key is drawn twice.
 - **Orchestration — *whether* the call is traced.** Off by default. A computation can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result.
 
 ### Rationale
