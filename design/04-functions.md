@@ -1,6 +1,6 @@
 # Part IV — Functions
 
-A **`Function`** wraps an ordinary Python callable, lifting it into ProbPipe's world of distributions and values. The user writes a plain function over its "natural" values, and wrapping it makes that callable (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. The operations of Part V are themselves `Function`s, which is why this part comes first: `sample`, `log_prob`, and `condition_on` inherit the lifting, tracking, dispatch, and orchestration defined here. `Function`s compose into a *workflow*.
+A **`Function`** (III.2) wraps an ordinary Python callable; this part is its **engine**, installed on the base at import, lifting the callable into ProbPipe's world of distributions and values. The user writes a plain function over its "natural" values, and wrapping it makes that callable (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. The operations of Part V are themselves `Function`s, which is why this part comes first: `sample`, `log_prob`, and `condition_on` inherit the lifting, tracking, dispatch, and orchestration defined here. `Function`s compose into a *workflow*.
 
 ## IV.0 — Overview: what a `Function` adds
 
@@ -27,7 +27,7 @@ def predict(theta, x): ...                    # an ordinary callable over concre
 def predict(theta, x): ...
 ```
 
-Calling it runs the wrapped function and returns a `Tracked` result: the output is wrapped as a value or distribution carrying `Provenance` that records this `Function` and its tracked inputs. A call whose arguments are all ordinary values is one invocation of `f` followed by that wrap. A distribution- or batch-valued argument triggers lifting instead.
+Calling it runs the wrapped function and returns a `Tracked` result: the output is wrapped as a value or distribution carrying `Provenance` that records this `Function` and its tracked inputs. A call whose arguments are all ordinary values is one invocation of `f` followed by that wrap. A distribution- or batch-valued argument triggers lifting instead. The call semantics beyond plain evaluation are installed on the III.2 base when this layer imports — registration flowing upward, so the value layer never imports the engine.
 
 A `Function` is a node in a directed graph: arguments that are themselves tracked terms become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse. A `Function` may also belong to a *module* that supplies some of its inputs and dependencies, but the unit of execution is always the single wrapped function. `LinOp` (III.5) is the linear subtype: the map it wraps is the operator's action, and the operator algebra and structured queries are what linearity adds.
 

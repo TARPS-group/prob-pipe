@@ -4,15 +4,15 @@ Part III introduces the value and distribution objects a user constructs and ope
 
 ## III.0 — Overview: the layer map
 
-The sections build in the order below, each depending only on those above it and on the shared abstractions of Part II — with one stated forward reference, `LinOp` subclassing the `Function` of Part IV:
+The sections build in the order below, each depending only on those above it and on the shared abstractions of Part II:
 
 | §      | Layer                       | Contents                                                                                              | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | III.1  | Schema                      | `EventTemplate`                                                                                       | A `NamedTree` of type-specs — the type-level structure of one value. Pure structure, no data.                  |
-| III.2  | Values                      | `FunctionBatch` / `OpaqueBatch`                                                                                       | Batches of function-valued and opaque values, giving every value spec a batch form.                             |
+| III.2  | Values                      | `Function`, `FunctionBatch` / `OpaqueBatch`                                                                                       | The function kind's base — templates, identity, plain evaluation — plus the batch forms of the function-valued and opaque specs.                             |
 | III.3  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
 | III.4  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
-| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map — the linear `Function` subtype (Part IV) — typed by numeric event templates, and the carrier of covariances.                          |
+| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map — the linear `Function` subtype (III.2) — typed by numeric event templates, and the carrier of covariances.                          |
 | III.6  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an `event_template` for its draws.                           |
 | III.7  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
 | III.8  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
@@ -94,9 +94,21 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ---
 
-## III.2 — `FunctionBatch` and `OpaqueBatch`
+## III.2 — `Function`, `FunctionBatch`, and `OpaqueBatch`
 
 ### Contract
+
+The function kind's base type lives here, beside the spec that admits it. A `Function` is a tracked term wrapping exactly one Python callable, and it carries what the representation needs and nothing more: a `name`, `provenance`, and an input and an output `EventTemplate`, the two sides of its `FunctionSpec`. Its own call is **plain evaluation**: apply the wrapped callable to concrete values and return the result. Everything else a call can mean — lifting over distributions and batches, controls, dispatch, and orchestration — is the engine of Part IV, which the `functions` package installs on the base at import, the same upward registration by which families register converters and inference methods register themselves. `LinOp` (III.5) subclasses it, and nothing in this part depends on the engine.
+
+```python
+class Function(Tracked):
+    @property
+    def input_template(self) -> EventTemplate | None: ...
+    @property
+    def output_template(self) -> EventTemplate | None: ...
+    # its own call is plain evaluation of the wrapped callable; the lifted
+    # call semantics are installed by Part IV's engine at import
+```
 
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.
 
@@ -112,7 +124,7 @@ class OpaqueBatch(Batch[Any]):
 
 ### Rationale
 
-The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them.
+Defining the base in the value layer keeps the part order acyclic: the representation is fixed here, and the call engine arrives by upward registration (`D2 – Generality first`), so `LinOp` and the specs reference `Function` with no forward dependency — the split `values/_function_base.py` / `functions/` in the package structure. The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them.
 
 ## III.3 — `Record` and `NumericRecord`
 
@@ -214,12 +226,12 @@ A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side:
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (Part IV), so it is `Tracked` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.2), so it is `Tracked` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
 
 Its templates are always concrete, and construction from a template with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
 ```python
-class LinOp(Function, ABC):        # the linear Function subtype; Function is fixed in Part IV
+class LinOp(Function, ABC):        # the linear subtype of the III.2 base
     @property
     @abstractmethod
     def shape(self) -> tuple[int, int]: ...    # (output_template.vector_size, input_template.vector_size)
