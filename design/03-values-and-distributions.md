@@ -98,7 +98,7 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ### Contract
 
-The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map: a `name`, `provenance`, and an input and an output `EventTemplate` — the two sides of its `FunctionSpec`, either side optional exactly as in the spec. Construction fixes all of it. Calling a `Function` delegates to an installable **call path**, and the base installs plain evaluation: apply the wrapped callable to concrete values and return its result. The call path is the base's one extension point. It is replaced once, at import, by the engine layer (Part IV), so richer call semantics reach every `Function` while the base stays fixed. The function kind's capability protocols live beside the base: `SupportsInverse` (III.14) and `SupportsDifferentiability` are claims a `Function` carries, checked like the distribution capabilities of III.7.
+The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map: a `name`, `provenance`, and an input and an output `EventTemplate` — the two sides of its `FunctionSpec`, either side optional exactly as in the spec. Construction fixes all of it. Calling a `Function` delegates to an installable **call path**, and the base installs plain evaluation: apply the wrapped callable to concrete values and return its result. The base also carries its **controls**, the execution defaults of IV.3 (sample count, seed, dispatch, orchestration), set at construction and revised functionally by `with_options`, which returns a new `Function` with the update applied (`C2 – Functional interface over immutable objects`). The base gives the controls no meaning: they ride the object, plain evaluation ignores them, and the installed engine reads them at call time. The call path is the base's one extension point. It is replaced once, at import, by the engine layer (Part IV), so richer call semantics reach every `Function` while the base stays fixed. The function kind's capability protocols live beside the base: `SupportsInverse` (III.14) and `SupportsDifferentiation` are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7.
 
 ```python
 class Function(Tracked):
@@ -109,16 +109,21 @@ class Function(Tracked):
     def input_template(self) -> EventTemplate | None: ...
     @property
     def output_template(self) -> EventTemplate | None: ...
+    @property
+    def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
+    def with_options(self, **controls) -> Function: ...  # functional update (C2)
     def __call__(self, *args, **kwargs) -> Any: ...
     # delegates to the installed call path; the base installs plain evaluation
 
 def install_call_engine(engine: Callable[..., Any]) -> None: ...
     # replaces the call path, once, at import time; until then calls evaluate plainly.
-    # The engine must agree with plain evaluation on concrete values (IV.1).
+    # The engine reads the controls the Function carries and must agree with
+    # plain evaluation on concrete values (IV.1).
 
 @runtime_checkable
-class SupportsDifferentiability(Protocol):
-    _differentiable: ClassVar[bool]   # True: the call is array-native and traceable end-to-end (D6)
+class SupportsDifferentiation(Protocol):
+    _differentiable: ClassVar[bool]   # declared, e.g. @function(differentiable=True):
+                                      #   calls differentiate end-to-end (D6)
 ```
 
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.

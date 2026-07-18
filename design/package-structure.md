@@ -33,8 +33,8 @@ probpipe/
 │   ├── _constraints.py        #   Constraint and the constraint factories (III.1)
 │   ├── _specs.py              #   ValueSpec, ArraySpec, OpaqueSpec (III.1)
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (III.1)
-│   ├── _function_base.py      #   Function itself (templates, identity, plain evaluation),
-│   │                          #     FunctionSpec, and the function capabilities (invertibility, …)
+│   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
+│   │                          #     plain evaluation), FunctionSpec, and the function capabilities
 │   ├── _function_batch.py     #   FunctionBatch (III.2)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
 │   ├── _record.py             #   Record, NumericRecord (III.3)
@@ -57,7 +57,7 @@ probpipe/
 │   ├── _conversion.py         #   Converter, ConverterRegistry (III.13)
 │   └── _reparameterization.py #   Constraint → invertible Function (III.14)
 ├── functions/                 # Part IV — Function and its engine
-│   ├── _function.py           #   the engine installed on Function at import; the wrapping decorator, controls, with_options
+│   ├── _function.py           #   the engine installed on Function at import; the wrapping decorator
 │   ├── _call.py               #   argument classification: the lifting trigger (IV.2)
 │   ├── _plan.py               #   broadcast planning, root-ancestor grouping (IV.2)
 │   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (IV.2)
