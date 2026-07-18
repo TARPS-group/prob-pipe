@@ -644,7 +644,7 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 
 ### Contract
 
-Gradient-based and Hamiltonian inference work in an unconstrained space, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims `SupportsInverse`. Invertibility with a tractable Jacobian is a capability rather than a class — a `Function` claims `SupportsInverse` by providing the inverse map and the forward log-determinant of its Jacobian, with its own `apply` serving as the forward map. A `LinOp` claims it the same way, its inverse supplied by the operator algebra and its `logdet` the log-Jacobian, so one capability labels invertible maps, linear or not. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
+Gradient-based and Hamiltonian inference work in an unconstrained space, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims `SupportsInverse`. Invertibility with a tractable Jacobian is a capability rather than a class — a `Function` claims `SupportsInverse` by providing the inverse map and the forward log-determinant of its Jacobian, with its own `apply` serving as the forward map. A `LinOp` claims it the same way, its inverse supplied by the operator algebra and its `logdet` the log-Jacobian, so one capability labels invertible maps, linear or not. Bijector-valued signatures annotate the protocol, with the `Function` carrier understood. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
 
 ```python
 @runtime_checkable
@@ -652,10 +652,10 @@ class SupportsInverse(Protocol):            # an invertible map with a tractable
     def _inverse(self, y: Array) -> Array: ...
     def _forward_log_det_jacobian(self, x: Array) -> Array: ...
 
-def bijector_for(constraint: Constraint) -> Function: ...    # a SupportsInverse map ℝⁿ → support(constraint)
+def bijector_for(constraint: Constraint) -> SupportsInverse: ...    # the canonical map ℝⁿ → support(constraint)
 def register_bijector(
     key: type[Constraint] | Constraint,
-    factory: Callable[[Constraint], Function],
+    factory: Callable[[Constraint], SupportsInverse],
 ) -> None: ...
 ```
 
