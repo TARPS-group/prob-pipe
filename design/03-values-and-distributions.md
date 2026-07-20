@@ -102,7 +102,7 @@ The function kind's base type is `Function`: a tracked term wrapping exactly one
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_template`, it returns one conforming to `output_template`, with no tracking or lifting. `__call__` runs the **call path**, the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import, adding lifting, tracking, and provenance to every `Function`. So `apply` is the raw map that operations such as change-of-variables build on, and `__call__` is the tracked call a user makes. The base also carries its **controls** — the execution defaults of IV.3 (sample count, seed, dispatch, orchestration) — set at construction and revised functionally by `with_options` (`C2 – Functional interface over immutable objects`); the base gives them no meaning, and the engine reads them at call time.
 
-A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Its capability protocols live beside the base: `SupportsInverse` (III.14) and `SupportsDifferentiation` are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7. The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
+A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Its capability protocols live beside the base: `SupportsInverse` (III.14) and `SupportsDifferentiation` are claims a `Function` carries, declared at construction. `SupportsInverse` is checked like the distribution capabilities of III.7; `SupportsDifferentiation` is checked by the value it declares, as described below. The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
 
 ```python
 class Function(Tracked):
@@ -130,11 +130,13 @@ def install_call_engine(engine: Callable[..., Any]) -> None: ...
 
 @runtime_checkable
 class SupportsDifferentiation(Protocol):
-    _differentiable: ClassVar[bool]   # set by the differentiable flag (False by
-                                      #   default): calls differentiate end-to-end (D6)
+    differentiable: bool   # an instance attribute, set at construction; its value carries the claim
+
+def is_differentiable(x: Any) -> bool: ...
+# True exactly when x declares the attribute and sets it to True
 ```
 
-An object declares `SupportsDifferentiation` at construction to assert that gradients propagate through it end-to-end. A `Function` declares it through the `differentiable` flag, and a `LinOp` or a distribution family that differentiates declares it the same way. The claim composes: a joint, a transformed distribution, or a field view carries it when every part it is built from does. An operation that needs gradients checks the claim and names the first step that lacks it before a backend trace runs. The claim concerns differentiation alone. Execution dispatch is a separate control, so `jax` vectorizes a call whether or not the object differentiates.
+An object declares `SupportsDifferentiation` at construction to assert that gradients propagate through it end-to-end. The attribute lives on the instance and its value carries the claim: `is_differentiable` returns `True` exactly when an object declares `differentiable` and sets it to `True`, so an object constructed with `differentiable=False` is treated the same as one that never declares it. Differentiation is performed by an external transform rather than by a method of the object, which is why this capability is guarded by a value where the others are guarded by a method. A `Function` sets the attribute through the `differentiable` flag, and a `LinOp` or a distribution family that differentiates sets it the same way. The claim composes: a joint, a transformed distribution, or a field view is differentiable when every part it is built from is. An operation that needs gradients checks `is_differentiable` and names the first step that fails it before a backend trace runs. Execution dispatch is a separate control, so `jax` vectorizes a call whether or not the object differentiates.
 
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.
 
@@ -154,7 +156,7 @@ Defining the base in the value layer keeps the layering strict: the representati
 
 ### Open points
 
-- *Differentiability granularity.* The `SupportsDifferentiation` claim is all-or-nothing. Which *variables* a map differentiates with respect to (a claim scoped to input paths), and whether a Monte Carlo fallback differentiates through its sampler's reparameterization, are unsettled and left to a dedicated pass.
+- *Differentiability granularity.* The `SupportsDifferentiation` claim is all-or-nothing. Which *variables* a map differentiates with respect to (a claim scoped to input paths), and whether a Monte Carlo fallback differentiates through its sampler's reparameterization, are unsettled and left to a dedicated pass. That pass would also make `grad` an ordinary operation with registered routes: a custom gradient method where an object supplies one, the automatic-differentiation route gated by this declaration, and finite differences as the fallback at approximate fidelity.
 
 ## III.3 — `Record` and `NumericRecord`
 
@@ -686,20 +688,22 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 
 ### Contract
 
-Many inference algorithms are defined to operate on an unconstrained space ℝᵈ, among them gradient-based optimization and Hamiltonian Monte Carlo, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims `SupportsInverse`. Invertibility with a tractable Jacobian is a capability: a `Function` claims `SupportsInverse` by providing the inverse map and the forward log-determinant of its Jacobian, its own `apply` (III.2) serving as the forward map. A `LinOp` claims it the same way, with its inverse from the operator algebra and its `logdet` the log-Jacobian, so one capability marks invertible maps, linear or not, over structured numeric values as well as bare arrays. A signature that expects a bijector annotates `SupportsInverse`, and a slot that requires it — `BijectorTransformedDistribution`'s `bijector`, a GLM `canonical_link` — checks the claim at construction and raises a capability error otherwise, the same `isinstance` check the distribution capabilities use. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
+Many inference algorithms are defined to operate on an unconstrained space ℝᵈ, among them gradient-based optimization and Hamiltonian Monte Carlo, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims `SupportsInverse`. Invertibility with a tractable Jacobian is a capability: a `Function` claims `SupportsInverse` by providing the inverse map and the forward log-determinant of its Jacobian, its own `apply` (III.2) serving as the forward map. A `LinOp` claims it the same way, with its inverse from the operator algebra and its `logdet` the log-Jacobian, so one capability marks invertible maps, linear or not, over structured numeric values as well as bare arrays. The protocol stays minimal, so the forward map comes from the carrier: a bijector-valued slot — `BijectorTransformedDistribution`'s `bijector`, a GLM `canonical_link` — is typed `Function` and checks at construction that the argument claims `SupportsInverse`, raising a capability error otherwise. The two checks together guarantee the full contract: the `Function` supplies the forward `apply`, and the claim supplies the inverse and the Jacobian. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
 
 ```python
 @runtime_checkable
 class SupportsInverse(Protocol):            # an invertible map with a tractable Jacobian
-    # forward map = the Function's own apply (III.2); this capability adds the inverse and
-    # the forward log-det-Jacobian, typed over the numeric value carried, not fixed to arrays
+    # minimal by design: the forward map is the carrier Function's own apply (III.2);
+    # the capability adds the inverse and the forward log-det-Jacobian, typed over the
+    # numeric value carried, not fixed to arrays
     def _inverse(self, y: Array | NumericRecord) -> Array | NumericRecord: ...
     def _forward_log_det_jacobian(self, x: Array | NumericRecord) -> Array: ...
 
-def bijector_for(constraint: Constraint) -> SupportsInverse: ...    # the canonical map ℝⁿ → support(constraint)
+def bijector_for(constraint: Constraint) -> Function: ...
+# the canonical map ℝⁿ → support(constraint): a Function claiming SupportsInverse
 def register_bijector(
     key: type[Constraint] | Constraint,
-    factory: Callable[[Constraint], SupportsInverse],
+    factory: Callable[[Constraint], Function],   # each factory output claims SupportsInverse
 ) -> None: ...
 ```
 
