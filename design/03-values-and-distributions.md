@@ -98,7 +98,11 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ### Contract
 
-The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map: a `name`, `provenance`, and an input and an output `EventTemplate` — the two sides of its `FunctionSpec`, either side optional exactly as in the spec. Construction fixes all of it. Calling a `Function` delegates to an installable **call path**, and the base installs plain evaluation: apply the wrapped callable to concrete values and return its result. The base also carries its **controls**, the execution defaults of IV.3 (sample count, seed, dispatch, orchestration), set at construction and revised functionally by `with_options`, which returns a new `Function` with the update applied (`C2 – Functional interface over immutable objects`). The base gives the controls no meaning: they ride the object, plain evaluation ignores them, and the installed engine reads them at call time. The call path is the base's one extension point. It is replaced once, at import, by the engine layer (Part IV), so richer call semantics reach every `Function` while the base stays fixed. The function kind's capability protocols live beside the base: `SupportsInverse` (III.14) and `SupportsDifferentiation` are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7.
+The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map: a `name`, `provenance`, and an input and an output `EventTemplate` — the two sides of its `FunctionSpec`, either side optional exactly as in the spec. Construction fixes all of it. The wrapped callable and any execution state it needs are held in a **private implementation carrier**, reached only through the `Function`'s own methods rather than as a public attribute, so a fitted or otherwise stateful map exposes no backend object.
+
+A `Function` is invoked two ways. `apply` is the **plain forward map**: it evaluates the wrapped callable on values conforming to `input_template` and returns one conforming to `output_template`, unwrapped and engine-free. `__call__` instead delegates to an installable **call path**; the base installs plain evaluation there, and the engine layer (Part IV) replaces it once, at import, so richer call semantics — lifting, tracking, provenance — reach every `Function` while the base stays fixed. Inner numeric uses such as change-of-variables take `apply`, avoiding the engine; user-facing calls take `__call__`. The call path is the base's one extension point. The base also carries its **controls**, the execution defaults of IV.3 (sample count, seed, dispatch, orchestration), set at construction and revised functionally by `with_options`, which returns a new `Function` with the update applied (`C2 – Functional interface over immutable objects`). The base gives the controls no meaning: they ride the object, `apply` ignores them, and the installed engine reads them at call time.
+
+A `Function` is authored with the `@function` decorator or produced dynamically by an operation, such as a fitted mapping returned by `fit`; both use the same call path, and a produced `Function` carries its training `provenance` like any other tracked term. Its capability protocols live beside the base: `SupportsInverse` (III.14) and `SupportsDifferentiation` are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7. The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — a `Function` being one admissible callable and never the required type, and a `FunctionBatch` holds a collection of them. No consumer branches on whether a callable arrived bare or as a `Function`.
 
 ```python
 class Function(Tracked):
@@ -113,8 +117,12 @@ class Function(Tracked):
     @property
     def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
     def with_options(self, **controls) -> Function: ...  # functional update (C2)
+    def apply(self, *args, **kwargs) -> Any: ...
+    # the plain forward map: evaluate the wrapped callable on values conforming to
+    # input_template, returning one conforming to output_template, engine-free
     def __call__(self, *args, **kwargs) -> Any: ...
-    # delegates to the installed call path; the base installs plain evaluation
+    # routes through the installed call path (plain evaluation on the base; the Part IV
+    # engine after import). apply stays plain whatever the installed call path
 
 def install_call_engine(engine: Callable[..., Any]) -> None: ...
     # replaces the call path, once, at import time; until then calls evaluate plainly.
