@@ -135,6 +135,8 @@ class SupportsDifferentiation(Protocol):
                                       #   default): calls differentiate end-to-end (D6)
 ```
 
+`SupportsDifferentiation` is an all-or-nothing claim. A `Function` sets it through the `differentiable` flag, and the array-backed families carry it as a class fact — the parametric `Distribution`s and the array-backed `LinOp`s claim it, rather than having it inferred from their backing at each call. A composite claims it exactly when all of its parts do: a joint or a transformed distribution when its factors and map are differentiable, a field view when its parent is. An operation that requires gradients dispatches on the claim and, when it is absent, raises naming the first step that does not carry it. Dispatch (IV.4) is orthogonal: `jax` traces a call, but the claim, not the trace, is what gates gradients.
+
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.
 
 ```python
@@ -150,6 +152,10 @@ class OpaqueBatch(Batch[Any]):
 ### Rationale
 
 Defining the base in the value layer keeps the layering strict: the representation is fixed here, the call engine arrives by upward registration (`D2 – Generality first`), and `LinOp` and the specs reference `Function` downward — the split the package structure realizes as `values/_function_base.py` and `functions/`. The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them.
+
+### Open points
+
+- *Differentiability granularity.* The `SupportsDifferentiation` claim is all-or-nothing. Which *variables* a map differentiates with respect to — a claim scoped to input paths, tied to the input template — and whether a Monte Carlo fallback is differentiable through the reparameterization of its sampler are unsettled, and left to a dedicated pass.
 
 ## III.3 — `Record` and `NumericRecord`
 
@@ -296,7 +302,7 @@ class LinOp(Function, ABC):        # the linear subtype of the III.2 base
 
 ### Rationale
 
-Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators keep every query differentiable (`D6 – Differentiability as a capability`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
+Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators claim `SupportsDifferentiation` so their queries differentiate end-to-end (`D6 – Differentiability as a capability`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
 
 ### Open points
 
@@ -352,7 +358,7 @@ DistributionSpec(event_template: EventTemplate)
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and, when it is array-backed, differentiable end-to-end (`D6 – Differentiability as a capability`). A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`).
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and differentiable end-to-end when it claims `SupportsDifferentiation`, as the array-backed families do (`D6 – Differentiability as a capability`). A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`).
 
 ## III.7 — Distribution capabilities
 
