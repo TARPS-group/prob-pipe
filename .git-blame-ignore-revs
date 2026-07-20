@@ -5,3 +5,6 @@
 
 # style: adopt ruff format and reformat the source tree
 9946d1ecd005606c474a4c01327eb7e22002d001
+
+# refactor(core): mechanically rename WorkflowFunction to Function (#378)
+d6e5b41184f8180ca33d6882c2237f0f1e85f99a
