@@ -265,7 +265,7 @@ A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side:
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.2), so it is `Tracked` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.2), so it is `Tracked` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a value, an `Array` or a `NumericRecord` conforming to `input_template`, returning the matching form, with the operator's parameters as the private state behind it. Calling a `LinOp` therefore takes the same call path as any `Function`, and like any `Function` it carries the execution controls, read only by a call that needs them. `matvec` is syntactic sugar for `apply` in the linear-algebra spelling; `matmat` is the raw spelling of the operator's registered batched rule, applying the action to stacked columns in one routine, with `rmatvec` and `rmatmat` for the transpose. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
 
 Its templates are always concrete, and construction from a template with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
@@ -287,8 +287,11 @@ class LinOp(Function, ABC):        # the linear subtype of the III.2 base
     def to_dense(self) -> Array: ...
 
     def matvec(self, x: Array | NumericRecord) -> Array | NumericRecord: ...
-    # A x; a NumericRecord flattens through input_template, and the result matches the argument's form
-    def matmat(self, X: Array) -> Array: ...   # A X on a matrix; rmatvec / rmatmat apply the transpose
+    # syntactic sugar for apply: A x, with a NumericRecord flattened through
+    # input_template and the result matching the argument's form
+    def matmat(self, X: Array) -> Array: ...
+    # A X on stacked columns: the raw spelling of the operator's registered batched rule;
+    # rmatvec / rmatmat apply the transpose
 
     # square-only queries
     def solve(self, b: Array) -> Array: ...
