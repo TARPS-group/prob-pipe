@@ -1,6 +1,6 @@
 # Identity & provenance
 
-Every `Distribution` or `Record` returned by a workflow function carries
+Every `Distribution` or `Record` returned by a Function carries
 a `Provenance` record linking it to its inputs and the op that produced
 it. The result is a directed acyclic graph: each node is a value, each
 edge points from a value to one of its inputs.
@@ -136,7 +136,7 @@ The fingerprint covers the full content of the parent:
 | TFP-backed distribution (`Normal`, `Gamma`, …) | class name + distribution name + all TFP constructor parameters |
 | `EmpiricalDistribution` | class name + name + sample arrays + log-normalised weight array |
 | `Record` | field names + values, recursively |
-| `WorkflowFunction` | user function bytecode (not the Prefect wrapper closure) |
+| `Function` | user function bytecode (not the Prefect wrapper closure) |
 | JAX / NumPy array | shape + dtype + raw bytes (large arrays are sampled) |
 
 The fingerprint is intended as the foundation for a future Prefect

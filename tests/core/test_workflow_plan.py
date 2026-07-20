@@ -1,4 +1,4 @@
-"""Tests for WorkflowFunction broadcast planning."""
+"""Tests for Function broadcast planning."""
 
 from __future__ import annotations
 

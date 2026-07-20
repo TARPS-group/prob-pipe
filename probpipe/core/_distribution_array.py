@@ -4,7 +4,7 @@ A ``DistributionArray`` is ``Array[Distribution]``: an ordered
 collection of independent scalar distributions addressed by a
 (multi-d) ``batch_shape``.
 
-Vectorized ops are delivered by the :class:`~probpipe.WorkflowFunction`
+Vectorized ops are delivered by the :class:`~probpipe.Function`
 sweep layer — when a ``DistributionArray`` is passed to an op like
 ``sample`` / ``mean`` / ``log_prob`` whose signature expects a scalar
 ``Distribution``, the WF dispatches cell-by-cell and stacks the results
@@ -12,7 +12,7 @@ into a ``NumericRecordArray`` / ``RecordArray`` (or nested
 ``DistributionArray`` when the op returns a distribution per cell).
 The class itself only carries the container surface.
 
-Use case: the natural output type of a ``WorkflowFunction`` parameter
+Use case: the natural output type of a ``Function`` parameter
 sweep whose inner call returns a ``Distribution``. Each cell's
 posterior stays identifiable rather than being marginalised.
 
@@ -69,7 +69,7 @@ class DistributionArray[T](Distribution[T]):
     Exposes only the container surface (indexing, iteration,
     ``components``, ``batch_shape``, ``event_shape``). Vectorized
     ops (``sample``, ``mean``, ``variance``, ``log_prob``, …) are
-    delivered by the :class:`~probpipe.core.node.WorkflowFunction`
+    delivered by the :class:`~probpipe.core.node.Function`
     sweep layer, which treats the array as ``Array[Distribution]`` and
     dispatches cell-by-cell.
 
@@ -93,7 +93,7 @@ class DistributionArray[T](Distribution[T]):
     capabilities. Vectorization is handled at a different layer:
 
     1. ``sample(da, ...)`` calls the :class:`~probpipe.sample`
-       :class:`~probpipe.core.node.WorkflowFunction`, whose dispatch
+       :class:`~probpipe.core.node.Function`, whose dispatch
        sees a ``DistributionArray`` argument where the op's annotation
        expects a scalar ``SupportsSampling``.
     2. WF dispatches cell-by-cell: each ``da[i]`` is sampled, results
@@ -649,7 +649,7 @@ def _make_distribution_array(
     """Factory: build a ``DistributionArray``.
 
     Vectorized ops (``sample`` / ``mean`` / ``variance`` / ``log_prob``
-    / ...) are delivered uniformly by the ``WorkflowFunction`` sweep
+    / ...) are delivered uniformly by the ``Function`` sweep
     layer, which treats a ``DistributionArray`` as ``Array[Distribution]``
     and dispatches cell-by-cell. This factory therefore doesn't build
     protocol mixins — the class is one fixed type.

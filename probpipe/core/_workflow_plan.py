@@ -1,7 +1,7 @@
-"""WorkflowFunction broadcast-planning helpers.
+"""Function broadcast-planning helpers.
 
 This private module classifies already-normalized workflow inputs into
-the broadcast regime and sweep shape that ``WorkflowFunction`` should
+the broadcast regime and sweep shape that ``Function`` should
 execute. Planning is intentionally side-effect-free.
 """
 

@@ -308,7 +308,7 @@ class TestBayesFlowNPE:
 
     def test_direct_sampling_not_implemented(self, npe_model):
         """BayesFlowModel has no direct sampler: ``_sample`` raises
-        NotImplementedError -- the signal WorkflowFunction's dispatch fallback
+        NotImplementedError -- the signal Function's dispatch fallback
         catches -- pointing to condition_on and the prior/simulator components.
         The properties pass the training inputs through (which remain available
         for forward simulation by hand)."""

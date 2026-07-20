@@ -1,4 +1,4 @@
-"""Characterization tests for WorkflowFunction distribution normalization."""
+"""Characterization tests for Function distribution normalization."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ from probpipe import (
 from probpipe.core._workflow_distribution_normalization import (
     normalize_distribution_values,
 )
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 from probpipe.core.protocols import SupportsLogProb
 
 
@@ -138,7 +138,7 @@ class TestNormalizeDistributionValues:
         assert normalized["x"] is not normal_external
 
 
-# Facade checks below are retained to verify WorkflowFunction wiring.
+# Facade checks below are retained to verify Function wiring.
 class TestHintedDistributionConversion:
     def test_concrete_distribution_hint_converts_external_distribution(
         self,
@@ -146,7 +146,7 @@ class TestHintedDistributionConversion:
         normal_external,
     ):
         mean_of_normal, seen = mean_recorder
-        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
+        wf = Function(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=normal_external)
 
@@ -160,7 +160,7 @@ class TestHintedDistributionConversion:
             seen.append(dist)
             return log_prob(dist, jnp.asarray([0.0]))
 
-        wf = WorkflowFunction(func=log_prob_at_zero, dispatch="sequential")
+        wf = Function(func=log_prob_at_zero, dispatch="sequential")
 
         result = wf(dist=empirical_dist)
 
@@ -183,7 +183,7 @@ class TestDistributionArrayHandling:
             scale=jnp.asarray(1.0),
             name="zero_d",
         )
-        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
+        wf = Function(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=da)
 
@@ -199,7 +199,7 @@ class TestDistributionArrayHandling:
             scale=jnp.asarray([1.0]),
             name="one_cell",
         )
-        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
+        wf = Function(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=da)
 
@@ -217,7 +217,7 @@ class TestUnhintedExternalDistribution:
             seen_values.append(value)
             return value * 2.0
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=double,
             n_broadcast_samples=8,
             dispatch="sequential",

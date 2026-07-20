@@ -1,4 +1,4 @@
-"""WorkflowFunction distribution-only broadcast helpers.
+"""Function distribution-only broadcast helpers.
 
 This private module owns scalar distribution broadcasting after call
 resolution, distribution normalization, and broadcast planning have

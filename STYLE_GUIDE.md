@@ -81,24 +81,24 @@ _sample_impl, _log_prob_impl, _mean_impl, _condition_on_impl
 ```
 
 These functions contain the protocol-check-and-delegate logic and are
-registered in `_OP_REGISTRY`. They are wrapped by `WorkflowFunction`
+registered in `_OP_REGISTRY`. They are wrapped by `Function`
 for broadcasting/orchestration and by `_make_op` for the positional-arg
 public API.
 
-### 1.4 Standalone workflow functions
+### 1.4 Standalone Functions
 
-Workflow functions that are **not** ops (i.e., not universal operations
+Functions that are **not** ops (i.e., not universal operations
 on distributions) follow the pattern:
 
 - Implementation function: `_<name>_impl`
-- Public `WorkflowFunction` instance: `<name>`
+- Public `Function` instance: `<name>`
 
 ```python
 # probpipe/inference/_nutpie.py
 def _condition_on_nutpie_impl(model, data=None, *, ...):
     ...
 
-condition_on_nutpie = WorkflowFunction(
+condition_on_nutpie = Function(
     func=_condition_on_nutpie_impl, name="condition_on_nutpie"
 )
 ```
@@ -150,8 +150,8 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 
 ### 1.8 Workflow option namespace
 
-`WorkflowFunction` keeps ProbPipe controls separate from wrapped-function
-kwargs. Use `@workflow_function(...)` for definition-time controls
+`Function` keeps ProbPipe controls separate from wrapped-function
+kwargs. Use `@function(...)` for definition-time controls
 such as `dispatch`, `seed`, and `n_broadcast_samples`, and use
 `workflow.with_options(...)(...)` for one-call overrides such as
 `seed`, `n_broadcast_samples`, and `include_inputs`.
@@ -380,7 +380,7 @@ example when helpful:
 
 Each public function (``sample``, ``mean``, ``log_prob``, ...) is a
 lightweight positional-arg wrapper around an internal
-:class:`~probpipe.core.node.WorkflowFunction`.
+:class:`~probpipe.core.node.Function`.
 
 Usage::
 

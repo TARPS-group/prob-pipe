@@ -1,4 +1,4 @@
-"""Tests for the nutpie workflow function.
+"""Tests for the nutpie Function.
 
 These tests require nutpie (and pymc, for the PyMC integration path) to
 be installed.  Helper / error-path tests that don't require a compiled

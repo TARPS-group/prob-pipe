@@ -165,7 +165,7 @@ class _RecordDistributionView(Distribution):
     The Record-world analog of
     :class:`~probpipe.core._joint.DistributionView`. Preserves
     correlation when multiple views from the same parent are used in
-    :class:`~probpipe.core.node.WorkflowFunction` broadcasting.
+    :class:`~probpipe.core.node.Function` broadcasting.
 
     **Dynamic protocol support:** this base class intentionally does
     not inherit any ``SupportsFoo`` protocols. Each concrete instance
@@ -212,9 +212,9 @@ class _RecordDistributionView(Distribution):
     def parent(self) -> Distribution:
         """The :class:`RecordDistribution` this view points at.
 
-        Shared-identity signal for the ``WorkflowFunction`` sweep layer:
+        Shared-identity signal for the ``Function`` sweep layer:
         views with the same ``parent`` co-sample (preserve correlation)
-        when passed as sibling broadcast args to a workflow function.
+        when passed as sibling broadcast args to a Function.
         Matches the ``_RecordArrayView.parent`` surface.
         """
         return self._parent
@@ -423,7 +423,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         return _RecordDistributionView(self, key)
 
     def select(self, *fields: str, **mapping: str) -> dict[str, _RecordDistributionView]:
-        """Select named fields as views for workflow function broadcasting.
+        """Select named fields as views for Function broadcasting.
 
         Positional args use the field name as the argument name.
         Keyword args remap: ``select(x="field_name")``.
@@ -446,7 +446,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         :meth:`Record.select_all` / :meth:`RecordArray.select_all` so
         the splat-all pattern works uniformly across the three field-
         bearing container types. Preserves cross-field correlation via
-        the parent-identity machinery in the ``WorkflowFunction`` sweep
+        the parent-identity machinery in the ``Function`` sweep
         layer.
         """
         return self.select(*self.fields)

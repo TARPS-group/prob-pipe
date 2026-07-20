@@ -111,7 +111,7 @@ class Distribution[T](Tracked, Annotated, ABC):
 
         Builds exactly one draw (``sample_shape == ()``). Batched
         evaluation does not go through kwargs — pass the batch positionally
-        and let ``WorkflowFunction`` broadcasting handle it.
+        and let ``Function`` broadcasting handle it.
 
         Raises
         ------

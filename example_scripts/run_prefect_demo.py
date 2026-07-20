@@ -52,8 +52,8 @@ from probpipe import (
     SimpleModel,
     WorkflowKind,
     condition_on,
+    function,
     mean,
-    workflow_function,
 )
 
 probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
@@ -71,7 +71,7 @@ print()
 df = pd.read_csv("./docs/tutorials/data/horseshoe_crabs.csv")
 
 
-@workflow_function
+@function
 def prep_data(width, satellites) -> Record:
     width = np.asarray(width, dtype=np.float32)
     width_z = (width - np.mean(width)) / np.std(width)

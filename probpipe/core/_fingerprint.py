@@ -16,7 +16,7 @@ Supported types
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
 - ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
   hashes samples + weights; ``Weights`` are hashed by content
-- ``WorkflowFunction`` — user-function bytecode, referenced names, and
+- ``Function`` — user-function bytecode, referenced names, and
   captured/default values
 - Numeric containers (``xarray`` / ``pandas`` / registered array backends)
   — concrete type + materialised shape + dtype + bytes **and** the
@@ -39,7 +39,7 @@ the same array differ between ``jax_enable_x64=False`` (default, float32)
 and ``jax_enable_x64=True`` (float64).  Digests are stable within a fixed
 JAX configuration.
 
-**Python version portability:** bytecode (``WorkflowFunction``) is not
+**Python version portability:** bytecode (``Function``) is not
 portable across Python minor versions — a 3.12-compiled digest differs from
 a 3.13 one for the same source.
 """
@@ -115,8 +115,8 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
         _update_record(h, obj, depth, max_array_bytes)
     elif _is_distribution(obj):
         _update_distribution(h, obj, depth, max_array_bytes)
-    elif _is_workflow_function(obj):
-        _update_workflow_function(h, obj, max_array_bytes)
+    elif _is_function(obj):
+        _update_function(h, obj, max_array_bytes)
     elif _is_weights(obj):
         _update_weights(h, obj, depth, max_array_bytes)
     elif isinstance(obj, _np.generic):
@@ -466,15 +466,15 @@ def _update_distribution(
 
 
 # ---------------------------------------------------------------------------
-# WorkflowFunction hashing
+# Function hashing
 # ---------------------------------------------------------------------------
 
 
-def _is_workflow_function(obj: Any) -> bool:
+def _is_function(obj: Any) -> bool:
     try:
-        from .node import WorkflowFunction
+        from .node import Function
 
-        return isinstance(obj, WorkflowFunction)
+        return isinstance(obj, Function)
     except ImportError:
         return False
 
@@ -511,15 +511,19 @@ def _hash_code(h: hashlib._Hash, code: Any, depth: int, max_array_bytes: int | N
             _update(h, c, depth + 1, max_array_bytes)
 
 
-def _update_workflow_function(h: hashlib._Hash, wf: Any, max_array_bytes: int | None) -> None:
-    """Hash a WorkflowFunction by its user function's bytecode.
+def _update_function(
+    h: hashlib._Hash,
+    function: Any,
+    max_array_bytes: int | None,
+) -> None:
+    """Hash a Function by its user function's bytecode.
 
     Hashes ``_func.__code__`` directly rather than the Prefect task-wrapper
     closure, so changes to the user function body are detected even when the
     wrapper source is unchanged.
     """
     h.update(b"wf:")
-    func = getattr(wf, "_func", None)
+    func = getattr(function, "_func", None)
     if func is None:
         h.update(b"unknown")
         return

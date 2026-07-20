@@ -10,7 +10,7 @@ inheriting from ProbPipe base classes.
 
 **Naming convention:** Protocol methods use an underscore prefix
 (``_sample``, ``_log_prob``, ``_mean``, …) to distinguish the
-primitive implementation from the public workflow-function API in
+primitive implementation from the public Function API in
 :mod:`probpipe.core.ops`.
 
 **Orchestration hints:** ``SupportsSampling`` defines class-attribute

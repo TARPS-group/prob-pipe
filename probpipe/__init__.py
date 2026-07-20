@@ -91,10 +91,10 @@ from probpipe.core.event_template import (
 )
 from probpipe.core.named_tree import NamedTree
 from probpipe.core.node import (
+    Function,
     Module,
-    WorkflowFunction,
     abstract_workflow_method,
-    workflow_function,
+    function,
     workflow_method,
 )
 from probpipe.core.protocols import (
@@ -233,6 +233,7 @@ __all__ = [
     "FlatNumericRecordDistribution",
     "FlattenedDistributionView",
     "FullFactorialDesign",
+    "Function",
     "FunctionSpec",
     # Modeling
     "GLMLikelihood",
@@ -314,8 +315,6 @@ __all__ = [
     # Weights
     "Weights",
     "Wishart",
-    # WorkflowFunction
-    "WorkflowFunction",
     # Configuration
     "WorkflowKind",
     "abstract_workflow_method",
@@ -326,6 +325,7 @@ __all__ = [
     # Converters
     "converter_registry",
     "elliptical_slice",
+    "function",
     "greater_than",
     "inference_method_registry",
     "integer_interval",
@@ -355,12 +355,11 @@ __all__ = [
     "unit_interval",
     "with_conversion",
     "with_resampling",
-    "workflow_function",
     "workflow_method",
 ]
 
 # ---------------------------------------------------------------------------
-# Standalone operations (plain functions + WorkflowFunction wrappers)
+# Standalone operations (plain functions + Function wrappers)
 # ---------------------------------------------------------------------------
 from probpipe.core.ops import (
     condition_on,

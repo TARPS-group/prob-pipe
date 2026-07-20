@@ -1,4 +1,4 @@
-"""Tests for WorkflowFunction sweep execution helpers."""
+"""Tests for Function sweep execution helpers."""
 
 from __future__ import annotations
 

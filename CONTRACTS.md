@@ -2,7 +2,7 @@
 
 **Audience:** every session (Claude or human) implementing a phase of the #235 value-model plan —
 `EventTemplate`, the `Record` / `Distribution` value containers, the Batch types
-(`*Array` → `*Batch`), `WorkflowFunction`, and naming/provenance. **Read this before you start, and
+(`*Array` → `*Batch`), `Function`, and naming/provenance. **Read this before you start, and
 follow it for every phase.** It is meant to outlive any single PR or session — do not assume the
 plan's author is available to restate these rules.
 
@@ -96,7 +96,7 @@ if it were user-guide reference text.
 | `EventTemplate` / `NumericEventTemplate` / `ValueSpec` (`ArraySpec`·`OpaqueSpec`·`DistributionSpec`·`FunctionSpec`) | docstrings in `probpipe/core/event_template.py`; #235 Chapter 1 |
 | `Record` / `NumericRecord` | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
 | Batch types (`RecordArray`/`NumericRecordArray`/`DistributionArray` → `*Batch`) | docstrings in `_record_array.py`, `_distribution_array.py`; #235 Chapter 2 |
-| `WorkflowFunction` & ops (`sample`, `log_prob`, …) | docstrings in `core/node.py`, `core/ops.py`, `_workflow_result.py`; #235 Chapter 3 |
+| `Function` & ops (`sample`, `log_prob`, …) | docstrings in `core/node.py`, `core/ops.py`, `_workflow_result.py`; #235 Chapter 3 |
 | Naming / provenance / annotations (`Tracked` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
 
 ## Canonical variable names (use these; don't invent synonyms)

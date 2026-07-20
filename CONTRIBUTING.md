@@ -298,7 +298,7 @@ keep an example running against an old API.
 ### Prefect orchestration
 
 ProbPipe ships with Prefect orchestration **off** by default — every
-`WorkflowFunction` runs in-process unless the caller opts in. Two
+`Function` runs in-process unless the caller opts in. Two
 ways to opt in:
 
 ```python
@@ -313,8 +313,8 @@ export PROBPIPE_WORKFLOW_KIND=task   # or flow / off / default
 ```
 
 Per-workflow overrides via
-`@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)` and
-explicit `WorkflowFunction(..., workflow_kind=probpipe.WorkflowKind.FLOW)`
+`@function(workflow_kind=probpipe.WorkflowKind.TASK)` and
+explicit `Function(..., workflow_kind=probpipe.WorkflowKind.FLOW)`
 are unaffected by either of the above. String aliases such as `"task"` /
 `"flow"` are not accepted; use `WorkflowKind` enum members explicitly.
 
@@ -447,8 +447,8 @@ uv build packaging/probpipe   # probpipe (metapackage)
    break the provenance/identity tracking that downstream code relies
    on. Treat `_annotations` as append-only; never mutate other state
    post-construction.
-2. **Operations are standalone workflow functions** — `sample()`, `mean()`,
-   `log_prob()`, `condition_on()` are `WorkflowFunction` instances in
+2. **Operations are standalone Functions** — `sample()`, `mean()`,
+   `log_prob()`, `condition_on()` are `Function` instances in
    `probpipe/core/ops.py`.
 3. **Capabilities via protocols** — distributions declare support through
    `@runtime_checkable` protocols (e.g., `SupportsSampling`,
@@ -473,7 +473,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 5. **Record and Distributions are parallel** — `Record` is the universal
    container for non-random structured data; `Distribution` is the
    universal container for random quantities. Both support named fields,
-   `select()` for workflow function splatting, and JAX pytree
+   `select()` for Function splatting, and JAX pytree
    traversal.  The full pipeline (prior → inference → posterior
    predictive) produces named, provenance-tracked objects at every step.
    **Field access is bracket-only**: use `record["x"]`, `array["x"]`,
@@ -502,8 +502,8 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `name_is_auto=True` so later composition can re-derive it. A nested
    record stored as a field is renamed to its field key (also flagged
    auto-derived).
-7. **Uniform output wrap at the WorkflowFunction boundary** — every
-   `@workflow_function` return is coerced into the
+7. **Uniform output wrap at the Function boundary** — every
+   `@function` return is coerced into the
    `Record | RecordArray | Distribution` contract before it reaches the
    caller.  Scalars and `jnp.ndarray`s become a single-field auto-named
    `NumericRecord` with field `fn_name` (no sweep) or
@@ -516,10 +516,10 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `.dtype`, `.ndim`) so `jnp.array(log_prob(d, v))`,
    `float(mean(d))`, and `sample(grf)(X)` stay terse.
 8. **Array inputs vectorize with the product rule** — when a
-   `@workflow_function` is called with array-valued inputs
+   `@function` is called with array-valued inputs
    (`RecordArray` or `DistributionArray` with nonempty
    `batch_shape`) passed to slots whose hints don't match the
-   batched type, the WorkflowFunction layer dispatches cell-by-cell
+   batched type, the Function layer dispatches cell-by-cell
    and stacks the returns.  Multiple array inputs combine by the
    **product rule** (Cartesian full factorial); the sweep's
    `batch_shape` is the concatenation of each array arg's
@@ -537,7 +537,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`) that the constructor reads back. `EventTemplate` and `Record` are its two families; each declares its leaf type (`ValueSpec` vs arbitrary values), and mappings are never leaves. |
 | `Tracked` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `Tracked` carries `name`, `name_is_auto`, and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Distribution` and `Record` mix in both; the batch types are tracked terms through their bases. |
 | `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and the `Tracked` / `Annotated` identity attributes |
-| `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for workflow function splatting |
+| `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
 | `RecordArray` | Batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array |
 | `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `to_vector` / `mean` / `var` |
@@ -548,11 +548,11 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericEventTemplate`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
 | `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
 | `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordArray` keyed by `template.fields`. |
-| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
+| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `components`). Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
-| `WorkflowFunction` | Orchestration-aware function wrapper (Prefect off by default; see the Prefect-orchestration section above); groups views by parent for correlated broadcasting |
+| `Function` | Orchestration-aware function wrapper (Prefect off by default; see the Prefect-orchestration section above); groups views by parent for correlated broadcasting |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `BaseDispatchRegistry` | Abstract base for priority-based registries: holds registration, priority management (incl. opt-in-only sentinel + override warnings), and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
@@ -562,7 +562,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
-| `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordArray` subclass carrying per-field marginals; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready `RecordArray`. Pipe into a `WorkflowFunction` as a single `Record`-typed arg to trigger the WF sweep path. |
+| `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordArray` subclass carrying per-field marginals; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready `RecordArray`. Pipe into a `Function` as a single `Record`-typed arg to trigger the Function sweep path. |
 
 ### Inference method registry
 

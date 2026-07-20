@@ -194,9 +194,9 @@ fingerprinted. See
 ## Broadcasting internals (exposed for extension)
 
 `DistributionArray` is the shape-indexed container produced by
-parameter-sweep workflow functions whose inner call returns a
+parameter-sweep `Function` calls whose inner call returns a
 `Distribution`. `BroadcastDistribution` is the joint container produced
-by `WorkflowFunction` when called with `workflow.with_options(include_inputs=True)(...)`.
+by `Function` when called with `workflow.with_options(include_inputs=True)(...)`.
 
 ::: probpipe.DistributionArray
 

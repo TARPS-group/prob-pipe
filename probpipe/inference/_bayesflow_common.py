@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     # bijector annotations.
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
-# Offline-simulation execution backend; values mirror ``WorkflowFunction``'s
+# Offline-simulation execution backend; values mirror ``Function``'s
 # dispatch names ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
 SimBackend = Literal["jax", "sequential"]
 

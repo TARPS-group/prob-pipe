@@ -9,7 +9,7 @@ import probpipe.core._workflow_execution as execution_mod
 import probpipe.core.node as node_mod
 from probpipe import Normal
 from probpipe.core.config import WorkflowKind, prefect_config
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 
 
 def add_one(x):
@@ -135,7 +135,7 @@ class TestExecutionRequestShape:
             "prefect_task_runner",
         }
 
-    def test_workflow_function_request_contains_plain_function(self, monkeypatch):
+    def test_function_request_contains_plain_function(self, monkeypatch):
         seen = {}
 
         def fake_execute_many(request):
@@ -143,13 +143,13 @@ class TestExecutionRequestShape:
             return [request.func(**request.call_value_list[0])]
 
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)
-        wf = WorkflowFunction(func=add_one, dispatch="sequential")
+        wf = Function(func=add_one, dispatch="sequential")
 
         result = wf(x=1)
 
         assert float(result["add_one"]) == 2.0
         assert seen["request"].func is add_one
-        assert not isinstance(seen["request"].func, WorkflowFunction)
+        assert not isinstance(seen["request"].func, Function)
         assert seen["request"].execution.mode == "sequential"
 
 
@@ -269,9 +269,9 @@ class TestPrefectMapping:
         assert FakeMappedTask.created_names == ["plus_one_run"]
 
 
-class TestWorkflowFunctionExecutionConfig:
+class TestFunctionExecutionConfig:
     def test_make_execution_config_resolves_thread_dispatch_to_thread_mode(self):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             dispatch="thread",
             workflow_kind=WorkflowKind.OFF,
@@ -280,7 +280,7 @@ class TestWorkflowFunctionExecutionConfig:
         assert wf._make_execution_config().mode == "thread"
 
     def test_thread_dispatch_passes_max_workers_to_execution_config(self):
-        wf = WorkflowFunction(func=add_one, dispatch="thread", max_workers=3)
+        wf = Function(func=add_one, dispatch="thread", max_workers=3)
 
         execution = wf._make_execution_config()
 
@@ -288,7 +288,7 @@ class TestWorkflowFunctionExecutionConfig:
         assert execution.max_workers == 3
 
     def test_thread_dispatch_accepts_true_max_workers_as_positive_int(self):
-        wf = WorkflowFunction(func=add_one, dispatch="thread", max_workers=True)
+        wf = Function(func=add_one, dispatch="thread", max_workers=True)
 
         execution = wf._make_execution_config()
 
@@ -297,7 +297,7 @@ class TestWorkflowFunctionExecutionConfig:
 
     def test_auto_dispatch_does_not_use_max_workers_as_mode_switch(self):
         with pytest.warns(UserWarning, match="max_workers configures only"):
-            wf = WorkflowFunction(func=add_one, dispatch="auto", max_workers=3)
+            wf = Function(func=add_one, dispatch="auto", max_workers=3)
 
         execution = wf._make_execution_config()
 
@@ -305,23 +305,23 @@ class TestWorkflowFunctionExecutionConfig:
         assert execution.max_workers is None
 
     @pytest.mark.parametrize("dispatch", ["loop", "python", "map", None, 1])
-    def test_workflow_function_rejects_invalid_dispatch(self, dispatch):
+    def test_function_rejects_invalid_dispatch(self, dispatch):
         with pytest.raises(ValueError, match="dispatch must be one of"):
-            WorkflowFunction(func=add_one, dispatch=dispatch)
+            Function(func=add_one, dispatch=dispatch)
 
     @pytest.mark.parametrize("max_workers", [0, -1, False])
-    def test_workflow_function_rejects_non_positive_max_workers(self, max_workers):
+    def test_function_rejects_non_positive_max_workers(self, max_workers):
         with pytest.raises(ValueError, match="max_workers"):
-            WorkflowFunction(func=add_one, dispatch="sequential", max_workers=max_workers)
+            Function(func=add_one, dispatch="sequential", max_workers=max_workers)
 
     @pytest.mark.parametrize("max_workers", ["3"])
-    def test_workflow_function_rejects_invalid_max_workers(self, max_workers):
+    def test_function_rejects_invalid_max_workers(self, max_workers):
         with pytest.raises(TypeError, match="max_workers"):
-            WorkflowFunction(func=add_one, dispatch="sequential", max_workers=max_workers)
+            Function(func=add_one, dispatch="sequential", max_workers=max_workers)
 
     def test_non_thread_dispatch_warns_and_ignores_max_workers(self):
         with pytest.warns(UserWarning, match="max_workers configures only"):
-            wf = WorkflowFunction(func=add_one, dispatch="sequential", max_workers=3)
+            wf = Function(func=add_one, dispatch="sequential", max_workers=3)
 
         execution = wf._make_execution_config()
 
@@ -333,7 +333,7 @@ class TestWorkflowFunctionExecutionConfig:
         # (effective_workflow_kind also gates on node_mod.flow, not just task).
         pytest.importorskip("prefect")
         monkeypatch.setattr(node_mod, "task", object())
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="thread",
@@ -356,7 +356,7 @@ class TestWorkflowFunctionExecutionConfig:
         monkeypatch.setattr(node_mod, "task", object())
         prefect_config.workflow_kind = WorkflowKind.FLOW
         with pytest.warns(UserWarning, match="max_workers configures only"):
-            wf = WorkflowFunction(
+            wf = Function(
                 func=add_one,
                 dispatch="sequential",
                 max_workers=3,
@@ -370,7 +370,7 @@ class TestWorkflowFunctionExecutionConfig:
 
     def test_jax_dispatch_warns_and_ignores_max_workers(self):
         with pytest.warns(UserWarning, match="max_workers configures only"):
-            wf = WorkflowFunction(
+            wf = Function(
                 func=add_one,
                 dispatch="jax",
                 workflow_kind=WorkflowKind.OFF,
@@ -388,7 +388,7 @@ class TestWorkflowFunctionExecutionConfig:
 
         monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", fail_executor)
         with pytest.warns(UserWarning, match="max_workers configures only"):
-            wf = WorkflowFunction(
+            wf = Function(
                 func=add_one,
                 dispatch="jax",
                 workflow_kind=WorkflowKind.OFF,
@@ -413,12 +413,12 @@ class TestWorkflowFunctionExecutionConfig:
 
         monkeypatch.setattr(node_mod, "task", object())
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)
-        task_wf = WorkflowFunction(
+        task_wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
         )
-        flow_wf = WorkflowFunction(
+        flow_wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
