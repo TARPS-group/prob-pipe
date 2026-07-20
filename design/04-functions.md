@@ -135,7 +135,7 @@ A `Function` must wrap an *ordinary* function with no naming restrictions (`C5 �
 Two orthogonal computational concerns sit beneath a lifted call, both with defaults so a user need not touch them:
 
 - **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is traced end-to-end, and it differentiates end-to-end when the `Function` claims `SupportsDifferentiation`; dispatch never changes the result beyond floating-point effects of evaluation order. Because each unit's PRNG key is fixed by its index rather than taken from a shared counter, the result is identical across `jax`, `sequential`, and `thread`, and parallel execution contends for no mutable random state: nothing is locked, and no key is drawn twice.
-- **Orchestration — *whether* the call is traced.** Off by default. A computation can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result.
+- **Orchestration — *whether* the call is traced.** Off by default. A `Function` can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result.
 
 ### Rationale
 
