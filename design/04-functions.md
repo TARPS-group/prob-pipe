@@ -41,7 +41,7 @@ def predict(theta, x): ...                    # an ordinary callable over concre
 def predict(theta, x): ...
 ```
 
-Construction may also declare claims. The decorator's `differentiable` flag, `False` by default, asserts that the wrapped callable differentiates end-to-end — array-native, with no gradient-breaking operations — and the constructed `Function` then claims `SupportsDifferentiation` (`D6 – Differentiability as a capability`), consumed wherever gradients are required. Like the templates, the flag is fixed at construction: a declaration, not a control.
+Construction may also declare claims. The decorator's `differentiable` argument, `False` by default, states which inputs gradients propagate through: `True` claims every numeric input — array-native, with no gradient-breaking operations — and a numeric event template claims exactly the values it names. The constructed `Function` then carries `SupportsDifferentiation` with that template (`D6 – Differentiability as a capability`), read through `is_differentiable` wherever gradients are required. Like the templates, the declaration is fixed at construction: a claim, not a control.
 
 Calling it runs the wrapped function and returns a `Tracked` result: the output is wrapped as a value or distribution carrying `Provenance` that records this `Function` and its tracked inputs. A call whose arguments are all ordinary values is one invocation of `f` followed by that wrap. A distribution- or batch-valued argument triggers lifting instead. The engine is installed on the III.2 base at import; imports still point strictly downward.
 

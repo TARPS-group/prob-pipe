@@ -102,14 +102,15 @@ The function kind's base type is `Function`: a tracked term wrapping exactly one
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_template`, it returns one conforming to `output_template`, with no tracking or lifting. `__call__` runs the **call path**, the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import, adding lifting, tracking, and provenance to every `Function`. So `apply` is the raw map that operations such as change-of-variables build on, and `__call__` is the tracked call a user makes. The base also carries its **controls** — the execution defaults of IV.3 (sample count, seed, dispatch, orchestration) — set at construction and revised functionally by `with_options` (`C2 – Functional interface over immutable objects`); the base gives them no meaning, and the engine reads them at call time.
 
-A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Its capability protocols live beside the base: `SupportsInverse` (III.14) and `SupportsDifferentiation` are claims a `Function` carries, declared at construction. `SupportsInverse` is checked like the distribution capabilities of III.7; `SupportsDifferentiation` is checked by the value it declares, as described below. The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
+A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Its capability protocols live beside the base: `SupportsInverse` (III.14) and `SupportsDifferentiation` are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7. `SupportsDifferentiation` additionally declares *which* values differentiate, read through `is_differentiable`, as described below. The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
 
 ```python
 class Function(Tracked):
     def __init__(self, name: str, fn: Callable, *,
                  input_template: EventTemplate | None = None,
                  output_template: EventTemplate | None = None,
-                 differentiable: bool = False) -> None: ...
+                 differentiable: bool | NumericEventTemplate = False) -> None: ...
+                 # True claims every numeric input; a template claims exactly the values it names
     @property
     def input_template(self) -> EventTemplate | None: ...
     @property
@@ -130,13 +131,18 @@ def install_call_engine(engine: Callable[..., Any]) -> None: ...
 
 @runtime_checkable
 class SupportsDifferentiation(Protocol):
-    differentiable: bool   # an instance attribute, set at construction; its value carries the claim
+    @property
+    def differentiable_template(self) -> NumericEventTemplate: ...
+    # exactly the values gradients propagate through: a sub-template of the numeric
+    # input template (Function, LinOp) or of the numeric event template (distribution)
 
-def is_differentiable(x: Any) -> bool: ...
-# True exactly when x declares the attribute and sets it to True
+def is_differentiable(x: Any, values: NamedTree | None = None) -> bool: ...
+# True when every value named in `values` lies in x's differentiable template;
+# with no `values`, when the template covers every numeric value. False when x
+# does not declare the capability.
 ```
 
-An object declares `SupportsDifferentiation` at construction to assert that gradients propagate through it end-to-end. The attribute lives on the instance and its value carries the claim: `is_differentiable` returns `True` exactly when an object declares `differentiable` and sets it to `True`, so an object constructed with `differentiable=False` is treated the same as one that never declares it. Differentiation is performed by an external transform rather than by a method of the object, which is why this capability is guarded by a value where the others are guarded by a method. A `Function` sets the attribute through the `differentiable` flag, and a `LinOp` or a distribution family that differentiates sets it the same way. The claim composes: a joint, a transformed distribution, or a field view is differentiable when every part it is built from is. An operation that needs gradients checks `is_differentiable` and names the first step that fails it before a backend trace runs. Execution dispatch is a separate control, so `jax` vectorizes a call whether or not the object differentiates.
+An object declares `SupportsDifferentiation` at construction to state which values gradients propagate through: its `differentiable_template` contains exactly the differentiable values, a sub-template of the numeric input template for a `Function` or `LinOp` and of the numeric event template for a distribution. `is_differentiable(x, values)` checks the claim: it is `True` when every value named in `values` lies in the template and, called without `values`, when the template covers every numeric value — the end-to-end case. An object with nothing to claim does not declare the capability, and `is_differentiable` is then `False`. A `Function` declares its template through the decorator's `differentiable` argument, where `True` claims every numeric input and a template claims exactly the values it names. A `LinOp` claims its whole input template, and a distribution family claims the event values its sampling reparameterizes. The claim composes: a field view restricts its parent's template to the viewed path, a joint assembles its factors' templates under their field names, and a value is differentiable through a chain of steps exactly when every step claims it. An operation that needs gradients checks `is_differentiable` for the values it differentiates and names the first step that fails, before a backend trace runs. Execution dispatch is a separate control, so `jax` vectorizes a call whether or not the object differentiates.
 
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.
 
@@ -156,7 +162,7 @@ Defining the base in the value layer keeps the layering strict: the representati
 
 ### Open points
 
-- *Differentiability granularity.* The `SupportsDifferentiation` claim is all-or-nothing. Which *variables* a map differentiates with respect to (a claim scoped to input paths), and whether a Monte Carlo fallback differentiates through its sampler's reparameterization, are unsettled and left to a dedicated pass. That pass would also make `grad` an ordinary operation with registered routes: a custom gradient method where an object supplies one, the automatic-differentiation route gated by this declaration, and finite differences as the fallback at approximate fidelity.
+- *Differentiability of sampling-based routes.* Whether a Monte Carlo fallback differentiates through its sampler's reparameterization is unsettled. So is the eventual `grad` operation the claims feed, with registered routes: a custom gradient method where an object supplies one, the automatic-differentiation route gated by the declared template, and finite differences as the fallback at approximate fidelity. Both are left to a dedicated pass.
 
 ## III.3 — `Record` and `NumericRecord`
 
