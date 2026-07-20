@@ -36,7 +36,7 @@ for known-name lookups.
 - **[Modeling and inference](inference.md)** — model and likelihood
   classes, the inference-method registry and built-ins, iterative
   transformations, predictive checks.
-- **[Workflows and orchestration](workflows.md)** — `WorkflowFunction`,
+- **[Workflows and orchestration](workflows.md)** — `Function`,
   `Module`, the workflow decorators, and Prefect-orchestration
   configuration.
 - **[Constraints and bijectors](constraints.md)** — `Constraint`

@@ -227,7 +227,7 @@ class RecordArray(Record):
 
         Unlike ``ra[field]`` (which returns the raw column), a view
         remembers the parent ``RecordArray``. When multiple views of
-        the same parent land in a single ``WorkflowFunction`` call,
+        the same parent land in a single ``Function`` call,
         the sweep layer groups them by parent identity and iterates
         them in lockstep (zip) rather than cartesian-producting.
 
@@ -299,7 +299,7 @@ class RecordArray(Record):
         Mirrors :meth:`Record.select` but each entry is a
         :class:`_RecordArrayView` rather than the raw column. The views
         carry this ``RecordArray`` as their parent, so splatting the
-        result into a ``@workflow_function`` triggers the
+        result into a ``@function`` triggers the
         parent-identity **zip sweep** (one inner call per row, matching
         ``f(p=self)``) instead of cartesian-producting the fields as
         independent axes.
@@ -742,7 +742,7 @@ class _RecordArrayView(RecordArray):
 
     Constructed via ``parent[field]``. The underlying column is aliased
     — no copy — and ``view._parent`` carries the parent reference used
-    by the ``WorkflowFunction`` sweep layer to group sibling views.
+    by the ``Function`` sweep layer to group sibling views.
 
     Minimal surface: ``__array__`` / ``__jax_array__`` for conversion,
     ``.shape`` / ``.dtype`` / ``.ndim`` for introspection,
@@ -785,7 +785,7 @@ class _RecordArrayView(RecordArray):
     def parent(self) -> RecordArray:
         """The parent ``RecordArray`` this view points at.
 
-        Shared-identity signal for the ``WorkflowFunction`` sweep layer:
+        Shared-identity signal for the ``Function`` sweep layer:
         views with the same ``parent`` zip into one sweep axis; views
         with different parents (and plain ``RecordArray``s) product.
         """

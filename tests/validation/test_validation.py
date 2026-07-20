@@ -108,7 +108,7 @@ def observed_data():
 
 
 class TestPredictiveCheck:
-    """Tests for the predictive_check WorkflowFunction."""
+    """Tests for the predictive_check Function."""
 
     def test_prior_check_returns_replicated_statistics(self, prior, likelihood):
         result = predictive_check(
@@ -194,10 +194,10 @@ class TestPredictiveCheck:
 
         assert "p_value" in result
 
-    def test_is_workflow_function(self):
-        from probpipe.core.node import WorkflowFunction
+    def test_is_function(self):
+        from probpipe.core.node import Function
 
-        assert isinstance(predictive_check, WorkflowFunction)
+        assert isinstance(predictive_check, Function)
 
     def test_importable_from_top_level(self):
         from probpipe import predictive_check as pc

@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 
 from probpipe import Normal, Record
-from probpipe.core._fingerprint import fingerprint
-from probpipe.core.node import WorkflowFunction
+from probpipe.core._fingerprint import _update_function, fingerprint
+from probpipe.core.node import Function
 from probpipe.core.provenance import ParentInfo, Provenance
 
 # ===========================================================================
@@ -306,13 +306,28 @@ class TestBootstrapSourceFingerprint:
 
 
 # ===========================================================================
-# 7. WorkflowFunction hashing
+# 7. Function hashing
 # ===========================================================================
 
 
-class TestWorkflowFunctionHashing:
+class TestFunctionHashing:
     def _make_wf(self, func):
-        return WorkflowFunction(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        return Function(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
+
+    def test_legacy_content_marker_is_preserved(self):
+        """A pure API rename must not invalidate existing cache identities."""
+
+        class _RecordingHash:
+            def __init__(self):
+                self.chunks: list[bytes] = []
+
+            def update(self, chunk: bytes) -> None:
+                self.chunks.append(chunk)
+
+        hasher = _RecordingHash()
+        _update_function(hasher, self._make_wf(lambda x: x), None)
+
+        assert hasher.chunks[0] == b"wf:"
 
     def test_same_function_stable(self):
         def add(x: float, y: float) -> float:
@@ -348,13 +363,13 @@ class TestWorkflowFunctionHashing:
             import sys
             sys.path.insert(0, sys.argv[1])
             from probpipe.core._fingerprint import fingerprint
-            from probpipe.core.node import WorkflowFunction
+            from probpipe.core.node import Function
 
             def f(x: float) -> float:
                 transform = lambda v: v * 2.0  # noqa: E731
                 return transform(x)
 
-            wf = WorkflowFunction(func=f, dispatch="sequential", n_broadcast_samples=10, seed=42)
+            wf = Function(func=f, dispatch="sequential", n_broadcast_samples=10, seed=42)
             print(fingerprint(wf))
         """)
         site = str(next(p for p in sys.path if "site-packages" in p))
@@ -444,11 +459,11 @@ class TestFingerprintInProvenance:
 # ===========================================================================
 
 
-class TestWorkflowFunctionCapture:
+class TestFunctionCapture:
     """Bytecode alone is not enough: referenced names, closures, and defaults."""
 
     def _wf(self, func):
-        return WorkflowFunction(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        return Function(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
 
     def test_called_name_differs(self):
         # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing

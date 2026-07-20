@@ -1,4 +1,4 @@
-"""Tests for Prefect orchestration in WorkflowFunction.
+"""Tests for Prefect orchestration in Function.
 
 Exercises all Prefect dispatch paths:
 - workflow_kind=WorkflowKind.TASK with sequential and JAX dispatch
@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 
 from probpipe import Normal, WorkflowKind
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
 prefect_test_harness = prefect_testing.prefect_test_harness
@@ -74,7 +74,7 @@ class TestPrefectTaskRowWise:
     """Exercises Prefect task execution via row-wise dispatch."""
 
     def test_returns_empirical_distribution(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -86,7 +86,7 @@ class TestPrefectTaskRowWise:
         assert result.num_atoms == 30
 
     def test_output_values_correct(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -102,7 +102,7 @@ class TestPrefectTaskRowWise:
         )
 
     def test_multiple_broadcast_args(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=sum_xy,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -124,7 +124,7 @@ class TestPrefectFlowRowWise:
     """Exercises Prefect flow execution via row-wise dispatch."""
 
     def test_returns_empirical_distribution(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -136,7 +136,7 @@ class TestPrefectFlowRowWise:
         assert result.num_atoms == 25
 
     def test_output_values_correct(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -161,7 +161,7 @@ class TestPrefectTaskJax:
     """Exercises the Prefect-wrapped distribution-broadcast JAX path."""
 
     def test_returns_empirical_distribution(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
@@ -173,7 +173,7 @@ class TestPrefectTaskJax:
         assert result.num_atoms == 30
 
     def test_output_values_correct(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
@@ -197,7 +197,7 @@ class TestPrefectFlowJax:
     """Exercises Prefect flow-wrapped jax.vmap path."""
 
     def test_returns_empirical_distribution(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="jax",
@@ -209,7 +209,7 @@ class TestPrefectFlowJax:
         assert result.num_atoms == 25
 
     def test_output_values_correct(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="jax",
@@ -233,7 +233,7 @@ class TestPrefectProvenance:
     """Verify provenance includes orchestration info."""
 
     def test_task_provenance(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -247,7 +247,7 @@ class TestPrefectProvenance:
         assert result.provenance.metadata["n_samples"] == 20
 
     def test_flow_provenance(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -259,7 +259,7 @@ class TestPrefectProvenance:
         assert result.provenance.metadata["orchestrate"] == "flow"
 
     def test_no_orchestration_provenance(self, normal_dist):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
@@ -280,7 +280,7 @@ class TestPrefectNonBroadcast:
     """When concrete args are passed, Prefect wrapping still applies."""
 
     def test_task_no_broadcast(self):
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -291,7 +291,7 @@ class TestPrefectNonBroadcast:
         np.testing.assert_allclose(float(result), 6.0)
 
     def test_flow_no_broadcast(self):
-        wf = WorkflowFunction(
+        wf = Function(
             func=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -315,7 +315,7 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -332,7 +332,7 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
@@ -349,7 +349,7 @@ class TestPrefectImportGuard:
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",

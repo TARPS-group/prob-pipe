@@ -29,11 +29,11 @@ case studies for applied, problem-first notebooks.
 
 <div class="grid cards" markdown>
 
--   **[Broadcasting and workflow functions](user_guide/03_broadcasting.ipynb)**
+-   **[Broadcasting and Functions](user_guide/03_broadcasting.ipynb)**
 
     ---
 
-    Automatic uncertainty propagation with `WorkflowFunction`, empirical
+    Automatic uncertainty propagation with `Function`, empirical
     enumeration, cartesian products, vectorized execution, and reproducible
     seeds.
 
@@ -103,6 +103,6 @@ case studies for applied, problem-first notebooks.
     ---
 
     Global Prefect configuration for distributing bagged posterior fits across
-    every configured `WorkflowFunction`.
+    every configured `Function`.
 
 </div>

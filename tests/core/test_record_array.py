@@ -959,7 +959,7 @@ class TestSingleFieldCoercion:
 
     This is the NumericRecordArray counterpart to the scalar shim on
     NumericRecord — it keeps ``np.asarray(result)`` working when a
-    workflow function auto-wrapped its scalar output as a
+    Function auto-wrapped its scalar output as a
     ``NumericRecordArray(result=...)`` under the PR 1.5 output-type
     contract.
     """

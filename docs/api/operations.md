@@ -1,6 +1,6 @@
 # Operations
 
-Standalone workflow functions for sampling, density evaluation, moments,
+Standalone Functions for sampling, density evaluation, moments,
 conditioning, and conversion. Each op dispatches via the matching
 [protocol](extending.md#protocols), participates in
 [broadcasting](../user_guide/03_broadcasting.ipynb), and is subject to

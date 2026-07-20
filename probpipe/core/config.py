@@ -2,7 +2,7 @@
 
 Provides:
 - ``WorkflowKind`` enum and ``PrefectConfig`` singleton (``prefect_config``)
-  controlling how ``WorkflowFunction`` instances dispatch work.
+  controlling how ``Function`` instances dispatch work.
 - ``ProvenanceMode`` enum and ``ProvenanceConfig`` singleton
   (``provenance_config``) controlling how much lineage history is retained.
 
@@ -36,7 +36,7 @@ from typing import Any
 
 
 class WorkflowKind(Enum):
-    """Orchestration mode for ``WorkflowFunction`` instances.
+    """Orchestration mode for ``Function`` instances.
 
     Members
     -------
@@ -125,7 +125,7 @@ class PrefectConfig:
     Parameters
     ----------
     workflow_kind : WorkflowKind
-        Default orchestration mode for all ``WorkflowFunction`` instances
+        Default orchestration mode for all ``Function`` instances
         that do not override their own.  Initial value is ``OFF`` unless
         the ``PROBPIPE_WORKFLOW_KIND`` environment variable is set, in
         which case its value (``off`` / ``task`` / ``flow`` / ``default``,
@@ -258,7 +258,7 @@ def _initial_provenance_mode() -> ProvenanceMode:
 class ProvenanceConfig:
     """Global provenance tracking settings.
 
-    Controls how much lineage history ``WorkflowFunction`` retains when
+    Controls how much lineage history ``Function`` retains when
     assembling provenance for each result.  Set once at application startup::
 
         import probpipe

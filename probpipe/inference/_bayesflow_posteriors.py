@@ -28,7 +28,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core.distribution import Distribution
-from ..core.node import workflow_function
+from ..core.node import function
 from ..core.protocols import GenerativeLikelihood, SupportsConditioning
 from ..custom_types import ArrayLike, PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
     from bayesflow.networks import InferenceNetwork
     from keras.optimizers import Optimizer as KerasOptimizer
 else:
-    # ``@workflow_function`` resolves the decorated signature's hints at runtime
+    # ``@function`` resolves the decorated signature's hints at runtime
     # (``get_type_hints``), so names appearing there must exist outside
     # TYPE_CHECKING; the optional-dependency types degrade to ``Any``.
     InferenceNetwork = KerasOptimizer = Any
@@ -200,7 +200,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
 
     def _sample(self, key: PRNGKey, sample_shape: tuple[int, ...] = ()) -> Any:
         # Present so sampleability probes get NotImplementedError -- which
-        # WorkflowFunction's dispatch fallback catches -- not AttributeError.
+        # Function's dispatch fallback catches -- not AttributeError.
         raise NotImplementedError(
             "BayesFlowModel does not implement direct sampling; draw posterior "
             "samples by conditioning (condition_on(model, observed)), or simulate "
@@ -256,11 +256,11 @@ class BayesFlowModel(Distribution, SupportsConditioning):
 
 
 # ---------------------------------------------------------------------------
-# Workflow function
+# Function
 # ---------------------------------------------------------------------------
 
 
-@workflow_function
+@function
 def learn_amortized_posterior(
     prior: Distribution,
     simulator: GenerativeLikelihood,
@@ -319,7 +319,7 @@ def learn_amortized_posterior(
         How the offline simulation is executed. ``"jax"`` (default) vmaps the
         simulator and requires it to be JAX-traceable; ``"sequential"`` runs an
         eager per-draw loop, supporting non-JAX simulators (numpy / external
-        code) at the cost of speed. Mirrors ``WorkflowFunction``'s dispatch names.
+        code) at the cost of speed. Mirrors ``Function``'s dispatch names.
     inference_network : bayesflow.networks.InferenceNetwork or None
         Overrides the method default (``CouplingFlow`` / ``FlowMatching`` /
         ``ConsistencyModel``).

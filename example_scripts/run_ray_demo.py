@@ -5,7 +5,7 @@ uses ``RayTaskRunner`` so each bootstrap MCMC fit runs in a separate Ray
 worker process — true parallelism across CPU cores.
 
 This is the current Ray support path for ProbPipe: Prefect orchestrates
-``WorkflowFunction`` tasks, and Prefect-Ray submits those tasks to Ray. It is
+``Function`` tasks, and Prefect-Ray submits those tasks to Ray. It is
 not a native Ray backend and does not expose ``ray.remote`` or ``ray.put``
 through ProbPipe.
 
@@ -83,8 +83,8 @@ from probpipe import (
     SimpleModel,
     WorkflowKind,
     condition_on,
+    function,
     mean,
-    workflow_function,
 )
 
 # ``address="auto"`` attaches to the persistent Ray head you launched with
@@ -112,7 +112,7 @@ print()
 df = pd.read_csv("./docs/tutorials/data/horseshoe_crabs.csv")
 
 
-@workflow_function
+@function
 def prep_data(width, satellites) -> Record:
     width = np.asarray(width, dtype=np.float32)
     width_z = (width - np.mean(width)) / np.std(width)

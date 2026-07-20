@@ -1,6 +1,6 @@
-"""Characterization tests for WorkflowFunction call resolution.
+"""Characterization tests for Function call resolution.
 
-These tests lock down the public-call boundary before WorkflowFunction
+These tests lock down the public-call boundary before Function
 internals are split into smaller private modules.
 """
 
@@ -13,7 +13,7 @@ import pytest
 
 from probpipe import BroadcastDistribution, Normal
 from probpipe.core import _workflow_call
-from probpipe.core.node import Module, Node, WorkflowFunction, workflow_method
+from probpipe.core.node import Function, Module, Node, workflow_method
 
 
 @pytest.fixture
@@ -170,34 +170,34 @@ class TestWorkflowCallHelpers:
 
 class TestArgumentBinding:
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
-        wf = WorkflowFunction(func=add_func, dispatch="sequential")
+        wf = Function(func=add_func, dispatch="sequential")
 
         assert float(wf(jnp.asarray(1.0), jnp.asarray(2.0))) == 3.0
         assert float(wf(jnp.asarray(1.0), y=jnp.asarray(2.0))) == 3.0
 
     def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
-        wf = WorkflowFunction(func=add_func, dispatch="sequential")
+        wf = Function(func=add_func, dispatch="sequential")
 
         with pytest.raises(TypeError, match="multiple values"):
             wf(jnp.asarray(1.0), x=jnp.asarray(2.0))
 
     def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = WorkflowFunction(func=identity, dispatch="sequential")
+        wf = Function(func=identity, dispatch="sequential")
 
         assert float(wf(x=1.0, scale=2.0)) == 1.0
         assert seen == [{"scale": 2.0}]
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = WorkflowFunction(func=identity, dispatch="sequential")
+        wf = Function(func=identity, dispatch="sequential")
 
         assert float(wf(x=1.0, kwargs={"scale": 2.0})) == 1.0
         assert seen == [{"kwargs": {"scale": 2.0}}]
 
     def test_bind_values_and_function_defaults_are_resolved_before_call(self, affine_func):
-        default_wf = WorkflowFunction(func=affine_func, dispatch="sequential")
-        bound_wf = WorkflowFunction(
+        default_wf = Function(func=affine_func, dispatch="sequential")
+        bound_wf = Function(
             func=affine_func,
             dispatch="sequential",
             bind={"offset": 3.0},
@@ -209,7 +209,7 @@ class TestArgumentBinding:
         assert float(bound_wf(x=1.0, offset=4.0)) == 10.0
 
     def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
-        wf = WorkflowFunction(func=add_func, dispatch="sequential")
+        wf = Function(func=add_func, dispatch="sequential")
 
         with pytest.raises(TypeError, match="Missing required input 'y'"):
             wf(x=1.0)
@@ -234,7 +234,7 @@ class TestModuleResolution:
         def use_dep(dep: DataNode):
             return 1.0
 
-        wf = WorkflowFunction(func=use_dep, dispatch="sequential")
+        wf = Function(func=use_dep, dispatch="sequential")
 
         with pytest.raises(TypeError, match="expects dependency 'dep:"):
             wf(dep=object())
@@ -246,7 +246,7 @@ class TestCallOptions:
         identity_func,
         normal_dist,
     ):
-        wf = WorkflowFunction(
+        wf = Function(
             func=identity_func,
             n_broadcast_samples=20,
             dispatch="sequential",
@@ -267,7 +267,7 @@ class TestCallOptions:
         identity_func,
         normal_dist,
     ):
-        wf = WorkflowFunction(
+        wf = Function(
             func=identity_func,
             n_broadcast_samples=8,
             dispatch="sequential",

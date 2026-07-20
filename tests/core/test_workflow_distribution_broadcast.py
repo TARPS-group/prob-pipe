@@ -1,4 +1,4 @@
-"""Tests for WorkflowFunction distribution-only broadcast helpers."""
+"""Tests for Function distribution-only broadcast helpers."""
 
 from __future__ import annotations
 

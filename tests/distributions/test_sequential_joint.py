@@ -20,7 +20,7 @@ from probpipe import (
     unnormalized_log_prob,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -452,7 +452,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=subtract,
             dispatch="sequential",
             n_broadcast_samples=30,
@@ -483,7 +483,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=subtract,
             dispatch="jax",
             n_broadcast_samples=30,
@@ -508,7 +508,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=subtract,
             dispatch="auto",
             n_broadcast_samples=30,

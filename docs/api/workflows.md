@@ -1,7 +1,7 @@
 # Workflows and orchestration
 
-`WorkflowFunction` wraps every [op](operations.md) and every user-written
-`@workflow_function`. `Module` is the stateful container with
+`Function` wraps every [op](operations.md) and every user-written
+`@function`. `Module` is the stateful container with
 `@workflow_method` children.
 
 Prefect orchestration is **off by default**. Set
@@ -10,18 +10,18 @@ export `PROBPIPE_WORKFLOW_KIND=task` in the environment.
 
 ## Options namespace
 
-Use bare `@workflow_function` when no ProbPipe controls are needed:
+Use bare `@function` when no ProbPipe controls are needed:
 
 ```python
-@workflow_function
+@function
 def score(x, seed):
     return x + seed
 ```
 
-Use `@workflow_function(...)` for definition-time controls:
+Use `@function(...)` for definition-time controls:
 
 ```python
-@workflow_function(dispatch="jax", n_broadcast_samples=1_000, seed=0)
+@function(dispatch="jax", n_broadcast_samples=1_000, seed=0)
 def score(x, seed):
     return x + seed
 ```
@@ -39,11 +39,11 @@ such as `seed`, `name`, `dispatch`, `n_broadcast_samples`, and
 
 ## Wrappers and decorators
 
-::: probpipe.WorkflowFunction
+::: probpipe.Function
 
 ::: probpipe.Module
 
-::: probpipe.workflow_function
+::: probpipe.function
 
 ::: probpipe.workflow_method
 

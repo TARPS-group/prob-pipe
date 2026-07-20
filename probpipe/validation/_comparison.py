@@ -18,9 +18,9 @@ Three metric families, by what the reference must carry (see :class:`Reference`)
 - **score** — ``ksd`` needs only the target score ``∇ log π`` (no reference
   draws).
 
-These are deliberately plain functions rather than ``@workflow_function`` ops:
+These are deliberately plain functions rather than ``@function`` ops:
 they return bare arrays (or, for :func:`score_posterior`, a ``dict``), which the
-workflow-function output-wrapping would otherwise coerce into single-field
+Function output-wrapping would otherwise coerce into single-field
 records.
 
 All metrics return 0-d (or, for ``std_ratios``, 1-d) JAX arrays and are

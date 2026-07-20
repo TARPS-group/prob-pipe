@@ -11,13 +11,13 @@ In practice, these issues make it hard to explore the full design space of avail
 
 1. **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 2. **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-3. **`WorkflowFunction`**: Usually construction by decorating a function with  `@workflow_function`. Pass the declared types of values, the workflow function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the functions declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all returned values from a workflow function are wrapped as an appropriate `Record` / `Distribution`. 
+3. **`Function`**: Usually constructed by decorating a function with `@function`. Pass the declared types of values and the Function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the function's declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all values returned from a Function are wrapped as an appropriate `Record` / `Distribution`.
 
-`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `WorkflowFunction`, so they are interchangeable as arguments to workflow function. 
+`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `Function`, so they are interchangeable as arguments to Functions.
 
 ## Built-in operations
 
-ProbPipe provides a set of built-in **ops**, which are workflow functions that can support specalized features to streamline pipeline construction:
+ProbPipe provides a set of built-in **ops**, which are Functions that can support specialized features to streamline pipeline construction:
 
 - **`condition_on`**: condition a model on observed data, automatically selecting the best inference algorithm (or specify one with `method=`).
 - **`mean`**, **`variance`**, **`cov`**, **`expectation`**: compute distributional summaries, with automatic Monte Carlo fallback when exact computation is unavailable.
@@ -94,7 +94,7 @@ pip install ".[bayesflow]"  # BayesFlow amortized simulation-based inference (Py
 
 ### Ray via Prefect
 
-ProbPipe can dispatch Prefect-orchestrated `WorkflowFunction` tasks to Ray via Prefect-Ray:
+ProbPipe can dispatch Prefect-orchestrated `Function` tasks to Ray via Prefect-Ray:
 
 ```bash
 pip install "probpipe[prefect]"

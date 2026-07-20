@@ -4,7 +4,7 @@ Covers:
 - ApproximateDistribution: chain access, warmup, inference_data, draws
 - ApproximateDistribution with Record template: named draws
 - _RecordDistributionView: component views, select, broadcasting
-- rwmh workflow function: basic sampling with SupportsLogProb
+- rwmh Function: basic sampling with SupportsLogProb
 """
 
 from __future__ import annotations
@@ -618,12 +618,12 @@ class TestApproximateDistributionValuesTemplate:
 
 
 # ---------------------------------------------------------------------------
-# rwmh workflow function
+# rwmh Function
 # ---------------------------------------------------------------------------
 
 
 class TestRWMH:
-    """Test the standalone rwmh workflow function."""
+    """Test the standalone rwmh Function."""
 
     def test_basic_sampling(self):
         """RWMH samples from a simple Normal distribution."""
@@ -1322,9 +1322,9 @@ class TestEndToEndValuesPipeline:
 
     def test_workflow_broadcasting_values_correct(self, posterior):
         """Broadcast predict(params, x) computes correct function of posterior."""
-        from probpipe.core.node import workflow_function
+        from probpipe.core.node import function
 
-        @workflow_function(n_broadcast_samples=100, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=100, dispatch="sequential", seed=0)
         def predict(params, x):
             return params[0] + params[1] * x
 
@@ -1341,9 +1341,9 @@ class TestEndToEndValuesPipeline:
         bug would produce mean≈0 (by symmetry) but var≈2*var(params),
         so checking var is the real correlation test.
         """
-        from probpipe.core.node import workflow_function
+        from probpipe.core.node import function
 
-        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def identity_pair(a, b):
             return a - b
 
@@ -1382,9 +1382,9 @@ class TestEndToEndValuesPipeline:
 
     def test_workflow_mixed_posterior_and_independent(self, posterior):
         """Workflow with both posterior views and an independent distribution."""
-        from probpipe.core.node import workflow_function
+        from probpipe.core.node import function
 
-        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 

@@ -1,4 +1,4 @@
-"""WorkflowFunction result-contract helpers.
+"""Function result-contract helpers.
 
 This private module owns the boundary rule that raw workflow returns
 become ``Record | RecordArray | Distribution`` values and receive
@@ -33,7 +33,7 @@ BROADCAST_NESTED: BroadcastMode = "nested"
 def _wrap_as_record(value: Any, field_name: str) -> Any:
     """Coerce a raw return into the Record | RecordArray | Distribution contract.
 
-    Uniform rule applied at the WorkflowFunction boundary:
+    Uniform rule applied at the Function boundary:
 
     - Already-structured values (``Record`` / ``RecordArray`` /
       ``Distribution``) pass through unchanged — their domain field
@@ -103,7 +103,7 @@ def _coerce_output(
         Provenance node to attach. ``None`` skips the attachment step.
     field_name : str
         Name used when wrapping bare scalar / array returns — always
-        the WorkflowFunction's own name so the single-field record
+        the Function's own name so the single-field record
         maps back to the op that produced it.
 
     Returns

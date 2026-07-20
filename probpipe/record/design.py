@@ -3,7 +3,7 @@
 A :class:`Design` is a :class:`~probpipe.RecordArray` whose rows are
 materialised from per-field **marginals** — the candidate values for
 each field — combined according to a subclass-specific rule. The
-resulting ``RecordArray`` plugs into the ``WorkflowFunction`` sweep
+resulting ``RecordArray`` plugs into the ``Function`` sweep
 path as a single array-valued input::
 
     result = fit(p=design)    # one inner call per row of the sweep
@@ -85,13 +85,13 @@ class Design(RecordArray):
     rows in ``__init__`` and stash the originating marginals for
     introspection.
 
-    Two equivalent ways to drive a sweep through a ``@workflow_function``::
+    Two equivalent ways to drive a sweep through a ``@function``::
 
-        @workflow_function
+        @function
         def fit(p): ...
         result = fit(p=design)              # one row per call
 
-        @workflow_function
+        @function
         def fit(r, K): ...
         result = fit(**design.select_all()) # zip across sibling views
 

@@ -7,7 +7,7 @@ Design
 ------
 Functions in this file mutate ``posterior._annotations`` in place and return
 ``None``. They are intentionally plain Python functions, not
-``@workflow_function``s, because diagnostics are post-hoc annotations on an
+``@function``s, because diagnostics are post-hoc annotations on an
 already-fitted posterior.
 
 ArviZ-compatible data are stored under::

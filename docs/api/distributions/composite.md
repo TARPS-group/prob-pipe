@@ -3,7 +3,7 @@
 Distributions combining named components into a joint over a
 [`Record`](../records.md). Component access: `dist["name"]` returns a view
 (see [Internals](../internals.md) for the correlation semantics);
-`dist.select("x", "y")` splats into a workflow function.
+`dist.select("x", "y")` splats into a Function.
 
 ::: probpipe.ProductDistribution
 

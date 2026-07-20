@@ -59,7 +59,7 @@ def _make_transformed():
 # User-constructible Distribution subclasses, parametrised here to pin
 # the non-iterable rule (#142). WF-output classes (BroadcastDistribution,
 # _RecordMarginal / _MixtureMarginal / _ListMarginal, BootstrapDistribution
-# of an op return) are produced by the WorkflowFunction layer rather than
+# of an op return) are produced by the Function layer rather than
 # user code; they inherit non-iterability from their bases (Distribution
 # / RecordEmpiricalDistribution / Distribution) and don't need direct
 # parametrisation here.

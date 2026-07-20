@@ -1,8 +1,8 @@
-"""WorkflowFunction distribution-input normalization helpers.
+"""Function distribution-input normalization helpers.
 
 This private module handles only distribution-valued workflow inputs.
 It is not a general normalization layer for all values entering a
-``WorkflowFunction`` call.
+``Function`` call.
 
 The normalization step runs after call resolution and before broadcast
 planning. It performs value-changing work that the planner should not

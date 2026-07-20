@@ -2,7 +2,7 @@
 
 A ``DistributionArray`` is ``Array[Distribution]`` — an ordered
 collection of scalar distributions indexed by a (multi-d)
-``batch_shape``. Vectorized ops live at the ``WorkflowFunction``
+``batch_shape``. Vectorized ops live at the ``Function``
 sweep layer, not on the DistArray itself. This file covers:
 
 - Construction + invariants + container surface (indexing, iteration,
@@ -520,7 +520,7 @@ class TestLogProbViaSweep:
     so it passes through to each cell as-is (the sweep broadcasts the
     single value across cells). Per-cell-value evaluation against a
     batched input is a user-level composition (wrap in a small
-    ``@workflow_function``) and is tested via the broader sweep tests,
+    ``@function``) and is tested via the broader sweep tests,
     not here.
     """
 

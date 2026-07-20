@@ -1,4 +1,4 @@
-"""WorkflowFunction execution dispatch helpers.
+"""Function execution dispatch helpers.
 
 This private module owns ordered execution of plain call dictionaries.
 It deliberately knows nothing about ProbPipe value semantics; callers

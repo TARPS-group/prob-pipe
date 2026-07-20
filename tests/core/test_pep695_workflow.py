@@ -1,4 +1,4 @@
-"""Regression tests for PEP 695 generics in @workflow_function.
+"""Regression tests for PEP 695 generics in @function.
 
 PEP 695 ``def f[T](...)`` syntax stores type parameters on
 ``func.__type_params__`` rather than injecting them into the function's
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Generic, TypeVar
 
-from probpipe.core.node import WorkflowFunction, workflow_function
+from probpipe.core.node import Function, function
 
 _T = TypeVar("_T")
 
@@ -28,11 +28,11 @@ class _Box(Generic[_T]):  # noqa: UP046
 def test_pep695_generic_function_can_be_wrapped():
     """A PEP 695 generic function should wrap without NameError."""
 
-    @workflow_function
+    @function
     def identity[T](x: _Box[T]) -> _Box[T]:
         return x
 
-    assert isinstance(identity, WorkflowFunction)
+    assert isinstance(identity, Function)
     assert identity.__name__ == "identity"
     # The hint for ``x`` should resolve to a parameterized _Box, not raise.
     assert "x" in identity._signature_info.hints
@@ -42,7 +42,7 @@ def test_pep695_generic_function_can_be_wrapped():
 def test_pep695_multiple_type_params():
     """Multiple PEP 695 type parameters should all resolve."""
 
-    @workflow_function
+    @function
     def pair[T, S](a: _Box[T], b: _Box[S]) -> tuple[_Box[T], _Box[S]]:
         return (a, b)
 

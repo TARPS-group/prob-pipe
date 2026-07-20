@@ -306,7 +306,7 @@ class BayesFlowRatio(_BayesFlowLikelihoodBase):
 
 
 # ---------------------------------------------------------------------------
-# Learner entry points. Deliberately plain functions, NOT @workflow_function:
+# Learner entry points. Deliberately plain functions, NOT @function:
 # the workflow result boundary coerces returns into Record/Distribution, which
 # would wrap (and break) these Likelihood components. See STYLE_GUIDE 1.4.
 # ---------------------------------------------------------------------------

@@ -141,7 +141,7 @@ class _MixtureSampling:
     common case — broadcasting a numeric function over a distribution
     of inputs), and a ``RecordArray`` when component samples are
     ``Record``-valued (e.g., broadcasting a ``Record``-returning
-    ``WorkflowFunction``). Opaque / non-stackable component outputs
+    ``Function``). Opaque / non-stackable component outputs
     raise a ``TypeError`` with the component types listed.
     """
 
@@ -384,7 +384,7 @@ def _make_marginal(
 # _make_stack — stacked sibling of _make_marginal for RecordArray broadcasts
 # ---------------------------------------------------------------------------
 #
-# When a WorkflowFunction broadcasts over a RecordArray (parameter
+# When a Function broadcasts over a RecordArray (parameter
 # sweep), the n inner outputs are independent scenarios indexed by
 # input row — *not* MC draws. The wrapper must preserve row identity:
 #
@@ -409,7 +409,7 @@ def _make_stack(
     name: str | None = None,
     field_name: str,
 ) -> Any:
-    """Wrap inner workflow-function outputs as a shape-``batch_shape``
+    """Wrap inner Function outputs as a shape-``batch_shape``
     aggregate.
 
     Internally the outputs are aggregated along a single leading axis
@@ -698,7 +698,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
     """Joint distribution over broadcast inputs and function output.
 
     Stores the paired input–output samples from a
-    :class:`~probpipe.core.node.WorkflowFunction` broadcast.  Supports
+    :class:`~probpipe.core.node.Function` broadcast.  Supports
     joint sampling (resampling paired input–output tuples) and named
     component access.
 

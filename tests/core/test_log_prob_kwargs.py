@@ -253,8 +253,8 @@ class TestWorkflowControlFieldNames:
 
 
 class TestControlsViaWithOptions:
-    """The density ops are plain WorkflowFunctions, so per-call controls use
-    their own ``with_options`` (the WorkflowFunction control path), exactly
+    """The density ops are plain Functions, so per-call controls use
+    their own ``with_options`` (the Function control path), exactly
     like the dispatch ops — not call kwargs (issue #228)."""
 
     @pytest.mark.parametrize(
@@ -265,12 +265,12 @@ class TestControlsViaWithOptions:
         d = Normal(0.0, 1.0, name="x")
         log_prob.with_options(**control)(d, 1.5)
 
-    def test_op_is_its_own_workflow_function(self):
-        # No wrapper: log_prob *is* a WorkflowFunction, so with_options is its
+    def test_op_is_its_own_function(self):
+        # No wrapper: log_prob *is* a Function, so with_options is its
         # own bound method — not a re-implementation.
-        from probpipe.core.node import WorkflowFunction
+        from probpipe.core.node import Function
 
-        assert isinstance(log_prob, WorkflowFunction)
+        assert isinstance(log_prob, Function)
         assert log_prob.with_options.__self__ is log_prob
 
     def test_with_options_supports_both_value_forms(self):

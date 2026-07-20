@@ -19,7 +19,7 @@ from probpipe import (
     sample,
     variance,
 )
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -479,7 +479,7 @@ class TestBroadcasting:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add,
             dispatch="sequential",
             n_broadcast_samples=50,

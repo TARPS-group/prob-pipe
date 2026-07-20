@@ -1,4 +1,4 @@
-"""WorkflowFunction call-resolution helpers.
+"""Function call-resolution helpers.
 
 This private module owns function signature metadata, workflow option
 resolution, argument binding, module/default resolution, and dependency
@@ -16,7 +16,7 @@ from typing import Any, get_type_hints
 
 @dataclass(frozen=True)
 class WorkflowSignatureInfo:
-    """Cached signature metadata for one wrapped workflow function."""
+    """Cached signature metadata for one wrapped Function."""
 
     signature: inspect.Signature
     hints: Mapping[str, Any]
@@ -35,7 +35,7 @@ class WorkflowCallOptions:
 
 @dataclass(frozen=True)
 class WorkflowCallOverrides:
-    """Resolved call-time workflow settings consumed by ``WorkflowFunction``."""
+    """Resolved call-time workflow settings consumed by ``Function``."""
 
     n_broadcast_samples: int
     include_inputs: bool
@@ -211,7 +211,7 @@ def resolve_workflow_call(
     default_include_inputs: bool,
     options: WorkflowCallOptions | None = None,
 ) -> ResolvedWorkflowCall:
-    """Resolve one ``WorkflowFunction`` call into values plus overrides."""
+    """Resolve one ``Function`` call into values plus overrides."""
     bound_inputs, overrides = bind_call_inputs(
         info,
         args,
@@ -268,6 +268,6 @@ def _validate_dependency_values(
         if not isinstance(value, dependency_type):
             ann = info.hints.get(name)
             raise TypeError(
-                f"WorkflowFunction '{workflow_name}' expects dependency "
+                f"Function '{workflow_name}' expects dependency "
                 f"'{name}: {ann}' to be a Node, but got {type(value)}."
             )

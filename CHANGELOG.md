@@ -106,7 +106,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   16-character hex digest (64-bit SHA-256 prefix) that stably identifies the
   parent's content across processes.  The hash covers the full value: numeric
   parameters for TFP-backed distributions, field-by-field content for Records,
-  and actual user-function bytecode for WorkflowFunctions (not the Prefect
+  and actual user-function bytecode for Functions (not the Prefect
   wrapper closure, so changes to the function body are detected reliably).
   Large arrays (> 256 MB) are sampled at evenly-spaced offsets rather than read
   in full.  The fingerprint is visible in `to_dict()` output and is the
@@ -120,6 +120,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **`WorkflowFunction` renamed to `Function` (#377, breaking).** The public
+  decorator is likewise renamed from `@workflow_function` to `@function`.
+  This is a hard rename with no compatibility aliases; call, lifting,
+  dispatch, RNG, provenance, and output-wrapping behavior are unchanged.
 
 - **`from_nested_dict` and `_flatten_paths` removed — the constructor reads a
   nested mapping directly (breaking).** Under the *"a mapping is never a leaf"*
@@ -391,7 +396,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single draw via `Distribution._pack_value` (single-field → the bare field
   value; multi-field → a `Record`), whose general field validation and
   `Record` building is the new public `RecordTemplate.pack`. The ops stay plain
-  `WorkflowFunction`s that resolve this in their body — the same shape as
+  `Function`s that resolve this in their body — the same shape as
   `condition_on`'s named data kwargs — so the positional form (including
   `value=`) is unchanged and still broadcasts, and per-call controls use
   `with_options` (`log_prob.with_options(seed=0)(dist, value)`). The keyword
@@ -727,7 +732,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Removed surface:
   - The **`[sbi]` extra** (`pip install probpipe[sbi]`) and its
     `sbijax>=0.3.6` dependency.
-  - The public workflow functions **`sbi_learn_conditional`** and
+  - The public Functions **`sbi_learn_conditional`** and
     **`sbi_learn_likelihood`** (exported from both `probpipe` and
     `probpipe.inference`), the **`DirectSamplerSBIModel`** they
     returned (exported from `probpipe.inference`), their `method=`
@@ -779,7 +784,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Normal`, `MultivariateNormal`, `JointGaussian` (named multi-field
     Gaussian with cross-covariance), and `ProductDistribution`
     compositions via the new `_gaussian_prior_params` helper.
-- New workflow function `probpipe.elliptical_slice(model, data, ...)`.
+- New Function `probpipe.elliptical_slice(model, data, ...)`.
 
 ### Changed
 
@@ -813,18 +818,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`WorkflowFunction` controls now live outside user call kwargs.**
-  `@workflow_function(...)` configures definition-time controls, and
+- **`Function` controls now live outside user call kwargs.**
+  `@function(...)` configures definition-time controls, and
   `workflow.with_options(...)(...)` is the call-time override API for
   `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
   ProbPipe controls; use `workflow.with_options(...)(...)` instead.
-- **`WorkflowFunction.workflow_kind` and `Module.workflow_kind` now require
+- **`Function.workflow_kind` and `Module.workflow_kind` now require
   `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
   and `None` are no longer accepted and now raise `TypeError`; use
   `WorkflowKind.TASK`, `WorkflowKind.FLOW`, or `WorkflowKind.OFF` explicitly.
-  The old `parallel=` / `vectorize=` keyword guard on `WorkflowFunction` was
+  The old `parallel=` / `vectorize=` keyword guard on `Function` was
   also removed, so those names are no longer specially reserved by the
   constructor.
 - **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
@@ -1314,7 +1319,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
   (`off` / `task` / `flow` / `default`, case-insensitive), which is
   read once at import time. Per-workflow overrides remain available via
-  `@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
+  `@function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
   aliases are no longer accepted in this release (see the
   `workflow_kind` breaking entry above).
   Migration: production callers that relied on the implicit
@@ -1594,11 +1599,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`_RecordArrayView`** (`RecordArray.view(field)`) — single-field view of a
   ``RecordArray`` column that carries its parent as shared-identity metadata.
-  The ``WorkflowFunction`` sweep layer groups sibling views from one parent
+  The ``Function`` sweep layer groups sibling views from one parent
   into a single zip axis; views from different parents product.
 - **Uniform `select_all()`** on ``Record`` / ``RecordArray`` /
   ``RecordDistribution``. Splatting the result into a
-  ``@workflow_function`` preserves correlation on the two batched variants
+  ``@function`` preserves correlation on the two batched variants
   and plain splats fields on scalar ``Record``.
 - **Public `.parent` / `.field`** properties on both
   ``_RecordArrayView`` and ``_RecordDistributionView``.

@@ -12,7 +12,7 @@ from typing import Any
 
 from ..core.config import WorkflowKind
 from ..core.distribution import Distribution
-from ..core.node import Module, WorkflowFunction
+from ..core.node import Function, Module
 from ..core.protocols import ConditionallyIndependentLikelihood, GenerativeLikelihood, Likelihood
 from ..core.transition import iterate
 
@@ -34,11 +34,11 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# _ConditioningStep — private WorkflowFunction for IncrementalConditioner
+# _ConditioningStep — private Function for IncrementalConditioner
 # ---------------------------------------------------------------------------
 
 
-class _ConditioningStep[P, D](WorkflowFunction):
+class _ConditioningStep[P, D](Function):
     """One step of incremental Bayesian conditioning.
 
     Builds a :class:`~probpipe.modeling.SimpleModel` from the current

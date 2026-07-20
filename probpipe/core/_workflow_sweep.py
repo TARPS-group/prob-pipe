@@ -1,4 +1,4 @@
-"""WorkflowFunction sweep execution helpers.
+"""Function sweep execution helpers.
 
 This private module owns array-valued workflow sweeps after call
 resolution, distribution normalization, and broadcast planning have

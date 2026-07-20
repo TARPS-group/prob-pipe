@@ -86,7 +86,7 @@ nav:
     - Overview: user_guide.md
     - Distribution basics: user_guide/01_distributions.ipynb
     - Records and Record Distributions: user_guide/02_records.ipynb
-    - Broadcasting and workflow functions: user_guide/03_broadcasting.ipynb
+    - Broadcasting and Functions: user_guide/03_broadcasting.ipynb
     - Joint distributions: user_guide/04_joint_distributions.ipynb
     - External backends: user_guide/05_external_backends.ipynb
     - Converting between representations: user_guide/06_converting_representations.ipynb

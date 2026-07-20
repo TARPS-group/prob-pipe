@@ -14,7 +14,7 @@ from probpipe import (
     with_conversion,
     with_resampling,
 )
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
 # Fixtures and helpers
@@ -54,7 +54,7 @@ class TestIterate:
     def test_basic(self, initial):
         """iterate returns a DistributionArray including the initial.
 
-        Post issue #130 PR 1.5, WorkflowFunction outputs whose function
+        Post issue #130 PR 1.5, Function outputs whose function
         body returns a Python list of Distributions get wrapped as a
         ``DistributionArray`` (the stacked-collection counterpart to
         ``list[Distribution]``), so indexing, iteration, and len all
@@ -154,10 +154,10 @@ class TestIterate:
 
 
 class TestWithConversion:
-    def test_returns_workflow_function(self):
-        """with_conversion returns a WorkflowFunction."""
+    def test_returns_function(self):
+        """with_conversion returns a Function."""
         step = with_conversion(shift_step, MultivariateNormal)
-        assert isinstance(step, WorkflowFunction)
+        assert isinstance(step, Function)
         assert "with_conversion" in step._name
         assert "shift_step" in step._name
         assert "MultivariateNormal" in step._name
@@ -199,10 +199,10 @@ class TestWithConversion:
 
 
 class TestWithResampling:
-    def test_returns_workflow_function(self):
-        """with_resampling returns a WorkflowFunction."""
+    def test_returns_function(self):
+        """with_resampling returns a Function."""
         step = with_resampling(shift_step, ess_threshold=0.5)
-        assert isinstance(step, WorkflowFunction)
+        assert isinstance(step, Function)
         assert "with_resampling" in step._name
         assert "shift_step" in step._name
 
@@ -357,7 +357,7 @@ class TestIncrementalConditioner:
             _SimpleLikelihood(),
             condition_fn=_mock_condition_fn,
         )
-        assert isinstance(conditioner.step, WorkflowFunction)
+        assert isinstance(conditioner.step, Function)
 
         # Use .step with iterate
         batches = [jnp.ones((10, 2)) * i for i in [1.0, 2.0]]

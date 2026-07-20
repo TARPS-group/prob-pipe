@@ -14,7 +14,7 @@ A canonical value wrapper
 probabilistic pipelines in ProbPipe. They are used to wrap concrete values,
 attaching metadata (name, provenance) and structural information
 (an :class:`EventTemplate`). The typical pattern is for
-:class:`WorkflowFunction`\\ s to work with native types; ``Record``\\ s come
+:class:`Function`\\ s to work with native types; ``Record``\\ s come
 into play at the boundaries, wrapping the inputs and outputs of these functions.
 For example, by default the return value of the ``sample`` operator is wrapped
 as a record.
@@ -684,7 +684,7 @@ class Record(NamedTree[Any], Tracked, Annotated):
         Sugar for ``select`` over the one-level names (``self.children``). On the
         batch and distribution subclasses, whose ``__getitem__`` returns a
         per-field view, the dict holds those views, so the result can be splatted
-        back into a workflow function field-by-field.
+        back into a Function field-by-field.
         """
         return self.select(*self.children)
 
@@ -1066,7 +1066,7 @@ class Record(NamedTree[Any], Tracked, Annotated):
 
     # -- Call-forwarding shim for single-field Records ----------------------
     #
-    # When a WorkflowFunction wraps a callable return as
+    # When a Function wraps a callable return as
     # ``Record(fn_name, {fn_name: callable}, name_is_auto=True)``, the caller
     # can keep invoking it via ``result(args)``. Multi-field records raise —
     # unwrapping one of many fields would be ambiguous.

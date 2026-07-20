@@ -24,7 +24,7 @@ from probpipe import (
 )
 from probpipe.core._record_array import RecordArray
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 from probpipe.core.record import Record
 
 # ---------------------------------------------------------------------------
@@ -497,7 +497,7 @@ class TestBroadcastingReconnection:
         def add(a: float, b: float) -> float:
             return a + b
 
-        return WorkflowFunction(
+        return Function(
             func=add,
             dispatch=backend,
             n_broadcast_samples=50,
@@ -544,7 +544,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=subtract,
             dispatch="sequential",
             n_broadcast_samples=20,
@@ -566,7 +566,7 @@ class TestBroadcastingReconnection:
         def add3(a: float, b: float, c: float) -> float:
             return a + b + c
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add3,
             dispatch="sequential",
             n_broadcast_samples=50,
@@ -588,7 +588,7 @@ class TestBroadcastingReconnection:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add,
             dispatch="jax",
             n_broadcast_samples=50,
@@ -610,7 +610,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=subtract,
             dispatch="jax",
             n_broadcast_samples=20,
@@ -1019,7 +1019,7 @@ class TestEnumerateWithDistributionViews:
         def compute(a: float, b: float, c: float) -> float:
             return (a - b) + c
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=compute,
             dispatch="sequential",
             n_broadcast_samples=50,
@@ -1344,7 +1344,7 @@ class TestNestedProductDistribution:
     # -- broadcasting with nested views ------------------------------------
 
     def test_workflow_broadcasting_nested(self):
-        """_RecordDistributionViews from nested joints should work in WorkflowFunction."""
+        """_RecordDistributionViews from nested joints should work in Function."""
         # Use a flat joint so each view is a scalar for the add function
         joint = ProductDistribution(
             force=Normal(loc=0.0, scale=1.0, name="force"),
@@ -1356,7 +1356,7 @@ class TestNestedProductDistribution:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add,
             dispatch="sequential",
             n_broadcast_samples=30,

@@ -6,7 +6,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Any, Literal, get_args
+from typing import Any, Literal, get_args, overload
 
 import jax
 import jax.numpy as jnp
@@ -40,17 +40,17 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AbstractModule",
+    "Function",
     "InputFrozenError",
     "Module",
     "Node",
-    "WorkflowFunction",
     "abstract_workflow_method",
-    "workflow_function",
+    "function",
     "workflow_method",
 ]
 
-_WorkflowFunctionDispatch = Literal["auto", "jax", "sequential", "thread"]
-_VALID_DISPATCH_STRATEGIES: tuple[str, ...] = get_args(_WorkflowFunctionDispatch)
+_FunctionDispatch = Literal["auto", "jax", "sequential", "thread"]
+_VALID_DISPATCH_STRATEGIES: tuple[str, ...] = get_args(_FunctionDispatch)
 
 
 class InputFrozenError(Exception):
@@ -61,7 +61,7 @@ def workflow_method(func: Callable):
     """Mark a method as a workflow method for :class:`Module` subclasses.
 
     Methods decorated with ``@workflow_method`` are automatically
-    converted to :class:`WorkflowFunction` instances when the
+    converted to :class:`Function` instances when the
     ``Module`` is instantiated.
     """
     func._is_workflow = True
@@ -78,18 +78,34 @@ def abstract_workflow_method(func: Callable):
     return abstractmethod(workflow_method(func))
 
 
-def workflow_function(_func=None, /, **kwargs):
-    """Decorator to create a :class:`WorkflowFunction` from a plain function.
+@overload
+def function(_func: Callable[..., Any], /, **kwargs: Any) -> Function: ...
 
-    Bare usage wraps a function with default ``WorkflowFunction`` controls::
 
-        @workflow_function
+@overload
+def function(
+    _func: None = None,
+    /,
+    **kwargs: Any,
+) -> Callable[[Callable[..., Any]], Function]: ...
+
+
+def function(
+    _func: Callable[..., Any] | None = None,
+    /,
+    **kwargs: Any,
+) -> Function | Callable[[Callable[..., Any]], Function]:
+    """Decorator to create a :class:`Function` from a plain function.
+
+    Bare usage wraps a function with default ``Function`` controls::
+
+        @function
         def my_func(x, y):
             return x + y
 
     Pass keyword arguments to configure ProbPipe controls at definition time::
 
-        @workflow_function(n_broadcast_samples=100, dispatch="sequential")
+        @function(n_broadcast_samples=100, dispatch="sequential")
         def my_func(x, y):
             return x + y
 
@@ -100,22 +116,22 @@ def workflow_function(_func=None, /, **kwargs):
     Parameters
     ----------
     _func : Callable or None
-        Function being decorated for bare ``@workflow_function`` usage.
+        Function being decorated for bare ``@function`` usage.
         Users should not pass this argument by keyword.
     **kwargs : Any
-        Construction-time ``WorkflowFunction`` controls such as ``dispatch``,
+        Construction-time ``Function`` controls such as ``dispatch``,
         ``seed``, ``n_broadcast_samples``, ``include_inputs``, and
         ``workflow_kind``.
 
     Returns
     -------
-    WorkflowFunction or Callable
-        Wrapped workflow function for bare usage, or a decorator when called
+    Function or Callable
+        Wrapped Function for bare usage, or a decorator when called
         with parentheses.
     """
 
-    def decorator(func: Callable[..., Any]) -> WorkflowFunction:
-        return WorkflowFunction(func=func, name=func.__name__, **kwargs)
+    def decorator(func: Callable[..., Any]) -> Function:
+        return Function(func=func, name=func.__name__, **kwargs)
 
     if _func is not None:
         return decorator(_func)
@@ -155,7 +171,7 @@ class Node(ABC):  # noqa: B024
         return self._inputs
 
 
-class WorkflowFunction(Node):
+class Function(Node):
     """
     A single executable DAG node wrapping exactly one function.
 
@@ -245,7 +261,7 @@ class WorkflowFunction(Node):
         bind: dict[str, Any] | None = None,  # construction-time bindings (defaults/config)
         module: Any | None = None,  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,  # default number of samples for broadcasting
-        dispatch: _WorkflowFunctionDispatch = "auto",  # "auto" | "jax" | "sequential" | "thread"
+        dispatch: _FunctionDispatch = "auto",  # "auto" | "jax" | "sequential" | "thread"
         max_workers: int | None = None,  # ThreadPoolExecutor worker count
         seed: int = 0,  # JAX PRNG seed for broadcasting
         include_inputs: bool = False,  # True → return BroadcastDistribution (joint over inputs+outputs)
@@ -372,7 +388,7 @@ class WorkflowFunction(Node):
         n_broadcast_samples: int | None = None,
         include_inputs: bool | None = None,
         seed: int | None = None,
-    ) -> _WorkflowFunctionCallWithOptions:
+    ) -> _FunctionCallWithOptions:
         """Return a callable view with temporary call-time workflow options.
 
         Keyword arguments passed to the returned callable are always treated
@@ -394,7 +410,7 @@ class WorkflowFunction(Node):
         Callable
             Callable view that applies these options to exactly one call.
         """
-        return _WorkflowFunctionCallWithOptions(
+        return _FunctionCallWithOptions(
             self,
             _workflow_call.WorkflowCallOptions(
                 n_broadcast_samples=n_broadcast_samples,
@@ -637,24 +653,24 @@ class WorkflowFunction(Node):
         return self._resolved_dispatch
 
 
-class _WorkflowFunctionCallWithOptions:
-    """Callable view that applies temporary WorkflowFunction options."""
+class _FunctionCallWithOptions:
+    """Callable view that applies temporary Function options."""
 
     def __init__(
         self,
-        workflow: WorkflowFunction,
+        function: Function,
         options: _workflow_call.WorkflowCallOptions,
     ):
-        self._workflow = workflow
+        self._function = function
         self._options = options
-        self.__doc__ = workflow.__doc__
-        self.__name__ = workflow.__name__
-        self.__qualname__ = workflow.__qualname__
-        self.__signature__ = workflow.__signature__
-        self.__module__ = workflow.__module__
+        self.__doc__ = function.__doc__
+        self.__name__ = function.__name__
+        self.__qualname__ = function.__qualname__
+        self.__signature__ = function.__signature__
+        self.__module__ = function.__module__
 
     def __call__(self, *args: Any, **call_inputs: Any) -> Any:
-        return self._workflow._call_with_options(
+        return self._function._call_with_options(
             args,
             call_inputs,
             self._options,
@@ -706,7 +722,7 @@ class Module(Node):
 
     def _build_workflows(self):
         """
-        Replace @workflow_method methods with WorkflowFunction instances.
+        Replace @workflow_method methods with Function instances.
         """
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
@@ -719,14 +735,14 @@ class Module(Node):
             if getattr(func, "__isabstractmethod__", False):
                 continue
 
-            wf_instance = WorkflowFunction(
+            function_instance = Function(
                 func=func,
                 workflow_kind=self._workflow_kind,
                 name=f"{self.__class__.__name__}.{func.__name__}",
                 module=self,
             )
 
-            setattr(self, attr_name, wf_instance)
+            setattr(self, attr_name, function_instance)
 
     def dag(self):
         """Return a Graphviz DAG visualization of this module."""
@@ -772,18 +788,18 @@ class Module(Node):
                 fontsize="12",
             )
 
-            # WorkflowFunction nodes inside the module
+            # Function nodes inside the module
             for attr_name in dir(self):
                 attr = getattr(self, attr_name)
-                if not isinstance(attr, WorkflowFunction):
+                if not isinstance(attr, Function):
                     continue
 
-                wf_name = attr._name  # e.g. PM25ForecastingModule.fit
-                wf_label = wf_name.split(".")[-1]
+                function_name = attr._name  # e.g. PM25ForecastingModule.fit
+                function_label = function_name.split(".")[-1]
 
                 cluster.node(
-                    wf_name,
-                    label=wf_label,
+                    function_name,
+                    label=function_label,
                     shape="box",
                     style="filled",
                     fillcolor="#C6DBEF",
@@ -794,13 +810,13 @@ class Module(Node):
         # -------------------------
         for attr_name in dir(self):
             attr = getattr(self, attr_name)
-            if not isinstance(attr, WorkflowFunction):
+            if not isinstance(attr, Function):
                 continue
 
-            wf_name = attr._name
+            function_name = attr._name
 
             # Infer dependencies from workflow signature
-            # (WorkflowFunctions don't store child_nodes; they resolve dependencies at runtime)
+            # (Functions don't store child_nodes; they resolve dependencies at runtime)
             for param_name in attr._signature_info.param_names:
                 is_dependency = _workflow_call.is_dependency_param(
                     attr._signature_info,
@@ -808,7 +824,7 @@ class Module(Node):
                     dependency_type=Node,
                 )
                 if is_dependency and param_name in self._child_nodes:
-                    dot.edge(param_name, wf_name)
+                    dot.edge(param_name, function_name)
 
         return dot
 
@@ -890,13 +906,13 @@ class Module(Node):
             ip = impl_by_name.get(ap.name)
             if ip is None:
                 raise TypeError(
-                    f"WorkflowFunction '{name}' implementation is missing parameter '{ap.name}'.\n"
+                    f"Function '{name}' implementation is missing parameter '{ap.name}'.\n"
                     f"Expected (abstract): {abs_sig}\n"
                     f"Got (impl):          {impl_sig}"
                 )
             if ip.kind != ap.kind:
                 raise TypeError(
-                    f"WorkflowFunction '{name}' parameter '{ap.name}' kind mismatch.\n"
+                    f"Function '{name}' parameter '{ap.name}' kind mismatch.\n"
                     f"Expected (abstract): {abs_sig}\n"
                     f"Got (impl):          {impl_sig}"
                 )

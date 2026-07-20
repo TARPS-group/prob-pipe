@@ -17,10 +17,10 @@ from probpipe import (
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
+    function,
     mean,
     sample,
     variance,
-    workflow_function,
 )
 from probpipe.core.distribution import (
     _ListMarginal,
@@ -656,17 +656,17 @@ class TestMakeMarginalEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _RecordMarginal (Record-returning WorkflowFunctions)
+# _RecordMarginal (Record-returning Functions)
 # ---------------------------------------------------------------------------
 
 
 class TestRecordArrayMarginal:
-    """Record-returning WorkflowFunction outputs should be RecordArrayMarginal,
+    """Record-returning Function outputs should be RecordArrayMarginal,
     not _ListMarginal, and must support mean/variance/sample."""
 
     @pytest.fixture
     def record_workflow(self):
-        @workflow_function
+        @function
         def transform(x, y):
             return Record("r", sum=x + y, diff=x - y)
 
