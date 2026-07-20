@@ -120,7 +120,7 @@ class LinearPushforwardDistribution(Distribution):
 
 class BijectorTransformedDistribution(Distribution[T]):
     def __init__(self, name: str, base: Distribution, bijector: Function) -> None: ...
-    # bijector must claim SupportsInverse, checked at construction;
+    # bijector must satisfy is_invertible and claim SupportsLogDetJacobian, checked at construction;
     # _sample pushes base draws through the bijector;
     # _log_prob(y) is the base log-density at the preimage minus the log-Jacobian determinant
 ```
@@ -220,7 +220,7 @@ class LinearGaussianConditional(ConditionalDistribution):
     # s ↦ N(A @ s + b, cov); given and event templates derived from A's input and output templates
 
 class GLMFamily(ABC):                     # a mean-parameterized response family
-    canonical_link: Function              # claims SupportsInverse
+    canonical_link: Function              # invertible: is_invertible checked at construction
     has_dispersion: bool                  # whether build takes a dispersion, e.g. a Gaussian scale
     @abstractmethod
     def build(self, name: str, mean: Array, dispersion: ArrayLike | None = None) -> Distribution: ...
@@ -232,7 +232,7 @@ class PoissonFamily(GLMFamily): ...       # canonical link: log; no dispersion
 
 def glm_likelihood(name: str, family: GLMFamily, link: Function | None = None,
                    *, X: Array | None = None, dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
-    # a supplied link must claim SupportsInverse, checked at construction;
+    # a supplied link must satisfy is_invertible, checked at construction;
     # given fields X ("obs", "features"), β ("features",), and the dispersion when the family has one;
     # the event is the response y ("obs",), with law family.build(link⁻¹(X @ β), dispersion) and link
     # defaulting to family.canonical_link. The dimensions are symbolic until X binds them, at

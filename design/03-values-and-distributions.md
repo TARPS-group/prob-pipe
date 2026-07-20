@@ -102,7 +102,7 @@ The function kind's base type is `Function`: a tracked term wrapping exactly one
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_template`, it returns one conforming to `output_template`, with no tracking or lifting. `__call__` runs the **call path**, the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import, adding lifting, tracking, and provenance to every `Function`. So `apply` is the raw map that operations such as change-of-variables build on, and `__call__` is the tracked call a user makes. The base also carries its **controls** — the execution defaults of IV.3 (sample count, seed, dispatch, orchestration) — set at construction and revised functionally by `with_options` (`C2 – Functional interface over immutable objects`); the base gives them no meaning, and the engine reads them at call time.
 
-A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Two capability protocols accompany the base: `SupportsDifferentiation`, defined below, and `SupportsInverse`, whose contract is given with constraint reparameterization in III.14 while the protocol itself sits beside the base in the layout. Both are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7; `SupportsDifferentiation` additionally declares *which* values differentiate, read through `is_differentiable`, as described below. The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
+A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Three capability protocols accompany the base: `SupportsDifferentiation`, defined below, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.14 while the protocols themselves sit beside the base in the layout. All are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7, except that a claim with an instance guard is read through its predicate: `SupportsDifferentiation` declares *which* values differentiate, read through `is_differentiable` as described below, and invertibility is read through `is_invertible` (III.14). The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
 
 ```python
 class Function(Tracked):
@@ -698,22 +698,29 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 
 ### Contract
 
-Many inference algorithms are defined to operate on an unconstrained space ℝᵈ, among them gradient-based optimization and Hamiltonian Monte Carlo, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims `SupportsInverse`. Invertibility with a tractable Jacobian is a capability: a `Function` claims `SupportsInverse` by providing the inverse map and the forward log-determinant of its Jacobian, its own `apply` (III.2) serving as the forward map. A `LinOp` claims it the same way, with its inverse from the operator algebra and its `logdet` the log-Jacobian, so one capability marks invertible maps, linear or not, over structured numeric values as well as bare arrays. The protocol stays minimal, so the forward map comes from the `Function` that claims it: a bijector-valued slot — the bijector of a transformed distribution, the link of a GLM likelihood — is typed `Function` and checks at construction that the argument claims `SupportsInverse`, raising a capability error otherwise. The two checks together guarantee the full contract: the `Function` supplies the forward `apply`, and the claim supplies the inverse and the Jacobian. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
+Many inference algorithms are defined to operate on an unconstrained space ℝᵈ, among them gradient-based optimization and Hamiltonian Monte Carlo, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims the two capabilities below. Invertibility is one capability: a `Function` claims `SupportsInverse` by providing the inverse map, its own `apply` (III.2) serving as the forward, so the protocol stays minimal and the forward map comes from the `Function` that claims it. The Jacobian determinant is a second, separate capability: `SupportsLogDetJacobian` provides the log-determinant of the Jacobian, which exists only for a differentiable map, and a map can be invertible without it. Change of variables requires exactly the pair, and both are typed over structured numeric values as well as bare arrays. A `LinOp` claims them only when they apply: the claim is guarded per instance by squareness (`input_template == output_template`), with its inverse from the operator algebra and its `logdet` the log-Jacobian, and a rectangular operator makes no claim. `is_invertible` reads the claim together with its guard — unconditional for a declared bijector, squareness for a linear operator — while singularity, which no construction-time check decides, surfaces at call time as `LinAlgError`, exactly as for `solve`. A slot checks the claims it needs at construction and raises a capability error otherwise: the bijector of a transformed distribution requires `is_invertible` and the Jacobian claim, the link of a GLM likelihood `is_invertible` alone. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
 
 ```python
 @runtime_checkable
-class SupportsInverse(Protocol):            # an invertible map with a tractable Jacobian
+class SupportsInverse(Protocol):            # an invertible map
     # minimal by design: the forward map is the claiming Function's own apply (III.2);
-    # the capability adds the inverse and the forward log-det-Jacobian, typed over the
-    # numeric value carried, not fixed to arrays
+    # typed over the numeric value carried, not fixed to arrays
     def _inverse(self, y: Array | NumericRecord) -> Array | NumericRecord: ...
-    def _forward_log_det_jacobian(self, x: Array | NumericRecord) -> Array: ...
+
+@runtime_checkable
+class SupportsLogDetJacobian(Protocol):     # a map with a tractable Jacobian determinant
+    def _log_det_jacobian(self, x: Array | NumericRecord) -> Array: ...
+    # the log-determinant of the Jacobian at x, defined only for a differentiable map
+
+def is_invertible(f: Any) -> bool: ...
+# True when f claims SupportsInverse and the instance guard passes: unconditionally
+# for a declared bijector, squareness for a linear operator
 
 def bijector_for(constraint: Constraint) -> Function: ...
-# the canonical map ℝⁿ → support(constraint): a Function claiming SupportsInverse
+# the canonical map ℝⁿ → support(constraint), a Function claiming both capabilities
 def register_bijector(
     key: type[Constraint] | Constraint,
-    factory: Callable[[Constraint], Function],   # each factory output claims SupportsInverse
+    factory: Callable[[Constraint], Function],   # each factory output claims both capabilities
 ) -> None: ...
 ```
 
@@ -721,7 +728,7 @@ The factory keys on constraint instances and types rather than dispatching on ar
 
 ### Rationale
 
-A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which serves `D6 – Differentiability as a capability`. Invertibility as a capability is `D3 – Capability-based operations`: an invertible map is an ordinary `Function` that additionally claims `SupportsInverse`, so it evaluates, composes, and pushes forward like any other, with *bijector* reserved for the mathematical statement. Keeping the factory open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
+A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which serves `D6 – Differentiability as a capability`. Invertibility as a capability is `D3 – Capability-based operations`: an invertible map is an ordinary `Function` that additionally claims `SupportsInverse`, so it evaluates, composes, and pushes forward like any other, with *bijector* reserved for the mathematical statement. The Jacobian determinant is a separate claim for the same reason: a map can be invertible without a tractable determinant, so each claim stays honest on its own and change of variables asks for exactly the pair. Keeping the factory open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
 
 ### Open points
 

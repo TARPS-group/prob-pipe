@@ -13,7 +13,7 @@ Every operation shares the following mechanics:
 - **Two levels.** The implementer's `_x` method acts on the raw value type `T`. The user-facing operation wraps the result at the boundary, attaches identity, metadata, and provenance, and broadcasts, all at no cost to the implementer.
 - **The wrap boundary.** A raw value becomes the `Record` its `event_template` describes, and the wrap is unconditional: a bare array becomes a single-field `Record`, a raw value that is already a `Record` is not wrapped again, and any other raw type, including the `Distribution` a random measure yields, becomes the `Record`'s leaf value. A concrete family such as a `Normal` can therefore be written in plain arrays, and a user writes the family's natural constructor rather than supplying a template by hand. A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
 - **The `raw` opt-out.** Every operation accepts `raw=True` and returns the implementer method's result unchanged, skipping the wrap and the identity attachment: the raw event type `T` for an event-typed result, the bare array for a density, and the bare operator for `cov`. The wrapped, tracked result is always the default.
-- **Stated fallback status.** Every operation declares one of three fallback statuses. A *fallback* means a closed form when the object provides one and otherwise a default such as Monte Carlo, total on a stated domain (any distribution that samples), with the sample count and PRNG key exposed as controls. *Total by definition* means the operation is the object's own capability, so no fallback question arises; `sample` is one. *Capability-only* means no fallback: the operation answers only where the object claims the capability, as for `log_prob` (V.3) and `factor` (V.7). The status is registry data, not contract: registering a numerical default later moves an operation from capability-only to fallback-backed without changing its signature.
+- **Stated fallback status.** Every operation declares one of three fallback statuses. A *fallback* means a closed form when the object provides one and otherwise a default such as Monte Carlo, total on a stated domain (any distribution that samples), with the sample count and PRNG key exposed as controls. *Total by definition* means the operation is the object's own capability, so no fallback question arises; `sample` is one. *Capability-only* means no fallback: the operation answers only where the object claims the capability, as for `log_prob` (V.3) and `factor` (V.8). The status is registry data, not contract: registering a numerical default later moves an operation from capability-only to fallback-backed without changing its signature.
 - **Controls in the signature.** An operation is not a user function, so its signature is its control surface: the PRNG key, sample counts, and `method=` selection appear as ordinary parameters. The separate options namespace exists for wrapped user functions, whose argument names the framework must not constrain.
 - **Randomness.** No operation draws from ambient random state. A draw-producing operation (`sample`) requires an explicit PRNG `key` and raises without one, since without ambient state a defaulted key would silently repeat a draw. An operation whose contract is a deterministic quantity but that falls back to Monte Carlo, such as a moment, a marginal, or an inference result, instead takes the key as an optional control defaulting to one derived from the `seed`, so the Monte Carlo route neither enters the signature nor burdens the caller. The resolved key is recorded in `provenance`.
 - **Output identity.** Every tracked term an operation mints is fully specified, never left implicit. Its `event_template` is carried or derived from the inputs, its `provenance` records the operation and its parent descriptors, and its `name` is auto-derived and marked `name_is_auto`. Free-form `annotations` do not auto-propagate, since lineage rides on `provenance` rather than on annotations.
@@ -137,7 +137,7 @@ A map with more than one parameter is evaluated over exactly one of them, with `
 
 **The evaluation registry.** For a distribution or batch operand the call dispatches through a `BinaryDispatchRegistry` keyed on the map's and the operand's types, whose methods are **evaluation rules**. The registry is defined beside the engine (Part IV) and consulted by every single-distribution and batched application, the operation and the direct call alike. Auto-selection tries the rules in priority order:
 - **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
-- **Change of variables** applies when the map claims `SupportsInverse` (an invertible map with a tractable Jacobian), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
+- **Change of variables** applies when the map is invertible and carries the Jacobian claim (`is_invertible` and `SupportsLogDetJacobian`), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
 - **The sampling lift**, the rule registered at the generic pair, always applies: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls. It is the registry's floor, and the route every plain callable takes.
 - **The elementwise sweep** is the batch counterpart: the rule at the generic pair for a batch operand. A fused batched implementation, such as an operator's matrix–matrix routine or a single vectorized call over array-backed elements, registers above it.
 
@@ -154,7 +154,21 @@ The result is a tracked term: its `provenance` records `evaluate`, the map, and 
 `evaluate` is `C4 – Function lifting via pushforward` in operation form: applying a map is one act whatever the operand kind, and replacing a value by a distribution over it leaves that act well-defined, with this operation returning the resulting law directly. Dispatching over pairs of map and distribution types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form gets it automatically and every other pair still answers by sampling. Recording the producing rule keeps the approximation honest (`D1 – Mathematical fidelity`), registration grows the exact set without changing call sites (`D2 – Generality first`), and the result is a tracked term that composes further (`D4 – Closed system of objects under operations`). The operation is named for what it does across every operand kind, with *pushforward* reserved for mathematical statements, as *kernel* is for `ConditionalDistribution`.
 
 
-## V.7 — `marginal` and `factor`
+## V.7 — `inverse` and `log_det_jacobian`
+
+### Contract
+
+Two operations read a map's inverse structure.
+- `inverse(f)` returns the inverse map as a `Function`: `inverse(f)(y)` is the preimage of `y` under `f`. It dispatches through `is_invertible` and raises a capability error where that check fails. The result is itself invertible, with `f` as its inverse, and it carries the Jacobian claim whenever `f` does.
+- `log_det_jacobian(f, x)` returns the log-determinant of the Jacobian of `f` at `x`. It dispatches on `SupportsLogDetJacobian`. The result is a tracked scalar, with `raw=True` returning the bare array. The reverse direction needs no second operation, since `log_det_jacobian(inverse(f), y) = −log_det_jacobian(f, inverse(f)(y))`.
+- Both are capability-only, and the status is registry data: a numerical route — root finding for an inverse, automatic differentiation for a Jacobian — may register later at its recorded fidelity without changing either contract.
+- Both results are tracked terms whose `provenance` records the operation and the map, with `inverse(f)`'s name auto-derived from `f`'s.
+
+### Rationale
+
+Reparameterization moves in both directions between a constrained and an unconstrained space, so the inverse must be reachable from user code, and the operation form keeps the capability's implementer methods private, per the V.0 convention. Returning the inverse as a `Function` keeps the system closed (`D4 – Closed system of objects under operations`): the inverse evaluates, composes, and pushes forward like any map. Splitting the Jacobian claim from invertibility is `D3 – Capability-based operations`: a map can be invertible without a tractable Jacobian determinant, and the determinant exists only for a differentiable map, so each claim stays honest on its own and change of variables requires exactly the pair.
+
+## V.8 — `marginal` and `factor`
 
 ### Contract
 
@@ -169,7 +183,7 @@ Both return a **tracked term** whose `provenance` records the access and its sou
 
 `marginal` and `factor` are the two query directions of the field and factor interfaces fixed with the factored distributions: `marginal` reads a field's law detached from its joint, and `factor` reads a construction block. Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` keeps factor access honest, since only a distribution actually built from named parts can answer it (`D3 – Capability-based operations`).
 
-## V.8 — Batched operations
+## V.9 — Batched operations
 
 ### Contract
 

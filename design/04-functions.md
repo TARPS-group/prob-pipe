@@ -24,7 +24,7 @@ Each concern has one home, and only two things are open for extension — the en
 | the controls store and `with_options` | the base (III.2) | ride the object; the engine gives them meaning (IV.3) |
 | the `@function` decorator and the control semantics | the engine (IV.3–IV.4) | controls, a namespace apart from the arguments |
 | execution dispatch and orchestration | the engine (IV.4) | modes selected by a control; neither is a registry |
-| invertibility, differentiation | capabilities the object claims (III.14, III.2) | claims declared at construction, never registrations; `SupportsInverse` feeds `evaluate`'s change-of-variables rule, `SupportsDifferentiation` whatever requires gradients (`D6`) |
+| invertibility, the Jacobian determinant, differentiation | capabilities the object claims (III.14, III.2) | claims declared at construction, never registrations; `SupportsInverse` and `SupportsLogDetJacobian` feed `evaluate`'s change-of-variables rule and the `inverse` / `log_det_jacobian` operations (V.7), `SupportsDifferentiation` whatever requires gradients (`D6`) |
 | evaluation rules, exact and approximate | the rule registry, defined beside the engine (V.6) | registered upward, ranked by fidelity above the sampling lift, the rule at the generic pair; consulted by the engine at each single-distribution application, `evaluate` the operation form |
 
 ## IV.1 — `Function`
