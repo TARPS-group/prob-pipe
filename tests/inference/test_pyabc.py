@@ -141,7 +141,7 @@ class TestPyABCRecovery:
         np.testing.assert_allclose(m, [1.5, -1.0], atol=0.6)
 
     def test_auto_dispatch(self):
-        post = condition_on(
+        post = condition_on.apply(
             _model(_product("theta")),
             jnp.array([2.0]),
             n_particles=200,
