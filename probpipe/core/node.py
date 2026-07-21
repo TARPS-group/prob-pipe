@@ -342,7 +342,12 @@ class Function(Node, Tracked, Annotated):
         seed: int = 0,
         include_inputs: bool = False,
     ) -> Function:
-        """Construct a normal Function around a private implementation seam."""
+        """Construct an ordinary Function from a private implementation.
+
+        This is the internal construction entry point for dynamically produced
+        Functions. Fitted-producer validation and attestations remain the
+        responsibility of the controlled factory planned in #370.
+        """
         if not isinstance(name, str) or not name:
             raise TypeError("Function._from_implementation() requires a non-empty name")
         if not callable(getattr(implementation, "invoke", None)):

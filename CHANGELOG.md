@@ -31,9 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   signature strings.
   `LinOp.apply(x)` now
   delegates to `matvec(x)`, preserving existing operator structure and
-  behavior. The private implementation factory intentionally reserves the
-  seam needed by #370; fitted-producer contracts, result plans, and
-  `OperationRef` remain follow-up work.
+  behavior. `Function._from_implementation(...)` is the internal construction
+  entry point for dynamically produced ordinary Functions; #370 will layer
+  fitted-producer validation and attestations over that boundary. Result plans
+  and `OperationRef` remain follow-up work.
 
 - **`NamedTree` — the public name-keyed tree substrate (#338).** New
   `probpipe.core.named_tree` module holding the ordered, immutable,

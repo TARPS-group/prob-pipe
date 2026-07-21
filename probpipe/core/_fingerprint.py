@@ -16,8 +16,9 @@ Supported types
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
 - ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
   hashes samples + weights; ``Weights`` are hashed by content
-- ``Function`` — user-function bytecode, referenced names, and
-  captured/default values
+- ``Function`` — plain-callable bytecode, referenced names, and
+  captured/default values; private implementations use their type plus the
+  Function's declared signature and templates
 - Numeric containers (``xarray`` / ``pandas`` / registered array backends)
   — concrete type + materialised shape + dtype + bytes **and** the
   container's identity-bearing metadata (coords / index / dims / attrs, via
@@ -65,6 +66,11 @@ _NP_ARRAY_TYPE = _np.ndarray
 # Canonical NaN payload — every NaN hashes identically regardless of the bit
 # pattern a computation happened to produce.
 _CANONICAL_NAN = struct.pack(">d", float("nan"))
+
+# A closure cell may be empty after its captured binding is deleted. Keep the
+# cell's position in the digest without letting ``cell_contents`` escape as a
+# ``ValueError`` or conflating the empty state with an ordinary captured value.
+_EMPTY_CLOSURE_CELL = b"[empty-closure-cell]"
 
 # Default cap: arrays up to 256 MB are hashed in full (zero-copy via
 # memoryview).  Arrays beyond this are sampled at evenly-spaced offsets so
@@ -520,9 +526,10 @@ def _update_function(
 ) -> None:
     """Hash a Function by callable content or stable implementation declaration.
 
-    Plain-callable Functions retain their bytecode/default/closure identity.
+    Plain-callable Functions use bytecode plus default and closure content.
     Other private implementations use only their implementation type and the
-    Function's declared signature/templates, avoiding artifact identity.
+    Function's declared signature and templates, excluding implementation
+    instance state and artifact identity.
     """
     h.update(b"wf:")
     from ._function_contract import _CallableFunctionImplementation
@@ -563,7 +570,12 @@ def _update_function(
     else:
         h.update(struct.pack(">I", len(closure)))
         for cell in closure:
-            _update(h, cell.cell_contents, 1, max_array_bytes)
+            try:
+                contents = cell.cell_contents
+            except ValueError:
+                h.update(_EMPTY_CLOSURE_CELL)
+            else:
+                _update(h, contents, 1, max_array_bytes)
 
 
 def _update_signature_declaration(

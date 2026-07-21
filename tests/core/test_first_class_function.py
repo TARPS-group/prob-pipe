@@ -301,6 +301,32 @@ class TestSymbolicCalls:
         assert regression_function.input_template is declaration
         assert declaration == EventTemplate(X=("obs", "p"), p=("p",))
 
+    def test_template_less_distribution_array_reports_lifting_contract(self):
+        def identity(x):
+            return x
+
+        wrapped = Function(
+            func=identity,
+            input_template=EventTemplate(x=()),
+            dispatch="sequential",
+        )
+        values = DistributionArray(
+            [
+                Normal(0, 1, name="left"),
+                Normal(1, 1, name="right"),
+            ]
+        )
+
+        assert values.event_template is None
+        with pytest.raises(
+            ValueError,
+            match=(
+                r"Function 'identity' input 'x' does not expose an authoritative "
+                r"event_template for lifting"
+            ),
+        ):
+            wrapped(values)
+
     def test_repeated_input_symbol_conflict_has_function_path(self, regression_function):
         with pytest.raises(
             ValueError,

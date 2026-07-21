@@ -223,12 +223,18 @@ def _bind_planned_function_inputs(
     for name in lifted_names:
         value = values[name]
         try:
-            schema_values[name] = value.event_template
+            lifted_template = value.event_template
         except (AttributeError, TypeError) as error:
             raise ValueError(
                 f"Function {function_name!r} input {name!r} does not expose an "
                 "authoritative event_template for lifting"
             ) from error
+        if not isinstance(lifted_template, EventTemplate):
+            raise ValueError(
+                f"Function {function_name!r} input {name!r} does not expose an "
+                "authoritative event_template for lifting"
+            )
+        schema_values[name] = lifted_template
     return _unify_event_template_with_value(
         input_template,
         schema_values,

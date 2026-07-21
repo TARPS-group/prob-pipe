@@ -337,6 +337,24 @@ class TestFunctionHashing:
         wf2 = self._make_wf(add)
         assert fingerprint(wf1) == fingerprint(wf2)
 
+    def test_empty_closure_cell_uses_stable_sentinel(self):
+        def build(*, empty: bool) -> Function:
+            captured = 1
+
+            def inner():
+                return captured
+
+            if empty:
+                del captured
+            return self._make_wf(inner)
+
+        empty_first = build(empty=True)
+        empty_second = build(empty=True)
+        bound = build(empty=False)
+
+        assert fingerprint(empty_first) == fingerprint(empty_second)
+        assert fingerprint(empty_first) != fingerprint(bound)
+
     def test_different_function_bodies_differ(self):
         def add(x: float, y: float) -> float:
             return x + y

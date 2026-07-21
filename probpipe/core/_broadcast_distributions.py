@@ -427,6 +427,10 @@ def _make_marginal(
         ]
 
     if event_template is not None and isinstance(output_samples, jnp.ndarray):
+        assert len(event_template) == 1, (
+            "bare array aggregation requires a single-leaf event_template; "
+            "authoritative Function outputs must be wrapped before aggregation"
+        )
         only_path = next(iter(event_template.keys()))
         output_samples = Record(
             name or "marginal",
@@ -796,10 +800,26 @@ def _make_stack(
 
         event_shape = tuple(inner_outputs.shape[1:])
         reshaped = inner_outputs.reshape(batch_shape + event_shape)
-        tpl = event_template or EventTemplate(**{field_name: event_shape})
-        output_field = next(iter(tpl.keys())) if event_template is not None else field_name
+        if event_template is not None:
+            assert len(event_template) == 1, (
+                "bare array aggregation requires a single-leaf event_template; "
+                "authoritative Function outputs must be wrapped before aggregation"
+            )
+            output_field = next(iter(event_template.keys()))
+            batched_record = Record(
+                name or field_name,
+                {output_field: reshaped},
+                name_is_auto=True,
+            )
+            return _stack_declared_records(
+                batched_record,
+                batch_shape=batch_shape,
+                template=event_template,
+                name=name or field_name,
+            )
+        tpl = EventTemplate(**{field_name: event_shape})
         return NumericRecordArray(
-            {output_field: reshaped},
+            {field_name: reshaped},
             batch_shape=batch_shape,
             template=tpl,
         )

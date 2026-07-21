@@ -363,6 +363,27 @@ class TestMakeMarginal:
         m = _make_marginal(jnp.ones((5, 2)), None)
         assert isinstance(m, _RecordMarginal)
 
+    def test_declared_bare_array_requires_single_leaf_template(self):
+        from probpipe import EventTemplate
+
+        with pytest.raises(AssertionError, match=r"bare array.*single-leaf"):
+            _make_marginal(
+                jnp.ones((5, 2)),
+                None,
+                event_template=EventTemplate(left=(2,), right=(2,)),
+            )
+
+    def test_declared_bare_array_preserves_nested_single_leaf_path(self):
+        from probpipe import EventTemplate
+
+        samples = jnp.arange(10.0).reshape(5, 2)
+        template = EventTemplate(stats=EventTemplate(value=(2,)))
+
+        marginal = _make_marginal(samples, None, event_template=template)
+
+        assert marginal.event_template == template
+        np.testing.assert_allclose(marginal.samples["stats/value"], samples)
+
     def test_list_of_arrays(self):
         m = _make_marginal([jnp.array(1.0), jnp.array(2.0)], None)
         assert isinstance(m, _RecordMarginal)
@@ -826,6 +847,35 @@ class TestMakeStack:
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
         assert out["demo"].shape == (4, 3)
+
+    def test_declared_vmap_array_requires_single_leaf_template(self):
+        from probpipe import EventTemplate
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        with pytest.raises(AssertionError, match=r"bare array.*single-leaf"):
+            _make_stack(
+                jnp.ones((4, 2)),
+                n=4,
+                field_name="demo",
+                event_template=EventTemplate(left=(2,), right=(2,)),
+            )
+
+    def test_declared_vmap_array_preserves_nested_single_leaf_path(self):
+        from probpipe import EventTemplate
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        values = jnp.arange(8.0).reshape(4, 2)
+        template = EventTemplate(stats=EventTemplate(value=(2,)))
+
+        out = _make_stack(
+            values,
+            n=4,
+            field_name="demo",
+            event_template=template,
+        )
+
+        assert out.event_template == template
+        np.testing.assert_allclose(out["stats/value"], values)
 
     def test_vmap_record_with_batched_leaves_promotes_to_ra(self):
         """``jax.vmap`` of a Record-returning fn produces a Record whose
