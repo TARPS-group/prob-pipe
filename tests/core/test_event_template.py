@@ -264,6 +264,14 @@ class TestFlatSize:
         tpl = NumericEventTemplate(a=())
         assert tpl.vector_size == 1
 
+    def test_symbolic_template_raises(self):
+        tpl = NumericEventTemplate(x=("obs", 3), y=("obs",))
+
+        assert tpl.free_dims == frozenset({"obs"})
+        assert not tpl.is_concrete
+        with pytest.raises(ValueError, match="unbound dimensions: obs"):
+            _ = tpl.vector_size
+
     def test_rejects_opaque_leaf(self):
         with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(label=None, x=(3,))
@@ -652,6 +660,17 @@ class TestValueSpecs:
         assert spec.shape == (0,)
         assert spec.is_valid(jnp.ones(0))
         assert not spec.is_valid(jnp.ones(1))
+
+    def test_array_spec_symbolic_dimensions(self):
+        spec = ArraySpec(("obs", 3, "obs"))
+
+        assert spec.is_valid(np.zeros((4, 3, 4)))
+        assert not spec.is_valid(np.zeros((4, 3, 5)))
+
+    @pytest.mark.parametrize("dimension", ["", -1, 1.5, None])
+    def test_array_spec_rejects_invalid_symbolic_dimensions(self, dimension):
+        with pytest.raises(TypeError, match="symbolic dimension"):
+            ArraySpec((dimension,))
 
     def test_distribution_spec_requires_event_template(self):
         with pytest.raises(TypeError, match="must be an EventTemplate"):

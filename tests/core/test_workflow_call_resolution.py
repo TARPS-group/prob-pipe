@@ -98,19 +98,19 @@ class TestWorkflowCallHelpers:
         with pytest.raises(TypeError, match="multiple values"):
             _resolve_call(add_func, 1.0, x=2.0)
 
-    def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
+    def test_var_keyword_preserves_signature_shaped_mapping(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, scale=2.0)
 
-        assert call.values == {"x": 1.0, "scale": 2.0}
+        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, kwargs={"scale": 2.0})
 
-        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
+        assert call.values == {"x": 1.0, "kwargs": {"kwargs": {"scale": 2.0}}}
 
     def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
         with pytest.raises(TypeError, match="unexpected keyword argument"):

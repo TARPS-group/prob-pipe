@@ -13,13 +13,15 @@ from typing import Any
 
 import jax
 
-from . import _workflow_execution, _workflow_plan, _workflow_result
+from . import _workflow_call, _workflow_execution, _workflow_plan, _workflow_result
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import _RecordArrayView
 from .distribution import BroadcastDistribution, Distribution
+from .event_template import EventTemplate
 from .provenance import Provenance
 from .record import Record
+from .tracked import Tracked
 
 
 def execute_sweep(
@@ -33,14 +35,16 @@ def execute_sweep(
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[str]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
     distribution_broadcast: Callable[
-        [dict[str, Any], list[str], int, bool],
+        [dict[str, Any], list[_workflow_call.WorkflowInputRef], int, bool],
         BroadcastDistribution | Distribution,
     ],
     workflow_name: str,
     n_broadcast_samples: int,
     include_inputs: bool = False,
+    output_template: EventTemplate | None = None,
+    provenance_parents: list[Tracked] | None = None,
 ) -> Any:
     """Execute pure or nested sweep regimes for one workflow call."""
     if plan.regime not in ("sweep", "nested"):
@@ -72,6 +76,7 @@ def execute_sweep(
             batch_shape=plan.sweep_batch_shape,
             name=workflow_name,
             field_name=workflow_name,
+            event_template=output_template,
         )
         provenance = make_sweep_provenance(
             values=values,
@@ -80,6 +85,7 @@ def execute_sweep(
             workflow_name=workflow_name,
             batch_shape=plan.sweep_batch_shape,
             k=0,
+            parents=provenance_parents,
         )
         return _workflow_result._coerce_output(
             aggregate,
@@ -112,6 +118,7 @@ def execute_sweep(
         batch_shape=plan.sweep_batch_shape,
         name=workflow_name or "sweep",
         name_is_auto=True,
+        event_template=output_template,
     )
     provenance = make_sweep_provenance(
         values=values,
@@ -120,6 +127,7 @@ def execute_sweep(
         workflow_name=workflow_name,
         batch_shape=plan.sweep_batch_shape,
         k=n_broadcast_samples,
+        parents=provenance_parents,
     )
     return _workflow_result._coerce_output(
         stacked,
@@ -143,12 +151,14 @@ def slice_sweep_values(
     for group in reversed(array_groups):
         idx = rem % group.size
         rem = rem // group.size
-        for name in group.arg_names:
-            source = values[name]
+        replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
+        for ref in group.arg_refs:
+            source = _workflow_call.input_ref_value(values, ref)
             if isinstance(source, DistributionArray):
-                out[name] = source._flat_component(idx)
+                replacements[ref] = source._flat_component(idx)
             else:
-                out[name] = source[idx]
+                replacements[ref] = source[idx]
+        out = _workflow_call.replace_input_refs(out, replacements)
     return out
 
 
@@ -156,7 +166,7 @@ def execute_sweep_rows(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: list[str],
+    array_args: list[_workflow_call.WorkflowInputRef],
     plan: _workflow_plan.BroadcastPlan,
     make_execution_config: Callable[
         [],
@@ -164,11 +174,17 @@ def execute_sweep_rows(
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[str]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
-    has_dist_array = any(isinstance(values[name], DistributionArray) for name in array_args)
-    has_view = any(isinstance(values[name], _RecordArrayView) for name in array_args)
+    has_dist_array = any(
+        isinstance(_workflow_call.input_ref_value(values, ref), DistributionArray)
+        for ref in array_args
+    )
+    has_view = any(
+        isinstance(_workflow_call.input_ref_value(values, ref), _RecordArrayView)
+        for ref in array_args
+    )
     jax_supported = not (
         has_dist_array or has_view or len(plan.array_groups) > 1 or len(array_args) > 1
     )
@@ -214,53 +230,62 @@ def execute_sweep_rows_jax(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    array_args: list[str],
+    array_args: list[_workflow_call.WorkflowInputRef],
     n_total: int,
 ) -> Any:
     """Execute the limited single-RecordArray sweep through ``jax.vmap``."""
-    static = {name: value for name, value in values.items() if name not in array_args}
 
     def single_call(array_slice_leaves):
-        kwargs = dict(static)
-        for name in array_args:
-            kwargs[name] = Record(name, array_slice_leaves[name], name_is_auto=True)
-        return func(**kwargs)
-
-    vmap_input = {}
-    for name in array_args:
-        array_value = values[name]
-        n_batch = len(array_value.batch_shape)
-        vmap_input[name] = {
-            leaf: array_value[leaf].reshape((n_total, *array_value[leaf].shape[n_batch:]))
-            for leaf in array_value.event_template
+        replacements = {
+            ref: Record(ref.label, leaves, name_is_auto=True)
+            for ref, leaves in zip(array_args, array_slice_leaves)
         }
-    return jax.vmap(single_call)(vmap_input)
+        return func(**_workflow_call.replace_input_refs(values, replacements))
+
+    vmap_input = []
+    for ref in array_args:
+        array_value = _workflow_call.input_ref_value(values, ref)
+        n_batch = len(array_value.batch_shape)
+        vmap_input.append(
+            {
+                leaf: array_value[leaf].reshape((n_total, *array_value[leaf].shape[n_batch:]))
+                for leaf in array_value.event_template
+            }
+        )
+    return jax.vmap(single_call)(tuple(vmap_input))
 
 
 def make_sweep_provenance(
     *,
     values: Mapping[str, Any],
-    array_args: list[str],
-    dist_args: list[str],
+    array_args: list[_workflow_call.WorkflowInputRef],
+    dist_args: list[_workflow_call.WorkflowInputRef],
     workflow_name: str,
     batch_shape: tuple[int, ...],
     k: int,
+    parents: list[Tracked] | None = None,
 ) -> Provenance | None:
     """Build provenance metadata for pure and nested sweep outputs.
 
     Returns ``None`` when :attr:`ProvenanceMode.OFF` is active.
     """
     regime = "nested" if dist_args else "stack"
-    array_candidates = [values[name] for name in array_args]
-    dist_candidates = [values[name] for name in dist_args if isinstance(values[name], Distribution)]
+    if parents is None:
+        array_candidates = [_workflow_call.input_ref_value(values, ref) for ref in array_args]
+        dist_candidates = [
+            _workflow_call.input_ref_value(values, ref)
+            for ref in dist_args
+            if isinstance(_workflow_call.input_ref_value(values, ref), Distribution)
+        ]
+        parents = array_candidates + dist_candidates
     return Provenance.create(
         f"workflow.{regime}",
-        parents=array_candidates + dist_candidates,
+        parents=parents,
         metadata={
             "func": workflow_name,
             "batch_shape": tuple(batch_shape),
             "k": k,
-            "ra_args": list(array_args),
-            "dist_args": list(dist_args),
+            "ra_args": [ref.label for ref in array_args],
+            "dist_args": [ref.label for ref in dist_args],
         },
     )

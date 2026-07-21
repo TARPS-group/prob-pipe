@@ -19,6 +19,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    EventTemplate,
     Normal,
     NumericRecordArray,
     ProductDistribution,
@@ -46,6 +47,40 @@ class TestConstruction:
         assert len(da) == 4
         assert da.batch_shape == (4,)
         assert da.event_shape == ()
+
+    def test_common_component_event_template_is_exposed(self):
+        components = [Normal(loc=float(i), scale=1.0, name="y") for i in range(2)]
+
+        array = DistributionArray(components, name="common")
+
+        assert array.event_template == EventTemplate(y=())
+
+    def test_mismatched_component_event_templates_report_none(self):
+        components = [
+            Normal(loc=0.0, scale=1.0, name="left"),
+            Normal(loc=1.0, scale=1.0, name="right"),
+        ]
+
+        array = DistributionArray(components, name="mixed")
+
+        assert array.event_template is None
+
+    def test_explicit_event_template_is_validated_by_private_factory(self):
+        components = [Normal(loc=float(i), scale=1.0, name="y") for i in range(2)]
+
+        array = _make_distribution_array(
+            components,
+            name="declared",
+            event_template=EventTemplate(y=()),
+        )
+
+        assert array.event_template == EventTemplate(y=())
+        with pytest.raises(ValueError, match="does not match declared template"):
+            _make_distribution_array(
+                components,
+                name="invalid",
+                event_template=EventTemplate(z=()),
+            )
 
     def test_indexing_returns_component(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]

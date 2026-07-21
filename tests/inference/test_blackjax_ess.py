@@ -386,7 +386,7 @@ class TestDeclinesToRWMH:
         model = self._model()
         # No method= → registry auto-selects. ESS (75) declines
         # (non-traceable), NUTS/HMC (gradient) decline, so RWMH (55) wins.
-        posterior = condition_on(
+        posterior = condition_on.apply(
             model,
             np.zeros((5, 2)),
             num_results=50,

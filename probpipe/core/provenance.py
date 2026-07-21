@@ -11,11 +11,9 @@ from .config import ProvenanceMode, provenance_config
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from ._record_array import RecordArray
-    from .distribution import Distribution
-    from .record import Record
+    from .tracked import Tracked
 
-    ProvenanceNode = Distribution | Record | RecordArray
+    ProvenanceNode = Tracked
 
 __all__ = [
     "ParentInfo",
@@ -269,8 +267,8 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
     return ancestors
 
 
-def provenance_dag(dist: Distribution):
-    """Build a Graphviz ``Digraph`` of the provenance chain rooted at *dist*.
+def provenance_dag(node: ProvenanceNode):
+    """Build a Graphviz ``Digraph`` of the provenance chain rooted at *node*.
 
     Each node is labelled with its type and name.  Edges point from parent
     to child and are labelled with the operation that produced the child.
@@ -313,16 +311,16 @@ def provenance_dag(dist: Distribution):
                     _visit_parent(pp, nid, p.provenance.operation)
         dot.edge(nid, child_nid, label=operation)
 
-    def _visit_dist(d: Distribution) -> str:
-        nid = str(id(d))
-        if id(d) in visited:
+    def _visit_node(value: ProvenanceNode) -> str:
+        nid = str(id(value))
+        if id(value) in visited:
             return nid
-        visited.add(id(d))
-        dot.node(nid, _label(type(d).__name__, d.name or ""))
-        if d.provenance is not None:
-            for p in d.provenance.parents:
-                _visit_parent(p, nid, d.provenance.operation)
+        visited.add(id(value))
+        dot.node(nid, _label(type(value).__name__, value.name or ""))
+        if value.provenance is not None:
+            for p in value.provenance.parents:
+                _visit_parent(p, nid, value.provenance.operation)
         return nid
 
-    _visit_dist(dist)
+    _visit_node(node)
     return dot

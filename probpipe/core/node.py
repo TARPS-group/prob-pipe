@@ -6,7 +6,7 @@ import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from types import MappingProxyType
-from typing import Any, Literal, get_args, overload
+from typing import Any, Literal, cast, get_args, overload
 
 import jax
 import jax.numpy as jnp
@@ -32,8 +32,20 @@ from . import (
     _workflow_result,
     _workflow_sweep,
 )
+from ._function_contract import (
+    _bind_function_inputs,
+    _bind_planned_function_inputs,
+    _CallableFunctionImplementation,
+    _FunctionImplementation,
+    _FunctionInvocationContext,
+    _validate_function_output,
+    _validate_function_templates,
+    _wrap_declared_function_output,
+)
 from ._record_array import RecordArray
+from .event_template import EventTemplate, _concretize_event_template
 from .provenance import Provenance
+from .tracked import Annotated, Tracked, auto_name
 
 logger = logging.getLogger(__name__)
 
@@ -119,9 +131,9 @@ def function(
         Function being decorated for bare ``@function`` usage.
         Users should not pass this argument by keyword.
     **kwargs : Any
-        Construction-time ``Function`` controls such as ``dispatch``,
-        ``seed``, ``n_broadcast_samples``, ``include_inputs``, and
-        ``workflow_kind``.
+        Construction-time ``Function`` controls and declarations such as
+        ``dispatch``, ``seed``, ``n_broadcast_samples``, ``include_inputs``,
+        ``workflow_kind``, ``input_template``, and ``output_template``.
 
     Returns
     -------
@@ -131,7 +143,7 @@ def function(
     """
 
     def decorator(func: Callable[..., Any]) -> Function:
-        return Function(func=func, name=func.__name__, **kwargs)
+        return Function(func=func, **kwargs)
 
     if _func is not None:
         return decorator(_func)
@@ -171,12 +183,14 @@ class Node(ABC):  # noqa: B024
         return self._inputs
 
 
-class Function(Node):
+class Function(Node, Tracked, Annotated):
     """
-    A single executable DAG node wrapping exactly one function.
+    An immutable, tracked executable DAG node wrapping one implementation.
 
-    Infers dependency-vs-input from the function signature and type hints.
-    Optionally resolves missing values from an attached Module.
+    Captures the wrapped callable's Python signature once, independently of
+    any input or output event template. Infers dependency-vs-input from that
+    signature and its type hints, and optionally resolves missing values from
+    an attached Module.
 
     **Broadcasting**: When a ``Distribution`` is passed for an argument whose
     type hint is *not* a ``Distribution`` subclass, the workflow automatically
@@ -235,7 +249,22 @@ class Function(Node):
         ``vmap``, local sequential dispatch, Prefect, Ray, and Dask do not
         use this setting.
     seed : int
-        Random seed for JAX PRNG key management during broadcasting.
+        Random seed for invocation-local JAX PRNG key management during
+        broadcasting. Repeated calls with the same seed use the same key
+        sequence without mutating the Function.
+    include_inputs : bool
+        Whether distribution broadcasting includes sampled inputs in the
+        returned joint distribution by default.
+    input_template : EventTemplate or None
+        Optional authoritative input schema. Its top-level fields must match
+        the fixed signature parameters by name. Symbolic dimensions are bound
+        independently for each invocation.
+    output_template : EventTemplate or None
+        Optional authoritative output schema. Output symbols must be declared
+        by ``input_template`` and are resolved in the same invocation-local
+        dimension scope.
+    **kwargs : Any
+        Convenience construction-time bindings merged into ``bind``.
 
     Notes
     -----
@@ -251,6 +280,7 @@ class Function(Node):
     """
 
     DEFAULT_N_BROADCAST_SAMPLES: int = 128
+    _name: str
 
     def __init__(
         self,
@@ -265,8 +295,101 @@ class Function(Node):
         max_workers: int | None = None,  # ThreadPoolExecutor worker count
         seed: int = 0,  # JAX PRNG seed for broadcasting
         include_inputs: bool = False,  # True → return BroadcastDistribution (joint over inputs+outputs)
+        input_template: EventTemplate | None = None,
+        output_template: EventTemplate | None = None,
         **kwargs: Any,  # convenience bindings (merged into bind)
     ):
+        if not callable(func):
+            raise TypeError(f"func must be callable, got {type(func).__name__}")
+        signature_info = _workflow_call.make_signature_info(func)
+        implementation = _CallableFunctionImplementation(func)
+        resolved_name, name_is_auto = auto_name(
+            name, getattr(func, "__name__", self.__class__.__name__)
+        )
+        self._initialize(
+            implementation=implementation,
+            signature_info=signature_info,
+            workflow_kind=workflow_kind,
+            name=resolved_name,
+            name_is_auto=name_is_auto,
+            bind=bind,
+            module=module,
+            n_broadcast_samples=n_broadcast_samples,
+            dispatch=dispatch,
+            max_workers=max_workers,
+            seed=seed,
+            include_inputs=include_inputs,
+            input_template=input_template,
+            output_template=output_template,
+            convenience_bindings=kwargs,
+            metadata_source=func,
+        )
+
+    @staticmethod
+    def _from_implementation(
+        implementation: _FunctionImplementation,
+        *,
+        signature: inspect.Signature,
+        name: str,
+        input_template: EventTemplate | None = None,
+        output_template: EventTemplate | None = None,
+        workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
+        bind: dict[str, Any] | None = None,
+        module: Any | None = None,
+        n_broadcast_samples: int | None = None,
+        dispatch: _FunctionDispatch = "auto",
+        max_workers: int | None = None,
+        seed: int = 0,
+        include_inputs: bool = False,
+    ) -> Function:
+        """Construct a normal Function around a private implementation seam."""
+        if not isinstance(name, str) or not name:
+            raise TypeError("Function._from_implementation() requires a non-empty name")
+        if not callable(getattr(implementation, "invoke", None)):
+            raise TypeError(
+                "implementation must provide an invoke(bound_inputs, *, context) method"
+            )
+        instance = object.__new__(Function)
+        instance._initialize(
+            implementation=implementation,
+            signature_info=_workflow_call.make_signature_info_from_signature(signature),
+            workflow_kind=workflow_kind,
+            name=name,
+            name_is_auto=False,
+            bind=bind,
+            module=module,
+            n_broadcast_samples=n_broadcast_samples,
+            dispatch=dispatch,
+            max_workers=max_workers,
+            seed=seed,
+            include_inputs=include_inputs,
+            input_template=input_template,
+            output_template=output_template,
+            convenience_bindings={},
+            metadata_source=None,
+        )
+        return instance
+
+    def _initialize(
+        self,
+        *,
+        implementation: _FunctionImplementation,
+        signature_info: _workflow_call.WorkflowSignatureInfo,
+        workflow_kind: WorkflowKind,
+        name: str,
+        name_is_auto: bool,
+        bind: Mapping[str, Any] | None,
+        module: Any | None,
+        n_broadcast_samples: int | None,
+        dispatch: _FunctionDispatch,
+        max_workers: int | None,
+        seed: int,
+        include_inputs: bool,
+        input_template: EventTemplate | None,
+        output_template: EventTemplate | None,
+        convenience_bindings: Mapping[str, Any],
+        metadata_source: Callable[..., Any] | None,
+    ) -> None:
         # Validate arguments before setting any instance state.
         if dispatch not in _VALID_DISPATCH_STRATEGIES:
             raise ValueError(
@@ -286,19 +409,31 @@ class Function(Node):
                 f"got {type(workflow_kind).__name__}"
             )
 
-        self._func = func
-        self._signature_info = _workflow_call.make_signature_info(func)
+        construction_bindings = dict(bind or {})
+        construction_bindings.update(convenience_bindings)
+        _validate_function_templates(
+            function_name=name,
+            signature=signature_info.signature,
+            input_template=input_template,
+            output_template=output_template,
+            construction_bindings=construction_bindings,
+        )
+
+        object.__setattr__(self, "_initializing", True)
+        self._init_tracked(name, name_is_auto=name_is_auto)
+        object.__setattr__(self, "_annotations", {})
+        self._implementation = implementation
+        self._signature_info = signature_info
         self._workflow_kind_raw = workflow_kind
-        self._name = name or getattr(func, "__name__", self.__class__.__name__)
 
         # Expose wrapped function's metadata for introspection (help(),
         # inspect.signature(), IDE tooltips, mkdocstrings).  We skip
         # __wrapped__ to prevent inspect.unwrap() from bypassing __call__.
-        self.__doc__ = func.__doc__
+        self.__doc__ = getattr(metadata_source, "__doc__", None)
         self.__name__ = self._name
-        self.__qualname__ = getattr(func, "__qualname__", self._name)
+        self.__qualname__ = getattr(metadata_source, "__qualname__", self._name)
         self.__signature__ = self._signature_info.signature
-        self.__module__ = getattr(func, "__module__", None)
+        self.__module__ = getattr(metadata_source, "__module__", None) or type(self).__module__
         self._module = module
         self._n_broadcast_samples = (
             n_broadcast_samples
@@ -307,16 +442,113 @@ class Function(Node):
         )
         self._dispatch = dispatch
         self._max_workers = max_workers
-        self._key = jax.random.PRNGKey(seed)
+        self._seed = seed
         self._include_inputs = include_inputs
-        self._resolved_dispatch: str | None = None  # cached auto-detection result
+        self._input_template = input_template
+        self._output_template = output_template
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
-        b = dict(bind or {})
-        b.update(kwargs)
-        self._bind = b
+        self._bind = MappingProxyType(construction_bindings)
 
         super().__init__()
+        object.__setattr__(self, "_initializing", False)
+
+    @property
+    def signature(self) -> inspect.Signature:
+        """The independently captured Python call signature."""
+        return self._signature_info.signature
+
+    @property
+    def input_template(self) -> EventTemplate | None:
+        """The authoritative input schema declaration, when provided."""
+        return self._input_template
+
+    @property
+    def output_template(self) -> EventTemplate | None:
+        """The authoritative output schema declaration, when provided."""
+        return self._output_template
+
+    def apply(self, *args: Any, **call_inputs: Any) -> Any:
+        """Execute one raw point under the Function's declared contracts.
+
+        Arguments follow :attr:`signature`, including defaults, fixed
+        construction bindings, and attached-Module resolution. Authoritative
+        input and output templates are validated in one call-local symbolic
+        dimension scope.
+
+        Unlike :meth:`__call__`, this method performs no distribution lifting,
+        batch sweep, orchestration, result wrapping, or call-provenance
+        creation.
+
+        Parameters
+        ----------
+        *args : Any
+            Positional arguments for the captured Python signature.
+        **call_inputs : Any
+            Keyword arguments for the captured Python signature.
+
+        Returns
+        -------
+        Any
+            The implementation's unwrapped native result.
+
+        Raises
+        ------
+        TypeError
+            If arguments cannot bind to the captured signature.
+        ValueError
+            If an authoritative input or output template is violated.
+        """
+        call = _workflow_call.resolve_workflow_call(
+            self._signature_info,
+            args,
+            call_inputs,
+            bind=self._bind,
+            module=self._module,
+            dependency_type=Node,
+            workflow_name=self._name,
+            default_n_broadcast_samples=self._n_broadcast_samples,
+            default_include_inputs=self._include_inputs,
+        )
+        _, bindings = _bind_function_inputs(
+            function_name=self._name,
+            input_template=self._input_template,
+            values=call.values,
+        )
+        context = _FunctionInvocationContext(bindings)
+        result = self._invoke_resolved(call.values, context=context)
+        _validate_function_output(
+            function_name=self._name,
+            output_template=self._output_template,
+            result=result,
+            bindings=context.dimension_bindings,
+        )
+        return result
+
+    def _invoke_resolved(
+        self,
+        values: Mapping[str, Any],
+        *,
+        context: _FunctionInvocationContext,
+    ) -> Any:
+        bound = _workflow_call.values_to_bound_arguments(self.signature, values)
+        return self._implementation.invoke(bound, context=context)
+
+    def with_name(self, name: str) -> Function:
+        """Return a renamed shallow copy with synchronized callable metadata."""
+        renamed = cast(Function, Tracked.with_name(self, name))
+        object.__setattr__(renamed, "__name__", name)
+        object.__setattr__(renamed, "__qualname__", name)
+        return renamed
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if getattr(self, "_initializing", False):
+            object.__setattr__(self, name, value)
+            return
+        raise AttributeError("Function is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("Function is immutable")
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
@@ -444,38 +676,127 @@ class Function(Node):
             default_include_inputs=self._include_inputs,
             options=options,
         )
-        if call.overrides.seed is not None:
-            self._key = jax.random.PRNGKey(call.overrides.seed)
+        key = jax.random.PRNGKey(self._seed if call.overrides.seed is None else call.overrides.seed)
+
+        def get_key():
+            nonlocal key
+            key, subkey = jax.random.split(key)
+            return subkey
 
         values = _workflow_distribution_normalization.normalize_distribution_values(
             values=call.values,
-            hints=self._signature_info.hints,
+            signature_info=self._signature_info,
         )
         broadcast_plan = _workflow_plan.build_broadcast_plan(
             values=values,
-            hints=self._signature_info.hints,
+            signature_info=self._signature_info,
         )
+        _, invocation_bindings = _bind_planned_function_inputs(
+            function_name=self._name,
+            input_template=self._input_template,
+            values=values,
+            lifted_names={
+                ref.parameter_name
+                for ref in (*broadcast_plan.dist_args, *broadcast_plan.array_args)
+            },
+        )
+        concrete_output_template = (
+            _concretize_event_template(
+                self._output_template,
+                invocation_bindings,
+                context=f"Function {self._name!r} output_template",
+            )
+            if self._output_template is not None
+            else None
+        )
+        provenance_parents: list[Tracked] = [self]
+        seen_parent_ids = {id(self)}
+        for ref in _workflow_call.iter_input_refs(self._signature_info, values):
+            value = _workflow_call.input_ref_value(values, ref)
+            if isinstance(value, Tracked) and id(value) not in seen_parent_ids:
+                seen_parent_ids.add(id(value))
+                provenance_parents.append(value)
+
+        def invoke_point(**point_values: Any) -> Any:
+            _, point_bindings = _bind_function_inputs(
+                function_name=self._name,
+                input_template=self._input_template,
+                values=point_values,
+                bindings=invocation_bindings,
+            )
+            context = _FunctionInvocationContext(point_bindings)
+            result = self._invoke_resolved(point_values, context=context)
+            point_output_template = _validate_function_output(
+                function_name=self._name,
+                output_template=self._output_template,
+                result=result,
+                bindings=context.dimension_bindings,
+            )
+            if point_output_template is not None:
+                result = _wrap_declared_function_output(
+                    result,
+                    function_name=self._name,
+                    output_template=point_output_template,
+                )
+            return result
+
+        resolved_dispatch: str | None = None
+
+        def resolve_dispatch(
+            dispatch_values: dict[str, Any],
+            broadcast_args: list[_workflow_call.WorkflowInputRef],
+            *,
+            jax_supported: bool = True,
+        ) -> str:
+            nonlocal resolved_dispatch
+            if self._dispatch != "auto" or not jax_supported:
+                return self._resolve_dispatch(
+                    dispatch_values,
+                    broadcast_args,
+                    jax_supported=jax_supported,
+                    func=invoke_point,
+                )
+            if resolved_dispatch is None:
+                resolved_dispatch = self._resolve_dispatch(
+                    dispatch_values,
+                    broadcast_args,
+                    jax_supported=True,
+                    func=invoke_point,
+                )
+            return resolved_dispatch
+
+        def require_jax_traceable(
+            dispatch_values: dict[str, Any],
+            broadcast_args: list[_workflow_call.WorkflowInputRef],
+        ) -> None:
+            self._require_jax_traceable(
+                dispatch_values,
+                broadcast_args,
+                func=invoke_point,
+            )
 
         def execute_distribution_broadcast(
             *,
             row_values: dict[str, Any],
-            dist_args: Sequence[str],
+            dist_args: Sequence[_workflow_call.WorkflowInputRef],
             n_broadcast_samples: int = call.overrides.n_broadcast_samples,
             include_inputs: bool = call.overrides.include_inputs,
         ):
             return _workflow_distribution_broadcast.execute_distribution_broadcast(
-                func=self._func,
+                func=invoke_point,
                 values=row_values,
                 broadcast_args=dist_args,
                 n_broadcast_samples=n_broadcast_samples,
                 include_inputs=include_inputs,
-                get_key=self._get_key,
+                get_key=get_key,
                 make_execution_config=self._make_execution_config,
                 requested_dispatch=self._dispatch,
-                resolve_dispatch=self._resolve_dispatch,
-                require_jax_traceable=self._require_jax_traceable,
+                resolve_dispatch=resolve_dispatch,
+                require_jax_traceable=require_jax_traceable,
                 workflow_name=self._name,
                 workflow_kind=self.effective_workflow_kind,
+                output_template=concrete_output_template,
+                provenance_parents=provenance_parents,
             )
 
         if broadcast_plan.regime == "distribution":
@@ -487,7 +808,7 @@ class Function(Node):
 
             def distribution_broadcast(
                 row_values: dict[str, Any],
-                dist_args: list[str],
+                dist_args: list[_workflow_call.WorkflowInputRef],
                 n_broadcast_samples: int,
                 include_inputs: bool,
             ):
@@ -499,17 +820,19 @@ class Function(Node):
                 )
 
             return _workflow_sweep.execute_sweep(
-                func=self._func,
+                func=invoke_point,
                 values=values,
                 plan=broadcast_plan,
                 make_execution_config=self._make_execution_config,
                 requested_dispatch=self._dispatch,
-                resolve_dispatch=self._resolve_dispatch,
-                require_jax_traceable=self._require_jax_traceable,
+                resolve_dispatch=resolve_dispatch,
+                require_jax_traceable=require_jax_traceable,
                 distribution_broadcast=distribution_broadcast,
                 workflow_name=self._name,
                 n_broadcast_samples=call.overrides.n_broadcast_samples,
                 include_inputs=call.overrides.include_inputs,
+                output_template=concrete_output_template,
+                provenance_parents=provenance_parents,
             )
 
         # Non-broadcast call — one function invocation, then wrap.
@@ -519,21 +842,15 @@ class Function(Node):
         # the same request shape. A later execution cleanup can centralize this
         # without reintroducing private facade wrappers.
         request = _workflow_execution.WorkflowExecutionRequest(
-            func=self._func,
+            func=invoke_point,
             call_value_list=[values],
             execution=self._make_execution_config(),
         )
         result = _workflow_execution.execute_many(request)[0]
-        seen: set[int] = set()
-        candidates = []
-        for v in values.values():
-            if hasattr(v, "provenance") and id(v) not in seen:
-                seen.add(id(v))
-                candidates.append(v)
-        name = self._name or self._func.__name__
+        name = self._name
         provenance = Provenance.create(
             f"workflow.{name}",
-            parents=candidates,
+            parents=provenance_parents,
             metadata={"func": name},
         )
         return _workflow_result._coerce_output(
@@ -541,31 +858,28 @@ class Function(Node):
             broadcast_mode=_workflow_result.BROADCAST_WRAP,
             provenance=provenance,
             field_name=self._name,
+            output_template=concrete_output_template,
         )
-
-    def _get_key(self):
-        """Split and advance the internal PRNG key."""
-        self._key, subkey = jax.random.split(self._key)
-        return subkey
 
     def _jax_traceability_error(
         self,
         values: dict[str, Any],
-        broadcast_args: list[str],
+        broadcast_args: list[_workflow_call.WorkflowInputRef],
+        *,
+        func: Callable[..., Any],
     ) -> Exception | None:
         """Return the JAX trace-probe error for the current call, if any."""
         try:
-            dummy_kw = {}
-            for name in self._signature_info.signature.parameters:
-                if name == "self":
-                    continue
-                if name in broadcast_args:
-                    v = values[name]
+            dummy_kw = dict(values)
+            broadcast_refs = set(broadcast_args)
+            for ref in _workflow_call.iter_input_refs(self._signature_info, values):
+                v = _workflow_call.input_ref_value(values, ref)
+                if ref in broadcast_refs:
                     # RecordArray input: construct a single Record from
                     # row 0 so the dummy call sees what an inner sweep
                     # iteration will actually receive.
                     if isinstance(v, RecordArray):
-                        dummy_kw[name] = v[0]
+                        replacement = v[0]
                     else:
                         dist = v
                         # ``event_shape`` raises on multi-field NRDs
@@ -583,23 +897,24 @@ class Function(Node):
                             raise NotImplementedError(
                                 f"Cannot probe JAX traceability for "
                                 f"{type(dist).__name__} broadcast arg "
-                                f"{name!r}: no single ``event_shape`` "
+                                f"{ref.label!r}: no single ``event_shape`` "
                                 f"(multi-field or abstract). "
                                 f"Falling back to row-wise dispatch."
                             ) from exc
                         # Match the distribution's own dtype so the probe
                         # mirrors what the inner function actually sees.
                         dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
-                        dummy_kw[name] = jnp.zeros(es, dtype=dt) if es else jnp.zeros((), dtype=dt)
-                elif name in values:
-                    v = values[name]
+                        replacement = jnp.zeros(es, dtype=dt) if es else jnp.zeros((), dtype=dt)
+                    dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
+                else:
                     if isinstance(v, jnp.ndarray):
-                        dummy_kw[name] = v
+                        replacement = v
                     elif hasattr(v, "__array__"):
-                        dummy_kw[name] = jnp.asarray(v)
+                        replacement = jnp.asarray(v)
                     else:
-                        dummy_kw[name] = v
-            jax.make_jaxpr(lambda kw: self._func(**kw))(dummy_kw)
+                        replacement = v
+                    dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
+            jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
         except Exception as exc:
             return exc
         return None
@@ -607,10 +922,12 @@ class Function(Node):
     def _require_jax_traceable(
         self,
         values: dict[str, Any],
-        broadcast_args: list[str],
+        broadcast_args: list[_workflow_call.WorkflowInputRef],
+        *,
+        func: Callable[..., Any],
     ) -> None:
         """Raise a clear error if explicit JAX dispatch cannot trace."""
-        trace_error = self._jax_traceability_error(values, broadcast_args)
+        trace_error = self._jax_traceability_error(values, broadcast_args, func=func)
         if trace_error is None:
             return
         raise ValueError(
@@ -622,9 +939,10 @@ class Function(Node):
     def _resolve_dispatch(
         self,
         values: dict[str, Any],
-        broadcast_args: list[str],
+        broadcast_args: list[_workflow_call.WorkflowInputRef],
         *,
         jax_supported: bool = True,
+        func: Callable[..., Any],
     ) -> str:
         """Resolve the dispatch strategy, caching JAX traceability detection.
 
@@ -638,19 +956,14 @@ class Function(Node):
         if not jax_supported:
             return "sequential"
 
-        if self._resolved_dispatch is not None:
-            return self._resolved_dispatch
-
-        if self._jax_traceability_error(values, broadcast_args) is None:
-            self._resolved_dispatch = "jax"
+        if self._jax_traceability_error(values, broadcast_args, func=func) is None:
+            return "jax"
         else:
             logger.info(
                 "Function '%s' is not JAX-traceable; using sequential dispatch.",
                 self._name,
             )
-            self._resolved_dispatch = "sequential"
-
-        return self._resolved_dispatch
+            return "sequential"
 
 
 class _FunctionCallWithOptions:

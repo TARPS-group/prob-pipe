@@ -481,12 +481,15 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `Record` and `RecordDistribution` because it shadowed methods and
    properties like `.mean`, `.var`, `.fields`, `.map`, and produced
    confusing errors.
-6. **Every object is a tracked term** — distributions, records, and the
-   batch types all carry the `Tracked` identity attributes and methods
+6. **Every object is a tracked term** — Functions, distributions, records,
+   and the batch types all carry the `Tracked` identity attributes and methods
    (`name`, `name_is_auto`, write-once `provenance` via
    `with_provenance`, `with_name`) from `probpipe.core.tracked`, and
    the mixin's metaclass enforces a non-empty `name` at construction
-   for every host.  Leaf distributions (Normal, Gamma, etc.) require an
+   for every host. `Function` is an immutable, schema-aware computation term;
+   its Python signature is captured independently from its optional
+   authoritative input and output templates. Leaf distributions (Normal,
+   Gamma, etc.) require an
    explicit `name=` at construction.  Composite distributions
    (ProductDistribution, EmpiricalDistribution, TransformedDistribution,
    etc.) auto-derive a name from their components when one is not
@@ -509,9 +512,18 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `NumericRecord` with field `fn_name` (no sweep) or
    `NumericRecordArray({fn_name: arr}, batch_shape=sweep_shape)`
    (swept); `dict` / `list` / `tuple` promote via `_make_stack`;
-   existing `Record` / `RecordArray` / `Distribution` values pass
-   through unchanged.  The field name is always the function's own
-   name.  Single-field `NumericRecord` / `NumericRecordArray` / `Record`
+   existing `Record` / `RecordArray` / `Distribution` values preserve their
+   structure and backing data but `Function.__call__` returns a shallow copy
+   as an independent result term. The copy gets a fresh annotations container,
+   discards the returned object's prior provenance, and records the called
+   Function followed by tracked inputs as its direct parents. `Function.apply`
+   is the raw boundary: it performs the same Python binding and schema checks,
+   but preserves the implementation return object's identity and provenance.
+   Authoritative nested output templates use a private recursive aggregate
+   packer across sequential and JAX dispatch; the public
+   `RecordArray.stack` contract remains unchanged. The field name for inferred
+   single-field output is always the function's own name. Single-field
+   `NumericRecord` / `NumericRecordArray` / `Record`
    expose shims (`__jax_array__`, `__float__`, `__call__`, `.shape`,
    `.dtype`, `.ndim`) so `jnp.array(log_prob(d, v))`,
    `float(mean(d))`, and `sample(grf)(X)` stay terse.
@@ -529,13 +541,17 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `sample(da)` / `mean(da)` / `log_prob(da, v)` are handled
    uniformly by the sweep path rather than by DistArray-specific
    methods.
+   Variadic inputs participate in the same planner: each `*args` element and
+   `**kwargs` entry is lifted or swept independently, annotations apply to each
+   element, and provenance labels use stable forms such as `*items[0]` and
+   `**extras['key']`.
 
 ### Key abstractions
 
 | Abstraction | Description |
 |-------------|-------------|
 | `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`) that the constructor reads back. `EventTemplate` and `Record` are its two families; each declares its leaf type (`ValueSpec` vs arbitrary values), and mappings are never leaves. |
-| `Tracked` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `Tracked` carries `name`, `name_is_auto`, and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Distribution` and `Record` mix in both; the batch types are tracked terms through their bases. |
+| `Tracked` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `Tracked` carries `name`, `name_is_auto`, and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Function`, `Distribution`, and `Record` mix in both; the batch types are tracked terms through their bases. |
 | `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and the `Tracked` / `Annotated` identity attributes |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
@@ -548,11 +564,11 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericEventTemplate`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
 | `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
 | `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordArray` keyed by `template.fields`. |
-| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `components`). Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
+| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `event_template`, `components`). `event_template` is the explicitly supplied authoritative template for Function aggregates, the common component template for compatible literal arrays, or `None`. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
-| `Function` | Orchestration-aware function wrapper (Prefect off by default; see the Prefect-orchestration section above); groups views by parent for correlated broadcasting |
+| `Function` | Immutable first-class `Tracked` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `EventTemplate`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `BaseDispatchRegistry` | Abstract base for priority-based registries: holds registration, priority management (incl. opt-in-only sentinel + override warnings), and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |

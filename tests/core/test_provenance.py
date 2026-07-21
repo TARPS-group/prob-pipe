@@ -141,19 +141,21 @@ class TestFromDistributionProvenance:
         src = Beta(alpha=2.0, beta=5.0, name="beta_src")
         converted = from_distribution(src, Normal)
         assert converted.provenance is not None
-        assert converted.provenance.operation == "from_distribution"
-        assert len(converted.provenance.parents) == 1
+        assert converted.provenance.operation == "workflow.from_distribution"
+        assert len(converted.provenance.parents) == 2
         assert isinstance(converted.provenance.parents[0], ParentInfo)
-        assert converted.provenance.parents[0].name == "beta_src"
+        assert converted.provenance.parents[0].name == "from_distribution"
+        assert converted.provenance.parents[1].name == "beta_src"
 
     def test_empirical_from_distribution(self):
         src = Normal(loc=0.0, scale=1.0, name="norm_src")
         ed = from_distribution(src, RecordEmpiricalDistribution, n_samples=100)
         assert ed.provenance is not None
-        assert ed.provenance.operation == "from_distribution"
-        assert len(ed.provenance.parents) == 1
+        assert ed.provenance.operation == "workflow.from_distribution"
+        assert len(ed.provenance.parents) == 2
         assert isinstance(ed.provenance.parents[0], ParentInfo)
-        assert ed.provenance.parents[0].name == "norm_src"
+        assert ed.provenance.parents[0].name == "from_distribution"
+        assert ed.provenance.parents[1].name == "norm_src"
 
 
 # ===========================================================================
@@ -199,12 +201,18 @@ class TestConditioningProvenance:
             x=Normal(loc=0.0, scale=1.0, name="x"),
             y=Normal(loc=1.0, scale=2.0, name="y"),
         )
+        raw = condition_on.apply(joint, x=jnp.array(0.0))
         cond = condition_on(joint, x=jnp.array(0.0))
+        assert raw.provenance.operation == "condition_on"
+        assert "x" in raw.provenance.metadata["conditioned"]
         assert cond.provenance is not None
-        assert cond.provenance.operation == "condition_on"
-        assert len(cond.provenance.parents) == 1
+        assert cond.provenance.operation == "workflow.condition_on"
+        assert len(cond.provenance.parents) == 2
         assert isinstance(cond.provenance.parents[0], ParentInfo)
-        assert "x" in cond.provenance.metadata["conditioned"]
+        assert [parent.name for parent in cond.provenance.parents] == [
+            "condition_on",
+            joint.name,
+        ]
 
     def test_sequential_condition_on(self):
         seq = SequentialJointDistribution(
@@ -212,8 +220,8 @@ class TestConditioningProvenance:
             x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         cond = condition_on(seq, z=jnp.array(1.0))
-        assert cond.provenance.operation == "condition_on"
-        assert len(cond.provenance.parents) == 1
+        assert cond.provenance.operation == "workflow.condition_on"
+        assert len(cond.provenance.parents) == 2
         assert isinstance(cond.provenance.parents[0], ParentInfo)
 
     def test_gaussian_condition_on(self):
@@ -224,8 +232,11 @@ class TestConditioningProvenance:
             y=1,
         )
         cond = condition_on(jg, x=jnp.array([0.0]))
-        assert cond.provenance.operation == "condition_on"
-        assert "x" in cond.provenance.metadata["conditioned"]
+        assert cond.provenance.operation == "workflow.condition_on"
+        assert [parent.name for parent in cond.provenance.parents] == [
+            "condition_on",
+            jg.name,
+        ]
 
 
 # ===========================================================================
@@ -245,9 +256,10 @@ class TestBroadcastingProvenance:
         assert hasattr(result, "samples")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
-        assert len(result.provenance.parents) == 1
+        assert len(result.provenance.parents) == 2
         assert isinstance(result.provenance.parents[0], ParentInfo)
-        assert result.provenance.parents[0].parent is n
+        assert result.provenance.parents[0].parent is wf
+        assert result.provenance.parents[1].parent is n
         assert result.provenance.metadata["dispatch"] == "sequential"
         assert result.provenance.metadata["n_samples"] == 20
         assert result.provenance.metadata["func"] == "identity"
@@ -276,7 +288,8 @@ class TestBroadcastingProvenance:
         wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20, seed=42)
         result = wf(x=a, y=b)
         assert result.provenance is not None
-        assert len(result.provenance.parents) == 2
+        assert len(result.provenance.parents) == 3
+        assert [parent.name for parent in result.provenance.parents] == ["add", "a", "b"]
 
     def test_broadcast_enumerate_provenance(self):
         """Enumeration path should also get provenance."""
@@ -307,13 +320,13 @@ class TestProvenanceChains:
         cond = condition_on(joint, x=jnp.array(0.0))
 
         # cond's provenance points to joint
-        assert cond.provenance.operation == "condition_on"
+        assert cond.provenance.operation == "workflow.condition_on"
         # joint has no provenance (constructed directly)
         assert joint.provenance is None
         # but converted has provenance pointing to src
-        assert converted.provenance.operation == "from_distribution"
-        assert isinstance(converted.provenance.parents[0], ParentInfo)
-        assert converted.provenance.parents[0].name == "prior"
+        assert converted.provenance.operation == "workflow.from_distribution"
+        assert isinstance(converted.provenance.parents[1], ParentInfo)
+        assert converted.provenance.parents[1].name == "prior"
 
     def test_transform_then_broadcast(self, full_provenance_mode):
         """transform → broadcast creates a 2-step chain."""
@@ -327,7 +340,8 @@ class TestProvenanceChains:
         result = wf(x=td)
         # result → broadcast → td → transform → base
         assert result.provenance.operation == "broadcast"
-        parent_td = result.provenance.parents[0]
+        assert result.provenance.parents[0].parent is wf
+        parent_td = result.provenance.parents[1]
         assert isinstance(parent_td, ParentInfo)
         assert parent_td.parent is td
         assert parent_td.provenance.operation == "transform"
@@ -432,7 +446,7 @@ class TestProvenanceAncestors:
         assert ancestors[0].name == "base"
 
     def test_chain_of_ancestors(self, full_provenance_mode):
-        """base → transform → broadcast gives 2 ancestors for broadcast result."""
+        """Function plus base → transform are all broadcast ancestors."""
         base = Normal(loc=0.0, scale=1.0, name="base")
         td = TransformedDistribution(base, tfb.Exp(), name="positive")
 
@@ -442,12 +456,14 @@ class TestProvenanceAncestors:
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         ancestors = provenance_ancestors(result)
-        # result → td → base; both steps now produce ParentInfo in FULL mode.
-        assert len(ancestors) == 2
+        # result → Function and result → td → base.
+        assert len(ancestors) == 3
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].parent is td
+        assert ancestors[0].parent is wf
         assert isinstance(ancestors[1], ParentInfo)
-        assert ancestors[1].parent is base
+        assert ancestors[1].parent is td
+        assert isinstance(ancestors[2], ParentInfo)
+        assert ancestors[2].parent is base
 
     def test_no_duplicates(self, full_provenance_mode):
         """Same parent appearing in multiple roles doesn't duplicate."""
@@ -459,10 +475,11 @@ class TestProvenanceAncestors:
         wf = Function(func=add, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
-        # n appears as both args but dedup keeps only one ParentInfo for it
-        assert len(ancestors) == 1
+        # The Function comes first; n appears as both args but is deduplicated.
+        assert len(ancestors) == 2
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].parent is n
+        assert ancestors[0].parent is wf
+        assert ancestors[1].parent is n
 
     def test_diamond_no_duplicates(self):
         """Shared ancestor in a diamond DAG appears exactly once.
@@ -543,12 +560,13 @@ class TestProvenanceDag:
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=td)
         dag = provenance_dag(result)
-        # result <- td <- base : 3 nodes, 2 edges.
+        # result <- Function and result <- td <- base: 4 nodes, 3 edges.
         num_nodes, num_edges = _count_dag_entries(dag)
-        assert num_nodes == 3
-        assert num_edges == 2
+        assert num_nodes == 4
+        assert num_edges == 3
         # Ancestor chain must contain base (root); all nodes are ParentInfo in FULL mode.
         ancestors = provenance_ancestors(result)
+        assert any(a.parent is wf for a in ancestors)
         assert any(a.parent is td for a in ancestors)
         assert any(a.parent is base for a in ancestors)
 
@@ -598,8 +616,10 @@ class TestProvenanceModes:
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         assert result.provenance is not None
-        assert len(result.provenance.parents) == 1
-        parent = result.provenance.parents[0]
+        assert len(result.provenance.parents) == 2
+        function_parent, parent = result.provenance.parents
+        assert function_parent.type_name == "Function"
+        assert function_parent.name == "identity"
         assert isinstance(parent, ParentInfo)
         assert parent.type_name == "Normal"
         assert parent.name == "input"
@@ -613,7 +633,7 @@ class TestProvenanceModes:
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
-        parent = result.provenance.parents[0]
+        parent = result.provenance.parents[1]
         assert parent is not n
 
     def test_lightweight_ancestors_returns_parentinfo(self):
@@ -630,16 +650,16 @@ class TestProvenanceModes:
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
         result = wf(x=n)
         ancestors = provenance_ancestors(result)
-        assert len(ancestors) == 1
+        assert len(ancestors) == 2
         assert isinstance(ancestors[0], ParentInfo)
-        assert ancestors[0].name == "input"
+        assert [ancestor.name for ancestor in ancestors] == ["identity", "input"]
         assert ancestors[0].parent is None
 
-    def test_lightweight_dag_two_nodes(self):
-        """provenance_dag() shows leaf + parent node in LIGHTWEIGHT mode.
+    def test_lightweight_dag_includes_function_and_input(self):
+        """provenance_dag() shows leaf, Function, and input in LIGHTWEIGHT mode.
 
-        The parent node is a ParentInfo descriptor (no live object), so the
-        DAG has 2 nodes and 1 edge even though no live Distribution ref is held.
+        Parent nodes are descriptors (no live objects), so the DAG retains both
+        direct parents without keeping either live reference.
         """
         n = Normal(loc=0.0, scale=1.0, name="input")
 
@@ -650,8 +670,8 @@ class TestProvenanceModes:
         result = wf(x=n)
         dag = provenance_dag(result)
         num_nodes, num_edges = _count_dag_entries(dag)
-        assert num_nodes == 2
-        assert num_edges == 1
+        assert num_nodes == 3
+        assert num_edges == 2
 
     def test_off_mode_no_provenance(self):
         """OFF mode attaches no provenance to workflow results."""

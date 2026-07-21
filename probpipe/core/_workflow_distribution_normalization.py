@@ -18,10 +18,10 @@ classification step over already-normalized values.
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from typing import Any
 
 from ..converters import converter_registry
+from . import _workflow_call
 from ._distribution_array import DistributionArray
 from .distribution import Distribution, NumericRecordDistribution
 from .protocols import (
@@ -72,7 +72,7 @@ def is_distribution_hint(expected: Any) -> bool:
 def normalize_distribution_values(
     *,
     values: dict[str, Any],
-    hints: Mapping[str, Any],
+    signature_info: _workflow_call.WorkflowSignatureInfo,
 ) -> dict[str, Any]:
     """Normalize distribution-valued inputs before broadcast planning.
 
@@ -84,8 +84,9 @@ def normalize_distribution_values(
     """
     out = dict(values)
 
-    for name, value in values.items():
-        expected = hints.get(name)
+    for ref in _workflow_call.iter_input_refs(signature_info, values):
+        value = _workflow_call.input_ref_value(out, ref)
+        expected = _workflow_call.input_ref_hint(signature_info, ref)
 
         if isinstance(value, DistributionArray):
             if (
@@ -93,19 +94,23 @@ def normalize_distribution_values(
                 and not _is_distribution_array_hint(expected)
                 and expected is not Any
             ):
-                out[name] = value._flat_component(0)
+                out = _workflow_call.replace_input_ref(out, ref, value._flat_component(0))
             continue
 
         if expected is not None:
-            out[name] = _convert_hinted_distribution(value, expected)
-            value = out[name]
+            value = _convert_hinted_distribution(value, expected)
+            out = _workflow_call.replace_input_ref(out, ref, value)
 
         if (
             not is_distribution_hint(expected)
             and converter_registry.is_distribution_type(value)
             and not isinstance(value, Distribution)
         ):
-            out[name] = converter_registry.convert(value, NumericRecordDistribution)
+            out = _workflow_call.replace_input_ref(
+                out,
+                ref,
+                converter_registry.convert(value, NumericRecordDistribution),
+            )
 
     return out
 

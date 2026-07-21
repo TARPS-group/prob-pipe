@@ -49,6 +49,7 @@ from .event_template import (
     EventTemplate,
     NumericEventTemplate,
     _full_array_shape_or_none,
+    _unify_event_template_with_value,
 )
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
 from .tracked import Annotated, Tracked
@@ -428,6 +429,11 @@ class Record(NamedTree[Any], Tracked, Annotated):
             field_inputs = dict(fields)
         if not field_inputs:
             raise ValueError("Record requires at least one named field")
+
+        if event_template is not None and event_template.free_dims and _validate_leaves:
+            event_template, _ = _unify_event_template_with_value(
+                event_template, field_inputs, context=f"Record {name!r}"
+            )
 
         field_map: dict[str, _FieldValue] = {}
         for field_name, value in field_inputs.items():

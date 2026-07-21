@@ -607,12 +607,14 @@ class TestFromDistributionDelegation:
         assert isinstance(emp, RecordEmpiricalDistribution)
         assert emp.num_atoms == 50
 
-    def test_empirical_to_empirical_returns_source(self):
+    def test_empirical_to_empirical_preserves_source_only_for_raw_apply(self):
         samples = jnp.array([[1.0], [2.0], [3.0]])
         emp = RecordEmpiricalDistribution(samples, name="orig")
+        raw = from_distribution.apply(emp, RecordEmpiricalDistribution)
         emp2 = from_distribution(emp, RecordEmpiricalDistribution)
-        # Same-class: returns source directly
-        assert emp2 is emp
+        assert raw is emp
+        assert emp2 is not emp
+        assert emp2.provenance.operation == "workflow.from_distribution"
 
 
 # ---------------------------------------------------------------------------

@@ -47,9 +47,11 @@ a 3.13 one for the same source.
 from __future__ import annotations
 
 import hashlib
+import inspect
 import math
 import struct
-from typing import Any
+from enum import Enum
+from typing import Any, get_args, get_origin
 
 import jax as _jax
 import numpy as _np
@@ -516,18 +518,31 @@ def _update_function(
     function: Any,
     max_array_bytes: int | None,
 ) -> None:
-    """Hash a Function by its user function's bytecode.
+    """Hash a Function by callable content or stable implementation declaration.
 
-    Hashes ``_func.__code__`` directly rather than the Prefect task-wrapper
-    closure, so changes to the user function body are detected even when the
-    wrapper source is unchanged.
+    Plain-callable Functions retain their bytecode/default/closure identity.
+    Other private implementations use only their implementation type and the
+    Function's declared signature/templates, avoiding artifact identity.
     """
     h.update(b"wf:")
-    func = getattr(function, "_func", None)
-    if func is None:
-        h.update(b"unknown")
+    from ._function_contract import _CallableFunctionImplementation
+
+    implementation = function._implementation
+    if not isinstance(implementation, _CallableFunctionImplementation):
+        implementation_type = type(implementation)
+        h.update(b"implementation:")
+        h.update(implementation_type.__module__.encode())
+        h.update(b".")
+        h.update(implementation_type.__qualname__.encode())
+        h.update(b":signature=")
+        _update_signature_declaration(h, function.signature, max_array_bytes)
+        h.update(b":input_template=")
+        _update(h, function.input_template, 1, max_array_bytes)
+        h.update(b":output_template=")
+        _update(h, function.output_template, 1, max_array_bytes)
         return
 
+    func = implementation.callable
     code = getattr(func, "__code__", None)
     if code is None:
         h.update(repr(func)[:200].encode())
@@ -549,3 +564,116 @@ def _update_function(
         h.update(struct.pack(">I", len(closure)))
         for cell in closure:
             _update(h, cell.cell_contents, 1, max_array_bytes)
+
+
+def _update_signature_declaration(
+    h: hashlib._Hash,
+    signature: inspect.Signature,
+    max_array_bytes: int | None,
+) -> None:
+    """Hash a Python signature without object-address representations."""
+    h.update(struct.pack(">I", len(signature.parameters)))
+    for parameter in signature.parameters.values():
+        h.update(parameter.name.encode())
+        h.update(b":")
+        h.update(parameter.kind.name.encode())
+        h.update(b":default=")
+        _update_declaration_value(h, parameter.default, 0, max_array_bytes)
+        h.update(b":annotation=")
+        _update_declaration_value(h, parameter.annotation, 0, max_array_bytes)
+        h.update(b";")
+    h.update(b"return=")
+    _update_declaration_value(h, signature.return_annotation, 0, max_array_bytes)
+
+
+def _update_declaration_value(
+    h: hashlib._Hash,
+    value: Any,
+    depth: int,
+    max_array_bytes: int | None,
+) -> None:
+    """Hash signature metadata at stable declaration-level granularity."""
+    if depth > 32:
+        h.update(b"[max_depth]")
+        return
+    if value is inspect.Parameter.empty or value is inspect.Signature.empty:
+        h.update(b"empty")
+        return
+    if isinstance(value, type):
+        h.update(b"type:")
+        h.update(value.__module__.encode())
+        h.update(b".")
+        h.update(value.__qualname__.encode())
+        return
+    if isinstance(value, Enum):
+        enum_type = type(value)
+        h.update(b"enum:")
+        h.update(enum_type.__module__.encode())
+        h.update(b".")
+        h.update(enum_type.__qualname__.encode())
+        h.update(b":")
+        h.update(value.name.encode())
+        return
+
+    origin = get_origin(value)
+    if origin is not None:
+        h.update(b"typing:")
+        _update_declaration_value(h, origin, depth + 1, max_array_bytes)
+        for argument in get_args(value):
+            _update_declaration_value(h, argument, depth + 1, max_array_bytes)
+        return
+
+    if isinstance(value, (list, tuple)):
+        h.update(b"list:" if isinstance(value, list) else b"tuple:")
+        h.update(struct.pack(">I", len(value)))
+        for item in value:
+            _update_declaration_value(h, item, depth + 1, max_array_bytes)
+        return
+    if isinstance(value, dict):
+        h.update(b"dict:")
+        entries = []
+        for key, item in value.items():
+            sub = hashlib.sha256()
+            _update_declaration_value(sub, key, depth + 1, max_array_bytes)
+            entries.append((sub.digest(), key, item))
+        for _, key, item in sorted(entries, key=lambda entry: entry[0]):
+            _update_declaration_value(h, key, depth + 1, max_array_bytes)
+            _update_declaration_value(h, item, depth + 1, max_array_bytes)
+        return
+    if isinstance(value, (set, frozenset)):
+        h.update(b"set:")
+        digests = []
+        for item in value:
+            sub = hashlib.sha256()
+            _update_declaration_value(sub, item, depth + 1, max_array_bytes)
+            digests.append(sub.digest())
+        for digest in sorted(digests):
+            h.update(digest)
+        return
+    if isinstance(
+        value,
+        (
+            _NP_ARRAY_TYPE,
+            _JAX_ARRAY_TYPE,
+            _np.generic,
+            bool,
+            int,
+            float,
+            str,
+            type(None),
+        ),
+    ):
+        _update(h, value, depth + 1, max_array_bytes)
+        return
+    if callable(value):
+        h.update(b"callable:")
+        h.update(getattr(value, "__module__", type(value).__module__).encode())
+        h.update(b".")
+        h.update(getattr(value, "__qualname__", type(value).__qualname__).encode())
+        return
+
+    value_type = type(value)
+    h.update(b"opaque-type:")
+    h.update(value_type.__module__.encode())
+    h.update(b".")
+    h.update(value_type.__qualname__.encode())

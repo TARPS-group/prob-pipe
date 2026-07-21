@@ -288,7 +288,7 @@ class TestConditionOn:
         )
         cond = condition_on(joint, z=jnp.array(0.0))
         assert cond.provenance is not None
-        assert cond.provenance.operation == "condition_on"
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_condition_on_unknown_raises(self):
         joint = SequentialJointDistribution(

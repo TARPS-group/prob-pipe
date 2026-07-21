@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordArray
+from probpipe.core import _workflow_call
 from probpipe.core._workflow_distribution_normalization import (
     normalize_distribution_values,
 )
@@ -22,9 +24,24 @@ def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
     )
 
 
+def _ref(name: str) -> _workflow_call.WorkflowInputRef:
+    return _workflow_call.WorkflowInputRef(name)
+
+
+def _plan(values, hints=None):
+    signature = inspect.Signature(
+        [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
+    )
+    signature_info = _workflow_call.make_signature_info_from_signature(
+        signature,
+        hints=hints,
+    )
+    return build_broadcast_plan(values=values, signature_info=signature_info)
+
+
 class TestBroadcastRegime:
     def test_plain_values_do_not_broadcast(self):
-        plan = build_broadcast_plan(values={"x": 1.0}, hints={})
+        plan = _plan({"x": 1.0})
 
         assert plan.regime == "none"
         assert plan.dist_args == ()
@@ -36,22 +53,22 @@ class TestBroadcastRegime:
     def test_distribution_value_selects_distribution_regime(self):
         dist = Normal(loc=0.0, scale=1.0, name="x")
 
-        plan = build_broadcast_plan(values={"x": dist}, hints={})
+        plan = _plan({"x": dist})
 
         assert plan.regime == "distribution"
-        assert plan.dist_args == ("x",)
+        assert plan.dist_args == (_ref("x"),)
         assert plan.array_args == ()
 
     def test_record_array_value_selects_sweep_regime(self):
         values = {"p": _numeric_record_array("x", range(4))}
 
-        plan = build_broadcast_plan(values=values, hints={})
+        plan = _plan(values)
 
         assert plan.regime == "sweep"
         assert plan.dist_args == ()
-        assert plan.array_args == ("p",)
+        assert plan.array_args == (_ref("p"),)
         assert plan.array_groups == (
-            ArrayBroadcastGroup(arg_names=("p",), batch_shape=(4,), size=4),
+            ArrayBroadcastGroup(arg_refs=(_ref("p"),), batch_shape=(4,), size=4),
         )
         assert plan.sweep_batch_shape == (4,)
         assert plan.n_sweep == 4
@@ -62,25 +79,19 @@ class TestBroadcastRegime:
             "noise": Normal(loc=0.0, scale=1.0, name="noise"),
         }
 
-        plan = build_broadcast_plan(values=values, hints={})
+        plan = _plan(values)
 
         assert plan.regime == "nested"
-        assert plan.dist_args == ("noise",)
-        assert plan.array_args == ("p",)
+        assert plan.dist_args == (_ref("noise"),)
+        assert plan.array_args == (_ref("p"),)
 
 
 class TestHintClassification:
     def test_distribution_hints_skip_scalar_distribution_broadcast(self):
         dist = Normal(loc=0.0, scale=1.0, name="x")
 
-        concrete = build_broadcast_plan(
-            values={"x": dist},
-            hints={"x": Distribution},
-        )
-        protocol = build_broadcast_plan(
-            values={"x": dist},
-            hints={"x": SupportsSampling},
-        )
+        concrete = _plan({"x": dist}, {"x": Distribution})
+        protocol = _plan({"x": dist}, {"x": SupportsSampling})
 
         assert concrete.regime == "none"
         assert protocol.regime == "none"
@@ -95,18 +106,9 @@ class TestHintClassification:
             name="d",
         )
 
-        record_plan = build_broadcast_plan(
-            values={"p": ra},
-            hints={"p": NumericRecordArray},
-        )
-        dist_plan = build_broadcast_plan(
-            values={"d": da},
-            hints={"d": DistributionArray},
-        )
-        any_plan = build_broadcast_plan(
-            values={"p": ra},
-            hints={"p": Any},
-        )
+        record_plan = _plan({"p": ra}, {"p": NumericRecordArray})
+        dist_plan = _plan({"d": da}, {"d": DistributionArray})
+        any_plan = _plan({"p": ra}, {"p": Any})
 
         assert record_plan.regime == "none"
         assert dist_plan.regime == "none"
@@ -119,15 +121,12 @@ class TestArrayGrouping:
             [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)]
         )
 
-        plan = build_broadcast_plan(
-            values={"x": ra.view("x"), "y": ra.view("y")},
-            hints={},
-        )
+        plan = _plan({"x": ra.view("x"), "y": ra.view("y")})
 
         assert plan.regime == "sweep"
-        assert plan.array_args == ("x", "y")
+        assert plan.array_args == (_ref("x"), _ref("y"))
         assert plan.array_groups == (
-            ArrayBroadcastGroup(arg_names=("x", "y"), batch_shape=(4,), size=4),
+            ArrayBroadcastGroup(arg_refs=(_ref("x"), _ref("y")), batch_shape=(4,), size=4),
         )
         assert plan.sweep_batch_shape == (4,)
         assert plan.n_sweep == 4
@@ -136,15 +135,12 @@ class TestArrayGrouping:
         ra_a = _numeric_record_array("a", range(3))
         ra_b = _numeric_record_array("b", range(2))
 
-        plan = build_broadcast_plan(
-            values={"a": ra_a.view("a"), "b": ra_b.view("b")},
-            hints={},
-        )
+        plan = _plan({"a": ra_a.view("a"), "b": ra_b.view("b")})
 
         assert plan.regime == "sweep"
         assert plan.array_groups == (
-            ArrayBroadcastGroup(arg_names=("a",), batch_shape=(3,), size=3),
-            ArrayBroadcastGroup(arg_names=("b",), batch_shape=(2,), size=2),
+            ArrayBroadcastGroup(arg_refs=(_ref("a"),), batch_shape=(3,), size=3),
+            ArrayBroadcastGroup(arg_refs=(_ref("b"),), batch_shape=(2,), size=2),
         )
         assert plan.sweep_batch_shape == (3, 2)
         assert plan.n_sweep == 6
@@ -158,12 +154,12 @@ class TestArrayGrouping:
             name="d",
         )
 
-        plan = build_broadcast_plan(values={"d": da}, hints={})
+        plan = _plan({"d": da})
 
         assert plan.regime == "sweep"
-        assert plan.array_args == ("d",)
+        assert plan.array_args == (_ref("d"),)
         assert plan.array_groups == (
-            ArrayBroadcastGroup(arg_names=("d",), batch_shape=(2, 3), size=6),
+            ArrayBroadcastGroup(arg_refs=(_ref("d"),), batch_shape=(2, 3), size=6),
         )
         assert plan.sweep_batch_shape == (2, 3)
         assert plan.n_sweep == 6
@@ -174,9 +170,22 @@ class TestPlanPurity:
         external = tfd.Normal(loc=0.0, scale=1.0)
         values = {"x": external}
 
-        raw_plan = build_broadcast_plan(values=values, hints={})
-        normalized = normalize_distribution_values(values=values, hints={})
-        normalized_plan = build_broadcast_plan(values=normalized, hints={})
+        signature = inspect.Signature(
+            [inspect.Parameter("x", inspect.Parameter.POSITIONAL_OR_KEYWORD)]
+        )
+        signature_info = _workflow_call.make_signature_info_from_signature(signature)
+        raw_plan = build_broadcast_plan(
+            values=values,
+            signature_info=signature_info,
+        )
+        normalized = normalize_distribution_values(
+            values=values,
+            signature_info=signature_info,
+        )
+        normalized_plan = build_broadcast_plan(
+            values=normalized,
+            signature_info=signature_info,
+        )
 
         assert values["x"] is external
         assert raw_plan.regime == "none"
