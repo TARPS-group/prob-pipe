@@ -9,10 +9,10 @@ The sections build in the order below, each depending only on those above it and
 | §      | Layer                       | Contents                                                                                              | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
 | III.1  | Schema                      | `EventTemplate`                                                                                       | A `NamedTree` of type-specs — the type-level structure of one value. Pure structure, no data.                  |
-| III.2  | Values                      | `FunctionBatch` / `OpaqueBatch`                                                                                       | Batches of function-valued and opaque values, giving every value spec a batch form.                             |
+| III.2  | Values                      | `Function`, `SupportsDifferentiation`, `FunctionBatch` / `OpaqueBatch`                                                            | The function kind's base — templates, identity, plain evaluation — its differentiability claim, plus the batch forms of the function-valued and opaque specs. |
 | III.3  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
 | III.4  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
-| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map typed by numeric event templates, and the carrier of covariances.                          |
+| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map — the linear `Function` subtype (III.2) — typed by numeric event templates, and the carrier of covariances.                          |
 | III.6  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an `event_template` for its draws.                           |
 | III.7  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
 | III.8  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
@@ -21,7 +21,7 @@ The sections build in the order below, each depending only on those above it and
 | III.11  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts, with the result kind derived from the operands.                                        |
 | III.12 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
 | III.13 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
-| III.14 | Registries | constraint reparameterization (`bijector_for`) | Mapping a `Constraint` to a bijector for unconstrained inference. |
+| III.14 | Registries | constraint reparameterization (`bijector_for`, `SupportsInverse`, `SupportsLogDetJacobian`) | Mapping a `Constraint` to a bijector for unconstrained inference, with the invertibility and Jacobian claims. |
 
 ## III.1 — `EventTemplate`
 
@@ -94,9 +94,56 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ---
 
-## III.2 — `FunctionBatch` and `OpaqueBatch`
+## III.2 — `Function`, `FunctionBatch`, and `OpaqueBatch`
 
 ### Contract
+
+The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map: a `name`, `provenance`, and an input and an output `EventTemplate` — the two sides of its `FunctionSpec`, either side optional exactly as in the spec. Construction fixes all of it. A `Function` carries a frozen `inspect.Signature`, authoritative for Python argument binding — parameter kinds, defaults, and variadic parameters, which a value schema cannot express — while the `input_template` is authoritative for the value schema. Construction validates their total correspondence, the signature's parameters matching the template's top-level fields, so binding an argument binds a field by name. The wrapped callable and its state stay private, reached only through the `Function`'s methods, so a stateful map exposes no backend object.
+
+A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_template`, it returns one conforming to `output_template`, with no tracking or lifting. `__call__` runs the **call path**, the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import, adding lifting, tracking, and provenance to every `Function`. So `apply` is the raw map that operations such as change-of-variables build on, and `__call__` is the tracked call a user makes. The base also carries its **controls** — the execution defaults of IV.3 (sample count, seed, dispatch, orchestration) — set at construction and revised functionally by `with_options` (`C2 – Functional interface over immutable objects`); the base gives them no meaning, and the engine reads them at call time.
+
+A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Three capability protocols accompany the base: `SupportsDifferentiation`, defined below, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.14 while the protocols themselves sit beside the base in the layout. All are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7, except that a claim with an instance guard is read through its predicate: `SupportsDifferentiation` declares *which* values differentiate, read through `is_differentiable` as described below, and invertibility is read through `is_invertible` (III.14). The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
+
+```python
+class Function(Tracked):
+    def __init__(self, name: str, fn: Callable, *,
+                 input_template: EventTemplate | None = None,
+                 output_template: EventTemplate | None = None,
+                 differentiable: NumericEventTemplate = ...) -> None: ...
+                 # optional: a non-empty template of exactly the differentiable values;
+                 # omitted, the Function makes no claim
+    @property
+    def input_template(self) -> EventTemplate | None: ...
+    @property
+    def output_template(self) -> EventTemplate | None: ...
+    @property
+    def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
+    def with_options(self, **controls) -> Self: ...      # functional update (C2)
+    def apply(self, *args, **kwargs) -> Any: ...
+    # evaluate the wrapped callable at a point (input_template -> output_template),
+    # with no tracking or lifting; the raw map operations build on
+    def __call__(self, *args, **kwargs) -> Any: ...
+    # run the call path: plain evaluation on the base, the Part IV engine after import
+
+def install_call_engine(engine: Callable[..., Any]) -> None: ...
+    # replaces the call path, once, at import time; until then calls evaluate plainly.
+    # The engine reads the controls the Function carries and must agree with
+    # plain evaluation on concrete values (IV.1).
+
+@runtime_checkable
+class SupportsDifferentiation(Protocol):
+    @property
+    def differentiable_template(self) -> NumericEventTemplate: ...
+    # exactly the values gradients propagate through: a sub-template of the numeric
+    # input template (maps) or of the numeric event template (distributions)
+
+def is_differentiable(x: Any, values: NamedTree | None = None) -> bool: ...
+# True when every value named in `values` lies in x's differentiable template;
+# with no `values`, when the template covers every numeric value. False when x
+# does not declare the capability.
+```
+
+An object declares `SupportsDifferentiation` at construction to state which values gradients propagate through: its `differentiable_template` contains exactly the differentiable values, a sub-template of the numeric input template for a map and of the numeric event template for a distribution. `is_differentiable(x, values)` checks the claim: it is `True` when every value named in `values` lies in the template and, called without `values`, when the template covers every numeric value — the end-to-end case. The template is non-empty, as every `EventTemplate` is: carrying the capability asserts that something differentiates. An object with nothing to claim does not declare it, and `is_differentiable` is then `False`. A `Function` declares its template through the decorator's `differentiable` argument, which takes the template itself; the claim is always explicit, and omitting the argument makes no claim. A linear operator claims its whole input template, and a distribution family claims the event values its sampling reparameterizes. The claim composes: a field view restricts its parent's template to the viewed path, a joint assembles its factors' templates under their field names, and a value is differentiable through a chain of steps exactly when every step claims it. An operation that needs gradients checks `is_differentiable` for the values it differentiates and names the first step that fails, before a backend trace runs. Execution dispatch is a separate control, so `jax` vectorizes a call whether or not the object differentiates.
 
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.
 
@@ -112,7 +159,11 @@ class OpaqueBatch(Batch[Any]):
 
 ### Rationale
 
-The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them.
+Defining the base in the value layer keeps the layering strict: the representation is fixed here, the call engine arrives by upward registration (`D2 – Generality first`), and `LinOp` and the specs reference `Function` downward — the split the package structure realizes as `values/_function_base.py` and `functions/`. The batch forms close the multiplicity axis over the value specs: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces. Giving every value spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them.
+
+### Open points
+
+- *Differentiability of sampling-based routes.* Whether a Monte Carlo fallback differentiates through its sampler's reparameterization is unsettled. So is the eventual `grad` operation the claims feed, with registered routes: a custom gradient method where an object supplies one, the automatic-differentiation route gated by the declared template, and finite differences as the fallback at approximate fidelity. Both are left to a dedicated pass.
 
 ## III.3 — `Record` and `NumericRecord`
 
@@ -150,12 +201,12 @@ class Record(NamedTree[Any], Tracked, Annotated):
     # reconstruct from values in the template's canonical order; ValueError on count/shape mismatch
 
     def select(self, *fields: str, **mapping: str) -> dict[str, Any]: ...
-    # fields into a plain dict for **-splatting into a computation call;
+    # fields into a plain dict for **-splatting into a `Function` call;
     # keywords remap: select(x="r") == {"x": self["r"]}
     def select_all(self) -> dict[str, Any]: ...   # every top-level field, ready to splat
 ```
 
-`select` resolves each argument with `at_path`, so a key reaches a leaf and a partial path a subtree view, and returns a plain `dict` carrying no schema; its purpose is `**`-splatting a value's parts into a computation call (Part IV), with `select_all` the whole-record form over the top-level children.
+`select` resolves each argument with `at_path`, so a key reaches a leaf and a partial path a subtree view, and returns a plain `dict` carrying no schema; its purpose is `**`-splatting a value's parts into a `Function` call (Part IV), with `select_all` the whole-record form over the top-level children.
 
 When every leaf is numeric, a `Record` is a `NumericRecord`. Leaves are stored in native form — a bare array, an `xarray` / `pandas` container, or any registered array backend — and convert to `jax.Array` only at the compute boundary (the pytree flatten that `grad` / `vmap` / `jit` traverse, and `to_vector`), each leaf at most once. Because promotion changes no data, construction auto-promotes exactly when every leaf is numeric and no explicit non-numeric template vetoes it, and every transform re-derives the promotion from the current leaves — removing the last non-numeric leaf promotes, introducing one demotes — exactly as for `EventTemplate`. Flat vectorization reads its layout (`leaf_shapes`, `vector_size`, canonical order) from the template. At the boundary a `NumericRecord` presents a bare array pytree, so it passes through `grad` / `vmap` / `jit` unchanged and a JAX round-trip returns bare-array leaves; passing through means leaf transport only — a transform never promotes a `Record` to a `RecordBatch`. Flattening is deliberately numeric-only, which is why `NamedTree` itself has no `flatten`.
 
@@ -172,7 +223,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Notes
 
-- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays (a `NumericRecord`'s native leaves convert at this boundary) and its static aux data is the template and the identity pair (`name`, `name_is_auto`) only, so provenance, annotations, and native container types do not survive a JAX transform boundary; lineage instead rides on the computation layer, which records the transform itself.
+- *Pytrees.* `Record` and `NumericRecord` are registered as JAX pytrees for advanced use, and the native `NamedTree` methods are the supported interface. JAX traversal follows the pytree registration, which does not always agree with ProbPipe on what is a leaf, so users applying raw JAX functions are responsible for the documented behavior. Record equality is structural value equality, which is weaker than treedef equality. The registration's children are the field arrays (a `NumericRecord`'s native leaves convert at this boundary) and its static aux data is the template and the identity pair (`name`, `name_is_auto`) only, so provenance, annotations, and native container types do not survive a JAX transform boundary; lineage instead rides on the function layer, which records the transform itself.
 
 - *Single-field presentation.* A single-field `NumericRecord` forwards the explicit coercion entry points to its sole leaf — `float` / `int` / `bool`, `np.asarray` / `jnp.asarray`, and the `.shape` / `.dtype` / `.ndim` attributes — and a single-field `Record` holding a callable forwards `__call__`. The shim is deliberately narrow: no arithmetic, reductions, or slicing, and a multi-field record raises and points at explicit field access, since unwrapping one field of many would be ambiguous.
 - *Construction validation.* Construction checks each leaf against its spec's `is_valid`, which validates structure only — for an `ArraySpec`, shape and dtype (dtype by `numpy.can_cast` same-kind: a widening promotion or a within-kind narrowing passes, a cross-kind conversion raises). An `ArraySpec`'s `support` is **not** part of `is_valid`: it is a data-dependent, element-wise check that reduces to a Python `bool` and so cannot run under `jax.jit` tracing, where construction also happens (pytree unflatten reconstructs a value inside the trace). `support` is therefore descriptive metadata, and invariant 2 (`is_valid`) covers shape and dtype. Leaf validation is skipped on the unflatten path, where a leaf's shape is transform-relative.
@@ -181,7 +232,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Contract
 
-A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTemplate`. It is the batched value a computation produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `Tracked` but not `Annotated`, and it is a *collection* of records rather than itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
+A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTemplate`. It is the batched value a `Function` produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `Tracked` but not `Annotated`, and it is a *collection* of records rather than itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
 
 ```python
 class RecordBatch(Batch[Record]):
@@ -214,12 +265,12 @@ A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side:
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces, and it is `Tracked`. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.2), so it is `Tracked` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a value, an `Array` or a `NumericRecord` conforming to `input_template`, returning the matching form, with the operator's parameters as the private state behind it. Calling a `LinOp` therefore takes the same call path as any `Function`, and like any `Function` it carries the execution controls, read only by a call that needs them. `matvec` is syntactic sugar for `apply`, its linear-algebra name; `matmat` applies the action to stacked columns in one routine and is the operator's registered batched rule, with `rmatvec` and `rmatmat` for the transpose. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (mirroring a `FunctionSpec`), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
 
 Its templates are always concrete, and construction from a template with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
 ```python
-class LinOp(Tracked, ABC):
+class LinOp(Function, ABC):        # the linear subtype of the III.2 base
     @property
     @abstractmethod
     def shape(self) -> tuple[int, int]: ...    # (output_template.vector_size, input_template.vector_size)
@@ -236,8 +287,11 @@ class LinOp(Tracked, ABC):
     def to_dense(self) -> Array: ...
 
     def matvec(self, x: Array | NumericRecord) -> Array | NumericRecord: ...
-    # A x; a NumericRecord flattens through input_template, and the result matches the argument's form
-    def matmat(self, X: Array) -> Array: ...   # A X on a matrix; rmatvec / rmatmat apply the transpose
+    # syntactic sugar for apply: A x, with a NumericRecord flattened through
+    # input_template and the result matching the argument's form
+    def matmat(self, X: Array) -> Array: ...
+    # A X on stacked columns, the operator's registered batched rule;
+    # rmatvec / rmatmat apply the transpose
 
     # square-only queries
     def solve(self, b: Array) -> Array: ...
@@ -259,7 +313,7 @@ class LinOp(Tracked, ABC):
 
 ### Rationale
 
-Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators keep every query differentiable (`D6 – Differentiability where possible`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
+Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators claim `SupportsDifferentiation` so their queries differentiate end-to-end (`D6 – Differentiability as a capability`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
 
 ### Open points
 
@@ -315,7 +369,7 @@ DistributionSpec(event_template: EventTemplate)
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and, when it is array-backed, differentiable end-to-end (`D6 – Differentiability where possible`). A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`).
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and differentiable end-to-end when it claims `SupportsDifferentiation`, as the array-backed families do (`D6 – Differentiability as a capability`). A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`).
 
 ## III.7 — Distribution capabilities
 
@@ -401,7 +455,7 @@ Making each operation a *capability* rather than a base-class method follows `D3
 
 ### Contract
 
-A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `ConditionalDistribution` is not a `Distribution` and does not inherit from one: it has no marginal law, so `sample` / `log_prob` / `mean` do not apply to it unconditionally. Rather, the two are siblings sharing a capability vocabulary.
+A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `Distribution` is the empty-given corner of this picture, a kernel with nothing to condition on, so its marginal law exists and `sample` / `log_prob` / `mean` apply unconditionally, whereas a kernel with a non-empty given has none. A distribution is *isomorphic* to a kernel with an empty given but not identical to one, and the two stay distinct tracked types, neither inheriting from the other. ProbPipe represents only the distribution at that corner: a `ConditionalDistribution` carries a non-empty `given_template`, so there is no empty template and no rule that turns an empty-given kernel into a `Distribution` — a kernel is never in that state, since binding its last given field returns the `Distribution` directly — and a `ConditionalDistributionSpec` likewise carries a non-empty given, the empty corner being `DistributionSpec`'s. They are siblings sharing a capability vocabulary, each unconditional capability mirrored by a conditional twin that prepends the given.
 
 A `ConditionalDistribution` carries two schemas: a `given_template` (the `EventTemplate` of the conditioning value `S`) and an `event_template` (the schema of one produced draw `T`). Unlike a function's domain and codomain, a kernel's given and event are distinct *roles* — the value conditioned on versus the law produced — so their field names stay disjoint even when the two spaces coincide. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two templates jointly, so a name shared between given and event fields is one dimension, and the fused conditional paths bind dimensions from the given value at call time. `with_path_names` renames fields across both templates, returning the same kernel under new field names, and `with_dims` binds symbolic dimensions across both.
 
@@ -644,21 +698,29 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 
 ### Contract
 
-Gradient-based and Hamiltonian inference work in an unconstrained space, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a bijector that takes `ℝⁿ` onto that support. `bijector_for(constraint)` returns the canonical bijector, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
+Many inference algorithms are defined to operate on an unconstrained space ℝᵈ, among them gradient-based optimization and Hamiltonian Monte Carlo, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims the two capabilities below. Invertibility is one capability: a `Function` claims `SupportsInverse` by providing the inverse map, its own `apply` (III.2) serving as the forward, so the protocol stays minimal and the forward map comes from the `Function` that claims it. The Jacobian determinant is a second, separate capability: `SupportsLogDetJacobian` provides the log-determinant of the Jacobian, which exists only for a differentiable map, and a map can be invertible without it. Change of variables requires exactly the pair, and both are typed over structured numeric values as well as bare arrays. A `LinOp` claims them only when they apply: the claim is guarded per instance by squareness (`input_template == output_template`), with its inverse from the operator algebra and its `logdet` the log-Jacobian, and a rectangular operator makes no claim. `is_invertible` reads the claim together with its guard — unconditional for a declared bijector, squareness for a linear operator — while singularity, which no construction-time check decides, surfaces at call time as `LinAlgError`, exactly as for `solve`. A slot checks the claims it needs at construction and raises a capability error otherwise: the bijector of a transformed distribution requires `is_invertible` and the Jacobian claim, the link of a GLM likelihood `is_invertible` alone. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
 
 ```python
-class Bijector(ABC):                    # an invertible map with a tractable Jacobian
-    @abstractmethod
-    def forward(self, x: Array) -> Array: ...
-    @abstractmethod
-    def inverse(self, y: Array) -> Array: ...
-    @abstractmethod
-    def forward_log_det_jacobian(self, x: Array) -> Array: ...
+@runtime_checkable
+class SupportsInverse(Protocol):            # an invertible map
+    # minimal by design: the forward map is the claiming Function's own apply (III.2);
+    # typed over the numeric value carried, not fixed to arrays
+    def _inverse(self, y: Array | NumericRecord) -> Array | NumericRecord: ...
 
-def bijector_for(constraint: Constraint) -> Bijector: ...    # the canonical map ℝⁿ → support(constraint)
+@runtime_checkable
+class SupportsLogDetJacobian(Protocol):     # a map with a tractable Jacobian determinant
+    def _log_det_jacobian(self, x: Array | NumericRecord) -> Array: ...
+    # the log-determinant of the Jacobian at x, defined only for a differentiable map
+
+def is_invertible(f: Any) -> bool: ...
+# True when f claims SupportsInverse and the instance guard passes: unconditionally
+# for a declared bijector, squareness for a linear operator
+
+def bijector_for(constraint: Constraint) -> Function: ...
+# the canonical map ℝⁿ → support(constraint), a Function claiming both capabilities
 def register_bijector(
     key: type[Constraint] | Constraint,
-    factory: Callable[[Constraint], Bijector],
+    factory: Callable[[Constraint], Function],   # each factory output claims both capabilities
 ) -> None: ...
 ```
 
@@ -666,7 +728,7 @@ The factory keys on constraint instances and types rather than dispatching on ar
 
 ### Rationale
 
-A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which serves `D6 – Differentiability where possible`. Keeping the map open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
+A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which serves `D6 – Differentiability as a capability`. Invertibility as a capability is `D3 – Capability-based operations`: an invertible map is an ordinary `Function` that additionally claims `SupportsInverse`, so it evaluates, composes, and pushes forward like any other, with *bijector* reserved for the mathematical statement. The Jacobian determinant is a separate claim for the same reason: a map can be invertible without a tractable determinant, so each claim stays honest on its own and change of variables asks for exactly the pair. Keeping the factory open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
 
 ### Open points
 

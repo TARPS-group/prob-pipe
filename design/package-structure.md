@@ -2,7 +2,7 @@
 
 The package layout realizes the design reference as an import architecture: one package per layer of the reference, imports pointing strictly downward, and registries carrying capability upward. Like the rest of the reference, it describes the target state, but its module boundaries follow the seams the implementation already has, so the layout is reachable by moving modules rather than rewriting them.
 
-This document uses the **`Function`** vocabulary. A `Function` is the universal function representation: a tracked term carrying an input and an output template. `LinOp` is its linear subtype, invertibility is a capability, a `FunctionSpec` admits it, and a `FunctionBatch` holds them. Its detailed contract is unsettled (see Open points); this document fixes only where its pieces live.
+This document uses the **`Function`** vocabulary. A `Function` is the universal function representation: a tracked term carrying an input and an output template and wrapping any Python callable. `LinOp` is its linear subtype, and invertibility is a capability a `Function` may claim. The value-layer specs stay callable-generic: a `FunctionSpec` admits any callable — a `Function` is one such, not the required type — and a `FunctionBatch` holds a collection of them. The base class is `Function` itself, in the value layer, carrying templates, identity, and plain evaluation; the Part IV engine is installed on it at import, registration flowing upward. This document fixes where its pieces live.
 
 ### Principles
 
@@ -33,8 +33,8 @@ probpipe/
 │   ├── _constraints.py        #   Constraint and the constraint factories (III.1)
 │   ├── _specs.py              #   ValueSpec, ArraySpec, OpaqueSpec (III.1)
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (III.1)
-│   ├── _function_base.py      #   the function kind's base: what a FunctionSpec admits,
-│   │                          #     FunctionSpec itself, and function capabilities (invertibility, …)
+│   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
+│   │                          #     plain evaluation), FunctionSpec, and the function capabilities
 │   ├── _function_batch.py     #   FunctionBatch (III.2)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
 │   ├── _record.py             #   Record, NumericRecord (III.3)
@@ -57,9 +57,11 @@ probpipe/
 │   ├── _conversion.py         #   Converter, ConverterRegistry (III.13)
 │   └── _reparameterization.py #   Constraint → invertible Function (III.14)
 ├── functions/                 # Part IV — Function and its engine
-│   ├── _function.py           #   Function, the wrapping decorator, controls, with_options
+│   ├── _function.py           #   the engine installed on Function at import; the wrapping decorator
 │   ├── _call.py               #   argument classification: the lifting trigger (IV.2)
 │   ├── _plan.py               #   broadcast planning, root-ancestor grouping (IV.2)
+│   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
+│   │                          #     populated upward by the families (V.6)
 │   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (IV.2)
 │   ├── _sweep.py              #   the batch sweep (IV.2)
 │   ├── _keys.py               #   the structural key split from seed (IV.3)
@@ -73,7 +75,8 @@ probpipe/
 │   ├── _condition.py          #   condition_on, predictive, the inference registry (V.4)
 │   ├── _joint.py              #   joint (V.5)
 │   ├── _evaluate.py           #   evaluate and its rule registry (V.6)
-│   └── _marginal.py           #   marginal, factor (V.7)
+│   ├── _inverse.py            #   inverse, log_det_jacobian (V.7)
+│   └── _marginal.py           #   marginal, factor (V.8)
 ├── families/                  # Part VI — the distribution catalog
 │   ├── _backend.py            #   TFPDistribution, the backend adapter (VI.1)
 │   ├── _continuous.py         #   Normal, Gamma, … (VI.1)
@@ -94,11 +97,11 @@ probpipe/
 ### The layers
 
 - **`core/`** is Part II verbatim: generic, type-agnostic, and importable by everything.
-- **`values/`** is the value layer of Part III, covering every leaf kind. The function kind's base lives here: the class a `FunctionSpec` admits and a `FunctionBatch` holds, together with its capability protocols. The base carries the *representation* only: templates, identity, and plain evaluation. `LinOp` subclasses it and the spec references it, both below the distribution layer.
+- **`values/`** is the value layer of Part III, covering every leaf kind. The function kind's base lives here: `Function` itself, the class a `FunctionSpec` admits and a `FunctionBatch` holds, together with its capability protocols. The base carries the *representation* only: templates, identity, and plain evaluation. `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
-- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per operation section (V.1–V.7). V.0's operation model is the wrapping itself, and V.8's batching is the engine's sweep, so neither is a module here. The registries the operations own are defined here and populated from above: the inference-method registry with `condition_on`, and the rule registry with `evaluate`.
+- **`functions/`** is the `Function` engine, installed on the III.2 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per operation section (V.1–V.8). V.0's operation model is the wrapping itself, and V.9's batching is the engine's sweep, so neither is a module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
 
@@ -117,7 +120,7 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `core/_workflow_sweep.py` | `functions/_sweep.py` |
 | `core/_workflow_execution.py` | `functions/_execution.py` |
 | `core/_workflow_result.py`, `core/_workflow_distribution_normalization.py` | `functions/_result.py` |
-| `core/ops.py` | `operations/`, one module per operation section (V.1–V.7) |
+| `core/ops.py` | `operations/`, one module per operation section (V.1–V.8) |
 | `core/distribution.py`, `core/_distribution_base.py` | `distributions/_distribution.py` |
 | `core/protocols.py` | `distributions/_capabilities.py` |
 | `core/_distribution_array.py`, `core/_broadcast_distributions.py` | `distributions/_batches.py` |
@@ -128,5 +131,4 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 
 ### Open points
 
-- *The `Function` contract.* The decorator, the call behavior, the base class's name and exact surface, and how the engine attaches to it are fixed by the forthcoming `Function` design. This document constrains only placement: the base in `values/`, the engine in `functions/`.
 - *Model-construction helpers.* The GLM assembly lands in the catalog; whether the remaining model-building conveniences earn a package is settled by the catalog consolidation.

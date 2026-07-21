@@ -28,6 +28,6 @@ ProbPipe's overarching aim is *simplification via abstraction*: complexity is ab
 
 **D5 — Explicit, carried structure.** The structure of a value — its named parts and their kinds — is represented explicitly and travels with the value and with the objects that produce and consume it. Structure is propagated forward from the producer that knows it.
 
-**D6 — Differentiability where possible.** An operation is differentiable end-to-end when the objects it acts on are backed by a differentiable, array-native representation, so gradients propagate through an entire workflow; when they are not, the operation remains correct but forgoes differentiability. Support for differentiation is encouraged but not required.
+**D6 — Differentiability as a capability.** Differentiability is a capability an object claims. Operations that require gradients dispatch on it, so support is settled at dispatch and a step that cannot differentiate is named there. Differentiability composes: a workflow is differentiable end-to-end exactly when every step claims it. Support for differentiation is encouraged but not required.
 
 **D7 — Single source of truth.** Each quantity is stored once, in one authoritative place; summaries, alternate encodings, exports, and any other view are derived from it on demand rather than stored separately.
