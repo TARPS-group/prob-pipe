@@ -626,7 +626,7 @@ class RecordEmpiricalDistribution(
 
     @property
     def supports(self) -> dict[str, Constraint]:
-        return {key: real for key in self._record_data}
+        return dict.fromkeys(self._record_data, real)
 
     # -- sampling -----------------------------------------------------------
 
@@ -1240,7 +1240,7 @@ class RecordBootstrapReplicateDistribution(
 
     @property
     def supports(self) -> dict[str, Constraint]:
-        return {f: real for f in self._record_data.fields}
+        return dict.fromkeys(self._record_data.fields, real)
 
     # -- sampling -----------------------------------------------------------
 

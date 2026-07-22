@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
@@ -271,7 +272,7 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
     """
     visited: set = {id(node)}
     ancestors: list = []
-    queue: list = []
+    queue: deque[Any] = deque()
 
     def _enqueue(p: Any) -> None:
         key = _parent_key(p)
@@ -285,7 +286,7 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
             _enqueue(p)
 
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         current_provenance = current.provenance
         if current_provenance is not None:
             for p in current_provenance.parents:
