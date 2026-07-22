@@ -1,9 +1,11 @@
 # Identity & provenance
 
-Every `Distribution` or `Record` returned by a Function carries
-a `Provenance` record linking it to its inputs and the op that produced
-it. The result is a directed acyclic graph: each node is a value, each
-edge points from a value to one of its inputs.
+Every `Distribution` or `Record` returned by a Function carries a
+`Provenance` record describing the operation that produced it. Tracked inputs
+are lineage `parents`; resolved ordinary values are fingerprinted separately
+under `inputs`. The resulting directed acyclic graph traverses only tracked
+parents, while ordinary arrays, scalars, defaults, and Module-provided values
+still distinguish otherwise identical calls.
 
 `provenance_ancestors(value)` returns the transitive set of ancestors that
 went into producing `value`. `provenance_dag(value)` renders the same
@@ -43,8 +45,8 @@ How much history is retained is controlled by a global `ProvenanceMode`:
 
 | Mode | What is stored | Memory cost |
 |------|----------------|-------------|
-| `LIGHTWEIGHT` (default) | `ParentInfo` descriptors — type name, distribution name, and the parent's own provenance chain | Low — parent data arrays can be GC'd |
-| `FULL` | `ParentInfo` plus a live reference to the parent object via `.parent` | Higher — full ancestry stays in memory |
+| `LIGHTWEIGHT` (default) | `ParentInfo` descriptors for tracked parents and plain inputs; tracked parents also carry their own provenance chain | Low — parent and input values can be GC'd |
+| `FULL` | `ParentInfo` plus a live reference to each tracked parent or plain input via `.parent` | Higher — full ancestry and call inputs stay in memory |
 | `OFF` | Nothing — `dist.provenance` is `None` | Zero |
 
 Set the mode once at startup:
@@ -88,6 +90,23 @@ anc.parent                                      # the live Normal distribution
 sample(anc.parent, key=key, sample_shape=(100,))  # sample from it
 ```
 
+## Resolved plain inputs
+
+`Provenance.inputs` maps stable parameter labels to `ParentInfo` descriptors.
+These values are not returned by `provenance_ancestors()` and do not add DAG
+edges. They capture the resolved call before lifting or sweep execution, so a
+broadcast records the original Distribution as a tracked parent and retains
+ordinary static arguments without substituting per-cell samples.
+
+```python
+conditioned = condition_on(joint, x=0.0)
+info = conditioned.provenance.inputs["**kwargs['x']"]
+print(info.fingerprint)  # differs from the fingerprint for x=5.0
+```
+
+Operation controls such as dispatch and sample count remain in provenance
+`metadata`; they are not duplicated in `inputs`.
+
 ## Migration from the pre-LIGHTWEIGHT API
 
 Before `ProvenanceMode` was introduced, `provenance_ancestors` always
@@ -113,10 +132,10 @@ sample(ancestors[0].parent, key=key, sample_shape=(10,))
 
 ## Content fingerprints
 
-Every `ParentInfo` descriptor carries a `fingerprint` — a 16-character hex
-string that stably identifies the parent's content across processes.  It is
-populated automatically by `Provenance.create()` and visible in `to_dict()`
-output:
+Every tracked-parent or plain-input `ParentInfo` descriptor carries a
+`fingerprint` — a 16-character hex string that stably identifies its content
+across processes. It is populated automatically by `Provenance.create()` and
+visible in `to_dict()` output:
 
 ```python
 prior = Normal(loc=0.0, scale=1.0, name="prior")

@@ -32,6 +32,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   structurally; callable implementations additionally encode their code,
   defaults, and closure, while private implementations use stable opaque-
   default type fallbacks rather than address-bearing signature strings.
+  Function provenance now separates tracked lineage in `parents` from all
+  resolved ordinary call arguments in `inputs`; the latter retain stable
+  per-slot fingerprints across plain, broadcast, sweep, and nested execution
+  without appearing in ancestry DAGs. Existing operation controls remain in
+  provenance metadata.
   `LinOp.apply(x)` now
   delegates to `matvec(x)`, preserving existing operator structure and
   behavior. `Function._from_implementation(...)` is the internal construction

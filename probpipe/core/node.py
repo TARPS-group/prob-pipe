@@ -715,12 +715,15 @@ class Function(Node, Tracked, Annotated):
             else None
         )
         provenance_parents: list[Tracked] = [self]
+        provenance_inputs: dict[str, Any] = {}
         seen_parent_ids = {id(self)}
         for ref in _workflow_call.iter_input_refs(self._signature_info, values):
             value = _workflow_call.input_ref_value(values, ref)
             if isinstance(value, Tracked) and id(value) not in seen_parent_ids:
                 seen_parent_ids.add(id(value))
                 provenance_parents.append(value)
+            elif not isinstance(value, Tracked):
+                provenance_inputs[ref.label] = value
 
         def invoke_point(**point_values: Any) -> Any:
             _, point_bindings = _bind_function_inputs(
@@ -802,6 +805,7 @@ class Function(Node, Tracked, Annotated):
                 workflow_kind=self.effective_workflow_kind,
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,
+                provenance_inputs=provenance_inputs,
             )
 
         if broadcast_plan.regime == "distribution":
@@ -838,11 +842,12 @@ class Function(Node, Tracked, Annotated):
                 include_inputs=call.overrides.include_inputs,
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,
+                provenance_inputs=provenance_inputs,
             )
 
-        # Non-broadcast call — one function invocation, then wrap.
-        # Provenance parents are the inputs that carry their own
-        # ``.provenance`` slot (Distribution / Record / RecordArray).
+        # Non-broadcast call — one function invocation, then wrap. Tracked
+        # values form lineage parents; every other resolved parameter remains
+        # separately fingerprinted in Provenance.inputs.
         # Known harmless duplication: the distribution-broadcast module builds
         # the same request shape. A later execution cleanup can centralize this
         # without reintroducing private facade wrappers.
@@ -857,6 +862,7 @@ class Function(Node, Tracked, Annotated):
             f"workflow.{name}",
             parents=provenance_parents,
             metadata={"func": name},
+            inputs=provenance_inputs,
         )
         return _workflow_result._coerce_output(
             result,

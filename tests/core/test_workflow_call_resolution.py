@@ -224,6 +224,19 @@ class TestModuleResolution:
         assert float(module.step()) == 12.0
         assert float(module.step(y=2.0)) == 7.0
 
+    def test_module_records_resolved_plain_inputs(self, full_provenance_mode):
+        dep = DataNode()
+        module = CallResolutionModule(dep=dep, x=5.0)
+
+        result = module.step()
+
+        assert result.provenance is not None
+        assert result.provenance.parents[1:] == ()
+        assert tuple(result.provenance.inputs) == ("dep", "x", "y")
+        assert result.provenance.inputs["dep"].parent is dep
+        assert result.provenance.inputs["x"].parent == 5.0
+        assert result.provenance.inputs["y"].parent == 7.0
+
     def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
         module = CallResolutionModule(dep=DataNode(), x=5.0)
 

@@ -8,7 +8,11 @@
 `signature` is captured from the wrapped Python callable once at construction;
 optional event templates describe values, but do not replace or derive that
 Python calling contract. Function calls record the Function itself as the first
-provenance parent, followed by tracked inputs in parameter order.
+provenance parent, followed by tracked inputs in parameter order. Every resolved
+non-tracked parameter is recorded separately in `provenance.inputs`, including
+defaults, construction bindings, and Module-provided values. Plain parameters
+use their names; variadic slots use stable labels such as `*items[0]` and
+`**extras['scale']`.
 
 Prefect orchestration is **off by default**. Set
 `prefect_config.workflow_kind = WorkflowKind.TASK` (or `FLOW`) globally, or
@@ -102,7 +106,9 @@ declared. Each `*args` element and `**kwargs` entry is classified, lifted,
 sampled, or swept independently, using the variadic parameter's annotation.
 The original Python call is reconstructed before execution. Provenance and
 `include_inputs` labels are stable, for example `*items[0]` and
-`**extras['scale']`.
+`**extras['scale']`. Tracked slots form deduplicated lineage parents; ordinary
+slots remain distinct in `Provenance.inputs` even when multiple parameters
+refer to the same object.
 
 `apply` deliberately performs no distribution lifting, batch sweep, result
 wrapping, orchestration, or call-provenance creation. It is therefore also the

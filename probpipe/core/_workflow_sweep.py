@@ -45,6 +45,7 @@ def execute_sweep(
     include_inputs: bool = False,
     output_template: EventTemplate | None = None,
     provenance_parents: list[Tracked] | None = None,
+    provenance_inputs: Mapping[str, Any] | None = None,
 ) -> Any:
     """Execute pure or nested sweep regimes for one workflow call."""
     if plan.regime not in ("sweep", "nested"):
@@ -86,6 +87,7 @@ def execute_sweep(
             batch_shape=plan.sweep_batch_shape,
             k=0,
             parents=provenance_parents,
+            inputs=provenance_inputs,
         )
         return _workflow_result._coerce_output(
             aggregate,
@@ -128,6 +130,7 @@ def execute_sweep(
         batch_shape=plan.sweep_batch_shape,
         k=n_broadcast_samples,
         parents=provenance_parents,
+        inputs=provenance_inputs,
     )
     return _workflow_result._coerce_output(
         stacked,
@@ -264,9 +267,12 @@ def make_sweep_provenance(
     batch_shape: tuple[int, ...],
     k: int,
     parents: list[Tracked] | None = None,
+    inputs: Mapping[str, Any] | None = None,
 ) -> Provenance | None:
     """Build provenance metadata for pure and nested sweep outputs.
 
+    ``parents`` carries tracked call-level lineage; ``inputs`` carries the
+    original resolved plain values rather than per-cell sweep values.
     Returns ``None`` when :attr:`ProvenanceMode.OFF` is active.
     """
     regime = "nested" if dist_args else "stack"
@@ -288,4 +294,5 @@ def make_sweep_provenance(
             "ra_args": [ref.label for ref in array_args],
             "dist_args": [ref.label for ref in dist_args],
         },
+        inputs=inputs,
     )

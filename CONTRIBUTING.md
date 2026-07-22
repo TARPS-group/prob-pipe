@@ -516,9 +516,14 @@ uv build packaging/probpipe   # probpipe (metapackage)
    structure and backing data but `Function.__call__` returns a shallow copy
    as an independent result term. The copy gets a fresh annotations container,
    discards the returned object's prior provenance, and records the called
-   Function followed by tracked inputs as its direct parents. `Function.apply`
-   is the raw boundary: it performs the same Python binding and schema checks,
-   but preserves the implementation return object's identity and provenance.
+   Function followed by tracked inputs as its direct parents. All resolved
+   non-tracked parameters are fingerprinted separately in
+   `Provenance.inputs`; defaults, construction bindings, Module values, and
+   distinct variadic slots therefore remain reproducible without becoming DAG
+   ancestors. Existing operation controls remain provenance metadata.
+   `Function.apply` is the raw boundary: it performs the same Python binding
+   and schema checks, but preserves the implementation return object's identity
+   and provenance.
    Other tracked terms, including a `Function`, remain event payloads under
    this default boundary; returning them directly requires the explicit
    term-result planning reserved for #369.

@@ -106,6 +106,20 @@ class TestApplyContract:
         assert isinstance(result, Record)
         assert result["answer"] == 10
 
+    def test_call_records_positional_and_keyword_only_inputs(self, full_provenance_mode):
+        def combine(x, /, y=2.0, *, scale=3.0):
+            return (x + y) * scale
+
+        wrapped = Function(func=combine)
+
+        result = wrapped(1.0)
+
+        assert result.provenance is not None
+        assert tuple(result.provenance.inputs) == ("x", "y", "scale")
+        assert result.provenance.inputs["x"].parent == 1.0
+        assert result.provenance.inputs["y"].parent == 2.0
+        assert result.provenance.inputs["scale"].parent == 3.0
+
     def test_variadic_apply_without_template(self):
         def collect(first, *rest, **extras):
             return first + sum(rest) + sum(extras.values())
@@ -882,6 +896,30 @@ class TestVariadicPlanning:
             first_extra,
             second_extra,
         ]
+
+    def test_plain_inputs_keep_resolved_variadic_slots(self, full_provenance_mode):
+        tracked = NumericRecord("tracked", value=1.0)
+        shared = jnp.asarray(2.0)
+
+        def total(head, *items, offset, bias=3.0, **extras):
+            return head["value"] + items[0] + items[1] + offset + bias + extras["tail"]
+
+        wrapped = Function(func=total, bind={"offset": 4.0})
+
+        result = wrapped(tracked, shared, shared, tail=shared)
+
+        assert result.provenance is not None
+        assert [parent.parent for parent in result.provenance.parents] == [wrapped, tracked]
+        assert tuple(result.provenance.inputs) == (
+            "*items[0]",
+            "*items[1]",
+            "offset",
+            "bias",
+            "**extras['tail']",
+        )
+        assert result.provenance.inputs["*items[0]"].parent is shared
+        assert result.provenance.inputs["*items[1]"].parent is shared
+        assert result.provenance.inputs["**extras['tail']"].parent is shared
 
     def test_varargs_and_varkwargs_with_same_textual_name_do_not_collide(self):
         def collect(*items, **extras):

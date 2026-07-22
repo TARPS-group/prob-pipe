@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
@@ -11,6 +12,8 @@ from probpipe import (
     Beta,
     JointGaussian,
     Normal,
+    NumericRecord,
+    NumericRecordArray,
     ProductDistribution,
     Provenance,
     ProvenanceMode,
@@ -36,6 +39,35 @@ class TestProvenanceBasics:
         assert p.operation == "test_op"
         assert p.parents == ()
         assert p.metadata == {"key": "val"}
+        assert p.inputs == {}
+
+    def test_inputs_follow_metadata_for_positional_compatibility(self):
+        p = Provenance("test_op", (), {"key": "val"})
+
+        assert p.metadata == {"key": "val"}
+        assert p.inputs == {}
+
+    def test_plain_input_fingerprints_are_content_sensitive(self):
+        first = Provenance.create(
+            "op",
+            inputs={"scalar": 1.0, "array": np.asarray([1.0, 2.0])},
+        )
+        same = Provenance.create(
+            "op",
+            inputs={"scalar": 1.0, "array": np.asarray([1.0, 2.0])},
+        )
+        different = Provenance.create(
+            "op",
+            inputs={"scalar": 5.0, "array": np.asarray([1.0, 3.0])},
+        )
+
+        assert first is not None
+        assert same is not None
+        assert different is not None
+        assert first.inputs["scalar"].fingerprint == same.inputs["scalar"].fingerprint
+        assert first.inputs["array"].fingerprint == same.inputs["array"].fingerprint
+        assert first.inputs["scalar"].fingerprint != different.inputs["scalar"].fingerprint
+        assert first.inputs["array"].fingerprint != different.inputs["array"].fingerprint
 
     def test_provenance_with_parents(self):
         n = Normal(loc=0.0, scale=1.0, name="n")
@@ -214,6 +246,24 @@ class TestConditioningProvenance:
             joint.name,
         ]
 
+    def test_condition_on_records_plain_observation_by_parameter(self):
+        joint = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=1.0, scale=2.0, name="y"),
+        )
+
+        at_zero = condition_on(joint, x=jnp.array(0.0))
+        at_five = condition_on(joint, x=jnp.array(5.0))
+
+        assert at_zero.provenance is not None
+        assert at_five.provenance is not None
+        assert [parent.fingerprint for parent in at_zero.provenance.parents] == [
+            parent.fingerprint for parent in at_five.provenance.parents
+        ]
+        assert at_zero.provenance.inputs["**kwargs['x']"].fingerprint != (
+            at_five.provenance.inputs["**kwargs['x']"].fingerprint
+        )
+
     def test_sequential_condition_on(self):
         seq = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -278,6 +328,21 @@ class TestBroadcastingProvenance:
         assert result.provenance.operation == "broadcast"
         assert result.provenance.metadata["dispatch"] == "jax"
 
+    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+    def test_broadcast_records_static_plain_inputs(self, dispatch):
+        n = Normal(loc=0.0, scale=1.0, name="input_normal")
+
+        def shift(x: float, offset: float = 2.0) -> float:
+            return x + offset
+
+        wf = Function(func=shift, dispatch=dispatch, n_broadcast_samples=5, seed=42)
+
+        result = wf(n)
+
+        assert result.provenance is not None
+        assert tuple(result.provenance.inputs) == ("offset",)
+        assert result.provenance.inputs["offset"].fingerprint is not None
+
     def test_broadcast_multiple_parents(self):
         a = Normal(loc=0.0, scale=1.0, name="a")
         b = Normal(loc=1.0, scale=0.5, name="b")
@@ -304,6 +369,38 @@ class TestBroadcastingProvenance:
         assert hasattr(result, "samples")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
+
+    def test_sweep_records_static_plain_inputs(self):
+        rows = NumericRecordArray.stack(
+            [NumericRecord("row", value=float(value)) for value in range(3)]
+        )
+
+        def shift(row, offset: float = 2.0) -> float:
+            return row["value"] + offset
+
+        result = Function(func=shift)(rows)
+
+        assert result.provenance is not None
+        assert tuple(result.provenance.inputs) == ("offset",)
+        assert result.provenance.inputs["offset"].fingerprint is not None
+
+    def test_nested_broadcast_records_static_plain_inputs(self):
+        rows = NumericRecordArray.stack(
+            [NumericRecord("row", value=float(value)) for value in range(2)]
+        )
+        noise = Normal(loc=0.0, scale=1.0, name="noise")
+
+        def add_noise(row, random_value: float, offset: float = 2.0) -> float:
+            return row["value"] + random_value + offset
+
+        wf = Function(func=add_noise, dispatch="sequential", n_broadcast_samples=5, seed=42)
+
+        result = wf(rows, noise)
+
+        assert result.provenance is not None
+        assert result.components[0].provenance is not None
+        assert tuple(result.provenance.inputs) == ("offset",)
+        assert tuple(result.components[0].provenance.inputs) == ("offset",)
 
 
 # ===========================================================================
@@ -370,6 +467,17 @@ class TestSerialization:
         assert d["parents"][0]["type"] == "Normal"
         assert d["parents"][0]["name"] == "my_normal"
 
+    def test_to_dict_with_plain_inputs(self):
+        value = jnp.array([1.0, 2.0])
+        p = Provenance.create("op", inputs={"x": value})
+
+        assert p is not None
+        d = p.to_dict()
+
+        assert d["inputs"]["x"]["type"] == type(value).__name__
+        assert d["inputs"]["x"]["name"] is None
+        assert d["inputs"]["x"]["fingerprint"] == p.inputs["x"].fingerprint
+
     def test_to_dict_recursive(self):
         """Recursive serialization follows provenance chains."""
         src = Normal(loc=0.0, scale=1.0, name="src")
@@ -405,6 +513,21 @@ class TestSerialization:
         # Parent info preserved in metadata
         assert restored.metadata["_parents_info"][0]["type"] == "Normal"
         assert restored.metadata["_parents_info"][0]["name"] == "n"
+
+    def test_from_dict_preserves_plain_input_info(self):
+        p = Provenance.create("op", inputs={"x": jnp.array([1.0, 2.0])})
+
+        assert p is not None
+        restored = Provenance.from_dict(p.to_dict())
+
+        assert restored.inputs == {}
+        assert restored.metadata["_inputs_info"]["x"]["fingerprint"] == (p.inputs["x"].fingerprint)
+
+    def test_from_dict_accepts_legacy_dict_without_inputs(self):
+        restored = Provenance.from_dict({"operation": "legacy", "parents": [], "metadata": {}})
+
+        assert restored.inputs == {}
+        assert restored.metadata["_inputs_info"] == {}
 
     def test_to_dict_fingerprint_included(self):
         """fingerprint is serialized when set on a ParentInfo."""
@@ -570,6 +693,16 @@ class TestProvenanceDag:
         assert any(a.parent is td for a in ancestors)
         assert any(a.parent is base for a in ancestors)
 
+    def test_plain_inputs_are_not_dag_ancestors(self):
+        wf = Function(func=lambda x: x + 1)
+
+        result = wf(jnp.asarray(2.0))
+
+        ancestors = provenance_ancestors(result)
+        assert [ancestor.name for ancestor in ancestors] == [wf.name]
+        dag = provenance_dag(result)
+        assert _count_dag_entries(dag) == (2, 1)
+
     def test_diamond_dag_no_duplicate_nodes(self):
         """Shared ancestor in a diamond renders as a single node, not two."""
         X = Normal(loc=0.0, scale=1.0, name="X")
@@ -635,6 +768,17 @@ class TestProvenanceModes:
         result = wf(x=n)
         parent = result.provenance.parents[1]
         assert parent is not n
+
+    def test_lightweight_plain_input_has_no_live_ref(self):
+        value = jnp.asarray([1.0, 2.0])
+
+        provenance = Provenance.create("op", inputs={"value": value})
+
+        assert provenance is not None
+        info = provenance.inputs["value"]
+        assert info.name is None
+        assert info.parent is None
+        assert info.fingerprint is not None
 
     def test_lightweight_ancestors_returns_parentinfo(self):
         """In LIGHTWEIGHT mode provenance_ancestors returns ParentInfo descriptors.
@@ -723,6 +867,14 @@ class TestProvenanceModes:
         gc.collect()
 
         assert ref() is not None, "FULL mode should retain the parent via ParentInfo.parent"
+
+    def test_full_mode_plain_input_is_retained(self, full_provenance_mode):
+        value = jnp.asarray([1.0, 2.0])
+
+        provenance = Provenance.create("op", inputs={"value": value})
+
+        assert provenance is not None
+        assert provenance.inputs["value"].parent is value
 
     def test_off_mode_ancestors_empty(self):
         """In OFF mode provenance_ancestors returns an empty list."""

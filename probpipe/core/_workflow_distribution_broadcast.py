@@ -10,7 +10,7 @@ empirical enumeration, JAX ``vmap`` execution, and
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from itertools import product as cartesian_product
 from typing import Any
 
@@ -53,6 +53,7 @@ def execute_distribution_broadcast(
     workflow_kind: WorkflowKind,
     output_template: EventTemplate | None = None,
     provenance_parents: Sequence[Tracked] = (),
+    provenance_inputs: Mapping[str, Any] | None = None,
 ) -> BroadcastDistribution | Distribution:
     """Execute one distribution-only broadcasted workflow call.
 
@@ -99,6 +100,13 @@ def execute_distribution_broadcast(
         Effective orchestration mode for this call. The value is recorded in
         provenance and passed to the JAX path so Prefect task/flow requests can
         fail clearly when Prefect is unavailable.
+    output_template : EventTemplate or None
+        Concrete authoritative template for declared outputs, when present.
+    provenance_parents : sequence of Tracked
+        Call-level tracked lineage, already ordered and deduplicated.
+    provenance_inputs : mapping of str to Any or None
+        Call-level resolved plain inputs. Per-row sampled values do not replace
+        these original descriptors.
 
     Returns
     -------
@@ -173,6 +181,7 @@ def execute_distribution_broadcast(
         workflow_name=workflow_name,
         func=func,
         provenance_parents=provenance_parents,
+        provenance_inputs=provenance_inputs,
     )
     result.with_provenance(provenance)
 
@@ -241,6 +250,7 @@ def _make_broadcast_provenance(
     workflow_name: str,
     func: Callable[..., Any],
     provenance_parents: Sequence[Tracked],
+    provenance_inputs: Mapping[str, Any] | None,
 ) -> Provenance | None:
     return Provenance.create(
         "broadcast",
@@ -252,6 +262,7 @@ def _make_broadcast_provenance(
             "func": workflow_name or func.__name__,
             "broadcast_args": [ref.label for ref in broadcast_args],
         },
+        inputs=provenance_inputs,
     )
 
 
