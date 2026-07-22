@@ -36,13 +36,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolved ordinary call arguments in `inputs`; the latter retain stable
   per-slot fingerprints across plain, broadcast, sweep, and nested execution
   without appearing in ancestry DAGs. Existing operation controls remain in
-  provenance metadata.
-  `LinOp.apply(x)` now
-  delegates to `matvec(x)`, preserving existing operator structure and
-  behavior. `Function._from_implementation(...)` is the internal construction
-  entry point for dynamically produced ordinary Functions; #370 will layer
-  fitted-producer validation and attestations over that boundary. Result plans
-  and `OperationRef` remain follow-up work.
+  provenance metadata. Authoritative output validation now treats bare values,
+  mappings, Records, and Distributions consistently: field trees and concrete
+  shapes must conform, dtypes use same-kind casting, and declared supports are
+  enforced against concrete values or canonical Distribution metadata. A
+  Distribution that cannot expose required dtype or support metadata fails
+  explicitly. Support-bearing outputs use row-wise execution under auto
+  dispatch because their data-dependent checks cannot run while JAX traces;
+  explicit JAX dispatch and direct `jax.jit(Function.apply)` report that
+  limitation. `apply` preserves a returned container's original template,
+  while the independent `__call__` result copy carries the concrete declared
+  template. `LinOp.apply(x)` now delegates to `matvec(x)`, preserving existing
+  operator structure and behavior. `Function._from_implementation(...)` is the
+  internal construction entry point for dynamically produced ordinary
+  Functions; #370 will layer fitted-producer validation and attestations over
+  that boundary. Result plans and `OperationRef` remain follow-up work.
 
 - **`NamedTree` — the public name-keyed tree substrate (#338).** New
   `probpipe.core.named_tree` module holding the ordered, immutable,

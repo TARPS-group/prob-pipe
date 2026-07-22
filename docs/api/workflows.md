@@ -92,8 +92,13 @@ When supplied, templates are authoritative:
 - every symbolic output dimension must be declared by the input template;
 - mappings must match the declared output structure, while a scalar or array
   result can satisfy only a single-leaf output template;
-- existing `Record` and `Distribution` results must carry the same concrete
-  event template.
+- existing `Record` and `Distribution` results must conform to the same field
+  tree and concrete shapes. Dtypes use same-kind conformance, just like bare
+  values. A Distribution must expose any declared dtype or support through its
+  canonical per-field metadata when its event template omits that metadata;
+- every declared output support is checked against concrete scalar, array,
+  mapping, or Record data. A Distribution's authoritative support must be the
+  declared support or a known subset of it.
 
 Authoritative mapping outputs are normalized to the declared `Record` pytree
 before dispatch aggregation. Flat and nested output structures therefore have
@@ -116,9 +121,20 @@ raw execution boundary used by inference integrations. If the implementation
 returns an existing `Record`, `RecordArray`, or `Distribution`, `apply`
 preserves that object's identity, annotations, and provenance. `__call__`
 instead creates a shallow independent result item: value data and templates are
-shared, the annotations container is copied, prior provenance is cleared, and
-the current Function and tracked inputs become the new direct parents. This
-copy is still made when provenance tracking is disabled.
+shared by default, the annotations container is copied, prior provenance is
+cleared, and the current Function and tracked inputs become the new direct
+parents. With an authoritative output declaration, this public result copy
+instead carries the concrete declared template even when the raw implementation
+result had a weaker inferred template; value data remains shared and `apply`
+leaves the raw object's template unchanged. This copy is still made when
+provenance tracking is disabled.
+
+Output-support checks are data-dependent and cannot execute under JAX tracing.
+For broadcast and sweep calls, `dispatch="auto"` therefore detects a
+support-bearing output and falls back to row-wise execution. An explicit
+`dispatch="jax"`, or a direct `jax.jit(function.apply)`, raises a traceability
+error instead of silently omitting the support guarantee. Output templates
+without support constraints retain their existing JAX path.
 
 When a sweep returns distributions, its `DistributionArray.event_template`
 records the concrete authoritative output template. Ordinary

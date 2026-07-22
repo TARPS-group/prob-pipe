@@ -8,12 +8,18 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
+import jax
+import jax.numpy as jnp
+
 from ._distribution_base import Distribution
+from .constraints import _supports_compatible
 from .event_template import (
+    ArraySpec,
     EventTemplate,
     ValueSpec,
     _concretize_event_template,
     _unify_event_template_with_value,
+    _unify_event_templates,
 )
 from .record import Record
 
@@ -268,10 +274,44 @@ def _validate_function_output(
             raise ValueError(
                 f"Function {function_name!r} output does not expose an authoritative event_template"
             ) from error
-        if actual_template != concrete:
+        if not isinstance(actual_template, EventTemplate):
             raise ValueError(
-                f"Function {function_name!r} output event_template {actual_template!r} "
-                f"does not match declared concrete template {concrete!r}"
+                f"Function {function_name!r} output does not expose an authoritative event_template"
+            )
+        _unify_event_templates(
+            concrete,
+            actual_template,
+            context=f"Function {function_name!r} output",
+        )
+        if isinstance(result, Distribution):
+            conforming_template = _enrich_distribution_output_template(
+                function_name=function_name,
+                declared_template=concrete,
+                actual_template=actual_template,
+                result=result,
+            )
+        else:
+            conforming_template = actual_template
+        _unify_event_templates(
+            concrete,
+            conforming_template,
+            context=f"Function {function_name!r} output",
+        )
+        _validate_function_output_template_supports(
+            function_name=function_name,
+            declared_template=concrete,
+            actual_template=conforming_template,
+        )
+        if isinstance(result, Record):
+            _unify_event_template_with_value(
+                concrete,
+                result,
+                context=f"Function {function_name!r} output",
+            )
+            _validate_function_output_supports(
+                function_name=function_name,
+                template=concrete,
+                value=result,
             )
         return concrete
 
@@ -290,6 +330,11 @@ def _validate_function_output(
                 f"Function {function_name!r} output at {only_path!r} does not conform "
                 f"to its field spec ({only_spec!r})"
             )
+        _validate_function_output_supports(
+            function_name=function_name,
+            template=concrete,
+            value=result,
+        )
         return concrete
 
     _unify_event_template_with_value(
@@ -297,7 +342,178 @@ def _validate_function_output(
         validation_value,
         context=f"Function {function_name!r} output",
     )
+    _validate_function_output_supports(
+        function_name=function_name,
+        template=concrete,
+        value=validation_value,
+    )
     return concrete
+
+
+def _enrich_distribution_output_template(
+    *,
+    function_name: str,
+    declared_template: EventTemplate,
+    actual_template: EventTemplate,
+    result: Distribution,
+) -> EventTemplate:
+    """Fill missing declared metadata from a Distribution's canonical accessors."""
+    requires_dtype = any(
+        isinstance(spec, ArraySpec) and spec.dtype is not None
+        for spec in declared_template.values()
+    )
+    requires_support = any(
+        isinstance(spec, ArraySpec) and spec.support is not None
+        for spec in declared_template.values()
+    )
+    dtypes = _distribution_output_metadata(result, "dtypes") if requires_dtype else None
+    supports = _distribution_output_metadata(result, "supports") if requires_support else None
+
+    def _enrich(
+        declared: EventTemplate,
+        actual: EventTemplate,
+        prefix: str,
+    ) -> EventTemplate:
+        children: dict[str, EventTemplate | ValueSpec] = {}
+        for name, declared_spec in declared.children.items():
+            path = f"{prefix}/{name}" if prefix else name
+            actual_spec = actual.children[name]
+            if isinstance(declared_spec, EventTemplate):
+                assert isinstance(actual_spec, EventTemplate)
+                children[name] = _enrich(declared_spec, actual_spec, path)
+                continue
+            if not isinstance(declared_spec, ArraySpec) or not isinstance(actual_spec, ArraySpec):
+                assert isinstance(actual_spec, ValueSpec)
+                children[name] = actual_spec
+                continue
+
+            dtype = actual_spec.dtype
+            if declared_spec.dtype is not None and dtype is None:
+                if dtypes is None or path not in dtypes:
+                    raise ValueError(
+                        f"Function {function_name!r} output at {path!r} does not expose "
+                        "authoritative dtype metadata"
+                    )
+                dtype = dtypes[path]
+
+            support = actual_spec.support
+            if declared_spec.support is not None and support is None:
+                if supports is None or path not in supports:
+                    raise ValueError(
+                        f"Function {function_name!r} output at {path!r} does not expose "
+                        "authoritative support metadata"
+                    )
+                support = supports[path]
+            children[name] = ArraySpec(
+                actual_spec.shape,
+                dtype=dtype,
+                support=support,
+            )
+        return EventTemplate(children)
+
+    return _enrich(declared_template, actual_template, "")
+
+
+def _validate_function_output_template_supports(
+    *,
+    function_name: str,
+    declared_template: EventTemplate,
+    actual_template: EventTemplate,
+) -> None:
+    """Validate authoritative output-support subset relationships."""
+    for path, declared_spec in declared_template.items():
+        actual_spec = actual_template[path]
+        if (
+            isinstance(declared_spec, ArraySpec)
+            and isinstance(actual_spec, ArraySpec)
+            and declared_spec.support is not None
+            and actual_spec.support is not None
+            and not _supports_compatible(actual_spec.support, declared_spec.support)
+        ):
+            raise ValueError(
+                f"Function {function_name!r} output/{path} support {actual_spec.support!r} "
+                f"does not conform to {declared_spec.support!r}"
+            )
+
+
+def _distribution_output_metadata(
+    result: Distribution,
+    attribute: str,
+) -> Mapping[str, Any] | None:
+    """Read one optional canonical per-field Distribution metadata mapping."""
+    try:
+        metadata = getattr(result, attribute)
+    except (AttributeError, NotImplementedError, TypeError):
+        return None
+    return metadata if isinstance(metadata, Mapping) else None
+
+
+def _validate_function_output_supports(
+    *,
+    function_name: str,
+    template: EventTemplate,
+    value: Any,
+) -> None:
+    """Validate declared ArraySpec supports outside JAX tracing."""
+    children = getattr(value, "children", None)
+    if not isinstance(children, Mapping):
+        children = value if isinstance(value, Mapping) else None
+    if children is None:
+        only_path = next(iter(template.keys()))
+        only_spec = template[only_path]
+        assert isinstance(only_spec, ValueSpec)
+        _validate_function_output_leaf_support(
+            function_name=function_name,
+            path=only_path,
+            spec=only_spec,
+            value=value,
+        )
+        return
+
+    def _walk(expected: EventTemplate, actual: Mapping[str, Any], prefix: str) -> None:
+        for name, spec in expected.children.items():
+            path = f"{prefix}/{name}" if prefix else name
+            child = actual[name]
+            if isinstance(spec, EventTemplate):
+                nested = getattr(child, "children", None)
+                if not isinstance(nested, Mapping):
+                    nested = child
+                _walk(spec, nested, path)
+                continue
+            _validate_function_output_leaf_support(
+                function_name=function_name,
+                path=path,
+                spec=spec,
+                value=child,
+            )
+
+    _walk(template, children, "")
+
+
+def _validate_function_output_leaf_support(
+    *,
+    function_name: str,
+    path: str,
+    spec: ValueSpec,
+    value: Any,
+) -> None:
+    """Validate one declared ArraySpec support outside JAX tracing."""
+    if not isinstance(spec, ArraySpec) or spec.support is None:
+        return
+    support = spec.support
+    membership = jnp.all(support.check(value))
+    try:
+        is_valid = bool(membership)
+    except jax.errors.TracerBoolConversionError as error:
+        raise ValueError(
+            f"Function {function_name!r} output support validation at {path!r} "
+            "cannot run during JAX tracing"
+        ) from error
+    if not is_valid:
+        raise ValueError(
+            f"Function {function_name!r} output at {path!r} does not conform "
+            f"to declared support {support!r}"
+        )
 
 
 def _wrap_declared_function_output(

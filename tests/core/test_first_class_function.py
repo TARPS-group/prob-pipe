@@ -9,6 +9,7 @@ import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -16,11 +17,13 @@ import pytest
 import probpipe
 from probpipe import (
     Annotated,
+    ArraySpec,
     Distribution,
     DistributionArray,
     EventTemplate,
     Function,
     FunctionSpec,
+    Gamma,
     Normal,
     NumericRecord,
     NumericRecordArray,
@@ -30,6 +33,10 @@ from probpipe import (
     Tracked,
     function,
     mean,
+    positive,
+    positive_definite,
+    real,
+    simplex,
 )
 
 
@@ -158,6 +165,197 @@ class TestApplyContract:
         with pytest.raises(ValueError, match="output at 'y'"):
             wrapped.apply(2)
 
+    def test_dtype_pinned_output_accepts_bare_and_inferred_record(self):
+        template = EventTemplate(y=ArraySpec((), dtype="float32"))
+        value = jnp.asarray(3.0, dtype=jnp.float32)
+        returned = Record("returned", y=value)
+        bare = Function(func=lambda: value, output_template=template)
+        structured = Function(func=lambda: returned, output_template=template)
+
+        assert bare.apply() is value
+        assert structured.apply() is returned
+        assert returned.event_template != template
+
+        result = structured()
+
+        assert result is not returned
+        assert result["y"] is value
+        assert result.event_template == template
+        assert returned.event_template != template
+
+    @pytest.mark.parametrize(
+        ("actual_dtype", "declared_dtype"),
+        [
+            ("float32", "float64"),
+            ("float64", "float32"),
+            ("int32", "int64"),
+            ("int64", "int32"),
+        ],
+    )
+    def test_same_kind_output_dtype_conformance_is_wrapper_independent(
+        self,
+        actual_dtype,
+        declared_dtype,
+    ):
+        value = np.asarray(3, dtype=actual_dtype)
+        template = EventTemplate(y=ArraySpec((), dtype=declared_dtype))
+
+        Function(func=lambda: value, output_template=template).apply()
+        Function(func=lambda: Record("returned", y=value), output_template=template).apply()
+
+    @pytest.mark.parametrize("structured", [False, True])
+    def test_cross_kind_output_dtype_is_rejected(self, structured):
+        value = np.asarray(3.0, dtype="float32")
+        returned = Record("returned", y=value) if structured else value
+        wrapped = Function(
+            func=lambda: returned,
+            output_template=EventTemplate(y=ArraySpec((), dtype="int32")),
+        )
+
+        with pytest.raises(ValueError, match=r"output/y.*dtype|output at 'y'"):
+            wrapped.apply()
+
+    def test_support_pinned_scalar_output_is_enforced(self):
+        template = EventTemplate(y=ArraySpec((), support=positive))
+
+        assert Function(func=lambda: jnp.asarray(3.0), output_template=template).apply() == 3.0
+        with pytest.raises(ValueError, match=r"output at 'y'.*support positive"):
+            Function(func=lambda: jnp.asarray(-3.0), output_template=template).apply()
+
+    def test_support_pinned_nested_mapping_output_is_enforced(self):
+        template = EventTemplate(
+            stats=EventTemplate(y=ArraySpec((2,), support=positive)),
+        )
+        wrapped = Function(
+            func=lambda value: {"stats": {"y": value}},
+            output_template=template,
+        )
+
+        wrapped.apply(jnp.asarray([1.0, 2.0]))
+        with pytest.raises(ValueError, match=r"output at 'stats/y'.*support positive"):
+            wrapped.apply(jnp.asarray([1.0, -2.0]))
+
+    def test_support_pinned_nested_record_output_is_enforced(self):
+        template = EventTemplate(
+            stats=EventTemplate(y=ArraySpec((2,), support=positive)),
+        )
+        valid = Record("returned", stats=Record("stats", y=jnp.asarray([1.0, 2.0])))
+        invalid = Record("returned", stats=Record("stats", y=jnp.asarray([1.0, -2.0])))
+
+        Function(func=lambda: valid, output_template=template).apply()
+        with pytest.raises(ValueError, match=r"output at 'stats/y'.*support positive"):
+            Function(func=lambda: invalid, output_template=template).apply()
+
+    def test_explicit_record_support_must_conform_to_declaration(self):
+        returned = Record(
+            "returned",
+            y=jnp.asarray(3.0),
+            event_template=EventTemplate(y=ArraySpec((), support=real)),
+        )
+        wrapped = Function(
+            func=lambda: returned,
+            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+        )
+
+        with pytest.raises(ValueError, match=r"output/y support real does not conform to positive"):
+            wrapped.apply()
+
+    def test_distribution_metadata_must_conform_to_declaration(self):
+        normal = Normal(0, 1, name="y")
+        declared = EventTemplate(
+            y=ArraySpec((), dtype=normal.dtypes["y"], support=real),
+        )
+        wrapped = Function(func=lambda: normal, output_template=declared)
+
+        assert wrapped.apply() is normal
+
+        result = wrapped()
+
+        assert result is not normal
+        assert result.event_template == declared
+        assert normal.event_template != declared
+
+        with pytest.raises(ValueError, match=r"output/y support real does not conform to positive"):
+            Function(
+                func=lambda: normal,
+                output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            ).apply()
+        with pytest.raises(ValueError, match=r"output/y dtype .* does not conform to int32"):
+            Function(
+                func=lambda: normal,
+                output_template=EventTemplate(y=ArraySpec((), dtype="int32")),
+            ).apply()
+
+        gamma = Gamma(1, 1, name="y")
+        Function(
+            func=lambda: gamma,
+            output_template=EventTemplate(y=ArraySpec((), support=real)),
+        ).apply()
+
+    def test_distribution_missing_declared_metadata_is_rejected(self):
+        class MetadataPoorDistribution(Distribution):
+            @property
+            def event_template(self):
+                return EventTemplate(y=())
+
+        returned = MetadataPoorDistribution(name="y")
+
+        with pytest.raises(ValueError, match=r"output at 'y'.*authoritative dtype metadata"):
+            Function(
+                func=lambda: returned,
+                output_template=EventTemplate(y=ArraySpec((), dtype="float32")),
+            ).apply()
+        with pytest.raises(ValueError, match=r"output at 'y'.*authoritative support metadata"):
+            Function(
+                func=lambda: returned,
+                output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            ).apply()
+
+    @pytest.mark.parametrize(
+        ("support", "valid", "invalid"),
+        [
+            (simplex, jnp.asarray([0.25, 0.75]), jnp.asarray([0.25, 0.5])),
+            (
+                positive_definite,
+                jnp.asarray([[2.0, 0.0], [0.0, 1.0]]),
+                jnp.asarray([[1.0, 2.0], [2.0, 1.0]]),
+            ),
+        ],
+    )
+    def test_output_support_reductions_are_enforced(self, support, valid, invalid):
+        template = EventTemplate(y=ArraySpec(valid.shape, support=support))
+
+        Function(func=lambda: valid, output_template=template).apply()
+        with pytest.raises(ValueError, match=r"output at 'y'.*declared support"):
+            Function(func=lambda: invalid, output_template=template).apply()
+
+    def test_support_validation_rejects_direct_jax_jit(self):
+        wrapped = Function(
+            func=lambda x: x + 1,
+            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+        )
+
+        with pytest.raises(ValueError, match="cannot run during JAX tracing"):
+            jax.jit(wrapped.apply)(jnp.asarray(1.0))
+
+    def test_input_template_support_remains_descriptive_for_lifting(self):
+        class SupportAnnotatedNormal(Normal):
+            @property
+            def event_template(self):
+                return EventTemplate(x=ArraySpec((), support=real))
+
+        wrapped = Function(
+            func=lambda x: x,
+            input_template=EventTemplate(x=ArraySpec((), support=positive)),
+            dispatch="sequential",
+            n_broadcast_samples=5,
+            seed=0,
+        )
+
+        result = wrapped(SupportAnnotatedNormal(0, 1, name="x"))
+
+        assert result.num_atoms == 5
+
     def test_authoritative_nested_mapping_must_match_exactly(self):
         template = EventTemplate(
             stats=EventTemplate(copy=("obs",), total=()),
@@ -193,7 +391,7 @@ class TestApplyContract:
             output_template=EventTemplate(expected=()),
         )
 
-        with pytest.raises(ValueError, match="does not match declared concrete template"):
+        with pytest.raises(ValueError, match=r"fields .* do not match template fields"):
             wrapped.apply(1)
 
     def test_existing_distribution_requires_matching_authoritative_template(self):
@@ -206,7 +404,7 @@ class TestApplyContract:
         assert wrapped.apply(1) is matching
 
         mismatching = Normal(0, 1, name="other")
-        with pytest.raises(ValueError, match="does not match declared concrete template"):
+        with pytest.raises(ValueError, match=r"fields .* do not match template fields"):
             Function(
                 func=lambda x: mismatching,
                 output_template=matching.event_template,
@@ -444,6 +642,83 @@ class TestSymbolicCalls:
         )
 
         with pytest.raises(ValueError, match="output at 'value'"):
+            wrapped(rows)
+
+    def test_every_sweep_cell_is_validated_against_output_support(self):
+        rows = NumericRecordArray.stack(
+            [
+                NumericRecord("row", value=jnp.asarray(1.0)),
+                NumericRecord("row", value=jnp.asarray(-1.0)),
+            ]
+        )
+        wrapped = Function(
+            func=lambda row: row["value"],
+            input_template=EventTemplate(row=EventTemplate(value=())),
+            output_template=EventTemplate(value=ArraySpec((), support=positive)),
+            dispatch="sequential",
+        )
+
+        with pytest.raises(ValueError, match=r"output at 'value'.*support positive"):
+            wrapped(rows)
+
+    def test_support_pinned_broadcast_auto_falls_back_to_sequential(self):
+        wrapped = Function(
+            func=lambda x: x**2 + 1,
+            input_template=EventTemplate(x=()),
+            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            dispatch="auto",
+            n_broadcast_samples=8,
+            seed=11,
+        )
+
+        result = wrapped(Normal(0, 1, name="x"))
+
+        assert result.provenance.metadata["dispatch"] == "sequential"
+        assert result.event_template == EventTemplate(y=ArraySpec((), support=positive))
+        assert bool(jnp.all(result.samples["y"] > 0))
+
+    def test_support_pinned_broadcast_explicit_jax_reports_traceability_error(self):
+        wrapped = Function(
+            func=lambda x: x**2 + 1,
+            input_template=EventTemplate(x=()),
+            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            dispatch="jax",
+            n_broadcast_samples=8,
+            seed=11,
+        )
+
+        with pytest.raises(ValueError, match=r"dispatch='jax' failed while tracing"):
+            wrapped(Normal(0, 1, name="x"))
+
+    def test_support_pinned_sweep_auto_falls_back_to_sequential(self):
+        rows = NumericRecordArray.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+        )
+        template = EventTemplate(y=ArraySpec((), support=positive))
+        wrapped = Function(
+            func=lambda row: row["value"] + 1,
+            input_template=EventTemplate(row=EventTemplate(value=())),
+            output_template=template,
+            dispatch="auto",
+        )
+
+        result = wrapped(rows)
+
+        assert result.event_template == template
+        np.testing.assert_allclose(result["y"], np.arange(3.0) + 1)
+
+    def test_support_pinned_sweep_explicit_jax_reports_traceability_error(self):
+        rows = NumericRecordArray.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+        )
+        wrapped = Function(
+            func=lambda row: row["value"] + 1,
+            input_template=EventTemplate(row=EventTemplate(value=())),
+            output_template=EventTemplate(y=ArraySpec((), support=positive)),
+            dispatch="jax",
+        )
+
+        with pytest.raises(ValueError, match=r"dispatch='jax' failed while tracing"):
             wrapped(rows)
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])

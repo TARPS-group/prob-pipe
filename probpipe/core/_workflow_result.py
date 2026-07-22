@@ -140,7 +140,7 @@ def _coerce_output(
         # _wrap_as_record reach this identity branch. Arbitrary tracked terms
         # were wrapped as event payloads above.
         if value is raw_value and isinstance(value, Tracked):
-            value = _copy_result_term(value)
+            value = _copy_result_term(value, output_template=output_template)
     elif isinstance(value, Tracked) and value.provenance is not None:
         value = _copy_result_term(value)
     if provenance is not None and isinstance(value, Tracked):
@@ -148,9 +148,15 @@ def _coerce_output(
     return value
 
 
-def _copy_result_term(value: Tracked) -> Tracked:
+def _copy_result_term(
+    value: Tracked,
+    *,
+    output_template: EventTemplate | None = None,
+) -> Tracked:
     """Copy a retained tracked container into an independent result term."""
     clone = value._shallow_copy()
+    if output_template is not None and isinstance(clone, (Record, Distribution)):
+        object.__setattr__(clone, "_event_template", output_template)
     object.__setattr__(clone, "_provenance", None)
     annotations = getattr(clone, "_annotations", None)
     if annotations is not None:
