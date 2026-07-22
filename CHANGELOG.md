@@ -23,12 +23,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   across sequential, threaded, Prefect, and JAX dispatch without changing the
   public `RecordArray.stack` contract, and declared distribution sweeps expose
   their concrete schema through `DistributionArray.event_template`.
-  `Function.__call__` shallow-copies an implementation-returned tracked value
-  into an independent result item before attaching current-call provenance;
-  `apply` preserves the raw object's identity and existing provenance. Dynamic
-  implementation fingerprints encode signatures and templates structurally,
-  including stable opaque-default type fallbacks rather than address-bearing
-  signature strings.
+  `Function.__call__` shallow-copies an implementation-returned `Record`,
+  `RecordArray`, or `Distribution` into an independent result item before
+  attaching current-call provenance; other tracked terms remain event payloads
+  until #369 adds explicit term-result planning. `apply` preserves the raw
+  object's identity and existing provenance. Callable and private-
+  implementation fingerprints encode frozen signatures and templates
+  structurally; callable implementations additionally encode their code,
+  defaults, and closure, while private implementations use stable opaque-
+  default type fallbacks rather than address-bearing signature strings.
   `LinOp.apply(x)` now
   delegates to `matvec(x)`, preserving existing operator structure and
   behavior. `Function._from_implementation(...)` is the internal construction

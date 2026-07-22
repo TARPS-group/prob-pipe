@@ -258,6 +258,9 @@ def _validate_function_output(
         context=f"Function {function_name!r} output_template",
     )
 
+    # Record and Distribution are schema-carrying result containers. Other
+    # tracked terms remain leaf values under the default event-result contract
+    # and are validated by their ValueSpec (for example, FunctionSpec).
     if isinstance(result, (Record, Distribution)):
         try:
             actual_template = cast(Any, result).event_template
@@ -303,7 +306,12 @@ def _wrap_declared_function_output(
     function_name: str,
     output_template: EventTemplate,
 ) -> Record | Distribution:
-    """Wrap a validated raw point result under its authoritative template."""
+    """Wrap a validated event result under its authoritative template.
+
+    Schema-carrying Record and Distribution results retain their structure.
+    Other tracked terms are event leaves until #369 supplies an explicit
+    term-result plan.
+    """
     if isinstance(result, (Record, Distribution)):
         return result
     if isinstance(result, Mapping):

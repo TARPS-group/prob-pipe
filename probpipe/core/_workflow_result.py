@@ -1,8 +1,10 @@
-"""Function result-contract helpers.
+"""Default event-result contract helpers for Function calls.
 
 This private module owns the boundary rule that raw workflow returns
 become ``Record | RecordArray | Distribution`` values and receive
-provenance when appropriate.
+provenance when appropriate. Other tracked terms remain event payloads under
+this default contract; returning one directly requires the explicit term-result
+planning reserved for #369.
 """
 
 from __future__ import annotations
@@ -45,6 +47,9 @@ def _wrap_as_record(
       ``Distribution``) retain their structure here. ``_coerce_output``
       copies a directly returned tracked value before attaching call
       provenance.
+    - Other ``Tracked`` values are event payloads, not direct term results.
+      They follow the ordinary wrapping rules until an explicit term-result
+      plan selects their atom and aggregate families (#369).
     - ``dict`` (non-empty) → a ``Record`` keyed by the caller's keys; a
       nested ``dict`` value denotes tree structure and becomes a nested
       subtree (mappings are never leaves), not a single opaque field.
@@ -131,6 +136,9 @@ def _coerce_output(
     if broadcast_mode == BROADCAST_WRAP:
         raw_value = value
         value = _wrap_as_record(value, field_name, output_template)
+        # Only the schema-carrying event/result containers retained by
+        # _wrap_as_record reach this identity branch. Arbitrary tracked terms
+        # were wrapped as event payloads above.
         if value is raw_value and isinstance(value, Tracked):
             value = _copy_result_term(value)
     elif isinstance(value, Tracked) and value.provenance is not None:
@@ -141,7 +149,7 @@ def _coerce_output(
 
 
 def _copy_result_term(value: Tracked) -> Tracked:
-    """Copy a tracked payload into an independent Function result term."""
+    """Copy a retained tracked container into an independent result term."""
     clone = value._shallow_copy()
     object.__setattr__(clone, "_provenance", None)
     annotations = getattr(clone, "_annotations", None)

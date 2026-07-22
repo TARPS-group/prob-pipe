@@ -136,7 +136,7 @@ The fingerprint covers the full content of the parent:
 | TFP-backed distribution (`Normal`, `Gamma`, …) | class name + distribution name + all TFP constructor parameters |
 | `EmpiricalDistribution` | class name + name + sample arrays + log-normalised weight array |
 | `Record` | field names + values, recursively |
-| `Function` | user function bytecode (not the Prefect wrapper closure) |
+| `Function` | frozen signature and input/output templates, plus user-function bytecode/defaults/closure or the private implementation type |
 | JAX / NumPy array | shape + dtype + raw bytes (large arrays are sampled) |
 
 The fingerprint is intended as the foundation for a future Prefect

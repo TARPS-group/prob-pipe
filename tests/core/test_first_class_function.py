@@ -20,6 +20,7 @@ from probpipe import (
     DistributionArray,
     EventTemplate,
     Function,
+    FunctionSpec,
     Normal,
     NumericRecord,
     NumericRecordArray,
@@ -196,6 +197,46 @@ class TestApplyContract:
                 func=lambda x: mismatching,
                 output_template=matching.event_template,
             ).apply(1)
+
+    def test_function_return_remains_event_payload_without_template(self, full_provenance_mode):
+        learned = Function(func=lambda x: x + 1, name="learned")
+        wrapped = Function(func=lambda: learned, name="fit_like")
+
+        assert wrapped.apply() is learned
+
+        result = wrapped()
+
+        assert isinstance(result, Record)
+        assert result["fit_like"] is learned
+        assert result.provenance.parents[0].parent is wrapped
+
+    def test_function_spec_return_remains_authoritative_event_payload(self, full_provenance_mode):
+        learned = Function(
+            func=lambda x: x + 1,
+            name="learned",
+            input_template=EventTemplate(x=()),
+            output_template=EventTemplate(y=()),
+        )
+        output_template = EventTemplate(
+            learned=FunctionSpec(
+                input_template=learned.input_template,
+                output_template=learned.output_template,
+            )
+        )
+        wrapped = Function(
+            func=lambda: learned,
+            name="fit_like",
+            output_template=output_template,
+        )
+
+        assert wrapped.apply() is learned
+
+        result = wrapped()
+
+        assert isinstance(result, Record)
+        assert result.event_template == output_template
+        assert result["learned"] is learned
+        assert result.provenance.parents[0].parent is wrapped
 
 
 class TestTemplateDeclarationContract:

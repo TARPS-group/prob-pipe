@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 import sys
 import textwrap
@@ -10,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, Record
+from probpipe import EventTemplate, Normal, Record
 from probpipe.core._fingerprint import _update_function, fingerprint
 from probpipe.core.node import Function
 from probpipe.core.provenance import ParentInfo, Provenance
@@ -336,6 +337,63 @@ class TestFunctionHashing:
         wf1 = self._make_wf(add)
         wf2 = self._make_wf(add)
         assert fingerprint(wf1) == fingerprint(wf2)
+
+    def test_callable_fingerprint_tracks_template_declarations(self, full_provenance_mode):
+        def identity(x):
+            return x
+
+        def build(*, input_shape=(), output_shape=()):
+            return Function(
+                func=identity,
+                input_template=EventTemplate(x=input_shape),
+                output_template=EventTemplate(y=output_shape),
+            )
+
+        baseline = build()
+        matching = build()
+        changed_input = build(input_shape=(5,))
+        changed_output = build(output_shape=(5,))
+
+        assert fingerprint(baseline) == fingerprint(matching)
+        assert fingerprint(baseline) != fingerprint(changed_input)
+        assert fingerprint(baseline) != fingerprint(changed_output)
+
+        provenance = Provenance.create("compare", parents=[baseline, changed_output])
+        assert provenance.parents[0].fingerprint != provenance.parents[1].fingerprint
+
+    def test_callable_fingerprint_tracks_frozen_signature_declaration(self):
+        def build(signature: inspect.Signature) -> Function:
+            def identity(x):
+                return x
+
+            identity.__signature__ = signature  # type: ignore[attr-defined]
+            return self._make_wf(identity)
+
+        base = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "x",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=int,
+                )
+            ],
+            return_annotation=int,
+        )
+        changed_kind = base.replace(
+            parameters=[base.parameters["x"].replace(kind=inspect.Parameter.KEYWORD_ONLY)]
+        )
+        changed_default = base.replace(parameters=[base.parameters["x"].replace(default=1)])
+        changed_annotation = base.replace(
+            parameters=[base.parameters["x"].replace(annotation=float)]
+        )
+        changed_return = base.replace(return_annotation=float)
+
+        baseline = fingerprint(build(base))
+        assert baseline == fingerprint(build(base))
+        assert baseline != fingerprint(build(changed_kind))
+        assert baseline != fingerprint(build(changed_default))
+        assert baseline != fingerprint(build(changed_annotation))
+        assert baseline != fingerprint(build(changed_return))
 
     def test_empty_closure_cell_uses_stable_sentinel(self):
         def build(*, empty: bool) -> Function:

@@ -16,9 +16,9 @@ Supported types
 - ``Record`` — leaf paths + leaf values (leaf-keyed collection)
 - ``Distribution`` — class + name + parameters; ``EmpiricalDistribution``
   hashes samples + weights; ``Weights`` are hashed by content
-- ``Function`` — plain-callable bytecode, referenced names, and
-  captured/default values; private implementations use their type plus the
-  Function's declared signature and templates
+- ``Function`` — frozen signature and input/output templates, plus either
+  plain-callable bytecode, referenced names, and captured/default values or a
+  private implementation type
 - Numeric containers (``xarray`` / ``pandas`` / registered array backends)
   — concrete type + materialised shape + dtype + bytes **and** the
   container's identity-bearing metadata (coords / index / dims / attrs, via
@@ -526,29 +526,31 @@ def _update_function(
 ) -> None:
     """Hash a Function by callable content or stable implementation declaration.
 
-    Plain-callable Functions use bytecode plus default and closure content.
-    Other private implementations use only their implementation type and the
-    Function's declared signature and templates, excluding implementation
-    instance state and artifact identity.
+    Every Function includes its frozen signature and templates. Plain-callable
+    Functions additionally use bytecode plus default and closure content.
+    Other private implementations add only their implementation type,
+    excluding implementation instance state and artifact identity.
     """
     h.update(b"wf:")
     from ._function_contract import _CallableFunctionImplementation
 
+    h.update(b"signature=")
+    _update_signature_declaration(h, function.signature, max_array_bytes)
+    h.update(b":input_template=")
+    _update(h, function.input_template, 1, max_array_bytes)
+    h.update(b":output_template=")
+    _update(h, function.output_template, 1, max_array_bytes)
+
     implementation = function._implementation
     if not isinstance(implementation, _CallableFunctionImplementation):
         implementation_type = type(implementation)
-        h.update(b"implementation:")
+        h.update(b":implementation=")
         h.update(implementation_type.__module__.encode())
         h.update(b".")
         h.update(implementation_type.__qualname__.encode())
-        h.update(b":signature=")
-        _update_signature_declaration(h, function.signature, max_array_bytes)
-        h.update(b":input_template=")
-        _update(h, function.input_template, 1, max_array_bytes)
-        h.update(b":output_template=")
-        _update(h, function.output_template, 1, max_array_bytes)
         return
 
+    h.update(b":callable=")
     func = implementation.callable
     code = getattr(func, "__code__", None)
     if code is None:
