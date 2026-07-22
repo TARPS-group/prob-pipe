@@ -335,7 +335,7 @@ class TestApplyContract:
             output_template=EventTemplate(y=ArraySpec((), support=positive)),
         )
 
-        with pytest.raises(ValueError, match="cannot run during JAX tracing"):
+        with pytest.raises(jax.errors.TracerBoolConversionError):
             jax.jit(wrapped.apply)(jnp.asarray(1.0))
 
     def test_input_template_support_remains_descriptive_for_lifting(self):

@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from types import MappingProxyType
 from typing import Any, Protocol, cast
 
-import jax
 import jax.numpy as jnp
 
 from ._distribution_base import Distribution
@@ -502,14 +501,7 @@ def _validate_function_output_leaf_support(
         return
     support = spec.support
     membership = jnp.all(support.check(value))
-    try:
-        is_valid = bool(membership)
-    except jax.errors.TracerBoolConversionError as error:
-        raise ValueError(
-            f"Function {function_name!r} output support validation at {path!r} "
-            "cannot run during JAX tracing"
-        ) from error
-    if not is_valid:
+    if not bool(membership):
         raise ValueError(
             f"Function {function_name!r} output at {path!r} does not conform "
             f"to declared support {support!r}"
