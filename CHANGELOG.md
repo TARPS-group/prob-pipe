@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-class, tracked `Function` values (#368).** `Function` is now an
+  immutable `Node` / `Tracked` / `Annotated` object with a construction-time
+  Python `signature`, optional authoritative `input_template` and
+  `output_template`, and a raw `apply(*args, **kwargs)` execution boundary.
+  `ArraySpec` shapes accept symbolic dimension names; templates expose
+  `free_dims` / `is_concrete`, and each invocation unifies input and output
+  symbols without mutating declarations. Decorated and private-
+  implementation-backed Functions share the same planner, invocation-local
+  RNG and dispatch state, output validation, and Function-first provenance.
+  Variadic arguments now participate in lifting and sweeps through stable
+  per-element planner slots. Authoritative nested outputs aggregate identically
+  across sequential, threaded, Prefect, and JAX dispatch without changing the
+  public `RecordArray.stack` contract, and declared distribution sweeps expose
+  their concrete schema through `DistributionArray.event_template`.
+  `Function.__call__` shallow-copies an implementation-returned `Record`,
+  `RecordArray`, or `Distribution` into an independent result item before
+  attaching current-call provenance; other tracked terms remain event payloads
+  until #369 adds explicit term-result planning. `apply` preserves the raw
+  object's identity and existing provenance. Callable and private-
+  implementation fingerprints encode frozen signatures and templates
+  structurally; callable implementations additionally encode their code,
+  defaults, and closure, while private implementations use stable opaque-
+  default type fallbacks rather than address-bearing signature strings.
+  Function provenance now separates tracked lineage in `parents` from all
+  resolved ordinary call arguments in `inputs`; the latter retain stable
+  per-slot fingerprints across plain, broadcast, sweep, and nested execution
+  without appearing in ancestry DAGs. Existing operation controls remain in
+  provenance metadata. Authoritative output validation requires field trees and
+  concrete shapes to conform, uses same-kind dtype checks for bare values,
+  mappings, and Records, and enforces their declared supports against concrete
+  values. An existing Distribution must carry an `event_template` exactly
+  equal to the concrete declaration; Function neither reconciles parallel
+  `dtypes` / `supports` accessors nor rewrites the Distribution's intrinsic
+  template. Consolidating Distribution schema ownership remains follow-up
+  work. Support-bearing value outputs use row-wise execution under auto
+  dispatch because their data-dependent checks cannot run while JAX traces;
+  explicit JAX dispatch and direct `jax.jit(Function.apply)` report that
+  limitation. `apply` preserves a returned container's original template,
+  while the independent `__call__` result copy carries the concrete declared
+  template for Records and retains an already-matching Distribution template.
+  `LinOp.apply(x)` now delegates to `matvec(x)`, preserving existing operator
+  structure and behavior. `Function._from_implementation(...)` is the internal
+  construction entry point for dynamically produced ordinary Functions; #370
+  will layer fitted-producer validation and attestations over that boundary.
+  Result plans and `OperationRef` remain follow-up work.
+
 - **`NamedTree` — the public name-keyed tree substrate (#338).** New
   `probpipe.core.named_tree` module holding the ordered, immutable,
   `/`-path-navigable tree that `EventTemplate` and `Record` now share as their

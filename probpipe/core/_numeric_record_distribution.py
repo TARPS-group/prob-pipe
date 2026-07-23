@@ -293,7 +293,7 @@ class NumericRecordDistribution(RecordDistribution):
         each override from spelling out
         ``{name: value for name in event_template.fields}``.
         """
-        return {name: value for name in self.event_template.fields}
+        return dict.fromkeys(self.event_template.fields, value)
 
     # -- per-field metadata ---------------------------------------------------
 

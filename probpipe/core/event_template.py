@@ -127,10 +127,12 @@ class ValueSpec(ABC):
 
 @dataclass(frozen=True, eq=False)
 class ArraySpec(ValueSpec):
-    """A numeric-array value spec: a fixed event ``shape`` plus optional metadata.
+    """A numeric-array value spec: an event ``shape`` plus optional metadata.
 
     ``dtype`` and ``support`` are optional (default ``None``); when unset the
-    spec describes its shape only. ``dtype`` accepts any ``numpy.dtype``
+    spec describes its shape only. Each dimension is either a fixed
+    non-negative integer or a non-empty symbolic name. Repeated names must have
+    the same size when a value is validated. ``dtype`` accepts any ``numpy.dtype``
     spelling (a dtype instance, a scalar type such as ``jnp.float32``, or a
     string such as ``"float32"``) and is normalised to ``numpy.dtype`` at
     construction, so equal dtypes compare and hash equal however they were
@@ -138,7 +140,7 @@ class ArraySpec(ValueSpec):
     concrete dtype. ``support`` must be hashable when set.
     """
 
-    shape: tuple[int, ...]
+    shape: tuple[int | str, ...]
     # ``DTypeLike`` types the constructor *input* (a dtype instance, scalar
     # type, or string); ``__post_init__`` normalises it, so the stored value
     # is always ``np.dtype | None``.
@@ -147,9 +149,12 @@ class ArraySpec(ValueSpec):
 
     def __post_init__(self) -> None:
         shape = tuple(self.shape)
-        if not all(isinstance(d, int) and d >= 0 for d in shape):
+        if not all(
+            (isinstance(d, int) and d >= 0) or (isinstance(d, str) and bool(d)) for d in shape
+        ):
             raise TypeError(
-                f"ArraySpec.shape must be a tuple of non-negative ints, got {self.shape!r}"
+                "ArraySpec.shape must contain only non-negative ints or non-empty "
+                f"symbolic dimension names, got {self.shape!r}"
             )
         object.__setattr__(self, "shape", shape)
         if self.dtype is not None:
@@ -178,7 +183,8 @@ class ArraySpec(ValueSpec):
 
         Checks that *value* is a numeric array-like (a numeric Python scalar,
         or an object with a numeric ``dtype`` and a ``shape``) whose shape
-        equals ``shape`` exactly (a numeric scalar has shape ``()``), and whose
+        has the declared rank and fixed sizes (a numeric scalar has shape
+        ``()``), with repeated symbolic dimensions agreeing, and whose
         dtype is **same-kind castable** to ``dtype`` when set — a widening
         promotion (e.g. ``float32`` for a ``float64`` spec) or a within-kind
         narrowing both pass, while a cross-kind conversion (e.g. a float where
@@ -196,8 +202,17 @@ class ArraySpec(ValueSpec):
         runs under ``jax.jit`` unchanged.
         """
         shape = _full_array_shape_or_none(value)
-        if shape is None or shape != self.shape:
+        if shape is None or len(shape) != len(self.shape):
             return False
+        symbolic_sizes: dict[str, int] = {}
+        for declared, actual in zip(self.shape, shape, strict=True):
+            if isinstance(declared, int):
+                if declared != actual:
+                    return False
+                continue
+            previous = symbolic_sizes.setdefault(declared, actual)
+            if previous != actual:
+                return False
         if self.dtype is not None:
             # ``None`` means the value has no single dtype (a heterogeneous
             # frame), which cannot match a dtype-pinned spec.
@@ -347,7 +362,7 @@ class FunctionSpec(ValueSpec):
 # ``_FieldSpecInput`` also admits the construction-time sugar the constructor
 # normalises (a bare shape tuple or ``None``).
 type _FieldSpec = ValueSpec | EventTemplate
-type _FieldSpecInput = _FieldSpec | tuple[int, ...] | None
+type _FieldSpecInput = _FieldSpec | tuple[int | str, ...] | None
 
 
 def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
@@ -483,8 +498,9 @@ class EventTemplate(NamedTree[ValueSpec]):
     **field_specs
         Named fields. Each value is one of:
 
-        - ``tuple[int, ...]`` — shape of a numeric array leaf (e.g. ``()`` for a
-          scalar, ``(3,)`` for a 3-vector); normalised to :class:`ArraySpec`.
+        - ``tuple[int | str, ...]`` — fixed or symbolic shape of a numeric array
+          leaf (e.g. ``()`` for a scalar, ``(3,)`` for a 3-vector, or
+          ``("obs", 3)``); normalised to :class:`ArraySpec`.
         - ``None`` — opaque (non-array) leaf; normalised to :class:`OpaqueSpec`.
         - a :class:`ValueSpec` — an already-built spec (passed through).
         - ``EventTemplate`` — a nested sub-structure (an internal node).
@@ -507,6 +523,11 @@ class EventTemplate(NamedTree[ValueSpec]):
     node — see *Terminology*); the enumeration of leaves is :meth:`keys`, and
     per-leaf array shapes (on a numeric template) live on
     :attr:`~NumericEventTemplate.leaf_shapes`.
+
+    Symbolic array dimensions make a template polymorphic. :attr:`free_dims`
+    returns their names and :attr:`is_concrete` is true only when all dimensions
+    are fixed. Function invocation binds symbols in a call-local scope rather
+    than mutating the declaration.
 
     Calling ``EventTemplate(...)`` directly auto-promotes to a
     :class:`NumericEventTemplate` when every spec is numeric (and every nested
@@ -641,6 +662,24 @@ class EventTemplate(NamedTree[ValueSpec]):
             # Opaque / distribution / function leaf — not numeric.
             return False
         return True
+
+    @property
+    def free_dims(self) -> frozenset[str]:
+        """Symbolic dimension names declared anywhere in this template."""
+        dimensions: set[str] = set()
+        for spec in self._tree.values():
+            if isinstance(spec, EventTemplate):
+                dimensions.update(spec.free_dims)
+            elif isinstance(spec, ArraySpec):
+                dimensions.update(
+                    dimension for dimension in spec.shape if isinstance(dimension, str)
+                )
+        return frozenset(dimensions)
+
+    @property
+    def is_concrete(self) -> bool:
+        """Whether every array dimension in this template has a fixed size."""
+        return not self.free_dims
 
     def numeric_subset(self) -> NumericEventTemplate:
         """Project to the :class:`ArraySpec`-leaf sub-template.
@@ -857,7 +896,7 @@ class NumericEventTemplate(EventTemplate):
         object.__setattr__(self, "_vector_size", self._compute_vector_size())
 
     @property
-    def leaf_shapes(self) -> dict[str, tuple[int, ...]]:
+    def leaf_shapes(self) -> dict[str, tuple[int | str, ...]]:
         """Per-leaf array shapes, keyed by :meth:`keys` (canonical leaf order).
 
         Maps each leaf's ``/``-delimited path to its array ``shape``. Defined
@@ -868,7 +907,7 @@ class NumericEventTemplate(EventTemplate):
         is :meth:`keys`. A nested sub-template contributes one entry per
         nested leaf.
         """
-        result: dict[str, tuple[int, ...]] = {}
+        result: dict[str, tuple[int | str, ...]] = {}
         for name, spec in self._tree.items():
             if isinstance(spec, NumericEventTemplate):
                 for sub_name, sub_shape in spec.leaf_shapes.items():
@@ -880,6 +919,8 @@ class NumericEventTemplate(EventTemplate):
 
     def _compute_vector_size(self) -> int:
         """Total scalar count across all numeric leaves."""
+        if self.free_dims:
+            return 0
         total = 0
         for spec in self._tree.values():
             if isinstance(spec, NumericEventTemplate):
@@ -898,7 +939,19 @@ class NumericEventTemplate(EventTemplate):
         :meth:`~probpipe.NumericRecord.to_vector` output. A single value
         serializes to shape ``(vector_size,)``; a batch serializes to a matrix
         ``(*batch_shape, vector_size)``, not a single vector.
+
+        Raises
+        ------
+        ValueError
+            If the template still has symbolic dimensions. The message lists
+            the dimensions that must first be made concrete.
         """
+        if self.free_dims:
+            dimensions = ", ".join(sorted(self.free_dims))
+            raise ValueError(
+                "vector_size is undefined for a polymorphic NumericEventTemplate; "
+                f"unbound dimensions: {dimensions}"
+            )
         return self._vector_size
 
     # 1-D numeric (de)serialization is a value operation and lives on the
@@ -906,6 +959,205 @@ class NumericEventTemplate(EventTemplate):
     # :class:`~probpipe.NumericRecordArray`, and their ``from_vector``
     # classmethods (which take a template). A template describes structure
     # and does not depend on the value type, so it carries neither.
+
+
+# ---------------------------------------------------------------------------
+# Private symbolic-dimension unification
+# ---------------------------------------------------------------------------
+
+
+def _unify_event_template_with_value(
+    template: EventTemplate,
+    value: Any,
+    bindings: Mapping[str, int] | None = None,
+    *,
+    context: str = "value",
+) -> tuple[EventTemplate, dict[str, int]]:
+    """Return a concrete copy of *template* unified with a concrete value.
+
+    The declaration and the optional input bindings are never mutated. The
+    returned binding dictionary can be threaded through several calls to give
+    inputs and outputs one invocation-local symbolic-dimension scope.
+    """
+    resolved = dict(bindings or {})
+    concrete = _unify_template_node(template, value, resolved, context)
+    return concrete, resolved
+
+
+def _unify_event_templates(
+    expected: EventTemplate,
+    actual: EventTemplate,
+    bindings: Mapping[str, int] | None = None,
+    *,
+    context: str = "value",
+) -> tuple[EventTemplate, dict[str, int]]:
+    """Return *expected* concretized against an authoritative actual template."""
+    if not isinstance(actual, EventTemplate):
+        raise TypeError(f"{context} template must be an EventTemplate")
+    resolved = dict(bindings or {})
+    concrete = _unify_template_node(expected, actual, resolved, context)
+    return concrete, resolved
+
+
+def _concretize_event_template(
+    template: EventTemplate,
+    bindings: Mapping[str, int],
+    *,
+    context: str = "template",
+) -> EventTemplate:
+    """Substitute all symbolic dimensions, failing if any remain unbound."""
+    missing = template.free_dims.difference(bindings)
+    if missing:
+        dimensions = ", ".join(sorted(missing))
+        raise ValueError(f"{context} has unbound symbolic dimensions: {dimensions}")
+    return _replace_template_dimensions(template, bindings)
+
+
+def _unify_template_node(
+    expected: EventTemplate,
+    actual: Any,
+    bindings: dict[str, int],
+    path: str,
+) -> EventTemplate:
+    if isinstance(actual, EventTemplate):
+        actual_children: Mapping[str, Any] = actual.children
+    elif isinstance(getattr(actual, "children", None), Mapping):
+        actual_children = actual.children
+    elif isinstance(actual, Mapping):
+        actual_children = actual
+    else:
+        raise ValueError(
+            f"{path} does not match its EventTemplate: expected named fields, "
+            f"got {type(actual).__name__}"
+        )
+
+    expected_names = set(expected.children)
+    actual_names = set(actual_children)
+    if expected_names != actual_names:
+        raise ValueError(
+            f"{path} fields {sorted(actual_names)} do not match template fields "
+            f"{sorted(expected_names)}"
+        )
+
+    concrete_children: dict[str, _FieldSpec] = {}
+    for name, spec in expected.children.items():
+        child_path = f"{path}{_PATH_SEP}{name}" if path else name
+        actual_child = actual_children[name]
+        if isinstance(spec, EventTemplate):
+            concrete_children[name] = _unify_template_node(spec, actual_child, bindings, child_path)
+            continue
+        if isinstance(actual_child, EventTemplate):
+            if len(actual_child) != 1:
+                raise ValueError(
+                    f"{child_path} does not match its field spec: template has a leaf "
+                    f"but the value has fields {list(actual_child.keys())}"
+                )
+            concrete_children[name] = _unify_specs(
+                spec, next(iter(actual_child.values())), bindings, child_path
+            )
+            continue
+        if isinstance(actual_child, ValueSpec):
+            concrete_children[name] = _unify_specs(spec, actual_child, bindings, child_path)
+        else:
+            concrete_children[name] = _unify_spec_with_value(
+                spec, actual_child, bindings, child_path
+            )
+    return EventTemplate(concrete_children)
+
+
+def _unify_specs(
+    expected: ValueSpec,
+    actual: ValueSpec,
+    bindings: dict[str, int],
+    path: str,
+) -> ValueSpec:
+    if isinstance(expected, ArraySpec) and isinstance(actual, ArraySpec):
+        if any(isinstance(dimension, str) for dimension in actual.shape):
+            raise ValueError(
+                f"{path} has a polymorphic actual template; concrete dimensions are required"
+            )
+        concrete_shape = _unify_array_shape(expected.shape, actual.shape, bindings, path)
+        if expected.dtype is not None and actual.dtype is not None:
+            if not np.can_cast(actual.dtype, expected.dtype, casting="same_kind"):
+                raise ValueError(
+                    f"{path} dtype {actual.dtype} does not conform to {expected.dtype}"
+                )
+        return ArraySpec(concrete_shape, dtype=expected.dtype, support=expected.support)
+    if expected != actual:
+        raise ValueError(f"{path} spec {actual!r} does not conform to {expected!r}")
+    return expected
+
+
+def _unify_spec_with_value(
+    spec: ValueSpec,
+    value: Any,
+    bindings: dict[str, int],
+    path: str,
+) -> ValueSpec:
+    if not isinstance(spec, ArraySpec):
+        if not spec.is_valid(value):
+            raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
+        return spec
+
+    actual_shape = _full_array_shape_or_none(value)
+    if actual_shape is None:
+        raise ValueError(
+            f"{path} does not conform to its field spec ({spec!r}): got {type(value).__name__}"
+        )
+    concrete_shape = _unify_array_shape(spec.shape, actual_shape, bindings, path)
+    concrete = ArraySpec(concrete_shape, dtype=spec.dtype, support=spec.support)
+    if not concrete.is_valid(value):
+        raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
+    return concrete
+
+
+def _unify_array_shape(
+    declared: tuple[int | str, ...],
+    actual: tuple[int | str, ...],
+    bindings: dict[str, int],
+    path: str,
+) -> tuple[int, ...]:
+    if len(declared) != len(actual):
+        raise ValueError(
+            f"{path} has rank {len(actual)}, expected rank {len(declared)} from shape {declared!r}"
+        )
+    concrete: list[int] = []
+    for declared_dimension, actual_dimension in zip(declared, actual, strict=True):
+        if not isinstance(actual_dimension, int):
+            raise ValueError(f"{path} has non-concrete dimension {actual_dimension!r}")
+        if isinstance(declared_dimension, int):
+            if declared_dimension != actual_dimension:
+                raise ValueError(
+                    f"{path} has dimension {actual_dimension}, expected "
+                    f"{declared_dimension} from shape {declared!r}"
+                )
+        else:
+            previous = bindings.setdefault(declared_dimension, actual_dimension)
+            if previous != actual_dimension:
+                raise ValueError(
+                    f"{path} binds symbolic dimension {declared_dimension!r} to "
+                    f"{actual_dimension}, but it is already bound to {previous}"
+                )
+        concrete.append(actual_dimension)
+    return tuple(concrete)
+
+
+def _replace_template_dimensions(
+    template: EventTemplate, bindings: Mapping[str, int]
+) -> EventTemplate:
+    children: dict[str, _FieldSpec] = {}
+    for name, spec in template.children.items():
+        if isinstance(spec, EventTemplate):
+            children[name] = _replace_template_dimensions(spec, bindings)
+        elif isinstance(spec, ArraySpec):
+            shape = tuple(
+                bindings[dimension] if isinstance(dimension, str) else dimension
+                for dimension in spec.shape
+            )
+            children[name] = ArraySpec(shape, dtype=spec.dtype, support=spec.support)
+        else:
+            children[name] = spec
+    return EventTemplate(children)
 
 
 # ---------------------------------------------------------------------------

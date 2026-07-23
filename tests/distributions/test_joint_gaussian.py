@@ -420,10 +420,12 @@ class TestConditionOn:
 
     def test_provenance(self):
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
+        raw = condition_on.apply(jg, x=jnp.array([0.0]))
         cond = condition_on(jg, x=jnp.array([0.0]))
+        assert raw.provenance.operation == "condition_on"
+        assert "x" in raw.provenance.metadata["conditioned"]
         assert cond.provenance is not None
-        assert cond.provenance.operation == "condition_on"
-        assert "x" in cond.provenance.metadata["conditioned"]
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_conditional_sampling(self):
         """Draw samples from conditional and verify they're centered correctly."""

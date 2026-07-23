@@ -1,22 +1,26 @@
-"""Function result-contract helpers.
+"""Default event-result contract helpers for Function calls.
 
 This private module owns the boundary rule that raw workflow returns
 become ``Record | RecordArray | Distribution`` values and receive
-provenance when appropriate.
+provenance when appropriate. Other tracked terms remain event payloads under
+this default contract; returning one directly requires the explicit term-result
+planning reserved for #369.
 """
 
 from __future__ import annotations
 
-from contextlib import suppress
 from typing import Any, Literal
 
 import jax.numpy as jnp
 
 from ._broadcast_distributions import _make_stack
 from ._distribution_base import Distribution
+from ._function_contract import _wrap_declared_function_output
 from ._numeric_record import _is_numeric_leaf
+from .event_template import EventTemplate
 from .provenance import Provenance
 from .record import Record
+from .tracked import Tracked
 
 # Broadcast modes: how a value reached ``_coerce_output``. Named
 # constants so callsites use the same spelling and typos fail loudly.
@@ -30,14 +34,22 @@ BROADCAST_STACK: BroadcastMode = "stack"
 BROADCAST_NESTED: BroadcastMode = "nested"
 
 
-def _wrap_as_record(value: Any, field_name: str) -> Any:
+def _wrap_as_record(
+    value: Any,
+    field_name: str,
+    output_template: EventTemplate | None = None,
+) -> Any:
     """Coerce a raw return into the Record | RecordArray | Distribution contract.
 
     Uniform rule applied at the Function boundary:
 
     - Already-structured values (``Record`` / ``RecordArray`` /
-      ``Distribution``) pass through unchanged — their domain field
-      names are preserved.
+      ``Distribution``) retain their structure here. ``_coerce_output``
+      copies a directly returned tracked value before attaching call
+      provenance.
+    - Other ``Tracked`` values are event payloads, not direct term results.
+      They follow the ordinary wrapping rules until an explicit term-result
+      plan selects their atom and aggregate families (#369).
     - ``dict`` (non-empty) → a ``Record`` keyed by the caller's keys; a
       nested ``dict`` value denotes tree structure and becomes a nested
       subtree (mappings are never leaves), not a single opaque field.
@@ -52,6 +64,12 @@ def _wrap_as_record(value: Any, field_name: str) -> Any:
     - Anything else (opaque Python object) → a single-field plain
       ``Record`` named and keyed by the function's own name.
     """
+    if output_template is not None:
+        return _wrap_declared_function_output(
+            value,
+            function_name=field_name,
+            output_template=output_template,
+        )
     if isinstance(value, (Distribution, Record)):
         return value
     if isinstance(value, dict) and value:
@@ -77,6 +95,7 @@ def _coerce_output(
     broadcast_mode: BroadcastMode,
     provenance: Provenance | None,
     field_name: str,
+    output_template: EventTemplate | None = None,
 ) -> Any:
     """Enforce the Record | RecordArray | Distribution output contract.
 
@@ -93,7 +112,8 @@ def _coerce_output(
           user's function returned. Scalars / arrays become
           a single-field record named after the function; dict / list / tuple
           promote via ``_wrap_as_record``; existing Record /
-          RecordArray / Distribution values pass through.
+          RecordArray / Distribution values become independent shallow
+          result copies.
         * ``"stack"`` — array-valued broadcast; ``value`` is a stacked
           aggregate from ``_make_stack`` (``NumericRecordArray`` /
           ``RecordArray`` / ``DistributionArray``).
@@ -109,15 +129,37 @@ def _coerce_output(
     Returns
     -------
     Record | RecordArray | Distribution
-        The value, possibly wrapped, with ``.provenance`` attached when it
-        was empty. An already-sourced value keeps its existing source
-        (inner marginals produced by the broadcast layer carry their
-        own provenance; ``_coerce_output`` doesn't overwrite).
+        The value, possibly wrapped or shallow-copied, with the current
+        call's ``.provenance`` attached. A copied result does not retain the
+        implementation-returned object's prior provenance.
     """
     if broadcast_mode == BROADCAST_WRAP:
-        value = _wrap_as_record(value, field_name)
-    if provenance is not None and hasattr(value, "with_provenance"):
-        # Existing source, e.g. an inner marginal, keeps its provenance.
-        with suppress(RuntimeError):
-            value.with_provenance(provenance)
+        raw_value = value
+        value = _wrap_as_record(value, field_name, output_template)
+        # Only the schema-carrying event/result containers retained by
+        # _wrap_as_record reach this identity branch. Arbitrary tracked terms
+        # were wrapped as event payloads above.
+        if value is raw_value and isinstance(value, Tracked):
+            value = _copy_result_term(value, output_template=output_template)
+    elif isinstance(value, Tracked) and value.provenance is not None:
+        value = _copy_result_term(value)
+    if provenance is not None and isinstance(value, Tracked):
+        value.with_provenance(provenance)
     return value
+
+
+def _copy_result_term(
+    value: Tracked,
+    *,
+    output_template: EventTemplate | None = None,
+) -> Tracked:
+    """Copy a retained tracked container into an independent result term."""
+    clone = value._shallow_copy()
+    if output_template is not None and isinstance(clone, Record):
+        object.__setattr__(clone, "_event_template", output_template)
+    object.__setattr__(clone, "_provenance", None)
+    annotations = getattr(clone, "_annotations", None)
+    if annotations is not None:
+        copied = annotations.copy() if hasattr(annotations, "copy") else dict(annotations)
+        object.__setattr__(clone, "_annotations", copied)
+    return clone

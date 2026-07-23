@@ -280,7 +280,7 @@ class TestBayesFlowNPE:
         """``condition_on`` honours ``num_results`` (and its model default) and
         ignores the MCMC-only kwargs; the result is a named
         ``ApproximateDistribution``."""
-        post = condition_on(
+        post = condition_on.apply(
             npe_model, _observe(0.0, 0.0, 1), num_results=300, num_warmup=99, num_chains=4
         )
         assert isinstance(post, ApproximateDistribution)
@@ -349,7 +349,7 @@ class TestBayesFlowMethods:
             random_seed=0,
             verbose=0,
         )
-        post = condition_on(model, _observe(0.5, 0.0, 0))
+        post = condition_on.apply(model, _observe(0.5, 0.0, 0))
         assert post.algorithm == f"bayesflow_{method}"
         draws = post.draws()
         assert np.isfinite(np.asarray(draws["a"])).all()
@@ -442,7 +442,7 @@ class TestBayesFlowMethods:
             random_seed=0,
             verbose=0,
         )
-        post = condition_on(model, _observe(0.5, 0.0, 0))
+        post = condition_on.apply(model, _observe(0.5, 0.0, 0))
         assert post.algorithm == "bayesflow_npe"
         draws = post.draws()
         assert np.asarray(draws["a"]).reshape(-1).shape[0] == 200

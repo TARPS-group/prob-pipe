@@ -284,6 +284,7 @@ class TestProvenanceChain:
         out = f(p=sweep)
         assert out.provenance is not None
         assert out.provenance.operation == "workflow.stack"
+        assert out.provenance.parents[0].parent is f
         assert any(p.parent is sweep for p in out.provenance.parents)
         assert out.provenance.metadata["batch_shape"] == (3,)
         assert out.provenance.metadata["k"] == 0
@@ -298,6 +299,7 @@ class TestProvenanceChain:
         noise_dist = Normal(loc=0.0, scale=1.0, name="noise")
         out = f(p=sweep, noise=noise_dist)
         assert out.provenance.operation == "workflow.nested"
+        assert out.provenance.parents[0].parent is f
         assert any(p.parent is sweep for p in out.provenance.parents)
         assert any(p.parent is noise_dist for p in out.provenance.parents)
         assert out.provenance.metadata["k"] == 10
@@ -315,7 +317,8 @@ class TestProvenanceChain:
         out = f(p=sweep)
         assert out.provenance is not None
         assert out.provenance.operation == "workflow.stack"
-        parent = out.provenance.parents[0]
+        assert out.provenance.parents[0].type_name == "Function"
+        parent = out.provenance.parents[1]
         assert parent.parent is None  # live ref dropped in LIGHTWEIGHT
         assert parent.type_name == "NumericRecordArray"
         assert any(a.type_name == "NumericRecordArray" for a in provenance_ancestors(out))

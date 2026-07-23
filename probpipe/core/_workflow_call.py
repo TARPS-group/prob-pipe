@@ -9,6 +9,7 @@ broadcast planning, execution, or result coercion.
 from __future__ import annotations
 
 import inspect
+from collections import OrderedDict
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, get_type_hints
@@ -44,10 +45,28 @@ class WorkflowCallOverrides:
 
 @dataclass(frozen=True)
 class ResolvedWorkflowCall:
-    """Fully resolved call values plus call-time workflow overrides."""
+    """Fully resolved signature-shaped values plus workflow overrides."""
 
     values: dict[str, Any]
     overrides: WorkflowCallOverrides
+
+
+@dataclass(frozen=True)
+class WorkflowInputRef:
+    """Reference to one planner-visible value in a resolved Python call."""
+
+    parameter_name: str
+    position: int | None = None
+    keyword: str | None = None
+
+    @property
+    def label(self) -> str:
+        """Stable display name for provenance and broadcast metadata."""
+        if self.position is not None:
+            return f"*{self.parameter_name}[{self.position}]"
+        if self.keyword is not None:
+            return f"**{self.parameter_name}[{self.keyword!r}]"
+        return self.parameter_name
 
 
 def make_signature_info(
@@ -56,7 +75,7 @@ def make_signature_info(
     """Build reusable signature metadata for a wrapped function."""
     signature = inspect.signature(func)
     hints = _get_type_hints(func)
-    param_names = tuple(p for p in signature.parameters if p != "self")
+    param_names = tuple(signature.parameters)
     has_var_keyword = any(
         p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
     )
@@ -66,6 +85,119 @@ def make_signature_info(
         param_names=param_names,
         has_var_keyword=has_var_keyword,
     )
+
+
+def make_signature_info_from_signature(
+    signature: inspect.Signature,
+    *,
+    hints: Mapping[str, Any] | None = None,
+) -> WorkflowSignatureInfo:
+    """Build reusable metadata from an independently supplied signature."""
+    if not isinstance(signature, inspect.Signature):
+        raise TypeError(f"signature must be inspect.Signature, got {type(signature).__name__}")
+    resolved_hints = dict(hints or {})
+    for name, parameter in signature.parameters.items():
+        if parameter.annotation is not inspect.Parameter.empty:
+            resolved_hints.setdefault(name, parameter.annotation)
+    param_names = tuple(signature.parameters)
+    has_var_keyword = any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    return WorkflowSignatureInfo(
+        signature=signature,
+        hints=resolved_hints,
+        param_names=param_names,
+        has_var_keyword=has_var_keyword,
+    )
+
+
+def values_to_bound_arguments(
+    signature: inspect.Signature,
+    values: Mapping[str, Any],
+) -> inspect.BoundArguments:
+    """Reconstruct Python call semantics from resolved workflow values."""
+    arguments: OrderedDict[str, Any] = OrderedDict()
+    for name in signature.parameters:
+        if name in values:
+            arguments[name] = values[name]
+    return inspect.BoundArguments(signature, arguments)
+
+
+def iter_input_refs(
+    info: WorkflowSignatureInfo,
+    values: Mapping[str, Any],
+) -> tuple[WorkflowInputRef, ...]:
+    """Return planner-visible input references in Python parameter order."""
+    refs: list[WorkflowInputRef] = []
+    for name, parameter in info.signature.parameters.items():
+        if name not in values:
+            continue
+        value = values[name]
+        if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
+            refs.extend(WorkflowInputRef(name, position=index) for index in range(len(value)))
+        elif parameter.kind == inspect.Parameter.VAR_KEYWORD:
+            refs.extend(WorkflowInputRef(name, keyword=key) for key in value)
+        else:
+            refs.append(WorkflowInputRef(name))
+    return tuple(refs)
+
+
+def input_ref_hint(info: WorkflowSignatureInfo, ref: WorkflowInputRef) -> Any:
+    """Return the annotation governing one resolved input reference."""
+    return info.hints.get(ref.parameter_name)
+
+
+def input_ref_value(values: Mapping[str, Any], ref: WorkflowInputRef) -> Any:
+    """Read one referenced value from signature-shaped call values."""
+    value = values[ref.parameter_name]
+    if ref.position is not None:
+        return value[ref.position]
+    if ref.keyword is not None:
+        return value[ref.keyword]
+    return value
+
+
+def replace_input_ref(
+    values: Mapping[str, Any],
+    ref: WorkflowInputRef,
+    value: Any,
+) -> dict[str, Any]:
+    """Return signature-shaped values with one referenced input replaced."""
+    out = dict(values)
+    if ref.position is not None:
+        items = list(out[ref.parameter_name])
+        items[ref.position] = value
+        out[ref.parameter_name] = tuple(items)
+    elif ref.keyword is not None:
+        extras = dict(out[ref.parameter_name])
+        extras[ref.keyword] = value
+        out[ref.parameter_name] = extras
+    else:
+        out[ref.parameter_name] = value
+    return out
+
+
+def replace_input_refs(
+    values: Mapping[str, Any],
+    replacements: Mapping[WorkflowInputRef, Any],
+) -> dict[str, Any]:
+    """Return signature-shaped values with referenced inputs replaced."""
+    out = dict(values)
+    positional: dict[str, list[Any]] = {}
+    keywords: dict[str, dict[str, Any]] = {}
+    for ref, value in replacements.items():
+        if ref.position is not None:
+            items = positional.setdefault(ref.parameter_name, list(out[ref.parameter_name]))
+            items[ref.position] = value
+        elif ref.keyword is not None:
+            extras = keywords.setdefault(ref.parameter_name, dict(out[ref.parameter_name]))
+            extras[ref.keyword] = value
+        else:
+            out[ref.parameter_name] = value
+    out.update({name: tuple(items) for name, items in positional.items()})
+    out.update(keywords)
+    return out
 
 
 def is_dependency_param(
@@ -80,27 +212,6 @@ def is_dependency_param(
         return isinstance(ann, type) and issubclass(ann, dependency_type)
     except TypeError:
         return False
-
-
-def _flatten_bound_inputs(
-    signature: inspect.Signature,
-    bound: inspect.BoundArguments,
-) -> dict[str, Any]:
-    """Flatten bound arguments into workflow input names.
-
-    ``**kwargs`` parameters are expanded into the returned input mapping.
-    """
-    inputs: dict[str, Any] = {}
-
-    for name, value in bound.arguments.items():
-        param = signature.parameters[name]
-
-        if param.kind == inspect.Parameter.VAR_KEYWORD:
-            inputs.update(value)
-        else:
-            inputs[name] = value
-
-    return inputs
 
 
 def bind_call_inputs(
@@ -139,9 +250,7 @@ def bind_call_inputs(
     )
 
     bound = info.signature.bind_partial(*args, **call_inputs)
-    bound_inputs = _flatten_bound_inputs(info.signature, bound)
-
-    return bound_inputs, overrides
+    return dict(bound.arguments), overrides
 
 
 def resolve_workflow_values(
@@ -153,13 +262,36 @@ def resolve_workflow_values(
     dependency_type: type,
     workflow_name: str,
 ) -> dict[str, Any]:
-    """Resolve final function kwargs from call, bind, module, and defaults."""
+    """Resolve final signature-shaped arguments from every value source."""
     values: dict[str, Any] = {}
     mod_child_nodes = getattr(module, "child_nodes", {}) if module is not None else {}
     mod_inputs = getattr(module, "inputs", {}) if module is not None else {}
 
+    var_keyword_name = next(
+        (
+            name
+            for name, parameter in info.signature.parameters.items()
+            if parameter.kind == inspect.Parameter.VAR_KEYWORD
+        ),
+        None,
+    )
+
     for name, param in info.signature.parameters.items():
-        if name == "self":
+        if param.kind == inspect.Parameter.VAR_KEYWORD:
+            extras: dict[str, Any] = {}
+            bound_container = bind.get(name)
+            if bound_container is not None:
+                if not isinstance(bound_container, Mapping):
+                    raise TypeError(
+                        f"Construction binding for variadic keyword parameter "
+                        f"'{name}' of workflow '{workflow_name}' must be a mapping"
+                    )
+                extras.update(bound_container)
+            known_params = set(info.signature.parameters)
+            extras.update({key: value for key, value in bind.items() if key not in known_params})
+            extras.update(call_inputs.get(name, {}))
+            if extras:
+                values[name] = extras
             continue
 
         is_dep = is_dependency_param(info, name, dependency_type=dependency_type)
@@ -182,11 +314,15 @@ def resolve_workflow_values(
         if name not in values and param.default is not param.empty:
             values[name] = param.default
 
-    if info.has_var_keyword:
-        known_params = set(info.signature.parameters.keys())
-        for name, value in call_inputs.items():
-            if name not in known_params:
-                values[name] = value
+    if var_keyword_name is None:
+        # Construction declarations validate this case before call time; keep
+        # the guard here for direct use of the private resolver.
+        unexpected = set(bind).difference(info.signature.parameters)
+        if unexpected:
+            raise TypeError(
+                f"Unexpected construction bindings for workflow '{workflow_name}': "
+                f"{sorted(unexpected)}"
+            )
 
     _validate_required_values(info, values, workflow_name=workflow_name)
     _validate_dependency_values(
@@ -246,8 +382,6 @@ def _validate_required_values(
     workflow_name: str,
 ) -> None:
     for name, param in info.signature.parameters.items():
-        if name == "self":
-            continue
         if param.kind in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
             continue
         if param.default is param.empty and name not in values:
@@ -261,13 +395,14 @@ def _validate_dependency_values(
     dependency_type: type,
     workflow_name: str,
 ) -> None:
-    for name in info.param_names:
+    for ref in iter_input_refs(info, values):
+        name = ref.parameter_name
         if not is_dependency_param(info, name, dependency_type=dependency_type):
             continue
-        value = values.get(name)
+        value = input_ref_value(values, ref)
         if not isinstance(value, dependency_type):
             ann = info.hints.get(name)
             raise TypeError(
                 f"Function '{workflow_name}' expects dependency "
-                f"'{name}: {ann}' to be a Node, but got {type(value)}."
+                f"'{ref.label}: {ann}' to be a Node, but got {type(value)}."
             )

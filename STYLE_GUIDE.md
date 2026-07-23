@@ -103,6 +103,23 @@ condition_on_nutpie = Function(
 )
 ```
 
+Treat a public `Function` as an immutable, first-class `Tracked` / `Annotated`
+computation term. Its construction-time `inspect.Signature` is the Python
+calling contract; optional `input_template` and `output_template` declarations
+are authoritative schemas but never derive or replace that signature. Use
+`apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
+Use `__call__` for distribution lifting, array sweeps, orchestration, result
+wrapping, and Function-first provenance.
+
+If an implementation returns an existing `Record`, `RecordArray`, or
+`Distribution`, `apply` preserves its identity. `__call__` instead creates a
+shallow result copy that shares value data and templates, owns a separate
+annotations container, and receives only the current call's provenance. Do not
+restore identity-through behavior at the workflow boundary. Variadic Functions
+without an input template are supported: the planner treats every `*args`
+element and `**kwargs` entry as an independent slot while reconstructing the
+original `BoundArguments` before invoking user code.
+
 Exception: functions whose return value is a model *component* rather than a
 `Record`/`Distribution` are deliberately **plain functions** — the workflow
 result boundary coerces returns into `Record`/`Distribution`, which would wrap
@@ -269,6 +286,9 @@ field names dict-style (`keys()` / `values()` / `items()`).
 `DistributionArray` is positional and follows numpy/jax conventions:
 `len(da)` is the leading-axis dim and `da.size` is the total cell
 count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
+Its read-only `event_template` is an explicitly supplied authoritative
+Function aggregate template, a common template derived from compatible literal
+components, or `None` when no common declaration exists.
 Iteration walks the leading axis — for a 1-D `DistributionArray`
 it yields scalar cells; for a multi-d one it yields sub-arrays of
 shape `batch_shape[1:]`, mirroring `iter(np.zeros((2, 3)))`. For
@@ -768,8 +788,9 @@ modules (`_*.py`) whose symbols are re-exported through the package
 
 ### 9.2 Immutability
 
-Distribution objects are immutable. Parameters are fixed at construction;
-operations return new distribution objects rather than mutating state.
+Distribution and `Function` objects are immutable. Parameters, Function
+signatures, templates, controls, and implementations are fixed at construction;
+operations return new terms rather than mutating state.
 
 **The one carve-out is the `annotations` store** (`_annotations`, provided
 by the `Annotated` mixin in `probpipe.core.tracked` and carried by

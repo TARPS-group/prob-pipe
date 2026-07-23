@@ -7,7 +7,8 @@ step function, and a stateful module for sequential Bayesian updating.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
+from types import MappingProxyType
 from typing import Any
 
 from ..core.config import WorkflowKind
@@ -64,6 +65,10 @@ class _ConditioningStep[P, D](Function):
         call (e.g., ``method="tfp_nuts"``, ``num_results=2000``).
     """
 
+    _likelihood: Likelihood[P, D]
+    _condition_fn: Callable[..., Distribution[P]]
+    _condition_kwargs: Mapping[str, Any]
+
     def __init__(
         self,
         likelihood: Likelihood[P, D],
@@ -77,9 +82,16 @@ class _ConditioningStep[P, D](Function):
 
             condition_fn = condition_on
 
-        self._likelihood = likelihood
-        self._condition_fn = condition_fn
-        self._condition_kwargs = condition_kwargs
+        # Function instances freeze after construction. This private subclass
+        # deliberately installs its implementation state before the facade is
+        # initialized, and keeps the forwarded options read-only as well.
+        object.__setattr__(self, "_likelihood", likelihood)
+        object.__setattr__(self, "_condition_fn", condition_fn)
+        object.__setattr__(
+            self,
+            "_condition_kwargs",
+            MappingProxyType(dict(condition_kwargs)),
+        )
 
         super().__init__(
             func=self._step_impl,

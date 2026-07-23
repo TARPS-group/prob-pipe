@@ -48,6 +48,7 @@ import numpy as np
 
 from .._array_utils import _slice_leading_axes
 from ._distribution_base import Distribution
+from .event_template import EventTemplate
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
 
@@ -67,7 +68,8 @@ class DistributionArray[T](Distribution[T]):
     addressed by a (multi-d) ``batch_shape``.
 
     Exposes only the container surface (indexing, iteration,
-    ``components``, ``batch_shape``, ``event_shape``). Vectorized
+    ``components``, ``batch_shape``, ``event_shape``, ``event_template``).
+    Vectorized
     ops (``sample``, ``mean``, ``variance``, ``log_prob``, …) are
     delivered by the :class:`~probpipe.core.node.Function`
     sweep layer, which treats the array as ``Array[Distribution]`` and
@@ -170,6 +172,7 @@ class DistributionArray[T](Distribution[T]):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
+        self._event_template: EventTemplate | None = None
         name, name_is_auto = auto_name(name, "distribution_array")
         super().__init__(name=name, name_is_auto=name_is_auto)
         # A DistributionArray holding MC-marginal components inherits
@@ -349,6 +352,7 @@ class DistributionArray[T](Distribution[T]):
         instance._components = None
         instance._batch_shape = tuple(backend.batch_shape)
         instance._backend = backend
+        instance._event_template = None
         name, name_is_auto = auto_name(name, "distribution_array")
         Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
         # Approximation status flows from the backend. TFP-backed
@@ -398,6 +402,27 @@ class DistributionArray[T](Distribution[T]):
         if self._backend is not None:
             return tuple(self._backend.event_shape)
         return getattr(self._components[0], "event_shape", ())
+
+    @property
+    def event_template(self) -> EventTemplate | None:
+        """Authoritative template shared by the component distributions.
+
+        Function-produced arrays store the declared template explicitly.
+        Other arrays expose a template only when all materialized components
+        carry the same non-``None`` template.
+        """
+        if self._event_template is not None:
+            return self._event_template
+        if self._backend is not None:
+            return None
+        templates = [getattr(component, "event_template", None) for component in self.components]
+        if (
+            templates
+            and templates[0] is not None
+            and all(template == templates[0] for template in templates[1:])
+        ):
+            return templates[0]
+        return None
 
     @property
     def dtype(self):
@@ -512,6 +537,7 @@ class DistributionArray[T](Distribution[T]):
             batch_shape=sliced.shape,
             name=self._name,
             name_is_auto=self._name_is_auto,
+            event_template=self._event_template,
         )
 
     def __iter__(self):
@@ -645,6 +671,7 @@ def _make_distribution_array(
     batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
     name_is_auto: bool | None = None,
+    event_template: EventTemplate | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray``.
 
@@ -670,8 +697,20 @@ def _make_distribution_array(
         Overrides the flag on the result — pass the parent's flag when the
         result inherits a possibly-auto name (e.g. a slice). ``None`` keeps
         the constructor's own resolution (auto iff *name* was omitted).
+    event_template : EventTemplate, optional
+        Authoritative template for a Function-produced aggregate. Every
+        component must expose the same template.
     """
     array = DistributionArray(components, batch_shape=batch_shape, name=name)
+    if event_template is not None:
+        for index, component in enumerate(array.components):
+            actual = getattr(component, "event_template", None)
+            if actual != event_template:
+                raise ValueError(
+                    f"DistributionArray component {index} event_template {actual!r} "
+                    f"does not match declared template {event_template!r}"
+                )
+        array._event_template = event_template
     if name_is_auto is not None:
         object.__setattr__(array, "_name_is_auto", bool(name_is_auto))
     return array

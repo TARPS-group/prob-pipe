@@ -76,6 +76,37 @@ def test_dense_matvec_matmat_dtype():
     assert "dense" in op.flags
 
 
+@pytest.mark.parametrize(
+    "operator",
+    [
+        DenseLinOp(jnp.array([[1.0, 2.0], [3.0, 4.0]])),
+        DiagonalLinOp(jnp.array([2.0, 3.0])),
+        SumLinOp(
+            [
+                DiagonalLinOp(jnp.array([1.0, 2.0])),
+                DiagonalLinOp(jnp.array([3.0, 4.0])),
+            ]
+        ),
+    ],
+)
+def test_apply_matches_matvec_for_dense_diagonal_and_composite(operator):
+    x = jnp.array([1.0, -2.0])
+
+    assert jnp.array_equal(operator.apply(x), operator.matvec(x))
+
+
+def test_apply_and_matvec_have_identical_error_behavior():
+    operator = DenseLinOp(jnp.eye(2))
+    invalid = jnp.ones((2, 2, 1))
+
+    with pytest.raises(ValueError) as apply_error:
+        operator.apply(invalid)
+    with pytest.raises(type(apply_error.value)) as matvec_error:
+        operator.matvec(invalid)
+
+    assert str(apply_error.value) == str(matvec_error.value)
+
+
 def test_diagonal_matvec_solve_cholesky_flags():
     diag = jnp.array([2.0, 3.0])
     d = DiagonalLinOp(diag)

@@ -135,7 +135,7 @@ class TestExecutionRequestShape:
             "prefect_task_runner",
         }
 
-    def test_function_request_contains_plain_function(self, monkeypatch):
+    def test_function_request_contains_resolved_point_callable(self, monkeypatch):
         seen = {}
 
         def fake_execute_many(request):
@@ -148,7 +148,8 @@ class TestExecutionRequestShape:
         result = wf(x=1)
 
         assert float(result["add_one"]) == 2.0
-        assert seen["request"].func is add_one
+        assert callable(seen["request"].func)
+        assert seen["request"].func is not add_one
         assert not isinstance(seen["request"].func, Function)
         assert seen["request"].execution.mode == "sequential"
 

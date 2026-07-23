@@ -21,6 +21,32 @@ class TestConstruction:
         v = Record("r", {"a": 1.0, "b": 2.0})
         assert v.fields == ("a", "b")
 
+    def test_polymorphic_template_is_jointly_bound_and_stored_concrete(self):
+        declaration = EventTemplate(x=("obs", 2), nested=EventTemplate(y=("obs",)))
+
+        record = Record(
+            "data",
+            {"x": np.zeros((4, 2)), "nested": {"y": np.ones((4,))}},
+            event_template=declaration,
+        )
+
+        assert record.event_template == EventTemplate(x=(4, 2), nested=EventTemplate(y=(4,)))
+        assert record.event_template.is_concrete
+        assert declaration.free_dims == frozenset({"obs"})
+
+    def test_polymorphic_template_reports_joint_binding_conflict(self):
+        declaration = EventTemplate(x=("obs", 2), y=("obs",))
+
+        with pytest.raises(
+            ValueError,
+            match=r"Record 'data'/y.*'obs'.*already bound to 4",
+        ):
+            Record(
+                "data",
+                {"x": np.zeros((4, 2)), "y": np.ones((5,))},
+                event_template=declaration,
+            )
+
     def test_positional_accepts_any_mapping(self):
         # The positional arg accepts any collections.abc.Mapping, not just dict.
         from collections import OrderedDict

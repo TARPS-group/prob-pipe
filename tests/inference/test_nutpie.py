@@ -93,7 +93,7 @@ class TestImportError:
             patch.dict("sys.modules", {"nutpie": None}),
             pytest.raises(ImportError, match="pip install nutpie"),
         ):
-            condition_on_nutpie._func(MagicMock(), num_results=10)
+            condition_on_nutpie.apply(MagicMock(), num_results=10)
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ class TestNutpieStanIntegration:
             name="linreg",
         )
 
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": y.tolist()},
             num_results=200,
@@ -277,7 +277,7 @@ class TestNutpieIntegration:
         np.random.seed(0)
         y_obs = np.array([1.2, 0.8, 1.1, 0.9, 1.0], dtype=float)
         model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": y_obs},
             num_results=500,
@@ -310,7 +310,7 @@ class TestNutpieIntegration:
     def test_annotations_trace_attached(self):
         model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
         y_obs = np.array([0.0, 1.0], dtype=float)
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": y_obs},
             num_results=50,
@@ -342,7 +342,7 @@ class TestNutpieIntegration:
             return m
 
         model = PyMCModel(model_fn, name="ordering")
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": np.zeros(4, dtype=float)},
             num_results=300,
@@ -375,7 +375,7 @@ class TestNutpieIntegration:
             return m
 
         model = PyMCModel(model_fn, name="partial")
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": np.zeros(5, dtype=float)},
             num_results=200,

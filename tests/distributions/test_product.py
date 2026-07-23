@@ -468,10 +468,12 @@ class TestConditionOn:
         assert jnp.all(jnp.isfinite(lps))
 
     def test_provenance_attached(self, joint_xy):
+        raw = condition_on.apply(joint_xy, y=jnp.array(0.5))
         cond = condition_on(joint_xy, y=jnp.array(0.5))
+        assert raw.provenance.operation == "condition_on"
+        assert "y" in raw.provenance.metadata["conditioned"]
         assert cond.provenance is not None
-        assert cond.provenance.operation == "condition_on"
-        assert "y" in cond.provenance.metadata["conditioned"]
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_keyerror_on_unknown_component(self, joint_xy):
         with pytest.raises(KeyError, match="not found"):
@@ -1307,7 +1309,7 @@ class TestNestedProductDistribution:
         """Conditioned distribution should have provenance."""
         cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
         assert cond.provenance is not None
-        assert cond.provenance.operation == "condition_on"
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_condition_on_empty_raises(self, nested_joint):
         """Calling condition_on with no arguments should raise."""

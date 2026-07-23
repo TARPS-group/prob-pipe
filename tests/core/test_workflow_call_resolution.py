@@ -98,19 +98,19 @@ class TestWorkflowCallHelpers:
         with pytest.raises(TypeError, match="multiple values"):
             _resolve_call(add_func, 1.0, x=2.0)
 
-    def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
+    def test_var_keyword_preserves_signature_shaped_mapping(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, scale=2.0)
 
-        assert call.values == {"x": 1.0, "scale": 2.0}
+        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, kwargs={"scale": 2.0})
 
-        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
+        assert call.values == {"x": 1.0, "kwargs": {"kwargs": {"scale": 2.0}}}
 
     def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
         with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -223,6 +223,19 @@ class TestModuleResolution:
         assert module.child_nodes["dep"] is dep
         assert float(module.step()) == 12.0
         assert float(module.step(y=2.0)) == 7.0
+
+    def test_module_records_resolved_plain_inputs(self, full_provenance_mode):
+        dep = DataNode()
+        module = CallResolutionModule(dep=dep, x=5.0)
+
+        result = module.step()
+
+        assert result.provenance is not None
+        assert result.provenance.parents[1:] == ()
+        assert tuple(result.provenance.inputs) == ("dep", "x", "y")
+        assert result.provenance.inputs["dep"].parent is dep
+        assert result.provenance.inputs["x"].parent == 5.0
+        assert result.provenance.inputs["y"].parent == 7.0
 
     def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
         module = CallResolutionModule(dep=DataNode(), x=5.0)
