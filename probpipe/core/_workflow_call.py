@@ -56,16 +56,15 @@ class WorkflowInputRef:
     """Reference to one planner-visible value in a resolved Python call."""
 
     parameter_name: str
-    position: int | None = None
-    keyword: str | None = None
+    subscript: int | str | None = None
 
     @property
     def label(self) -> str:
         """Stable display name for provenance and broadcast metadata."""
-        if self.position is not None:
-            return f"*{self.parameter_name}[{self.position}]"
-        if self.keyword is not None:
-            return f"**{self.parameter_name}[{self.keyword!r}]"
+        if isinstance(self.subscript, int):
+            return f"*{self.parameter_name}[{self.subscript}]"
+        if isinstance(self.subscript, str):
+            return f"**{self.parameter_name}[{self.subscript!r}]"
         return self.parameter_name
 
 
@@ -135,9 +134,9 @@ def iter_input_refs(
             continue
         value = values[name]
         if parameter.kind == inspect.Parameter.VAR_POSITIONAL:
-            refs.extend(WorkflowInputRef(name, position=index) for index in range(len(value)))
+            refs.extend(WorkflowInputRef(name, subscript=index) for index in range(len(value)))
         elif parameter.kind == inspect.Parameter.VAR_KEYWORD:
-            refs.extend(WorkflowInputRef(name, keyword=key) for key in value)
+            refs.extend(WorkflowInputRef(name, subscript=key) for key in value)
         else:
             refs.append(WorkflowInputRef(name))
     return tuple(refs)
@@ -151,11 +150,7 @@ def input_ref_hint(info: WorkflowSignatureInfo, ref: WorkflowInputRef) -> Any:
 def input_ref_value(values: Mapping[str, Any], ref: WorkflowInputRef) -> Any:
     """Read one referenced value from signature-shaped call values."""
     value = values[ref.parameter_name]
-    if ref.position is not None:
-        return value[ref.position]
-    if ref.keyword is not None:
-        return value[ref.keyword]
-    return value
+    return value if ref.subscript is None else value[ref.subscript]
 
 
 def replace_input_ref(
@@ -165,13 +160,13 @@ def replace_input_ref(
 ) -> dict[str, Any]:
     """Return signature-shaped values with one referenced input replaced."""
     out = dict(values)
-    if ref.position is not None:
+    if isinstance(ref.subscript, int):
         items = list(out[ref.parameter_name])
-        items[ref.position] = value
+        items[ref.subscript] = value
         out[ref.parameter_name] = tuple(items)
-    elif ref.keyword is not None:
+    elif isinstance(ref.subscript, str):
         extras = dict(out[ref.parameter_name])
-        extras[ref.keyword] = value
+        extras[ref.subscript] = value
         out[ref.parameter_name] = extras
     else:
         out[ref.parameter_name] = value
@@ -187,12 +182,12 @@ def replace_input_refs(
     positional: dict[str, list[Any]] = {}
     keywords: dict[str, dict[str, Any]] = {}
     for ref, value in replacements.items():
-        if ref.position is not None:
+        if isinstance(ref.subscript, int):
             items = positional.setdefault(ref.parameter_name, list(out[ref.parameter_name]))
-            items[ref.position] = value
-        elif ref.keyword is not None:
+            items[ref.subscript] = value
+        elif isinstance(ref.subscript, str):
             extras = keywords.setdefault(ref.parameter_name, dict(out[ref.parameter_name]))
-            extras[ref.keyword] = value
+            extras[ref.subscript] = value
         else:
             out[ref.parameter_name] = value
     out.update({name: tuple(items) for name, items in positional.items()})

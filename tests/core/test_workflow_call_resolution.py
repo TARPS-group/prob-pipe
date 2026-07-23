@@ -90,6 +90,69 @@ def _resolve_call(
 
 
 class TestWorkflowCallHelpers:
+    def test_input_refs_use_one_subscript_for_variadic_slots(self):
+        def collect(head, *items, **extras):
+            return head, items, extras
+
+        info = _workflow_call.make_signature_info(collect)
+        values = {
+            "head": 1,
+            "items": (2, 3),
+            "extras": {"tail": 4},
+        }
+
+        refs = _workflow_call.iter_input_refs(info, values)
+
+        assert refs == (
+            _workflow_call.WorkflowInputRef("head"),
+            _workflow_call.WorkflowInputRef("items", subscript=0),
+            _workflow_call.WorkflowInputRef("items", subscript=1),
+            _workflow_call.WorkflowInputRef("extras", subscript="tail"),
+        )
+        assert tuple(ref.label for ref in refs) == (
+            "head",
+            "*items[0]",
+            "*items[1]",
+            "**extras['tail']",
+        )
+        assert tuple(_workflow_call.input_ref_value(values, ref) for ref in refs) == (
+            1,
+            2,
+            3,
+            4,
+        )
+
+    def test_input_ref_replacement_preserves_signature_shaped_containers(self):
+        values = {
+            "head": 1,
+            "items": (2, 3),
+            "extras": {"tail": 4},
+        }
+        head = _workflow_call.WorkflowInputRef("head")
+        first_item = _workflow_call.WorkflowInputRef("items", subscript=0)
+        tail = _workflow_call.WorkflowInputRef("extras", subscript="tail")
+
+        singly_replaced = _workflow_call.replace_input_ref(values, first_item, 20)
+        jointly_replaced = _workflow_call.replace_input_refs(
+            values,
+            {
+                head: 10,
+                first_item: 20,
+                tail: 40,
+            },
+        )
+
+        assert singly_replaced == {
+            "head": 1,
+            "items": (20, 3),
+            "extras": {"tail": 4},
+        }
+        assert jointly_replaced == {
+            "head": 10,
+            "items": (20, 3),
+            "extras": {"tail": 40},
+        }
+
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
         assert _resolve_call(add_func, 1.0, 2.0).values == {"x": 1.0, "y": 2.0}
         assert _resolve_call(add_func, 1.0, y=2.0).values == {"x": 1.0, "y": 2.0}
