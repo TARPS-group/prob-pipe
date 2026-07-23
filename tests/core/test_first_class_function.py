@@ -632,6 +632,10 @@ class TestSymbolicCalls:
 
         assert result.event_template == EventTemplate(prediction=(2,))
         assert result.batch_shape == (3,)
+        np.testing.assert_allclose(
+            result["prediction"],
+            np.asarray([[1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]),
+        )
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_distribution_broadcast_preserves_declared_output_template(self, dispatch):
@@ -647,7 +651,12 @@ class TestSymbolicCalls:
         result = wrapped(Normal(0, 1, name="x"))
 
         assert result.event_template == EventTemplate(pair=(2,))
+        assert result.num_atoms == 8
         assert result.samples["pair"].shape == (8, 2)
+        np.testing.assert_allclose(
+            result.samples["pair"][:, 1],
+            result.samples["pair"][:, 0] + 1,
+        )
 
     def test_every_sweep_cell_is_validated_against_output_template(self):
         rows = NumericRecordArray.stack(
@@ -810,9 +819,19 @@ class TestSymbolicCalls:
             seed=3,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        broadcast = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"))
+        result = broadcast.marginalize()
 
         assert result.event_template == EventTemplate(y=())
+        assert result.num_atoms == 8
+        np.testing.assert_allclose(
+            jnp.stack([component.loc for component in result.components]),
+            broadcast.input_samples["x"],
+        )
+        np.testing.assert_allclose(
+            jnp.stack([component.scale for component in result.components]),
+            np.ones(8),
+        )
 
     def test_distribution_broadcast_rejects_incomplete_intrinsic_template(self):
         wrapped = Function(
@@ -845,6 +864,15 @@ class TestSymbolicCalls:
 
         assert isinstance(result, DistributionArray)
         assert result.event_template == EventTemplate(y=())
+        assert result.size == 3
+        np.testing.assert_allclose(
+            jnp.stack([component.loc for component in result.components]),
+            np.arange(3.0),
+        )
+        np.testing.assert_allclose(
+            jnp.stack([component.scale for component in result.components]),
+            np.ones(3),
+        )
 
     def test_nested_broadcast_distribution_array_keeps_declared_template(self):
         rows = NumericRecordArray.stack(
