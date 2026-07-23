@@ -83,6 +83,8 @@ __all__ = [
     "FunctionSpec",
     "NumericEventTemplate",
     "OpaqueSpec",
+    "RecordSpec",
+    "TermSpec",
     "ValueSpec",
 ]
 
@@ -123,6 +125,27 @@ class ValueSpec(ABC):
             documents its own); it does not suppress an unexpected error from
             inspecting a malformed value, so a genuine bug still surfaces.
         """
+
+
+class TermSpec(ValueSpec):
+    """A :class:`ValueSpec` marking a leaf whose value is a tracked term.
+
+    A term spec is the subset of leaf specs whose value is itself a tracked
+    term — a ``Record``, ``Distribution``, ``ConditionalDistribution``, or
+    ``Function``. It subclasses :class:`ValueSpec` and adds no members of its
+    own: the concrete subclass (:class:`RecordSpec`, :class:`DistributionSpec`,
+    ``ConditionalDistributionSpec``, :class:`FunctionSpec`) *is* the kind, and
+    ``is_valid`` is inherited, not redeclared. ``ArraySpec`` and ``OpaqueSpec``,
+    the raw-value leaves, are not term specs. The marker is what
+    ``isinstance`` checks — a `Function`'s ``output_template`` accepts a
+    ``TermSpec`` for a term-valued result, and the wrap boundary reads it to
+    coproject a raw result into the term it names.
+
+    Position fixes how a term spec is read. As a **leaf** of an
+    :class:`EventTemplate` it types a field holding such a term. Heading an
+    operation's output declaration it states that the result *is* a term of
+    that kind, rather than a raw value wrapped into a ``Record``.
+    """
 
 
 @dataclass(frozen=True, eq=False)
@@ -243,8 +266,58 @@ class OpaqueSpec(ValueSpec):
 
 
 @dataclass(frozen=True)
-class DistributionSpec(ValueSpec):
-    """A value spec for a ``Distribution``.
+class RecordSpec(TermSpec):
+    """A term spec for an embedded ``Record``; mirrors :class:`DistributionSpec`
+    at the ``Rec`` corner.
+
+    ``event_template`` describes the record. ``RecordSpec(tau)`` and the
+    template ``tau`` denote the same space but read differently: the spec is a
+    leaf holding a tracked ``Record`` that keeps its own name and provenance,
+    whereas an interior :class:`EventTemplate` node contributes fields that are
+    paths of the enclosing template. Raw mappings are never leaves, so a
+    ``RecordSpec`` leaf is reached only for an already-tracked record or an
+    explicit declaration; at top level it declares a result that *is* a
+    ``Record``.
+
+    Raises
+    ------
+    TypeError
+        If ``event_template`` is not an :class:`EventTemplate`.
+    """
+
+    event_template: EventTemplate
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.event_template, EventTemplate):
+            raise TypeError(
+                f"RecordSpec.event_template must be an EventTemplate, "
+                f"got {type(self.event_template).__name__}"
+            )
+
+    def is_valid(self, value: Any) -> bool:
+        """Whether *value* is a ``Record`` whose template matches ``event_template``.
+
+        *value* must be a :class:`~probpipe.Record` whose own
+        ``event_template`` equals this spec's. Anything that is not a
+        ``Record``, or a ``Record`` whose template cannot be read, does not
+        satisfy the spec and returns ``False``; an unexpected error while
+        reading the template is left to propagate. Mirrors
+        :meth:`DistributionSpec.is_valid`.
+        """
+        from .record import Record
+
+        if not isinstance(value, Record):
+            return False
+        try:
+            template = value.event_template
+        except (AttributeError, TypeError):
+            return False
+        return template == self.event_template
+
+
+@dataclass(frozen=True)
+class DistributionSpec(TermSpec):
+    """A term spec for a ``Distribution``.
 
     ``event_template`` is the :class:`EventTemplate` of one draw from that
     distribution.
@@ -295,43 +368,49 @@ class DistributionSpec(ValueSpec):
 
 
 @dataclass(frozen=True)
-class FunctionSpec(ValueSpec):
-    """A value spec for a callable, optionally typed by its input/output structure.
+class FunctionSpec(TermSpec):
+    """A term spec for a callable, optionally typed by its input/output structure.
 
-    ``input_template`` / ``output_template`` are the :class:`EventTemplate`\\ s
-    of the callable's input and output, and each is optional (default
-    ``None``). A template describes a structured signature: its named fields
-    are the callable's inputs (or outputs), so
-    ``FunctionSpec(EventTemplate(x=(), y=(3,)), EventTemplate(out=()))`` types
-    ``f(x, y) -> out``. ``None`` means that side's structure is unspecified,
-    so a bare ``FunctionSpec()`` describes *any* callable — the natural spec
-    for a function of unknown or variable signature.
+    ``input_template`` is the :class:`EventTemplate` of the callable's input.
+    ``output_template`` is its output: an :class:`EventTemplate` (a record
+    output) or any :class:`TermSpec` (a result that is itself a term, e.g. a
+    ``Function`` returning a ``Distribution``). Both default to ``None``,
+    leaving that side unspecified, so a bare ``FunctionSpec()`` describes any
+    callable. A specified side is written out — e.g.
+    ``FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))`` for
+    ``f(x) -> out`` — so a function's field names are caller-chosen and
+    meaningful, matching :class:`DistributionSpec`.
 
-    Each specified side must be an :class:`EventTemplate`; a single-field
-    signature is written out explicitly, e.g.
-    ``FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))``, rather than
-    passed as a bare :class:`ValueSpec` — so a function's field names are
-    always caller-chosen and meaningful, not a fixed ``"input"`` / ``"output"``
-    placeholder. This matches :class:`DistributionSpec`, which likewise takes an
-    explicit template.
+    Validity is callability alone: the value-layer specs stay callable-generic,
+    so a ``FunctionSpec`` admits any callable (a lambda, a NumPy function, a
+    ``Function``) as a leaf value. It is the spec's identity as a
+    ``FunctionSpec``, not ``is_valid``, that tells the wrap boundary to
+    coproject a raw callable *result* into a ``Function`` term.
 
     Raises
     ------
     TypeError
-        If either side is not ``None`` or an :class:`EventTemplate`.
+        If ``input_template`` is neither ``None`` nor an :class:`EventTemplate`,
+        or ``output_template`` is neither ``None``, an :class:`EventTemplate`,
+        nor a :class:`TermSpec`.
     """
 
     input_template: EventTemplate | None = None
-    output_template: EventTemplate | None = None
+    output_template: EventTemplate | TermSpec | None = None
 
     def __post_init__(self) -> None:
-        for attr in ("input_template", "output_template"):
-            template = getattr(self, attr)
-            if template is not None and not isinstance(template, EventTemplate):
-                raise TypeError(
-                    f"FunctionSpec.{attr} must be None or an EventTemplate, "
-                    f"got {type(template).__name__}"
-                )
+        if self.input_template is not None and not isinstance(self.input_template, EventTemplate):
+            raise TypeError(
+                f"FunctionSpec.input_template must be None or an EventTemplate, "
+                f"got {type(self.input_template).__name__}"
+            )
+        if self.output_template is not None and not isinstance(
+            self.output_template, (EventTemplate, TermSpec)
+        ):
+            raise TypeError(
+                f"FunctionSpec.output_template must be None, an EventTemplate, "
+                f"or a TermSpec, got {type(self.output_template).__name__}"
+            )
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.
