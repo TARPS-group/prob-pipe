@@ -902,17 +902,23 @@ class TestFunctionSpecTemplatesRequired:
         assert spec.output_template is out
 
     def test_bare_value_spec_rejected(self):
-        # A single-field signature is written out as an EventTemplate; a bare
-        # ValueSpec is not wrapped into one.
+        # The input side is a record schema, written out as an EventTemplate; a
+        # bare ValueSpec is not wrapped into one. The output side additionally
+        # accepts a TermSpec (a term-valued result), but a raw-value ValueSpec
+        # (ArraySpec / OpaqueSpec — not a TermSpec) is still rejected.
         with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
             FunctionSpec(ArraySpec(()), EventTemplate(b=()))  # type: ignore[arg-type]
-        with pytest.raises(TypeError, match="output_template must be None or an EventTemplate"):
+        with pytest.raises(
+            TypeError, match="output_template must be None, an EventTemplate, or a TermSpec"
+        ):
             FunctionSpec(EventTemplate(a=()), OpaqueSpec())  # type: ignore[arg-type]
 
     def test_non_spec_rejected(self):
         with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
             FunctionSpec((3,), EventTemplate(b=()))  # type: ignore[arg-type]
-        with pytest.raises(TypeError, match="output_template must be None or an EventTemplate"):
+        with pytest.raises(
+            TypeError, match="output_template must be None, an EventTemplate, or a TermSpec"
+        ):
             FunctionSpec(EventTemplate(a=()), "not a template")  # type: ignore[arg-type]
 
 
@@ -1308,3 +1314,103 @@ class TestFromVectorErrors:
         tpl = EventTemplate(x=(), y=(3,))
         with pytest.raises(ValueError, match="vector_size"):
             NumericRecord.from_vector("nr", tpl, jnp.zeros(5))
+
+
+# ---------------------------------------------------------------------------
+# TermSpec taxonomy (RecordSpec / DistributionSpec / FunctionSpec)
+# ---------------------------------------------------------------------------
+
+
+class TestTermSpecTaxonomy:
+    """The term-spec sub-hierarchy: one spec per kind, all also ValueSpecs."""
+
+    def test_term_specs_are_value_specs(self):
+        from probpipe.core.event_template import RecordSpec, TermSpec
+
+        tau = EventTemplate(x=())
+        for spec in (
+            RecordSpec(tau),
+            DistributionSpec(tau),
+            FunctionSpec(),
+        ):
+            assert isinstance(spec, TermSpec)
+            assert isinstance(spec, ValueSpec)  # sub-hierarchy: still a leaf spec
+
+    def test_raw_value_specs_are_not_term_specs(self):
+        from probpipe.core.event_template import TermSpec
+
+        assert not isinstance(ArraySpec(()), TermSpec)
+        assert not isinstance(OpaqueSpec(), TermSpec)
+
+    def test_event_template_is_not_a_spec(self):
+        """The schema is the index; it is not itself a (value or term) spec."""
+        from probpipe.core.event_template import TermSpec
+
+        tau = EventTemplate(x=())
+        assert not isinstance(tau, ValueSpec)
+        assert not isinstance(tau, TermSpec)
+
+    def test_specs_are_frozen_hashable_by_value(self):
+        from probpipe.core.event_template import RecordSpec
+
+        tau = EventTemplate(x=())
+        assert RecordSpec(tau) == RecordSpec(tau)
+        assert hash(RecordSpec(tau)) == hash(RecordSpec(EventTemplate(x=())))
+        # Same event template, different kinds: the concrete class distinguishes.
+        assert RecordSpec(tau) != DistributionSpec(tau)
+
+
+class TestRecordSpec:
+    def test_requires_event_template(self):
+        from probpipe.core.event_template import RecordSpec
+
+        with pytest.raises(TypeError):
+            RecordSpec(ArraySpec(()))  # not an EventTemplate
+
+    def test_is_valid_accepts_matching_record_only(self):
+        from probpipe.core.event_template import RecordSpec
+
+        rec = Record("r", x=jnp.asarray(1.0))
+        spec = RecordSpec(rec.event_template)
+        assert spec.is_valid(rec)
+        assert not spec.is_valid(jnp.asarray(1.0))  # not a Record
+        assert not spec.is_valid(Record("r", y=jnp.asarray(1.0)))  # wrong template
+
+
+class TestFunctionSpecOutputWidening:
+    """A FunctionSpec output may be a record schema or any term spec."""
+
+    def test_event_template_output_still_accepted(self):
+        # backward compatible: the pre-existing EventTemplate output
+        fs = FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))
+        assert isinstance(fs.output_template, EventTemplate)
+
+    def test_term_spec_output_accepted(self):
+        # the widening: a function whose result is itself a term
+        from probpipe.core.event_template import RecordSpec
+
+        tau = EventTemplate(out=())
+        fs = FunctionSpec(EventTemplate(x=()), DistributionSpec(tau))
+        assert fs.output_template == DistributionSpec(tau)
+        fs2 = FunctionSpec(output_template=RecordSpec(EventTemplate(y=())))
+        assert isinstance(fs2.output_template, RecordSpec)
+
+    def test_bad_output_rejected(self):
+        with pytest.raises(TypeError):
+            FunctionSpec(output_template=ArraySpec(()))  # neither template nor term spec
+
+    def test_input_template_still_event_template_only(self):
+        with pytest.raises(TypeError):
+            FunctionSpec(input_template=DistributionSpec(EventTemplate(x=())))
+
+    def test_is_valid_is_callable_generic(self):
+        # unchanged: the leaf role admits any callable, not only Functions
+        assert FunctionSpec().is_valid(lambda x: x)
+
+
+def test_public_exports():
+    import probpipe
+
+    for name in ("TermSpec", "RecordSpec"):
+        assert hasattr(probpipe, name), name
+        assert name in probpipe.__all__, name
