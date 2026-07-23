@@ -27,13 +27,18 @@ The sections build in the order below, each depending only on those above it and
 
 ### Contract
 
-An `EventTemplate` is a `NamedTree` that defines the *shape of one event* (a draw, a stored datum, ...). Hence, each leaf specifies the type of value it holds as a `ValueSpec` which must provide an `is_valid` method to check if a value satisfies that spec.
+An `EventTemplate` is a `NamedTree` that defines the *shape of one event* — a draw, a stored datum, and so on. Each leaf is a `ValueSpec`: it says what the single value at that path looks like, and it answers `is_valid` on a candidate value.
+
+Value specs come in two families. A **raw-value spec** types a leaf holding a plain value that names no ProbPipe kind — a numeric array (`ArraySpec`) or an opaque Python object (`OpaqueSpec`). A **term spec** types a leaf holding a tracked ProbPipe term: a `Record`, `Distribution`, `ConditionalDistribution`, or `Function`, one per kind. A tracked term is, at bottom, still one value that can occupy a leaf, so a term spec *is* a value spec: `TermSpec` subclasses `ValueSpec` as a marker, and the concrete class — `RecordSpec`, `DistributionSpec`, and so on — is the kind. Two consequences follow. `is_valid` stays declared once, on `ValueSpec`; and anywhere a leaf is accepted, a term spec is accepted unchanged.
+
+A term spec is used in two positions, and position alone fixes its role. As a **leaf** of a template it types a field that holds a term — the *as-data* role, a `Distribution` stored inside a record, say. Heading an operation's **output declaration** it states that the operation's result *is* a term of that kind — the *as-result* role, how a fitted mapping declares that it returns a `Function`. An `EventTemplate` is not itself a spec: it is the *schema*, the structure that indexes a kind, and it is never one of its own leaves. A record output is declared with a bare `EventTemplate` directly, or as `RecordSpec(template)` where a uniform `TermSpec` is wanted — the two denote the same space, differing only in reading.
 
 ```python
-class ValueSpec(ABC):
+class ValueSpec(ABC):               # a leaf value; is_valid declared once, here
     @abstractmethod
     def is_valid(self, value: Any) -> bool: ...
 
+# --- raw-value specs: a leaf holding a plain value, no kind ---
 class ArraySpec(ValueSpec):  # a numeric array leaf
     shape: tuple[int | str, ...]   # a str names a symbolic dimension
     dtype: DType
@@ -42,9 +47,16 @@ class ArraySpec(ValueSpec):  # a numeric array leaf
 class OpaqueSpec(ValueSpec):  # the fallback spec; is_valid accepts any non-mapping value
     meta: Hashable
 
-class FunctionSpec(ValueSpec):  # a leaf holding a callable
-    input_template: EventTemplate | None   # None: that side's structure is unspecified
-    output_template: EventTemplate | None
+# --- term specs: a leaf holding a tracked term; the concrete class is the kind ---
+class TermSpec(ValueSpec): ...      # marker; adds nothing, is_valid inherited
+
+class RecordSpec(TermSpec):  # a Record; is_valid accepts a matching Record
+    event_template: EventTemplate
+
+class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
+    input_template: EventTemplate | None            # None: that side's structure unspecified
+    output_template: EventTemplate | TermSpec | None  # a record schema OR a term result
+# DistributionSpec (III.6) and ConditionalDistributionSpec (III.8) are the other two term specs.
 
 class Constraint(ABC):              # an array support, carried by ArraySpec
     @abstractmethod
@@ -52,7 +64,9 @@ class Constraint(ABC):              # an array support, carried by ArraySpec
     # constraints compare and hash by value, so an instance can serve as a registry key
 ```
 
-A `FunctionSpec` types a callable by its input and output structure. Either template is optional: `None` leaves that side's structure unspecified, so a bare `FunctionSpec()` describes any callable, and the templates are supplied only where the signature is known or required. Each specified side is an explicit `EventTemplate` — a single-field signature is written out, e.g. `FunctionSpec(EventTemplate(x=...), EventTemplate(out=...))` — so a function's field names are always caller-chosen and meaningful, matching `DistributionSpec` (which likewise takes an explicit template). The two templates are independent — a `FunctionSpec` places no relation between them, so a callable may map a space to itself or between two different spaces.
+`RecordSpec(τ)` and the template `τ` denote the same space; the tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity — name, provenance, capabilities — is never dropped implicitly. Both follow the wrap boundary (V.0).
+
+A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, a single-field signature written out as `FunctionSpec(EventTemplate(x=...), EventTemplate(out=...))`, so a function's field names are caller-chosen and meaningful, matching `DistributionSpec`. The output side additionally accepts any `TermSpec`, so a function may declare a term-valued result: a `Function` returning a `Distribution`, or a fitted mapping declared `Fun`/`Cond`, with a record output the common case. Validity is callability alone — the value-layer specs stay callable-generic, admitting any callable as a leaf value — and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to coproject a raw callable *result* into a `Function`. The two sides are otherwise independent, so a callable may map a space to itself or between two different spaces.
 
 When every leaf is an `ArraySpec` then all values are numeric and construction auto-promotes to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
 
@@ -361,7 +375,7 @@ class FieldView(Distribution):
     # marked name_is_auto; provenance records the view and its parent
 ```
 
-**The distribution value specification.** The `DistributionSpec(event_template)` class extends the value spec to include a `Distribution` as a valid value (with the given `event_template`). Hence, it is possible to define random measures (distributions over distributions). A draw from a random measure is therefore a `Record` whose leaf value is a `Distribution`, wrapped like any other draw.
+**The distribution value specification.** The `DistributionSpec(event_template)` class is the `Dist`-corner term spec (III.1): a leaf holding a `Distribution` with the given `event_template`. Hence random measures (distributions over distributions) are expressible. A draw from a random measure is itself a `Distribution`, the draw at its own kind (05 V.2), not a `Record` with the distribution buried as a leaf; as a field value a `Distribution` is a term-valued leaf (III.1).
 
 ```python
 DistributionSpec(event_template: EventTemplate)
@@ -504,7 +518,7 @@ class FullyNumericConditionalDistribution(
 | `ConditionalNumericDistribution` | any | numeric |
 | `FullyNumericConditionalDistribution` | numeric | numeric |
 
-**The conditional distribution value specification.** The `ConditionalDistributionSpec(given_template, event_template)` class extends the value spec to include a `ConditionalDistribution` as a valid value, analogously to `DistributionSpec`:
+**The conditional distribution value specification.** The `ConditionalDistributionSpec(given_template, event_template)` class is the `Cond`-corner term spec (III.1): a leaf holding a `ConditionalDistribution`, analogously to `DistributionSpec`:
 
 ```python
 ConditionalDistributionSpec(given_template: EventTemplate, event_template: EventTemplate)
