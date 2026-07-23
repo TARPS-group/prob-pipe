@@ -87,6 +87,14 @@ __all__ = [
 ]
 
 
+def _require_hashable(value: Any, *, context: str) -> None:
+    """Fail at construction when a schema component cannot be hashed."""
+    try:
+        hash(value)
+    except TypeError as error:
+        raise TypeError(f"{context} must be hashable: {error}") from None
+
+
 class ValueSpec(ABC):
     """The structure of one leaf value — the base of the concrete specs.
 
@@ -159,6 +167,8 @@ class ArraySpec(ValueSpec):
         object.__setattr__(self, "shape", shape)
         if self.dtype is not None:
             object.__setattr__(self, "dtype", np.dtype(self.dtype))
+        if self.support is not None:
+            _require_hashable(self.support, context="ArraySpec.support")
 
     def __eq__(self, other: object) -> bool:
         # Mirror the dataclass-generated ``__eq__``: on a class mismatch,
@@ -237,6 +247,9 @@ class OpaqueSpec(ValueSpec):
     """
 
     meta: Hashable = None
+
+    def __post_init__(self) -> None:
+        _require_hashable(self.meta, context="OpaqueSpec.meta")
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a valid opaque value — anything but a mapping.
@@ -575,7 +588,7 @@ class EventTemplate(NamedTree[ValueSpec]):
         for name, spec in nested.items():
             if isinstance(spec, Mapping):
                 # A mapping spec is nested structure: materialise a subtree.
-                specs[name] = EventTemplate(spec)
+                converted = EventTemplate(spec)
             else:
                 try:
                     converted = _to_spec(spec)
@@ -583,7 +596,8 @@ class EventTemplate(NamedTree[ValueSpec]):
                     raise TypeError(f"Field {name!r}: {exc}") from None
                 if not isinstance(converted, EventTemplate):
                     self._check_leaf(name, converted)
-                specs[name] = converted
+            _require_hashable(converted, context=f"Field {name!r} spec")
+            specs[name] = converted
         self._post_validate(specs)
         object.__setattr__(self, "_tree", specs)
 

@@ -1,5 +1,8 @@
 """Tests for probpipe.core.record.EventTemplate."""
 
+from dataclasses import dataclass
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,6 +18,23 @@ from probpipe.core.event_template import (
     OpaqueSpec,
     ValueSpec,
 )
+
+
+@dataclass(frozen=True)
+class _UnhashableValueSpec(ValueSpec):
+    metadata: list[str]
+
+    def is_valid(self, value: Any) -> bool:
+        return True
+
+
+@dataclass(frozen=True)
+class _TaggedValueSpec(ValueSpec):
+    tag: str
+
+    def is_valid(self, value: Any) -> bool:
+        return True
+
 
 # ---------------------------------------------------------------------------
 # Path separator
@@ -551,6 +571,28 @@ class TestValueSpecs:
             ): 4,
         }
         assert len(specs) == 4
+
+    def test_opaque_spec_rejects_unhashable_meta_at_construction(self):
+        with pytest.raises(TypeError, match=r"OpaqueSpec\.meta must be hashable"):
+            OpaqueSpec(meta=[])  # type: ignore[arg-type]
+
+    def test_array_spec_rejects_unhashable_support_at_construction(self):
+        with pytest.raises(TypeError, match=r"ArraySpec\.support must be hashable"):
+            ArraySpec((), support=[])  # type: ignore[arg-type]
+
+    def test_template_rejects_unhashable_custom_value_spec_at_construction(self):
+        spec = _UnhashableValueSpec(metadata=["mutable"])
+
+        with pytest.raises(TypeError, match=r"Field 'custom' spec must be hashable"):
+            EventTemplate(custom=spec)
+
+    def test_template_accepts_hashable_custom_value_spec(self):
+        spec = _TaggedValueSpec(tag="custom")
+
+        template = EventTemplate(custom=spec)
+
+        assert template["custom"] is spec
+        assert hash(template) == hash(EventTemplate(custom=_TaggedValueSpec(tag="custom")))
 
     def test_specs_value_equality(self):
         assert ArraySpec((3,)) == ArraySpec((3,))
