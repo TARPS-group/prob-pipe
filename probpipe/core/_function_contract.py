@@ -277,41 +277,34 @@ def _validate_function_output(
             raise ValueError(
                 f"Function {function_name!r} output does not expose an authoritative event_template"
             )
+        if isinstance(result, Distribution):
+            if actual_template != concrete:
+                raise ValueError(
+                    f"Function {function_name!r} output event_template {actual_template!r} "
+                    f"does not exactly match declared concrete template {concrete!r}"
+                )
+            return concrete
+
         _unify_event_templates(
             concrete,
             actual_template,
             context=f"Function {function_name!r} output",
         )
-        if isinstance(result, Distribution):
-            conforming_template = _enrich_distribution_output_template(
-                function_name=function_name,
-                declared_template=concrete,
-                actual_template=actual_template,
-                result=result,
-            )
-        else:
-            conforming_template = actual_template
-        _unify_event_templates(
-            concrete,
-            conforming_template,
-            context=f"Function {function_name!r} output",
-        )
         _validate_function_output_template_supports(
             function_name=function_name,
             declared_template=concrete,
-            actual_template=conforming_template,
+            actual_template=actual_template,
         )
-        if isinstance(result, Record):
-            _unify_event_template_with_value(
-                concrete,
-                result,
-                context=f"Function {function_name!r} output",
-            )
-            _validate_function_output_supports(
-                function_name=function_name,
-                template=concrete,
-                value=result,
-            )
+        _unify_event_template_with_value(
+            concrete,
+            result,
+            context=f"Function {function_name!r} output",
+        )
+        _validate_function_output_supports(
+            function_name=function_name,
+            template=concrete,
+            value=result,
+        )
         return concrete
 
     validation_value = result
@@ -349,70 +342,6 @@ def _validate_function_output(
     return concrete
 
 
-def _enrich_distribution_output_template(
-    *,
-    function_name: str,
-    declared_template: EventTemplate,
-    actual_template: EventTemplate,
-    result: Distribution,
-) -> EventTemplate:
-    """Fill missing declared metadata from a Distribution's canonical accessors."""
-    requires_dtype = any(
-        isinstance(spec, ArraySpec) and spec.dtype is not None
-        for spec in declared_template.values()
-    )
-    requires_support = any(
-        isinstance(spec, ArraySpec) and spec.support is not None
-        for spec in declared_template.values()
-    )
-    dtypes = _distribution_output_metadata(result, "dtypes") if requires_dtype else None
-    supports = _distribution_output_metadata(result, "supports") if requires_support else None
-
-    def _enrich(
-        declared: EventTemplate,
-        actual: EventTemplate,
-        prefix: str,
-    ) -> EventTemplate:
-        children: dict[str, EventTemplate | ValueSpec] = {}
-        for name, declared_spec in declared.children.items():
-            path = f"{prefix}/{name}" if prefix else name
-            actual_spec = actual.children[name]
-            if isinstance(declared_spec, EventTemplate):
-                assert isinstance(actual_spec, EventTemplate)
-                children[name] = _enrich(declared_spec, actual_spec, path)
-                continue
-            if not isinstance(declared_spec, ArraySpec) or not isinstance(actual_spec, ArraySpec):
-                assert isinstance(actual_spec, ValueSpec)
-                children[name] = actual_spec
-                continue
-
-            dtype = actual_spec.dtype
-            if declared_spec.dtype is not None and dtype is None:
-                if dtypes is None or path not in dtypes:
-                    raise ValueError(
-                        f"Function {function_name!r} output at {path!r} does not expose "
-                        "authoritative dtype metadata"
-                    )
-                dtype = dtypes[path]
-
-            support = actual_spec.support
-            if declared_spec.support is not None and support is None:
-                if supports is None or path not in supports:
-                    raise ValueError(
-                        f"Function {function_name!r} output at {path!r} does not expose "
-                        "authoritative support metadata"
-                    )
-                support = supports[path]
-            children[name] = ArraySpec(
-                actual_spec.shape,
-                dtype=dtype,
-                support=support,
-            )
-        return EventTemplate(children)
-
-    return _enrich(declared_template, actual_template, "")
-
-
 def _validate_function_output_template_supports(
     *,
     function_name: str,
@@ -433,18 +362,6 @@ def _validate_function_output_template_supports(
                 f"Function {function_name!r} output/{path} support {actual_spec.support!r} "
                 f"does not conform to {declared_spec.support!r}"
             )
-
-
-def _distribution_output_metadata(
-    result: Distribution,
-    attribute: str,
-) -> Mapping[str, Any] | None:
-    """Read one optional canonical per-field Distribution metadata mapping."""
-    try:
-        metadata = getattr(result, attribute)
-    except (AttributeError, NotImplementedError, TypeError):
-        return None
-    return metadata if isinstance(metadata, Mapping) else None
 
 
 def _validate_function_output_supports(

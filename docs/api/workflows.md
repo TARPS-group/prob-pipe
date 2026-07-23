@@ -92,13 +92,14 @@ When supplied, templates are authoritative:
 - every symbolic output dimension must be declared by the input template;
 - mappings must match the declared output structure, while a scalar or array
   result can satisfy only a single-leaf output template;
-- existing `Record` and `Distribution` results must conform to the same field
-  tree and concrete shapes. Dtypes use same-kind conformance, just like bare
-  values. A Distribution must expose any declared dtype or support through its
-  canonical per-field metadata when its event template omits that metadata;
+- existing `Record` results must conform to the same field tree and concrete
+  shapes. Dtypes use same-kind conformance, just like bare values;
+- an existing `Distribution` must expose an `event_template` exactly equal to
+  the concrete declaration. Function does not reconcile separate `dtypes` or
+  `supports` accessors, so a metadata-bearing declaration requires the
+  Distribution's own template to be schema-complete;
 - every declared output support is checked against concrete scalar, array,
-  mapping, or Record data. A Distribution's authoritative support must be the
-  declared support or a known subset of it.
+  mapping, or Record data.
 
 Authoritative mapping outputs are normalized to the declared `Record` pytree
 before dispatch aggregation. Flat and nested output structures therefore have
@@ -124,10 +125,12 @@ instead creates a shallow independent result item: value data and templates are
 shared by default, the annotations container is copied, prior provenance is
 cleared, and the current Function and tracked inputs become the new direct
 parents. With an authoritative output declaration, this public result copy
-instead carries the concrete declared template even when the raw implementation
-result had a weaker inferred template; value data remains shared and `apply`
-leaves the raw object's template unchanged. This copy is still made when
-provenance tracking is disabled.
+carries the concrete declared template for `Record` and `RecordArray` results
+even when the raw implementation result had a weaker inferred template.
+Distribution results instead retain their intrinsic, already-matching
+`event_template`; Function never rewrites it. Value data remains shared and
+`apply` leaves every raw object's template unchanged. This copy is still made
+when provenance tracking is disabled.
 
 Output-support checks are data-dependent and cannot execute under JAX tracing.
 For broadcast and sweep calls, `dispatch="auto"` therefore detects a

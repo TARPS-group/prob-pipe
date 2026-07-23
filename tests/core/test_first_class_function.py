@@ -260,56 +260,75 @@ class TestApplyContract:
         with pytest.raises(ValueError, match=r"output/y support real does not conform to positive"):
             wrapped.apply()
 
-    def test_distribution_metadata_must_conform_to_declaration(self):
-        normal = Normal(0, 1, name="y")
-        declared = EventTemplate(
-            y=ArraySpec((), dtype=normal.dtypes["y"], support=real),
-        )
-        wrapped = Function(func=lambda: normal, output_template=declared)
+    def test_shape_only_distribution_output_keeps_intrinsic_template(self):
+        returned = Normal(0, 1, name="y")
+        intrinsic = returned.event_template
+        declared = EventTemplate(y=())
+        wrapped = Function(func=lambda: returned, output_template=declared)
 
-        assert wrapped.apply() is normal
+        assert intrinsic == declared
+        assert intrinsic is not declared
+        assert wrapped.apply() is returned
 
         result = wrapped()
 
-        assert result is not normal
-        assert result.event_template == declared
-        assert normal.event_template != declared
+        assert result is not returned
+        assert result.event_template is intrinsic
+        assert returned.event_template is intrinsic
 
-        with pytest.raises(ValueError, match=r"output/y support real does not conform to positive"):
-            Function(
-                func=lambda: normal,
-                output_template=EventTemplate(y=ArraySpec((), support=positive)),
-            ).apply()
-        with pytest.raises(ValueError, match=r"output/y dtype .* does not conform to int32"):
-            Function(
-                func=lambda: normal,
-                output_template=EventTemplate(y=ArraySpec((), dtype="int32")),
-            ).apply()
+    def test_schema_complete_distribution_does_not_read_parallel_metadata(self):
+        class SchemaCompleteDistribution(Distribution):
+            def __init__(self, event_template):
+                super().__init__(name="y")
+                self._event_template = event_template
 
-        gamma = Gamma(1, 1, name="y")
-        Function(
-            func=lambda: gamma,
-            output_template=EventTemplate(y=ArraySpec((), support=real)),
-        ).apply()
-
-    def test_distribution_missing_declared_metadata_is_rejected(self):
-        class MetadataPoorDistribution(Distribution):
             @property
             def event_template(self):
-                return EventTemplate(y=())
+                return self._event_template
 
-        returned = MetadataPoorDistribution(name="y")
+            @property
+            def dtypes(self):
+                raise AssertionError("Function must not read Distribution.dtypes")
 
-        with pytest.raises(ValueError, match=r"output at 'y'.*authoritative dtype metadata"):
-            Function(
-                func=lambda: returned,
-                output_template=EventTemplate(y=ArraySpec((), dtype="float32")),
-            ).apply()
-        with pytest.raises(ValueError, match=r"output at 'y'.*authoritative support metadata"):
-            Function(
-                func=lambda: returned,
-                output_template=EventTemplate(y=ArraySpec((), support=positive)),
-            ).apply()
+            @property
+            def supports(self):
+                raise AssertionError("Function must not read Distribution.supports")
+
+        intrinsic = EventTemplate(y=ArraySpec((), dtype="float32", support=positive))
+        declared = EventTemplate(y=ArraySpec((), dtype="float32", support=positive))
+        returned = SchemaCompleteDistribution(intrinsic)
+        wrapped = Function(func=lambda: returned, output_template=declared)
+
+        assert intrinsic == declared
+        assert intrinsic is not declared
+        assert wrapped.apply() is returned
+
+        result = wrapped()
+
+        assert result is not returned
+        assert result.event_template is intrinsic
+
+    def test_distribution_requires_metadata_in_its_own_event_template(self):
+        cases = [
+            (
+                Normal(0, 1, name="y"),
+                EventTemplate(y=ArraySpec((), dtype="float32")),
+            ),
+            (
+                Gamma(1, 1, name="y"),
+                EventTemplate(y=ArraySpec((), support=real)),
+            ),
+        ]
+
+        for returned, declared in cases:
+            with pytest.raises(
+                ValueError,
+                match="does not exactly match declared concrete template",
+            ):
+                Function(
+                    func=lambda returned=returned: returned,
+                    output_template=declared,
+                ).apply()
 
     @pytest.mark.parametrize(
         ("support", "valid", "invalid"),
@@ -404,7 +423,7 @@ class TestApplyContract:
         assert wrapped.apply(1) is matching
 
         mismatching = Normal(0, 1, name="other")
-        with pytest.raises(ValueError, match=r"fields .* do not match template fields"):
+        with pytest.raises(ValueError, match="does not exactly match declared concrete template"):
             Function(
                 func=lambda x: mismatching,
                 output_template=matching.event_template,
@@ -794,6 +813,22 @@ class TestSymbolicCalls:
         result = wrapped(Normal(0, 1, name="x"))
 
         assert result.event_template == EventTemplate(y=())
+
+    def test_distribution_broadcast_rejects_incomplete_intrinsic_template(self):
+        wrapped = Function(
+            func=lambda x: Normal(x, 1, name="y"),
+            input_template=EventTemplate(x=()),
+            output_template=EventTemplate(y=ArraySpec((), support=real)),
+            dispatch="sequential",
+            n_broadcast_samples=8,
+            seed=3,
+        )
+
+        with pytest.raises(
+            ValueError,
+            match="does not exactly match declared concrete template",
+        ):
+            wrapped(Normal(0, 1, name="x"))
 
     def test_distribution_outputs_keep_declared_template_through_sweep(self):
         rows = NumericRecordArray.stack(

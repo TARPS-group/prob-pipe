@@ -155,7 +155,7 @@ def _copy_result_term(
 ) -> Tracked:
     """Copy a retained tracked container into an independent result term."""
     clone = value._shallow_copy()
-    if output_template is not None and isinstance(clone, (Record, Distribution)):
+    if output_template is not None and isinstance(clone, Record):
         object.__setattr__(clone, "_event_template", output_template)
     object.__setattr__(clone, "_provenance", None)
     annotations = getattr(clone, "_annotations", None)
