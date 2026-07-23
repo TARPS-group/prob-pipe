@@ -1033,6 +1033,7 @@ def _unify_template_node(
     bindings: dict[str, int],
     path: str,
 ) -> EventTemplate:
+    """Recursively unify one declared template node with actual structure."""
     children = getattr(actual, "children", None)
 
     if isinstance(children, Mapping):
@@ -1085,6 +1086,7 @@ def _unify_specs(
     bindings: dict[str, int],
     path: str,
 ) -> ValueSpec:
+    """Unify one declared leaf spec with an authoritative actual spec."""
     if isinstance(expected, ArraySpec) and isinstance(actual, ArraySpec):
         if any(isinstance(dimension, str) for dimension in actual.shape):
             raise ValueError(
@@ -1108,6 +1110,7 @@ def _unify_spec_with_value(
     bindings: dict[str, int],
     path: str,
 ) -> ValueSpec:
+    """Validate and concretize one declared leaf spec against an actual value."""
     if not isinstance(spec, ArraySpec):
         if not spec.is_valid(value):
             raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
@@ -1131,6 +1134,7 @@ def _unify_array_shape(
     bindings: dict[str, int],
     path: str,
 ) -> tuple[int, ...]:
+    """Validate fixed dimensions and bind symbols against a concrete shape."""
     if len(declared) != len(actual):
         raise ValueError(
             f"{path} has rank {len(actual)}, expected rank {len(declared)} from shape {declared!r}"
@@ -1159,6 +1163,7 @@ def _unify_array_shape(
 def _replace_template_dimensions(
     template: EventTemplate, bindings: Mapping[str, int]
 ) -> EventTemplate:
+    """Return a template whose symbolic dimensions are replaced from bindings."""
     children: dict[str, _FieldSpec] = {}
     for name, spec in template.children.items():
         if isinstance(spec, EventTemplate):
@@ -1180,4 +1185,5 @@ def _replace_template_dimensions(
 
 
 def _unpickle_event_template(specs: dict) -> EventTemplate:
+    """Rebuild an EventTemplate during unpickling."""
     return EventTemplate(specs)
