@@ -1019,10 +1019,10 @@ def _unify_template_node(
     bindings: dict[str, int],
     path: str,
 ) -> EventTemplate:
-    if isinstance(actual, EventTemplate):
-        actual_children: Mapping[str, Any] = actual.children
-    elif isinstance(getattr(actual, "children", None), Mapping):
-        actual_children = actual.children
+    children = getattr(actual, "children", None)
+
+    if isinstance(children, Mapping):
+        actual_children: Mapping[str, Any] = children
     elif isinstance(actual, Mapping):
         actual_children = actual
     else:
