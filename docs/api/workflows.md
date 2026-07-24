@@ -109,12 +109,13 @@ planner; it does not broaden the public `RecordArray.stack` contract.
 
 Variadic Functions participate fully when no authoritative input template is
 declared. Each `*args` element and `**kwargs` entry is classified, lifted,
-sampled, or swept independently, using the variadic parameter's annotation.
-The original Python call is reconstructed before execution. Provenance and
-`include_inputs` labels are stable, for example `*items[0]` and
-`**extras['scale']`. Tracked slots form deduplicated lineage parents; ordinary
-slots remain distinct in `Provenance.inputs` even when multiple parameters
-refer to the same object.
+sampled, or swept independently. Informative variadic annotations apply to
+each expanded slot; `Any` supplies no pass-through guarantee, so generic
+`**kwargs: Any` APIs retain lifting and sweep behavior. The original Python
+call is reconstructed before execution. Provenance and `include_inputs` labels
+are stable, for example `*items[0]` and `**extras['scale']`. Tracked slots form
+deduplicated lineage parents; ordinary slots remain distinct in
+`Provenance.inputs` even when multiple parameters refer to the same object.
 
 `apply` deliberately performs no distribution lifting, batch sweep, result
 wrapping, orchestration, or call-provenance creation. It is therefore also the

@@ -8,6 +8,7 @@ import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -1196,6 +1197,32 @@ class TestVariadicPlanning:
 
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(result["<lambda>"], np.arange(3.0) + 2)
+
+    def test_record_array_in_any_varargs_is_swept(self):
+        rows = NumericRecordArray.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+        )
+
+        def double(*items: Any):
+            return items[0]["value"] * 2
+
+        result = Function(func=double)(rows)
+
+        assert result.batch_shape == (3,)
+        np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
+
+    def test_record_array_in_any_varkwargs_is_swept(self):
+        rows = NumericRecordArray.stack(
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+        )
+
+        def double(**extras: Any):
+            return extras["rows"]["value"] * 2
+
+        result = Function(func=double)(rows=rows)
+
+        assert result.batch_shape == (3,)
+        np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
 
     def test_tracked_varargs_are_provenance_parents(self, full_provenance_mode):
         first = NumericRecord("first", value=1.0)

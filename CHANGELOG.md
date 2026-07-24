@@ -19,10 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   implementation-backed Functions share the same planner, invocation-local
   RNG and dispatch state, and output validation.
   Variadic arguments now participate in lifting and sweeps through stable
-  per-element planner slots. Authoritative nested outputs aggregate identically
-  across sequential, threaded, Prefect, and JAX dispatch without changing the
-  public `RecordArray.stack` contract, and declared distribution sweeps expose
-  their concrete schema through `DistributionArray.event_template`.
+  per-element planner slots; `Any` on a variadic parameter remains
+  non-restrictive rather than suppressing those behaviors. Authoritative nested
+  outputs aggregate identically across sequential, threaded, Prefect, and JAX
+  dispatch without changing the public `RecordArray.stack` contract, and
+  declared distribution sweeps expose their concrete schema through
+  `DistributionArray.event_template`.
   Callable and private-implementation fingerprints encode frozen signatures
   and templates structurally; callable implementations additionally encode
   their code, defaults, and closure, while private implementations use stable

@@ -25,6 +25,8 @@ from probpipe import (
     MinibatchedDistribution,
     MultivariateNormal,
     Normal,
+    NumericRecord,
+    NumericRecordArray,
     ProductDistribution,
     Record,
     SequentialJointDistribution,
@@ -55,6 +57,19 @@ class TestKwargFormScalar:
         d = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
         v = jnp.array([0.1, 0.2, 0.3])
         assert jnp.allclose(log_prob(d, z=v), log_prob(d, v))
+
+    def test_record_array_view_in_variadic_any_kwarg_is_swept(self):
+        d = Normal(0.0, 1.0, name="x")
+        rows = NumericRecordArray.stack(
+            [NumericRecord("row", x=float(value)) for value in range(3)]
+        )
+
+        result = log_prob(d, x=rows.view("x"))
+
+        assert isinstance(result, NumericRecordArray)
+        assert result.batch_shape == (3,)
+        expected = jnp.stack([log_prob.apply(d, float(value)) for value in range(3)])
+        np.testing.assert_allclose(result["log_prob"], expected)
 
 
 class TestKwargFormRecord:

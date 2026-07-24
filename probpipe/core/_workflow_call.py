@@ -143,8 +143,14 @@ def iter_input_refs(
 
 
 def input_ref_hint(info: WorkflowSignatureInfo, ref: WorkflowInputRef) -> Any:
-    """Return the annotation governing one resolved input reference."""
-    return info.hints.get(ref.parameter_name)
+    """Return the informative annotation governing one planner input.
+
+    ``Any`` on an expanded variadic slot must not suppress lifting or sweeps.
+    """
+    hint = info.hints.get(ref.parameter_name)
+    if ref.subscript is not None and hint is Any:
+        return None
+    return hint
 
 
 def input_ref_value(values: Mapping[str, Any], ref: WorkflowInputRef) -> Any:

@@ -7,6 +7,7 @@ internals are split into smaller private modules.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -120,6 +121,28 @@ class TestWorkflowCallHelpers:
             2,
             3,
             4,
+        )
+
+    def test_variadic_any_is_not_a_planner_pass_through_hint(self):
+        def collect(head: Any, *items: Any, **extras: Any):
+            return head, items, extras
+
+        info = _workflow_call.make_signature_info(collect)
+
+        assert _workflow_call.input_ref_hint(info, _workflow_call.WorkflowInputRef("head")) is Any
+        assert (
+            _workflow_call.input_ref_hint(
+                info,
+                _workflow_call.WorkflowInputRef("items", subscript=0),
+            )
+            is None
+        )
+        assert (
+            _workflow_call.input_ref_hint(
+                info,
+                _workflow_call.WorkflowInputRef("extras", subscript="tail"),
+            )
+            is None
         )
 
     def test_input_ref_replacement_preserves_signature_shaped_containers(self):
