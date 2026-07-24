@@ -492,7 +492,7 @@ class ConditionalDistribution[S, T](Tracked, Annotated):
     @property
     def given_template(self) -> EventTemplate: ...
     @property
-    def event_template(self) -> EventTemplate: ...
+    def event_template(self) -> EventTemplate | TermSpec: ...
     def _condition_on(self, given: S, /, **kwargs) -> Distribution[T] | ConditionalDistribution: ...
     # the required primitive: the law K(given, ·), or a curried kernel for a partial given
 
@@ -528,10 +528,10 @@ class FullyNumericConditionalDistribution(
 | `ConditionalNumericDistribution` | any | numeric |
 | `FullyNumericConditionalDistribution` | numeric | numeric |
 
-**The conditional distribution value specification.** The `ConditionalDistributionSpec(given_template, event_template)` class is the `Cond`-corner term spec (III.1): a leaf holding a `ConditionalDistribution`, analogously to `DistributionSpec`:
+**The conditional distribution value specification.** `ConditionalDistributionSpec(given_template, event_template)` is the term spec of the `Cond` kind. As a leaf, it types a field holding a `ConditionalDistribution`. Its event side accepts a root `TermSpec`, exactly as a `Distribution`'s declaration does; the given side is always an `EventTemplate`:
 
 ```python
-ConditionalDistributionSpec(given_template: EventTemplate, event_template: EventTemplate)
+ConditionalDistributionSpec(given_template: EventTemplate, event_template: EventTemplate | TermSpec)
 ```
 
 ### Rationale
