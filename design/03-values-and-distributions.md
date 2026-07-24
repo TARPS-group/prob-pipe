@@ -8,7 +8,7 @@ The sections build in the order below, each depending only on those above it and
 
 | §      | Layer                       | Contents                                                                                              | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| III.1  | Schema                      | `EventTemplate`                                                                                       | A `NamedTree` of type-specs — the type-level structure of one value. Pure structure, no data.                  |
+| III.1  | Schema                      | `EventTemplate`                                                                                       | Moved to II.2: value specifications and event templates are shared abstractions (Part II).                  |
 | III.2  | Values                      | `Function`, `SupportsDifferentiation`, `FunctionBatch` / `OpaqueBatch`                                                            | The function kind's base — templates, identity, plain evaluation — its differentiability claim, plus the batch forms of the function-valued and opaque specs. |
 | III.3  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
 | III.4  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
@@ -23,102 +23,10 @@ The sections build in the order below, each depending only on those above it and
 | III.13 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
 | III.14 | Registries | constraint reparameterization (`bijector_for`, `SupportsInverse`, `SupportsLogDetJacobian`) | Mapping a `Constraint` to a bijector for unconstrained inference, with the invertibility and Jacobian claims. |
 
-## III.1 — `EventTemplate`
+## III.1 — `EventTemplate` *(moved to II.2)*
 
-### Contract
+The value-specification and event-template layer — `ValueSpec`, `TermSpec`, `ArraySpec`, `OpaqueSpec`, `EventTemplate`, `Constraint`, the declaration roles, and the storage rule — is a shared abstraction: the tracked base (II.3) houses the spec slot, so the layer lives in Part II. See II.2. Sections III.2–III.14 keep their numbers.
 
-An `EventTemplate` is a `NamedTree` that defines the *shape of one event* — a draw, a stored datum, and so on. Each leaf is a `ValueSpec`: it says what the single value at that path looks like, and it answers `is_valid` on a candidate value.
-
-Value specs come in two families. A **raw-value spec** types a leaf holding a plain value that names no ProbPipe kind — a numeric array (`ArraySpec`) or an opaque Python object (`OpaqueSpec`). A **term spec** types a leaf holding a tracked ProbPipe term: a `Record`, `Distribution`, `ConditionalDistribution`, or `Function`, one per kind. A tracked term is, at bottom, still one value that can occupy a leaf, so a term spec *is* a value spec: `TermSpec` subclasses `ValueSpec` as a marker, and the concrete class — `RecordSpec`, `DistributionSpec`, and so on — is the kind. Two consequences follow. `is_valid` stays declared once, on `ValueSpec`; and anywhere a leaf is accepted, a term spec is accepted unchanged.
-
-A term spec plays one of two roles, fixed by its position.
-
-- **As data.** At a named leaf of a template, a term spec types a field that holds a term. A `Distribution` stored inside a record is a leaf value.
-- **As result.** As an output declaration, a term spec states that the result *is* a term of that kind. A fitted mapping declares that it returns a `Function` this way.
-
-A `Distribution`'s event declaration is an output declaration: it types what `sample` returns. The two roles therefore settle every draw kind. `Distribution(name, DistributionSpec(t))` declares a random measure; its draws are `Distribution`s. `Distribution(name, EventTemplate(x=DistributionSpec(t)))` declares a record law; its draws are `Record`s with a distribution-valued field `x`. The two spaces are isomorphic, but the draw kinds differ, and the declaration alone decides which — never the runtime type of `_sample`'s return. A result of the wrong kind raises the kind error; a schema mismatch raises its own.
-
-An `EventTemplate` is not itself a spec. It is the *schema*, the structure that indexes a kind, and it is never one of its own leaves. A declaration is *stored* as a spec: a bare `EventTemplate` is accepted wherever a record declaration is meant, as a convenience, and construction wraps it as `RecordSpec(template)`. The two forms denote the same space; after construction only the spec remains, so the declared kind is simply the stored spec's class.
-
-The same storage rule holds for the tracked types themselves. Each carries the spec of its kind — a `Record` its `RecordSpec`, a `Distribution` its `DistributionSpec`, a `ConditionalDistribution` its `ConditionalDistributionSpec`, a `Function` its `FunctionSpec` — as the single stored source of its type. Each type exposes convenience accessors for its own spec's properties — a `Record` its `event_template`, a `Function` its `input_template` and `output_spec`, a `Distribution` its `event_spec`, a `ConditionalDistribution` its `given_template` and `event_spec` — views on the one stored object, so they cannot disagree with it or with each other.
-
-```python
-class ValueSpec(ABC):               # a leaf value; is_valid declared once, here
-    @abstractmethod
-    def is_valid(self, value: Any) -> bool: ...
-
-# --- raw-value specs: a leaf holding a plain value, no kind ---
-class ArraySpec(ValueSpec):  # a numeric array leaf
-    shape: tuple[int | str, ...]   # a str names a symbolic dimension
-    dtype: DType
-    support: Constraint
-
-class OpaqueSpec(ValueSpec):  # the fallback spec; is_valid accepts any non-mapping value
-    meta: Hashable
-
-# --- term specs: a leaf holding a tracked term; the concrete class is the kind ---
-class TermSpec(ValueSpec): ...      # marker; adds nothing, is_valid inherited
-
-class RecordSpec(TermSpec):  # a Record; is_valid accepts a matching Record
-    event_template: EventTemplate
-
-class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
-    input_template: EventTemplate | None   # None: that side's structure unspecified
-    output_spec: TermSpec | None           # the output declaration, stored as a spec;
-                                           #   construction wraps an EventTemplate as RecordSpec(template)
-# DistributionSpec (III.6) and ConditionalDistributionSpec (III.8) are the other two term specs.
-
-class Constraint(ABC):              # an array support, carried by ArraySpec
-    @abstractmethod
-    def check(self, value: ArrayLike) -> Array: ...   # elementwise membership
-    # constraints compare and hash by value, so an instance can serve as a registry key
-```
-
-**Placement.** `TermSpec` lives beside `ValueSpec` in `values/_specs.py`: it is a marker over the spec hierarchy, tied to no one kind. Each concrete term spec lives with its kind's base type: `RecordSpec` with `Record` and `NumericRecord` in `values/_record.py`, `FunctionSpec` with `Function` in `values/_function_base.py`, `DistributionSpec` in `distributions/_distribution.py`, and `ConditionalDistributionSpec` in `distributions/_conditional.py`.
-
-`RecordSpec(τ)` and the template `τ` denote the same space; the tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity — name, provenance, capabilities — is never dropped implicitly. Both follow the wrap boundary (V.0).
-
-A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, a single-field signature written out as `FunctionSpec(EventTemplate(x=...), EventTemplate(out=...))`, so a function's field names are caller-chosen and meaningful, matching `DistributionSpec`. The output side, `output_spec`, accepts any `TermSpec`, so a function may declare a term-valued result: a `Function` returning a `Distribution`, or a fitted mapping declared `Fun`/`Cond`, with a record output the common case; an `EventTemplate` output wraps to `RecordSpec` at construction, so the stored side is always a spec. Validity is callability alone — the value-layer specs stay callable-generic, admitting any callable as a leaf value — and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to coproject a raw callable *result* into a `Function`. The two sides are otherwise independent, so a callable may map a space to itself or between two different spaces.
-
-When every leaf is an `ArraySpec` then all values are numeric and construction auto-promotes to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
-
-```python
-class EventTemplate(NamedTree[ValueSpec]):
-    def __init__(self, field_specs: Mapping[str, Any] | None = None, /,
-                 **fields: ValueSpec | EventTemplate | tuple[int, ...] | None) -> None: ...
-    # sugar: a bare shape tuple means ArraySpec(shape) and None means OpaqueSpec();
-    # the positional mapping form accepts "/"-path keys and names that collide with keywords
-
-    @classmethod
-    def infer_from(cls, value: Any) -> EventTemplate: ...   # best-effort, possibly lossy
-    @property
-    def is_numeric(self) -> bool: ...
-    @property
-    def is_concrete(self) -> bool: ...                      # False when any dimension is symbolic
-    @property
-    def free_dims(self) -> frozenset[str]: ...              # the unbound symbolic dimensions
-    def numeric_subset(self) -> NumericEventTemplate: ...   # remove non-ArraySpec leaves
-```
-
-`NumericEventTemplate` further provides a flat (vectorized) layout of the leaves:
-
-```python
-class NumericEventTemplate(EventTemplate):
-    @property
-    def leaf_shapes(self) -> dict[str, tuple[int, ...]]: ...   # per-field array shapes, canonical order
-    @property
-    def vector_size(self) -> int: ...                          # total flat dimension; defined only when concrete
-```
-
-**Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer. `ArraySpec(shape=("obs", "features"))` fixes the rank and gives each dimension an identity while deferring its size, and within one template a name refers to one dimension: a template with fields `X: ("obs", "features")` and `coefficients: ("features",)` states that the second dimension of `X` and the length of `coefficients` are the same dimension, an equality no pair of concrete integers can express. A template with any symbolic entry is **polymorphic**, with `is_concrete` false and `free_dims` listing the unbound names. Templates carry no scope object beyond the names themselves, so they serialize as plain data.
-
-A polymorphic template is checked by **unification** rather than per-leaf comparison. Validating values against it runs one pass over all fields: each occurrence of a name must resolve to a single size, a conflict raises, and a name, once bound, never rebinds. The per-leaf `is_valid` covers rank and dtype (an `ArraySpec`'s `support` is descriptive metadata, not checked by `is_valid`), and leaves size consistency to that one pass. Binding produces a new template, so refinement is monotone and nothing mutates. The flat layout of a `NumericEventTemplate` is defined only when the template is concrete, and anything that needs sizes raises with the free dimensions named.
-
-### Rationale
-
-As the *type layer*, an `EventTemplate` is the explicit structure that travels with a value and with the producers and consumers of values (`D5 – Explicit, carried structure`). It separates the structure of one event from the orthogonal axes of *multiplicity* and *identity*, keeping those distinctions explicit (`D1 – Mathematical fidelity`). A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
-
----
 
 ## III.2 — `Function`, `FunctionBatch`, and `OpaqueBatch`
 
@@ -131,7 +39,7 @@ A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a po
 A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Three capability protocols accompany the base: `SupportsDifferentiation`, defined below, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.14 while the protocols themselves sit beside the base in the layout. All are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7, except that a claim with an instance guard is read through its predicate: `SupportsDifferentiation` declares *which* values differentiate, read through `is_differentiable` as described below, and invertibility is read through `is_invertible` (III.14). The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
 
 ```python
-class Function(Tracked):
+class Function(TrackedTerm):
     def __init__(self, name: str, fn: Callable, *,
                  input_template: EventTemplate | None = None,
                  output_spec: EventTemplate | TermSpec | None = None,
@@ -197,7 +105,7 @@ Defining the base in the value layer keeps the layering strict: the representati
 
 ### Contract
 
-A `Record` is a  `NamedTree` that is `Tracked` and `Annotated` with leaves that are *values*. Its structure conforms to an authoritative `EventTemplate`. Records provide a uniform representation for all types of values, including the data a function consumes and the draws a distribution produces. `NumericRecord` is the specialization in which every leaf is a numeric array and hence carries a `NumericEventTemplate`.
+A `Record` is a  `NamedTree` that is `TrackedTerm` and `Annotated` with leaves that are *values*. Its structure conforms to an authoritative `EventTemplate`. Records provide a uniform representation for all types of values, including the data a function consumes and the draws a distribution produces. `NumericRecord` is the specialization in which every leaf is a numeric array and hence carries a `NumericEventTemplate`.
 
 Since the structure of `Record` matches that of its template, the following invariants must hold:
 1. *matching keys:* `record.keys() == record.event_template.keys()`.
@@ -209,13 +117,13 @@ Against a polymorphic template, the invariants are checked by one joint unificat
 Two records are equal when they share a class, an `event_template`, and field-by-field equal data. Because the template is carried rather than re-inferred, an identity transform that threads it through compares equal to its input. A transform that instead rebuilds the template by inference matches only when that inference recovers the original, for instance when the original template was itself produced by `infer_from`.
 
 ```python
-class Record(NamedTree[Any], Tracked, Annotated):
+class Record(NamedTree[Any], TrackedTerm, Annotated):
     def __init__(self, name: str, fields: Mapping[str, Any] | None = None, /, *,
                  event_template: EventTemplate | RecordSpec | None = None,
                  name_is_auto: bool = False,
                  **kw_fields: Any) -> None: ...
         # name is the required first argument (semantic identity)
-        # name_is_auto marks an operation-derived name (II.2); user constructions leave it False
+        # name_is_auto marks an operation-derived name (II.3); user constructions leave it False
         # a nested sub-record's name is its field key; a mapping-valued field is a subtree, never a leaf.
         # Binds to the declaration if given (structural validation): a bare
         # EventTemplate wraps to RecordSpec(template).
@@ -263,7 +171,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 
 ### Contract
 
-A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTemplate`. It is the batched value a `Function` produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `Tracked` but not `Annotated`, and it is a *collection* of records rather than itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
+A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTemplate`. It is the batched value a `Function` produces and consumes, such as the many draws a `sample` yields. Being a `Batch`, it is `TrackedTerm` but not `Annotated`, and it is a *collection* of records rather than itself a named tree. `NumericRecordBatch` is the all-array specialization. Indexing reaches both axes and stays unambiguous by dispatching on the key's type:
 
 ```python
 class RecordBatch(Batch[Record]):
@@ -296,7 +204,7 @@ A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side:
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.2), so it is `Tracked` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a value, an `Array` or a `NumericRecord` conforming to `input_template`, returning the matching form, with the operator's parameters as the private state behind it. Calling a `LinOp` therefore takes the same call path as any `Function`, and like any `Function` it carries the execution controls, read only by a call that needs them. `matvec` is syntactic sugar for `apply`, its linear-algebra name; `matmat` applies the action to stacked columns in one routine and is the operator's registered batched rule, with `rmatvec` and `rmatmat` for the transpose. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (its `output_spec` is always a numeric `RecordSpec`, so both sides expose template views), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.2), so it is `TrackedTerm` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a value, an `Array` or a `NumericRecord` conforming to `input_template`, returning the matching form, with the operator's parameters as the private state behind it. Calling a `LinOp` therefore takes the same call path as any `Function`, and like any `Function` it carries the execution controls, read only by a call that needs them. `matvec` is syntactic sugar for `apply`, its linear-algebra name; `matmat` applies the action to stacked columns in one routine and is the operator's registered batched rule, with `rmatvec` and `rmatmat` for the transpose. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (its `output_spec` is always a numeric `RecordSpec`, so both sides expose template views), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
 
 Its templates are always concrete, and construction from a template with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
@@ -344,7 +252,7 @@ class LinOp(Function, ABC):        # the linear subtype of the III.2 base
 
 ### Rationale
 
-Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `Tracked` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators claim `SupportsDifferentiation` so their queries differentiate end-to-end (`D6 – Differentiability as a capability`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
+Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `TrackedTerm` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators claim `SupportsDifferentiation` so their queries differentiate end-to-end (`D6 – Differentiability as a capability`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
 
 ### Open points
 
@@ -356,12 +264,12 @@ Operations mint linear operators, covariances above all, and every operation mus
 
 ### Contract
 
-A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. Its single stored source of type is its `DistributionSpec`, whose `event_spec` — the declaration of one draw — it exposes as a view. Construction accepts a bare `EventTemplate` as a convenience and wraps it as `RecordSpec(template)`, and the stored class fixes the draw kind. It is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_path_names`, which returns the same law under new field names. A distribution whose declaration is polymorphic is legal: operations that need sizes raise, naming the free dimensions, until a value binds them or `with_dims` does so explicitly.
+A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. Its single stored source of type is its `DistributionSpec`, whose `event_spec` — the declaration of one draw — it exposes as a view. Construction accepts a bare `EventTemplate` as a convenience and wraps it as `RecordSpec(template)`, and the stored class fixes the draw kind. It is `TrackedTerm` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_path_names`, which returns the same law under new field names. A distribution whose declaration is polymorphic is legal: operations that need sizes raise, naming the free dimensions, until a value binds them or `with_dims` does so explicitly.
 
 A `NumericDistribution` is a `Distribution` whose draws are numeric, so it carries a `NumericEventTemplate` and can use the flat-vector machinery.
 
 ```python
-class Distribution[T](Tracked, Annotated):
+class Distribution[T](TrackedTerm, Annotated):
     def __init__(self, name: str, event_spec: EventTemplate | TermSpec) -> None: ...
         # the event declaration; its stored class fixes the draw kind,
         # and an EventTemplate wraps to RecordSpec(template)
@@ -499,7 +407,7 @@ A `ConditionalDistribution` carries a `given_template` (the `EventTemplate` of t
 Users never call a method on the `ConditionalDistribution`. Instead, they use the existing ops: `condition_on(K, s)` binds the given fields, evaluating it to a `Distribution` exactly and with no inference, and `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`, bitwise under a shared PRNG key in the exact cases and in law when inference is involved. Conditioning on only a subset of given fields *curries* to a smaller `ConditionalDistribution` view. A value supplied for a given field is always bound, whatever its type; the predictive mixture `∫ K(s, ·) μ(ds)` over a mixing distribution is obtained through the separate `predictive` operation, not by conditioning on a distribution.
 
 ```python
-class ConditionalDistribution[S, T](Tracked, Annotated):
+class ConditionalDistribution[S, T](TrackedTerm, Annotated):
     def __init__(self, name: str, given_template: EventTemplate, event_spec: EventTemplate | TermSpec) -> None: ...
         # given before event, as in FunctionSpec; the stored event spec's class fixes the draw kind
     @property
@@ -581,7 +489,7 @@ class ConditionalDistributionBatch(Batch[ConditionalDistribution]):
 
 ### Rationale
 
-This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space, exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a `ConditionalDistribution` produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `Tracked` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
+This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space, exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a `ConditionalDistribution` produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `TrackedTerm` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
 
 ## III.10 — Factored distributions
 
