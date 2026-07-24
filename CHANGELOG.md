@@ -17,38 +17,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `free_dims` / `is_concrete`, and each invocation unifies input and output
   symbols without mutating declarations. Decorated and private-
   implementation-backed Functions share the same planner, invocation-local
-  RNG and dispatch state, output validation, and Function-first provenance.
+  RNG and dispatch state, and output validation.
   Variadic arguments now participate in lifting and sweeps through stable
   per-element planner slots. Authoritative nested outputs aggregate identically
   across sequential, threaded, Prefect, and JAX dispatch without changing the
   public `RecordArray.stack` contract, and declared distribution sweeps expose
   their concrete schema through `DistributionArray.event_template`.
-  `Function.__call__` shallow-copies an implementation-returned `Record`,
-  `RecordArray`, or `Distribution` into an independent result item before
-  attaching current-call provenance; other tracked terms remain event payloads
-  until #369 adds explicit term-result planning. `apply` preserves the raw
-  object's identity and existing provenance. Callable and private-
-  implementation fingerprints encode frozen signatures and templates
-  structurally; callable implementations additionally encode their code,
-  defaults, and closure, while private implementations use stable opaque-
-  default type fallbacks rather than address-bearing signature strings.
-  Function provenance now separates tracked lineage in `parents` from all
-  resolved ordinary call arguments in `inputs`; the latter retain stable
-  per-slot fingerprints across plain, broadcast, sweep, and nested execution
-  without appearing in ancestry DAGs. Existing operation controls remain in
-  provenance metadata. Authoritative output validation requires field trees and
-  concrete shapes to conform, uses same-kind dtype checks for bare values,
-  mappings, and Records, and enforces their declared supports against concrete
-  values. An existing Distribution must carry an `event_template` exactly
-  equal to the concrete declaration; Function neither reconciles parallel
-  `dtypes` / `supports` accessors nor rewrites the Distribution's intrinsic
-  template. Consolidating Distribution schema ownership remains follow-up
-  work. Support-bearing value outputs use row-wise execution under auto
-  dispatch because their data-dependent checks cannot run while JAX traces;
-  explicit JAX dispatch and direct `jax.jit(Function.apply)` report that
-  limitation. `apply` preserves a returned container's original template,
-  while the independent `__call__` result copy carries the concrete declared
-  template for Records and retains an already-matching Distribution template.
+  Callable and private-implementation fingerprints encode frozen signatures
+  and templates structurally; callable implementations additionally encode
+  their code, defaults, and closure, while private implementations use stable
+  opaque-default type fallbacks rather than address-bearing signature strings.
+  Authoritative output validation requires field trees and concrete shapes to
+  conform, uses same-kind dtype checks for bare values, mappings, and Records,
+  and enforces their declared supports against concrete values. An existing
+  Distribution must carry an `event_template` exactly equal to the concrete
+  declaration; Function neither reconciles parallel `dtypes` / `supports`
+  accessors nor rewrites the Distribution's intrinsic template. Consolidating
+  Distribution schema ownership remains follow-up work. Support-bearing value
+  outputs use row-wise execution under auto dispatch because their
+  data-dependent checks cannot run while JAX traces; explicit JAX dispatch and
+  direct `jax.jit(Function.apply)` report that limitation. `apply` preserves a
+  returned container's original template, while the independent `__call__`
+  result copy carries the concrete declared template for Records and retains
+  an already-matching Distribution template.
   `LinOp.apply(x)` now delegates to `matvec(x)`, preserving existing operator
   structure and behavior. `Function._from_implementation(...)` is the internal
   construction entry point for dynamically produced ordinary Functions; #370
@@ -166,6 +157,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **Function calls establish a new result identity and provenance boundary
+  (#368, breaking).** Existing operations such as `condition_on` and
+  `from_distribution` now record point-call operations as `workflow.<name>`,
+  with the called Function as the first parent followed by tracked inputs.
+  Resolved ordinary arguments are fingerprinted separately in
+  `Provenance.inputs` and do not become ancestry nodes. When an implementation
+  directly returns a `Record`, `RecordArray`, or `Distribution`,
+  `Function.__call__` returns a shallow independent result rather than the same
+  object, clears the implementation result's provenance, and attaches only the
+  current call provenance. Consequently, implementation-domain metadata such
+  as `conditioned`, `ess`, or backend algorithm details is not propagated to
+  the public call result; a plain point-call result carries `{"func": name}`
+  while broadcast and sweep results retain their own execution metadata. Use
+  `Function.apply()` when raw identity, provenance, or domain metadata is
+  required. Existing operation controls remain provenance metadata. Other
+  tracked return values remain event payloads until #369 adds explicit
+  term-result planning.
 
 - **`WorkflowFunction` renamed to `Function` (#377, breaking).** The public
   decorator is likewise renamed from `@workflow_function` to `@function`.
