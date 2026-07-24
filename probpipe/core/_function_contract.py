@@ -370,7 +370,7 @@ def _validate_function_output_supports(
     template: EventTemplate,
     value: Any,
 ) -> None:
-    """Validate declared ArraySpec supports outside JAX tracing."""
+    """Validate declared ArraySpec supports at an eager execution boundary."""
     children = getattr(value, "children", None)
     if not isinstance(children, Mapping):
         children = value if isinstance(value, Mapping) else None
@@ -413,7 +413,7 @@ def _validate_function_output_leaf_support(
     spec: ValueSpec,
     value: Any,
 ) -> None:
-    """Validate one declared ArraySpec support outside JAX tracing."""
+    """Validate one declared ArraySpec support at an eager execution boundary."""
     if not isinstance(spec, ArraySpec) or spec.support is None:
         return
     support = spec.support

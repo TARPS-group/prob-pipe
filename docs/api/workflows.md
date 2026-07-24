@@ -135,9 +135,10 @@ when provenance tracking is disabled.
 Output-support checks are data-dependent and cannot execute under JAX tracing.
 For broadcast and sweep calls, `dispatch="auto"` therefore detects a
 support-bearing output and falls back to row-wise execution. An explicit
-`dispatch="jax"`, or a direct `jax.jit(function.apply)`, raises a traceability
-error instead of silently omitting the support guarantee. Output templates
-without support constraints retain their existing JAX path.
+`dispatch="jax"` reports that output support validation requires eager
+execution, while a direct `jax.jit(function.apply)` preserves JAX's native
+tracer error. Neither path silently omits the support guarantee. Output
+templates without support constraints retain their existing JAX path.
 
 When a sweep returns distributions, its `DistributionArray.event_template`
 records the concrete authoritative output template. Ordinary

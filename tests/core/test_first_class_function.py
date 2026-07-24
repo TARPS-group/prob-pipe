@@ -715,7 +715,10 @@ class TestSymbolicCalls:
             seed=11,
         )
 
-        with pytest.raises(ValueError, match=r"dispatch='jax' failed while tracing"):
+        with pytest.raises(
+            ValueError,
+            match=r"dispatch='jax' cannot validate output_template support constraints",
+        ):
             wrapped(Normal(0, 1, name="x"))
 
     def test_support_pinned_sweep_auto_falls_back_to_sequential(self):
@@ -746,7 +749,10 @@ class TestSymbolicCalls:
             dispatch="jax",
         )
 
-        with pytest.raises(ValueError, match=r"dispatch='jax' failed while tracing"):
+        with pytest.raises(
+            ValueError,
+            match=r"dispatch='jax' cannot validate output_template support constraints",
+        ):
             wrapped(rows)
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])

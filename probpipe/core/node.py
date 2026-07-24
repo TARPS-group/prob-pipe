@@ -43,7 +43,7 @@ from ._function_contract import (
     _wrap_declared_function_output,
 )
 from ._record_array import RecordArray
-from .event_template import EventTemplate, _concretize_event_template
+from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
 from .tracked import Annotated, Tracked, auto_name
 
@@ -938,6 +938,14 @@ class Function(Node, Tracked, Annotated):
         func: Callable[..., Any],
     ) -> None:
         """Raise a clear error if explicit JAX dispatch cannot trace."""
+        if self._output_template is not None and any(
+            isinstance(spec, ArraySpec) and spec.support is not None
+            for spec in self._output_template.values()
+        ):
+            raise ValueError(
+                "dispatch='jax' cannot validate output_template support constraints "
+                "during JAX tracing; use dispatch='auto', 'sequential', or 'thread'."
+            )
         trace_error = self._jax_traceability_error(values, broadcast_args, func=func)
         if trace_error is None:
             return
