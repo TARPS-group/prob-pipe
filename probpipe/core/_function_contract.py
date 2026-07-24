@@ -9,14 +9,18 @@ from types import MappingProxyType
 from typing import Any, Protocol, cast
 
 import jax.numpy as jnp
+import numpy as np
 
+from ._array_backend import _numpy_dtype_of
 from ._distribution_base import Distribution
+from ._record_array import RecordArray
 from .constraints import _supports_compatible
 from .event_template import (
     ArraySpec,
     EventTemplate,
     ValueSpec,
     _concretize_event_template,
+    _full_array_shape_or_none,
     _unify_event_template_with_value,
     _unify_event_templates,
 )
@@ -295,11 +299,18 @@ def _validate_function_output(
             declared_template=concrete,
             actual_template=actual_template,
         )
-        _unify_event_template_with_value(
-            concrete,
-            result,
-            context=f"Function {function_name!r} output",
-        )
+        if isinstance(result, RecordArray):
+            _validate_function_record_array_output_values(
+                function_name=function_name,
+                template=concrete,
+                value=result,
+            )
+        else:
+            _unify_event_template_with_value(
+                concrete,
+                result,
+                context=f"Function {function_name!r} output",
+            )
         _validate_function_output_supports(
             function_name=function_name,
             template=concrete,
@@ -340,6 +351,47 @@ def _validate_function_output(
         value=validation_value,
     )
     return concrete
+
+
+def _validate_function_record_array_output_values(
+    *,
+    function_name: str,
+    template: EventTemplate,
+    value: RecordArray,
+) -> None:
+    """Validate batched numeric leaves against their per-element specs."""
+    batch_shape = value.batch_shape
+    batch_rank = len(batch_shape)
+    for path, spec in template.items():
+        if not isinstance(spec, ArraySpec):
+            continue
+        leaf = value[path]
+        actual_shape = _full_array_shape_or_none(leaf)
+        context = f"Function {function_name!r} output/{path}"
+        if actual_shape is None:
+            raise ValueError(
+                f"{context} does not conform to its field spec ({spec!r}): "
+                f"got {type(leaf).__name__}"
+            )
+        actual_batch_shape = actual_shape[:batch_rank]
+        if actual_batch_shape != batch_shape:
+            raise ValueError(
+                f"{context} has batch shape {actual_batch_shape}, expected {batch_shape}"
+            )
+        actual_event_shape = actual_shape[batch_rank:]
+        if actual_event_shape != spec.shape:
+            raise ValueError(
+                f"{context} has event shape {actual_event_shape}, expected {spec.shape}"
+            )
+        if spec.dtype is None:
+            continue
+        actual_dtype = _numpy_dtype_of(leaf)
+        if actual_dtype is None or not np.can_cast(
+            actual_dtype,
+            spec.dtype,
+            casting="same_kind",
+        ):
+            raise ValueError(f"{context} dtype {actual_dtype} does not conform to {spec.dtype}")
 
 
 def _validate_function_output_template_supports(

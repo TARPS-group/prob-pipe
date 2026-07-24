@@ -31,6 +31,7 @@ from probpipe import (
     Provenance,
     ProvenanceMode,
     Record,
+    RecordArray,
     Tracked,
     function,
     mean,
@@ -183,6 +184,83 @@ class TestApplyContract:
         assert result["y"] is value
         assert result.event_template == template
         assert returned.event_template != template
+
+    def test_declared_output_accepts_record_array_as_a_batched_event(self):
+        intrinsic = EventTemplate(y=())
+        declared = EventTemplate(y=ArraySpec((), dtype="float32"))
+        returned = NumericRecordArray(
+            {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
+            batch_shape=(2,),
+            template=intrinsic,
+        )
+        wrapped = Function(func=lambda: returned, output_template=declared)
+
+        assert wrapped.apply() is returned
+
+        result = wrapped()
+
+        assert result is not returned
+        assert isinstance(result, NumericRecordArray)
+        assert result.batch_shape == (2,)
+        assert result.event_template == declared
+        assert returned.event_template is intrinsic
+        np.testing.assert_allclose(result["y"], np.asarray([1.0, 2.0]))
+
+    @pytest.mark.parametrize("batch_shape", [(2, 3), (0, 3)])
+    def test_declared_output_accepts_multidimensional_and_empty_record_arrays(
+        self,
+        batch_shape,
+    ):
+        template = EventTemplate(y=(2,))
+        returned = NumericRecordArray(
+            {"y": jnp.ones((*batch_shape, 2))},
+            batch_shape=batch_shape,
+            template=template,
+        )
+        wrapped = Function(func=lambda: returned, output_template=template)
+
+        assert wrapped.apply() is returned
+        result = wrapped()
+
+        assert result.batch_shape == batch_shape
+        assert result.event_template == template
+        np.testing.assert_allclose(result["y"], np.ones((*batch_shape, 2)))
+
+    def test_declared_output_rejects_record_array_with_wrong_event_shape(self):
+        template = EventTemplate(y=())
+        returned = RecordArray(
+            {"y": jnp.ones((2, 3))},
+            batch_shape=(2,),
+            template=template,
+        )
+        wrapped = Function(func=lambda: returned, output_template=template)
+
+        with pytest.raises(
+            ValueError,
+            match=r"output/y has event shape \(3,\), expected \(\)",
+        ):
+            wrapped.apply()
+
+    def test_declared_output_checks_record_array_dtype_and_support(self):
+        dtype_template = EventTemplate(y=ArraySpec((), dtype="int32"))
+        float_array = RecordArray(
+            {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
+            batch_shape=(2,),
+            template=EventTemplate(y=()),
+        )
+
+        with pytest.raises(ValueError, match=r"output/y dtype float32 does not conform"):
+            Function(func=lambda: float_array, output_template=dtype_template).apply()
+
+        support_template = EventTemplate(y=ArraySpec((), support=positive))
+        invalid_array = NumericRecordArray(
+            {"y": jnp.asarray([1.0, -2.0])},
+            batch_shape=(2,),
+            template=EventTemplate(y=()),
+        )
+
+        with pytest.raises(ValueError, match=r"output at 'y'.*support positive"):
+            Function(func=lambda: invalid_array, output_template=support_template).apply()
 
     @pytest.mark.parametrize(
         ("actual_dtype", "declared_dtype"),

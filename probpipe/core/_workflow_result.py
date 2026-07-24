@@ -17,6 +17,7 @@ from ._broadcast_distributions import _make_stack
 from ._distribution_base import Distribution
 from ._function_contract import _wrap_declared_function_output
 from ._numeric_record import _is_numeric_leaf
+from ._record_array import RecordArray
 from .event_template import EventTemplate
 from .provenance import Provenance
 from .record import Record
@@ -155,8 +156,11 @@ def _copy_result_term(
 ) -> Tracked:
     """Copy a retained tracked container into an independent result term."""
     clone = value._shallow_copy()
-    if output_template is not None and isinstance(clone, Record):
-        object.__setattr__(clone, "_event_template", output_template)
+    if output_template is not None:
+        if isinstance(clone, RecordArray):
+            object.__setattr__(clone, "_template", output_template)
+        elif isinstance(clone, Record):
+            object.__setattr__(clone, "_event_template", output_template)
     object.__setattr__(clone, "_provenance", None)
     annotations = getattr(clone, "_annotations", None)
     if annotations is not None:
