@@ -50,7 +50,7 @@ A mean is defined whenever draws can be averaged: coordinate-wise for arrays, po
 ### Contract
 
 `sample(d, key, sample_shape=(), raw=False)` draws from a distribution.
-- With `sample_shape=()` it returns a single draw **at the event's own kind**, tracked. A draw over a record event is a `Record`; a scalar law returns a single-field `Record` keyed by the distribution's name (initialized from the name, thereafter independent of it). A draw whose event declaration is a root `TermSpec` is a term of the declared kind: a random measure's draw is a `Distribution`, a random function's draw is a `Function`, fixed by the declaration rather than by the runtime value. The record wrap applies only to a raw draw, so `sample` never buries a term as a `Record`'s leaf value.
+- With `sample_shape=()` it returns a single draw **at the declared kind**, tracked. The kind is the event declaration's class: a `RecordSpec` draws a `Record`, a `DistributionSpec` draws a `Distribution` (a random measure), a `FunctionSpec` draws a `Function` (a random function) — fixed by the declaration, never by the runtime value. A scalar law returns a single-field `Record` keyed by the distribution's name (initialized from the name, thereafter independent of it). The record wrap applies only to a raw draw, so `sample` never buries a term as a `Record`'s leaf value.
 - A non-empty `sample_shape` prepends batch axes and returns the tracked batch type of the draw's kind, with those leading dimensions on a level named `draw`: a `RecordBatch` (`NumericRecordBatch` when numeric) for a record event, and the native batch form of the table below — a `DistributionBatch`, `FunctionBatch`, and so on — for a term-drawing law.
 - With `raw=True`, `sample` skips the identity attachment. For `sample_shape=()` it returns the bare draw type `T`; when `T` is already a tracked term (a `Record`, `Distribution`, `ConditionalDistribution`, or `Function`) the wrap is already the identity, so the only difference from the default is the identity attachment — `raw=True` returns the implementer's term itself, with its own name and provenance, while the default derives a new term from it, the same kind and representation under fresh `sample` provenance, and a raw non-term draw carries no name or provenance either way. For a non-empty `sample_shape` it returns `T`'s **native batch form**:
 
@@ -62,7 +62,7 @@ A mean is defined whenever draws can be averaged: coordinate-wise for arrays, po
 | `ConditionalDistribution` | `ConditionalDistributionBatch` |
 | function | `FunctionBatch` |
 | opaque | `OpaqueBatch` |
-- Sampling requires a concrete event template and raises with the free dimensions named; in the fused conditional path, the given value binds them first.
+- Sampling requires a concrete declaration and raises with the free dimensions named; in the fused conditional path, the given value binds them first.
 - The PRNG `key` is explicit and supplied by the caller, so a draw is reproducible from its key. Under a non-empty `sample_shape` the key splits by draw index, so the draws are jointly independent and reproducible together; inside a `Function` the `seed` supplies the key by the same structural split, so draws are never hand-threaded.
 - The draw carries `provenance` recording `sample` and the distribution it came from.
 
