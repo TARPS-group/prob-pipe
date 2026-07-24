@@ -427,10 +427,11 @@ def _make_marginal(
         ]
 
     if event_template is not None and isinstance(output_samples, jnp.ndarray):
-        assert len(event_template) == 1, (
-            "bare array aggregation requires a single-leaf event_template; "
-            "authoritative Function outputs must be wrapped before aggregation"
-        )
+        if len(event_template) != 1:
+            raise ValueError(
+                "bare array aggregation requires a single-leaf event_template; "
+                "authoritative Function outputs must be wrapped before aggregation"
+            )
         only_path = next(iter(event_template.keys()))
         output_samples = Record(
             name or "marginal",
@@ -799,16 +800,16 @@ def _make_stack(
         from ._record_array import NumericRecordArray
 
         event_shape = tuple(inner_outputs.shape[1:])
-        reshaped = inner_outputs.reshape(batch_shape + event_shape)
         if event_template is not None:
-            assert len(event_template) == 1, (
-                "bare array aggregation requires a single-leaf event_template; "
-                "authoritative Function outputs must be wrapped before aggregation"
-            )
+            if len(event_template) != 1:
+                raise ValueError(
+                    "bare array aggregation requires a single-leaf event_template; "
+                    "authoritative Function outputs must be wrapped before aggregation"
+                )
             output_field = next(iter(event_template.keys()))
             batched_record = Record(
                 name or field_name,
-                {output_field: reshaped},
+                {output_field: inner_outputs},
                 name_is_auto=True,
             )
             return _stack_declared_records(
@@ -817,6 +818,7 @@ def _make_stack(
                 template=event_template,
                 name=name or field_name,
             )
+        reshaped = inner_outputs.reshape(batch_shape + event_shape)
         tpl = EventTemplate(**{field_name: event_shape})
         return NumericRecordArray(
             {field_name: reshaped},

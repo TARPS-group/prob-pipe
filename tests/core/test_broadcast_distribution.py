@@ -366,7 +366,7 @@ class TestMakeMarginal:
     def test_declared_bare_array_requires_single_leaf_template(self):
         from probpipe import EventTemplate
 
-        with pytest.raises(AssertionError, match=r"bare array.*single-leaf"):
+        with pytest.raises(ValueError, match=r"bare array.*single-leaf"):
             _make_marginal(
                 jnp.ones((5, 2)),
                 None,
@@ -852,7 +852,7 @@ class TestMakeStack:
         from probpipe import EventTemplate
         from probpipe.core._broadcast_distributions import _make_stack
 
-        with pytest.raises(AssertionError, match=r"bare array.*single-leaf"):
+        with pytest.raises(ValueError, match=r"bare array.*single-leaf"):
             _make_stack(
                 jnp.ones((4, 2)),
                 n=4,
@@ -876,6 +876,24 @@ class TestMakeStack:
 
         assert out.event_template == template
         np.testing.assert_allclose(out["stats/value"], values)
+
+    def test_declared_vmap_array_supports_multidimensional_batch_shape(self):
+        from probpipe import EventTemplate
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        values = jnp.arange(12.0).reshape(6, 2)
+        template = EventTemplate(stats=EventTemplate(value=(2,)))
+
+        out = _make_stack(
+            values,
+            batch_shape=(2, 3),
+            field_name="demo",
+            event_template=template,
+        )
+
+        assert out.batch_shape == (2, 3)
+        assert out.event_template == template
+        np.testing.assert_allclose(out["stats/value"], values.reshape(2, 3, 2))
 
     def test_vmap_record_with_batched_leaves_promotes_to_ra(self):
         """``jax.vmap`` of a Record-returning fn produces a Record whose
