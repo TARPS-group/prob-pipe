@@ -130,12 +130,13 @@ assert any(a.parent is prior for a in ancestors)
 sample(ancestors[0].parent, key=key, sample_shape=(10,))
 ```
 
-## Content fingerprints
+## Best-effort fingerprints
 
 Every tracked-parent or plain-input `ParentInfo` descriptor carries a
-`fingerprint` — a 16-character hex string that stably identifies its content
-across processes. It is populated automatically by `Provenance.create()` and
-visible in `to_dict()` output:
+`fingerprint` — a 16-character best-effort digest — plus
+`fingerprint_is_weak`, which states whether any part of that digest used
+process-local identity. Both are populated automatically by
+`Provenance.create()` and visible in `to_dict()` output:
 
 ```python
 prior = Normal(loc=0.0, scale=1.0, name="prior")
@@ -143,12 +144,17 @@ posterior = wf(prior)
 
 anc = provenance_ancestors(posterior)[0]
 print(anc.fingerprint)   # e.g. "8d86780c50cea472"
+print(anc.fingerprint_is_weak)  # False for this structured distribution
 
 d = posterior.provenance.to_dict()
 print(d["parents"][0]["fingerprint"])   # same digest
 ```
 
-The fingerprint covers the full content of the parent:
+The classification is conservative. Known content-bearing values receive
+strong structural fingerprints; unsupported objects and callable forms whose
+runtime behavior cannot be recovered safely receive process-local identity
+fingerprints marked as weak. Weakness propagates through records, containers,
+closures, and other composite values.
 
 | Parent type | What is hashed |
 |---|---|
@@ -157,9 +163,13 @@ The fingerprint covers the full content of the parent:
 | `Record` | field names + values, recursively |
 | `Function` | frozen signature and input/output templates, plus user-function bytecode/defaults/closure or the private implementation type |
 | JAX / NumPy array | shape + dtype + raw bytes (large arrays are sampled) |
+| Closure-free Python function | module + qualified name + bytecode + defaults |
+| Closure-bearing function, bound method, partial, callable instance, class, builtin, or unsupported object | process-local identity; marked weak |
 
 The fingerprint is intended as the foundation for a future Prefect
-`cache_key_fn` that will enable cross-run task caching and failure recovery.
+`cache_key_fn`. A cross-run cache must fail closed when
+`fingerprint_is_weak` is true rather than treating that digest as portable
+content identity.
 
 ## API reference
 

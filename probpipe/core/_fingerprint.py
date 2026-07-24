@@ -1,9 +1,11 @@
-"""Stable content hashing for ProbPipe objects.
+"""Best-effort structural and identity hashing for ProbPipe objects.
 
-Produces a short hex digest that is deterministic across processes for the
-same inputs.  Intended for provenance tracking (populating
+Produces a short hex digest for provenance tracking (populating
 ``ParentInfo.fingerprint``) and as the foundation for a future Prefect
-``cache_key_fn``.
+``cache_key_fn``. Known content-bearing values receive structural fingerprints
+that are deterministic across processes. Opaque values receive process-local
+identity fingerprints and are reported as weak by
+``_fingerprint_with_strength``.
 
 Supported types
 ---------------
@@ -19,12 +21,15 @@ Supported types
 - ``Function`` — frozen signature and input/output templates, plus either
   plain-callable bytecode, referenced names, and captured/default values or a
   private implementation type
+- Closure-free Python functions — module + qualified name + bytecode +
+  defaults. Closure-bearing functions and every other callable kind are
+  process-local identities.
 - Numeric containers (``xarray`` / ``pandas`` / registered array backends)
   — concrete type + materialised shape + dtype + bytes **and** the
   container's identity-bearing metadata (coords / index / dims / attrs, via
   the backend's ``metadata`` hook), so equal values under different coords
   hash differently; a lazy leaf materialises when fingerprinted
-- Everything else — ``repr()`` (may be process-dependent for opaque types)
+- Everything else — type-qualified, process-local object identity
 
 All imports of ProbPipe types are deferred to call time so this module can
 be imported early in the package without triggering circular-import issues.
@@ -50,7 +55,9 @@ from __future__ import annotations
 import hashlib
 import inspect
 import math
+import os
 import struct
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, get_args, get_origin
 
@@ -72,6 +79,12 @@ _CANONICAL_NAN = struct.pack(">d", float("nan"))
 # ``ValueError`` or conflating the empty state with an ordinary captured value.
 _EMPTY_CLOSURE_CELL = b"[empty-closure-cell]"
 
+# Opaque fingerprints deliberately have process-local rather than portable
+# semantics. A random per-process salt prevents equal allocator addresses in
+# separate interpreters from accidentally looking like a cross-process
+# identity.
+_PROCESS_IDENTITY_SALT = os.urandom(16)
+
 # Default cap: arrays up to 256 MB are hashed in full (zero-copy via
 # memoryview).  Arrays beyond this are sampled at evenly-spaced offsets so
 # large posteriors are still discriminated without a full buffer read.
@@ -79,18 +92,27 @@ _EMPTY_CLOSURE_CELL = b"[empty-closure-cell]"
 _DEFAULT_MAX_ARRAY_BYTES: int = 256 << 20  # 256 MB
 
 
-def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BYTES) -> str:
-    """Return a 16-character hex digest that stably identifies *obj*'s content.
+@dataclass
+class _FingerprintState:
+    """Aggregate whether any component used a weak identity fingerprint."""
 
-    The digest is deterministic within a Python session and across processes
-    for the same inputs.  It is NOT cryptographically secure — use it only
-    for cache keying and provenance labelling.
+    is_weak: bool = False
+
+
+def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BYTES) -> str:
+    """Return a 16-character best-effort digest for *obj*.
+
+    Known content-bearing values are deterministic across processes. Opaque
+    values are stable only for the same object in the current process. Use
+    :attr:`ParentInfo.fingerprint_is_weak` before treating a provenance
+    fingerprint as a portable cache-key component. The digest is NOT
+    cryptographically secure.
 
     Parameters
     ----------
     obj:
-        Any ProbPipe object or Python primitive.  Unknown types fall back
-        to a ``repr()``-based hash.
+        Any ProbPipe object or Python primitive. Unknown types fall back to a
+        process-local identity hash.
     max_array_bytes:
         Arrays whose byte size is at or below this threshold are hashed in
         full (zero-copy via ``memoryview``).  Larger arrays are sampled at
@@ -102,9 +124,20 @@ def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BY
     str
         A 16-character hex string (64-bit prefix of a SHA-256 digest).
     """
+    digest, _ = _fingerprint_with_strength(obj, max_array_bytes=max_array_bytes)
+    return digest
+
+
+def _fingerprint_with_strength(
+    obj: Any,
+    *,
+    max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BYTES,
+) -> tuple[str, bool]:
+    """Return a digest and whether any component used weak identity semantics."""
     h = hashlib.sha256()
-    _update(h, obj, depth=0, max_array_bytes=max_array_bytes)
-    return h.hexdigest()[:16]
+    state = _FingerprintState()
+    _update(h, obj, depth=0, max_array_bytes=max_array_bytes, state=state)
+    return h.hexdigest()[:16], state.is_weak
 
 
 # ---------------------------------------------------------------------------
@@ -112,21 +145,30 @@ def fingerprint(obj: Any, *, max_array_bytes: int | None = _DEFAULT_MAX_ARRAY_BY
 # ---------------------------------------------------------------------------
 
 
-def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None) -> None:
+def _update(
+    h: hashlib._Hash,
+    obj: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
     if depth > 32:
         h.update(b"[max_depth]")
+        state.is_weak = True
         return
 
     if isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
-        _update_array(h, obj, max_array_bytes)
+        _update_array(h, obj, max_array_bytes, state)
     elif _is_record(obj):
-        _update_record(h, obj, depth, max_array_bytes)
+        _update_record(h, obj, depth, max_array_bytes, state)
     elif _is_distribution(obj):
-        _update_distribution(h, obj, depth, max_array_bytes)
+        _update_distribution(h, obj, depth, max_array_bytes, state)
     elif _is_function(obj):
-        _update_function(h, obj, max_array_bytes)
+        _update_function(h, obj, max_array_bytes, state)
+    elif _is_event_template(obj):
+        _update_event_template(h, obj, depth, max_array_bytes, state)
     elif _is_weights(obj):
-        _update_weights(h, obj, depth, max_array_bytes)
+        _update_weights(h, obj, depth, max_array_bytes, state)
     elif isinstance(obj, _np.generic):
         # numpy scalars: np.int64 is NOT an int subclass, and np.float32's repr
         # is numpy-version-dependent — hash by dtype + raw bytes, never repr.
@@ -152,6 +194,15 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
     elif isinstance(obj, str):
         h.update(b"str:")
         h.update(obj.encode())
+    elif isinstance(obj, bytes):
+        h.update(b"bytes:")
+        h.update(obj)
+    elif isinstance(obj, complex):
+        h.update(b"complex:")
+        h.update(struct.pack(">d", obj.real))
+        h.update(struct.pack(">d", obj.imag))
+    elif obj is Ellipsis:
+        h.update(b"ellipsis")
     elif obj is None:
         h.update(b"none")
     elif isinstance(obj, (list, tuple)):
@@ -159,23 +210,23 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
         h.update(tag)
         h.update(struct.pack(">I", len(obj)))
         for item in obj:
-            _update(h, item, depth + 1, max_array_bytes)
+            _update(h, item, depth + 1, max_array_bytes, state)
     elif isinstance(obj, (set, frozenset)):
         # Order-independent: hash each element to a sub-digest and combine the
         # sorted digests, so the result never depends on set iteration order
         # (which is PYTHONHASHSEED-randomized across processes).
         h.update(b"set:")
         h.update(struct.pack(">I", len(obj)))
-        for d in sorted(_subdigest(e, depth + 1, max_array_bytes) for e in obj):
+        for d in sorted(_subdigest(e, depth + 1, max_array_bytes, state) for e in obj):
             h.update(d)
     elif isinstance(obj, dict):
         h.update(b"dict:")
         h.update(struct.pack(">I", len(obj)))
         for k, v in sorted(obj.items(), key=lambda kv: str(kv[0])):
-            _update(h, k, depth + 1, max_array_bytes)
-            _update(h, v, depth + 1, max_array_bytes)
+            _update(h, k, depth + 1, max_array_bytes, state)
+            _update(h, v, depth + 1, max_array_bytes, state)
     elif _is_tfp_object(obj):
-        _update_tfp_object(h, obj, depth, max_array_bytes)
+        _update_tfp_object(h, obj, depth, max_array_bytes, state)
     elif (content := _numeric_container_to_numpy(obj)) is not None:
         # A numeric container (xarray / pandas / a registered array backend):
         # hash by concrete type, materialised values, AND the container's
@@ -186,28 +237,46 @@ def _update(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None)
         h.update(b"container:")
         h.update(type(obj).__qualname__.encode())
         h.update(b":")
-        _update_array(h, content, max_array_bytes)
+        _update_array(h, content, max_array_bytes, state)
         from ._array_backend import _metadata_of
 
         metadata = _metadata_of(obj)
         if metadata is not None:
             h.update(b":meta:")
-            _update(h, metadata, depth + 1, max_array_bytes)
+            _update(h, metadata, depth + 1, max_array_bytes, state)
+    elif inspect.isfunction(obj) and obj.__closure__ is None:
+        _update_plain_function(h, obj, depth, max_array_bytes, state)
     else:
-        # Last resort. ``repr`` may embed a memory address for objects with the
-        # default ``__repr__`` (making the digest process-dependent); the
-        # branches above cover ProbPipe's content-bearing types, so this is
-        # reached only for genuinely opaque values. Hash the full repr — no
-        # truncation, which would collide objects sharing a 500-char prefix.
-        h.update(b"repr:")
-        h.update(repr(obj).encode())
+        _update_weak_identity(h, obj, state)
 
 
-def _subdigest(obj: Any, depth: int, max_array_bytes: int | None) -> bytes:
+def _subdigest(
+    obj: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> bytes:
     """Content digest of a single object, for order-independent combination."""
     sub = hashlib.sha256()
-    _update(sub, obj, depth, max_array_bytes)
+    _update(sub, obj, depth, max_array_bytes, state)
     return sub.digest()
+
+
+def _update_weak_identity(
+    h: hashlib._Hash,
+    obj: Any,
+    state: _FingerprintState,
+) -> None:
+    """Hash an opaque object by process-local identity and mark it weak."""
+    obj_type = type(obj)
+    h.update(b"identity:")
+    h.update(obj_type.__module__.encode())
+    h.update(b".")
+    h.update(obj_type.__qualname__.encode())
+    h.update(b":")
+    h.update(_PROCESS_IDENTITY_SALT)
+    h.update(struct.pack(">Q", id(obj)))
+    state.is_weak = True
 
 
 def _numeric_container_to_numpy(obj: Any) -> _np.ndarray | None:
@@ -236,11 +305,123 @@ def _numeric_container_to_numpy(obj: Any) -> _np.ndarray | None:
 
 
 # ---------------------------------------------------------------------------
+# Event-template hashing
+# ---------------------------------------------------------------------------
+
+
+def _is_event_template(obj: Any) -> bool:
+    try:
+        from .event_template import EventTemplate
+
+        return isinstance(obj, EventTemplate)
+    except ImportError:
+        return False
+
+
+def _update_event_template(
+    h: hashlib._Hash,
+    template: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
+    """Hash an EventTemplate by its ordered tree and spec declarations."""
+    h.update(b"template:")
+    template_type = type(template)
+    h.update(template_type.__module__.encode())
+    h.update(b".")
+    h.update(template_type.__qualname__.encode())
+    h.update(b":")
+    for name, spec in template.children.items():
+        h.update(name.encode())
+        h.update(b"=")
+        if _is_event_template(spec):
+            _update_event_template(h, spec, depth + 1, max_array_bytes, state)
+        else:
+            _update_value_spec(h, spec, depth + 1, max_array_bytes, state)
+        h.update(b";")
+
+
+def _update_value_spec(
+    h: hashlib._Hash,
+    spec: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
+    """Hash a built-in ValueSpec by the declaration fields that define it."""
+    from .event_template import ArraySpec, DistributionSpec, FunctionSpec, OpaqueSpec
+
+    spec_type = type(spec)
+    h.update(b"spec:")
+    h.update(spec_type.__module__.encode())
+    h.update(b".")
+    h.update(spec_type.__qualname__.encode())
+    h.update(b":")
+    if isinstance(spec, ArraySpec):
+        _update(h, spec.shape, depth + 1, max_array_bytes, state)
+        h.update(b":dtype=")
+        _update(
+            h, None if spec.dtype is None else str(spec.dtype), depth + 1, max_array_bytes, state
+        )
+        h.update(b":support=")
+        _update_constraint(h, spec.support, depth + 1, max_array_bytes, state)
+    elif isinstance(spec, OpaqueSpec):
+        _update(h, spec.meta, depth + 1, max_array_bytes, state)
+    elif isinstance(spec, DistributionSpec):
+        _update_event_template(
+            h,
+            spec.event_template,
+            depth + 1,
+            max_array_bytes,
+            state,
+        )
+    elif isinstance(spec, FunctionSpec):
+        _update(h, spec.input_template, depth + 1, max_array_bytes, state)
+        _update(h, spec.output_template, depth + 1, max_array_bytes, state)
+    else:
+        _update_weak_identity(h, spec, state)
+
+
+def _update_constraint(
+    h: hashlib._Hash,
+    constraint: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
+    """Hash a support constraint by concrete type and declared instance state."""
+    if constraint is None:
+        h.update(b"none")
+        return
+    constraint_type = type(constraint)
+    h.update(b"constraint:")
+    h.update(constraint_type.__module__.encode())
+    h.update(b".")
+    h.update(constraint_type.__qualname__.encode())
+    try:
+        attributes = vars(constraint)
+    except TypeError:
+        _update_weak_identity(h, constraint, state)
+        return
+    for name, value in sorted(attributes.items()):
+        h.update(b":")
+        h.update(name.encode())
+        h.update(b"=")
+        _update(h, value, depth + 1, max_array_bytes, state)
+
+
+# ---------------------------------------------------------------------------
 # Array hashing
 # ---------------------------------------------------------------------------
 
 
-def _update_array(h: hashlib._Hash, arr: Any, max_bytes: int | None) -> None:
+def _update_array(
+    h: hashlib._Hash,
+    arr: Any,
+    max_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
     """Hash an array by shape, dtype, and content bytes.
 
     For large JAX arrays, ``np.asarray`` triggers a device→host transfer.
@@ -260,11 +441,12 @@ def _update_array(h: hashlib._Hash, arr: Any, max_bytes: int | None) -> None:
             flat = _np.asarray(arr).ravel()
         except Exception:
             h.update(b"unreadable")
+            state.is_weak = True
             return
         h.update(b"O")
         h.update(struct.pack(">Q", flat.size))
         for el in flat:
-            _update(h, el, 1, max_bytes)
+            _update(h, el, 1, max_bytes, state)
         return
 
     nbytes = getattr(arr, "nbytes", None)
@@ -301,6 +483,7 @@ def _update_array(h: hashlib._Hash, arr: Any, max_bytes: int | None) -> None:
         # above still discriminate by structure; two same-shape tracers are
         # indistinguishable at trace time — inherent, not a defect here.
         h.update(b"unreadable")
+        state.is_weak = True
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +505,13 @@ def _is_tfp_object(obj: Any) -> bool:
     return hasattr(obj, "log_prob") or hasattr(obj, "forward")
 
 
-def _update_tfp_object(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: int | None) -> None:
+def _update_tfp_object(
+    h: hashlib._Hash,
+    obj: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
     """Hash a TFP-native distribution or bijector by type and parameters."""
     h.update(b"tfp:")
     h.update(type(obj).__name__.encode())
@@ -331,7 +520,7 @@ def _update_tfp_object(h: hashlib._Hash, obj: Any, depth: int, max_array_bytes: 
     for k, v in sorted(params.items()):
         h.update(k.encode())
         h.update(b"=")
-        _update(h, v, depth + 1, max_array_bytes)
+        _update(h, v, depth + 1, max_array_bytes, state)
         h.update(b";")
 
 
@@ -349,7 +538,13 @@ def _is_record(obj: Any) -> bool:
         return False
 
 
-def _update_record(h: hashlib._Hash, record: Any, depth: int, max_array_bytes: int | None) -> None:
+def _update_record(
+    h: hashlib._Hash,
+    record: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
     """Hash a Record by its leaf-keyed items (full ``/``-paths → leaf values).
 
     ``Record`` is a leaf-keyed collection: ``items()`` yields every leaf by its
@@ -363,7 +558,7 @@ def _update_record(h: hashlib._Hash, record: Any, depth: int, max_array_bytes: i
     for path, value in record.items():
         h.update(path.encode())
         h.update(b"=")
-        _update(h, value, depth + 1, max_array_bytes)
+        _update(h, value, depth + 1, max_array_bytes, state)
         h.update(b";")
 
 
@@ -399,7 +594,13 @@ def _is_weights(obj: Any) -> bool:
         return False
 
 
-def _update_weights(h: hashlib._Hash, w: Any, depth: int, max_array_bytes: int | None) -> None:
+def _update_weights(
+    h: hashlib._Hash,
+    w: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
     """Hash a ``Weights`` object by content: uniformity, count, and log-weights.
 
     Hashed via the public API so a ``Weights`` reached through a distribution's
@@ -411,11 +612,15 @@ def _update_weights(h: hashlib._Hash, w: Any, depth: int, max_array_bytes: int |
     h.update(b"1" if w.is_uniform else b"0")
     h.update(struct.pack(">Q", int(w.n)))
     if not w.is_uniform:
-        _update(h, w.log_normalized, depth + 1, max_array_bytes)
+        _update(h, w.log_normalized, depth + 1, max_array_bytes, state)
 
 
 def _update_distribution(
-    h: hashlib._Hash, dist: Any, depth: int, max_array_bytes: int | None
+    h: hashlib._Hash,
+    dist: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
 ) -> None:
     """Hash a distribution by class name, distribution name, and parameters.
 
@@ -443,7 +648,7 @@ def _update_distribution(
                 continue
             h.update(k.encode())
             h.update(b"=")
-            _update(h, v, depth + 1, max_array_bytes)
+            _update(h, v, depth + 1, max_array_bytes, state)
             h.update(b";")
     elif _is_empirical(dist):
         # EmpiricalDistribution / RecordEmpiricalDistribution: hash the sample
@@ -453,12 +658,12 @@ def _update_distribution(
         # values); using ``.samples`` / ``.is_uniform`` / ``.log_weights``
         # distinguishes reweighted posteriors (IS/SMC) from the original.
         h.update(b"samples=")
-        _update(h, dist.samples, depth + 1, max_array_bytes)
+        _update(h, dist.samples, depth + 1, max_array_bytes, state)
         h.update(b"uniform=")
         h.update(b"1" if dist.is_uniform else b"0")
         if not dist.is_uniform:
             h.update(b"log_weights=")
-            _update(h, dist.log_weights, depth + 1, max_array_bytes)
+            _update(h, dist.log_weights, depth + 1, max_array_bytes, state)
     else:
         # Generic fallback for other non-TFP distributions.
         _SKIP = frozenset(
@@ -469,7 +674,7 @@ def _update_distribution(
                 continue
             h.update(attr.encode())
             h.update(b"=")
-            _update(h, val, depth + 1, max_array_bytes)
+            _update(h, val, depth + 1, max_array_bytes, state)
             h.update(b";")
 
 
@@ -487,7 +692,13 @@ def _is_function(obj: Any) -> bool:
         return False
 
 
-def _hash_code(h: hashlib._Hash, code: Any, depth: int, max_array_bytes: int | None) -> None:
+def _hash_code(
+    h: hashlib._Hash,
+    code: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
     """Recursively hash a code object without repr-ing nested code objects.
 
     Hashes the executable bytecode (``co_code``) *and* the symbol names it
@@ -514,15 +725,36 @@ def _hash_code(h: hashlib._Hash, code: Any, depth: int, max_array_bytes: int | N
             h.update(b",")
     for c in code.co_consts:
         if isinstance(c, types.CodeType):
-            _hash_code(h, c, depth + 1, max_array_bytes)
+            _hash_code(h, c, depth + 1, max_array_bytes, state)
         else:
-            _update(h, c, depth + 1, max_array_bytes)
+            _update(h, c, depth + 1, max_array_bytes, state)
+
+
+def _update_plain_function(
+    h: hashlib._Hash,
+    func: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
+    """Hash a closure-free Python function by stable executable content."""
+    h.update(b"python-function:")
+    h.update((func.__module__ or "").encode())
+    h.update(b".")
+    h.update(func.__qualname__.encode())
+    h.update(b":")
+    _hash_code(h, func.__code__, depth + 1, max_array_bytes, state)
+    h.update(b":defaults=")
+    _update(h, func.__defaults__, depth + 1, max_array_bytes, state)
+    h.update(b":kwdefaults=")
+    _update(h, func.__kwdefaults__, depth + 1, max_array_bytes, state)
 
 
 def _update_function(
     h: hashlib._Hash,
     function: Any,
     max_array_bytes: int | None,
+    state: _FingerprintState | None = None,
 ) -> None:
     """Hash a Function by callable content or stable implementation declaration.
 
@@ -531,15 +763,17 @@ def _update_function(
     Other private implementations add only their implementation type,
     excluding implementation instance state and artifact identity.
     """
+    if state is None:
+        state = _FingerprintState()
     h.update(b"wf:")
     from ._function_contract import _CallableFunctionImplementation
 
     h.update(b"signature=")
-    _update_signature_declaration(h, function.signature, max_array_bytes)
+    _update_signature_declaration(h, function.signature, max_array_bytes, state)
     h.update(b":input_template=")
-    _update(h, function.input_template, 1, max_array_bytes)
+    _update(h, function.input_template, 1, max_array_bytes, state)
     h.update(b":output_template=")
-    _update(h, function.output_template, 1, max_array_bytes)
+    _update(h, function.output_template, 1, max_array_bytes, state)
 
     implementation = function._implementation
     if not isinstance(implementation, _CallableFunctionImplementation):
@@ -554,17 +788,17 @@ def _update_function(
     func = implementation.callable
     code = getattr(func, "__code__", None)
     if code is None:
-        h.update(repr(func)[:200].encode())
+        _update_weak_identity(h, func, state)
         return
 
-    _hash_code(h, code, 0, max_array_bytes)
+    _hash_code(h, code, 0, max_array_bytes, state)
     # Captured/closed-over state: two functions with identical bytecode but
     # different defaults or closure values (e.g. ``make(1.0)`` vs ``make(2.0)``)
     # must not collide.
     h.update(b"defaults=")
-    _update(h, func.__defaults__, 1, max_array_bytes)
+    _update(h, func.__defaults__, 1, max_array_bytes, state)
     h.update(b"kwdefaults=")
-    _update(h, func.__kwdefaults__, 1, max_array_bytes)
+    _update(h, func.__kwdefaults__, 1, max_array_bytes, state)
     h.update(b"closure=")
     closure = func.__closure__
     if closure is None:
@@ -577,13 +811,14 @@ def _update_function(
             except ValueError:
                 h.update(_EMPTY_CLOSURE_CELL)
             else:
-                _update(h, contents, 1, max_array_bytes)
+                _update(h, contents, 1, max_array_bytes, state)
 
 
 def _update_signature_declaration(
     h: hashlib._Hash,
     signature: inspect.Signature,
     max_array_bytes: int | None,
+    state: _FingerprintState,
 ) -> None:
     """Hash a Python signature without object-address representations."""
     h.update(struct.pack(">I", len(signature.parameters)))
@@ -592,12 +827,12 @@ def _update_signature_declaration(
         h.update(b":")
         h.update(parameter.kind.name.encode())
         h.update(b":default=")
-        _update_declaration_value(h, parameter.default, 0, max_array_bytes)
+        _update_declaration_value(h, parameter.default, 0, max_array_bytes, state)
         h.update(b":annotation=")
-        _update_declaration_value(h, parameter.annotation, 0, max_array_bytes)
+        _update_declaration_value(h, parameter.annotation, 0, max_array_bytes, state)
         h.update(b";")
     h.update(b"return=")
-    _update_declaration_value(h, signature.return_annotation, 0, max_array_bytes)
+    _update_declaration_value(h, signature.return_annotation, 0, max_array_bytes, state)
 
 
 def _update_declaration_value(
@@ -605,6 +840,7 @@ def _update_declaration_value(
     value: Any,
     depth: int,
     max_array_bytes: int | None,
+    state: _FingerprintState,
 ) -> None:
     """Hash signature metadata at stable declaration-level granularity."""
     if depth > 32:
@@ -632,34 +868,34 @@ def _update_declaration_value(
     origin = get_origin(value)
     if origin is not None:
         h.update(b"typing:")
-        _update_declaration_value(h, origin, depth + 1, max_array_bytes)
+        _update_declaration_value(h, origin, depth + 1, max_array_bytes, state)
         for argument in get_args(value):
-            _update_declaration_value(h, argument, depth + 1, max_array_bytes)
+            _update_declaration_value(h, argument, depth + 1, max_array_bytes, state)
         return
 
     if isinstance(value, (list, tuple)):
         h.update(b"list:" if isinstance(value, list) else b"tuple:")
         h.update(struct.pack(">I", len(value)))
         for item in value:
-            _update_declaration_value(h, item, depth + 1, max_array_bytes)
+            _update_declaration_value(h, item, depth + 1, max_array_bytes, state)
         return
     if isinstance(value, dict):
         h.update(b"dict:")
         entries = []
         for key, item in value.items():
             sub = hashlib.sha256()
-            _update_declaration_value(sub, key, depth + 1, max_array_bytes)
+            _update_declaration_value(sub, key, depth + 1, max_array_bytes, state)
             entries.append((sub.digest(), key, item))
         for _, key, item in sorted(entries, key=lambda entry: entry[0]):
-            _update_declaration_value(h, key, depth + 1, max_array_bytes)
-            _update_declaration_value(h, item, depth + 1, max_array_bytes)
+            _update_declaration_value(h, key, depth + 1, max_array_bytes, state)
+            _update_declaration_value(h, item, depth + 1, max_array_bytes, state)
         return
     if isinstance(value, (set, frozenset)):
         h.update(b"set:")
         digests = []
         for item in value:
             sub = hashlib.sha256()
-            _update_declaration_value(sub, item, depth + 1, max_array_bytes)
+            _update_declaration_value(sub, item, depth + 1, max_array_bytes, state)
             digests.append(sub.digest())
         for digest in sorted(digests):
             h.update(digest)
@@ -677,7 +913,7 @@ def _update_declaration_value(
             type(None),
         ),
     ):
-        _update(h, value, depth + 1, max_array_bytes)
+        _update(h, value, depth + 1, max_array_bytes, state)
         return
     if callable(value):
         h.update(b"callable:")

@@ -520,7 +520,11 @@ uv build packaging/probpipe   # probpipe (metapackage)
    non-tracked parameters are fingerprinted separately in
    `Provenance.inputs`; defaults, construction bindings, Module values, and
    distinct variadic slots therefore remain reproducible without becoming DAG
-   ancestors. Existing operation controls remain provenance metadata.
+   ancestors. Fingerprints use conservative fidelity tiers: structurally known
+   values are content-hashed, while opaque objects and complex callable forms
+   use process-local identity and set `fingerprint_is_weak=True`; weakness
+   propagates through composites. Existing operation controls remain
+   provenance metadata.
    `Function.apply` is the raw boundary: it performs the same Python binding
    and schema checks, but preserves the implementation return object's identity
    and provenance.

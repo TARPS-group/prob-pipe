@@ -210,9 +210,9 @@ class ProvenanceMode(Enum):
     LIGHTWEIGHT
         Store only lightweight :class:`~probpipe.core.provenance.ParentInfo`
         descriptors — type name, distribution name, and an optional
-        fingerprint.  Parent objects are free to be garbage-collected once
-        a workflow step completes.  This is the default and scales to
-        larger workflows.
+        fingerprint plus its strength classification. Parent objects are free
+        to be garbage-collected once a workflow step completes. This is the
+        default and scales to larger workflows.
     OFF
         Attach no provenance at all.  Minimises overhead when lineage
         tracking is not needed.

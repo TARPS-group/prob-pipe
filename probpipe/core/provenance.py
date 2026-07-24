@@ -54,16 +54,21 @@ class ParentInfo:
         holds an unhashable ``metadata`` dict) but included in equality so
         that two descriptors for the same ancestor compare equal.
     fingerprint : str or None
-        Stable 16-character hex digest of the parent's content, populated
-        by :meth:`Provenance.create`.  ``None`` only when fingerprinting
-        raises an unexpected error.  Intended as the foundation for a future
-        Prefect ``cache_key_fn``.  Excluded from equality and hashing: descriptor
-        identity is structural (``type_name`` / ``name`` / ``provenance``), so a
-        content digest must not perturb ancestor-set dedup.
+        Best-effort 16-character digest populated by
+        :meth:`Provenance.create`. ``None`` only when fingerprinting raises an
+        unexpected error. Consult ``fingerprint_is_weak`` before treating it
+        as a portable cache-key component. Excluded from equality and hashing:
+        descriptor identity is structural (``type_name`` / ``name`` /
+        ``provenance``), so a digest must not perturb ancestor-set dedup.
     parent : Any or None
         The live tracked parent or plain input object.  Set in FULL mode;
         ``None`` in LIGHTWEIGHT so the object's data can be garbage-collected.
         Excluded from equality and hashing.
+    fingerprint_is_weak : bool
+        Whether the digest contains a process-local identity component. Weak
+        fingerprints remain useful for distinguishing live objects in one
+        process but must not be reused as portable content keys. Excluded from
+        equality and hashing.
     """
 
     type_name: str
@@ -71,6 +76,7 @@ class ParentInfo:
     provenance: Provenance | None = field(default=None, hash=False)
     fingerprint: str | None = field(default=None, compare=False)
     parent: Any | None = field(default=None, compare=False)
+    fingerprint_is_weak: bool = field(default=False, compare=False)
 
 
 # ---------------------------------------------------------------------------
@@ -130,6 +136,7 @@ class Provenance:
             }
             if p.fingerprint is not None:
                 entry["fingerprint"] = p.fingerprint
+            entry["fingerprint_is_weak"] = p.fingerprint_is_weak
             if recurse and p.provenance is not None:
                 entry["provenance"] = p.provenance.to_dict(recurse=True)
             return entry
@@ -202,12 +209,13 @@ class Provenance:
             return None
         keep = mode is ProvenanceMode.FULL
 
-        from ._fingerprint import fingerprint as _fingerprint
+        from ._fingerprint import _fingerprint_with_strength
 
         def _make_parent(p: Any) -> ParentInfo:
             fp: str | None
+            fingerprint_is_weak = False
             try:
-                fp = _fingerprint(p)
+                fp, fingerprint_is_weak = _fingerprint_with_strength(p)
             except Exception as exc:
                 logger.warning(
                     "fingerprint() failed for %s %r: %s",
@@ -222,6 +230,7 @@ class Provenance:
                 provenance=getattr(p, "provenance", None),
                 fingerprint=fp,
                 parent=p if keep else None,
+                fingerprint_is_weak=fingerprint_is_weak,
             )
 
         refs = tuple(_make_parent(p) for p in parents)

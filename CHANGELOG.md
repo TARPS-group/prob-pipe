@@ -135,22 +135,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
-  `type_name`, `name`, `source` (the parent's own `Provenance`, kept in all
-  non-OFF modes so the ancestry DAG remains traversable), `fingerprint`
-  (a 16-character stable content hash — see below), and `obj` (the live parent
-  object, set only in FULL mode).
+  `type_name`, `name`, `provenance` (the parent's own `Provenance`, kept in all
+  non-OFF modes so the ancestry DAG remains traversable), `fingerprint` and
+  `fingerprint_is_weak` (see below), and `parent` (the live parent object, set
+  only in FULL mode).
 
-- **`ParentInfo.fingerprint` — stable content hashing for provenance parents.**
-  Every `ParentInfo` descriptor now carries a `fingerprint: str` — a
-  16-character hex digest (64-bit SHA-256 prefix) that stably identifies the
-  parent's content across processes.  The hash covers the full value: numeric
-  parameters for TFP-backed distributions, field-by-field content for Records,
-  and actual user-function bytecode for Functions (not the Prefect
-  wrapper closure, so changes to the function body are detected reliably).
-  Large arrays (> 256 MB) are sampled at evenly-spaced offsets rather than read
-  in full.  The fingerprint is visible in `to_dict()` output and is the
-  foundation for a future Prefect `cache_key_fn` that will enable cross-run
-  task caching and failure recovery.
+- **`ParentInfo.fingerprint` — classified best-effort hashing for provenance.**
+  Every `ParentInfo` descriptor now carries a 16-character best-effort digest
+  plus `fingerprint_is_weak`. Known content-bearing values and closure-free
+  Python functions receive portable structural fingerprints. Closure-bearing
+  functions, bound methods, partials, callable instances, classes, builtins,
+  and unsupported objects use process-local identity and are marked weak;
+  weakness propagates through composite fingerprints. Large arrays (> 256 MB)
+  are sampled at evenly-spaced offsets rather than read in full. Both the
+  fingerprint and its classification are visible in `to_dict()` output, so a
+  future cross-run `cache_key_fn` can fail closed on weak inputs.
 
 - **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
   reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and

@@ -68,6 +68,23 @@ class TestProvenanceBasics:
         assert first.inputs["array"].fingerprint == same.inputs["array"].fingerprint
         assert first.inputs["scalar"].fingerprint != different.inputs["scalar"].fingerprint
         assert first.inputs["array"].fingerprint != different.inputs["array"].fingerprint
+        assert first.inputs["scalar"].fingerprint_is_weak is False
+        assert first.inputs["array"].fingerprint_is_weak is False
+
+    def test_opaque_input_fingerprint_is_explicitly_weak(self):
+        value = object()
+        first = Provenance.create("op", inputs={"value": value})
+        repeated = Provenance.create("op", inputs={"value": value})
+        different = Provenance.create("op", inputs={"value": object()})
+
+        assert first is not None
+        assert repeated is not None
+        assert different is not None
+        assert first.inputs["value"].fingerprint == repeated.inputs["value"].fingerprint
+        assert first.inputs["value"].fingerprint != different.inputs["value"].fingerprint
+        assert first.inputs["value"].fingerprint_is_weak is True
+        assert repeated.inputs["value"].fingerprint_is_weak is True
+        assert different.inputs["value"].fingerprint_is_weak is True
 
     def test_provenance_with_parents(self):
         n = Normal(loc=0.0, scale=1.0, name="n")
@@ -477,6 +494,7 @@ class TestSerialization:
         assert d["inputs"]["x"]["type"] == type(value).__name__
         assert d["inputs"]["x"]["name"] is None
         assert d["inputs"]["x"]["fingerprint"] == p.inputs["x"].fingerprint
+        assert d["inputs"]["x"]["fingerprint_is_weak"] is False
 
     def test_to_dict_recursive(self):
         """Recursive serialization follows provenance chains."""
@@ -535,6 +553,18 @@ class TestSerialization:
         p = Provenance("op", parents=(pi,))
         d = p.to_dict()
         assert d["parents"][0]["fingerprint"] == "abc123"
+        assert d["parents"][0]["fingerprint_is_weak"] is False
+
+    def test_to_dict_weak_fingerprint_classification_included(self):
+        pi = ParentInfo(
+            type_name="Opaque",
+            name=None,
+            fingerprint="abc123",
+            fingerprint_is_weak=True,
+        )
+        p = Provenance("op", inputs={"value": pi})
+
+        assert p.to_dict()["inputs"]["value"]["fingerprint_is_weak"] is True
 
     def test_to_dict_fingerprint_omitted_when_none(self):
         """fingerprint key is absent when fingerprint is None."""
@@ -542,6 +572,7 @@ class TestSerialization:
         p = Provenance("op", parents=(pi,))
         d = p.to_dict()
         assert "fingerprint" not in d["parents"][0]
+        assert d["parents"][0]["fingerprint_is_weak"] is False
 
     def test_to_dict_filters_non_serializable(self):
         """Non-JSON-serializable metadata values are stringified."""
