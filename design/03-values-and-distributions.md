@@ -38,7 +38,9 @@ A term spec plays one of two roles, fixed by its position.
 
 A `Distribution`'s event declaration is an output declaration: it types what `sample` returns. The two roles therefore settle every draw kind. `Distribution(name, DistributionSpec(t))` declares a random measure; its draws are `Distribution`s. `Distribution(name, EventTemplate(x=DistributionSpec(t)))` declares a record law; its draws are `Record`s with a distribution-valued field `x`. The two spaces are isomorphic, but the draw kinds differ, and the declaration alone decides which — never the runtime type of `_sample`'s return. A result of the wrong kind raises the kind error; a schema mismatch raises its own.
 
-An `EventTemplate` is not itself a spec. It is the *schema*, the structure that indexes a kind, and it is never one of its own leaves. A record output may be declared with a bare `EventTemplate`, or as `RecordSpec(template)` where a uniform `TermSpec` is wanted; the two denote the same space and differ only in reading.
+An `EventTemplate` is not itself a spec. It is the *schema*, the structure that indexes a kind, and it is never one of its own leaves. A declaration is *stored* as a spec: a bare `EventTemplate` is accepted wherever a record declaration is meant, as a convenience, and construction wraps it as `RecordSpec(template)`. The two forms denote the same space; after construction only the spec remains, so the declared kind is simply the stored spec's class.
+
+The same storage rule holds for the tracked types themselves. Each carries the spec of its kind — a `Record` its `RecordSpec`, a `Distribution` its `DistributionSpec`, a `ConditionalDistribution` its `ConditionalDistributionSpec`, a `Function` its `FunctionSpec` — as the single stored source of its type. The familiar accessors (`event_template`, `given_template`, `input_template`, `output_template`) are views on that one object, so they cannot disagree with it or with each other.
 
 ```python
 class ValueSpec(ABC):               # a leaf value; is_valid declared once, here
@@ -61,8 +63,9 @@ class RecordSpec(TermSpec):  # a Record; is_valid accepts a matching Record
     event_template: EventTemplate
 
 class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
-    input_template: EventTemplate | None            # None: that side's structure unspecified
-    output_template: EventTemplate | TermSpec | None  # a record schema OR a term result
+    input_template: EventTemplate | None   # None: that side's structure unspecified
+    output_template: TermSpec | None       # the output declaration, stored as a spec;
+                                           #   construction wraps an EventTemplate as RecordSpec(template)
 # DistributionSpec (III.6) and ConditionalDistributionSpec (III.8) are the other two term specs.
 
 class Constraint(ABC):              # an array support, carried by ArraySpec
@@ -75,7 +78,7 @@ class Constraint(ABC):              # an array support, carried by ArraySpec
 
 `RecordSpec(τ)` and the template `τ` denote the same space; the tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity — name, provenance, capabilities — is never dropped implicitly. Both follow the wrap boundary (V.0).
 
-A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, a single-field signature written out as `FunctionSpec(EventTemplate(x=...), EventTemplate(out=...))`, so a function's field names are caller-chosen and meaningful, matching `DistributionSpec`. The output side additionally accepts any `TermSpec`, so a function may declare a term-valued result: a `Function` returning a `Distribution`, or a fitted mapping declared `Fun`/`Cond`, with a record output the common case. Validity is callability alone — the value-layer specs stay callable-generic, admitting any callable as a leaf value — and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to coproject a raw callable *result* into a `Function`. The two sides are otherwise independent, so a callable may map a space to itself or between two different spaces.
+A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, a single-field signature written out as `FunctionSpec(EventTemplate(x=...), EventTemplate(out=...))`, so a function's field names are caller-chosen and meaningful, matching `DistributionSpec`. The output side additionally accepts any `TermSpec`, so a function may declare a term-valued result: a `Function` returning a `Distribution`, or a fitted mapping declared `Fun`/`Cond`, with a record output the common case; an `EventTemplate` output wraps to `RecordSpec` at construction, so the stored side is always a spec. Validity is callability alone — the value-layer specs stay callable-generic, admitting any callable as a leaf value — and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to coproject a raw callable *result* into a `Function`. The two sides are otherwise independent, so a callable may map a space to itself or between two different spaces.
 
 When every leaf is an `ArraySpec` then all values are numeric and construction auto-promotes to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
 
@@ -121,7 +124,7 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ### Contract
 
-The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map: a `name`, `provenance`, and an input and an output `EventTemplate` — the two sides of its `FunctionSpec`, either side optional exactly as in the spec. Construction fixes all of it. A `Function` carries a frozen `inspect.Signature`, authoritative for Python argument binding — parameter kinds, defaults, and variadic parameters, which a value schema cannot express — while the `input_template` is authoritative for the value schema. Construction validates their total correspondence, the signature's parameters matching the template's top-level fields, so binding an argument binds a field by name. The wrapped callable and its state stay private, reached only through the `Function`'s methods, so a stateful map exposes no backend object.
+The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map: a `name`, `provenance`, and its `FunctionSpec` — the single stored source of its type, whose sides it exposes as the `input_template` and `output_template` views, either side optional exactly as in the spec. Construction fixes all of it. A `Function` carries a frozen `inspect.Signature`, authoritative for Python argument binding — parameter kinds, defaults, and variadic parameters, which a value schema cannot express — while the `input_template` is authoritative for the value schema. Construction validates their total correspondence, the signature's parameters matching the template's top-level fields, so binding an argument binds a field by name. The wrapped callable and its state stay private, reached only through the `Function`'s methods, so a stateful map exposes no backend object.
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_template`, it returns one conforming to `output_template`, with no tracking or lifting. `__call__` runs the **call path**, the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import, adding lifting, tracking, and provenance to every `Function`. So `apply` is the raw map that operations such as change-of-variables build on, and `__call__` is the tracked call a user makes. The base also carries its **controls** — the execution defaults of IV.3 (sample count, seed, dispatch, orchestration) — set at construction and revised functionally by `with_options` (`C2 – Functional interface over immutable objects`); the base gives them no meaning, and the engine reads them at call time.
 
@@ -136,9 +139,12 @@ class Function(Tracked):
                  # optional: a non-empty template of exactly the differentiable values;
                  # omitted, the Function makes no claim
     @property
-    def input_template(self) -> EventTemplate | None: ...
+    def spec(self) -> FunctionSpec: ...                  # the single stored source of the type
+    @property
+    def input_template(self) -> EventTemplate | None: ...           # view on spec
     @property
     def output_template(self) -> EventTemplate | TermSpec | None: ...
+    # view on spec: a record output reads as its template, a term output as its spec
     @property
     def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
     def with_options(self, **controls) -> Self: ...      # functional update (C2)
@@ -216,7 +222,9 @@ class Record(NamedTree[Any], Tracked, Annotated):
         # Otherwise, infers it once via EventTemplate.infer_from.
 
     @property
-    def event_template(self) -> EventTemplate: ...
+    def spec(self) -> RecordSpec: ...                    # the single stored source of the type
+    @property
+    def event_template(self) -> EventTemplate: ...       # view on spec
     def to_numeric(self) -> NumericRecord: ...  # requires every leaf to be an array
 
     @classmethod
@@ -348,17 +356,20 @@ Operations mint linear operators, covariances above all, and every operation mus
 
 ### Contract
 
-A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. It carries its event declaration — an `event_template` (the schema of one draw) or, for a law whose draws are themselves terms, a root `TermSpec` — and is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_path_names`, which returns the same law under new field names. A distribution whose template is polymorphic is legal: operations that need sizes raise, naming the free dimensions, until a value binds them or `with_dims` does so explicitly.
+A `Distribution[T]` is a single random law: a probability measure over values of type `T`. The type `T` is the natural raw form of a draw (an `Array` for a scalar law, or a `Record` for a multi-field one), which implementer code uses directly. Its single stored source of type is its `DistributionSpec`; the event declaration — an `event_template` (the schema of one draw) or, for a law whose draws are themselves terms, a root `TermSpec` — is a view on it, and construction wraps a bare `EventTemplate` as `RecordSpec(template)`. It is `Tracked` and `Annotated`. It declares the operations it supports as **capabilities**, which are structural protocols it implements, so operational support is decoupled from the class. The draw a *user* sees is a `Record`: for a scalar law, a single-field `Record` keyed by the distribution's `name`. Fields can be renamed with `with_path_names`, which returns the same law under new field names. A distribution whose template is polymorphic is legal: operations that need sizes raise, naming the free dimensions, until a value binds them or `with_dims` does so explicitly.
 
 A `NumericDistribution` is a `Distribution` whose draws are numeric, so it carries a `NumericEventTemplate` and can use the flat-vector machinery.
 
 ```python
 class Distribution[T](Tracked, Annotated):
     def __init__(self, name: str, event_template: EventTemplate | TermSpec) -> None: ...
-        # a root TermSpec declares that a draw IS a term of that kind
+        # a root TermSpec declares that a draw IS a term of that kind;
+        # an EventTemplate wraps to RecordSpec(template) at construction
 
     @property
-    def event_template(self) -> EventTemplate | TermSpec: ...   # fixed at construction
+    def spec(self) -> DistributionSpec: ...                     # the single stored source of the type
+    @property
+    def event_template(self) -> EventTemplate | TermSpec: ...   # view on spec
     @property
     def event_shape(self) -> tuple[int, ...]: ...    # defined only when a draw is a single array
 
@@ -388,7 +399,7 @@ class FieldView(Distribution):
 **The distribution value specification.** `DistributionSpec(event_template)` is the term spec of the `Dist` kind. As a leaf, it types a field holding a `Distribution` with the given `event_template`. At the root of an event declaration, it declares a random measure: a distribution whose draws are themselves `Distribution`s. The draw kind comes from the declaration, never from what `_sample` happens to return. The two positions keep the two readings apart.
 
 ```python
-DistributionSpec(event_template: EventTemplate | TermSpec)
+DistributionSpec(event_template: EventTemplate | TermSpec)  # an EventTemplate wraps to RecordSpec(template)
 ```
 
 ### Rationale
@@ -481,7 +492,7 @@ Making each operation a *capability* rather than a base-class method follows `D3
 
 A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `Distribution` is the empty-given corner of this picture, a kernel with nothing to condition on, so its marginal law exists and `sample` / `log_prob` / `mean` apply unconditionally, whereas a kernel with a non-empty given has none. A distribution is *isomorphic* to a kernel with an empty given but not identical to one, and the two stay distinct tracked types, neither inheriting from the other. ProbPipe represents only the distribution at that corner: a `ConditionalDistribution` carries a non-empty `given_template`, so there is no empty template and no rule that turns an empty-given kernel into a `Distribution` — a kernel is never in that state, since binding its last given field returns the `Distribution` directly — and a `ConditionalDistributionSpec` likewise carries a non-empty given, the empty corner being `DistributionSpec`'s. They are siblings sharing a capability vocabulary, each unconditional capability mirrored by a conditional twin that prepends the given.
 
-A `ConditionalDistribution` carries a `given_template` (the `EventTemplate` of the conditioning value `S`) and its event declaration — an `event_template` (the schema of one produced draw `T`) or a root `TermSpec` for a kernel whose produced draws are themselves terms, read exactly as for a `Distribution`. The given side is always an `EventTemplate`. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles* — the value conditioned on versus the law produced — so their field names stay disjoint even when the two spaces coincide. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two templates jointly, so a name shared between given and event fields is one dimension, and the fused conditional paths bind dimensions from the given value at call time. `with_path_names` renames fields across both templates, returning the same kernel under new field names, and `with_dims` binds symbolic dimensions across both.
+A `ConditionalDistribution` carries a `given_template` (the `EventTemplate` of the conditioning value `S`) and its event declaration — an `event_template` (the schema of one produced draw `T`) or a root `TermSpec` for a kernel whose produced draws are themselves terms, read exactly as for a `Distribution`. The given side is always an `EventTemplate`. Both sides are views on its stored `ConditionalDistributionSpec`, the single source of its type. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles* — the value conditioned on versus the law produced — so their field names stay disjoint even when the two spaces coincide. For example, a Markov kernel (where `S = T`) uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two templates jointly, so a name shared between given and event fields is one dimension, and the fused conditional paths bind dimensions from the given value at call time. `with_path_names` renames fields across both templates, returning the same kernel under new field names, and `with_dims` binds symbolic dimensions across both.
 
 Users never call a method on the `ConditionalDistribution`. Instead, they use the existing ops: `condition_on(K, s)` binds the given fields, evaluating it to a `Distribution` exactly and with no inference, and `sample(K, given=s)` / `log_prob(K, y, given=s)` / `mean(K, given=s)` are the fused conditional paths, with the invariant `op(K, given=s) == op(condition_on(K, s))`, bitwise under a shared PRNG key in the exact cases and in law when inference is involved. Conditioning on only a subset of given fields *curries* to a smaller `ConditionalDistribution` view. A value supplied for a given field is always bound, whatever its type; the predictive mixture `∫ K(s, ·) μ(ds)` over a mixing distribution is obtained through the separate `predictive` operation, not by conditioning on a distribution.
 
@@ -490,9 +501,11 @@ class ConditionalDistribution[S, T](Tracked, Annotated):
     def __init__(self, name: str, given_template: EventTemplate, event_template: EventTemplate | TermSpec) -> None: ...
         # given before event, as in FunctionSpec; a root TermSpec declares term-valued draws
     @property
-    def given_template(self) -> EventTemplate: ...
+    def spec(self) -> ConditionalDistributionSpec: ...   # the single stored source of the type
     @property
-    def event_template(self) -> EventTemplate | TermSpec: ...
+    def given_template(self) -> EventTemplate: ...       # view on spec
+    @property
+    def event_template(self) -> EventTemplate | TermSpec: ...   # view on spec
     def _condition_on(self, given: S, /, **kwargs) -> Distribution[T] | ConditionalDistribution: ...
     # the required primitive: the law K(given, ·), or a curried kernel for a partial given
 
@@ -531,7 +544,7 @@ class FullyNumericConditionalDistribution(
 **The conditional distribution value specification.** `ConditionalDistributionSpec(given_template, event_template)` is the term spec of the `Cond` kind. As a leaf, it types a field holding a `ConditionalDistribution`. Its event side accepts a root `TermSpec`, exactly as a `Distribution`'s declaration does; the given side is always an `EventTemplate`:
 
 ```python
-ConditionalDistributionSpec(given_template: EventTemplate, event_template: EventTemplate | TermSpec)
+ConditionalDistributionSpec(given_template: EventTemplate, event_template: EventTemplate | TermSpec)  # event side wraps as above
 ```
 
 ### Rationale
@@ -542,7 +555,7 @@ Applying a `ConditionalDistribution` to a conditioning value returns a `Distribu
 
 ### Contract
 
-A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one event declaration, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate conditional distributions sharing one `given_template` and one event declaration. The shared event declaration is the elements' — an `EventTemplate` or a root `TermSpec` — so a batch of random measures declares term-valued draws exactly as its elements do. They are grouped because they are the identical multiplicity wrapper over the two distribution-like base types, and the conditional one merely adds the `given_template`. They are also the native batch forms of `DistributionSpec`- and `ConditionalDistributionSpec`-valued draws.
+A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distributions sharing one event declaration, indexed along a batch axis. A `ConditionalDistributionBatch` is the same construction over `ConditionalDistribution`s: `N` separate conditional distributions sharing one `given_template` and one event declaration. The shared event declaration is the elements' — an `EventTemplate` or a root `TermSpec` — so a batch of random measures declares term-valued draws exactly as its elements do. A batch's stored source is its element spec; the multiplicity is carried separately. They are grouped because they are the identical multiplicity wrapper over the two distribution-like base types, and the conditional one merely adds the `given_template`. They are also the native batch forms of `DistributionSpec`- and `ConditionalDistributionSpec`-valued draws.
 
 ```python
 class DistributionBatch(Batch[Distribution]):
