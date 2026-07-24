@@ -8,27 +8,21 @@ The sections build in the order below, each depending only on those above it and
 
 | §      | Layer                       | Contents                                                                                              | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
-| III.1  | Schema                      | `EventTemplate`                                                                                       | Moved to II.2: value specifications and event templates are shared abstractions (Part II).                  |
-| III.2  | Values                      | `Function`, `SupportsDifferentiation`, `FunctionBatch` / `OpaqueBatch`                                                            | The function kind's base — templates, identity, plain evaluation — its differentiability claim, plus the batch forms of the function-valued and opaque specs. |
-| III.3  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
-| III.4  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
-| III.5  | Values                      | `LinOp`                                                                                               | A lazy structured linear map — the linear `Function` subtype (III.2) — typed by numeric event templates, and the carrier of covariances.                          |
-| III.6  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an event declaration (`event_spec`) for its draws.                           |
-| III.7  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
-| III.8  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
-| III.9  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or conditional distributions): `N` separate laws, distinct from one joint distribution.                 |
-| III.10  | (Conditional) Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions, with the factor and field access interfaces.                       |
-| III.11  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts, with the result kind derived from the operands.                                        |
-| III.12 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
-| III.13 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
-| III.14 | Registries | constraint reparameterization (`bijector_for`, `SupportsInverse`, `SupportsLogDetJacobian`) | Mapping a `Constraint` to a bijector for unconstrained inference, with the invertibility and Jacobian claims. |
+| III.1  | Values                      | `Function`, `SupportsDifferentiation`, `FunctionBatch` / `OpaqueBatch`                                                            | The function kind's base — templates, identity, plain evaluation — its differentiability claim, plus the batch forms of the function-valued and opaque specs. |
+| III.2  | Values                      | `Record` / `NumericRecord`                                                                            | A `NamedTree` of values bound to an `EventTemplate` — the data-level counterpart.                              |
+| III.3  | Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws.                                                      |
+| III.4  | Values                      | `LinOp`                                                                                               | A lazy structured linear map — the linear `Function` subtype (III.1) — typed by numeric event templates, and the carrier of covariances.                          |
+| III.5  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an event declaration (`event_spec`) for its draws.                           |
+| III.6  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
+| III.7  | Conditional Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
+| III.8  | (Conditional) Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or conditional distributions): `N` separate laws, distinct from one joint distribution.                 |
+| III.9  | (Conditional) Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions, with the factor and field access interfaces.                       |
+| III.10  | (Conditional) Distributions | the `*` operator                                                                                      | Builds a joint from parts, with the result kind derived from the operands.                                        |
+| III.11 | (Conditional) Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
+| III.12 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
+| III.13 | Registries | constraint reparameterization (`bijector_for`, `SupportsInverse`, `SupportsLogDetJacobian`) | Mapping a `Constraint` to a bijector for unconstrained inference, with the invertibility and Jacobian claims. |
 
-## III.1 — `EventTemplate` *(moved to II.2)*
-
-The value-specification and event-template layer — `ValueSpec`, `TermSpec`, `ArraySpec`, `OpaqueSpec`, `EventTemplate`, `Constraint`, the declaration roles, and the storage rule — is a shared abstraction: the tracked base (II.3) houses the spec slot, so the layer lives in Part II. See II.2. Sections III.2–III.14 keep their numbers.
-
-
-## III.2 — `Function`, `FunctionBatch`, and `OpaqueBatch`
+## III.1 — `Function`, `FunctionBatch`, and `OpaqueBatch`
 
 ### Contract
 
@@ -36,7 +30,7 @@ The function kind's base type is `Function`: a tracked term wrapping exactly one
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_template`, it returns one conforming to `output_spec`, with no tracking or lifting. `__call__` runs the **call path**, the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import, adding lifting, tracking, and provenance to every `Function`. So `apply` is the raw map that operations such as change-of-variables build on, and `__call__` is the tracked call a user makes. The base also carries its **controls** — the execution defaults of IV.3 (sample count, seed, dispatch, orchestration) — set at construction and revised functionally by `with_options` (`C2 – Functional interface over immutable objects`); the base gives them no meaning, and the engine reads them at call time.
 
-A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Three capability protocols accompany the base: `SupportsDifferentiation`, defined below, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.14 while the protocols themselves sit beside the base in the layout. All are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.7, except that a claim with an instance guard is read through its predicate: `SupportsDifferentiation` declares *which* values differentiate, read through `is_differentiable` as described below, and invertibility is read through `is_invertible` (III.14). The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
+A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path, and a produced `Function` carries its provenance like any other tracked term. Three capability protocols accompany the base: `SupportsDifferentiation`, defined below, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.13 while the protocols themselves sit beside the base in the layout. All are claims a `Function` carries, declared at construction and checked like the distribution capabilities of III.6, except that a claim with an instance guard is read through its predicate: `SupportsDifferentiation` declares *which* values differentiate, read through `is_differentiable` as described below, and invertibility is read through `is_invertible` (III.13). The `Function` base is the tracked *wrapper*, not a restriction on what may be wrapped: the value-layer specs stay **callable-generic**. A `FunctionSpec` admits any callable — a plain lambda, a NumPy function, a `Function` — the `Function` being one such, not the required type, and a `FunctionBatch` holds a collection of them. No operation branches on whether a callable arrived bare or wrapped.
 
 ```python
 class Function(TrackedTerm):
@@ -101,7 +95,7 @@ Defining the base in the value layer keeps the layering strict: the representati
 
 - *Differentiability of sampling-based routes.* Whether a Monte Carlo fallback differentiates through its sampler's reparameterization is unsettled. So is the eventual `grad` operation the claims feed, with registered routes: a custom gradient method where an object supplies one, the automatic-differentiation route gated by the declared template, and finite differences as the fallback at approximate fidelity. Both are left to a dedicated pass.
 
-## III.3 — `Record` and `NumericRecord`
+## III.2 — `Record` and `NumericRecord`
 
 ### Contract
 
@@ -123,7 +117,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                  name_is_auto: bool = False,
                  **kw_fields: Any) -> None: ...
         # name is the required first argument (semantic identity)
-        # name_is_auto marks an operation-derived name (II.3); user constructions leave it False
+        # name_is_auto marks an operation-derived name (II.4); user constructions leave it False
         # a nested sub-record's name is its field key; a mapping-valued field is a subtree, never a leaf.
         # Binds to the declaration if given (structural validation): a bare
         # EventTemplate wraps to RecordSpec(template).
@@ -167,7 +161,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to distributions an
 - *Single-field presentation.* A single-field `NumericRecord` forwards the explicit coercion entry points to its sole leaf — `float` / `int` / `bool`, `np.asarray` / `jnp.asarray`, and the `.shape` / `.dtype` / `.ndim` attributes — and a single-field `Record` holding a callable forwards `__call__`. The shim is deliberately narrow: no arithmetic, reductions, or slicing, and a multi-field record raises and points at explicit field access, since unwrapping one field of many would be ambiguous.
 - *Construction validation.* Construction checks each leaf against its spec's `is_valid`, which validates structure only — for an `ArraySpec`, shape and dtype (dtype by `numpy.can_cast` same-kind: a widening promotion or a within-kind narrowing passes, a cross-kind conversion raises). An `ArraySpec`'s `support` is **not** part of `is_valid`: it is a data-dependent, element-wise check that reduces to a Python `bool` and so cannot run under `jax.jit` tracing, where construction also happens (pytree unflatten reconstructs a value inside the trace). `support` is therefore descriptive metadata, and invariant 2 (`is_valid`) covers shape and dtype. Leaf validation is skipped on the unflatten path, where a leaf's shape is transform-relative.
 
-## III.4 — `RecordBatch` and `NumericRecordBatch`
+## III.3 — `RecordBatch` and `NumericRecordBatch`
 
 ### Contract
 
@@ -200,16 +194,16 @@ class NumericRecordBatch(RecordBatch):
 
 A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side: a batch of `N` records is a *collection* of `N` distinct records, never the same as a single record with `N` fields. This is why it claims only the batch axis and never the leaf-keyed `Mapping` contract.
 
-## III.5 — `LinOp`
+## III.4 — `LinOp`
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.2), so it is `TrackedTerm` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a value, an `Array` or a `NumericRecord` conforming to `input_template`, returning the matching form, with the operator's parameters as the private state behind it. Calling a `LinOp` therefore takes the same call path as any `Function`, and like any `Function` it carries the execution controls, read only by a call that needs them. `matvec` is syntactic sugar for `apply`, its linear-algebra name; `matmat` applies the action to stacked columns in one routine and is the operator's registered batched rule, with `rmatvec` and `rmatmat` for the transpose. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (its `output_spec` is always a numeric `RecordSpec`, so both sides expose template views), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.1), so it is `TrackedTerm` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a value, an `Array` or a `NumericRecord` conforming to `input_template`, returning the matching form, with the operator's parameters as the private state behind it. Calling a `LinOp` therefore takes the same call path as any `Function`, and like any `Function` it carries the execution controls, read only by a call that needs them. `matvec` is syntactic sugar for `apply`, its linear-algebra name; `matmat` applies the action to stacked columns in one routine and is the operator's registered batched rule, with `rmatvec` and `rmatmat` for the transpose. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericEventTemplate` (its `output_spec` is always a numeric `RecordSpec`, so both sides expose template views), so it maps numeric records and not just anonymous vectors; those templates name its domain and codomain, and a bare matrix is given names explicitly rather than defaulting to a single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then `input_template == output_template`, which the operator algebra reads as the structural fact that operands compose or act on the same space.
 
 Its templates are always concrete, and construction from a template with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
 ```python
-class LinOp(Function, ABC):        # the linear subtype of the III.2 base
+class LinOp(Function, ABC):        # the linear subtype of the III.1 base
     @property
     @abstractmethod
     def shape(self) -> tuple[int, int]: ...    # (output_template.vector_size, input_template.vector_size)
@@ -260,7 +254,7 @@ Operations mint linear operators, covariances above all, and every operation mus
 - *Flag semantics.* Whether flags only describe structure or also steer which implementation a query selects is open.
 - *Batched matrix action.* `matmat` against a batched operand, where a batch axis would meet the operator's matrix axis, and any richer `LinOpBatch` alignment are deferred until a concrete consumer exists.
 
-## III.6 — `Distribution`
+## III.5 — `Distribution`
 
 ### Contract
 
@@ -316,7 +310,7 @@ class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching
 
 Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and differentiable end-to-end when it claims `SupportsDifferentiation`, as the array-backed families do (`D6 – Differentiability as a capability`). A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`).
 
-## III.7 — Distribution capabilities
+## III.6 — Distribution capabilities
 
 ### Contract
 
@@ -396,7 +390,7 @@ The projection rows are exact whenever the parent's answer is, and the density r
 
 Making each operation a *capability* rather than a base-class method follows `D3 – Capability-based operations`. Because support is structural (tested by `isinstance(dist, SupportsX)`, not subclassing), a distribution gains an operation just by implementing its method. A transform that preserves the event exposes exactly the capabilities of whatever it wraps, and a field view offers those its parent's capabilities can derive, so advertised support stays honest in both cases.
 
-## III.8 — `ConditionalDistribution`
+## III.7 — `ConditionalDistribution`
 
 ### Contract
 
@@ -463,7 +457,7 @@ class ConditionalDistributionSpec(TermSpec):  # a ConditionalDistribution; is_va
 
 Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. As with `Distribution`, a concrete `ConditionalDistribution` family derives both templates from its parameters and passes them up, and the base only requires they are fixed at construction (`D5 – Explicit, carried structure`, `D7 – Single source of truth`). The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the deliberate exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` satisfying `SupportsConditioning` is intended rather than a collision, while the names stay distinct exactly where the meanings differ.
 
-## III.9 — `DistributionBatch` and `ConditionalDistributionBatch`
+## III.8 — `DistributionBatch` and `ConditionalDistributionBatch`
 
 ### Contract
 
@@ -491,7 +485,7 @@ class ConditionalDistributionBatch(Batch[ConditionalDistribution]):
 
 This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space, exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a `ConditionalDistribution` produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `TrackedTerm` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
 
-## III.10 — Factored distributions
+## III.9 — Factored distributions
 
 ### Contract
 
@@ -534,7 +528,7 @@ Factorization is an *optional capability*, `SupportsFactors`, rather than a base
 
 - *Group views.* The field interface also accepts an interior path, which names a group of fields rather than a single field. For example, when the event declaration nests `coeffs/intercept` and `coeffs/slope` under `coeffs`, `d["coeffs"]` returns the marginal over the whole group. Like a single-field view, it is a view onto the parent joint, not a detached distribution, so co-sampling through the parent preserves correlation.
 
-## III.11 — Composition
+## III.10 — Composition
 
 ### Contract
 
@@ -574,7 +568,7 @@ Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 –
 - *Operator coexistence.* `*` also denotes scalar scaling on some objects, such as a random function or a linear operator. The two coexist by operand-type dispatch: `Distribution` and `ConditionalDistribution` operands compose, while scalar operands scale.
 - *The realigning `joint` form.* `joint(A, B, **align)` is `*` plus field renaming, for factors whose names do not line up: it is `A * B.with_path_names(**align)`.
 
-## III.12 — The `Distribution` hierarchy
+## III.11 — The `Distribution` hierarchy
 
 ### Contract
 
@@ -610,7 +604,7 @@ Any family can arise as the approximation of a target: what makes a result appro
 
 The hierarchy embodies `D2 – Generality first`: one base refined by *optional capabilities* (`SupportsFactors`, the numeric marker, each `SupportsX`) rather than a rigid class tower, so a new family slots in by implementing the capabilities it supports rather than by widening the base. The atomic-versus-joint split is a `D1 – Mathematical fidelity` distinction, since a joint genuinely offers its factors as distributions while an atomic-structured law does not, and it is carried by a capability rather than by the draw's type. Because composition is closed (`D4 – Closed system of objects under operations`), a joint re-enters the catalog as an ordinary `Distribution` for the next operation.
 
-## III.13 — Cross-type conversion
+## III.12 — Cross-type conversion
 
 ### Contract
 
@@ -647,16 +641,16 @@ converter_registry: ConverterRegistry   # the global instance
 
 Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment_match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`). Realizing the registry as a subclass of the shared dispatch machinery gives conversion registration, feasibility probing, prioritized selection, and cataloging without duplicating any of them (`D7 – Single source of truth`).
 
-## III.14 — Constraint reparameterization
+## III.13 — Constraint reparameterization
 
 ### Contract
 
-Many inference algorithms are defined to operate on an unconstrained space ℝᵈ, among them gradient-based optimization and Hamiltonian Monte Carlo, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims the two capabilities below. Invertibility is one capability: a `Function` claims `SupportsInverse` by providing the inverse map, its own `apply` (III.2) serving as the forward, so the protocol stays minimal and the forward map comes from the `Function` that claims it. The Jacobian determinant is a second, separate capability: `SupportsLogDetJacobian` provides the log-determinant of the Jacobian, which exists only for a differentiable map, and a map can be invertible without it. Change of variables requires exactly the pair, and both are typed over structured numeric values as well as bare arrays. A `LinOp` claims them only when they apply: the claim is guarded per instance by squareness (`input_template == output_template`), with its inverse from the operator algebra and its `logdet` the log-Jacobian, and a rectangular operator makes no claim. `is_invertible` reads the claim together with its guard — unconditional for a declared bijector, squareness for a linear operator — while singularity, which no construction-time check decides, surfaces at call time as `LinAlgError`, exactly as for `solve`. A slot checks the claims it needs at construction and raises a capability error otherwise: the bijector of a transformed distribution requires `is_invertible` and the Jacobian claim, the link of a GLM likelihood `is_invertible` alone. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
+Many inference algorithms are defined to operate on an unconstrained space ℝᵈ, among them gradient-based optimization and Hamiltonian Monte Carlo, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint` (the support an `ArraySpec` carries) to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims the two capabilities below. Invertibility is one capability: a `Function` claims `SupportsInverse` by providing the inverse map, its own `apply` (III.1) serving as the forward, so the protocol stays minimal and the forward map comes from the `Function` that claims it. The Jacobian determinant is a second, separate capability: `SupportsLogDetJacobian` provides the log-determinant of the Jacobian, which exists only for a differentiable map, and a map can be invertible without it. Change of variables requires exactly the pair, and both are typed over structured numeric values as well as bare arrays. A `LinOp` claims them only when they apply: the claim is guarded per instance by squareness (`input_template == output_template`), with its inverse from the operator algebra and its `logdet` the log-Jacobian, and a rectangular operator makes no claim. `is_invertible` reads the claim together with its guard — unconditional for a declared bijector, squareness for a linear operator — while singularity, which no construction-time check decides, surfaces at call time as `LinAlgError`, exactly as for `solve`. A slot checks the claims it needs at construction and raises a capability error otherwise: the bijector of a transformed distribution requires `is_invertible` and the Jacobian claim, the link of a GLM likelihood `is_invertible` alone. `bijector_for(constraint)` returns the canonical such `Function`, and `register_bijector` plugs in a factory for a constraint type or for a specific constraint instance, with instance registrations taking precedence over type registrations.
 
 ```python
 @runtime_checkable
 class SupportsInverse(Protocol):            # an invertible map
-    # minimal by design: the forward map is the claiming Function's own apply (III.2);
+    # minimal by design: the forward map is the claiming Function's own apply (III.1);
     # typed over the numeric value carried, not fixed to arrays
     def _inverse(self, y: Array | NumericRecord) -> Array | NumericRecord: ...
 

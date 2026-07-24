@@ -9,10 +9,11 @@ The shared abstractions, in dependency order. Each is generic and type-agnostic,
 | § | Layer | Abstraction | Role |
 |---|---|---|---|
 | II.1 | Structure | `NamedTree` | The named, ordered tree addressed by path that every structured object is built on, owning the leaf-keyed mapping contract and navigation. |
-| II.2 | Type | `ValueSpec` / `TermSpec` / `EventTemplate` | The value specifications every field and declaration is typed by, the event templates built from them, and the storage rule: a tracked term stores its type as its spec. |
-| II.3 | Identity | `TrackedTerm` / `Annotated` / `Provenance` | The name, type (spec), lineage, and annotations an object carries beyond its raw representation. |
-| II.4 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space. |
-| II.5 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved. The shared mechanism behind converters, inference selection, and bijector factories. |
+| II.2 | Type | `ValueSpec` / `TermSpec` | The value specifications every field and declaration is typed by, and the storage rule: a tracked term stores its type as its spec. |
+| II.3 | Schema | `EventTemplate` | The named tree of value specifications that gives one event its shape, with numeric promotion and symbolic dimensions. |
+| II.4 | Identity | `TrackedTerm` / `Annotated` / `Provenance` | The name, type (spec), lineage, and annotations an object carries beyond its raw representation. |
+| II.5 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space. |
+| II.6 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved. The shared mechanism behind converters, inference selection, and bijector factories. |
 
 ## II.1 — `NamedTree`
 
@@ -77,40 +78,41 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 - *Abstract substrate.* `NamedTree` provides no constructor logic and is not directly instantiable; each concrete family's constructor owns storage and validation policy.
 - *Bare-name reference.* `with_path_names` renames by `old="new"` pairs, where a key may be a bare name instead of a full path: a bare name resolves to the unique node so named and raises when the tree contains it more than once. Keyword pairs therefore cover the common case, while the positional mapping form addresses any path, as in `with_path_names({"group1/mu": "loc"})`. The `Mapping` interface itself is untouched, with `[]` and `keys()` keyed by full path.
 
-## II.2 — Value specifications & event templates: `ValueSpec`, `TermSpec`, `EventTemplate`
+## II.2 — Value specifications: `ValueSpec`, `TermSpec`
 
 ### Contract
 
-An `EventTemplate` is a `NamedTree` that defines the *shape of one event* — a draw, a stored datum, and so on. Each leaf is a `ValueSpec`: it says what the single value at that path looks like, and it answers `is_valid` on a candidate value.
-
-Value specs come in two families. A **raw-value spec** types a leaf holding a plain value that names no ProbPipe kind — a numeric array (`ArraySpec`) or an opaque Python object (`OpaqueSpec`). A **term spec** types a leaf holding a tracked ProbPipe term: a `Record`, `Distribution`, `ConditionalDistribution`, or `Function`, one per kind. A tracked term is, at bottom, still one value that can occupy a leaf, so a term spec *is* a value spec: `TermSpec` subclasses `ValueSpec` as a marker, and the concrete class — `RecordSpec`, `DistributionSpec`, and so on — is the kind. Two consequences follow. `is_valid` stays declared once, on `ValueSpec`; and anywhere a leaf is accepted, a term spec is accepted unchanged.
-
-A term spec plays one of two roles, fixed by its position.
-
-- **As data.** At a named leaf of a template, a term spec types a field that holds a term. A `Distribution` stored inside a record is a leaf value.
-- **As result.** As an output declaration, a term spec states that the result *is* a term of that kind. A fitted mapping declares that it returns a `Function` this way.
-
-A `Distribution`'s event declaration is an output declaration: it types what `sample` returns. The two roles therefore settle every draw kind. `Distribution(name, DistributionSpec(t))` declares a random measure; its draws are `Distribution`s. `Distribution(name, EventTemplate(x=DistributionSpec(t)))` declares a record law; its draws are `Record`s with a distribution-valued field `x`. The two spaces are isomorphic, but the draw kinds differ, and the declaration alone decides which — never the runtime type of `_sample`'s return. A result of the wrong kind raises the kind error; a schema mismatch raises its own.
-
-An `EventTemplate` is not itself a spec. It is the *schema*, the structure that indexes a kind, and it is never one of its own leaves. A declaration is *stored* as a spec: a bare `EventTemplate` is accepted wherever a record declaration is meant, as a convenience, and construction wraps it as `RecordSpec(template)`. The two forms denote the same space; after construction only the spec remains, so the declared kind is simply the stored spec's class.
-
-The same storage rule holds for the tracked types themselves. Each carries the spec of its kind — a `Record` its `RecordSpec`, a `Distribution` its `DistributionSpec`, a `ConditionalDistribution` its `ConditionalDistributionSpec`, a `Function` its `FunctionSpec` — as the single stored source of its type. The slot itself is `TrackedTerm.spec` (II.3), declared once on the tracked base, and each kind narrows it to its own spec class. Each type exposes convenience accessors for its own spec's properties — a `Record` its `event_template`, a `Function` its `input_template` and `output_spec`, a `Distribution` its `event_spec`, a `ConditionalDistribution` its `given_template` and `event_spec` — views on the one stored object, so they cannot disagree with it or with each other.
+A **value specification** types one value: what a single field may hold, and what an operation's result is declared to be. The base class declares validation once:
 
 ```python
-class ValueSpec(ABC):               # a leaf value; is_valid declared once, here
+class ValueSpec(ABC):
     @abstractmethod
     def is_valid(self, value: Any) -> bool: ...
+```
 
-# --- raw-value specs: a leaf holding a plain value, no kind ---
+Value specs come in two families. A **raw-value spec** types a plain value that names no ProbPipe kind: a numeric array or an opaque Python object. An `ArraySpec` declares a shape, a dtype, and a support. An `OpaqueSpec` is the fallback, admitting any non-mapping value.
+
+```python
 class ArraySpec(ValueSpec):  # a numeric array leaf
-    shape: tuple[int | str, ...]   # a str names a symbolic dimension
+    shape: tuple[int | str, ...]   # a str names a symbolic dimension (II.3)
     dtype: DType
     support: Constraint
 
 class OpaqueSpec(ValueSpec):  # the fallback spec; is_valid accepts any non-mapping value
     meta: Hashable
+```
 
-# --- term specs: a leaf holding a tracked term; the concrete class is the kind ---
+The support is a `Constraint`, an elementwise membership test. A constraint compares and hashes by value, so an instance can serve as a registry key.
+
+```python
+class Constraint(ABC):
+    @abstractmethod
+    def check(self, value: ArrayLike) -> Array: ...   # elementwise membership
+```
+
+A **term spec** types a tracked term, one concrete class per kind. `TermSpec` subclasses `ValueSpec` as a marker, since a tracked term is still one value that can occupy a leaf. Two consequences follow: `is_valid` stays declared once, on `ValueSpec`, and anywhere a leaf is accepted, a term spec is accepted unchanged.
+
+```python
 class TermSpec(ValueSpec): ...      # marker; adds nothing, is_valid inherited
 
 class RecordSpec(TermSpec):  # a Record; is_valid accepts a matching Record
@@ -120,21 +122,39 @@ class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
     input_template: EventTemplate | None   # None: that side's structure unspecified
     output_spec: TermSpec | None           # the output declaration, stored as a spec;
                                            #   construction wraps an EventTemplate as RecordSpec(template)
-# DistributionSpec (III.6) and ConditionalDistributionSpec (III.8) are the other two term specs.
-
-class Constraint(ABC):              # an array support, carried by ArraySpec
-    @abstractmethod
-    def check(self, value: ArrayLike) -> Array: ...   # elementwise membership
-    # constraints compare and hash by value, so an instance can serve as a registry key
+# DistributionSpec and ConditionalDistributionSpec are the other two term specs (Part III).
 ```
 
-**Placement.** `TermSpec` lives beside `ValueSpec` in `core/_specs.py`: it is a marker over the spec hierarchy, tied to no one kind, and the tracked base that houses the spec slot (II.3) lives in `core/`, which cannot depend on the value layer. `EventTemplate` and `Constraint` sit beside them in `core/_event_template.py` and `core/_constraints.py`. Each concrete term spec still lives with its kind's base type: `RecordSpec` with `Record` and `NumericRecord` in `values/_record.py`, `FunctionSpec` with `Function` in `values/_function_base.py`, `DistributionSpec` in `distributions/_distribution.py`, and `ConditionalDistributionSpec` in `distributions/_conditional.py`.
+Specs and event templates are mutually recursive: a template's leaves are specs, and a kind spec's parameters are templates (II.3). Both are finite trees, so the recursion grounds.
 
-`RecordSpec(τ)` and the template `τ` denote the same space; the tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity — name, provenance, capabilities — is never dropped implicitly. Both follow the wrap boundary (V.0).
+A term spec plays one of two roles, fixed by its position.
 
-A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, a single-field signature written out as `FunctionSpec(EventTemplate(x=...), EventTemplate(out=...))`, so a function's field names are caller-chosen and meaningful, matching `DistributionSpec`. The output side, `output_spec`, accepts any `TermSpec`, so a function may declare a term-valued result: a `Function` returning a `Distribution`, or a fitted mapping declared `Fun`/`Cond`, with a record output the common case; an `EventTemplate` output wraps to `RecordSpec` at construction, so the stored side is always a spec. Validity is callability alone — the value-layer specs stay callable-generic, admitting any callable as a leaf value — and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to coproject a raw callable *result* into a `Function`. The two sides are otherwise independent, so a callable may map a space to itself or between two different spaces.
+- **As data.** At a named leaf of a template, a term spec types a field that holds a term. A `Distribution` stored inside a record is a leaf value.
+- **As result.** As an output declaration, a term spec states that the result *is* a term of that kind. A fitted mapping declares that it returns a `Function` this way.
 
-When every leaf is an `ArraySpec` then all values are numeric and construction auto-promotes to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
+A `Distribution`'s event declaration is an output declaration: it types what `sample` returns. The two roles therefore settle every draw kind. `Distribution(name, DistributionSpec(t))` declares a random measure, whose draws are `Distribution`s, while `Distribution(name, EventTemplate(x=DistributionSpec(t)))` declares a record law, whose draws are `Record`s holding a distribution-valued field `x`. The two spaces are isomorphic but the draw kinds differ, and the declaration alone decides which, never the runtime type of `_sample`'s return. A wrong-kind result raises the kind error, a schema mismatch its own.
+
+A declaration is *stored* as a spec. A bare `EventTemplate` is accepted wherever a record declaration is meant, and construction wraps it as `RecordSpec(template)`. The two forms denote the same space, and after construction only the spec remains, so the declared kind is the stored spec's class.
+
+The same storage rule holds for the tracked types. Each carries the spec of its kind as the single stored source of its type: the slot is `TrackedTerm.spec` (II.4), declared once on the tracked base and narrowed by each kind to its own spec class. Convenience accessors expose the spec's properties and differ by kind: `event_template` on `Record`, `input_template` and `output_spec` on `Function`, `event_spec` on `Distribution`, `given_template` and `event_spec` on `ConditionalDistribution`. Each accessor is a view on the one stored object, so none can disagree with it.
+
+`RecordSpec(τ)` and the template `τ` denote the same space. The tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity (name, provenance, capabilities) is never dropped implicitly.
+
+A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, written out even for a single-field signature, so a function's field names are caller-chosen and meaningful. The output side accepts any `TermSpec`, so a function may declare a term-valued result, with a record output the common case. Validity is callability alone: the value-layer specs stay callable-generic, and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to wrap a raw callable result into a `Function`. The two sides are independent, so a callable may map a space to itself or between two spaces.
+
+**Placement.** `TermSpec` lives beside `ValueSpec` in `core/_specs.py`, with `EventTemplate` and `Constraint` in `core/_event_template.py` and `core/_constraints.py`: the marker is tied to no one kind, and the tracked base that houses the spec slot lives in `core/`, which cannot depend on the value layer. Each concrete term spec lives with its kind's base type: `RecordSpec` with `Record` and `NumericRecord` in `values/_record.py`, `FunctionSpec` with `Function` in `values/_function_base.py`, `DistributionSpec` in `distributions/_distribution.py`, and `ConditionalDistributionSpec` in `distributions/_conditional.py`.
+
+### Rationale
+
+One `is_valid` contract across raw values and terms keeps validation uniform (`C1 – Uniform interface to distributions and values`), and a term spec being a value spec is what lets a term occupy a field anywhere a plain value can. Storing every declaration as a spec, and the spec on the term itself, is `D7 – Single source of truth`: the declared kind is a stored class rather than an inference, and every accessor is a view that cannot drift.
+
+## II.3 — `EventTemplate`
+
+### Contract
+
+An `EventTemplate` is a `NamedTree` whose leaves are value specifications (II.2). It defines the *shape of one event*, such as a draw or a stored datum, and it is the *schema*: the structure that indexes a kind. It is never one of its own leaves.
+
+When every leaf is an `ArraySpec`, the template is fully numeric and construction auto-promotes it to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
 
 ```python
 class EventTemplate(NamedTree[ValueSpec]):
@@ -164,7 +184,7 @@ class NumericEventTemplate(EventTemplate):
     def vector_size(self) -> int: ...                          # total flat dimension; defined only when concrete
 ```
 
-**Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer. `ArraySpec(shape=("obs", "features"))` fixes the rank and gives each dimension an identity while deferring its size, and within one template a name refers to one dimension: a template with fields `X: ("obs", "features")` and `coefficients: ("features",)` states that the second dimension of `X` and the length of `coefficients` are the same dimension, an equality no pair of concrete integers can express. A template with any symbolic entry is **polymorphic**, with `is_concrete` false and `free_dims` listing the unbound names. Templates carry no scope object beyond the names themselves, so they serialize as plain data.
+**Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer. `ArraySpec(shape=("obs", "features"))` fixes the rank and gives each dimension an identity while deferring its size. Within one template a name refers to one dimension: fields `X: ("obs", "features")` and `coefficients: ("features",)` share the dimension `features`, an equality no pair of concrete integers can express. A template with any symbolic entry is **polymorphic**, with `is_concrete` false and `free_dims` listing the unbound names. Templates carry no scope object beyond the names themselves, so they serialize as plain data.
 
 A polymorphic template is checked by **unification** rather than per-leaf comparison. Validating values against it runs one pass over all fields: each occurrence of a name must resolve to a single size, a conflict raises, and a name, once bound, never rebinds. The per-leaf `is_valid` covers rank and dtype (an `ArraySpec`'s `support` is descriptive metadata, not checked by `is_valid`), and leaves size consistency to that one pass. Binding produces a new template, so refinement is monotone and nothing mutates. The flat layout of a `NumericEventTemplate` is defined only when the template is concrete, and anything that needs sizes raises with the free dimensions named.
 
@@ -174,7 +194,7 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 ---
 
-## II.3 — Identity, type & metadata: `TrackedTerm`, `Annotated`, `Provenance`
+## II.4 — Identity, type & metadata: `TrackedTerm`, `Annotated`, `Provenance`
 
 ### Contract
 
@@ -189,7 +209,7 @@ class Annotated:
 
 A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: a structure-changing transform re-derives an auto-derived name from its result, and composition into a larger object may rename it again, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`. `with_name` renames the object itself, unlike `NamedTree.with_path_names`, which renames the fields within it. A name is a human label rather than an identity: nothing resolves an object by name, derived names need no escaping scheme, and two objects may share a name wherever field uniqueness does not force distinctness. The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves.
 
-The `spec` slot is the term's type, stored once (II.2). Each kind narrows it to its own spec class — a `Record` to `RecordSpec`, a `Distribution` to `DistributionSpec`, and so on — and exposes convenience accessors for its properties (Part III).
+The `spec` slot is the term's type, stored once (II.2). Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
 ```python
 class TrackedTerm:
@@ -220,7 +240,7 @@ A provenance records everything its operation resolved: the tracked parents, the
 
 `TrackedTerm` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D7 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Recording the resolved controls, not just the parents, is what turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
 
-## II.4 — `Batch`
+## II.5 — `Batch`
 
 ### Contract
 
@@ -251,13 +271,13 @@ class Batch[E](TrackedTerm):
 
 **Element identity.** An element view of a batch derives its name as `name[i]` from the batch's own name, marked `name_is_auto`, with provenance recording the indexing, and the elements of nested levels compose the scheme, as in `name[i][j]`. A batch whose elements are bare values yields bare elements, which carry no identity to derive.
 
-**Selecting by level.** `select_at(**levels)` indexes a batch along its named levels and returns a view, the by-name counterpart of positional `[]`. The name is `select_at` rather than `select`, which is the field-splatting selector on `Record` (III.3): a batch of records can sensibly carry both, so the two keep distinct names. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order, where an integer drops its axis and a slice or `None` keeps it, `None` meaning the whole axis as `:` does. A level spanning several axes takes one indexer per axis, and a shorter indexer fills the leading axes and leaves the rest whole, so a scalar `draw=i` on a two-axis `draw` level means `draw=(i, None)`. Selecting an entire single-axis level by an integer removes it, yielding the inner batch or element just as positional indexing and iteration do, while a level left unnamed is kept whole. This parallels xarray's `isel`, with `level_names` in the role of xarray dimension names; there is no label-based counterpart, since batch levels carry no coordinate labels.
+**Selecting by level.** `select_at(**levels)` indexes a batch along its named levels and returns a view, the by-name counterpart of positional `[]`. The name is `select_at` rather than `select`, which is the field-splatting selector on `Record` (III.2): a batch of records can sensibly carry both, so the two keep distinct names. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order, where an integer drops its axis and a slice or `None` keeps it, `None` meaning the whole axis as `:` does. A level spanning several axes takes one indexer per axis, and a shorter indexer fills the leading axes and leaves the rest whole, so a scalar `draw=i` on a two-axis `draw` level means `draw=(i, None)`. Selecting an entire single-axis level by an integer removes it, yielding the inner batch or element just as positional indexing and iteration do, while a level left unnamed is kept whole. This parallels xarray's `isel`, with `level_names` in the role of xarray dimension names; there is no label-based counterpart, since batch levels carry no coordinate labels.
 
 ### Rationale
 
 `Batch` is necessary to satisfy `D1 – Mathematical fidelity` by ensuring how many objects there are stays separate from what one object contains. The level structure extends the same fidelity to collections of collections: how many objects sit at each level is a mathematical distinction, so `N` laws with `S` draws each are `(N,)` of `(S,)` rather than one anonymous `(N, S)`. Naming the levels is `C5 – Naming for unambiguous meaning` on that axis, letting a user say which multiplicity is which and letting operations align batches by meaning rather than by position. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). When those elements are array-backed and claim differentiation, the mapping is vectorized and differentiable end-to-end (`D6 – Differentiability as a capability`). To satisfy `D7 – Single source of truth`, indexing or iterating yields a *view*, the levels of a multi-level batch included.
 
-## II.5 — Dispatch and registries
+## II.6 — Dispatch and registries
 
 ### Contract
 
