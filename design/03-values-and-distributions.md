@@ -388,7 +388,7 @@ class FieldView(Distribution):
 **The distribution value specification.** `DistributionSpec(event_template)` is the term spec of the `Dist` kind. As a leaf, it types a field holding a `Distribution` with the given `event_template`. At the root of an event declaration, it declares a random measure: a distribution whose draws are themselves `Distribution`s. The draw kind comes from the declaration, never from what `_sample` happens to return. The two positions keep the two readings apart.
 
 ```python
-DistributionSpec(event_template: EventTemplate)
+DistributionSpec(event_template: EventTemplate | TermSpec)
 ```
 
 ### Rationale
