@@ -31,13 +31,13 @@ probpipe/
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.4)
 │   ├── _constraints.py        #   Constraint and the constraint factories (III.1)
-│   ├── _specs.py              #   ValueSpec, ArraySpec, OpaqueSpec (III.1)
+│   ├── _specs.py              #   ValueSpec, TermSpec, ArraySpec, OpaqueSpec (III.1)
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (III.1)
 │   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
 │   │                          #     plain evaluation), FunctionSpec, and the function capabilities
 │   ├── _function_batch.py     #   FunctionBatch (III.2)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
-│   ├── _record.py             #   Record, NumericRecord (III.3)
+│   ├── _record.py             #   Record, NumericRecord (III.3), RecordSpec (III.1)
 │   └── _record_batch.py       #   RecordBatch, NumericRecordBatch (III.4)
 ├── linalg/                    # LinOp, the linear Function subtype (III.5)
 │   ├── _linop.py              #   LinOp: the action, the queries, flags
