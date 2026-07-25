@@ -422,7 +422,7 @@ class TestAutoDispatch:
         g = Normal(loc=0.0, scale=1.0, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
-        assert w._resolved_dispatch == "jax"
+        assert not hasattr(w, "_resolved_dispatch")
 
     def test_auto_falls_back_to_sequential_for_non_traceable(self):
         import scipy.special
@@ -434,7 +434,7 @@ class TestAutoDispatch:
         g = Normal(loc=2.0, scale=0.1, name="x")
         result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
-        assert w._resolved_dispatch == "sequential"
+        assert not hasattr(w, "_resolved_dispatch")
 
     def test_jax_dispatch_rejects_non_traceable_function_with_clear_error(self):
         import scipy.special
@@ -472,13 +472,11 @@ class TestAutoDispatch:
             x=Normal(loc=0.0, scale=1.0, name="x"),
             y=Normal(loc=0.0, scale=1.0, name="y"),
         )
-        # Probing should fail gracefully (NotImplementedError caught
-        # inside the broad ``except Exception`` in ``_resolve_dispatch``);
-        # we don't assert on the result type since the function works
-        # on a Record, only that the resolution settles on ``"sequential"``.
+        # Probing fails gracefully (NotImplementedError caught inside
+        # ``_resolve_dispatch``) and the call-local planner falls back.
         with suppress(Exception):
             w(joint=joint)
-        assert w._resolved_dispatch == "sequential"
+        assert not hasattr(w, "_resolved_dispatch")
 
 
 # ---------------------------------------------------------------------------

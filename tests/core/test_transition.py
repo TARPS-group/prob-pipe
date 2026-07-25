@@ -211,8 +211,7 @@ class TestWithResampling:
         initial = EmpiricalDistribution(jnp.zeros((100, 2)), name="x")
         step = with_resampling(shift_step, ess_threshold=0.5)
         dists = iterate(step_fn=step, initial=initial, inputs=[1.0])
-        # No resampling occurred, so no "resample" provenance
-        assert dists[-1].provenance.operation != "resample"
+        assert dists[-1].provenance.operation == "workflow.with_resampling(shift_step)"
 
     def test_resample_degenerate(self):
         """Highly non-uniform weights -> resampling triggered."""
@@ -228,7 +227,7 @@ class TestWithResampling:
         dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
         resampled = dists[-1]
         assert resampled.is_uniform
-        assert resampled.provenance.operation == "resample"
+        assert resampled.provenance.operation == "workflow.with_resampling(weighted_step)"
 
     def test_resample_stores_ess_in_metadata(self):
         """Pre-resampling ESS is stored in provenance metadata."""
@@ -240,11 +239,13 @@ class TestWithResampling:
 
         initial = EmpiricalDistribution(jnp.zeros((n, 2)), name="x")
         step = with_resampling(weighted_step, ess_threshold=0.5)
-        dists = iterate(step_fn=step, initial=initial, inputs=[0.0])
-        resampled = dists[-1]
-        assert "ess" in resampled.provenance.metadata
-        assert "ess_ratio" in resampled.provenance.metadata
-        assert resampled.provenance.metadata["ess_ratio"] < 0.5
+        raw = step.apply(initial, 0.0)
+        wrapped = iterate(step_fn=step, initial=initial, inputs=[0.0])[-1]
+        assert raw.provenance.operation == "resample"
+        assert "ess" in raw.provenance.metadata
+        assert wrapped.provenance.operation == "workflow.with_resampling(weighted_step)"
+        assert "ess_ratio" in raw.provenance.metadata
+        assert raw.provenance.metadata["ess_ratio"] < 0.5
 
     def test_non_empirical_passthrough(self):
         """Non-EmpiricalDistribution passes through unchanged."""

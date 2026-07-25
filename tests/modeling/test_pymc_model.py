@@ -145,7 +145,7 @@ class TestPyMCModel:
         from probpipe import condition_on
 
         data = np.random.randn(50)
-        result = condition_on(
+        result = condition_on.apply(
             model,
             {"y": data},
             method="pymc_nuts",
@@ -180,7 +180,7 @@ class TestPyMCModel:
         _ = jnp.ones(1000).sum().block_until_ready()
 
         data = np.random.randn(50)
-        result = condition_on(
+        result = condition_on.apply(
             model,
             {"y": data},
             method="pymc_nuts",
@@ -208,7 +208,7 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         with _captured_pm_sample_kwargs() as captured:
-            result = condition_on(
+            result = condition_on.apply(
                 model,
                 {"y": data},
                 method="pymc_nuts",
@@ -400,7 +400,7 @@ class TestEventTemplate:
             return m
 
         y = np.zeros(8, dtype=np.float32)
-        result = condition_on(
+        result = condition_on.apply(
             PyMCModel(model_fn),
             {"y": y},
             method="pymc_advi",

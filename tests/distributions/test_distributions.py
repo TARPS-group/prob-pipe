@@ -181,7 +181,7 @@ class TestMultivariateNormal:
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.name == "fitted"
         assert g2.provenance is not None
-        assert g2.provenance.operation == "from_distribution"
+        assert g2.provenance.operation == "workflow.from_distribution"
 
     def test_from_distribution_gaussian(self, gaussian, key):
         """Moment-match from another MultivariateNormal via sampling."""
@@ -293,7 +293,7 @@ class TestEmpiricalDistribution:
         assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
         assert ed.provenance is not None
-        assert ed.provenance.operation == "from_distribution"
+        assert ed.provenance.operation == "workflow.from_distribution"
         assert ed.name == gaussian.name
 
     def test_from_distribution_custom_name(self, gaussian, key):

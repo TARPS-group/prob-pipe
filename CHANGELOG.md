@@ -9,6 +9,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **First-class, tracked `Function` values (#368).** `Function` is now an
+  immutable `Node` / `Tracked` / `Annotated` object with a construction-time
+  Python `signature`, optional authoritative `input_template` and
+  `output_template`, and a raw `apply(*args, **kwargs)` execution boundary.
+  `ArraySpec` shapes accept symbolic dimension names; templates expose
+  `free_dims` / `is_concrete`, and each invocation unifies input and output
+  symbols without mutating declarations. Decorated and private-
+  implementation-backed Functions share the same planner, invocation-local
+  RNG and dispatch state, and output validation.
+  Variadic arguments now participate in lifting and sweeps through stable
+  per-element planner slots; `Any` on a variadic parameter remains
+  non-restrictive rather than suppressing those behaviors. Authoritative nested
+  outputs aggregate identically across sequential, threaded, Prefect, and JAX
+  dispatch without changing the public `RecordArray.stack` contract, and
+  declared distribution sweeps expose their concrete schema through
+  `DistributionArray.event_template`.
+  Callable and private-implementation fingerprints encode frozen signatures
+  and templates structurally; callable implementations additionally encode
+  their code, defaults, and closure, while private implementations use stable
+  opaque-default type fallbacks rather than address-bearing signature strings.
+  Authoritative output validation requires field trees and concrete shapes to
+  conform, uses same-kind dtype checks for bare values, mappings, and Records,
+  and enforces their declared supports against concrete values. An existing
+  Distribution must carry an `event_template` exactly equal to the concrete
+  declaration; Function neither reconciles parallel `dtypes` / `supports`
+  accessors nor rewrites the Distribution's intrinsic template. Consolidating
+  Distribution schema ownership remains follow-up work. Support-bearing value
+  outputs use row-wise execution under auto dispatch because their
+  data-dependent checks cannot run while JAX traces; explicit JAX dispatch and
+  direct `jax.jit(Function.apply)` report that limitation. `apply` preserves a
+  returned container's original template, while the independent `__call__`
+  result copy carries the concrete declared template for Records and retains
+  an already-matching Distribution template.
+  `LinOp.apply(x)` now delegates to `matvec(x)`, preserving existing operator
+  structure and behavior. `Function._from_implementation(...)` is the internal
+  construction entry point for dynamically produced ordinary Functions; #370
+  will layer fitted-producer validation and attestations over that boundary.
+  Result plans and `OperationRef` remain follow-up work.
+
 - **`NamedTree` — the public name-keyed tree substrate (#338).** New
   `probpipe.core.named_tree` module holding the ordered, immutable,
   `/`-path-navigable tree that `EventTemplate` and `Record` now share as their
@@ -96,22 +135,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
-  `type_name`, `name`, `source` (the parent's own `Provenance`, kept in all
-  non-OFF modes so the ancestry DAG remains traversable), `fingerprint`
-  (a 16-character stable content hash — see below), and `obj` (the live parent
-  object, set only in FULL mode).
+  `type_name`, `name`, `provenance` (the parent's own `Provenance`, kept in all
+  non-OFF modes so the ancestry DAG remains traversable), `fingerprint` and
+  `fingerprint_is_weak` (see below), and `parent` (the live parent object, set
+  only in FULL mode).
 
-- **`ParentInfo.fingerprint` — stable content hashing for provenance parents.**
-  Every `ParentInfo` descriptor now carries a `fingerprint: str` — a
-  16-character hex digest (64-bit SHA-256 prefix) that stably identifies the
-  parent's content across processes.  The hash covers the full value: numeric
-  parameters for TFP-backed distributions, field-by-field content for Records,
-  and actual user-function bytecode for Functions (not the Prefect
-  wrapper closure, so changes to the function body are detected reliably).
-  Large arrays (> 256 MB) are sampled at evenly-spaced offsets rather than read
-  in full.  The fingerprint is visible in `to_dict()` output and is the
-  foundation for a future Prefect `cache_key_fn` that will enable cross-run
-  task caching and failure recovery.
+- **`ParentInfo.fingerprint` — classified best-effort hashing for provenance.**
+  Every `ParentInfo` descriptor now carries a 16-character best-effort digest
+  plus `fingerprint_is_weak`. Known content-bearing values and closure-free
+  Python functions receive portable structural fingerprints. Closure-bearing
+  functions, bound methods, partials, callable instances, classes, builtins,
+  and unsupported objects use process-local identity and are marked weak;
+  weakness propagates through composite fingerprints. Large arrays (> 256 MB)
+  are sampled at evenly-spaced offsets rather than read in full. Both the
+  fingerprint and its classification are visible in `to_dict()` output, so a
+  future cross-run `cache_key_fn` can fail closed on weak inputs.
 
 - **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
   reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and
@@ -120,6 +158,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **Function calls establish a new result identity and provenance boundary
+  (#368, breaking).** Existing operations such as `condition_on` and
+  `from_distribution` now record point-call operations as `workflow.<name>`,
+  with the called Function as the first parent followed by tracked inputs.
+  Resolved ordinary arguments are fingerprinted separately in
+  `Provenance.inputs` and do not become ancestry nodes. When an implementation
+  directly returns a `Record`, `RecordArray`, or `Distribution`,
+  `Function.__call__` returns a shallow independent result rather than the same
+  object, clears the implementation result's provenance, and attaches only the
+  current call provenance. Consequently, implementation-domain metadata such
+  as `conditioned`, `ess`, or backend algorithm details is not propagated to
+  the public call result; a plain point-call result carries `{"func": name}`
+  while broadcast and sweep results retain their own execution metadata. Use
+  `Function.apply()` when raw identity, provenance, or domain metadata is
+  required. Existing operation controls remain provenance metadata. Other
+  tracked return values remain event payloads until #369 adds explicit
+  term-result planning.
 
 - **`WorkflowFunction` renamed to `Function` (#377, breaking).** The public
   decorator is likewise renamed from `@workflow_function` to `@function`.

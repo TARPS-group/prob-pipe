@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+import inspect
 import subprocess
 import sys
 import textwrap
+from functools import partial
 
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, Record
-from probpipe.core._fingerprint import _update_function, fingerprint
+from probpipe import EventTemplate, Normal, Record
+from probpipe.core._fingerprint import (
+    _fingerprint_with_strength,
+    _update_function,
+    fingerprint,
+)
 from probpipe.core.node import Function
 from probpipe.core.provenance import ParentInfo, Provenance
 
@@ -33,7 +39,108 @@ class TestReturnFormat:
 
 
 # ===========================================================================
-# 2. Python primitives
+# 2. Strength classification
+# ===========================================================================
+
+
+class TestFingerprintStrength:
+    def test_structured_content_is_strong(self):
+        value = {"count": 3, "values": np.asarray([1.0, 2.0])}
+
+        digest, is_weak = _fingerprint_with_strength(value)
+
+        assert len(digest) == 16
+        assert is_weak is False
+
+    def test_opaque_identity_is_weak_and_process_local(self):
+        first = object()
+        second = object()
+
+        first_digest, first_is_weak = _fingerprint_with_strength(first)
+        repeated_digest, repeated_is_weak = _fingerprint_with_strength(first)
+        second_digest, second_is_weak = _fingerprint_with_strength(second)
+
+        assert first_digest == repeated_digest
+        assert first_digest != second_digest
+        assert first_is_weak is True
+        assert repeated_is_weak is True
+        assert second_is_weak is True
+
+    def test_weakness_propagates_through_structured_values(self):
+        _, is_weak = _fingerprint_with_strength({"opaque": object()})
+
+        assert is_weak is True
+
+    def test_callable_classification_is_conservative(self):
+        def plain(value=1):
+            return value
+
+        captured = 1
+
+        def closure(value):
+            return value + captured
+
+        class CallableObject:
+            def __call__(self, value):
+                return value
+
+            def method(self, value):
+                return value
+
+        callable_object = CallableObject()
+        weak_callables = (
+            closure,
+            callable_object.method,
+            partial(plain, 1),
+            callable_object,
+            CallableObject,
+            len,
+            np.add,
+        )
+
+        assert _fingerprint_with_strength(plain)[1] is False
+        assert all(_fingerprint_with_strength(value)[1] is True for value in weak_callables)
+
+    def test_function_closure_propagates_only_opaque_weakness(self):
+        def build(captured):
+            def implementation(value):
+                return value if captured is None else captured
+
+            return Function(func=implementation)
+
+        assert _fingerprint_with_strength(build(1))[1] is False
+        assert _fingerprint_with_strength(build(object()))[1] is True
+
+    def test_closure_free_function_is_strong_across_processes(self):
+        script = textwrap.dedent("""
+            from probpipe.core._fingerprint import _fingerprint_with_strength
+
+            def identity(value=1):
+                return value
+
+            print(*_fingerprint_with_strength(identity))
+        """)
+
+        def run():
+            return subprocess.check_output([sys.executable, "-c", script], text=True).strip()
+
+        assert run() == run()
+
+    def test_opaque_identity_is_not_portable_across_processes(self):
+        script = textwrap.dedent("""
+            from probpipe.core._fingerprint import _fingerprint_with_strength
+
+            print(*_fingerprint_with_strength(object()))
+        """)
+
+        def run():
+            return subprocess.check_output([sys.executable, "-c", script], text=True).strip()
+
+        assert run() != run()
+
+
+# ===========================================================================
+# 3. Python primitives
 # ===========================================================================
 
 
@@ -337,6 +444,81 @@ class TestFunctionHashing:
         wf2 = self._make_wf(add)
         assert fingerprint(wf1) == fingerprint(wf2)
 
+    def test_callable_fingerprint_tracks_template_declarations(self, full_provenance_mode):
+        def identity(x):
+            return x
+
+        def build(*, input_shape=(), output_shape=()):
+            return Function(
+                func=identity,
+                input_template=EventTemplate(x=input_shape),
+                output_template=EventTemplate(y=output_shape),
+            )
+
+        baseline = build()
+        matching = build()
+        changed_input = build(input_shape=(5,))
+        changed_output = build(output_shape=(5,))
+
+        assert fingerprint(baseline) == fingerprint(matching)
+        assert fingerprint(baseline) != fingerprint(changed_input)
+        assert fingerprint(baseline) != fingerprint(changed_output)
+
+        provenance = Provenance.create("compare", parents=[baseline, changed_output])
+        assert provenance.parents[0].fingerprint != provenance.parents[1].fingerprint
+
+    def test_callable_fingerprint_tracks_frozen_signature_declaration(self):
+        def build(signature: inspect.Signature) -> Function:
+            def identity(x):
+                return x
+
+            identity.__signature__ = signature  # type: ignore[attr-defined]
+            return self._make_wf(identity)
+
+        base = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "x",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=int,
+                )
+            ],
+            return_annotation=int,
+        )
+        changed_kind = base.replace(
+            parameters=[base.parameters["x"].replace(kind=inspect.Parameter.KEYWORD_ONLY)]
+        )
+        changed_default = base.replace(parameters=[base.parameters["x"].replace(default=1)])
+        changed_annotation = base.replace(
+            parameters=[base.parameters["x"].replace(annotation=float)]
+        )
+        changed_return = base.replace(return_annotation=float)
+
+        baseline = fingerprint(build(base))
+        assert baseline == fingerprint(build(base))
+        assert baseline != fingerprint(build(changed_kind))
+        assert baseline != fingerprint(build(changed_default))
+        assert baseline != fingerprint(build(changed_annotation))
+        assert baseline != fingerprint(build(changed_return))
+
+    def test_empty_closure_cell_uses_stable_sentinel(self):
+        def build(*, empty: bool) -> Function:
+            captured = 1
+
+            def inner():
+                return captured
+
+            if empty:
+                del captured
+            return self._make_wf(inner)
+
+        empty_first = build(empty=True)
+        empty_second = build(empty=True)
+        bound = build(empty=False)
+
+        assert fingerprint(empty_first) == fingerprint(empty_second)
+        assert fingerprint(empty_first) != fingerprint(bound)
+
     def test_different_function_bodies_differ(self):
         def add(x: float, y: float) -> float:
             return x + y
@@ -393,6 +575,7 @@ class TestFingerprintInProvenance:
         assert isinstance(parent, ParentInfo)
         assert parent.fingerprint is not None
         assert len(parent.fingerprint) == 16
+        assert parent.fingerprint_is_weak is False
 
     def test_parentinfo_fingerprint_stable_across_create_calls(self):
         n = Normal(loc=0.0, scale=1.0, name="prior")
@@ -441,7 +624,7 @@ class TestFingerprintInProvenance:
         # Patch the lazy import inside create() to use our broken function.
         import probpipe.core._fingerprint as fp_mod
 
-        monkeypatch.setattr(fp_mod, "fingerprint", _bad_fp)
+        monkeypatch.setattr(fp_mod, "_fingerprint_with_strength", _bad_fp)
 
         n = Normal(loc=0.0, scale=1.0, name="prior")
         with caplog.at_level(logging.WARNING, logger="probpipe.core.provenance"):
@@ -449,6 +632,7 @@ class TestFingerprintInProvenance:
 
         assert prov is not None
         assert prov.parents[0].fingerprint is None
+        assert prov.parents[0].fingerprint_is_weak is False
         assert any(
             "fingerprint" in r.message.lower() or "boom" in r.message for r in caplog.records
         )
@@ -616,6 +800,25 @@ class TestParentInfoIdentity:
         assert a == b
         assert hash(a) == hash(b)
 
+    def test_fingerprint_strength_excluded_from_equality(self):
+        strong = ParentInfo(
+            type_name="X",
+            name="n",
+            provenance=None,
+            fingerprint="aaaaaaaaaaaaaaaa",
+            fingerprint_is_weak=False,
+        )
+        weak = ParentInfo(
+            type_name="X",
+            name="n",
+            provenance=None,
+            fingerprint="bbbbbbbbbbbbbbbb",
+            fingerprint_is_weak=True,
+        )
+
+        assert strong == weak
+        assert hash(strong) == hash(weak)
+
 
 class TestNumericContainerHashing:
     """The ``container:`` tier — native numeric containers (xarray / pandas /
@@ -680,8 +883,8 @@ class TestNumericContainerHashing:
 
     def test_string_column_frame_not_container_tier(self):
         # A non-numeric container is not numeric, so it must not reach the
-        # container tier — it falls to the repr last resort and still hashes
-        # stably within a process.
+        # container tier — it falls to weak identity and still fingerprints
+        # consistently for the same live object.
         pd = pytest.importorskip("pandas")
         df = pd.DataFrame({"a": ["x", "y"]})
         assert fingerprint(df) == fingerprint(df)

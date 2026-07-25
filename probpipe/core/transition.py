@@ -186,10 +186,12 @@ def with_resampling(
     ``ESS / N < ess_threshold``, performs multinomial resampling to
     produce equally-weighted particles.
 
-    The pre-resampling ESS is stored in provenance metadata of the
-    resampled distribution (``dist.provenance.metadata["ess"]``) since
-    this information would otherwise be lost after resampling to
-    uniform weights.
+    When resampling occurs, the raw result from
+    ``wrapper.apply(...)`` carries ``"resample"`` provenance whose
+    metadata stores the pre-resampling ``"ess"`` and ``"ess_ratio"``.
+    A normal ``wrapper(...)`` call returns an independent Function result
+    whose provenance describes the wrapper invocation; it does not retain
+    that implementation-level resampling metadata.
 
     The returned wrapper is a :class:`Function`, so it appears
     as a node in the ProbPipe workflow DAG.

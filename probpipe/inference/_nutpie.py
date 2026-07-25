@@ -214,4 +214,4 @@ class NutpieNutsMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        return condition_on_nutpie._func(dist, observed, **kwargs)
+        return condition_on_nutpie.apply(dist, observed, **kwargs)

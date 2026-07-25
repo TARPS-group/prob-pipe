@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 
 from probpipe import BroadcastDistribution, EmpiricalDistribution, Normal, ProductDistribution
-from probpipe.core import _workflow_distribution_broadcast, _workflow_execution
+from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
 from probpipe.core.config import WorkflowKind
 
 
@@ -47,6 +47,10 @@ def _resolve_to(dispatch: str):
     return resolve_dispatch
 
 
+def _ref(name: str) -> _workflow_call.WorkflowInputRef:
+    return _workflow_call.WorkflowInputRef(name)
+
+
 class TestExecuteDistributionBroadcast:
     def test_sample_path_uses_execution_request(self, monkeypatch):
         values = {
@@ -72,7 +76,7 @@ class TestExecuteDistributionBroadcast:
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=shift,
             values=values,
-            broadcast_args=["x"],
+            broadcast_args=[_ref("x")],
             n_broadcast_samples=5,
             include_inputs=True,
             get_key=_key_source(0),
@@ -121,7 +125,7 @@ class TestExecuteDistributionBroadcast:
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=add,
             values=values,
-            broadcast_args=["x", "y"],
+            broadcast_args=[_ref("x"), _ref("y")],
             n_broadcast_samples=10,
             include_inputs=True,
             get_key=_key_source(1),
@@ -165,7 +169,7 @@ class TestExecuteDistributionBroadcast:
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=double,
             values=values,
-            broadcast_args=["x"],
+            broadcast_args=[_ref("x")],
             n_broadcast_samples=6,
             include_inputs=True,
             get_key=_key_source(2),
@@ -193,7 +197,7 @@ class TestExecuteDistributionBroadcast:
             _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
-                broadcast_args=["x"],
+                broadcast_args=[_ref("x")],
                 n_broadcast_samples=6,
                 include_inputs=True,
                 get_key=_key_source(2),
@@ -215,12 +219,12 @@ class TestExecuteDistributionBroadcast:
 
         sampled = _workflow_distribution_broadcast._sample_broadcast_args(
             values,
-            ["a", "b"],
+            [_ref("a"), _ref("b")],
             8,
             jax.random.PRNGKey(3),
         )
 
-        np.testing.assert_allclose(sampled["a"], sampled["b"])
+        np.testing.assert_allclose(sampled[_ref("a")], sampled[_ref("b")])
 
     @pytest.mark.parametrize(
         ("n_broadcast_samples", "error_type", "message"),
@@ -240,7 +244,7 @@ class TestExecuteDistributionBroadcast:
             _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values={"x": Normal(loc=0.0, scale=1.0, name="x")},
-                broadcast_args=["x"],
+                broadcast_args=[_ref("x")],
                 n_broadcast_samples=n_broadcast_samples,
                 include_inputs=True,
                 get_key=_key_source(4),
@@ -257,7 +261,7 @@ class TestExecuteDistributionBroadcast:
             result = _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values={"x": Normal(loc=0.0, scale=1.0, name="x")},
-                broadcast_args=["x"],
+                broadcast_args=[_ref("x")],
                 n_broadcast_samples=3,
                 include_inputs=True,
                 get_key=_key_source(5),

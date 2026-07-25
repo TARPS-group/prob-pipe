@@ -7,6 +7,7 @@ internals are split into smaller private modules.
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
@@ -90,6 +91,91 @@ def _resolve_call(
 
 
 class TestWorkflowCallHelpers:
+    def test_input_refs_use_one_subscript_for_variadic_slots(self):
+        def collect(head, *items, **extras):
+            return head, items, extras
+
+        info = _workflow_call.make_signature_info(collect)
+        values = {
+            "head": 1,
+            "items": (2, 3),
+            "extras": {"tail": 4},
+        }
+
+        refs = _workflow_call.iter_input_refs(info, values)
+
+        assert refs == (
+            _workflow_call.WorkflowInputRef("head"),
+            _workflow_call.WorkflowInputRef("items", subscript=0),
+            _workflow_call.WorkflowInputRef("items", subscript=1),
+            _workflow_call.WorkflowInputRef("extras", subscript="tail"),
+        )
+        assert tuple(ref.label for ref in refs) == (
+            "head",
+            "*items[0]",
+            "*items[1]",
+            "**extras['tail']",
+        )
+        assert tuple(_workflow_call.input_ref_value(values, ref) for ref in refs) == (
+            1,
+            2,
+            3,
+            4,
+        )
+
+    def test_variadic_any_is_not_a_planner_pass_through_hint(self):
+        def collect(head: Any, *items: Any, **extras: Any):
+            return head, items, extras
+
+        info = _workflow_call.make_signature_info(collect)
+
+        assert _workflow_call.input_ref_hint(info, _workflow_call.WorkflowInputRef("head")) is Any
+        assert (
+            _workflow_call.input_ref_hint(
+                info,
+                _workflow_call.WorkflowInputRef("items", subscript=0),
+            )
+            is None
+        )
+        assert (
+            _workflow_call.input_ref_hint(
+                info,
+                _workflow_call.WorkflowInputRef("extras", subscript="tail"),
+            )
+            is None
+        )
+
+    def test_input_ref_replacement_preserves_signature_shaped_containers(self):
+        values = {
+            "head": 1,
+            "items": (2, 3),
+            "extras": {"tail": 4},
+        }
+        head = _workflow_call.WorkflowInputRef("head")
+        first_item = _workflow_call.WorkflowInputRef("items", subscript=0)
+        tail = _workflow_call.WorkflowInputRef("extras", subscript="tail")
+
+        singly_replaced = _workflow_call.replace_input_ref(values, first_item, 20)
+        jointly_replaced = _workflow_call.replace_input_refs(
+            values,
+            {
+                head: 10,
+                first_item: 20,
+                tail: 40,
+            },
+        )
+
+        assert singly_replaced == {
+            "head": 1,
+            "items": (20, 3),
+            "extras": {"tail": 4},
+        }
+        assert jointly_replaced == {
+            "head": 10,
+            "items": (20, 3),
+            "extras": {"tail": 40},
+        }
+
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
         assert _resolve_call(add_func, 1.0, 2.0).values == {"x": 1.0, "y": 2.0}
         assert _resolve_call(add_func, 1.0, y=2.0).values == {"x": 1.0, "y": 2.0}
@@ -98,19 +184,19 @@ class TestWorkflowCallHelpers:
         with pytest.raises(TypeError, match="multiple values"):
             _resolve_call(add_func, 1.0, x=2.0)
 
-    def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
+    def test_var_keyword_preserves_signature_shaped_mapping(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, scale=2.0)
 
-        assert call.values == {"x": 1.0, "scale": 2.0}
+        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, kwargs={"scale": 2.0})
 
-        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
+        assert call.values == {"x": 1.0, "kwargs": {"kwargs": {"scale": 2.0}}}
 
     def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
         with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -223,6 +309,19 @@ class TestModuleResolution:
         assert module.child_nodes["dep"] is dep
         assert float(module.step()) == 12.0
         assert float(module.step(y=2.0)) == 7.0
+
+    def test_module_records_resolved_plain_inputs(self, full_provenance_mode):
+        dep = DataNode()
+        module = CallResolutionModule(dep=dep, x=5.0)
+
+        result = module.step()
+
+        assert result.provenance is not None
+        assert result.provenance.parents[1:] == ()
+        assert tuple(result.provenance.inputs) == ("dep", "x", "y")
+        assert result.provenance.inputs["dep"].parent is dep
+        assert result.provenance.inputs["x"].parent == 5.0
+        assert result.provenance.inputs["y"].parent == 7.0
 
     def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
         module = CallResolutionModule(dep=DataNode(), x=5.0)

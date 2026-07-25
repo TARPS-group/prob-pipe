@@ -206,9 +206,10 @@ def _validate_record_samples(record_data: Record) -> int:
     field and report its shape so users can debug shape mismatches
     without having to instrument the call site.
     """
-    if not record_data.fields:
+    field_paths = tuple(record_data.event_template.keys())
+    if not field_paths:
         raise ValueError("Record samples must have at least one field.")
-    first_name = record_data.fields[0]
+    first_name = field_paths[0]
     first = jnp.asarray(record_data[first_name])
     if first.ndim == 0:
         raise ValueError(
@@ -217,7 +218,7 @@ def _validate_record_samples(record_data: Record) -> int:
             f"field {first_name!r} has shape {first.shape}."
         )
     n = int(first.shape[0])
-    for f in record_data.fields[1:]:
+    for f in field_paths[1:]:
         arr = jnp.asarray(record_data[f])
         if arr.ndim == 0:
             raise ValueError(
@@ -625,7 +626,7 @@ class RecordEmpiricalDistribution(
 
     @property
     def supports(self) -> dict[str, Constraint]:
-        return {f: real for f in self._record_data.fields}
+        return dict.fromkeys(self._record_data, real)
 
     # -- sampling -----------------------------------------------------------
 
@@ -639,9 +640,9 @@ class RecordEmpiricalDistribution(
             return _index_record(self._record_data, idx)
         indices = self._w.choice(key, shape=(prod(sample_shape),))
         fields: dict[str, jnp.ndarray] = {}
-        for f in self._record_data.fields:
-            arr = jnp.asarray(self._record_data[f])
-            fields[f] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
+        for field_path in self._record_data:
+            arr = jnp.asarray(self._record_data[field_path])
+            fields[field_path] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
         # Return a ``NumericRecord`` rather than a ``NumericRecordArray``
         # for the batched case. ``NumericRecordArray`` would carry a
         # ``batch_shape`` that ``jax.vmap``'s pytree validation rejects
@@ -707,12 +708,16 @@ class RecordEmpiricalDistribution(
         constructed from an array, so they expect to operate on
         arrays). Multi-field records pass the row Record as-is.
         """
-        single_field = len(self._record_data.fields) == 1
-        only_field = self._record_data.fields[0] if single_field else None
+        keys = tuple(self._record_data.keys())
+        single_field = len(keys) == 1
+        only_field = keys[0] if single_field else None
 
         def _row(i):
             r = _index_record(self._record_data, i)
-            return r[only_field] if single_field else r
+            if not single_field:
+                return r
+            assert only_field is not None
+            return r[only_field]
 
         if num_evaluations is not None and num_evaluations < self._num_atoms:
             if key is None:
@@ -736,7 +741,7 @@ class RecordEmpiricalDistribution(
     def __repr__(self) -> str:
         return (
             f"RecordEmpiricalDistribution(num_atoms={self._num_atoms}, "
-            f"fields=({', '.join(self._record_data.fields)}))"
+            f"fields=({', '.join(self._record_data.keys())}))"
         )
 
 
@@ -1235,7 +1240,7 @@ class RecordBootstrapReplicateDistribution(
 
     @property
     def supports(self) -> dict[str, Constraint]:
-        return {f: real for f in self._record_data.fields}
+        return dict.fromkeys(self._record_data.fields, real)
 
     # -- sampling -----------------------------------------------------------
 

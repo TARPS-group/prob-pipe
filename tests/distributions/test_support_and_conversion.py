@@ -319,17 +319,20 @@ class TestFromDistribution:
 
     # -- provenance --
     def test_from_distribution_same_class_returns_source(self, key):
-        """Same-class conversion returns the source object (no-op)."""
+        """Raw same-class conversion is a no-op; Function call is a new result."""
         n = Normal(loc=0.0, scale=1.0, name="n")
+        raw = from_distribution.apply(n, Normal, key=key)
         n2 = from_distribution(n, Normal, key=key)
-        assert n2 is n
+        assert raw is n
+        assert n2 is not n
+        assert n2.provenance.operation == "workflow.from_distribution"
 
     def test_from_distribution_cross_class_provenance(self, key):
         """Cross-class conversion attaches provenance."""
         g = Gamma(concentration=3.0, rate=1.0, name="g")
         n = from_distribution(g, Normal, key=key, check_support=False)
         assert n.provenance is not None
-        assert n.provenance.operation == "from_distribution"
+        assert n.provenance.operation == "workflow.from_distribution"
 
     # -- empirical from anything --
     def test_empirical_from_normal(self, key):

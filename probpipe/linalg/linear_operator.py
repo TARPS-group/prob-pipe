@@ -135,6 +135,10 @@ class LinOp(ABC):
             raise LinAlgError(f"Linear operator is not square. Has shape ({n_out}, {n_in})")
 
     # ---- Optional convenience methods that implementors may override for speed ----
+    def apply(self, x: ArrayLike) -> Array:
+        """Apply the operator action, exactly as :meth:`matvec`."""
+        return self.matvec(x)
+
     def matvec(self, x: ArrayLike) -> Array:
         """Return A @ x for x shape (n_in,) -> (n_out,)."""
         x = _ensure_vector(x)

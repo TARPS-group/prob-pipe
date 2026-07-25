@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -11,11 +13,9 @@ from .config import ProvenanceMode, provenance_config
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from ._record_array import RecordArray
-    from .distribution import Distribution
-    from .record import Record
+    from .tracked import Tracked
 
-    ProvenanceNode = Distribution | Record | RecordArray
+    ProvenanceNode = Tracked
 
 __all__ = [
     "ParentInfo",
@@ -42,10 +42,11 @@ class ParentInfo:
     Attributes
     ----------
     type_name : str
-        Class name of the parent (e.g. ``"EmpiricalDistribution"``).
+        Class name of the tracked parent or plain input (e.g.
+        ``"EmpiricalDistribution"`` or ``"ArrayImpl"``).
     name : str or None
-        Name of the parent tracked term.  ``None`` for unnamed parents
-        (uncommon; most framework objects carry a name).
+        Name of the tracked parent. ``None`` for plain inputs and unnamed
+        tracked terms.
     provenance : Provenance or None
         The parent's own provenance node.  Kept in both LIGHTWEIGHT and
         FULL modes so the ancestry DAG remains traversable without holding
@@ -53,15 +54,20 @@ class ParentInfo:
         holds an unhashable ``metadata`` dict) but included in equality so
         that two descriptors for the same ancestor compare equal.
     fingerprint : str or None
-        Stable 16-character hex digest of the parent's content, populated
-        by :meth:`Provenance.create`.  ``None`` only when fingerprinting
-        raises an unexpected error.  Intended as the foundation for a future
-        Prefect ``cache_key_fn``.  Excluded from equality and hashing: descriptor
-        identity is structural (``type_name`` / ``name`` / ``provenance``), so a
-        content digest must not perturb ancestor-set dedup.
-    parent : ProvenanceNode or None
-        The live parent object.  Set in FULL mode; ``None`` in LIGHTWEIGHT
-        so the parent's data can be garbage-collected.  Excluded from
+        Best-effort 16-character digest populated by
+        :meth:`Provenance.create`. ``None`` only when fingerprinting raises an
+        unexpected error. Consult ``fingerprint_is_weak`` before treating it
+        as a portable cache-key component. Excluded from equality and hashing:
+        descriptor identity is structural (``type_name`` / ``name`` /
+        ``provenance``), so a digest must not perturb ancestor-set dedup.
+    parent : Any or None
+        The live tracked parent or plain input object.  Set in FULL mode;
+        ``None`` in LIGHTWEIGHT so the object's data can be garbage-collected.
+        Excluded from equality and hashing.
+    fingerprint_is_weak : bool
+        Whether the digest contains a process-local identity component. Weak
+        fingerprints remain useful for distinguishing live objects in one
+        process but must not be reused as portable content keys. Excluded from
         equality and hashing.
     """
 
@@ -69,7 +75,8 @@ class ParentInfo:
     name: str | None
     provenance: Provenance | None = field(default=None, hash=False)
     fingerprint: str | None = field(default=None, compare=False)
-    parent: ProvenanceNode | None = field(default=None, compare=False)
+    parent: Any | None = field(default=None, compare=False)
+    fingerprint_is_weak: bool = field(default=False, compare=False)
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +86,7 @@ class ParentInfo:
 
 @dataclass(frozen=True)
 class Provenance:
-    """How a tracked term was produced: an operation plus parent descriptors.
+    """How a tracked term was produced: an operation plus call descriptors.
 
     Attached write-once to a tracked term via ``with_provenance``.
 
@@ -89,16 +96,22 @@ class Provenance:
         The operation that produced the object (e.g. ``"broadcast"``,
         ``"condition_on"``, ``"with_name"``).
     parents : tuple of ParentInfo
-        Descriptors of the inputs the operation consumed.
+        Descriptors of tracked terms the operation consumed. Only these
+        descriptors participate in ancestry traversal.
     metadata : dict
         Optional scalar/string metadata about the operation (e.g. the old
         and new names of a rename). Serialized alongside the operation by
         :meth:`to_dict`.
+    inputs : mapping of str to ParentInfo
+        Descriptors of resolved plain inputs, keyed by stable parameter label.
+        These descriptors preserve call-defining values without turning them
+        into lineage nodes.
     """
 
     operation: str
     parents: tuple[Any, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
+    inputs: Mapping[str, ParentInfo] = field(default_factory=dict)
 
     def __repr__(self) -> str:
         parent_names = ", ".join(p.name or p.type_name for p in self.parents)
@@ -115,17 +128,21 @@ class Provenance:
             If True, recursively serialize parent provenance chains via
             each parent's ``.provenance``.
         """
-        parent_dicts = []
-        for p in self.parents:
+
+        def serialize_info(p: ParentInfo) -> dict[str, Any]:
             entry: dict[str, Any] = {
                 "type": p.type_name,
                 "name": p.name,
             }
             if p.fingerprint is not None:
                 entry["fingerprint"] = p.fingerprint
+            entry["fingerprint_is_weak"] = p.fingerprint_is_weak
             if recurse and p.provenance is not None:
                 entry["provenance"] = p.provenance.to_dict(recurse=True)
-            parent_dicts.append(entry)
+            return entry
+
+        parent_dicts = [serialize_info(p) for p in self.parents]
+        input_dicts = {label: serialize_info(info) for label, info in self.inputs.items()}
 
         safe_metadata = {}
         for k, v in self.metadata.items():
@@ -137,6 +154,7 @@ class Provenance:
         return {
             "operation": self.operation,
             "parents": parent_dicts,
+            "inputs": input_dicts,
             "metadata": safe_metadata,
         }
 
@@ -144,14 +162,20 @@ class Provenance:
     def from_dict(cls, d: dict[str, Any]) -> Provenance:
         """Reconstruct from a dict produced by :meth:`to_dict`.
 
-        Parent distributions are not available at deserialization time, so
-        ``parents`` will be an empty tuple.  The parent information is
-        preserved in the dict under ``"parents"`` for inspection.
+        Original parent and input objects are not available at deserialization
+        time, so ``parents`` and ``inputs`` are empty. Their descriptors are
+        preserved in metadata under ``"_parents_info"`` and
+        ``"_inputs_info"`` for inspection.
         """
         return cls(
             operation=d["operation"],
             parents=(),
-            metadata={**d.get("metadata", {}), "_parents_info": d.get("parents", [])},
+            metadata={
+                **d.get("metadata", {}),
+                "_parents_info": d.get("parents", []),
+                "_inputs_info": d.get("inputs", {}),
+            },
+            inputs={},
         )
 
     @classmethod
@@ -160,6 +184,7 @@ class Provenance:
         operation: str,
         parents: tuple | list = (),
         metadata: dict[str, Any] | None = None,
+        inputs: Mapping[str, Any] | None = None,
     ) -> Provenance | None:
         """Build provenance respecting the global :attr:`~probpipe.provenance_config` mode.
 
@@ -172,22 +197,25 @@ class Provenance:
         operation:
             Provenance operation label (e.g. ``"broadcast"``).
         parents:
-            Raw parent objects that carry a ``.provenance`` attribute
-            (already filtered and deduplicated by the caller).
+            Raw tracked parent objects, already ordered and deduplicated by the
+            caller.
         metadata:
             Optional mapping of scalar/string metadata.
+        inputs:
+            Resolved plain inputs keyed by stable parameter label.
         """
         mode = provenance_config.mode
         if mode is ProvenanceMode.OFF:
             return None
         keep = mode is ProvenanceMode.FULL
 
-        from ._fingerprint import fingerprint as _fingerprint
+        from ._fingerprint import _fingerprint_with_strength
 
         def _make_parent(p: Any) -> ParentInfo:
             fp: str | None
+            fingerprint_is_weak = False
             try:
-                fp = _fingerprint(p)
+                fp, fingerprint_is_weak = _fingerprint_with_strength(p)
             except Exception as exc:
                 logger.warning(
                     "fingerprint() failed for %s %r: %s",
@@ -202,10 +230,17 @@ class Provenance:
                 provenance=getattr(p, "provenance", None),
                 fingerprint=fp,
                 parent=p if keep else None,
+                fingerprint_is_weak=fingerprint_is_weak,
             )
 
         refs = tuple(_make_parent(p) for p in parents)
-        return cls(operation, parents=refs, metadata=metadata or {})
+        input_refs = {label: _make_parent(value) for label, value in (inputs or {}).items()}
+        return cls(
+            operation,
+            parents=refs,
+            metadata=metadata or {},
+            inputs=input_refs,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -246,7 +281,7 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
     """
     visited: set = {id(node)}
     ancestors: list = []
-    queue: list = []
+    queue: deque[Any] = deque()
 
     def _enqueue(p: Any) -> None:
         key = _parent_key(p)
@@ -260,7 +295,7 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
             _enqueue(p)
 
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         current_provenance = current.provenance
         if current_provenance is not None:
             for p in current_provenance.parents:
@@ -269,8 +304,8 @@ def provenance_ancestors(node: ProvenanceNode) -> list[Any]:
     return ancestors
 
 
-def provenance_dag(dist: Distribution):
-    """Build a Graphviz ``Digraph`` of the provenance chain rooted at *dist*.
+def provenance_dag(node: ProvenanceNode):
+    """Build a Graphviz ``Digraph`` of the provenance chain rooted at *node*.
 
     Each node is labelled with its type and name.  Edges point from parent
     to child and are labelled with the operation that produced the child.
@@ -313,16 +348,16 @@ def provenance_dag(dist: Distribution):
                     _visit_parent(pp, nid, p.provenance.operation)
         dot.edge(nid, child_nid, label=operation)
 
-    def _visit_dist(d: Distribution) -> str:
-        nid = str(id(d))
-        if id(d) in visited:
+    def _visit_node(value: ProvenanceNode) -> str:
+        nid = str(id(value))
+        if id(value) in visited:
             return nid
-        visited.add(id(d))
-        dot.node(nid, _label(type(d).__name__, d.name or ""))
-        if d.provenance is not None:
-            for p in d.provenance.parents:
-                _visit_parent(p, nid, d.provenance.operation)
+        visited.add(id(value))
+        dot.node(nid, _label(type(value).__name__, value.name or ""))
+        if value.provenance is not None:
+            for p in value.provenance.parents:
+                _visit_parent(p, nid, value.provenance.operation)
         return nid
 
-    _visit_dist(dist)
+    _visit_node(node)
     return dot

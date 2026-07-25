@@ -348,10 +348,12 @@ class TestConditionOn:
             x=jnp.array([1.0, 2.0]),
             y=jnp.array([3.0, 4.0]),
         )
+        raw = condition_on.apply(je, x=jnp.array(1.0))
         cond = condition_on(je, x=jnp.array(1.0))
+        assert raw.provenance.operation == "condition_on"
+        assert "x" in raw.provenance.metadata["conditioned"]
         assert cond.provenance is not None
-        assert cond.provenance.operation == "condition_on"
-        assert "x" in cond.provenance.metadata["conditioned"]
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_condition_on_unknown_raises(self):
         je = JointEmpirical(
