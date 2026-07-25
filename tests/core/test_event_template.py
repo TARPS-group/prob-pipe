@@ -16,6 +16,7 @@ from probpipe.core.event_template import (
     FunctionSpec,
     NumericEventTemplate,
     OpaqueSpec,
+    RecordSpec,
     ValueSpec,
 )
 
@@ -554,8 +555,8 @@ class TestValueSpecs:
         for spec in (
             ArraySpec((3,)),
             OpaqueSpec(),
-            DistributionSpec(event_template=EventTemplate(x=())),
-            FunctionSpec(input_template=EventTemplate(x=()), output_template=EventTemplate(y=())),
+            DistributionSpec(event_spec=EventTemplate(x=())),
+            FunctionSpec(input_template=EventTemplate(x=()), output_spec=EventTemplate(y=())),
         ):
             with pytest.raises(FrozenInstanceError):
                 spec.shape = (1,)  # type: ignore[misc]
@@ -565,10 +566,8 @@ class TestValueSpecs:
         specs = {
             ArraySpec((3,)): 1,
             OpaqueSpec(): 2,
-            DistributionSpec(event_template=EventTemplate(x=())): 3,
-            FunctionSpec(
-                input_template=EventTemplate(x=()), output_template=EventTemplate(y=())
-            ): 4,
+            DistributionSpec(event_spec=EventTemplate(x=())): 3,
+            FunctionSpec(input_template=EventTemplate(x=()), output_spec=EventTemplate(y=())): 4,
         }
         assert len(specs) == 4
 
@@ -604,12 +603,12 @@ class TestValueSpecs:
         assert OpaqueSpec(meta="a") != OpaqueSpec(meta="b")
         # Distinct-but-equal templates, so this pins value equality (a
         # shared object would also pass under identity-based equality).
-        assert DistributionSpec(event_template=EventTemplate(x=())) == DistributionSpec(
-            event_template=EventTemplate(x=())
+        assert DistributionSpec(event_spec=EventTemplate(x=())) == DistributionSpec(
+            event_spec=EventTemplate(x=())
         )
         assert FunctionSpec(
-            input_template=EventTemplate(x=()), output_template=EventTemplate(y=())
-        ) == FunctionSpec(input_template=EventTemplate(x=()), output_template=EventTemplate(y=()))
+            input_template=EventTemplate(x=()), output_spec=EventTemplate(y=())
+        ) == FunctionSpec(input_template=EventTemplate(x=()), output_spec=EventTemplate(y=()))
 
     def test_array_and_opaque_specs_are_distinct(self):
         assert ArraySpec(()) != OpaqueSpec()
@@ -641,7 +640,7 @@ class TestValueSpecs:
                 ArraySpec((2,), dtype=jnp.float32, support=positive),
             ),
             (OpaqueSpec(meta="a"), OpaqueSpec(meta="a")),
-            (DistributionSpec(event_template=inner_a), DistributionSpec(event_template=inner_b)),
+            (DistributionSpec(event_spec=inner_a), DistributionSpec(event_spec=inner_b)),
         ]
         for a, b in pairs:
             assert a == b
@@ -650,8 +649,8 @@ class TestValueSpecs:
     def test_distribution_and_function_spec_inequality(self):
         # Distinct-but-equal templates compare equal; different templates
         # do not (the equality is by value, not object identity).
-        assert DistributionSpec(event_template=EventTemplate(x=())) != DistributionSpec(
-            event_template=EventTemplate(y=())
+        assert DistributionSpec(event_spec=EventTemplate(x=())) != DistributionSpec(
+            event_spec=EventTemplate(y=())
         )
         assert FunctionSpec(EventTemplate(a=()), EventTemplate(b=())) != FunctionSpec(
             EventTemplate(a=()), EventTemplate(c=())
@@ -690,7 +689,7 @@ class TestValueSpecs:
         tpl = EventTemplate(
             x=ArraySpec((2,), dtype="float32"),
             label=OpaqueSpec(meta="tag"),
-            d=DistributionSpec(event_template=EventTemplate(a=())),
+            d=DistributionSpec(event_spec=EventTemplate(a=())),
             f=FunctionSpec(EventTemplate(inp=ArraySpec(())), EventTemplate(out=ArraySpec(()))),
         )
         restored = pickle.loads(pickle.dumps(tpl))
@@ -714,12 +713,12 @@ class TestValueSpecs:
         with pytest.raises(TypeError, match="symbolic dimension"):
             ArraySpec((dimension,))
 
-    def test_distribution_spec_requires_event_template(self):
-        with pytest.raises(TypeError, match="must be an EventTemplate"):
-            DistributionSpec(event_template=(3,))  # type: ignore[arg-type]
-        # Unlike FunctionSpec, a bare ValueSpec is not auto-wrapped here.
-        with pytest.raises(TypeError, match="must be an EventTemplate"):
-            DistributionSpec(event_template=ArraySpec(()))  # type: ignore[arg-type]
+    def test_distribution_spec_requires_record_declaration(self):
+        with pytest.raises(TypeError, match="must be an EventTemplate or a RecordSpec"):
+            DistributionSpec(event_spec=(3,))  # type: ignore[arg-type]
+        # A raw-value spec is not a declaration: it names no kind.
+        with pytest.raises(TypeError, match="must be an EventTemplate or a RecordSpec"):
+            DistributionSpec(event_spec=ArraySpec(()))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -862,16 +861,16 @@ class TestDistributionSpecIsValid:
         from probpipe import Normal
 
         dist = Normal(name="x", loc=0.0, scale=1.0)
-        assert DistributionSpec(event_template=dist.event_template).is_valid(dist)
+        assert DistributionSpec(event_spec=dist.event_template).is_valid(dist)
 
     def test_template_mismatch_invalid(self):
         from probpipe import Normal
 
         dist = Normal(name="x", loc=0.0, scale=1.0)
-        assert not DistributionSpec(event_template=EventTemplate(y=())).is_valid(dist)
+        assert not DistributionSpec(event_spec=EventTemplate(y=())).is_valid(dist)
 
     def test_non_distribution_invalid(self):
-        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        spec = DistributionSpec(event_spec=EventTemplate(x=()))
         assert not spec.is_valid(42)
         assert not spec.is_valid(EventTemplate(x=()))
 
@@ -884,7 +883,7 @@ class TestDistributionSpecIsValid:
             def __init__(self):
                 super().__init__(name="d")
 
-        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        spec = DistributionSpec(event_spec=EventTemplate(x=()))
         assert not spec.is_valid(_NoTemplate())
 
     def test_distribution_with_none_template_invalid(self):
@@ -898,7 +897,7 @@ class TestDistributionSpecIsValid:
             def event_template(self):
                 return None
 
-        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        spec = DistributionSpec(event_spec=EventTemplate(x=()))
         assert not spec.is_valid(_NoneTemplate())
 
     def test_type_error_template_is_not_a_match(self):
@@ -915,7 +914,7 @@ class TestDistributionSpecIsValid:
             def event_template(self):
                 raise TypeError("template not derivable")
 
-        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        spec = DistributionSpec(event_spec=EventTemplate(x=()))
         assert not spec.is_valid(_NotDerivable())
 
     @pytest.mark.parametrize("error", [RuntimeError, ValueError, KeyError])
@@ -933,19 +932,19 @@ class TestDistributionSpecIsValid:
             def event_template(self):
                 raise error("boom")
 
-        spec = DistributionSpec(event_template=EventTemplate(x=()))
+        spec = DistributionSpec(event_spec=EventTemplate(x=()))
         with pytest.raises(error):
             spec.is_valid(_Broken())
 
 
 class TestFunctionSpecIsValid:
     def test_callable_valid(self):
-        spec = FunctionSpec(input_template=EventTemplate(a=()), output_template=EventTemplate(b=()))
+        spec = FunctionSpec(input_template=EventTemplate(a=()), output_spec=EventTemplate(b=()))
         assert spec.is_valid(lambda a: a)
         assert spec.is_valid(np.sin)
 
     def test_non_callable_invalid(self):
-        spec = FunctionSpec(input_template=EventTemplate(a=()), output_template=EventTemplate(b=()))
+        spec = FunctionSpec(input_template=EventTemplate(a=()), output_spec=EventTemplate(b=()))
         assert not spec.is_valid(3.0)
         assert not spec.is_valid("f")
 
@@ -956,11 +955,13 @@ class TestFunctionSpecIsValid:
 
 
 class TestFunctionSpecTemplatesRequired:
-    def test_explicit_templates_stored_as_is(self):
+    def test_explicit_sides_stored_per_the_storage_rule(self):
+        # The input side is a schema and is stored as given; the output side is
+        # a declaration, so a bare template is stored wrapped.
         inp, out = EventTemplate(a=()), EventTemplate(b=())
         spec = FunctionSpec(inp, out)
         assert spec.input_template is inp
-        assert spec.output_template is out
+        assert spec.output_spec == RecordSpec(out)
 
     def test_bare_value_spec_rejected(self):
         # The input side is a record schema, written out as an EventTemplate; a
@@ -970,7 +971,7 @@ class TestFunctionSpecTemplatesRequired:
         with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
             FunctionSpec(ArraySpec(()), EventTemplate(b=()))  # type: ignore[arg-type]
         with pytest.raises(
-            TypeError, match="output_template must be None, an EventTemplate, or a TermSpec"
+            TypeError, match="output_spec must be None, an EventTemplate, or a TermSpec"
         ):
             FunctionSpec(EventTemplate(a=()), OpaqueSpec())  # type: ignore[arg-type]
 
@@ -978,7 +979,7 @@ class TestFunctionSpecTemplatesRequired:
         with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
             FunctionSpec((3,), EventTemplate(b=()))  # type: ignore[arg-type]
         with pytest.raises(
-            TypeError, match="output_template must be None, an EventTemplate, or a TermSpec"
+            TypeError, match="output_spec must be None, an EventTemplate, or a TermSpec"
         ):
             FunctionSpec(EventTemplate(a=()), "not a template")  # type: ignore[arg-type]
 
@@ -992,15 +993,16 @@ class TestFunctionSpecOptionalTemplates:
     def test_bare_function_spec_is_any_callable(self):
         spec = FunctionSpec()
         assert spec.input_template is None
-        assert spec.output_template is None
+        assert spec.output_spec is None
         assert spec.is_valid(lambda x: x)
         assert spec.is_valid(np.sin)
         assert not spec.is_valid(3.0)
 
     def test_one_side_specified(self):
-        spec = FunctionSpec(output_template=EventTemplate(out=ArraySpec(())))
+        spec = FunctionSpec(output_spec=EventTemplate(out=ArraySpec(())))
         assert spec.input_template is None
-        assert spec.output_template == EventTemplate(out=ArraySpec(()))
+        # A record output is stored as its declaration (the storage rule).
+        assert spec.output_spec == RecordSpec(EventTemplate(out=ArraySpec(())))
 
     def test_none_specs_are_hashable_and_equal(self):
         assert FunctionSpec() == FunctionSpec()
@@ -1054,10 +1056,8 @@ class TestConstructionSpecs:
         assert tpl["label"] is spec
 
     def test_explicit_distribution_and_function_specs_accepted(self):
-        dspec = DistributionSpec(event_template=EventTemplate(x=()))
-        fspec = FunctionSpec(
-            input_template=EventTemplate(a=()), output_template=EventTemplate(b=())
-        )
+        dspec = DistributionSpec(event_spec=EventTemplate(x=()))
+        fspec = FunctionSpec(input_template=EventTemplate(a=()), output_spec=EventTemplate(b=()))
         tpl = EventTemplate(d=dspec, f=fspec)
         assert tpl["d"] is dspec
         assert tpl["f"] is fspec
@@ -1086,13 +1086,13 @@ class TestAutoPromotionSpecs:
         assert type(tpl) is EventTemplate
 
     def test_distribution_spec_blocks_promotion(self):
-        tpl = EventTemplate(x=(), d=DistributionSpec(event_template=EventTemplate(a=())))
+        tpl = EventTemplate(x=(), d=DistributionSpec(event_spec=EventTemplate(a=())))
         assert type(tpl) is EventTemplate
 
     def test_function_spec_blocks_promotion(self):
         tpl = EventTemplate(
             x=(),
-            f=FunctionSpec(input_template=EventTemplate(a=()), output_template=EventTemplate(b=())),
+            f=FunctionSpec(input_template=EventTemplate(a=()), output_spec=EventTemplate(b=())),
         )
         assert type(tpl) is EventTemplate
 
@@ -1102,15 +1102,13 @@ class TestAutoPromotionSpecs:
 
     def test_numeric_rejects_distribution_spec(self):
         with pytest.raises(TypeError, match="only ArraySpec"):
-            NumericEventTemplate(x=(), d=DistributionSpec(event_template=EventTemplate(a=())))
+            NumericEventTemplate(x=(), d=DistributionSpec(event_spec=EventTemplate(a=())))
 
     def test_numeric_rejects_function_spec(self):
         with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(
                 x=(),
-                f=FunctionSpec(
-                    input_template=EventTemplate(a=()), output_template=EventTemplate(b=())
-                ),
+                f=FunctionSpec(input_template=EventTemplate(a=()), output_spec=EventTemplate(b=())),
             )
 
 
@@ -1141,11 +1139,11 @@ class TestShapeAccessorBackCompat:
 
 
 def _dist_spec() -> DistributionSpec:
-    return DistributionSpec(event_template=EventTemplate(a=()))
+    return DistributionSpec(event_spec=EventTemplate(a=()))
 
 
 def _func_spec() -> FunctionSpec:
-    return FunctionSpec(input_template=EventTemplate(a=()), output_template=EventTemplate(b=()))
+    return FunctionSpec(input_template=EventTemplate(a=()), output_spec=EventTemplate(b=()))
 
 
 class TestIsNumeric:
@@ -1386,7 +1384,7 @@ class TestTermSpecTaxonomy:
     """The term-spec sub-hierarchy: one spec per kind, all also ValueSpecs."""
 
     def test_term_specs_are_value_specs(self):
-        from probpipe.core.event_template import RecordSpec, TermSpec
+        from probpipe.core.event_template import TermSpec
 
         tau = EventTemplate(x=())
         for spec in (
@@ -1402,6 +1400,48 @@ class TestTermSpecTaxonomy:
 
         assert not isinstance(ArraySpec(()), TermSpec)
         assert not isinstance(OpaqueSpec(), TermSpec)
+
+    # --- the storage rule: a declaration is stored as a TermSpec ---
+
+    def test_event_template_declaration_wraps_to_record_spec(self):
+        """A bare EventTemplate is constructor sugar; the stored form is a spec."""
+        from probpipe.core.event_template import RecordSpec, TermSpec
+
+        tau = EventTemplate(x=())
+        assert DistributionSpec(tau).event_spec == RecordSpec(tau)
+        assert isinstance(DistributionSpec(tau).event_spec, TermSpec)
+        assert FunctionSpec(tau, tau).output_spec == RecordSpec(tau)
+        assert isinstance(FunctionSpec(tau, tau).output_spec, TermSpec)
+
+    def test_declaration_normalisation_is_idempotent(self):
+        """Passing the wrapped form gives the same spec as passing the template."""
+        from probpipe.core.event_template import RecordSpec
+
+        tau = EventTemplate(x=())
+        assert DistributionSpec(RecordSpec(tau)) == DistributionSpec(tau)
+        assert FunctionSpec(tau, RecordSpec(tau)) == FunctionSpec(tau, tau)
+
+    def test_term_valued_declaration_is_kept_not_wrapped(self):
+        """A term declaration names its own kind and passes through unchanged."""
+        tau = EventTemplate(x=())
+        inner = DistributionSpec(tau)
+        assert DistributionSpec(inner).event_spec is inner  # a random measure
+        assert FunctionSpec(tau, inner).output_spec is inner
+        assert FunctionSpec(tau, FunctionSpec()).output_spec == FunctionSpec()
+
+    def test_declared_kind_is_the_stored_spec_class(self):
+        """The declaration's class is the declared kind — a structural test."""
+        from probpipe.core.event_template import RecordSpec
+
+        tau = EventTemplate(x=())
+        assert type(DistributionSpec(tau).event_spec) is RecordSpec
+        assert type(DistributionSpec(DistributionSpec(tau)).event_spec) is DistributionSpec
+        assert type(FunctionSpec(tau, FunctionSpec()).output_spec) is FunctionSpec
+
+    def test_unspecified_output_stays_none(self):
+        """None means "unspecified" and is not wrapped into a record declaration."""
+        assert FunctionSpec().output_spec is None
+        assert FunctionSpec(EventTemplate(x=())).output_spec is None
 
     def test_event_template_is_not_a_spec(self):
         """The schema is the index; it is not itself a (value or term) spec."""
@@ -1442,9 +1482,11 @@ class TestFunctionSpecOutputWidening:
     """A FunctionSpec output may be a record schema or any term spec."""
 
     def test_event_template_output_still_accepted(self):
-        # backward compatible: the pre-existing EventTemplate output
-        fs = FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))
-        assert isinstance(fs.output_template, EventTemplate)
+        # The pre-existing EventTemplate output is still accepted, now as
+        # construction sugar: it is stored as the record declaration.
+        tau = EventTemplate(out=())
+        fs = FunctionSpec(EventTemplate(x=()), tau)
+        assert fs.output_spec == RecordSpec(tau)
 
     def test_term_spec_output_accepted(self):
         # the widening: a function whose result is itself a term
@@ -1452,13 +1494,13 @@ class TestFunctionSpecOutputWidening:
 
         tau = EventTemplate(out=())
         fs = FunctionSpec(EventTemplate(x=()), DistributionSpec(tau))
-        assert fs.output_template == DistributionSpec(tau)
-        fs2 = FunctionSpec(output_template=RecordSpec(EventTemplate(y=())))
-        assert isinstance(fs2.output_template, RecordSpec)
+        assert fs.output_spec == DistributionSpec(tau)
+        fs2 = FunctionSpec(output_spec=RecordSpec(EventTemplate(y=())))
+        assert isinstance(fs2.output_spec, RecordSpec)
 
     def test_bad_output_rejected(self):
         with pytest.raises(TypeError):
-            FunctionSpec(output_template=ArraySpec(()))  # neither template nor term spec
+            FunctionSpec(output_spec=ArraySpec(()))  # neither template nor term spec
 
     def test_input_template_still_event_template_only(self):
         with pytest.raises(TypeError):

@@ -145,7 +145,7 @@ class TermSpec(ValueSpec):
     ``ConditionalDistributionSpec``, :class:`FunctionSpec`) *is* the kind, and
     ``is_valid`` is inherited, not redeclared. ``ArraySpec`` and ``OpaqueSpec``,
     the raw-value leaves, are not term specs. The marker is what
-    ``isinstance`` checks — a `Function`'s ``output_template`` accepts a
+    ``isinstance`` checks — a `Function`'s ``output_spec`` accepts a
     ``TermSpec`` for a term-valued result, and the wrap boundary reads it to
     coproject a raw result into the term it names.
 
@@ -343,44 +343,78 @@ class RecordSpec(TermSpec):
         return template == self.event_template
 
 
+# A *declaration* — of an event or of an output — is stored as a ``TermSpec``,
+# whose class is the declared kind. An :class:`EventTemplate` is accepted as
+# construction-time sugar for the record case, mirroring the ``_FieldSpecInput``
+# sugar below, and is normalised by :func:`_to_declaration`.
+type _DeclInput = EventTemplate | TermSpec
+
+
+def _to_declaration(decl: _DeclInput) -> TermSpec:
+    """Normalise a declaration input to the stored :class:`TermSpec`.
+
+    A bare :class:`EventTemplate` means a record declaration and becomes
+    ``RecordSpec(template)``; an existing :class:`TermSpec` passes through. The
+    two forms denote the same space, so after construction only the spec
+    remains and the declared kind is its class.
+    """
+    if isinstance(decl, EventTemplate):
+        return RecordSpec(decl)
+    return decl
+
+
 @dataclass(frozen=True)
 class DistributionSpec(TermSpec):
     """A term spec for a ``Distribution``.
 
-    ``event_template`` is the :class:`EventTemplate` of one draw from that
-    distribution.
+    ``event_spec`` is the *event declaration*: what one draw from the
+    distribution is. A record draw is declared by its :class:`EventTemplate`,
+    which construction normalises to ``RecordSpec(template)``, so the stored
+    declaration is always a :class:`TermSpec` and the declared draw kind is
+    simply its class.
 
     Raises
     ------
     TypeError
-        If ``event_template`` is not an :class:`EventTemplate`.
+        If ``event_spec`` is neither an :class:`EventTemplate` nor a
+        :class:`TermSpec`.
     """
 
-    event_template: EventTemplate
+    event_spec: _DeclInput
 
     def __post_init__(self) -> None:
-        if not isinstance(self.event_template, EventTemplate):
+        if not isinstance(self.event_spec, (EventTemplate, TermSpec)):
             raise TypeError(
-                f"DistributionSpec.event_template must be an EventTemplate, "
-                f"got {type(self.event_template).__name__}"
+                f"DistributionSpec.event_spec must be an EventTemplate or a TermSpec, "
+                f"got {type(self.event_spec).__name__}"
             )
+        object.__setattr__(self, "event_spec", _to_declaration(self.event_spec))
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a ``Distribution`` whose draws match ``event_template``.
+        """Whether *value* is a ``Distribution`` matching this event declaration.
 
         *value* must be a :class:`~probpipe.Distribution` whose own
-        ``event_template`` equals this spec's. A distribution that is not one,
-        or that legitimately exposes no template — no ``event_template``
-        attribute, or a template that cannot yet be derived — does not satisfy
-        the spec and returns ``False``. These are the only two "schema
-        unavailable" conditions treated as a non-match; any *other* error
-        raised while reading ``event_template`` signals a malfunctioning
-        distribution and is left to propagate rather than being masked as
-        invalid.
+        ``event_template`` equals the declared record template. A distribution
+        that is not one, or that legitimately exposes no template — no
+        ``event_template`` attribute, or a template that cannot yet be
+        derived — does not satisfy the spec and returns ``False``. These are
+        the only two "schema unavailable" conditions treated as a non-match;
+        any *other* error raised while reading ``event_template`` signals a
+        malfunctioning distribution and is left to propagate rather than being
+        masked as invalid.
+
+        A declaration whose draws are themselves terms — a random measure, say
+        — is not certifiable here for the same reason: a ``Distribution``
+        exposes an ``EventTemplate`` and nothing that reports a term-valued
+        draw kind, so such a declaration returns ``False`` rather than a guess.
         """
         from ._distribution_base import Distribution
 
         if not isinstance(value, Distribution):
+            return False
+        if not isinstance(self.event_spec, RecordSpec):
+            # A term-valued draw declaration: nothing on ``Distribution``
+            # reports the draw kind yet, so the value cannot be certified.
             return False
         try:
             template = value.event_template
@@ -392,7 +426,7 @@ class DistributionSpec(TermSpec):
             # narrower catch than ``Exception`` on purpose: an unexpected
             # error is a bug to surface, not a silent "invalid".
             return False
-        return template == self.event_template
+        return template == self.event_spec.event_template
 
 
 @dataclass(frozen=True)
@@ -400,12 +434,15 @@ class FunctionSpec(TermSpec):
     """A term spec for a callable, optionally typed by its input/output structure.
 
     ``input_template`` is the :class:`EventTemplate` of the callable's input.
-    ``output_template`` is its output: an :class:`EventTemplate` (a record
-    output) or any :class:`TermSpec` (a result that is itself a term, e.g. a
-    ``Function`` returning a ``Distribution``). Both default to ``None``,
-    leaving that side unspecified, so a bare ``FunctionSpec()`` describes any
-    callable. A specified side is written out — e.g.
-    ``FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))`` for
+    ``output_spec`` is the *output declaration*: what the callable returns. A
+    record output is declared by its :class:`EventTemplate`, which construction
+    normalises to ``RecordSpec(template)``, and any other :class:`TermSpec`
+    declares a result that is itself a term of that kind (a ``Function``
+    returning a ``Distribution``, say). The stored declaration is therefore
+    always a :class:`TermSpec`, and the declared result kind is simply its
+    class. Both sides default to ``None``, leaving that side unspecified, so a
+    bare ``FunctionSpec()`` describes any callable. A specified side is written
+    out — e.g. ``FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))`` for
     ``f(x) -> out`` — so a function's field names are caller-chosen and
     meaningful, matching :class:`DistributionSpec`.
 
@@ -419,12 +456,12 @@ class FunctionSpec(TermSpec):
     ------
     TypeError
         If ``input_template`` is neither ``None`` nor an :class:`EventTemplate`,
-        or ``output_template`` is neither ``None``, an :class:`EventTemplate`,
-        nor a :class:`TermSpec`.
+        or ``output_spec`` is neither ``None``, an :class:`EventTemplate`, nor a
+        :class:`TermSpec`.
     """
 
     input_template: EventTemplate | None = None
-    output_template: EventTemplate | TermSpec | None = None
+    output_spec: _DeclInput | None = None
 
     def __post_init__(self) -> None:
         if self.input_template is not None and not isinstance(self.input_template, EventTemplate):
@@ -432,19 +469,21 @@ class FunctionSpec(TermSpec):
                 f"FunctionSpec.input_template must be None or an EventTemplate, "
                 f"got {type(self.input_template).__name__}"
             )
-        if self.output_template is not None and not isinstance(
-            self.output_template, (EventTemplate, TermSpec)
+        if self.output_spec is not None and not isinstance(
+            self.output_spec, (EventTemplate, TermSpec)
         ):
             raise TypeError(
-                f"FunctionSpec.output_template must be None, an EventTemplate, "
-                f"or a TermSpec, got {type(self.output_template).__name__}"
+                f"FunctionSpec.output_spec must be None, an EventTemplate, "
+                f"or a TermSpec, got {type(self.output_spec).__name__}"
             )
+        if self.output_spec is not None:
+            object.__setattr__(self, "output_spec", _to_declaration(self.output_spec))
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.
 
         The input/output structure of a bare callable cannot be inspected, so
-        validity is callability alone; ``input_template`` / ``output_template``
+        validity is callability alone; ``input_template`` / ``output_spec``
         document the intended signature but are not checked against the value.
         """
         return callable(value)
