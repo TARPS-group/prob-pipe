@@ -23,8 +23,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   bare `EventTemplate` is accepted as construction sugar wherever a record
   declaration is meant and normalised to `RecordSpec(template)`, so after
   construction the declared kind is simply the stored spec's class. This makes
-  `sample`'s draw kind and an operation's result kind a structural test rather
-  than an inference from a runtime value.
+  an operation's result kind a structural test rather than an inference from a
+  runtime value. A callable's `output_spec` accepts any kind; an *event*
+  declaration is record-valued for now, since a `Distribution` exposes an
+  `EventTemplate` and nothing that reports a term-valued draw kind, so a
+  random-measure declaration is refused at construction rather than accepted
+  and always reported invalid. Fingerprinting recurses into declarations and
+  covers `RecordSpec`, so equal declarations hash equally.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `Tracked` / `Annotated` object with a construction-time

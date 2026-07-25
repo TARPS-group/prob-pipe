@@ -12,7 +12,16 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, Normal, Record
+from probpipe import (
+    ArraySpec,
+    DistributionSpec,
+    EventTemplate,
+    FunctionSpec,
+    Normal,
+    OpaqueSpec,
+    Record,
+    RecordSpec,
+)
 from probpipe.core._fingerprint import (
     _fingerprint_with_strength,
     _update_function,
@@ -910,3 +919,66 @@ class TestNumericContainerHashing:
             return subprocess.check_output([sys.executable, "-c", script, site], text=True).strip()
 
         assert run() == run()
+
+
+class TestValueSpecFingerprints:
+    """Specs are hashed as template leaves, by declaration and not by identity.
+
+    A declaration is stored as a spec (`DistributionSpec.event_spec`,
+    `FunctionSpec.output_spec`), so the spec hasher must recurse into it. These
+    tests pin that: equal declarations must agree, distinct ones must not, and
+    every spec kind must be reachable — a spec the hasher does not know falls
+    back to identity hashing, which silently breaks cache keys and provenance.
+    """
+
+    @staticmethod
+    def _fp(spec):
+        """Fingerprint a spec in the position it is actually used: a leaf."""
+        return fingerprint(EventTemplate(field=spec))
+
+    @pytest.fixture
+    def tau(self):
+        return EventTemplate(x=())
+
+    def test_every_spec_kind_fingerprints(self, tau):
+        for spec in (
+            ArraySpec(()),
+            OpaqueSpec(),
+            RecordSpec(tau),
+            DistributionSpec(tau),
+            FunctionSpec(tau, tau),
+            FunctionSpec(),
+        ):
+            assert isinstance(self._fp(spec), str)
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda t: RecordSpec(t),
+            lambda t: DistributionSpec(t),
+            lambda t: FunctionSpec(t, t),
+            lambda t: FunctionSpec(t, DistributionSpec(t)),
+        ],
+        ids=["record", "distribution", "function-record-out", "function-term-out"],
+    )
+    def test_equal_declarations_fingerprint_equal(self, make):
+        # Distinct-but-equal templates, so this pins declaration equality
+        # rather than object identity.
+        assert self._fp(make(EventTemplate(x=()))) == self._fp(make(EventTemplate(x=())))
+
+    def test_distinct_declarations_fingerprint_differently(self, tau):
+        other = EventTemplate(y=())
+        assert self._fp(RecordSpec(tau)) != self._fp(RecordSpec(other))
+        assert self._fp(DistributionSpec(tau)) != self._fp(DistributionSpec(other))
+        assert self._fp(FunctionSpec(tau, tau)) != self._fp(FunctionSpec(tau, other))
+
+    def test_declared_kind_changes_the_fingerprint(self, tau):
+        # The same space under different declared kinds must not collide: the
+        # declaration's class is the kind.
+        assert self._fp(RecordSpec(tau)) != self._fp(DistributionSpec(tau))
+        assert self._fp(FunctionSpec(tau, tau)) != self._fp(
+            FunctionSpec(tau, DistributionSpec(tau))
+        )
+
+    def test_unspecified_output_differs_from_a_declared_one(self, tau):
+        assert self._fp(FunctionSpec(tau)) != self._fp(FunctionSpec(tau, tau))

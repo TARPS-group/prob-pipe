@@ -350,7 +350,13 @@ def _update_value_spec(
     state: _FingerprintState,
 ) -> None:
     """Hash a built-in ValueSpec by the declaration fields that define it."""
-    from .event_template import ArraySpec, DistributionSpec, FunctionSpec, OpaqueSpec
+    from .event_template import (
+        ArraySpec,
+        DistributionSpec,
+        FunctionSpec,
+        OpaqueSpec,
+        RecordSpec,
+    )
 
     spec_type = type(spec)
     h.update(b"spec:")
@@ -368,7 +374,7 @@ def _update_value_spec(
         _update_constraint(h, spec.support, depth + 1, max_array_bytes, state)
     elif isinstance(spec, OpaqueSpec):
         _update(h, spec.meta, depth + 1, max_array_bytes, state)
-    elif isinstance(spec, DistributionSpec):
+    elif isinstance(spec, RecordSpec):
         _update_event_template(
             h,
             spec.event_template,
@@ -376,9 +382,16 @@ def _update_value_spec(
             max_array_bytes,
             state,
         )
+    elif isinstance(spec, DistributionSpec):
+        # The event declaration is itself a spec, so recurse rather than
+        # hashing it as an opaque value.
+        _update_value_spec(h, spec.event_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
         _update(h, spec.input_template, depth + 1, max_array_bytes, state)
-        _update(h, spec.output_template, depth + 1, max_array_bytes, state)
+        if spec.output_spec is None:
+            _update(h, None, depth + 1, max_array_bytes, state)
+        else:
+            _update_value_spec(h, spec.output_spec, depth + 1, max_array_bytes, state)
     else:
         _update_weak_identity(h, spec, state)
 

@@ -1421,21 +1421,31 @@ class TestTermSpecTaxonomy:
         assert DistributionSpec(RecordSpec(tau)) == DistributionSpec(tau)
         assert FunctionSpec(tau, RecordSpec(tau)) == FunctionSpec(tau, tau)
 
-    def test_term_valued_declaration_is_kept_not_wrapped(self):
-        """A term declaration names its own kind and passes through unchanged."""
+    def test_term_valued_output_is_kept_not_wrapped(self):
+        """A term output declaration names its own kind and passes through."""
         tau = EventTemplate(x=())
         inner = DistributionSpec(tau)
-        assert DistributionSpec(inner).event_spec is inner  # a random measure
         assert FunctionSpec(tau, inner).output_spec is inner
         assert FunctionSpec(tau, FunctionSpec()).output_spec == FunctionSpec()
 
+    def test_term_valued_event_declaration_is_rejected(self):
+        """An event declaration is record-valued: a term draw is not yet checkable.
+
+        A ``Distribution`` exposes an ``EventTemplate`` and nothing that reports
+        a term-valued draw kind, so a random-measure declaration could be
+        written but never satisfied. It is refused at construction rather than
+        accepted and always reported invalid.
+        """
+        tau = EventTemplate(x=())
+        for decl in (DistributionSpec(tau), FunctionSpec()):
+            with pytest.raises(TypeError, match="must be an EventTemplate or a RecordSpec"):
+                DistributionSpec(decl)  # type: ignore[arg-type]
+
     def test_declared_kind_is_the_stored_spec_class(self):
         """The declaration's class is the declared kind — a structural test."""
-        from probpipe.core.event_template import RecordSpec
-
         tau = EventTemplate(x=())
         assert type(DistributionSpec(tau).event_spec) is RecordSpec
-        assert type(DistributionSpec(DistributionSpec(tau)).event_spec) is DistributionSpec
+        assert type(FunctionSpec(tau, tau).output_spec) is RecordSpec
         assert type(FunctionSpec(tau, FunctionSpec()).output_spec) is FunctionSpec
 
     def test_unspecified_output_stays_none(self):

@@ -38,10 +38,12 @@ contain lots of useful structure (e.g., shape and dtype for arrays), while
 others may expose no structure at all (e.g., an opaque Python object).
 The concrete specs are as follows:
 - :class:`ArraySpec`: describes a numeric array (shape, optional dtype/support)
-- :class:`DistributionSpec`: describes a ``Distribution``. Carries a sub-template
-  describing the structure of one sample from the distribution.
-- :class:`FunctionSpec`: describes a callable. Optionally carries sub-templates
-  for the structure of the function's inputs and outputs.
+- :class:`RecordSpec`: describes an embedded ``Record``. Carries the event
+  template of that record.
+- :class:`DistributionSpec`: describes a ``Distribution``. Carries the *event
+  declaration* of one draw from it, stored as a spec.
+- :class:`FunctionSpec`: describes a callable. Optionally carries the input
+  template and the *output declaration*, the latter stored as a spec.
 - :class:`OpaqueSpec`: fallback for any other object (no structure exposed).
 
 Numeric vs. Mixed
@@ -347,10 +349,17 @@ class RecordSpec(TermSpec):
 # whose class is the declared kind. An :class:`EventTemplate` is accepted as
 # construction-time sugar for the record case, mirroring the ``_FieldSpecInput``
 # sugar below, and is normalised by :func:`_to_declaration`.
-type _DeclInput = EventTemplate | TermSpec
+#
+# The output side of a callable admits any kind, since a ``FunctionSpec``
+# claims no check on it. An *event* declaration is record-only for now: a
+# ``Distribution`` exposes an ``EventTemplate`` and nothing that reports a
+# term-valued draw kind, so a term declaration would be expressible but never
+# satisfiable. Widening it belongs with the ``Distribution``-side support.
+type _OutputDecl = EventTemplate | TermSpec
+type _EventDecl = EventTemplate | RecordSpec
 
 
-def _to_declaration(decl: _DeclInput) -> TermSpec:
+def _to_declaration(decl: _OutputDecl) -> TermSpec:
     """Normalise a declaration input to the stored :class:`TermSpec`.
 
     A bare :class:`EventTemplate` means a record declaration and becomes
@@ -368,24 +377,30 @@ class DistributionSpec(TermSpec):
     """A term spec for a ``Distribution``.
 
     ``event_spec`` is the *event declaration*: what one draw from the
-    distribution is. A record draw is declared by its :class:`EventTemplate`,
-    which construction normalises to ``RecordSpec(template)``, so the stored
-    declaration is always a :class:`TermSpec` and the declared draw kind is
-    simply its class.
+    distribution is. It is declared by the draw's :class:`EventTemplate`, which
+    construction normalises to ``RecordSpec(template)``, so the stored
+    declaration is always a spec and the declared draw kind is simply its
+    class. A ``RecordSpec`` may also be passed directly.
+
+    The declaration is record-valued: a term-valued draw — a random measure —
+    is rejected here, because a ``Distribution`` exposes an ``EventTemplate``
+    and nothing that reports a term-valued draw kind, so such a declaration
+    could be written but never satisfied. Accepting it belongs with the
+    ``Distribution``-side support that makes it checkable.
 
     Raises
     ------
     TypeError
         If ``event_spec`` is neither an :class:`EventTemplate` nor a
-        :class:`TermSpec`.
+        :class:`RecordSpec`.
     """
 
-    event_spec: _DeclInput
+    event_spec: _EventDecl
 
     def __post_init__(self) -> None:
-        if not isinstance(self.event_spec, (EventTemplate, TermSpec)):
+        if not isinstance(self.event_spec, (EventTemplate, RecordSpec)):
             raise TypeError(
-                f"DistributionSpec.event_spec must be an EventTemplate or a TermSpec, "
+                f"DistributionSpec.event_spec must be an EventTemplate or a RecordSpec, "
                 f"got {type(self.event_spec).__name__}"
             )
         object.__setattr__(self, "event_spec", _to_declaration(self.event_spec))
@@ -402,19 +417,10 @@ class DistributionSpec(TermSpec):
         any *other* error raised while reading ``event_template`` signals a
         malfunctioning distribution and is left to propagate rather than being
         masked as invalid.
-
-        A declaration whose draws are themselves terms — a random measure, say
-        — is not certifiable here for the same reason: a ``Distribution``
-        exposes an ``EventTemplate`` and nothing that reports a term-valued
-        draw kind, so such a declaration returns ``False`` rather than a guess.
         """
         from ._distribution_base import Distribution
 
         if not isinstance(value, Distribution):
-            return False
-        if not isinstance(self.event_spec, RecordSpec):
-            # A term-valued draw declaration: nothing on ``Distribution``
-            # reports the draw kind yet, so the value cannot be certified.
             return False
         try:
             template = value.event_template
@@ -461,7 +467,7 @@ class FunctionSpec(TermSpec):
     """
 
     input_template: EventTemplate | None = None
-    output_spec: _DeclInput | None = None
+    output_spec: _OutputDecl | None = None
 
     def __post_init__(self) -> None:
         if self.input_template is not None and not isinstance(self.input_template, EventTemplate):
