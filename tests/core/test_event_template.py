@@ -17,6 +17,7 @@ from probpipe.core.event_template import (
     NumericEventTemplate,
     OpaqueSpec,
     RecordSpec,
+    TermSpec,
     ValueSpec,
 )
 
@@ -555,6 +556,7 @@ class TestValueSpecs:
         for spec in (
             ArraySpec((3,)),
             OpaqueSpec(),
+            RecordSpec(EventTemplate(x=())),
             DistributionSpec(event_spec=EventTemplate(x=())),
             FunctionSpec(input_template=EventTemplate(x=()), output_spec=EventTemplate(y=())),
         ):
@@ -568,8 +570,9 @@ class TestValueSpecs:
             OpaqueSpec(): 2,
             DistributionSpec(event_spec=EventTemplate(x=())): 3,
             FunctionSpec(input_template=EventTemplate(x=()), output_spec=EventTemplate(y=())): 4,
+            RecordSpec(EventTemplate(x=())): 5,
         }
-        assert len(specs) == 4
+        assert len(specs) == 5
 
     def test_opaque_spec_rejects_unhashable_meta_at_construction(self):
         with pytest.raises(TypeError, match=r"OpaqueSpec\.meta must be hashable"):
@@ -691,6 +694,7 @@ class TestValueSpecs:
             label=OpaqueSpec(meta="tag"),
             d=DistributionSpec(event_spec=EventTemplate(a=())),
             f=FunctionSpec(EventTemplate(inp=ArraySpec(())), EventTemplate(out=ArraySpec(()))),
+            r=RecordSpec(EventTemplate(c=ArraySpec(()))),
         )
         restored = pickle.loads(pickle.dumps(tpl))
         assert restored == tpl
@@ -1086,6 +1090,10 @@ class TestAutoPromotionSpecs:
         tpl = EventTemplate(x=(), d=DistributionSpec(event_spec=EventTemplate(a=())))
         assert type(tpl) is EventTemplate
 
+    def test_record_spec_blocks_promotion(self):
+        tpl = EventTemplate(x=(), r=RecordSpec(EventTemplate(a=())))
+        assert type(tpl) is EventTemplate
+
     def test_function_spec_blocks_promotion(self):
         tpl = EventTemplate(
             x=(),
@@ -1100,6 +1108,10 @@ class TestAutoPromotionSpecs:
     def test_numeric_rejects_distribution_spec(self):
         with pytest.raises(TypeError, match="only ArraySpec"):
             NumericEventTemplate(x=(), d=DistributionSpec(event_spec=EventTemplate(a=())))
+
+    def test_numeric_rejects_record_spec(self):
+        with pytest.raises(TypeError, match="only ArraySpec"):
+            NumericEventTemplate(x=(), r=RecordSpec(EventTemplate(a=())))
 
     def test_numeric_rejects_function_spec(self):
         with pytest.raises(TypeError, match="only ArraySpec"):
@@ -1381,7 +1393,6 @@ class TestTermSpecTaxonomy:
     """The term-spec sub-hierarchy: one spec per kind, all also ValueSpecs."""
 
     def test_term_specs_are_value_specs(self):
-        from probpipe.core.event_template import TermSpec
 
         tau = EventTemplate(x=())
         for spec in (
@@ -1393,7 +1404,6 @@ class TestTermSpecTaxonomy:
             assert isinstance(spec, ValueSpec)  # sub-hierarchy: still a leaf spec
 
     def test_raw_value_specs_are_not_term_specs(self):
-        from probpipe.core.event_template import TermSpec
 
         assert not isinstance(ArraySpec(()), TermSpec)
         assert not isinstance(OpaqueSpec(), TermSpec)
@@ -1402,7 +1412,6 @@ class TestTermSpecTaxonomy:
 
     def test_event_template_declaration_wraps_to_record_spec(self):
         """A bare EventTemplate is constructor sugar; the stored form is a spec."""
-        from probpipe.core.event_template import RecordSpec, TermSpec
 
         tau = EventTemplate(x=())
         assert DistributionSpec(tau).event_spec == RecordSpec(tau)
@@ -1412,7 +1421,6 @@ class TestTermSpecTaxonomy:
 
     def test_declaration_normalisation_is_idempotent(self):
         """Passing the wrapped form gives the same spec as passing the template."""
-        from probpipe.core.event_template import RecordSpec
 
         tau = EventTemplate(x=())
         assert DistributionSpec(RecordSpec(tau)) == DistributionSpec(tau)
@@ -1463,31 +1471,51 @@ class TestTermSpecTaxonomy:
 
     def test_event_template_is_not_a_spec(self):
         """The schema is the index; it is not itself a (value or term) spec."""
-        from probpipe.core.event_template import TermSpec
 
         tau = EventTemplate(x=())
         assert not isinstance(tau, ValueSpec)
         assert not isinstance(tau, TermSpec)
 
-    def test_specs_are_frozen_hashable_by_value(self):
-        from probpipe.core.event_template import RecordSpec
+    def test_term_specs_compare_and_hash_by_value(self):
+        # Distinct-but-equal templates throughout, so this pins value equality
+        # rather than sharing one template object.
+        assert RecordSpec(EventTemplate(x=())) == RecordSpec(EventTemplate(x=()))
+        assert hash(RecordSpec(EventTemplate(x=()))) == hash(RecordSpec(EventTemplate(x=())))
 
+    def test_a_record_declaration_is_the_wrapped_template(self):
+        """The storage rule at the value level, not merely by class."""
         tau = EventTemplate(x=())
-        assert RecordSpec(tau) == RecordSpec(tau)
-        assert hash(RecordSpec(tau)) == hash(RecordSpec(EventTemplate(x=())))
-        # Same event template, different kinds: the concrete class distinguishes.
-        assert RecordSpec(tau) != DistributionSpec(tau)
+        assert DistributionSpec(tau).event_spec == RecordSpec(tau)
+        assert FunctionSpec(tau, tau).output_spec == RecordSpec(tau)
+
+    def test_term_spec_is_abstract_and_declares_no_is_valid(self):
+        """The hierarchy's headline claim: is_valid stays declared once."""
+        with pytest.raises(TypeError, match="abstract"):
+            TermSpec()  # type: ignore[abstract]
+        assert "is_valid" not in TermSpec.__dict__
+
+    def test_the_old_attribute_names_are_gone(self):
+        """The breaking half of the rename, which the CHANGELOG advertises."""
+        tau = EventTemplate(x=())
+        assert not hasattr(DistributionSpec(tau), "event_template")
+        assert not hasattr(FunctionSpec(tau, tau), "output_template")
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            DistributionSpec(event_template=tau)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match="unexpected keyword argument"):
+            FunctionSpec(tau, output_template=tau)  # type: ignore[call-arg]
 
 
 class TestRecordSpec:
     def test_requires_event_template(self):
-        from probpipe.core.event_template import RecordSpec
 
         with pytest.raises(TypeError):
             RecordSpec(ArraySpec(()))  # not an EventTemplate
 
+    def test_requires_event_template_message(self):
+        with pytest.raises(TypeError, match="must be an EventTemplate"):
+            RecordSpec(ArraySpec(()))
+
     def test_is_valid_accepts_matching_record_only(self):
-        from probpipe.core.event_template import RecordSpec
 
         rec = Record("r", x=jnp.asarray(1.0))
         spec = RecordSpec(rec.event_template)
@@ -1495,43 +1523,52 @@ class TestRecordSpec:
         assert not spec.is_valid(jnp.asarray(1.0))  # not a Record
         assert not spec.is_valid(Record("r", y=jnp.asarray(1.0)))  # wrong template
 
+    # The two cases DistributionSpec.is_valid documents, mirrored here: a value
+    # that cannot present its schema is not a match, and any other error is a
+    # bug to surface rather than to report as invalid.
+
+    def test_is_valid_false_when_the_template_cannot_be_read(self):
+        class _Unreadable(Record):
+            @property
+            def event_template(self):
+                raise TypeError("template not derivable")
+
+        rec = _Unreadable("r", x=jnp.asarray(1.0))
+        assert not RecordSpec(EventTemplate(x=())).is_valid(rec)
+
+    def test_is_valid_propagates_an_unexpected_error(self):
+        class _Broken(Record):
+            @property
+            def event_template(self):
+                raise RuntimeError("malfunctioning record")
+
+        rec = _Broken("r", x=jnp.asarray(1.0))
+        with pytest.raises(RuntimeError, match="malfunctioning record"):
+            RecordSpec(EventTemplate(x=())).is_valid(rec)
+
 
 class TestFunctionSpecOutputWidening:
-    """A FunctionSpec output may be a record schema or any term spec."""
+    """An output declaration admits every kind, and raw values too.
 
-    def test_event_template_output_still_accepted(self):
-        # The pre-existing EventTemplate output is still accepted, now as
-        # construction sugar: it is stored as the record declaration.
-        tau = EventTemplate(out=())
-        fs = FunctionSpec(EventTemplate(x=()), tau)
-        assert fs.output_spec == RecordSpec(tau)
+    The record-output, non-spec-rejection, and callability cases are covered by
+    TestFunctionSpecTemplatesRequired and TestFunctionSpecOptionalTemplates; only
+    the widening itself lives here.
+    """
 
     def test_term_spec_output_accepted(self):
-        # the widening: a function whose result is itself a term
-        from probpipe.core.event_template import RecordSpec
-
         tau = EventTemplate(out=())
-        fs = FunctionSpec(EventTemplate(x=()), DistributionSpec(tau))
-        assert fs.output_spec == DistributionSpec(tau)
-        fs2 = FunctionSpec(output_spec=RecordSpec(EventTemplate(y=())))
-        assert isinstance(fs2.output_spec, RecordSpec)
-
-    def test_raw_value_output_accepted(self):
-        # An output declaration is any value specification, so a raw-value spec
-        # declares a raw result rather than being rejected.
-        assert FunctionSpec(output_spec=ArraySpec(())).output_spec == ArraySpec(())
-
-    def test_non_spec_output_rejected(self):
-        with pytest.raises(TypeError):
-            FunctionSpec(output_spec=(3,))  # neither a template nor a spec
+        assert FunctionSpec(EventTemplate(x=()), DistributionSpec(tau)).output_spec == (
+            DistributionSpec(tau)
+        )
+        assert isinstance(
+            FunctionSpec(output_spec=RecordSpec(EventTemplate(y=()))).output_spec, RecordSpec
+        )
 
     def test_input_template_still_event_template_only(self):
-        with pytest.raises(TypeError):
+        # The input side is a schema, so a spec is not accepted there even though
+        # the output side takes one.
+        with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
             FunctionSpec(input_template=DistributionSpec(EventTemplate(x=())))
-
-    def test_is_valid_is_callable_generic(self):
-        # unchanged: the leaf role admits any callable, not only Functions
-        assert FunctionSpec().is_valid(lambda x: x)
 
 
 def test_public_exports():

@@ -308,9 +308,9 @@ __all__ = [
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
     "TFPDistribution",
-    # Transformed
     "TermSpec",
     "Tracked",
+    # Transformed
     "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
