@@ -120,7 +120,7 @@ class RecordSpec(TermSpec):  # a Record; is_valid accepts a matching Record
 
 class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
     input_template: EventTemplate | None   # None: that side's structure unspecified
-    output_spec: TermSpec | None           # the output declaration, stored as a spec;
+    output_spec: ValueSpec | None          # the output declaration, stored as a spec;
                                            #   construction wraps an EventTemplate as RecordSpec(template)
 # DistributionSpec and ConditionalDistributionSpec are the other two term specs (Part III).
 ```
@@ -141,8 +141,6 @@ The same storage rule holds for the tracked types. Each carries the spec of its 
 `RecordSpec(τ)` and the template `τ` denote the same space. The tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity (name, provenance, capabilities) is never dropped implicitly.
 
 A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, written out even for a single-field signature, so a function's field names are caller-chosen and meaningful. The output side accepts any value specification, so a function may declare a term result of any kind or a raw-value result, with a record output the common case. A term declaration names its kind by its class; a raw-value declaration types the value that the wrap boundary then places in a single-field `Record`, keyed by the function's name, so no field name is invented at the spec layer. The output side is unchecked — validity is callability alone — so nothing there is expressible but unsatisfiable, unlike an event declaration, which `DistributionSpec` checks and therefore keeps record-valued. Validity is callability alone: the value-layer specs stay callable-generic, and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to wrap a raw callable result into a `Function`. The two sides are independent, so a callable may map a space to itself or between two spaces.
-
-**Placement.** `TermSpec` lives beside `ValueSpec` in `core/_specs.py`, with `EventTemplate` and `Constraint` in `core/_event_template.py` and `core/_constraints.py`: the marker is tied to no one kind, and the tracked base that houses the spec slot lives in `core/`, which cannot depend on the value layer. Each concrete term spec lives with its kind's base type: `RecordSpec` with `Record` and `NumericRecord` in `values/_record.py`, `FunctionSpec` with `Function` in `values/_function_base.py`, `DistributionSpec` in `distributions/_distribution.py`, and `ConditionalDistributionSpec` in `distributions/_conditional.py`.
 
 ### Rationale
 
@@ -186,7 +184,11 @@ class NumericEventTemplate(EventTemplate):
 
 **Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer. `ArraySpec(shape=("obs", "features"))` fixes the rank and gives each dimension an identity while deferring its size. Within one template a name refers to one dimension: fields `X: ("obs", "features")` and `coefficients: ("features",)` share the dimension `features`, an equality no pair of concrete integers can express. A template with any symbolic entry is **polymorphic**, with `is_concrete` false and `free_dims` listing the unbound names. Templates carry no scope object beyond the names themselves, so they serialize as plain data.
 
-A polymorphic template is checked by **unification** rather than per-leaf comparison. Validating values against it runs one pass over all fields: each occurrence of a name must resolve to a single size, a conflict raises, and a name, once bound, never rebinds. The per-leaf `is_valid` covers rank and dtype (an `ArraySpec`'s `support` is descriptive metadata, not checked by `is_valid`), and leaves size consistency to that one pass. Binding produces a new template, so refinement is monotone and nothing mutates. The flat layout of a `NumericEventTemplate` is defined only when the template is concrete, and anything that needs sizes raises with the free dimensions named.
+Checking a value against a polymorphic template cannot be done leaf by leaf, because a symbolic name constrains several leaves at once. Validation therefore runs a single pass over all fields, resolving each name to one size: a name is bound the first time it is seen, every later occurrence must agree, and a disagreement raises. Bound names never rebind.
+
+The work splits accordingly. A leaf's `is_valid` checks its own rank and dtype, and nothing else — an `ArraySpec`'s `support` is descriptive metadata, unchecked. Sizes belong to the one pass, since only it sees every occurrence of a name.
+
+Binding returns a new template rather than mutating the original, so refinement is monotone. Until every name is bound the template is not concrete, so a `NumericEventTemplate` has no flat layout: an operation that needs sizes raises, naming the free dimensions.
 
 ### Rationale
 

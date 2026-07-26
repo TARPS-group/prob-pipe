@@ -36,7 +36,7 @@ A `Function` is authored with the `@function` decorator or produced by an operat
 class Function(TrackedTerm):
     def __init__(self, name: str, fn: Callable, *,
                  input_template: EventTemplate | None = None,
-                 output_spec: EventTemplate | TermSpec | None = None,
+                 output_spec: EventTemplate | ValueSpec | None = None,
                  differentiable: NumericEventTemplate = ...) -> None: ...
                  # optional: a non-empty template of exactly the differentiable values;
                  # omitted, the Function makes no claim
