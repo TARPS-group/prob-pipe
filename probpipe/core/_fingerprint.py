@@ -346,10 +346,7 @@ def _update_event_template(
     for name, spec in template.children.items():
         h.update(name.encode())
         h.update(b"=")
-        if _is_event_template(spec):
-            _update_event_template(h, spec, depth + 1, max_array_bytes, state)
-        else:
-            _update_value_spec(h, spec, depth + 1, max_array_bytes, state)
+        _update(h, spec, depth + 1, max_array_bytes, state)
         h.update(b";")
 
 
