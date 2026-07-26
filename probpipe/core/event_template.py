@@ -306,11 +306,11 @@ class RecordSpec(TermSpec):
 
     ``event_template`` describes the record. ``RecordSpec(tau)`` and the template
     ``tau`` denote the same space but read differently, and that difference is
-    the point: the spec *names the kind* ``Record``, whereas an interior
-    :class:`EventTemplate` node contributes fields that are paths of the
-    enclosing template. So a declaration given as a bare template is stored as
-    ``RecordSpec(template)``, which is what makes a declared kind a stored class
-    rather than an inference.
+    the point. The spec *names the kind* ``Record``; an interior
+    :class:`EventTemplate` node instead contributes fields that are paths of the
+    enclosing template. A declaration given as a bare template is therefore
+    stored as ``RecordSpec(template)``, which is what makes a declared kind a
+    stored class rather than an inference.
 
     Record construction does not yet accept a ``RecordSpec`` leaf: a
     record-valued field materialises as an interior template node, so this spec
@@ -392,11 +392,11 @@ class DistributionSpec(TermSpec):
     declaration is always a spec and the declared draw kind is simply its
     class. A ``RecordSpec`` may also be passed directly.
 
-    The declaration is record-valued: a term-valued draw — a random measure —
-    is rejected here, because a ``Distribution`` exposes an ``EventTemplate``
-    and nothing that reports a term-valued draw kind, so such a declaration
-    could be written but never satisfied. Accepting it belongs with the
-    ``Distribution``-side support that makes it checkable.
+    The declaration is record-valued: a term-valued draw, a random measure say,
+    is rejected here. A ``Distribution`` exposes an ``EventTemplate`` and nothing
+    that reports a term-valued draw kind, so such a declaration could be written
+    but never satisfied. Accepting it belongs with the ``Distribution``-side
+    support that makes it checkable.
 
     Raises
     ------
@@ -455,9 +455,9 @@ class FunctionSpec(TermSpec):
     ``input_template`` is the :class:`EventTemplate` of the callable's input.
     ``output_spec`` is the *output declaration*: what the callable returns. A
     record output is declared by its :class:`EventTemplate`, which construction
-    normalises to ``RecordSpec(template)``; any other spec is stored as given,
-    so a :class:`TermSpec` declares a result that is itself a term of that kind
-    (a ``Function`` returning a ``Distribution``, say) and a raw-value spec
+    normalises to ``RecordSpec(template)``. Any other spec is stored as given, so
+    a :class:`TermSpec` declares a result that is itself a term of that kind — a
+    ``Function`` returning a ``Distribution``, say — and a raw-value spec
     declares a raw result. The stored declaration is therefore always a spec.
     Both sides default to ``None``, leaving that side unspecified, so a bare
     ``FunctionSpec()`` describes any callable. A specified side is written
