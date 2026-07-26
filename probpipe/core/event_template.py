@@ -350,22 +350,24 @@ class RecordSpec(TermSpec):
 # construction-time sugar for the record case, mirroring the ``_FieldSpecInput``
 # sugar below, and is normalised by :func:`_to_declaration`.
 #
-# The output side of a callable admits any kind, since a ``FunctionSpec``
-# claims no check on it. An *event* declaration is record-only for now: a
+# An output declaration is any value specification, matching ``Fun(sigma, rho)``
+# with ``rho`` a value specification: a callable may return a term of any kind
+# or a raw value. A ``FunctionSpec`` claims no check on its output, so nothing
+# is declared that cannot be satisfied. An *event* declaration is narrower,
+# record-only for now, because ``DistributionSpec.is_valid`` does check: a
 # ``Distribution`` exposes an ``EventTemplate`` and nothing that reports a
 # term-valued draw kind, so a term declaration would be expressible but never
 # satisfiable. Widening it belongs with the ``Distribution``-side support.
-type _OutputDecl = EventTemplate | TermSpec
+type _OutputDecl = EventTemplate | ValueSpec
 type _EventDecl = EventTemplate | RecordSpec
 
 
-def _to_declaration(decl: _OutputDecl) -> TermSpec:
-    """Normalise a declaration input to the stored :class:`TermSpec`.
+def _to_declaration(decl: _OutputDecl) -> ValueSpec:
+    """Normalise a declaration input to the stored spec.
 
     A bare :class:`EventTemplate` means a record declaration and becomes
-    ``RecordSpec(template)``; an existing :class:`TermSpec` passes through. The
-    two forms denote the same space, so after construction only the spec
-    remains and the declared kind is its class.
+    ``RecordSpec(template)``; an existing spec passes through. The two forms
+    denote the same space, so after construction only a spec remains.
     """
     if isinstance(decl, EventTemplate):
         return RecordSpec(decl)
@@ -442,21 +444,20 @@ class FunctionSpec(TermSpec):
     ``input_template`` is the :class:`EventTemplate` of the callable's input.
     ``output_spec`` is the *output declaration*: what the callable returns. A
     record output is declared by its :class:`EventTemplate`, which construction
-    normalises to ``RecordSpec(template)``, and any other :class:`TermSpec`
-    declares a result that is itself a term of that kind (a ``Function``
-    returning a ``Distribution``, say). The stored declaration is therefore
-    always a :class:`TermSpec`, and the declared result kind is simply its
-    class. Both sides default to ``None``, leaving that side unspecified, so a
+    normalises to ``RecordSpec(template)``; any other spec is stored as given,
+    so a :class:`TermSpec` declares a result that is itself a term of that kind
+    (a ``Function`` returning a ``Distribution``, say) and a raw-value spec
+    declares a raw result. The stored declaration is therefore always a spec. Both sides default to ``None``, leaving that side unspecified, so a
     bare ``FunctionSpec()`` describes any callable. A specified side is written
     out — e.g. ``FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))`` for
     ``f(x) -> out`` — so a function's field names are caller-chosen and
     meaningful, matching :class:`DistributionSpec`.
 
-    The output declaration is a kind, so it is a :class:`TermSpec` and not any
-    :class:`ValueSpec`. A raw-value result is declared as the single-field
-    template it wraps into, whose field name comes from the ``Function`` and so
-    cannot be supplied here; admitting a bare ``ArraySpec`` would store a
-    declaration that names no kind and has to be completed elsewhere.
+    The output declaration is any value specification, so a callable may
+    declare a raw-value result as well as a term: an ``ArraySpec`` output
+    declares one array. A term declaration names its kind by its class, while a
+    raw-value declaration types the value the wrap boundary then places in a
+    single-field ``Record``, keyed by the ``Function``'s name.
 
     Validity is callability alone: the value-layer specs stay callable-generic,
     so a ``FunctionSpec`` admits any callable (a lambda, a NumPy function, a
@@ -469,7 +470,7 @@ class FunctionSpec(TermSpec):
     TypeError
         If ``input_template`` is neither ``None`` nor an :class:`EventTemplate`,
         or ``output_spec`` is neither ``None``, an :class:`EventTemplate`, nor a
-        :class:`TermSpec`.
+        :class:`ValueSpec`.
     """
 
     input_template: EventTemplate | None = None
@@ -482,11 +483,11 @@ class FunctionSpec(TermSpec):
                 f"got {type(self.input_template).__name__}"
             )
         if self.output_spec is not None and not isinstance(
-            self.output_spec, (EventTemplate, TermSpec)
+            self.output_spec, (EventTemplate, ValueSpec)
         ):
             raise TypeError(
                 f"FunctionSpec.output_spec must be None, an EventTemplate, "
-                f"or a TermSpec, got {type(self.output_spec).__name__}"
+                f"or a ValueSpec, got {type(self.output_spec).__name__}"
             )
         if self.output_spec is not None:
             object.__setattr__(self, "output_spec", _to_declaration(self.output_spec))

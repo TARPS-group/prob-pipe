@@ -963,23 +963,20 @@ class TestFunctionSpecTemplatesRequired:
         assert spec.input_template is inp
         assert spec.output_spec == RecordSpec(out)
 
-    def test_bare_value_spec_rejected(self):
-        # The input side is a record schema, written out as an EventTemplate; a
-        # bare ValueSpec is not wrapped into one. The output side additionally
-        # accepts a TermSpec (a term-valued result), but a raw-value ValueSpec
-        # (ArraySpec / OpaqueSpec — not a TermSpec) is still rejected.
+    def test_bare_value_spec_rejected_on_the_input_side_only(self):
+        # The input side is a record schema, written out as an EventTemplate, so
+        # a bare ValueSpec is not wrapped into one. The output side is a
+        # declaration and accepts any value specification.
         with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
             FunctionSpec(ArraySpec(()), EventTemplate(b=()))  # type: ignore[arg-type]
-        with pytest.raises(
-            TypeError, match="output_spec must be None, an EventTemplate, or a TermSpec"
-        ):
-            FunctionSpec(EventTemplate(a=()), OpaqueSpec())  # type: ignore[arg-type]
+
+        assert FunctionSpec(EventTemplate(a=()), OpaqueSpec()).output_spec == OpaqueSpec()
 
     def test_non_spec_rejected(self):
         with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
             FunctionSpec((3,), EventTemplate(b=()))  # type: ignore[arg-type]
         with pytest.raises(
-            TypeError, match="output_spec must be None, an EventTemplate, or a TermSpec"
+            TypeError, match="output_spec must be None, an EventTemplate, or a ValueSpec"
         ):
             FunctionSpec(EventTemplate(a=()), "not a template")  # type: ignore[arg-type]
 
@@ -1448,6 +1445,17 @@ class TestTermSpecTaxonomy:
         assert type(FunctionSpec(tau, tau).output_spec) is RecordSpec
         assert type(FunctionSpec(tau, FunctionSpec()).output_spec) is FunctionSpec
 
+    def test_raw_value_output_declaration_is_stored_as_given(self):
+        """An output declaration is any value specification, as in Fun(sigma, rho).
+
+        A raw-value output declares the value itself; the wrap boundary is what
+        places it in a single-field record, keyed by the function's name, so no
+        field name is invented here.
+        """
+        tau = EventTemplate(x=())
+        for raw in (ArraySpec((3,)), OpaqueSpec(meta="m")):
+            assert FunctionSpec(tau, raw).output_spec is raw
+
     def test_unspecified_output_stays_none(self):
         """None means "unspecified" and is not wrapped into a record declaration."""
         assert FunctionSpec().output_spec is None
@@ -1508,9 +1516,14 @@ class TestFunctionSpecOutputWidening:
         fs2 = FunctionSpec(output_spec=RecordSpec(EventTemplate(y=())))
         assert isinstance(fs2.output_spec, RecordSpec)
 
-    def test_bad_output_rejected(self):
+    def test_raw_value_output_accepted(self):
+        # An output declaration is any value specification, so a raw-value spec
+        # declares a raw result rather than being rejected.
+        assert FunctionSpec(output_spec=ArraySpec(())).output_spec == ArraySpec(())
+
+    def test_non_spec_output_rejected(self):
         with pytest.raises(TypeError):
-            FunctionSpec(output_spec=ArraySpec(()))  # neither template nor term spec
+            FunctionSpec(output_spec=(3,))  # neither a template nor a spec
 
     def test_input_template_still_event_template_only(self):
         with pytest.raises(TypeError):

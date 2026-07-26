@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   to come, and `DistributionSpec` / `FunctionSpec` are reparented under
   `TermSpec`.
 
+  An **output declaration** is any value specification, matching the model's
+  `Fun(σ, ρ)` with `ρ` a value specification: a callable may declare a term
+  result of any kind or a raw-value result, the latter typing the value the wrap
+  boundary places in a single-field `Record`. An **event** declaration is
+  narrower, record-valued, because `DistributionSpec.is_valid` checks it.
+
   A *declaration* — of an event or an output — is now **stored as a spec**: a
   bare `EventTemplate` is accepted as construction sugar wherever a record
   declaration is meant and normalised to `RecordSpec(template)`, so after
@@ -40,7 +46,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaration is record-valued for now, since a `Distribution` exposes an
   `EventTemplate` and nothing that reports a term-valued draw kind, so a
   random-measure declaration is refused at construction rather than accepted
-  and always reported invalid.
+  and always reported invalid. `FunctionSpec` declares no check on its output,
+  so nothing there is expressible-but-unsatisfiable.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `Tracked` / `Annotated` object with a construction-time
