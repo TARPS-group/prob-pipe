@@ -452,6 +452,12 @@ class FunctionSpec(TermSpec):
     ``f(x) -> out`` — so a function's field names are caller-chosen and
     meaningful, matching :class:`DistributionSpec`.
 
+    The output declaration is a kind, so it is a :class:`TermSpec` and not any
+    :class:`ValueSpec`. A raw-value result is declared as the single-field
+    template it wraps into, whose field name comes from the ``Function`` and so
+    cannot be supplied here; admitting a bare ``ArraySpec`` would store a
+    declaration that names no kind and has to be completed elsewhere.
+
     Validity is callability alone: the value-layer specs stay callable-generic,
     so a ``FunctionSpec`` admits any callable (a lambda, a NumPy function, a
     ``Function``) as a leaf value. It is the spec's identity as a
