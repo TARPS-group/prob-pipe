@@ -17,7 +17,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   list, or mapping — records its type and declaration fields instead of falling
   through to identity hashing. Previously such a spec hashed weakly, so two
   *equal* declarations produced different fingerprints and silently broke jit
-  cache keys and provenance.
+  cache keys and provenance. Because a record declaration is now stored as a
+  `RecordSpec`, the digest of a template carrying a `DistributionSpec`, or a
+  `FunctionSpec` with a declared output, also changes value; fingerprints are
+  in-memory jit cache keys and provenance only, never persisted.
 
 ### Added
 
@@ -200,9 +203,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **Renamed, for the storage rule (#381):** `FunctionSpec.output_template` is
-  now **`output_spec`**, stored as a `TermSpec | None`, and
-  `DistributionSpec.event_template` is now **`event_spec`**, stored as a
-  `TermSpec`. Both constructors still accept an `EventTemplate` and wrap it, so
+  now **`output_spec`**, storing any `ValueSpec` or `None`, and
+  `DistributionSpec.event_template` is now **`event_spec`**, storing a
+  `RecordSpec`. Both constructors still accept an `EventTemplate` and wrap it, so
   existing positional and keyword construction from a template keeps working;
   reads of the old attribute names do not. The names now carry their content:
   `*_template` is always a record schema, `*_spec` a declaration of any kind —

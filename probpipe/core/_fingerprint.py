@@ -383,21 +383,12 @@ def _update_value_spec(
     elif isinstance(spec, OpaqueSpec):
         _update(h, spec.meta, depth + 1, max_array_bytes, state)
     elif isinstance(spec, RecordSpec):
-        _update_event_template(
-            h,
-            spec.event_template,
-            depth + 1,
-            max_array_bytes,
-            state,
-        )
+        _update(h, spec.event_template, depth + 1, max_array_bytes, state)
     elif isinstance(spec, DistributionSpec):
-        _update_value_spec(h, spec.event_spec, depth + 1, max_array_bytes, state)
+        _update(h, spec.event_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
         _update(h, spec.input_template, depth + 1, max_array_bytes, state)
-        if spec.output_spec is None:
-            _update(h, None, depth + 1, max_array_bytes, state)
-        else:
-            _update_value_spec(h, spec.output_spec, depth + 1, max_array_bytes, state)
+        _update(h, spec.output_spec, depth + 1, max_array_bytes, state)
     else:
         _update_weak_identity(h, spec, state)
 
