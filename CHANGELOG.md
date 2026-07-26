@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Value specs are fingerprinted by declaration, not identity (#381).** The
+  spec hasher now covers `RecordSpec` and recurses into a stored declaration
+  (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec
+  rather than a template. The generic hasher also routes any `ValueSpec` to it,
+  so a spec reached other than as a template leaf — bare, or inside a tuple,
+  list, or mapping — records its type and declaration fields instead of falling
+  through to identity hashing. Previously such a spec hashed weakly, so two
+  *equal* declarations produced different fingerprints and silently broke jit
+  cache keys and provenance.
+
 ### Added
 
 - **`TermSpec` — the term-spec sub-hierarchy, and declarations stored as specs
@@ -28,8 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaration is record-valued for now, since a `Distribution` exposes an
   `EventTemplate` and nothing that reports a term-valued draw kind, so a
   random-measure declaration is refused at construction rather than accepted
-  and always reported invalid. Fingerprinting recurses into declarations and
-  covers `RecordSpec`, so equal declarations hash equally.
+  and always reported invalid.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `Tracked` / `Annotated` object with a construction-time

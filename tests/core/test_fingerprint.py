@@ -982,3 +982,40 @@ class TestValueSpecFingerprints:
 
     def test_unspecified_output_differs_from_a_declared_one(self, tau):
         assert self._fp(FunctionSpec(tau)) != self._fp(FunctionSpec(tau, tau))
+
+    # --- a spec is hashed by declaration wherever it appears, not by identity ---
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [lambda sp: sp, lambda sp: (sp,), lambda sp: [sp], lambda sp: {"f": sp}],
+        ids=["bare", "in-tuple", "in-list", "in-dict"],
+    )
+    def test_spec_outside_a_template_is_still_hashed_by_declaration(self, wrap, tau):
+        """A spec reached other than as a template leaf must not hash by identity.
+
+        The generic hasher must route a `ValueSpec` to the spec hasher, which
+        records the object type and the declaration fields. Falling through to
+        identity hashing would make equal declarations hash differently and
+        silently break cache keys and provenance.
+        """
+        first, _ = _fingerprint_with_strength(wrap(RecordSpec(EventTemplate(x=()))))
+        second, weak = _fingerprint_with_strength(wrap(RecordSpec(EventTemplate(x=()))))
+
+        assert not weak
+        assert first == second
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [lambda sp: sp, lambda sp: (sp,)],
+        ids=["bare", "in-tuple"],
+    )
+    def test_spec_type_is_recorded_outside_a_template(self, wrap, tau):
+        """Two specs that differ only in kind must not collide."""
+        assert (
+            _fingerprint_with_strength(wrap(RecordSpec(tau)))[0]
+            != _fingerprint_with_strength(wrap(DistributionSpec(tau)))[0]
+        )
+        assert (
+            _fingerprint_with_strength(wrap(ArraySpec(())))[0]
+            != _fingerprint_with_strength(wrap(OpaqueSpec()))[0]
+        )
