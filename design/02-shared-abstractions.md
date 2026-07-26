@@ -132,11 +132,22 @@ A term spec plays one of two roles, fixed by its position.
 - **As data.** At a named leaf of a template, a term spec types a field that holds a term. A `Distribution` stored inside a record is a leaf value.
 - **As result.** As an output declaration, a term spec states that the result *is* a term of that kind. A fitted mapping declares that it returns a `Function` this way.
 
-A `Distribution`'s event declaration is an output declaration: it types what `sample` returns. The two roles therefore settle every draw kind. `Distribution(name, DistributionSpec(t))` declares a random measure, whose draws are `Distribution`s, while `Distribution(name, EventTemplate(x=DistributionSpec(t)))` declares a record law, whose draws are `Record`s holding a distribution-valued field `x`. The two spaces are isomorphic but the draw kinds differ, and the declaration alone decides which, never the runtime type of `_sample`'s return. A wrong-kind result raises the kind error, a schema mismatch its own.
+A `Distribution`'s event declaration is an output declaration: it types what `sample` returns. The two roles therefore settle every draw kind. `Distribution(name, DistributionSpec(t))` declares a random measure, whose draws are `Distribution`s. `Distribution(name, EventTemplate(x=DistributionSpec(t)))` declares a record law, whose draws are `Record`s holding a distribution-valued field `x`.
+
+The two spaces are isomorphic, but the draw kinds differ. The declaration alone decides which, never the runtime type of `_sample`'s return. A wrong-kind result raises the kind error, a schema mismatch its own.
 
 A declaration is *stored* as a spec. A bare `EventTemplate` is accepted wherever a record declaration is meant, and construction wraps it as `RecordSpec(template)`. The two forms denote the same space, and after construction only the spec remains, so the declared kind is the stored spec's class.
 
-The same storage rule holds for the tracked types. Each carries the spec of its kind as the single stored source of its type: the slot is `TrackedTerm.spec` (II.4), declared once on the tracked base and narrowed by each kind to its own spec class. Convenience accessors expose the spec's properties and differ by kind: `event_template` on `Record`, `input_template` and `output_spec` on `Function`, `event_spec` on `Distribution`, `given_template` and `event_spec` on `ConditionalDistribution`. Each accessor is a view on the one stored object, so none can disagree with it.
+The same storage rule holds for the tracked types. Each carries the spec of its kind as the single stored source of its type: the slot is `TrackedTerm.spec` (II.4), declared once on the tracked base and narrowed by each kind to its own spec class. Convenience accessors expose that spec's properties, and so differ by kind:
+
+| Type | Accessors |
+|---|---|
+| `Record` | `event_template` |
+| `Function` | `input_template`, `output_spec` |
+| `Distribution` | `event_spec` |
+| `ConditionalDistribution` | `given_template`, `event_spec` |
+
+Each accessor is a view on the one stored object, so none can disagree with it.
 
 `RecordSpec(τ)` and the template `τ` denote the same space. The tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity (name, provenance, capabilities) is never dropped implicitly.
 
@@ -144,7 +155,9 @@ A `FunctionSpec` types a callable by its input and output structure, either side
 
 ### Rationale
 
-One `is_valid` contract across raw values and terms keeps validation uniform (`C1 – Uniform interface to distributions and values`), and a term spec being a value spec is what lets a term occupy a field anywhere a plain value can. Storing every declaration as a spec, and the spec on the term itself, is `D7 – Single source of truth`: the declared kind is a stored class rather than an inference, and every accessor is a view that cannot drift.
+One `is_valid` contract across raw values and terms keeps validation uniform (`C1 – Uniform interface to distributions and values`). A term spec being a value spec is what lets a term occupy a field anywhere a plain value can.
+
+Storing every declaration as a spec, and the spec on the term itself, is `D7 – Single source of truth`. The declared kind is a stored class rather than an inference, and every accessor is a view that cannot drift.
 
 ## II.3 — `EventTemplate`
 
