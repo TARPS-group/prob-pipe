@@ -52,15 +52,6 @@ class _ListBatch(Batch[_Leaf]):
         ]
         return type(self)(kept, axis_groups, level_names, name=name, name_is_auto=True)
 
-    def _with_level_names(self, level_names):
-        return type(self)(
-            self._store,
-            self._axis_groups,
-            level_names,
-            name=self._name,
-            name_is_auto=self._name_is_auto,
-        )
-
 
 class _BareBatch(_ListBatch):
     """A batch whose elements are bare values; nothing to name."""
@@ -150,7 +141,16 @@ class TestLevelNames:
         renamed = nested.with_level_names(chain="walker")
         assert renamed.level_names == ("walker", "draw")
         assert renamed.batch_shape == nested.batch_shape
-        assert list(renamed._store) == list(nested._store)
+
+    def test_renaming_shares_elements_and_preserves_identity(self, nested):
+        """The default is a shallow copy: no storage is rebuilt, no identity minted."""
+        renamed = nested.with_level_names(chain="walker")
+        assert renamed._store is nested._store
+        assert (renamed.name, renamed.name_is_auto) == (nested.name, nested.name_is_auto)
+
+    def test_renaming_leaves_the_original_alone(self, nested):
+        nested.with_level_names(chain="walker")
+        assert nested.level_names == ("chain", "draw")
 
     def test_positional_mapping_and_keywords_both_work(self, nested):
         assert nested.with_level_names({"chain": "c"}, draw="d").level_names == ("c", "d")
@@ -281,5 +281,4 @@ class TestABC:
         assert isinstance(flat, TrackedTerm)
 
     def test_the_storage_seam_is_abstract(self):
-        expected = {"_element_at", "_sub_batch_at", "_with_level_names"}
-        assert expected <= set(Batch.__abstractmethods__)
+        assert set(Batch.__abstractmethods__) == {"_element_at", "_sub_batch_at"}

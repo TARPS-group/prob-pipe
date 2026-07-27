@@ -14,18 +14,21 @@ anything stated over ``batch_shape`` (flat vectorization above all) applies to a
 multi-level batch unchanged. Each level carries a name, so operations can align
 batched operands by meaning rather than by position.
 
-**Storage is the concrete class's business.** This module owns the level
-algebra: the shape invariants, the naming rules, index normalisation for
-:meth:`Batch.at_levels`, and the identity a view derives. A concrete batch
-supplies the two hooks :meth:`Batch._element_at` and
+**Storage is the concrete class's business, and only storage.** This module
+owns the level algebra: the shape invariants, the naming rules, index
+normalisation for :meth:`Batch.at_levels`, and the identity a view derives. A
+concrete batch supplies exactly two hooks, :meth:`Batch._element_at` and
 :meth:`Batch._sub_batch_at`, which materialise an element or a sub-batch view
-from a normalised positional index.
+from a normalised positional index. Renaming a level needs no hook: it touches
+no axes and no elements, so :meth:`Batch._with_level_names` defaults to a
+shallow copy.
 
 See design II.3.
 """
 
 from __future__ import annotations
 
+import copy
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from math import prod
@@ -325,9 +328,21 @@ class Batch[E](TrackedTerm, ABC):
         """``name[i]`` per dropped axis, composing as ``name[i][j]`` across levels."""
         return self._name + "".join(f"[{index}]" for index in dropped)
 
-    @abstractmethod
     def _with_level_names(self, level_names: tuple[str, ...]) -> Self:
-        """A shallow copy carrying *level_names*, sharing shape and elements."""
+        """A shallow copy carrying *level_names*, sharing shape and elements.
+
+        Renaming touches no axes and no elements, so the default is a shallow
+        copy with the names replaced. ``copy.copy`` does not run ``__init__``,
+        which is what makes this safe to define here: nothing is assumed about a
+        subclass's constructor, and the level invariants are not re-validated
+        for names already checked by :meth:`with_level_names`.
+
+        Override only when a subclass caches something derived from the level
+        names, since a shallow copy would carry the stale cache.
+        """
+        renamed = copy.copy(self)
+        object.__setattr__(renamed, "_level_names", level_names)
+        return renamed
 
 
 def _as_axis_indexers(indexer: LevelIndexer) -> tuple[int | slice | None, ...]:

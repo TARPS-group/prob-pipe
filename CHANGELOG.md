@@ -28,9 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positional `[]`, and the level analogue of `NamedTree.at_path`. An element
   view derives its name as `name[i]`, composing across levels as `name[i][j]`.
 
-  Element storage is the concrete class's business, supplied through the
-  `_element_at` / `_sub_batch_at` hooks; `FunctionBatch`, `RecordBatch`, and
-  `DistributionBatch` follow separately.
+  Element storage is the concrete class's business — the only thing left to a
+  subclass, through the two `_element_at` / `_sub_batch_at` hooks; renaming a
+  level touches no storage, so it defaults to a shallow copy.
+  `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow separately.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
