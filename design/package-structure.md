@@ -25,7 +25,7 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.1)
 │   ├── _identity.py           #   Tracked, Annotated, Provenance, fingerprints (II.2)
-│   ├── _batch.py              #   Batch: axis groups, level names, select (II.3)
+│   ├── _batch.py              #   Batch: axis groups, level names, at_levels (II.3)
 │   ├── _dispatch.py           #   dispatch methods and registries (II.4)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.4)
 │   └── _config.py             #   library configuration

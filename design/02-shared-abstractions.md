@@ -140,7 +140,7 @@ class Batch[E](Tracked):
     def __len__(self) -> int: ...                       # leading-axis size, batch_shape[0]
     def __iter__(self) -> Iterator[E | Self]: ...       # over the leading batch axis
     def __getitem__(self, index: Any) -> E | Self: ...  # returns a view of either an element or a sub-batch
-    def select_at(self, **levels: int | slice | None | tuple[int | slice | None, ...]) -> E | Self: ...
+    def at_levels(self, **levels: int | slice | None | tuple[int | slice | None, ...]) -> E | Self: ...
     # index by named level (a view); unnamed levels kept whole, None means the whole axis (:)
 ```
 
@@ -150,7 +150,7 @@ class Batch[E](Tracked):
 
 **Element identity.** An element view of a batch derives its name as `name[i]` from the batch's own name, marked `name_is_auto`, with provenance recording the indexing, and the elements of nested levels compose the scheme, as in `name[i][j]`. A batch whose elements are bare values yields bare elements, which carry no identity to derive.
 
-**Selecting by level.** `select_at(**levels)` indexes a batch along its named levels and returns a view, the by-name counterpart of positional `[]`. The name is `select_at` rather than `select`, which is the field-splatting selector on `Record` (III.3): a batch of records can sensibly carry both, so the two keep distinct names. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order, where an integer drops its axis and a slice or `None` keeps it, `None` meaning the whole axis as `:` does. A level spanning several axes takes one indexer per axis, and a shorter indexer fills the leading axes and leaves the rest whole, so a scalar `draw=i` on a two-axis `draw` level means `draw=(i, None)`. Selecting an entire single-axis level by an integer removes it, yielding the inner batch or element just as positional indexing and iteration do, while a level left unnamed is kept whole. This parallels xarray's `isel`, with `level_names` in the role of xarray dimension names; there is no label-based counterpart, since batch levels carry no coordinate labels.
+**Selecting by level.** `at_levels(**levels)` indexes a batch along its named levels and returns a view, the by-name counterpart of positional `[]`. It is the level analogue of `NamedTree.at_path` (II.1), and shares its shape: a path addresses a position and returns a leaf or a subtree, while named level indexers address positions and return an element or a sub-batch. The name is neither `select`, the field-splatting selector on `Record` (III.3) that a batch of records also carries, nor a name promising elements, which it returns only when the selection indexes down to one. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order, where an integer drops its axis and a slice or `None` keeps it, `None` meaning the whole axis as `:` does. A level spanning several axes takes one indexer per axis, and a shorter indexer fills the leading axes and leaves the rest whole, so a scalar `draw=i` on a two-axis `draw` level means `draw=(i, None)`. Selecting an entire single-axis level by an integer removes it, yielding the inner batch or element just as positional indexing and iteration do, while a level left unnamed is kept whole. This parallels xarray's `isel`, with `level_names` in the role of xarray dimension names; there is no label-based counterpart, since batch levels carry no coordinate labels.
 
 ### Rationale
 
