@@ -29,7 +29,7 @@ from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution, EmpiricalDistribution
 from .event_template import EventTemplate
 from .provenance import Provenance
-from .tracked import Tracked
+from .tracked import TrackedTerm
 
 MIN_BROADCAST_SAMPLES = 5
 
@@ -52,7 +52,7 @@ def execute_distribution_broadcast(
     workflow_name: str,
     workflow_kind: WorkflowKind,
     output_template: EventTemplate | None = None,
-    provenance_parents: Sequence[Tracked] = (),
+    provenance_parents: Sequence[TrackedTerm] = (),
     provenance_inputs: Mapping[str, Any] | None = None,
 ) -> BroadcastDistribution | Distribution:
     """Execute one distribution-only broadcasted workflow call.
@@ -102,7 +102,7 @@ def execute_distribution_broadcast(
         fail clearly when Prefect is unavailable.
     output_template : EventTemplate or None
         Concrete authoritative template for declared outputs, when present.
-    provenance_parents : sequence of Tracked
+    provenance_parents : sequence of TrackedTerm
         Call-level tracked lineage, already ordered and deduplicated.
     provenance_inputs : mapping of str to Any or None
         Call-level resolved plain inputs. Per-row sampled values do not replace
@@ -249,7 +249,7 @@ def _make_broadcast_provenance(
     n_broadcast_samples: int,
     workflow_name: str,
     func: Callable[..., Any],
-    provenance_parents: Sequence[Tracked],
+    provenance_parents: Sequence[TrackedTerm],
     provenance_inputs: Mapping[str, Any] | None,
 ) -> Provenance | None:
     return Provenance.create(

@@ -115,7 +115,7 @@ from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestor
 from probpipe.core.record import (
     Record,
 )
-from probpipe.core.tracked import Annotated, Tracked
+from probpipe.core.tracked import Annotated, TrackedTerm
 from probpipe.core.transition import (
     iterate,
     with_conversion,
@@ -305,7 +305,7 @@ __all__ = [
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
     "TFPDistribution",
-    "Tracked",
+    "TrackedTerm",
     # Transformed
     "TransformedDistribution",
     "TruncatedNormal",

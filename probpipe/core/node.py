@@ -45,7 +45,7 @@ from ._function_contract import (
 from ._record_array import RecordArray
 from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
-from .tracked import Annotated, Tracked, auto_name
+from .tracked import Annotated, TrackedTerm, auto_name
 
 logger = logging.getLogger(__name__)
 
@@ -183,7 +183,7 @@ class Node(ABC):  # noqa: B024
         return self._inputs
 
 
-class Function(Node, Tracked, Annotated):
+class Function(Node, TrackedTerm, Annotated):
     """
     An immutable, tracked executable DAG node wrapping one implementation.
 
@@ -541,7 +541,7 @@ class Function(Node, Tracked, Annotated):
 
     def with_name(self, name: str) -> Function:
         """Return a renamed shallow copy with synchronized callable metadata."""
-        renamed = cast(Function, Tracked.with_name(self, name))
+        renamed = cast(Function, TrackedTerm.with_name(self, name))
         object.__setattr__(renamed, "__name__", name)
         object.__setattr__(renamed, "__qualname__", name)
         return renamed
@@ -714,15 +714,15 @@ class Function(Node, Tracked, Annotated):
             if self._output_template is not None
             else None
         )
-        provenance_parents: list[Tracked] = [self]
+        provenance_parents: list[TrackedTerm] = [self]
         provenance_inputs: dict[str, Any] = {}
         seen_parent_ids = {id(self)}
         for ref in _workflow_call.iter_input_refs(self._signature_info, values):
             value = _workflow_call.input_ref_value(values, ref)
-            if isinstance(value, Tracked) and id(value) not in seen_parent_ids:
+            if isinstance(value, TrackedTerm) and id(value) not in seen_parent_ids:
                 seen_parent_ids.add(id(value))
                 provenance_parents.append(value)
-            elif not isinstance(value, Tracked):
+            elif not isinstance(value, TrackedTerm):
                 provenance_inputs[ref.label] = value
 
         def invoke_point(**point_values: Any) -> Any:
@@ -845,7 +845,7 @@ class Function(Node, Tracked, Annotated):
                 provenance_inputs=provenance_inputs,
             )
 
-        # Non-broadcast call — one function invocation, then wrap. Tracked
+        # Non-broadcast call — one function invocation, then wrap. TrackedTerm
         # values form lineage parents; every other resolved parameter remains
         # separately fingerprinted in Provenance.inputs.
         # Known harmless duplication: the distribution-broadcast module builds

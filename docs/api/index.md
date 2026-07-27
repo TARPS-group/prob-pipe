@@ -43,7 +43,7 @@ for known-name lookups.
   singletons and factories, the `bijector_for` map for reparameterization.
 - **[Conversion and interop](converters.md)** — `converter_registry`,
   `Converter`, the conversion-info dataclasses.
-- **[Identity & provenance](provenance.md)** — `Tracked`, `Annotated`, `Provenance`, `provenance_ancestors`,
+- **[Identity & provenance](provenance.md)** — `TrackedTerm`, `Annotated`, `Provenance`, `provenance_ancestors`,
   `provenance_dag`.
 - **[Extending ProbPipe](extending.md)** — base classes, protocols, and
   extension contracts.

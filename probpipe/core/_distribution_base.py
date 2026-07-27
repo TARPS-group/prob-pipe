@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from ..diagnostics.views import DiagnosticsView
     from ._distribution_array import DistributionArray
 
-from .tracked import Annotated, Tracked
+from .tracked import Annotated, TrackedTerm
 
 # ---------------------------------------------------------------------------
 # Global defaults
@@ -48,15 +48,15 @@ def set_return_approx_dist(value: bool) -> None:
 # ---------------------------------------------------------------------------
 
 
-class Distribution[T](Tracked, Annotated, ABC):
+class Distribution[T](TrackedTerm, Annotated, ABC):
     """
     Abstract base for all ProbPipe distributions, parameterized by
     value type ``T``.
 
     Every distribution is a tracked term: it is
-    :class:`~probpipe.core.tracked.Tracked` (a :attr:`~Tracked.name`, a
-    :attr:`~Tracked.name_is_auto` flag, and a write-once
-    :attr:`~Tracked.provenance`) and
+    :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.name`, a
+    :attr:`~TrackedTerm.name_is_auto` flag, and a write-once
+    :attr:`~TrackedTerm.provenance`) and
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  Leaf distributions (Normal, Gamma,
     etc.) require an explicit ``name=`` argument; composite distributions
