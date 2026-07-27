@@ -1,7 +1,7 @@
 # Identity & provenance
 
 Every `Distribution` or `Record` returned by a Function carries a
-`Provenance` record describing the operation that produced it. TrackedTerm inputs
+`Provenance` record describing the operation that produced it. Tracked-term inputs
 are lineage `parents`; resolved ordinary values are fingerprinted separately
 under `inputs`. The resulting directed acyclic graph traverses only tracked
 parents, while ordinary arrays, scalars, defaults, and Module-provided values
