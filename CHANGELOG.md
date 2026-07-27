@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`Batch[E]` — the generic multiplicity axis (#350 W1.2).** New
+  `probpipe.core._batch` module holding the tracked nd-collection ABC the
+  concrete batch types will specialize. A batch says *how many* objects there
+  are, separately from what one object contains, so `len` / `iter` /
+  `batch_shape` / `batch_size` speak only about the batch axes and never about
+  an element's structure.
+
+  Axes are partitioned into ordered **levels**: `axis_groups` tiles
+  `batch_shape` into contiguous groups, outermost first, with `batch_shape`
+  their flat concatenation — so `N` laws of `S` draws each are `(N,)` of `(S,)`
+  rather than one anonymous `(N, S)`, and anything stated over `batch_shape`
+  applies to a multi-level batch unchanged. Each level carries a name
+  (`level_names`, repinned by `with_level_names`, which raises on a collision,
+  while `Batch.disambiguate_level_name` supplies the smallest free integer
+  suffix an operation uses when minting a duplicate). `at_levels(**levels)`
+  indexes by level name and returns a view — the by-name counterpart of
+  positional `[]`, and the level analogue of `NamedTree.at_path`. An element
+  view derives its name as `name[i]`, composing across levels as `name[i][j]`.
+
+  Element storage is the concrete class's business, supplied through the
+  `_element_at` / `_sub_batch_at` hooks; `FunctionBatch`, `RecordBatch`, and
+  `DistributionBatch` follow separately.
+
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
   Python `signature`, optional authoritative `input_template` and
