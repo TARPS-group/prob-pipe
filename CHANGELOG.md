@@ -71,6 +71,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   positional `[]`, and the level analogue of `NamedTree.at_path`. An element
   view derives its name as `name[i]`, composing across levels as `name[i][j]`.
 
+  A batch's **specification is its own**, at the *family* kind: the new
+  `BatchSpec` term spec carries the element's specification together with that
+  named multiplicity, and a batch stores it as the single source of its type.
+  `spec` therefore names the collection, just as any other term's spec names the
+  term, while `element_spec`, `axis_groups`, `level_names`, `batch_shape`, and
+  `batch_size` are views on it; the level invariants are the spec's own, checked
+  when it is constructed. A batch of values naming no kind is specified all the
+  same, a raw-value `element_spec` being as well formed as a term spec.
+
   Element storage is the concrete class's business — the only thing left to a
   subclass, through the two `_element_at` / `_sub_batch_at` hooks; renaming a
   level touches no storage, so it defaults to a shallow copy.

@@ -10,8 +10,19 @@ from __future__ import annotations
 
 import pytest
 
-from probpipe.core._batch import Batch
+from probpipe import ArraySpec, OpaqueSpec, TermSpec
+from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core.tracked import TrackedTerm
+
+# The doubles' element type is neither a Record, a Distribution, nor a Function,
+# so no term spec fits it: OpaqueSpec is the honest element spec, and doubles as
+# a check that an element spec naming no kind is well formed.
+_ELEMENT_SPEC = OpaqueSpec()
+
+
+def _spec(axis_groups, level_names, element_spec=_ELEMENT_SPEC):
+    """A ``BatchSpec`` over the doubles' element type."""
+    return BatchSpec(element_spec, axis_groups, level_names)
 
 
 class _Leaf(TrackedTerm):
@@ -27,11 +38,11 @@ class _Leaf(TrackedTerm):
 class _ListBatch(Batch[_Leaf]):
     """A batch storing elements in a flat list, row-major over ``batch_shape``."""
 
-    __slots__ = ("_axis_groups", "_level_names", "_name", "_name_is_auto", "_provenance", "_store")
+    __slots__ = ("_name", "_name_is_auto", "_provenance", "_spec", "_store")
 
-    def __init__(self, store, axis_groups, level_names, *, name="b", name_is_auto=False):
+    def __init__(self, store, spec, *, name="b", name_is_auto=False):
         object.__setattr__(self, "_store", list(store))
-        self._init_batch(axis_groups, level_names, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
 
     # -- the storage seam --
 
@@ -44,13 +55,13 @@ class _ListBatch(Batch[_Leaf]):
     def _element_at(self, index, *, name):
         return _Leaf(self._store[self._flat(index)], name=name, name_is_auto=True)
 
-    def _sub_batch_at(self, index, *, axis_groups, level_names, name):
+    def _sub_batch_at(self, index, *, spec, name):
         kept = [
             self._store[self._flat(position)]
             for position in _positions(self.batch_shape)
             if _selected(position, index)
         ]
-        return type(self)(kept, axis_groups, level_names, name=name, name_is_auto=True)
+        return type(self)(kept, spec, name=name, name_is_auto=True)
 
 
 class _BareBatch(_ListBatch):
@@ -87,21 +98,21 @@ _SHAPE_OF: dict[int, tuple[int, ...]] = {}
 def flat():
     """A single-level batch: 4 elements on one ``draw`` axis."""
     _SHAPE_OF[1] = (4,)
-    return _ListBatch(range(4), [(4,)], ["draw"])
+    return _ListBatch(range(4), _spec([(4,)], ["draw"]))
 
 
 @pytest.fixture
 def nested():
     """Two levels: ``chain`` of 2 over ``draw`` of 3."""
     _SHAPE_OF[2] = (2, 3)
-    return _ListBatch(range(6), [(2,), (3,)], ["chain", "draw"])
+    return _ListBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
 
 
 @pytest.fixture
 def two_axis():
     """One two-axis level, to exercise partial level indexers."""
     _SHAPE_OF[2] = (2, 3)
-    return _ListBatch(range(6), [(2, 3)], ["draw"])
+    return _ListBatch(range(6), _spec([(2, 3)], ["draw"]))
 
 
 class TestShapeAndLevels:
@@ -133,7 +144,77 @@ class TestShapeAndLevels:
     )
     def test_level_invariants_are_checked_at_construction(self, groups, names, match):
         with pytest.raises(ValueError, match=match):
-            _ListBatch([], groups, names)
+            _spec(groups, names)
+
+
+class TestSpec:
+    """The stored ``BatchSpec`` is the single source of a batch's type."""
+
+    def test_the_level_accessors_are_views_on_the_stored_spec(self, nested):
+        assert isinstance(nested.spec, BatchSpec)
+        assert nested.spec is nested._spec
+        assert (nested.axis_groups, nested.level_names) == (
+            nested.spec.axis_groups,
+            nested.spec.level_names,
+        )
+        assert (nested.batch_shape, nested.batch_size) == (
+            nested.spec.batch_shape,
+            nested.spec.batch_size,
+        )
+
+    def test_the_spec_names_the_batch_not_the_element(self, nested):
+        assert nested.spec != nested.element_spec
+        assert nested.element_spec == _ELEMENT_SPEC
+
+    def test_an_element_spec_naming_no_kind_is_well_formed(self):
+        """The case ``BatchSpec`` exists to cover: a batch of raw values."""
+        _SHAPE_OF[1] = (3,)
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
+        assert bare.element_spec == ArraySpec(shape=())
+        assert isinstance(bare.spec, BatchSpec)
+
+    def test_axis_groups_are_normalised_to_tuples(self):
+        assert _spec([[2], [3]], ["chain", "draw"]).axis_groups == ((2,), (3,))
+
+    def test_specs_compare_and_hash_by_value(self):
+        assert _spec([(4,)], ["draw"]) == _spec([(4,)], ["draw"])
+        assert hash(_spec([(4,)], ["draw"])) == hash(_spec([(4,)], ["draw"]))
+        assert _spec([(4,)], ["draw"]) != _spec([(4,)], ["chain"])
+
+    def test_an_element_spec_must_be_a_value_spec(self):
+        with pytest.raises(TypeError, match="must be a ValueSpec"):
+            BatchSpec("not a spec", [(2,)], ["draw"])
+
+    def test_a_batch_must_be_given_a_batch_spec(self):
+        with pytest.raises(TypeError, match="specified by a BatchSpec"):
+            _ListBatch([], _ELEMENT_SPEC)
+
+    def test_a_sub_batch_view_keeps_the_element_spec_over_surviving_levels(self, nested):
+        inner = nested[1]
+        assert inner.element_spec == nested.element_spec
+        assert inner.spec == _spec([(3,)], ["draw"])
+
+    def test_a_sliced_view_narrows_the_axis_in_its_spec(self, nested):
+        assert nested.at_levels(draw=slice(0, 2)).spec == _spec([(2,), (2,)], ["chain", "draw"])
+
+    def test_renaming_replaces_the_spec_and_leaves_the_original_alone(self, nested):
+        renamed = nested.with_level_names(chain="walker")
+        assert renamed.spec == _spec([(2,), (3,)], ["walker", "draw"])
+        assert nested.spec == _spec([(2,), (3,)], ["chain", "draw"])
+
+    def test_is_valid_accepts_the_batch_it_specifies(self, flat):
+        assert flat.spec.is_valid(flat)
+
+    def test_is_valid_rejects_a_differently_shaped_batch(self, flat):
+        assert not _spec([(3,)], ["draw"]).is_valid(flat)
+        assert not _spec([(4,)], ["chain"]).is_valid(flat)
+
+    def test_is_valid_rejects_a_non_batch(self, flat):
+        assert not flat.spec.is_valid([0, 1, 2, 3])
+        assert not flat.spec.is_valid(_Leaf(0))
+
+    def test_a_batch_spec_is_a_term_spec(self, flat):
+        assert isinstance(flat.spec, TermSpec)
 
 
 class TestLevelNames:
@@ -267,7 +348,7 @@ class TestElementIdentity:
 
     def test_bare_elements_carry_no_identity(self):
         _SHAPE_OF[1] = (3,)
-        bare = _BareBatch(range(3), [(3,)], ["draw"])
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
         assert bare[1] == 1
         assert not isinstance(bare[1], TrackedTerm)
 
