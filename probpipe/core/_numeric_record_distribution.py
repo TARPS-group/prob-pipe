@@ -269,7 +269,7 @@ class NumericRecordDistribution(RecordDistribution):
     def with_name(self, new_name: str) -> NumericRecordDistribution:
         """Return a renamed copy, regenerating an auto-built template.
 
-        Extends :meth:`Tracked.with_name`. When the cached template
+        Extends :meth:`TrackedTerm.with_name`. When the cached template
         is the single-field auto-build (one field keyed by the old
         name), the clone's ``_event_template`` is cleared so the next
         access rebuilds it under ``new_name``. Multi-leaf and
@@ -934,7 +934,7 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
     def __init__(self, base: Distribution):
         self._base = base
         # Carry the base's identity through; ``base.name`` is guaranteed
-        # non-empty by the Tracked metaclass check, and the view mirrors
+        # non-empty by the TrackedTerm metaclass check, and the view mirrors
         # whether that name was auto-derived.
         self._init_tracked(base.name, name_is_auto=base.name_is_auto)
 
@@ -1196,7 +1196,7 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         name: str | None = None,
     ):
         # Skip ``Distribution.__init__`` to avoid double-validation;
-        # the Tracked metaclass check still enforces a non-empty
+        # the TrackedTerm metaclass check still enforces a non-empty
         # ``_name``. ``base.name`` is guaranteed non-empty by that same
         # check, so the fallback is always valid.
         self._base = base

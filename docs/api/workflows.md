@@ -113,7 +113,7 @@ sampled, or swept independently. Informative variadic annotations apply to
 each expanded slot; `Any` supplies no pass-through guarantee, so generic
 `**kwargs: Any` APIs retain lifting and sweep behavior. The original Python
 call is reconstructed before execution. Provenance and `include_inputs` labels
-are stable, for example `*items[0]` and `**extras['scale']`. Tracked slots form
+are stable, for example `*items[0]` and `**extras['scale']`. TrackedTerm slots form
 deduplicated lineage parents; ordinary slots remain distinct in
 `Provenance.inputs` even when multiple parameters refer to the same object.
 

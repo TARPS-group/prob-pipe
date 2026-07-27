@@ -13,9 +13,9 @@ from .config import ProvenanceMode, provenance_config
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from .tracked import Tracked
+    from .tracked import TrackedTerm
 
-    ProvenanceNode = Tracked
+    ProvenanceNode = TrackedTerm
 
 __all__ = [
     "ParentInfo",

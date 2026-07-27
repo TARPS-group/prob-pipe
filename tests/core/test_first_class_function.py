@@ -32,7 +32,7 @@ from probpipe import (
     ProvenanceMode,
     Record,
     RecordArray,
-    Tracked,
+    TrackedTerm,
     function,
     mean,
     positive,
@@ -49,7 +49,7 @@ class TestFunctionValueContract:
 
         wrapped = Function(func=increment)
 
-        assert isinstance(wrapped, Tracked)
+        assert isinstance(wrapped, TrackedTerm)
         assert isinstance(wrapped, Annotated)
         assert wrapped.name == "increment"
         assert wrapped.name_is_auto

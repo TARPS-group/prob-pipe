@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so nothing there is expressible-but-unsatisfiable.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
-  immutable `Node` / `Tracked` / `Annotated` object with a construction-time
+  immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
   Python `signature`, optional authoritative `input_template` and
   `output_template`, and a raw `apply(*args, **kwargs)` execution boundary.
   `ArraySpec` shapes accept symbolic dimension names; templates expose
@@ -106,9 +106,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Diagnostics payloads, previously carried as Records with dict-valued fields,
   are now plain dicts.
 
-- **`Tracked` / `Annotated` identity-and-metadata mixins (#336).** New
+- **`TrackedTerm` / `Annotated` identity-and-metadata mixins (#336).** New
   `probpipe.core.tracked` module defining the shared identity attributes and methods every
-  ProbPipe object carries: `Tracked` (a `name`, a `name_is_auto` flag, and a
+  ProbPipe object carries: `TrackedTerm` (a `name`, a `name_is_auto` flag, and a
   write-once `provenance` attached via `with_provenance`, plus `with_name` for
   rename-as-copy) and `Annotated` (a free-form `annotations` mapping).
   `Distribution` and `Record` / `NumericRecord` inherit both; the batch types
@@ -244,6 +244,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   required. Existing operation controls remain provenance metadata. Other
   tracked return values remain event payloads until #369 adds explicit
   term-result planning.
+
+- **`TrackedTerm` renamed from `Tracked` (breaking).** The mixin carrying a
+  `name`, a `name_is_auto` flag, and a `provenance` is now `TrackedTerm`, the
+  name the design reference uses for what it holds: the objects operations
+  consume and produce are *tracked terms*, while templates and specs are
+  structural helpers that are not. The private metaclass follows as
+  `_TrackedTermMeta`. This is a hard rename with no compatibility aliases, and
+  nothing about identity, provenance, or immutability behaviour changes.
 
 - **`WorkflowFunction` renamed to `Function` (#377, breaking).** The public
   decorator is likewise renamed from `@workflow_function` to `@function`.
@@ -387,7 +395,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **Identity attributes and methods renamed to the design-reference vocabulary (#336,
   breaking).** The duplicated per-class naming/provenance/metadata code on
-  `Distribution` and `Record` is replaced by the `Tracked` / `Annotated`
+  `Distribution` and `Record` is replaced by the `TrackedTerm` / `Annotated`
   mixins, with a hard rename (no aliases): `source` → `provenance`,
   `with_source(...)` → `with_provenance(...)`, `renamed(...)` →
   `with_name(...)` (rename provenance now records the operation as

@@ -1,4 +1,4 @@
-"""Contract tests for the ``Tracked`` / ``Annotated`` identity mixins.
+"""Contract tests for the ``TrackedTerm`` / ``Annotated`` identity mixins.
 
 Asserts the identity-and-metadata contract shared by every tracked term:
 ``name`` / ``name_is_auto`` semantics (user-given vs. auto-derived),
@@ -27,7 +27,7 @@ from probpipe import (
     RecordArray,
 )
 from probpipe.core.event_template import EventTemplate
-from probpipe.core.tracked import Annotated, Tracked, auto_name
+from probpipe.core.tracked import Annotated, TrackedTerm, auto_name
 
 # ===========================================================================
 # 1. Mixin membership — every core object is a tracked term
@@ -37,17 +37,17 @@ from probpipe.core.tracked import Annotated, Tracked, auto_name
 class TestMixinMembership:
     def test_distribution_is_tracked_and_annotated(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
-        assert isinstance(n, Tracked)
+        assert isinstance(n, TrackedTerm)
         assert isinstance(n, Annotated)
 
     def test_record_is_tracked_and_annotated(self):
         r = Record("r", a=1.0)
-        assert isinstance(r, Tracked)
+        assert isinstance(r, TrackedTerm)
         assert isinstance(r, Annotated)
 
     def test_numeric_record_is_tracked_and_annotated(self):
         nr = NumericRecord("nr", a=jnp.array(1.0))
-        assert isinstance(nr, Tracked)
+        assert isinstance(nr, TrackedTerm)
         assert isinstance(nr, Annotated)
 
     def test_record_array_is_tracked(self):
@@ -56,11 +56,11 @@ class TestMixinMembership:
             batch_shape=(3,),
             template=EventTemplate(a=()),
         )
-        assert isinstance(ra, Tracked)
+        assert isinstance(ra, TrackedTerm)
 
     def test_distribution_array_is_tracked(self):
         da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="batch")
-        assert isinstance(da, Tracked)
+        assert isinstance(da, TrackedTerm)
 
 
 # ===========================================================================
@@ -70,16 +70,16 @@ class TestMixinMembership:
 
 class TestNameEnforcement:
     def test_tracked_host_must_set_nonempty_name(self):
-        """The construction-time name check lives on Tracked, not per host."""
+        """The construction-time name check lives on TrackedTerm, not per host."""
 
-        class Nameless(Tracked):
+        class Nameless(TrackedTerm):
             def __init__(self):
                 pass
 
         with pytest.raises(TypeError, match="non-empty name"):
             Nameless()
 
-        class EmptyNamed(Tracked):
+        class EmptyNamed(TrackedTerm):
             def __init__(self):
                 self._init_tracked("")
 
@@ -332,7 +332,7 @@ class TestWithNameOnBatchTypes:
 
 
 class TestWithNameOnCustomNewHosts:
-    """with_name must work on every Tracked host, including classes whose
+    """with_name must work on every TrackedTerm host, including classes whose
     __new__ takes required arguments (dynamic class selection / views)."""
 
     def test_transformed_distribution(self):

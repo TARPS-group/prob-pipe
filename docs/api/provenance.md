@@ -1,7 +1,7 @@
 # Identity & provenance
 
 Every `Distribution` or `Record` returned by a Function carries a
-`Provenance` record describing the operation that produced it. Tracked inputs
+`Provenance` record describing the operation that produced it. TrackedTerm inputs
 are lineage `parents`; resolved ordinary values are fingerprinted separately
 under `inputs`. The resulting directed acyclic graph traverses only tracked
 parents, while ordinary arrays, scalars, defaults, and Module-provided values
@@ -12,17 +12,17 @@ went into producing `value`. `provenance_dag(value)` renders the same
 information as a Graphviz `Digraph` — useful for debugging or displaying
 lineage in a notebook.
 
-## The `Tracked` and `Annotated` mixins
+## The `TrackedTerm` and `Annotated` mixins
 
 The identity attributes and methods are defined once, by two mixins in
 `probpipe.core.tracked`, and shared by every core object:
 
-- **`Tracked`** — a `name`, a `name_is_auto` flag recording whether the name
+- **`TrackedTerm`** — a `name`, a `name_is_auto` flag recording whether the name
   was auto-derived by the operation that produced the object (`True`) or
   supplied by the user (`False`), and a write-once `provenance` attached via
   `with_provenance(...)`. `with_name(name)` returns a shallow copy under a
   new user-given name, with provenance recording the rename. `Distribution`,
-  `Record`/`NumericRecord`, and the batch types are all `Tracked`.
+  `Record`/`NumericRecord`, and the batch types are all `TrackedTerm`.
 - **`Annotated`** — a free-form `annotations` mapping for auxiliary
   information attached after construction (diagnostics, validation results).
   An `xarray.DataTree` is a valid value; fitted posteriors use it with
@@ -173,7 +173,7 @@ content identity.
 
 ## API reference
 
-::: probpipe.Tracked
+::: probpipe.TrackedTerm
 
 ::: probpipe.Annotated
 
