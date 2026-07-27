@@ -12,7 +12,17 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, Normal, Record
+from probpipe import (
+    ArraySpec,
+    DistributionSpec,
+    EventTemplate,
+    FunctionSpec,
+    Normal,
+    OpaqueSpec,
+    Record,
+    RecordSpec,
+    ValueSpec,
+)
 from probpipe.core._fingerprint import (
     _fingerprint_with_strength,
     _update_function,
@@ -910,3 +920,147 @@ class TestNumericContainerHashing:
             return subprocess.check_output([sys.executable, "-c", script, site], text=True).strip()
 
         assert run() == run()
+
+
+class TestValueSpecFingerprints:
+    """Specs are hashed as template leaves, by declaration and not by identity.
+
+    A declaration is stored as a spec (`DistributionSpec.event_spec`,
+    `FunctionSpec.output_spec`), so the spec hasher must recurse into it. These
+    tests pin that: equal declarations must agree, distinct ones must not, and
+    every spec kind must be reachable — a spec the hasher does not know falls
+    back to identity hashing, which silently breaks cache keys and provenance.
+    """
+
+    @staticmethod
+    def _fp(spec):
+        """Fingerprint a spec as a template leaf, asserting it hashed strongly.
+
+        A spec the hasher does not know falls through to identity hashing, which
+        still returns a digest — so every comparison below would be meaningless
+        without this check.
+        """
+        digest, weak = _fingerprint_with_strength(EventTemplate(field=spec))
+        assert not weak, "spec hashed by identity, not by declaration"
+        return digest
+
+    @pytest.fixture
+    def tau(self):
+        return EventTemplate(x=())
+
+    def test_every_spec_kind_is_reachable_by_the_hasher(self, tau):
+        """Each kind hashes by declaration; none falls through to identity."""
+        for spec in (
+            ArraySpec(()),
+            OpaqueSpec(),
+            RecordSpec(tau),
+            DistributionSpec(tau),
+            FunctionSpec(tau, tau),
+            FunctionSpec(),
+        ):
+            _, weak = _fingerprint_with_strength(EventTemplate(field=spec))
+            assert not weak, f"{type(spec).__name__} hashed by identity"
+
+    def test_an_unknown_spec_kind_is_reported_weak(self, tau):
+        """The contract boundary: a spec the hasher does not know is not silently
+        treated as strong, so a future kind that skips the hasher is visible."""
+
+        class _UnknownSpec(ValueSpec):
+            def is_valid(self, value):
+                return True
+
+        _, weak = _fingerprint_with_strength(EventTemplate(field=_UnknownSpec()))
+        assert weak
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda t: RecordSpec(t),
+            lambda t: DistributionSpec(t),
+            lambda t: FunctionSpec(t, t),
+            lambda t: FunctionSpec(t, DistributionSpec(t)),
+        ],
+        ids=["record", "distribution", "function-record-out", "function-term-out"],
+    )
+    def test_equal_declarations_fingerprint_equal(self, make):
+        # Distinct-but-equal templates, so this pins declaration equality
+        # rather than object identity.
+        assert self._fp(make(EventTemplate(x=()))) == self._fp(make(EventTemplate(x=())))
+
+    def test_distinct_declarations_fingerprint_differently(self, tau):
+        other = EventTemplate(y=())
+        assert self._fp(RecordSpec(tau)) != self._fp(RecordSpec(other))
+        assert self._fp(DistributionSpec(tau)) != self._fp(DistributionSpec(other))
+        assert self._fp(FunctionSpec(tau, tau)) != self._fp(FunctionSpec(tau, other))
+
+    def test_declared_kind_changes_the_fingerprint(self, tau):
+        # The same space under different declared kinds must not collide: the
+        # declaration's class is the kind.
+        assert self._fp(RecordSpec(tau)) != self._fp(DistributionSpec(tau))
+        assert self._fp(FunctionSpec(tau, tau)) != self._fp(
+            FunctionSpec(tau, DistributionSpec(tau))
+        )
+
+    def test_unspecified_output_differs_from_a_declared_one(self, tau):
+        assert self._fp(FunctionSpec(tau)) != self._fp(FunctionSpec(tau, tau))
+
+    def test_a_deep_declaration_chain_truncates_instead_of_recursing(self, tau):
+        """Declaration edges are hashed through the depth-guarded entry point.
+
+        An output declaration may itself be a FunctionSpec, so the chain is
+        unbounded; hashing it must degrade to the depth marker and report weak
+        rather than exhaust the interpreter stack. The spec is hashed directly:
+        nesting it in a template instead would recurse in ``EventTemplate``'s
+        own hash, which is a separate concern.
+        """
+        spec = FunctionSpec()
+        for _ in range(1000):
+            spec = FunctionSpec(tau, spec)
+
+        _, weak = _fingerprint_with_strength(spec)
+        assert weak
+
+    # --- a spec is hashed by declaration wherever it appears, not by identity ---
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [lambda sp: sp, lambda sp: (sp,), lambda sp: [sp], lambda sp: {"f": sp}],
+        ids=["bare", "in-tuple", "in-list", "in-dict"],
+    )
+    def test_spec_outside_a_template_is_still_hashed_by_declaration(self, wrap, tau):
+        """A spec reached other than as a template leaf must not hash by identity.
+
+        The generic hasher must route a `ValueSpec` to the spec hasher, which
+        records the object type and the declaration fields. Falling through to
+        identity hashing would make equal declarations hash differently and
+        silently break cache keys and provenance.
+        """
+        # Both specs are bound and alive simultaneously, so they cannot share an
+        # address: under identity hashing the digests would differ.
+        left = RecordSpec(EventTemplate(x=()))
+        right = RecordSpec(EventTemplate(x=()))
+        first, weak = _fingerprint_with_strength(wrap(left))
+        second, _ = _fingerprint_with_strength(wrap(right))
+
+        assert not weak
+        assert first == second
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [lambda sp: sp, lambda sp: (sp,), lambda sp: [sp], lambda sp: {"f": sp}],
+        ids=["bare", "in-tuple", "in-list", "in-dict"],
+    )
+    def test_declaration_fields_are_recorded_outside_a_template(self, wrap):
+        """Two specs of the same kind differing only in their declaration.
+
+        Distinguishing *kinds* would not pin this: the identity fallback writes
+        the type name too, so it separates a RecordSpec from a DistributionSpec
+        on its own. Only reading the declaration fields separates these.
+        """
+        one = RecordSpec(EventTemplate(x=()))
+        other = RecordSpec(EventTemplate(y=()))
+        first, weak = _fingerprint_with_strength(wrap(one))
+        second, _ = _fingerprint_with_strength(wrap(other))
+
+        assert not weak
+        assert first != second

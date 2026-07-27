@@ -593,7 +593,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         -----
         Inference is a lossy fallback (it cannot recover an ``ArraySpec``'s
         ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
-        ``DistributionSpec`` / ``FunctionSpec``). The template rides in the
+        ``RecordSpec`` / ``DistributionSpec`` / ``FunctionSpec``). The template rides in the
         JAX pytree aux data, so a value reconstructed by ``tree_unflatten``
         carries this same template; unpickling instead infers a fresh
         template from the rebuilt data.

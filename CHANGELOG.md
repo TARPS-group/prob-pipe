@@ -7,7 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Value specs are fingerprinted by declaration, not identity (#381).** The
+  spec hasher now covers `RecordSpec` and recurses into a stored declaration
+  (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec
+  rather than a template. The generic hasher also routes any `ValueSpec` to it,
+  so a spec reached other than as a template leaf — bare, or inside a tuple,
+  list, or mapping — records its type and declaration fields instead of falling
+  through to identity hashing. Previously such a spec hashed weakly, so two
+  *equal* declarations produced different fingerprints and silently broke jit
+  cache keys and provenance. Because a record declaration is now stored as a
+  `RecordSpec`, the digest of a template carrying a `DistributionSpec`, or a
+  `FunctionSpec` with a declared output, also changes value; fingerprints are
+  in-memory jit cache keys and provenance only, never persisted.
+
 ### Added
+
+- **`TermSpec` — the term-spec sub-hierarchy, and declarations stored as specs
+  (#381).** `ValueSpec` now splits into *raw-value specs* (`ArraySpec`,
+  `OpaqueSpec`), which name no ProbPipe kind, and *term specs*, one per kind,
+  whose concrete class *is* the kind. `TermSpec(ValueSpec)` is the marker
+  `isinstance` reads; `is_valid` stays declared once on `ValueSpec`, so a term
+  spec is accepted anywhere a leaf is. New `RecordSpec` completes the four
+  corners beside `DistributionSpec`, `FunctionSpec`, and the conditional spec
+  to come, and `DistributionSpec` / `FunctionSpec` are reparented under
+  `TermSpec`.
+
+  An **output declaration** is any value specification, matching the model's
+  `Fun(σ, ρ)` with `ρ` a value specification: a callable may declare a term
+  result of any kind or a raw-value result, the latter typing the value the wrap
+  boundary places in a single-field `Record`. An **event** declaration is
+  narrower, record-valued, because `DistributionSpec.is_valid` checks it.
+
+  A *declaration* — of an event or an output — is now **stored as a spec**: a
+  bare `EventTemplate` is accepted as construction sugar wherever a record
+  declaration is meant and normalised to `RecordSpec(template)`, so after
+  construction the declared kind is simply the stored spec's class. This makes
+  an operation's result kind a structural test rather than an inference from a
+  runtime value. A callable's `output_spec` accepts any kind; an *event*
+  declaration is record-valued for now, since a `Distribution` exposes an
+  `EventTemplate` and nothing that reports a term-valued draw kind, so a
+  random-measure declaration is refused at construction rather than accepted
+  and always reported invalid. `FunctionSpec` declares no check on its output,
+  so nothing there is expressible-but-unsatisfiable.
 
 - **`Batch[E]` — the generic multiplicity axis (#350 W1.2).** New
   `probpipe.core._batch` module holding the tracked nd-collection ABC the
@@ -182,6 +225,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **Renamed, for the storage rule (#381):** `FunctionSpec.output_template` is
+  now **`output_spec`**, storing any `ValueSpec` or `None`, and
+  `DistributionSpec.event_template` is now **`event_spec`**, storing a
+  `RecordSpec`. Both constructors still accept an `EventTemplate` and wrap it, so
+  existing positional and keyword construction from a template keeps working;
+  reads of the old attribute names do not. The names now carry their content:
+  `*_template` is always a record schema, `*_spec` a declaration of any kind —
+  which is why `RecordSpec.event_template` keeps its name.
 
 - **Function calls establish a new result identity and provenance boundary
   (#368, breaking).** Existing operations such as `condition_on` and

@@ -36,12 +36,17 @@ one. Every spec answers :meth:`ValueSpec.is_valid`, which checks whether a
 concrete value matches the spec. The specs for certain value types may
 contain lots of useful structure (e.g., shape and dtype for arrays), while
 others may expose no structure at all (e.g., an opaque Python object).
-The concrete specs are as follows:
+Specs come in two families. A **raw-value spec** describes a plain value that
+names no ProbPipe kind. A **term spec** describes a tracked term, one class per
+kind, and all of them subclass the :class:`TermSpec` marker; a declaration whose
+class is a term spec therefore names a kind. The concrete specs are as follows:
 - :class:`ArraySpec`: describes a numeric array (shape, optional dtype/support)
-- :class:`DistributionSpec`: describes a ``Distribution``. Carries a sub-template
-  describing the structure of one sample from the distribution.
-- :class:`FunctionSpec`: describes a callable. Optionally carries sub-templates
-  for the structure of the function's inputs and outputs.
+- :class:`RecordSpec`: describes an embedded ``Record``. Carries the event
+  template of that record.
+- :class:`DistributionSpec`: describes a ``Distribution``. Carries the *event
+  declaration* of one draw from it, stored as a spec.
+- :class:`FunctionSpec`: describes a callable. Optionally carries the input
+  template and the *output declaration*, the latter stored as a spec.
 - :class:`OpaqueSpec`: fallback for any other object (no structure exposed).
 
 Numeric vs. Mixed
@@ -62,7 +67,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from math import prod
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -83,6 +88,8 @@ __all__ = [
     "FunctionSpec",
     "NumericEventTemplate",
     "OpaqueSpec",
+    "RecordSpec",
+    "TermSpec",
     "ValueSpec",
 ]
 
@@ -100,7 +107,7 @@ class ValueSpec(ABC):
 
     A ``ValueSpec`` describes what a single value looks like; the concrete
     specs (see the module docstring for the catalog) cover numeric arrays,
-    distributions, callables, and opaque Python objects. These are the
+    records, distributions, callables, and opaque Python objects. These are the
     leaves of an :class:`EventTemplate`.
 
     A spec carries no name: it becomes a *field* only when an
@@ -131,6 +138,29 @@ class ValueSpec(ABC):
             documents its own); it does not suppress an unexpected error from
             inspecting a malformed value, so a genuine bug still surfaces.
         """
+
+
+class TermSpec(ValueSpec):
+    """A :class:`ValueSpec` marking a leaf whose value is a tracked term.
+
+    A term spec is the subset of leaf specs whose value is itself a tracked
+    term — a ``Record``, ``Distribution``, or ``Function``. It subclasses
+    :class:`ValueSpec` and adds no members of its own: the concrete subclass
+    (:class:`RecordSpec`, :class:`DistributionSpec`, :class:`FunctionSpec`)
+    *is* the kind, and ``is_valid`` is inherited, not redeclared. ``ArraySpec``
+    and ``OpaqueSpec``, the raw-value leaves, are not term specs.
+
+    The marker is what ``isinstance`` reads: a declaration whose class is a term
+    spec names a kind, which is how a :class:`FunctionSpec`'s ``output_spec``
+    declares that a callable returns a term rather than a raw value. (An
+    ``output_spec`` admits any :class:`ValueSpec`, so a raw-value declaration is
+    equally well formed; only a term spec names a kind.)
+
+    A term spec also types a field holding such a term, as a **leaf** of an
+    :class:`EventTemplate`. That leaf role is live for a ``Distribution`` or a
+    ``Function`` value; a record-valued field is currently an interior template
+    node instead, so :class:`RecordSpec` serves only as a declaration.
+    """
 
 
 @dataclass(frozen=True, eq=False)
@@ -271,11 +301,21 @@ class OpaqueSpec(ValueSpec):
 
 
 @dataclass(frozen=True)
-class DistributionSpec(ValueSpec):
-    """A value spec for a ``Distribution``.
+class RecordSpec(TermSpec):
+    """A term spec for a ``Record``, and the stored form of a record declaration.
 
-    ``event_template`` is the :class:`EventTemplate` of one draw from that
-    distribution.
+    ``event_template`` describes the record. ``RecordSpec(tau)`` and the template
+    ``tau`` denote the same space but read differently, and that difference is
+    the point. The spec *names the kind* ``Record``; an interior
+    :class:`EventTemplate` node instead contributes fields that are paths of the
+    enclosing template. A declaration given as a bare template is therefore
+    stored as ``RecordSpec(template)``, which is what makes a declared kind a
+    stored class rather than an inference.
+
+    Record construction does not yet accept a ``RecordSpec`` leaf: a
+    record-valued field materialises as an interior template node, so this spec
+    is reached as a declaration and not as a template leaf. ``is_valid`` is
+    written for the leaf role that a kind-directed wrap boundary will use.
 
     Raises
     ------
@@ -288,22 +328,107 @@ class DistributionSpec(ValueSpec):
     def __post_init__(self) -> None:
         if not isinstance(self.event_template, EventTemplate):
             raise TypeError(
-                f"DistributionSpec.event_template must be an EventTemplate, "
+                f"RecordSpec.event_template must be an EventTemplate, "
                 f"got {type(self.event_template).__name__}"
             )
 
     def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a ``Distribution`` whose draws match ``event_template``.
+        """Whether *value* is a ``Record`` whose template matches ``event_template``.
+
+        *value* must be a :class:`~probpipe.Record` whose own
+        ``event_template`` equals this spec's. Anything that is not a
+        ``Record``, or a ``Record`` whose template cannot be read, does not
+        satisfy the spec and returns ``False``; an unexpected error while
+        reading the template is left to propagate. Mirrors
+        :meth:`DistributionSpec.is_valid`.
+        """
+        from .record import Record
+
+        if not isinstance(value, Record):
+            return False
+        try:
+            template = value.event_template
+        except (AttributeError, TypeError):
+            return False
+        return template == self.event_template
+
+
+# A *declaration* — of an event or of an output — is stored as a ``TermSpec``,
+# whose class is the declared kind. An :class:`EventTemplate` is accepted as
+# construction-time sugar for the record case, mirroring the ``_FieldSpecInput``
+# sugar below, and is normalised by :func:`_to_declaration`.
+#
+# An output declaration is any value specification, matching ``Fun(sigma, rho)``
+# with ``rho`` a value specification: a callable may return a term of any kind
+# or a raw value. A ``FunctionSpec`` claims no check on its output, so nothing
+# is declared that cannot be satisfied. An *event* declaration is narrower,
+# record-only for now, because ``DistributionSpec.is_valid`` does check: a
+# ``Distribution`` exposes an ``EventTemplate`` and nothing that reports a
+# term-valued draw kind, so a term declaration would be expressible but never
+# satisfiable. Widening it belongs with the ``Distribution``-side support.
+type _OutputDecl = EventTemplate | ValueSpec
+type _EventDecl = EventTemplate | RecordSpec
+
+
+def _to_declaration(decl: _OutputDecl) -> ValueSpec:
+    """Normalise a declaration input to the stored spec.
+
+    A bare :class:`EventTemplate` means a record declaration and becomes
+    ``RecordSpec(template)``; an existing spec passes through. The two forms
+    denote the same space, so after construction only a spec remains.
+    """
+    if isinstance(decl, EventTemplate):
+        return RecordSpec(decl)
+    return decl
+
+
+@dataclass(frozen=True)
+class DistributionSpec(TermSpec):
+    """A term spec for a ``Distribution``.
+
+    ``event_spec`` is the *event declaration*: what one draw from the
+    distribution is. It is declared by the draw's :class:`EventTemplate`, which
+    construction normalises to ``RecordSpec(template)``, so the stored
+    declaration is always a spec and the declared draw kind is simply its
+    class. A ``RecordSpec`` may also be passed directly.
+
+    The declaration is record-valued: a term-valued draw, a random measure say,
+    is rejected here. A ``Distribution`` exposes an ``EventTemplate`` and nothing
+    that reports a term-valued draw kind, so such a declaration could be written
+    but never satisfied. Accepting it belongs with the ``Distribution``-side
+    support that makes it checkable.
+
+    Raises
+    ------
+    TypeError
+        If ``event_spec`` is neither an :class:`EventTemplate` nor a
+        :class:`RecordSpec`.
+    """
+
+    # ``_EventDecl`` types the constructor *input* (a template or a RecordSpec);
+    # ``__post_init__`` normalises it, so the stored value is always a RecordSpec.
+    event_spec: _EventDecl
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.event_spec, (EventTemplate, RecordSpec)):
+            raise TypeError(
+                f"DistributionSpec.event_spec must be an EventTemplate or a RecordSpec, "
+                f"got {type(self.event_spec).__name__}"
+            )
+        object.__setattr__(self, "event_spec", _to_declaration(self.event_spec))
+
+    def is_valid(self, value: Any) -> bool:
+        """Whether *value* is a ``Distribution`` matching this event declaration.
 
         *value* must be a :class:`~probpipe.Distribution` whose own
-        ``event_template`` equals this spec's. A distribution that is not one,
-        or that legitimately exposes no template — no ``event_template``
-        attribute, or a template that cannot yet be derived — does not satisfy
-        the spec and returns ``False``. These are the only two "schema
-        unavailable" conditions treated as a non-match; any *other* error
-        raised while reading ``event_template`` signals a malfunctioning
-        distribution and is left to propagate rather than being masked as
-        invalid.
+        ``event_template`` equals the declared record template. A distribution
+        that is not one, or that legitimately exposes no template — no
+        ``event_template`` attribute, or a template that cannot yet be
+        derived — does not satisfy the spec and returns ``False``. These are
+        the only two "schema unavailable" conditions treated as a non-match;
+        any *other* error raised while reading ``event_template`` signals a
+        malfunctioning distribution and is left to propagate rather than being
+        masked as invalid.
         """
         from ._distribution_base import Distribution
 
@@ -319,53 +444,73 @@ class DistributionSpec(ValueSpec):
             # narrower catch than ``Exception`` on purpose: an unexpected
             # error is a bug to surface, not a silent "invalid".
             return False
-        return template == self.event_template
+        # Normalised at construction, so the declaration is always a RecordSpec.
+        return template == cast(RecordSpec, self.event_spec).event_template
 
 
 @dataclass(frozen=True)
-class FunctionSpec(ValueSpec):
-    """A value spec for a callable, optionally typed by its input/output structure.
+class FunctionSpec(TermSpec):
+    """A term spec for a callable, optionally typed by its input/output structure.
 
-    ``input_template`` / ``output_template`` are the :class:`EventTemplate`\\ s
-    of the callable's input and output, and each is optional (default
-    ``None``). A template describes a structured signature: its named fields
-    are the callable's inputs (or outputs), so
-    ``FunctionSpec(EventTemplate(x=(), y=(3,)), EventTemplate(out=()))`` types
-    ``f(x, y) -> out``. ``None`` means that side's structure is unspecified,
-    so a bare ``FunctionSpec()`` describes *any* callable — the natural spec
-    for a function of unknown or variable signature.
+    ``input_template`` is the :class:`EventTemplate` of the callable's input.
+    ``output_spec`` is the *output declaration*: what the callable returns. A
+    record output is declared by its :class:`EventTemplate`, which construction
+    normalises to ``RecordSpec(template)``. Any other spec is stored as given, so
+    a :class:`TermSpec` declares a result that is itself a term of that kind — a
+    ``Function`` returning a ``Distribution``, say — and a raw-value spec
+    declares a raw result. The stored declaration is therefore always a spec.
+    Both sides default to ``None``, leaving that side unspecified, so a bare
+    ``FunctionSpec()`` describes any callable. A specified side is written
+    out — e.g. ``FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))`` for
+    ``f(x) -> out`` — so a function's field names are caller-chosen and
+    meaningful, matching :class:`DistributionSpec`.
 
-    Each specified side must be an :class:`EventTemplate`; a single-field
-    signature is written out explicitly, e.g.
-    ``FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))``, rather than
-    passed as a bare :class:`ValueSpec` — so a function's field names are
-    always caller-chosen and meaningful, not a fixed ``"input"`` / ``"output"``
-    placeholder. This matches :class:`DistributionSpec`, which likewise takes an
-    explicit template.
+    The output declaration is any value specification, so a callable may
+    declare a raw-value result as well as a term: an ``ArraySpec`` output
+    declares one array. A term declaration names its kind by its class, while a
+    raw-value declaration types the value the wrap boundary then places in a
+    single-field ``Record``, keyed by the ``Function``'s name.
+
+    Validity is callability alone: the value-layer specs stay callable-generic,
+    so a ``FunctionSpec`` admits any callable (a lambda, a NumPy function, a
+    ``Function``) as a leaf value. Nothing about the output declaration is
+    checked here; it is read by the kind-directed wrap boundary, which will
+    place a raw callable result in a ``Function``.
 
     Raises
     ------
     TypeError
-        If either side is not ``None`` or an :class:`EventTemplate`.
+        If ``input_template`` is neither ``None`` nor an :class:`EventTemplate`,
+        or ``output_spec`` is neither ``None``, an :class:`EventTemplate`, nor a
+        :class:`ValueSpec`.
     """
 
     input_template: EventTemplate | None = None
-    output_template: EventTemplate | None = None
+    # ``_OutputDecl`` types the constructor *input*; ``__post_init__`` normalises a
+    # bare template, so the stored value is always a ValueSpec (or None).
+    output_spec: _OutputDecl | None = None
 
     def __post_init__(self) -> None:
-        for attr in ("input_template", "output_template"):
-            template = getattr(self, attr)
-            if template is not None and not isinstance(template, EventTemplate):
-                raise TypeError(
-                    f"FunctionSpec.{attr} must be None or an EventTemplate, "
-                    f"got {type(template).__name__}"
-                )
+        if self.input_template is not None and not isinstance(self.input_template, EventTemplate):
+            raise TypeError(
+                f"FunctionSpec.input_template must be None or an EventTemplate, "
+                f"got {type(self.input_template).__name__}"
+            )
+        if self.output_spec is not None and not isinstance(
+            self.output_spec, (EventTemplate, ValueSpec)
+        ):
+            raise TypeError(
+                f"FunctionSpec.output_spec must be None, an EventTemplate, "
+                f"or a ValueSpec, got {type(self.output_spec).__name__}"
+            )
+        if self.output_spec is not None:
+            object.__setattr__(self, "output_spec", _to_declaration(self.output_spec))
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.
 
         The input/output structure of a bare callable cannot be inspected, so
-        validity is callability alone; ``input_template`` / ``output_template``
+        validity is callability alone; ``input_template`` / ``output_spec``
         document the intended signature but are not checked against the value.
         """
         return callable(value)
@@ -673,7 +818,7 @@ class EventTemplate(NamedTree[ValueSpec]):
                 if not spec.is_numeric:
                     return False
                 continue
-            # Opaque / distribution / function leaf — not numeric.
+            # Opaque / record / distribution / function leaf — not numeric.
             return False
         return True
 
@@ -735,7 +880,7 @@ class EventTemplate(NamedTree[ValueSpec]):
                     # future change adds another ValueError path, narrow this
                     # catch so it can't mask an unrelated failure.
                     continue
-            # Opaque / distribution / function leaves are dropped.
+            # Opaque / record / distribution / function leaves are dropped.
         if not specs:
             dropped = tuple(
                 name
@@ -790,9 +935,10 @@ class EventTemplate(NamedTree[ValueSpec]):
         yet (e.g. at a workflow boundary); for a value you already hold, read
         its authoritative ``event_template`` directly. Inference is lossy — it
         cannot recover an :class:`ArraySpec`'s ``dtype`` / ``support``, an
-        :class:`OpaqueSpec`'s ``meta``, or a :class:`DistributionSpec` /
-        :class:`FunctionSpec`. A Python ``list`` / ``tuple`` leaf (no ``.shape``
-        / ``.dtype``) is treated as opaque even if it holds numbers; wrap it in
+        :class:`OpaqueSpec`'s ``meta``, or a :class:`RecordSpec` /
+        :class:`DistributionSpec` / :class:`FunctionSpec`. A Python ``list`` /
+        ``tuple`` leaf (no ``.shape`` / ``.dtype``) is treated as opaque even if
+        it holds numbers; wrap it in
         ``np.asarray`` / ``jnp.asarray`` first for a numeric leaf.
 
         Parameters
@@ -893,7 +1039,7 @@ class NumericEventTemplate(EventTemplate):
                     f"{type(spec).__name__}; nested sub-templates must "
                     f"themselves be NumericEventTemplate."
                 )
-            # Any non-array leaf — OpaqueSpec, DistributionSpec, or FunctionSpec.
+            # Any non-array leaf — OpaqueSpec, RecordSpec, DistributionSpec, or FunctionSpec.
             raise TypeError(
                 f"NumericEventTemplate: field {name!r} is a {type(spec).__name__}; "
                 f"only ArraySpec leaves (or a nested NumericEventTemplate) are "

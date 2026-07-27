@@ -530,7 +530,7 @@ class TestApplyContract:
         output_template = EventTemplate(
             learned=FunctionSpec(
                 input_template=learned.input_template,
-                output_template=learned.output_template,
+                output_spec=learned.output_template,
             )
         )
         wrapped = Function(
