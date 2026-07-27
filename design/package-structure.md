@@ -9,7 +9,7 @@ This document uses the **`Function`** vocabulary. A `Function` is the universal 
 - **One package per layer.** Packages mirror the reference's parts in dependency order, and a module realizes one section or one coherent piece of one.
 - **Imports point downward.** Each package imports only from packages above it in the tree below. There are no import cycles, and no lazy imports to dodge one.
 - **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register evaluation rules and converters, and the inference methods register themselves. Capability reaches the operations without the operations importing their providers.
-- **A spec lives with the type it admits.** `ArraySpec`, `OpaqueSpec`, and `FunctionSpec` live in the value layer with the value kinds they describe, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The same placement rule covers each type's batch form.
+- **A spec lives with the type it admits.** `FunctionSpec` lives in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The rule bends only where layering forbids it: `ValueSpec` and the `TermSpec` marker are what the tracked base stores, and `ArraySpec` and `OpaqueSpec` admit no ProbPipe kind at all, so all four sit in `core/` beside `EventTemplate` and `Constraint` — `core/` cannot import the value layer. The same placement rule covers each type's batch form.
 - **Modules are private, packages are public.** Every module is underscore-prefixed. A package's `__init__` exports its public names, and the top-level `probpipe` namespace re-exports the curated user surface, which is the only import a user needs.
 - **Tests mirror the tree**, as `tests/<package>/test_<module>.py`.
 
@@ -26,9 +26,9 @@ probpipe/
 │   ├── _named_tree.py         #   NamedTree (II.1)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.2)
 │   ├── _specs.py              #   ValueSpec, TermSpec, ArraySpec, OpaqueSpec (II.2)
-│   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (II.2)
+│   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (II.3)
 │   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.4)
-│   ├── _batch.py              #   Batch: axis groups, level names, select (II.5)
+│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, select (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries (II.6)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.6)
 │   └── _config.py             #   library configuration
@@ -127,7 +127,8 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `core/_empirical.py` | `distributions/_empirical.py` |
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
-| `core/event_template.py`, `core/record.py`, `core/constraints.py`, `core/_record_array.py` | `values/`, one module per III section |
+| `core/record.py`, `core/_record_array.py` | `values/`, one module per III section |
+| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_event_template.py`, `core/_constraints.py` (II.2–II.3) |
 
 ### Open points
 

@@ -112,6 +112,8 @@ class Constraint(ABC):
 
 A **term spec** types a tracked term, one concrete class per kind. `TermSpec` subclasses `ValueSpec` as a marker, since a tracked term is still one value that can occupy a leaf. Two consequences follow: `is_valid` stays declared once, on `ValueSpec`, and anywhere a leaf is accepted, a term spec is accepted unchanged.
 
+A batch is a tracked term too, so it has a term spec of its own: `BatchSpec` types the *collection*, carrying the spec its elements satisfy together with the named multiplicity. It is what keeps the storage rule below universal — a batch's own type is not its element's type, and `OpaqueBatch`, whose elements name no kind at all, still has one.
+
 ```python
 class TermSpec(ValueSpec): ...      # marker; adds nothing, is_valid inherited
 
@@ -122,6 +124,11 @@ class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
     input_template: EventTemplate | None   # None: that side's structure unspecified
     output_spec: ValueSpec | None          # the output declaration, stored as a spec;
                                            #   construction wraps an EventTemplate as RecordSpec(template)
+
+class BatchSpec(TermSpec):     # a Batch; is_valid accepts a matching batch
+    element_spec: ValueSpec               # the spec every element satisfies
+    axis_groups: tuple[tuple[int, ...], ...]   # the multiplicity, tiled into levels (II.5)
+    level_names: tuple[str, ...]
 # DistributionSpec and ConditionalDistributionSpec are the other two term specs (Part III).
 ```
 
@@ -264,6 +271,10 @@ A `Batch` is the generic `TrackedTerm` nd array of shape `batch_shape` that hold
 ```python
 class Batch[E](TrackedTerm):
     @property
+    def spec(self) -> BatchSpec: ...                     # the single stored source of the type
+    @property
+    def element_spec(self) -> ValueSpec: ...             # view on spec: what every element satisfies
+    @property
     def batch_shape(self) -> tuple[int, ...]: ...
     @property
     def batch_size(self) -> int: ...                    # total element count, prod(batch_shape)
@@ -281,6 +292,8 @@ class Batch[E](TrackedTerm):
 ```
 
 **Axis groups.** A batch's axes are partitioned into ordered **levels**. `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and indexing operate on the outermost level, and an element of a multi-level batch is the inner-level batch, as a view. Nesting needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store.
+
+**The batch's own type.** A batch stores a `BatchSpec` (II.2), which carries the element spec and the named multiplicity together; `element_spec`, `axis_groups`, and `level_names` are views on it. This keeps the storage rule reading the same way for a batch as for any other term — `spec` is the batch's *own* type, not its element's — which is what makes `OpaqueBatch` well typed even though an `OpaqueSpec` names no kind. It also mirrors the model, where a batch inhabits the *family* kind over its element's kind rather than the element kind itself.
 
 **Level names.** Each level carries a name, listed in order by `level_names`. A name is auto-derived by the operation that produces the level, and `with_level_names` repins it: a shallow copy changing only the names. Names are unique within a batch: an operation that would mint a duplicate appends the smallest free integer suffix, so nested sampling yields `draw`, then `draw2`, and a rename onto an existing name raises. Operations align batched operands by level name, and two levels meant to correspond under different names are lined up by renaming one. Level names are independent of the field names within each element.
 

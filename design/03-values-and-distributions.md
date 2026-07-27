@@ -45,7 +45,7 @@ class Function(TrackedTerm):
     @property
     def input_template(self) -> EventTemplate | None: ...           # view on spec
     @property
-    def output_spec(self) -> TermSpec | None: ...                   # view on spec
+    def output_spec(self) -> ValueSpec | None: ...                  # view on spec
     @property
     def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
     def with_options(self, **controls) -> Self: ...      # functional update (C2)
@@ -80,11 +80,15 @@ Every value spec has a **batch form**. Since an `ArraySpec` value batches native
 ```python
 class FunctionBatch(Batch[Callable]):
     @property
-    def spec(self) -> FunctionSpec: ...   # the spec every element satisfies
+    def spec(self) -> BatchSpec: ...      # the batch's own type
+    @property
+    def element_spec(self) -> FunctionSpec: ...   # view on spec: what every element satisfies
 
 class OpaqueBatch(Batch[Any]):
     @property
-    def spec(self) -> OpaqueSpec: ...
+    def spec(self) -> BatchSpec: ...      # the batch's own type
+    @property
+    def element_spec(self) -> OpaqueSpec: ...     # view on spec
 ```
 
 ### Rationale
@@ -170,7 +174,11 @@ A `RecordBatch` is a batch of `Record`s that all conform to one shared `EventTem
 ```python
 class RecordBatch(Batch[Record]):
     @property
-    def event_template(self) -> EventTemplate: ...
+    def spec(self) -> BatchSpec: ...                # the batch's own type
+    @property
+    def element_spec(self) -> RecordSpec: ...       # view on spec
+    @property
+    def event_template(self) -> EventTemplate: ...  # view on element_spec
 
     def __getitem__(self, key: int | slice | tuple[int, ...] | str | tuple[str, ...]) -> Record | RecordBatch | Array | Batch: ...
     # int / slice (or a tuple of ints) -> an element Record or a sub-batch, indexing the batch axes
@@ -285,7 +293,7 @@ class Distribution[T](TrackedTerm, Annotated):
 class NumericDistribution(Distribution): ...   # marker: numeric draws, carries a NumericEventTemplate
 ```
 
-**Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. Every record-drawing law's declaration has at least one named field, so views exist on every record law, however it was constructed and whatever it supports; a term-drawing law has no fields to view. The capabilities a view offers are derived from its parent's, one by one, fixed with the capability protocols.
+**Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. Every record-drawing law's declaration has at least one named field, so views exist on every record law, however it was constructed and whatever it supports. A term-drawing law declares no fields, so it offers no field interface. The capabilities a view offers are derived from its parent's, one by one, fixed with the capability protocols.
 
 ```python
 class FieldView(Distribution):
@@ -466,14 +474,18 @@ A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distribution
 ```python
 class DistributionBatch(Batch[Distribution]):
     @property
-    def spec(self) -> DistributionSpec: ...   # the element spec; the batch's stored source
+    def spec(self) -> BatchSpec: ...          # the batch's own type
+    @property
+    def element_spec(self) -> DistributionSpec: ...   # view on spec
     @property
     def event_spec(self) -> TermSpec: ...     # view on spec
     def __getitem__(self, index: int | slice) -> Distribution | DistributionBatch: ...
 
 class ConditionalDistributionBatch(Batch[ConditionalDistribution]):
     @property
-    def spec(self) -> ConditionalDistributionSpec: ...   # the element spec; the batch's stored source
+    def spec(self) -> BatchSpec: ...                     # the batch's own type
+    @property
+    def element_spec(self) -> ConditionalDistributionSpec: ...   # view on spec
     @property
     def given_template(self) -> EventTemplate: ...       # view on spec
     @property
@@ -593,8 +605,8 @@ The line between the last two is **factorization, not field count**: a multi-fie
 - **Empirical.** A finite, possibly weighted, sample set: `sample` resamples, moments are sample estimates, and marginals are again empirical. It carries no density. Scalar or structured.
 - **Transformed (pushforward).** A base distribution pushed through a map with recognizable structure. An invertible map keeps an exact `log_prob` by change of variables, and a linear map keeps exact first and second moments. A general map's pushforward proceeds by sampling instead, so its result lands in the empirical family.
 - **Mixture.** A convex combination of finitely many component distributions. It is the form a dependent joint's detached `marginal` takes when the mixing parent is finite. Over a continuous parent the true marginal is a continuous mixture, which no finite-component family can represent, so the `marginal` operation returns its Monte Carlo fallback, an `EmpiricalDistribution` of projected draws, unless an exact route applies, as when the factors are jointly Gaussian.
-- **Random function.** A distribution over functions, whose event is a `FunctionSpec` leaf: a draw is a callable, and `mean` returns the mean function. A Gaussian process is the canonical case.
-- **Random measure.** A distribution *over distributions*: a draw is itself a `Distribution` (a `DistributionSpec` leaf), and `mean` returns the marginalized law.
+- **Random function.** A distribution over functions, declaring a `FunctionSpec` as its event: a draw is a callable, and `mean` returns the mean function. A Gaussian process is the canonical case.
+- **Random measure.** A distribution *over distributions*: a draw is itself a `Distribution`, declared by a `DistributionSpec` as its event, and `mean` returns the marginalized law.
 
 Any family can arise as the approximation of a target: what makes a result approximate (the target, the method, and the fit) is recorded in its `provenance`.
 
