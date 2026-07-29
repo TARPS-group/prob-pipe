@@ -53,7 +53,7 @@ __all__ = ["Batch", "BatchSpec"]
 type LevelIndexer = int | slice | None | tuple[int | slice | None, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class BatchSpec(TermSpec):
     """A term spec for a :class:`Batch`: an element spec plus a named multiplicity.
 
@@ -82,14 +82,23 @@ class BatchSpec(TermSpec):
     axis_groups: tuple[tuple[int, ...], ...]
     level_names: tuple[str, ...]
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.element_spec, ValueSpec):
+    def __init__(
+        self,
+        element_spec: ValueSpec,
+        axis_groups: Iterable[Iterable[int]],
+        level_names: Iterable[str],
+    ) -> None:
+        """Store the element spec and the multiplicity, validating the levels.
+
+        The fields are the *stored* types; the iterables accepted here are
+        normalised to tuples before assignment, so a stored spec is hashable.
+        """
+        if not isinstance(element_spec, ValueSpec):
             raise TypeError(
-                f"BatchSpec.element_spec must be a ValueSpec, "
-                f"got {type(self.element_spec).__name__}"
+                f"BatchSpec.element_spec must be a ValueSpec, got {type(element_spec).__name__}"
             )
-        groups = tuple(tuple(int(size) for size in group) for group in self.axis_groups)
-        names = tuple(self.level_names)
+        groups = tuple(tuple(int(size) for size in group) for group in axis_groups)
+        names = tuple(level_names)
 
         if not groups:
             raise ValueError("a Batch has at least one batch axis; axis_groups was empty")
@@ -109,6 +118,7 @@ class BatchSpec(TermSpec):
         if len(set(names)) != len(names):
             raise ValueError(f"level names must be unique within a batch; got {names}")
 
+        object.__setattr__(self, "element_spec", element_spec)
         object.__setattr__(self, "axis_groups", groups)
         object.__setattr__(self, "level_names", names)
 

@@ -8,6 +8,8 @@ elements are plain values and so carry no identity to derive.
 
 from __future__ import annotations
 
+from typing import get_type_hints
+
 import pytest
 
 from probpipe import ArraySpec, OpaqueSpec, TermSpec
@@ -175,6 +177,17 @@ class TestSpec:
 
     def test_axis_groups_are_normalised_to_tuples(self):
         assert _spec([[2], [3]], ["chain", "draw"]).axis_groups == ((2,), (3,))
+
+    def test_the_multiplicity_fields_are_declared_at_the_types_they_store(self):
+        """The annotation is the post-construction guarantee, not the input sugar.
+
+        The constructor takes any iterables; the fields are the tuples it stores,
+        which is what makes a stored spec hashable. Mirrors the declaration
+        fields on ``DistributionSpec`` and ``FunctionSpec``.
+        """
+        hints = get_type_hints(BatchSpec)
+        assert hints["axis_groups"] == tuple[tuple[int, ...], ...]
+        assert hints["level_names"] == tuple[str, ...]
 
     def test_specs_compare_and_hash_by_value(self):
         assert _spec([(4,)], ["draw"]) == _spec([(4,)], ["draw"])
