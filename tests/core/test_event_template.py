@@ -1,7 +1,7 @@
 """Tests for probpipe.core.record.EventTemplate."""
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, get_type_hints
 
 import jax
 import jax.numpy as jnp
@@ -1408,7 +1408,7 @@ class TestTermSpecTaxonomy:
         assert not isinstance(ArraySpec(()), TermSpec)
         assert not isinstance(OpaqueSpec(), TermSpec)
 
-    # --- the storage rule: a declaration is stored as a TermSpec ---
+    # --- the storage rule: a declaration is stored as a ValueSpec ---
 
     def test_event_template_declaration_wraps_to_record_spec(self):
         """A bare EventTemplate is constructor sugar; the stored form is a spec."""
@@ -1425,6 +1425,33 @@ class TestTermSpecTaxonomy:
         tau = EventTemplate(x=())
         assert DistributionSpec(RecordSpec(tau)) == DistributionSpec(tau)
         assert FunctionSpec(tau, RecordSpec(tau)) == FunctionSpec(tau, tau)
+
+    def test_a_declaration_field_is_declared_at_the_type_it_stores(self):
+        """The annotation is the post-construction guarantee, not the input sugar.
+
+        The wider template spelling is carried by the constructor signature, so a
+        type checker and the generated API reference read the stored type. Pins
+        the split against a rewidening of the field annotations.
+        """
+        assert get_type_hints(DistributionSpec)["event_spec"] is RecordSpec
+        assert get_type_hints(FunctionSpec)["output_spec"] == ValueSpec | None
+        assert get_type_hints(ArraySpec)["dtype"] == np.dtype | None
+
+    def test_the_old_parameter_names_are_gone(self):
+        """Positional construction survives the rename; keyword construction does not.
+
+        The migration rule the CHANGELOG states: a keyword call moves to the new
+        parameter name, as does every read of the old attribute.
+        """
+        tau = EventTemplate(x=())
+        assert DistributionSpec(tau) == DistributionSpec(event_spec=tau)
+        assert FunctionSpec(tau, tau) == FunctionSpec(tau, output_spec=tau)
+        with pytest.raises(TypeError, match="event_template"):
+            DistributionSpec(event_template=tau)  # type: ignore[call-arg]
+        with pytest.raises(TypeError, match="output_template"):
+            FunctionSpec(tau, output_template=tau)  # type: ignore[call-arg]
+        assert not hasattr(DistributionSpec(tau), "event_template")
+        assert not hasattr(FunctionSpec(tau, tau), "output_template")
 
     def test_term_valued_output_is_kept_not_wrapped(self):
         """A term output declaration names its own kind and passes through."""
