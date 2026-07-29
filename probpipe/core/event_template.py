@@ -67,7 +67,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from math import prod
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -163,7 +163,7 @@ class TermSpec(ValueSpec):
     """
 
 
-@dataclass(frozen=True, eq=False)
+@dataclass(frozen=True, eq=False, init=False)
 class ArraySpec(ValueSpec):
     """A numeric-array value spec: an event ``shape`` plus optional metadata.
 
@@ -179,26 +179,33 @@ class ArraySpec(ValueSpec):
     """
 
     shape: tuple[int | str, ...]
-    # ``DTypeLike`` types the constructor *input* (a dtype instance, scalar
-    # type, or string); ``__post_init__`` normalises it, so the stored value
-    # is always ``np.dtype | None``.
-    dtype: npt.DTypeLike | None = None
-    support: Constraint | None = None
+    dtype: np.dtype | None
+    support: Constraint | None
 
-    def __post_init__(self) -> None:
-        shape = tuple(self.shape)
+    def __init__(
+        self,
+        shape: Iterable[int | str],
+        dtype: npt.DTypeLike | None = None,
+        support: Constraint | None = None,
+    ) -> None:
+        """Store the shape and metadata, normalising *shape* and *dtype*.
+
+        The fields are the *stored* types; the wider parameters here are the
+        accepted spellings, normalised away before assignment.
+        """
+        dimensions = tuple(shape)
         if not all(
-            (isinstance(d, int) and d >= 0) or (isinstance(d, str) and bool(d)) for d in shape
+            (isinstance(d, int) and d >= 0) or (isinstance(d, str) and bool(d)) for d in dimensions
         ):
             raise TypeError(
                 "ArraySpec.shape must contain only non-negative ints or non-empty "
-                f"symbolic dimension names, got {self.shape!r}"
+                f"symbolic dimension names, got {shape!r}"
             )
-        object.__setattr__(self, "shape", shape)
-        if self.dtype is not None:
-            object.__setattr__(self, "dtype", np.dtype(self.dtype))
-        if self.support is not None:
-            _require_hashable(self.support, context="ArraySpec.support")
+        if support is not None:
+            _require_hashable(support, context="ArraySpec.support")
+        object.__setattr__(self, "shape", dimensions)
+        object.__setattr__(self, "dtype", None if dtype is None else np.dtype(dtype))
+        object.__setattr__(self, "support", support)
 
     def __eq__(self, other: object) -> bool:
         # Mirror the dataclass-generated ``__eq__``: on a class mismatch,
@@ -353,10 +360,12 @@ class RecordSpec(TermSpec):
         return template == self.event_template
 
 
-# A *declaration* — of an event or of an output — is stored as a ``TermSpec``,
-# whose class is the declared kind. An :class:`EventTemplate` is accepted as
-# construction-time sugar for the record case, mirroring the ``_FieldSpecInput``
-# sugar below, and is normalised by :func:`_to_declaration`.
+# A *declaration* — of an event or of an output — is stored as a ``ValueSpec``.
+# An :class:`EventTemplate` is accepted as construction-time sugar for the record
+# case, mirroring the ``_FieldSpecInput`` sugar below, and is normalised to
+# ``RecordSpec(template)``. Of the stored specs only a ``TermSpec`` names a
+# ProbPipe kind, and it names it by its class; a raw-value spec declares a raw
+# value instead.
 #
 # An output declaration is any value specification, matching ``Fun(sigma, rho)``
 # with ``rho`` a value specification: a callable may return a term of any kind
@@ -382,7 +391,18 @@ def _to_declaration(decl: _OutputDecl) -> ValueSpec:
     return decl
 
 
-@dataclass(frozen=True)
+def _to_record_declaration(decl: _EventDecl) -> RecordSpec:
+    """:func:`_to_declaration` for a record-valued declaration.
+
+    Narrower in and narrower out: the record case is where the stored spec's
+    class is known statically, so a caller storing one needs no cast.
+    """
+    if isinstance(decl, EventTemplate):
+        return RecordSpec(decl)
+    return decl
+
+
+@dataclass(frozen=True, init=False)
 class DistributionSpec(TermSpec):
     """A term spec for a ``Distribution``.
 
@@ -405,17 +425,20 @@ class DistributionSpec(TermSpec):
         :class:`RecordSpec`.
     """
 
-    # ``_EventDecl`` types the constructor *input* (a template or a RecordSpec);
-    # ``__post_init__`` normalises it, so the stored value is always a RecordSpec.
-    event_spec: _EventDecl
+    event_spec: RecordSpec
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.event_spec, (EventTemplate, RecordSpec)):
+    def __init__(self, event_spec: _EventDecl) -> None:
+        """Store *event_spec*, wrapping a bare :class:`EventTemplate`.
+
+        The field is the *stored* declaration; the wider ``_EventDecl`` here is
+        the construction sugar, and is normalised away before assignment.
+        """
+        if not isinstance(event_spec, (EventTemplate, RecordSpec)):
             raise TypeError(
                 f"DistributionSpec.event_spec must be an EventTemplate or a RecordSpec, "
-                f"got {type(self.event_spec).__name__}"
+                f"got {type(event_spec).__name__}"
             )
-        object.__setattr__(self, "event_spec", _to_declaration(self.event_spec))
+        object.__setattr__(self, "event_spec", _to_record_declaration(event_spec))
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a ``Distribution`` matching this event declaration.
@@ -445,10 +468,10 @@ class DistributionSpec(TermSpec):
             # error is a bug to surface, not a silent "invalid".
             return False
         # Normalised at construction, so the declaration is always a RecordSpec.
-        return template == cast(RecordSpec, self.event_spec).event_template
+        return template == self.event_spec.event_template
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class FunctionSpec(TermSpec):
     """A term spec for a callable, optionally typed by its input/output structure.
 
@@ -485,26 +508,33 @@ class FunctionSpec(TermSpec):
         :class:`ValueSpec`.
     """
 
-    input_template: EventTemplate | None = None
-    # ``_OutputDecl`` types the constructor *input*; ``__post_init__`` normalises a
-    # bare template, so the stored value is always a ValueSpec (or None).
-    output_spec: _OutputDecl | None = None
+    input_template: EventTemplate | None
+    output_spec: ValueSpec | None
 
-    def __post_init__(self) -> None:
-        if self.input_template is not None and not isinstance(self.input_template, EventTemplate):
+    def __init__(
+        self,
+        input_template: EventTemplate | None = None,
+        output_spec: _OutputDecl | None = None,
+    ) -> None:
+        """Store both sides, wrapping a bare :class:`EventTemplate` output.
+
+        The fields are the *stored* declarations; the wider ``_OutputDecl`` here
+        is the construction sugar, and is normalised away before assignment.
+        """
+        if input_template is not None and not isinstance(input_template, EventTemplate):
             raise TypeError(
                 f"FunctionSpec.input_template must be None or an EventTemplate, "
-                f"got {type(self.input_template).__name__}"
+                f"got {type(input_template).__name__}"
             )
-        if self.output_spec is not None and not isinstance(
-            self.output_spec, (EventTemplate, ValueSpec)
-        ):
+        if output_spec is not None and not isinstance(output_spec, (EventTemplate, ValueSpec)):
             raise TypeError(
                 f"FunctionSpec.output_spec must be None, an EventTemplate, "
-                f"or a ValueSpec, got {type(self.output_spec).__name__}"
+                f"or a ValueSpec, got {type(output_spec).__name__}"
             )
-        if self.output_spec is not None:
-            object.__setattr__(self, "output_spec", _to_declaration(self.output_spec))
+        object.__setattr__(self, "input_template", input_template)
+        object.__setattr__(
+            self, "output_spec", None if output_spec is None else _to_declaration(output_spec)
+        )
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.

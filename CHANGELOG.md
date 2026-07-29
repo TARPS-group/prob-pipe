@@ -205,11 +205,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Renamed, for the storage rule (#381):** `FunctionSpec.output_template` is
   now **`output_spec`**, storing any `ValueSpec` or `None`, and
   `DistributionSpec.event_template` is now **`event_spec`**, storing a
-  `RecordSpec`. Both constructors still accept an `EventTemplate` and wrap it, so
-  existing positional and keyword construction from a template keeps working;
-  reads of the old attribute names do not. The names now carry their content:
-  `*_template` is always a record schema, `*_spec` a declaration of any kind —
-  which is why `RecordSpec.event_template` keeps its name.
+  `RecordSpec`. The names now carry their content: `*_template` is always a
+  record schema, `*_spec` a declaration of any kind — which is why
+  `RecordSpec.event_template` keeps its name.
+
+  To migrate: **positional** construction is unchanged, and both constructors
+  still accept an `EventTemplate` and wrap it, so `DistributionSpec(tau)` and
+  `FunctionSpec(tau, tau)` keep working. **Keyword** construction moves to the
+  new parameter name, and so does every **read** of the old attribute:
+
+  ```python
+  DistributionSpec(event_template=tau)    ->  DistributionSpec(event_spec=tau)
+  FunctionSpec(tau, output_template=tau)  ->  FunctionSpec(tau, output_spec=tau)
+  spec.event_template                     ->  spec.event_spec.event_template
+  ```
+
+  Each field is now declared at the type it *stores* — `event_spec: RecordSpec`,
+  `output_spec: ValueSpec | None` — with the wider template sugar carried by the
+  constructor signature, so a type checker and the generated API reference both
+  read the post-construction guarantee. `ArraySpec` follows the same split, its
+  `dtype` field declared as the `numpy.dtype` it stores rather than the
+  `DTypeLike` spellings it accepts.
 
 - **Function calls establish a new result identity and provenance boundary
   (#368, breaking).** Existing operations such as `condition_on` and
