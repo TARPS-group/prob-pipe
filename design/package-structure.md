@@ -9,7 +9,7 @@ This document uses the **`Function`** vocabulary. A `Function` is the universal 
 - **One package per layer.** Packages mirror the reference's parts in dependency order, and a module realizes one section or one coherent piece of one.
 - **Imports point downward.** Each package imports only from packages above it in the tree below. There are no import cycles, and no lazy imports to dodge one.
 - **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register evaluation rules and converters, and the inference methods register themselves. Capability reaches the operations without the operations importing their providers.
-- **A spec lives with the type it admits.** `ArraySpec`, `OpaqueSpec`, and `FunctionSpec` live in the value layer with the value kinds they describe, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The same placement rule covers each type's batch form.
+- **A spec lives with the type it admits.** `FunctionSpec` lives in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The rule bends only where layering forbids it: `ValueSpec` and the `TermSpec` marker are what the tracked base stores, and `ArraySpec` and `OpaqueSpec` admit no ProbPipe kind at all, so all four sit in `core/` beside `EventTemplate` and `Constraint` — `core/` cannot import the value layer. The same placement rule covers each type's batch form.
 - **Modules are private, packages are public.** Every module is underscore-prefixed. A package's `__init__` exports its public names, and the top-level `probpipe` namespace re-exports the curated user surface, which is the only import a user needs.
 - **Tests mirror the tree**, as `tests/<package>/test_<module>.py`.
 
@@ -24,38 +24,38 @@ probpipe/
 ├── __init__.py                # the curated public API
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.1)
-│   ├── _identity.py           #   Tracked, Annotated, Provenance, fingerprints (II.2)
-│   ├── _batch.py              #   Batch: axis groups, level names, select (II.3)
-│   ├── _dispatch.py           #   dispatch methods and registries (II.4)
-│   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.4)
+│   ├── _constraints.py        #   Constraint and the constraint factories (II.2)
+│   ├── _specs.py              #   ValueSpec, TermSpec, ArraySpec, OpaqueSpec (II.2)
+│   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (II.3)
+│   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.4)
+│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, select (II.5)
+│   ├── _dispatch.py           #   dispatch methods and registries (II.6)
+│   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.6)
 │   └── _config.py             #   library configuration
-├── values/                    # the value layer (III.1–III.4)
-│   ├── _constraints.py        #   Constraint and the constraint factories (III.1)
-│   ├── _specs.py              #   ValueSpec, ArraySpec, OpaqueSpec (III.1)
-│   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (III.1)
+├── values/                    # the value layer (III.1–III.3)
 │   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
 │   │                          #     plain evaluation), FunctionSpec, and the function capabilities
-│   ├── _function_batch.py     #   FunctionBatch (III.2)
-│   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
-│   ├── _record.py             #   Record, NumericRecord (III.3)
-│   └── _record_batch.py       #   RecordBatch, NumericRecordBatch (III.4)
-├── linalg/                    # LinOp, the linear Function subtype (III.5)
+│   ├── _function_batch.py     #   FunctionBatch (III.1)
+│   ├── _opaque_batch.py       #   OpaqueBatch (III.1)
+│   ├── _record.py             #   Record, NumericRecord (III.2), RecordSpec (II.2)
+│   └── _record_batch.py       #   RecordBatch, NumericRecordBatch (III.3)
+├── linalg/                    # LinOp, the linear Function subtype (III.4)
 │   ├── _linop.py              #   LinOp: the action, the queries, flags
 │   ├── _structured.py         #   Dense / Diagonal / Triangular / Cholesky / Root …
 │   ├── _composites.py         #   Product / Sum / Scaled / Transpose — the operator algebra
 │   └── _batch.py              #   LinOpBatch
-├── distributions/             # the distribution layer (III.6–III.14)
-│   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.6)
-│   ├── _views.py              #   FieldView (III.6–III.7)
-│   ├── _capabilities.py       #   the Supports* protocols (III.7)
-│   ├── _conditional.py        #   ConditionalDistribution, its markers and spec (III.8)
-│   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.9)
-│   ├── _factored.py           #   SupportsFactors and the factored classes (III.10)
-│   ├── _composition.py        #   the * engine behind __mul__ (III.11)
+├── distributions/             # the distribution layer (III.5–III.13)
+│   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.5)
+│   ├── _views.py              #   FieldView (III.5–III.6)
+│   ├── _capabilities.py       #   the Supports* protocols (III.6)
+│   ├── _conditional.py        #   ConditionalDistribution, its markers and spec (III.7)
+│   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.8)
+│   ├── _factored.py           #   SupportsFactors and the factored classes (III.9)
+│   ├── _composition.py        #   the * engine behind __mul__ (III.10)
 │   ├── _empirical.py          #   EmpiricalDistribution (VI.2) — the closure family the
 │   │                          #     lift and the Monte Carlo fallbacks construct
-│   ├── _conversion.py         #   Converter, ConverterRegistry (III.13)
-│   └── _reparameterization.py #   Constraint → invertible Function (III.14)
+│   ├── _conversion.py         #   Converter, ConverterRegistry (III.12)
+│   └── _reparameterization.py #   Constraint → invertible Function (III.13)
 ├── functions/                 # Part IV — Function and its engine
 │   ├── _function.py           #   the engine installed on Function at import; the wrapping decorator
 │   ├── _call.py               #   argument classification: the lifting trigger (IV.2)
@@ -88,7 +88,7 @@ probpipe/
 │   ├── _random_functions.py   #   RandomFunction, RandomMeasure (VI.5)
 │   ├── _gaussian.py           #   the Gaussian algebra (VI.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VI.8)
-│   └── _converters.py         #   the shipped converters (III.13)
+│   └── _converters.py         #   the shipped converters (III.12)
 ├── inference/                 # the registered inference methods (V.4)
 ├── diagnostics/               # diagnostics over inference results
 └── validation/                # predictive checks and model comparison
@@ -100,7 +100,7 @@ probpipe/
 - **`values/`** is the value layer of Part III, covering every leaf kind. The function kind's base lives here: `Function` itself, the class a `FunctionSpec` admits and a `FunctionBatch` holds, together with its capability protocols. The base carries the *representation* only: templates, identity, and plain evaluation. `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, installed on the III.2 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`functions/`** is the `Function` engine, installed on the III.1 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
 - **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per operation section (V.1–V.8). V.0's operation model is the wrapping itself, and V.9's batching is the engine's sweep, so neither is a module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
@@ -127,7 +127,8 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `core/_empirical.py` | `distributions/_empirical.py` |
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
-| `core/event_template.py`, `core/record.py`, `core/constraints.py`, `core/_record_array.py` | `values/`, one module per III section |
+| `core/record.py`, `core/_record_array.py` | `values/`, one module per III section |
+| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_event_template.py`, `core/_constraints.py` (II.2–II.3) |
 
 ### Open points
 
