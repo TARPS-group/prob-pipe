@@ -167,6 +167,8 @@ def _update(
         _update_function(h, obj, max_array_bytes, state)
     elif _is_event_template(obj):
         _update_event_template(h, obj, depth, max_array_bytes, state)
+    elif _is_value_spec(obj):
+        _update_value_spec(h, obj, depth, max_array_bytes, state)
     elif _is_weights(obj):
         _update_weights(h, obj, depth, max_array_bytes, state)
     elif isinstance(obj, _np.generic):
@@ -318,6 +320,15 @@ def _is_event_template(obj: Any) -> bool:
         return False
 
 
+def _is_value_spec(obj: Any) -> bool:
+    try:
+        from .event_template import ValueSpec
+
+        return isinstance(obj, ValueSpec)
+    except ImportError:
+        return False
+
+
 def _update_event_template(
     h: hashlib._Hash,
     template: Any,
@@ -335,10 +346,7 @@ def _update_event_template(
     for name, spec in template.children.items():
         h.update(name.encode())
         h.update(b"=")
-        if _is_event_template(spec):
-            _update_event_template(h, spec, depth + 1, max_array_bytes, state)
-        else:
-            _update_value_spec(h, spec, depth + 1, max_array_bytes, state)
+        _update(h, spec, depth + 1, max_array_bytes, state)
         h.update(b";")
 
 
@@ -350,7 +358,13 @@ def _update_value_spec(
     state: _FingerprintState,
 ) -> None:
     """Hash a built-in ValueSpec by the declaration fields that define it."""
-    from .event_template import ArraySpec, DistributionSpec, FunctionSpec, OpaqueSpec
+    from .event_template import (
+        ArraySpec,
+        DistributionSpec,
+        FunctionSpec,
+        OpaqueSpec,
+        RecordSpec,
+    )
 
     spec_type = type(spec)
     h.update(b"spec:")
@@ -368,17 +382,13 @@ def _update_value_spec(
         _update_constraint(h, spec.support, depth + 1, max_array_bytes, state)
     elif isinstance(spec, OpaqueSpec):
         _update(h, spec.meta, depth + 1, max_array_bytes, state)
+    elif isinstance(spec, RecordSpec):
+        _update(h, spec.event_template, depth + 1, max_array_bytes, state)
     elif isinstance(spec, DistributionSpec):
-        _update_event_template(
-            h,
-            spec.event_template,
-            depth + 1,
-            max_array_bytes,
-            state,
-        )
+        _update(h, spec.event_spec, depth + 1, max_array_bytes, state)
     elif isinstance(spec, FunctionSpec):
         _update(h, spec.input_template, depth + 1, max_array_bytes, state)
-        _update(h, spec.output_template, depth + 1, max_array_bytes, state)
+        _update(h, spec.output_spec, depth + 1, max_array_bytes, state)
     else:
         _update_weak_identity(h, spec, state)
 

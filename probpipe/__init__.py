@@ -87,6 +87,8 @@ from probpipe.core.event_template import (
     FunctionSpec,
     NumericEventTemplate,
     OpaqueSpec,
+    RecordSpec,
+    TermSpec,
     ValueSpec,
 )
 from probpipe.core.named_tree import NamedTree
@@ -287,6 +289,7 @@ __all__ = [
     "RecordBootstrapReplicateDistribution",
     "RecordDistribution",
     "RecordEmpiricalDistribution",
+    "RecordSpec",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
@@ -305,6 +308,7 @@ __all__ = [
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
     "TFPDistribution",
+    "TermSpec",
     "Tracked",
     # Transformed
     "TransformedDistribution",
