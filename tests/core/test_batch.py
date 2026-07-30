@@ -1,7 +1,6 @@
 """Tests for the `Batch[E]` ABC — the level algebra, not any concrete storage.
 
-The concrete batch types (`FunctionBatch`, `RecordBatch`, `DistributionBatch`)
-land separately; these tests exercise the shared contract through two minimal
+These tests exercise the shared contract through two minimal
 doubles: `_ListBatch`, whose elements are tracked terms, and `_BareBatch`, whose
 elements are plain values and so carry no identity to derive.
 """
@@ -40,7 +39,7 @@ class _Leaf(TrackedTerm):
 class _ListBatch(Batch[_Leaf]):
     """A batch storing elements in a flat list, row-major over ``batch_shape``."""
 
-    __slots__ = ("_name", "_name_is_auto", "_provenance", "_spec", "_store")
+    __slots__ = ("_store",)
 
     def __init__(self, store, spec, *, name="b", name_is_auto=False):
         object.__setattr__(self, "_store", list(store))
@@ -58,10 +57,11 @@ class _ListBatch(Batch[_Leaf]):
         return _Leaf(self._store[self._flat(index)], name=name, name_is_auto=True)
 
     def _sub_batch_at(self, index, *, spec, name):
+        shape = self.batch_shape
         kept = [
             self._store[self._flat(position)]
-            for position in _positions(self.batch_shape)
-            if _selected(position, index)
+            for position in _positions(shape)
+            if _selected(position, index, shape)
         ]
         return type(self)(kept, spec, name=name, name_is_auto=True)
 
@@ -84,36 +84,30 @@ def _positions(shape):
             yield (head, *rest)
 
 
-def _selected(position, index):
+def _selected(position, index, shape):
     return all(
         coordinate == indexer
         if isinstance(indexer, int)
         else coordinate in range(*indexer.indices(size))
-        for coordinate, indexer, size in zip(position, index, _SHAPE_OF[len(index)], strict=True)
+        for coordinate, indexer, size in zip(position, index, shape, strict=True)
     )
-
-
-_SHAPE_OF: dict[int, tuple[int, ...]] = {}
 
 
 @pytest.fixture
 def flat():
     """A single-level batch: 4 elements on one ``draw`` axis."""
-    _SHAPE_OF[1] = (4,)
     return _ListBatch(range(4), _spec([(4,)], ["draw"]))
 
 
 @pytest.fixture
 def nested():
     """Two levels: ``chain`` of 2 over ``draw`` of 3."""
-    _SHAPE_OF[2] = (2, 3)
     return _ListBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
 
 
 @pytest.fixture
 def two_axis():
     """One two-axis level, to exercise partial level indexers."""
-    _SHAPE_OF[2] = (2, 3)
     return _ListBatch(range(6), _spec([(2, 3)], ["draw"]))
 
 
@@ -170,7 +164,6 @@ class TestSpec:
 
     def test_an_element_spec_naming_no_kind_is_well_formed(self):
         """The case ``BatchSpec`` exists to cover: a batch of raw values."""
-        _SHAPE_OF[1] = (3,)
         bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
         assert bare.element_spec == ArraySpec(shape=())
         assert isinstance(bare.spec, BatchSpec)
@@ -260,18 +253,52 @@ class TestLevelNames:
         with pytest.raises(KeyError, match="not levels of this batch"):
             nested.with_level_names(nope="x")
 
-    @pytest.mark.parametrize(
-        ("existing", "candidate", "expected"),
-        [
-            ((), "draw", "draw"),
-            (("draw",), "draw", "draw2"),
-            (("draw", "draw2"), "draw", "draw3"),
-            (("draw", "draw3"), "draw", "draw2"),
-            (("chain",), "draw", "draw"),
-        ],
-    )
-    def test_disambiguate_appends_the_smallest_free_suffix(self, existing, candidate, expected):
-        assert Batch.disambiguate_level_name(existing, candidate) == expected
+    def test_a_duplicate_level_name_is_rejected_not_altered(self):
+        """A minted level takes a name of its own; a clash is an error.
+
+        An operation adding a level is given the name to use, so a name already
+        present is a mistake the caller resolves. Nothing silently alters it,
+        which is what keeps a level name a statement about meaning rather than
+        about the order levels were added in.
+        """
+        with pytest.raises(ValueError, match="must be unique within a batch"):
+            _spec([(2,), (3,)], ["draw", "draw"])
+
+    def test_the_duplicate_message_names_the_remedy(self):
+        with pytest.raises(ValueError, match="name of its own"):
+            _spec([(2,), (3,)], ["draw", "draw"])
+
+    def test_renaming_onto_a_kept_level_raises_like_minting_does(self, nested):
+        """Renaming and minting answer a clash the same way."""
+        with pytest.raises(ValueError, match="would duplicate a level name"):
+            nested.with_level_names(chain="draw")
+
+    def test_an_empty_new_name_raises(self, nested):
+        with pytest.raises(ValueError, match="must be non-empty"):
+            nested.with_level_names(chain="")
+
+    def test_two_renames_onto_one_name_raise(self, nested):
+        with pytest.raises(ValueError, match="would duplicate a level name"):
+            nested.with_level_names(chain="x", draw="x")
+
+    def test_a_level_renamed_twice_by_mapping_and_keyword_raises(self, nested):
+        with pytest.raises(ValueError, match="renamed twice"):
+            nested.with_level_names({"chain": "a"}, chain="b")
+
+    def test_the_same_new_name_from_both_forms_is_not_a_conflict(self, nested):
+        assert nested.with_level_names({"chain": "a"}, chain="a").level_names == ("a", "draw")
+
+    def test_a_level_name_must_be_an_identifier(self):
+        with pytest.raises(ValueError, match="must be an identifier"):
+            _spec([(2,)], ["my level"])
+
+    def test_a_level_name_must_be_a_string(self):
+        with pytest.raises(TypeError, match="level names are strings"):
+            _spec([(2,)], [7])
+
+    def test_renaming_a_level_repins_the_names_a_view_derives_from(self, nested):
+        renamed = nested.with_level_names(chain="group")
+        assert renamed[1].name == "b[group=1]"
 
 
 class TestIndexing:
@@ -344,23 +371,48 @@ class TestAtLevels:
 
 
 class TestElementIdentity:
-    def test_an_element_derives_name_index_and_is_marked_auto(self, flat):
+    def test_an_element_derives_the_level_it_was_selected_at(self, flat):
         element = flat[2]
-        assert element.name == "b[2]"
+        assert element.name == "b[draw=2]"
         assert element.name_is_auto
 
-    def test_nested_levels_compose_the_scheme(self, nested):
-        assert nested[1][2].name == "b[1][2]"
+    def test_nested_levels_name_every_level_selected(self, nested):
+        assert nested[1][2].name == "b[chain=1, draw=2]"
 
     def test_at_levels_derives_the_same_name_as_positional_indexing(self, nested):
         assert nested.at_levels(chain=1, draw=2).name == nested[1][2].name
 
     def test_a_sub_batch_view_also_derives_its_name(self, nested):
-        assert nested[1].name == "b[1]"
+        assert nested[1].name == "b[chain=1]"
         assert nested[1].name_is_auto
 
+    def test_a_negative_index_names_the_position_it_resolves_to(self, flat):
+        assert flat[-1].name == flat[3].name == "b[draw=3]"
+
+    def test_a_slice_names_the_positions_it_spans(self, flat):
+        assert flat[1:3].name == "b[draw=1:3]"
+
+    def test_a_step_slice_names_its_step(self, flat):
+        assert flat[0:3:2].name == "b[draw=0:3:2]"
+
+    def test_slices_spanning_the_same_positions_name_alike(self, flat):
+        """A name is a function of what is selected, not of how it was written."""
+        assert flat[0:4:2].name == flat[0:3:2].name
+
+    def test_a_multi_axis_level_names_its_axes_together(self, two_axis):
+        assert two_axis.at_levels(draw=(1, slice(0, 2))).name == "b[draw=(1, 0:2)]"
+
+    def test_selecting_the_whole_batch_derives_the_batch_s_own_name(self, nested):
+        assert nested.at_levels().name == "b"
+        assert nested[:].name == "b"
+
+    def test_a_user_given_name_survives_a_no_op_selection(self, nested):
+        assert not nested.at_levels().name_is_auto
+
+    def test_a_renamed_batch_roots_the_names_of_its_own_views(self, nested):
+        assert nested[1].with_name("inner")[2].name == "inner[draw=2]"
+
     def test_bare_elements_carry_no_identity(self):
-        _SHAPE_OF[1] = (3,)
         bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
         assert bare[1] == 1
         assert not isinstance(bare[1], TrackedTerm)
@@ -376,3 +428,155 @@ class TestABC:
 
     def test_the_storage_seam_is_abstract(self):
         assert set(Batch.__abstractmethods__) == {"_element_at", "_sub_batch_at"}
+
+
+class TestDerivedNamesIdentifyTheObject:
+    """A derived name is a function of what a view selects.
+
+    Two routes to the same selection read alike, and two different selections of
+    one batch never do — the property that lets a name be used to say which
+    object is meant.
+    """
+
+    def test_indexing_two_levels_in_either_order_reads_alike(self, nested):
+        one_call = nested.at_levels(chain=1, draw=2)
+        chain_first = nested.at_levels(chain=1).at_levels(draw=2)
+        draw_first = nested.at_levels(draw=2).at_levels(chain=1)
+        positional = nested[1][2]
+        assert (
+            one_call.name
+            == chain_first.name
+            == draw_first.name
+            == positional.name
+            == "b[chain=1, draw=2]"
+        )
+
+    def test_the_same_element_is_reached_by_either_order(self, nested):
+        assert (
+            nested.at_levels(chain=1, draw=2).value
+            == nested.at_levels(draw=2).at_levels(chain=1).value
+            == nested[1][2].value
+            == 5
+        )
+
+    def test_slicing_then_indexing_reads_as_the_position_selected(self, flat):
+        """A position within a slice is named by where it sits in the batch."""
+        assert flat[1:4][0].name == flat[1].name == "b[draw=1]"
+        assert flat[1:4][0].value == 1
+
+    def test_a_slice_of_a_slice_names_the_positions_it_still_spans(self, flat):
+        assert flat[1:4][1:].name == "b[draw=2:4]"
+
+    def test_selecting_different_levels_reads_differently(self, nested):
+        """The collision a positional-only scheme cannot avoid."""
+        assert nested.at_levels(chain=1).name == "b[chain=1]"
+        assert nested.at_levels(draw=1).name == "b[draw=1]"
+        assert nested.at_levels(chain=1).name != nested.at_levels(draw=1).name
+
+    def test_distinct_elements_of_distinct_sub_batches_read_differently(self, nested):
+        outer = nested.at_levels(draw=1)[0]
+        inner = nested[1][0]
+        assert outer.name != inner.name
+        assert (outer.name, inner.name) == ("b[chain=0, draw=1]", "b[chain=1, draw=0]")
+
+    def test_a_slice_view_does_not_borrow_the_batch_s_own_name(self, flat):
+        assert flat[0:2].name != flat.name
+
+
+class TestIndexerValidation:
+    @pytest.mark.parametrize("indexer", ["draw", 1.5, object()])
+    def test_an_indexer_must_be_an_integer_a_slice_or_none(self, flat, indexer):
+        with pytest.raises(TypeError, match="indexed by an integer, a slice, or None"):
+            flat[indexer]
+
+    def test_at_levels_rejects_the_same_indexers(self, flat):
+        with pytest.raises(TypeError, match="indexed by an integer, a slice, or None"):
+            flat.at_levels(draw="first")
+
+    def test_a_bool_is_not_an_index(self, flat):
+        with pytest.raises(TypeError, match="not indexed by a bool"):
+            flat[True]
+
+    def test_a_tuple_addresses_the_leading_axes_in_order(self, nested):
+        assert nested[1, 2].value == 5
+        assert nested[1, 2].name == "b[chain=1, draw=2]"
+
+    def test_a_partial_tuple_leaves_the_rest_whole(self, nested):
+        assert nested[1,].name == "b[chain=1]"
+
+    def test_too_many_indices_raises_through_the_public_index(self, flat):
+        with pytest.raises(IndexError, match="too many indices"):
+            flat[0, 0]
+
+    def test_an_out_of_range_index_raises(self, flat):
+        with pytest.raises(IndexError, match="out of range"):
+            flat[4]
+
+
+class TestViewProvenance:
+    def test_a_view_records_the_indexing(self, nested, full_provenance_mode):
+        view = nested[1]
+        assert view.provenance is not None
+        assert view.provenance.operation == "index"
+        assert view.provenance.metadata["selection"] == "chain=1"
+
+    def test_an_element_records_the_indexing(self, nested, full_provenance_mode):
+        element = nested[1][2]
+        assert element.provenance is not None
+        assert element.provenance.metadata["selection"] == "chain=1, draw=2"
+
+    def test_the_batch_indexed_is_the_parent(self, nested, full_provenance_mode):
+        view = nested[1]
+        assert [parent.name for parent in view.provenance.parents] == ["b"]
+
+    def test_a_bare_element_has_nothing_to_record_on(self, full_provenance_mode):
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
+        assert bare[1] == 1
+
+
+class TestImmutability:
+    def test_a_batch_rejects_attribute_assignment(self, flat):
+        with pytest.raises(AttributeError, match="immutable"):
+            flat._spec = None
+
+    def test_a_batch_rejects_attribute_deletion(self, flat):
+        with pytest.raises(AttributeError, match="immutable"):
+            del flat._spec
+
+    def test_renaming_levels_shares_storage(self, nested):
+        renamed = nested.with_level_names(chain="group")
+        assert renamed.batch_shape == nested.batch_shape
+        assert [element.value for element in renamed[0]] == [0, 1, 2]
+
+
+class TestDegenerateAxes:
+    def test_a_zero_length_axis_is_a_batch_of_nothing(self):
+        empty = _ListBatch([], _spec([(0,)], ["draw"]))
+        assert (len(empty), empty.batch_size) == (0, 0)
+        assert list(empty) == []
+
+    def test_indexing_an_empty_axis_raises(self):
+        empty = _ListBatch([], _spec([(0,)], ["draw"]))
+        with pytest.raises(IndexError, match="out of range"):
+            empty[0]
+
+    def test_a_slice_selecting_nothing_keeps_the_level(self, flat):
+        none_of_it = flat[2:2]
+        assert none_of_it.batch_shape == (0,)
+        assert none_of_it.level_names == ("draw",)
+
+
+class TestSpecValidation:
+    def test_an_axis_size_must_be_integral(self):
+        with pytest.raises(TypeError, match="axis sizes are integers"):
+            _spec([(2.7,)], ["draw"])
+
+    def test_a_string_is_not_an_axis_size(self):
+        with pytest.raises(TypeError, match="axis sizes are integers"):
+            _spec([("3",)], ["draw"])
+
+    def test_replacing_a_field_revalidates_the_levels(self):
+        from dataclasses import replace
+
+        with pytest.raises(ValueError, match="must name every level"):
+            replace(_spec([(2,)], ["draw"]), level_names=("a", "b"))
