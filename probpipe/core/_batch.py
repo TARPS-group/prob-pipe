@@ -43,6 +43,7 @@ See design II.5.
 
 from __future__ import annotations
 
+import contextlib
 import operator
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -217,10 +218,37 @@ class Batch[E](TrackedTerm, ABC):
     )
 
     def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError("Batch is immutable")
+        raise AttributeError(f"{type(self).__name__} is immutable")
 
     def __delattr__(self, name: str) -> None:
-        raise AttributeError("Batch is immutable")
+        raise AttributeError(f"{type(self).__name__} is immutable")
+
+    def __getstate__(self) -> tuple[None, dict[str, Any]]:
+        """Every assigned slot, for ``pickle`` and ``copy``.
+
+        A batch has no instance dictionary, so the state is the slots declared
+        across the class hierarchy — a subclass's storage included, without it
+        having to say so.
+        """
+        state: dict[str, Any] = {}
+        for klass in type(self).__mro__:
+            for slot in getattr(klass, "__slots__", ()):
+                if slot in state or slot in ("__dict__", "__weakref__"):
+                    continue
+                with contextlib.suppress(AttributeError):
+                    state[slot] = getattr(self, slot)
+        return None, state
+
+    def __setstate__(self, state: tuple[None, dict[str, Any]]) -> None:
+        """Restore the slots through ``object.__setattr__``.
+
+        ``pickle`` and ``copy`` restore state by assignment, which the
+        immutability guard refuses, so the write has to go around it exactly as
+        construction does.
+        """
+        _, slots = state
+        for slot, value in slots.items():
+            object.__setattr__(self, slot, value)
 
     # -- construction -------------------------------------------------------
 
@@ -381,7 +409,7 @@ class Batch[E](TrackedTerm, ABC):
         """
         return self._at_axes(index if isinstance(index, tuple) else (index,))
 
-    def at_levels(self, **levels: LevelIndexer) -> E | Self:
+    def at_levels(self, /, **levels: LevelIndexer) -> E | Self:
         """Index by named level, returning an element or a sub-batch view.
 
         The by-name counterpart of positional ``[]``, and the level analogue of
@@ -397,6 +425,9 @@ class Batch[E](TrackedTerm, ABC):
         ``draw=(i, None)``. A level not named is kept whole, and a level whose
         every axis is dropped is removed, yielding the inner batch or element
         just as positional indexing does.
+
+        The receiver is positional-only, so every level name is addressable as a
+        keyword — including one that happens to spell a parameter of this method.
 
         Raises
         ------
@@ -446,6 +477,12 @@ class Batch[E](TrackedTerm, ABC):
     def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
         """A view over the sub-batch at a partial positional *index*.
 
+        *index* is one entry per axis of this batch: a resolved position for an
+        axis being dropped, or a slice selecting the positions a kept axis spans,
+        **in the order the view presents them** — a descending slice for a
+        reversed selection, which storage must honour rather than re-sort, since
+        the view's derived names are stated in that order.
+
         *spec* is the view's own specification: the same ``element_spec`` over
         the surviving levels, with every integer-indexed axis already removed.
         *name* is the derived identity, taken marked auto-derived. A subclass
@@ -461,7 +498,7 @@ class Batch[E](TrackedTerm, ABC):
         if len(index) > len(shape):
             raise IndexError(f"too many indices for batch_shape {shape}: got {len(index)}")
 
-        normalised: list[int | slice] = []
+        normalised: list[int | range] = []
         for axis, size in enumerate(shape):
             indexer = index[axis] if axis < len(index) else None
             normalised.append(_normalise_indexer(indexer, size, axis, shape))
@@ -469,35 +506,47 @@ class Batch[E](TrackedTerm, ABC):
         selection = self._compose_selection(normalised)
         label = _render_index(self._root_spec, selection)
         name = f"{self._root_name}[{label}]" if label else self._root_name
-        provenance = Provenance.create("index", parents=[self], metadata={"selection": label})
+        # Recorded against the batch indexed, so the selection reads against the
+        # parent this provenance names; the derived name is stated against the
+        # root instead, which is what makes it route-independent.
+        step = _render_index(self._spec, tuple(normalised))
 
         dropped = tuple(i for i in normalised if isinstance(i, int))
         if len(dropped) == len(shape):
-            return _carry_provenance(self._element_at(dropped, name=name), provenance)
+            return _carry_provenance(self._element_at(dropped, name=name), self, step)
 
         groups, names = self._surviving_levels(normalised)
         spec = replace(self._spec, axis_groups=groups, level_names=names)
-        view = self._sub_batch_at(tuple(normalised), spec=spec, name=name)
+        view = self._sub_batch_at(
+            tuple(_as_storage_slice(i) for i in normalised), spec=spec, name=name
+        )
         object.__setattr__(view, "_root_name", self._root_name)
         object.__setattr__(view, "_root_spec", self._root_spec)
         object.__setattr__(view, "_root_selection", selection)
         if not label:
             # Selecting the whole batch derives nothing: the view carries the
             # name it came with, so a user-given name stays user-given and is
-            # not re-derived by a later transform.
+            # not re-derived by a later transform, and no indexing is recorded
+            # because none happened.
             object.__setattr__(view, "_name_is_auto", self._name_is_auto)
-        return _carry_provenance(view, provenance)
+            return view
+        return _carry_provenance(view, self, step)
 
-    def _compose_selection(self, normalised: list[int | slice]) -> tuple[int | slice, ...]:
+    def _compose_selection(self, normalised: list[int | range]) -> tuple[int | range, ...]:
         """This view's selection composed with *normalised*, in root coordinates.
 
         Each entry of :attr:`_root_selection` is one root axis: an integer for an
-        axis already dropped, or the canonical slice of root positions a kept
-        axis still spans. Composing in root coordinates is what makes a derived
-        name a function of the object rather than of the route to it — two
-        routes to the same selection compose to the same tuple.
+        axis already dropped, or the ``range`` of root positions a kept axis
+        still spans, in the order the axis presents them. Composing in root
+        coordinates is what makes a derived name a function of the object rather
+        than of the route to it — two routes to the same selection compose to
+        the same tuple.
+
+        A ``range`` is the resolved form throughout: it carries the selected
+        positions and their order without a ``slice``'s from-the-end bounds, so
+        composing and sizing it never re-interpret a bound.
         """
-        composed: list[int | slice] = []
+        composed: list[int | range] = []
         axis = 0
         for entry in self._root_selection:
             if isinstance(entry, int):
@@ -506,10 +555,10 @@ class Batch[E](TrackedTerm, ABC):
             indexer = normalised[axis]
             axis += 1
             if isinstance(indexer, int):
-                composed.append(entry.start + indexer * entry.step)
+                composed.append(entry[indexer])
             else:
                 composed.append(
-                    _canonical_slice(
+                    range(
                         entry.start + indexer.start * entry.step,
                         entry.start + indexer.stop * entry.step,
                         entry.step * indexer.step,
@@ -518,17 +567,23 @@ class Batch[E](TrackedTerm, ABC):
         return tuple(composed)
 
     def _surviving_levels(
-        self, normalised: list[int | slice]
+        self, normalised: list[int | range]
     ) -> tuple[tuple[tuple[int, ...], ...], tuple[str, ...]]:
-        """The levels left after dropping every integer-indexed axis."""
+        """The levels left after dropping every integer-indexed axis.
+
+        A kept axis is sized by the number of positions its selection spans; an
+        integer-indexed axis is gone, and a level all of whose axes are gone goes
+        with them.
+        """
         groups: list[tuple[int, ...]] = []
         names: list[str] = []
         start = 0
         for level_name, group in zip(self.level_names, self.axis_groups, strict=True):
-            kept = tuple(
-                _sliced_size(normalised[start + offset], size) for offset, size in enumerate(group)
+            surviving = tuple(
+                len(entry)
+                for entry in normalised[start : start + len(group)]
+                if isinstance(entry, range)
             )
-            surviving = tuple(size for size in kept if size is not None)
             if surviving:
                 groups.append(surviving)
                 names.append(level_name)
@@ -542,24 +597,38 @@ class Batch[E](TrackedTerm, ABC):
         copy carrying a renamed spec. :meth:`TrackedTerm._shallow_copy` assigns
         through ``object.__setattr__``, which is what makes this safe to define
         here: it runs no ``__init__`` and survives this class's immutability
-        guard, so nothing is assumed about a subclass's constructor. The names a
-        view's own name derives from are renamed with it.
+        guard, so nothing is assumed about a subclass's constructor.
+
+        The names the copy's own name derives from are renamed with it, and its
+        name is re-derived, so a renamed view and any view taken from it read the
+        level the same way. The copy carries no provenance of its own beyond the
+        rename: the record of how the batch it was renamed from arose belongs to
+        that batch.
 
         Override only when a subclass caches something derived from the level
         names, since a shallow copy would carry the stale cache; call ``super``
         for the renamed copy rather than reassigning ``_spec`` by hand.
         """
+        repinned = dict(zip(self.level_names, level_names, strict=True))
+        root_names = tuple(repinned.get(name, name) for name in self._root_spec.level_names)
+        if len(set(root_names)) != len(root_names):
+            taken = sorted({name for name in root_names if root_names.count(name) > 1})
+            raise ValueError(
+                f"level name {taken[0]!r} is already used by a level this view derives its "
+                f"name from but no longer carries; renaming onto it would make the derived "
+                f"name ambiguous. Rename it on the batch this view came from, or give the "
+                f"level another name"
+            )
+
         renamed = self._shallow_copy()
         object.__setattr__(renamed, "_spec", replace(self._spec, level_names=level_names))
-        repinned = dict(zip(self.level_names, level_names, strict=True))
+        object.__setattr__(renamed, "_root_spec", replace(self._root_spec, level_names=root_names))
+        label = _render_index(renamed._root_spec, self._root_selection)
         object.__setattr__(
-            renamed,
-            "_root_spec",
-            replace(
-                self._root_spec,
-                level_names=tuple(repinned.get(name, name) for name in self._root_spec.level_names),
-            ),
+            renamed, "_name", f"{self._root_name}[{label}]" if label else self._root_name
         )
+        object.__setattr__(renamed, "_provenance", None)
+        renamed.with_provenance(Provenance.create("with_level_names", parents=[self]))
         return renamed
 
 
@@ -576,19 +645,24 @@ def _as_axis_indexers(indexer: LevelIndexer) -> tuple[int | slice | None, ...]:
     return indexer if isinstance(indexer, tuple) else (indexer,)
 
 
-def _normalise_indexer(indexer: Any, size: int, axis: int, shape: tuple[int, ...]) -> int | slice:
-    """One axis indexer as a resolved integer or a canonical slice.
+def _normalise_indexer(indexer: Any, size: int, axis: int, shape: tuple[int, ...]) -> int | range:
+    """One axis indexer as a resolved integer or the ``range`` of positions it selects.
 
     ``None`` and an omitted axis mean the whole axis. An integer is resolved
     against *size* (so a negative index names the same position as its
-    non-negative twin, and both derive the same name); a slice is resolved to
-    concrete bounds. A ``bool`` is rejected rather than read as ``0`` / ``1``,
-    since a batch axis has no mask indexing for it to mean.
+    non-negative twin, and both derive the same name); a slice is resolved to the
+    positions it selects, in order. A ``bool`` is rejected rather than read as
+    ``0`` / ``1``, since a batch axis has no mask indexing for it to mean.
+
+    Resolving to a ``range`` rather than a bounded slice is what keeps a
+    descending selection intact: ``slice.indices`` reports the stop of a reverse
+    slice as ``-1``, a bound only meaningful once, so anything that resolved it a
+    second time would read that as the last position and select nothing.
     """
     if indexer is None:
-        return slice(0, size, 1)
+        return range(size)
     if isinstance(indexer, slice):
-        return slice(*indexer.indices(size))
+        return range(*indexer.indices(size))
     if isinstance(indexer, bool):
         raise TypeError(
             f"a batch axis is not indexed by a bool (axis {axis} of batch_shape {shape}); "
@@ -612,42 +686,68 @@ def _check_in_range(index: int, size: int, axis: int, shape: tuple[int, ...]) ->
     return resolved
 
 
-def _canonical_slice(start: int, stop: int, step: int) -> slice:
-    """One canonical slice per set of selected positions.
+def _bounds(selected: range) -> tuple[int, int | None, int]:
+    """The first position, the bound after the last, and the step of *selected*.
 
-    A derived name is a function of the selection, so two slices spanning the
-    same positions must be the same slice. Bounds are pinned to the first and
-    last position actually selected, and a selection of one position or none
-    takes the single form for it.
+    One form per set of positions, so a name stays a function of the selection:
+    the bounds are pinned to the first and last position actually selected, and a
+    single position takes the ascending unit-step form whatever step reached it,
+    since a step spans nothing there. The bound is ``None`` where a descending
+    selection runs down to position 0, since no integer sits before it: that is
+    the one case a stop cannot state, and it is why both the rendered name and
+    the storage slice omit it there.
     """
-    selected = range(start, stop, step)
-    if not selected:
-        return slice(0, 0, 1)
+    start = selected[0]
     if len(selected) == 1:
-        return slice(selected[0], selected[0] + 1, 1)
-    return slice(selected[0], selected[-1] + (1 if step > 0 else -1), step)
+        return start, start + 1, 1
+    stop = selected[-1] + (1 if selected.step > 0 else -1)
+    return start, None if stop < 0 else stop, selected.step
 
 
-def _whole_of(spec: BatchSpec) -> tuple[slice, ...]:
+def _as_storage_slice(indexer: int | range) -> int | slice:
+    """One axis indexer as the storage seam takes it: a position or a slice.
+
+    A ``range`` becomes the slice selecting the same positions in the same order,
+    so applying it to a list, a numpy array, or a JAX array reproduces the
+    selection exactly — including a descending one, which is spelled with an
+    omitted stop rather than a from-the-end bound.
+    """
+    if isinstance(indexer, int):
+        return indexer
+    if not indexer:
+        return slice(0, 0, 1)
+    start, stop, step = _bounds(indexer)
+    return slice(start, stop, step)
+
+
+def _whole_of(spec: BatchSpec) -> tuple[range, ...]:
     """The selection of a batch that selects all of itself: every axis whole."""
-    return tuple(slice(0, size, 1) for size in spec.batch_shape)
+    return tuple(range(size) for size in spec.batch_shape)
 
 
-def _is_whole_axis(entry: int | slice, size: int) -> bool:
+def _is_whole_axis(entry: int | range, size: int) -> bool:
     """Whether *entry* selects a whole axis of *size*, in order."""
-    return isinstance(entry, slice) and entry.start == 0 and entry.stop == size and entry.step == 1
+    return isinstance(entry, range) and entry == range(size)
 
 
-def _render_axis(entry: int | slice) -> str:
-    """One axis of a selection: its position, or the slice of positions."""
+def _render_axis(entry: int | range) -> str:
+    """One axis of a selection: its position, or the positions it spans.
+
+    A span is rendered so that reading it back selects the same positions in the
+    same order, which is what lets a derived name be read as an index.
+    """
     if isinstance(entry, int):
         return str(entry)
-    if entry.step == 1:
-        return f"{entry.start}:{entry.stop}"
-    return f"{entry.start}:{entry.stop}:{entry.step}"
+    if not entry:
+        return "0:0"
+    start, stop, step = _bounds(entry)
+    bound = "" if stop is None else str(stop)
+    if step == 1:
+        return f"{start}:{bound}"
+    return f"{start}:{bound}:{step}"
 
 
-def _render_index(root_spec: BatchSpec, selection: tuple[int | slice, ...]) -> str:
+def _render_index(root_spec: BatchSpec, selection: tuple[int | range, ...]) -> str:
     """A selection as ``level=positions`` per touched level, in level order.
 
     Levels selected whole are left out, and the levels that remain appear in the
@@ -669,21 +769,15 @@ def _render_index(root_spec: BatchSpec, selection: tuple[int | slice, ...]) -> s
     return ", ".join(parts)
 
 
-def _carry_provenance(view: Any, provenance: Provenance | None) -> Any:
+def _carry_provenance(view: Any, indexed: Batch, selection: str) -> Any:
     """Record the indexing on a derived view that carries no provenance of its own.
 
-    An element that is a bare value has nothing to record on, and a subclass that
-    supplied its own provenance keeps it.
+    The record is built only once there is something to carry it: an element that
+    is a bare value has no identity to record on, and a subclass that supplied its
+    own provenance keeps it, so neither pays for a node that would be discarded.
     """
-    if provenance is None or not isinstance(view, TrackedTerm):
+    if not isinstance(view, TrackedTerm) or view.provenance is not None:
         return view
-    if view.provenance is not None:
-        return view
-    return view.with_provenance(provenance)
-
-
-def _sliced_size(indexer: int | slice, size: int) -> int | None:
-    """The axis size after *indexer*, or ``None`` when the axis is dropped."""
-    if isinstance(indexer, int):
-        return None
-    return len(range(*indexer.indices(size)))
+    return view.with_provenance(
+        Provenance.create("index", parents=[indexed], metadata={"selection": selection})
+    )
