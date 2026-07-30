@@ -38,7 +38,7 @@ from a normalised positional index. Renaming a level needs no hook: it touches
 no axes and no elements, so :meth:`Batch._with_level_names` defaults to a
 shallow copy.
 
-See design II.3.
+See design II.5.
 """
 
 from __future__ import annotations

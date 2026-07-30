@@ -479,13 +479,13 @@ class TestComputeExpectationDecorator:
         """The decorator must call _expectation, not bypass it."""
         calls: list[str] = []
 
-        class TrackedTerm(_MCNormalDist):
+        class Spy(_MCNormalDist):
             def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=False):
                 calls.append("called")
                 return super()._expectation(
                     f, key=key, num_evaluations=num_evaluations, return_dist=return_dist
                 )
 
-        d = TrackedTerm(loc=0.0, scale=1.0)
+        d = Spy(loc=0.0, scale=1.0)
         _ = d._mean()
         assert calls == ["called"]

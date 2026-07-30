@@ -10,7 +10,7 @@ Parts III and V fixed what a distribution *is* and what the operations do to one
 | VI.2  | empirical, bootstrap, KDE         | any                                    | no                                 | sampling, sample moments, exact marginals           | constructor, or as a sampling result                   |
 | VI.3  | mixture                           | the components' shared event           | no                                 | what the components jointly support                 | `predictive`, dependent marginals, or constructor      |
 | VI.4  | evaluation results                | the map's output template              | no                                 | per rule: exact density, exact moments, or sampling | `evaluate`                                             |
-| VI.5  | random functions, random measures | a `FunctionSpec` or `DistributionSpec` leaf | no                             | mean function / marginalized law, sampling          | constructor                                            |
+| VI.5  | random functions, random measures | a `FunctionSpec` or `DistributionSpec` event declaration | no                             | mean function / marginalized law, sampling          | constructor                                            |
 | VI.6  | the Gaussian algebra              | numeric                                | yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `evaluate`    |
 | VI.7  | inference-produced                | any                                    | as realized                        | whatever the realizing family supports              | `condition_on` (inference)                             |
 | VI.8  | conditional families              | (given, event) template pairs          | some                               | the conditional capabilities                        | constructor or composition                             |
@@ -19,7 +19,7 @@ Parts III and V fixed what a distribution *is* and what the operations do to one
 
 ### Contract
 
-A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its `event_template` from its parameters, including shape, dtype, and the support `Constraint`, and auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists.
+A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its `event_spec` from its parameters, including shape, dtype, and the support `Constraint`, and auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists.
 
 ```python
 class TFPDistribution(Distribution[Array]):
@@ -97,7 +97,7 @@ A `MixtureDistribution` is a convex combination of component distributions over 
 ```python
 class MixtureDistribution(Distribution[T]):
     def __init__(self, name: str, components: Sequence[Distribution], weights: Array) -> None: ...
-    # components share one event_template; weights are nonnegative and sum to one
+    # components share one event declaration; weights are nonnegative and sum to one
 ```
 
 ### Rationale
@@ -137,7 +137,7 @@ Typing evaluation results as catalog families keeps the operation closed and its
 
 ### Contract
 
-A `RandomFunction` is a distribution whose event is a `FunctionSpec` leaf: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point returns a distribution over outputs, the law of `f(x)` for `f` drawn from the random function. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random, so `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member.
+A `RandomFunction` is a distribution declaring a `FunctionSpec` as its event: a draw is a callable, `mean` returns the mean function, and `variance` returns the pointwise variance function when the family provides it. Calling it at a point returns a distribution over outputs, the law of `f(x)` for `f` drawn from the random function. A `RandomMeasure` is a distribution whose event is a `DistributionSpec` leaf: a draw is a `Distribution`, `mean` returns the marginalized law, and no event-typed variance is claimed in general. A draw's log-density is itself random, so `_random_log_prob()` returns the law of `x ↦ log D(x)`, a `RandomFunction`. A `BootstrapDistribution` is a member.
 
 ```python
 class RandomFunction[X, Y](Distribution[Callable[[X], Y]]):
