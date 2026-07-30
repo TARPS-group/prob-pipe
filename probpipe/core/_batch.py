@@ -21,6 +21,14 @@ multiplicity. A batch stores it and nothing else about its type, so
 term, :attr:`Batch.element_spec` and the level accessors are views on it, and a
 batch of values naming no kind is specified all the same.
 
+**A view is named by what it selects.** Indexing derives the view's name from
+the batch it was taken from and the positions selected, level by level:
+``posterior[chain=0]`` for a sub-batch, ``posterior[chain=0, draw=7]`` for an
+element. The selection is tracked against the batch the name is rooted in, so
+the reading identifies the object rather than the route taken to it — indexing
+two levels in one call, in two calls, or in the other order all read the same —
+and no two distinct selections of one batch read alike.
+
 **Storage is the concrete class's business, and only storage.** This module
 owns the level algebra: the shape invariants, the naming rules, index
 normalisation for :meth:`Batch.at_levels`, and the identity a view derives. A
@@ -35,7 +43,7 @@ See design II.3.
 
 from __future__ import annotations
 
-import copy
+import operator
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
@@ -50,7 +58,7 @@ __all__ = ["Batch", "BatchSpec"]
 
 # One indexer per level: a single value addresses the level's first axis, a
 # tuple addresses its axes in order. ``None`` means the whole axis, as ``:``.
-type LevelIndexer = int | slice | None | tuple[int | slice | None, ...]
+type LevelIndexer = int | slice | tuple[int | slice | None, ...] | None
 
 
 @dataclass(frozen=True, init=False)
@@ -68,14 +76,21 @@ class BatchSpec(TermSpec):
     second copy of the multiplicity: its shape and level accessors read the
     stored spec.
 
+    Level names are unique within a batch, and a duplicate is an error rather
+    than something this class alters: an operation that mints a level takes the
+    name to give it, so a name already in use means the caller must supply
+    another. Renaming through :meth:`Batch.with_level_names` raises on a
+    collision for the same reason.
+
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`ValueSpec`.
+        If ``element_spec`` is not a :class:`ValueSpec`, an axis size is not an
+        integer, or a level name is not a string.
     ValueError
         If there are no batch axes, a level holds no axes, an axis size is
         negative, the number of names does not match the number of levels, or a
-        level name is empty or duplicated.
+        level name is empty, not an identifier, or duplicated.
     """
 
     element_spec: ValueSpec
@@ -97,7 +112,7 @@ class BatchSpec(TermSpec):
             raise TypeError(
                 f"BatchSpec.element_spec must be a ValueSpec, got {type(element_spec).__name__}"
             )
-        groups = tuple(tuple(int(size) for size in group) for group in axis_groups)
+        groups = tuple(tuple(_axis_size(size) for size in group) for group in axis_groups)
         names = tuple(level_names)
 
         if not groups:
@@ -113,10 +128,23 @@ class BatchSpec(TermSpec):
                 f"level_names must name every level: {len(names)} names for {len(groups)} levels"
             )
         for level_name in names:
+            if not isinstance(level_name, str):
+                raise TypeError(
+                    f"level names are strings, got {type(level_name).__name__}: {level_name!r}"
+                )
             if not level_name:
                 raise ValueError("level names must be non-empty")
+            if not level_name.isidentifier():
+                raise ValueError(
+                    f"level name {level_name!r} must be an identifier, since at_levels "
+                    f"addresses a level by keyword"
+                )
         if len(set(names)) != len(names):
-            raise ValueError(f"level names must be unique within a batch; got {names}")
+            raise ValueError(
+                f"level names must be unique within a batch; got {names}. An operation "
+                f"minting a level takes the name to use, so give the new level a name of "
+                f"its own rather than reusing one already present"
+            )
 
         object.__setattr__(self, "element_spec", element_spec)
         object.__setattr__(self, "axis_groups", groups)
@@ -178,7 +206,21 @@ class Batch[E](TrackedTerm, ABC):
     batch axes and the content of one element.
     """
 
-    __slots__ = ()
+    __slots__ = (
+        "_name",
+        "_name_is_auto",
+        "_provenance",
+        "_root_name",
+        "_root_selection",
+        "_root_spec",
+        "_spec",
+    )
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError("Batch is immutable")
+
+    def __delattr__(self, name: str) -> None:
+        raise AttributeError("Batch is immutable")
 
     # -- construction -------------------------------------------------------
 
@@ -192,10 +234,18 @@ class Batch[E](TrackedTerm, ABC):
     ) -> None:
         """Store the batch's *spec* and identity (constructor helper).
 
-        Assigns ``_spec`` via ``object.__setattr__`` so immutable hosts can call
+        Assigns the state via ``object.__setattr__`` so immutable hosts can call
         this from their constructor, and delegates identity to
         :meth:`TrackedTerm._init_tracked`. The level invariants are the spec's
-        own and are checked when it is constructed.
+        own and are checked when it is constructed. A subclass declares only its
+        storage in ``__slots__``; this class declares the batch's own state and
+        the identity slots it hosts.
+
+        The batch becomes the **root** of the names its views derive: it selects
+        all of itself, so its derived name is its own. A view built by
+        :meth:`at_levels` or ``[]`` is re-pointed at its parent's root
+        afterwards, which is what makes a derived name independent of the route
+        taken to it.
 
         Raises
         ------
@@ -205,6 +255,9 @@ class Batch[E](TrackedTerm, ABC):
         if not isinstance(spec, BatchSpec):
             raise TypeError(f"a Batch is specified by a BatchSpec, got {type(spec).__name__}")
         object.__setattr__(self, "_spec", spec)
+        object.__setattr__(self, "_root_name", name)
+        object.__setattr__(self, "_root_spec", spec)
+        object.__setattr__(self, "_root_selection", _whole_of(spec))
         self._init_tracked(name, name_is_auto=name_is_auto, provenance=provenance)
 
     # -- the specification --------------------------------------------------
@@ -253,10 +306,22 @@ class Batch[E](TrackedTerm, ABC):
         KeyError
             If a name to rename is not a level of this batch.
         ValueError
-            If a new name is empty, collides with a level that is being kept,
-            or two renames target the same name.
+            If a level is renamed twice with different names, or a new name is
+            empty, not an identifier, collides with a level that is being kept,
+            or is the target of two renames.
+        TypeError
+            If a new name is not a string.
         """
-        renames: dict[str, str] = {**(mapping or {}), **kwargs}
+        positional = dict(mapping or {})
+        conflicting = sorted(
+            old for old, new in kwargs.items() if old in positional and positional[old] != new
+        )
+        if conflicting:
+            raise ValueError(
+                f"level {conflicting[0]!r} is renamed twice, by the positional mapping and "
+                f"by a keyword; give it one new name"
+            )
+        renames: dict[str, str] = {**positional, **kwargs}
         unknown = set(renames) - set(self.level_names)
         if unknown:
             raise KeyError(
@@ -273,23 +338,19 @@ class Batch[E](TrackedTerm, ABC):
             )
         return self._with_level_names(renamed)
 
-    @staticmethod
-    def disambiguate_level_name(existing: Iterable[str], candidate: str) -> str:
-        """A free level name for *candidate*, given the *existing* names.
+    def with_name(self, name: str) -> Self:
+        """Rename the batch, which becomes the root its view names derive from.
 
-        The rule an operation follows when it mints a level whose natural name
-        is taken: append the smallest free integer suffix, so repeated sampling
-        yields ``draw``, then ``draw2``, then ``draw3``. Renaming, by contrast,
-        raises on a collision rather than suffixing — see
-        :meth:`with_level_names`.
+        A user-given name overrides derivation, so the copy selects all of
+        itself: its own name is *name*, and a view of it reads
+        ``name[level=...]`` rather than carrying any selection the original had
+        accumulated.
         """
-        taken = set(existing)
-        if candidate not in taken:
-            return candidate
-        suffix = 2
-        while f"{candidate}{suffix}" in taken:
-            suffix += 1
-        return f"{candidate}{suffix}"
+        renamed = super().with_name(name)
+        object.__setattr__(renamed, "_root_name", name)
+        object.__setattr__(renamed, "_root_spec", renamed._spec)
+        object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))
+        return renamed
 
     # -- indexing -----------------------------------------------------------
 
@@ -302,8 +363,23 @@ class Batch[E](TrackedTerm, ABC):
         return (self[index] for index in range(len(self)))
 
     def __getitem__(self, index: Any) -> E | Self:
-        """Index the leading batch axis, returning an element or a sub-batch view."""
-        return self._at_axes((index,))
+        """Index the batch axes positionally, returning an element or a sub-batch view.
+
+        A single indexer addresses the leading axis; a tuple addresses the
+        leading axes in order, as ``batch[i, j]`` does for an array. Each
+        indexer is an integer, a slice, or ``None``; an integer drops its axis
+        and a slice or ``None`` keeps it. :meth:`at_levels` is the by-name
+        counterpart.
+
+        Raises
+        ------
+        IndexError
+            If more indexers are given than there are batch axes, or an integer
+            is out of range for its axis.
+        TypeError
+            If an indexer is not an integer, a slice, or ``None``.
+        """
+        return self._at_axes(index if isinstance(index, tuple) else (index,))
 
     def at_levels(self, **levels: LevelIndexer) -> E | Self:
         """Index by named level, returning an element or a sub-batch view.
@@ -328,6 +404,11 @@ class Batch[E](TrackedTerm, ABC):
             If a keyword is not a level of this batch.
         ValueError
             If a level is given more indexers than it has axes.
+        IndexError
+            If an integer is out of range for its axis.
+        TypeError
+            If an indexer is not an integer, a slice, ``None``, or a tuple of
+            those.
         """
         unknown = set(levels) - set(self.level_names)
         if unknown:
@@ -367,8 +448,9 @@ class Batch[E](TrackedTerm, ABC):
 
         *spec* is the view's own specification: the same ``element_spec`` over
         the surviving levels, with every integer-indexed axis already removed.
-        *name* is the derived identity. A subclass stores both as given rather
-        than recomputing either.
+        *name* is the derived identity, taken marked auto-derived. A subclass
+        stores both as given rather than recomputing either; the names a further
+        view derives from are re-pointed at this view's own root afterwards.
         """
 
     # -- internals ----------------------------------------------------------
@@ -381,22 +463,59 @@ class Batch[E](TrackedTerm, ABC):
 
         normalised: list[int | slice] = []
         for axis, size in enumerate(shape):
-            indexer = index[axis] if axis < len(index) else slice(None)
-            if indexer is None:
-                indexer = slice(None)
-            if isinstance(indexer, int):
-                normalised.append(_check_in_range(indexer, size, axis, shape))
-            else:
-                normalised.append(indexer)
+            indexer = index[axis] if axis < len(index) else None
+            normalised.append(_normalise_indexer(indexer, size, axis, shape))
+
+        selection = self._compose_selection(normalised)
+        label = _render_index(self._root_spec, selection)
+        name = f"{self._root_name}[{label}]" if label else self._root_name
+        provenance = Provenance.create("index", parents=[self], metadata={"selection": label})
 
         dropped = tuple(i for i in normalised if isinstance(i, int))
-        name = self._derived_name(dropped)
         if len(dropped) == len(shape):
-            return self._element_at(dropped, name=name)
+            return _carry_provenance(self._element_at(dropped, name=name), provenance)
 
         groups, names = self._surviving_levels(normalised)
         spec = replace(self._spec, axis_groups=groups, level_names=names)
-        return self._sub_batch_at(tuple(normalised), spec=spec, name=name)
+        view = self._sub_batch_at(tuple(normalised), spec=spec, name=name)
+        object.__setattr__(view, "_root_name", self._root_name)
+        object.__setattr__(view, "_root_spec", self._root_spec)
+        object.__setattr__(view, "_root_selection", selection)
+        if not label:
+            # Selecting the whole batch derives nothing: the view carries the
+            # name it came with, so a user-given name stays user-given and is
+            # not re-derived by a later transform.
+            object.__setattr__(view, "_name_is_auto", self._name_is_auto)
+        return _carry_provenance(view, provenance)
+
+    def _compose_selection(self, normalised: list[int | slice]) -> tuple[int | slice, ...]:
+        """This view's selection composed with *normalised*, in root coordinates.
+
+        Each entry of :attr:`_root_selection` is one root axis: an integer for an
+        axis already dropped, or the canonical slice of root positions a kept
+        axis still spans. Composing in root coordinates is what makes a derived
+        name a function of the object rather than of the route to it — two
+        routes to the same selection compose to the same tuple.
+        """
+        composed: list[int | slice] = []
+        axis = 0
+        for entry in self._root_selection:
+            if isinstance(entry, int):
+                composed.append(entry)
+                continue
+            indexer = normalised[axis]
+            axis += 1
+            if isinstance(indexer, int):
+                composed.append(entry.start + indexer * entry.step)
+            else:
+                composed.append(
+                    _canonical_slice(
+                        entry.start + indexer.start * entry.step,
+                        entry.start + indexer.stop * entry.step,
+                        entry.step * indexer.step,
+                    )
+                )
+        return tuple(composed)
 
     def _surviving_levels(
         self, normalised: list[int | slice]
@@ -416,30 +535,73 @@ class Batch[E](TrackedTerm, ABC):
             start += len(group)
         return tuple(groups), tuple(names)
 
-    def _derived_name(self, dropped: tuple[int, ...]) -> str:
-        """``name[i]`` per dropped axis, composing as ``name[i][j]`` across levels."""
-        return self._name + "".join(f"[{index}]" for index in dropped)
-
     def _with_level_names(self, level_names: tuple[str, ...]) -> Self:
         """A shallow copy specified over *level_names*, sharing shape and elements.
 
         Renaming touches no axes and no elements, so the default is a shallow
-        copy carrying a renamed spec. ``copy.copy`` does not run ``__init__``,
-        which is what makes this safe to define here: nothing is assumed about a
-        subclass's constructor.
+        copy carrying a renamed spec. :meth:`TrackedTerm._shallow_copy` assigns
+        through ``object.__setattr__``, which is what makes this safe to define
+        here: it runs no ``__init__`` and survives this class's immutability
+        guard, so nothing is assumed about a subclass's constructor. The names a
+        view's own name derives from are renamed with it.
 
         Override only when a subclass caches something derived from the level
         names, since a shallow copy would carry the stale cache; call ``super``
         for the renamed copy rather than reassigning ``_spec`` by hand.
         """
-        renamed = copy.copy(self)
+        renamed = self._shallow_copy()
         object.__setattr__(renamed, "_spec", replace(self._spec, level_names=level_names))
+        repinned = dict(zip(self.level_names, level_names, strict=True))
+        object.__setattr__(
+            renamed,
+            "_root_spec",
+            replace(
+                self._root_spec,
+                level_names=tuple(repinned.get(name, name) for name in self._root_spec.level_names),
+            ),
+        )
         return renamed
+
+
+def _axis_size(size: Any) -> int:
+    """An axis size as an ``int``, rejecting anything not integral."""
+    try:
+        return operator.index(size)
+    except TypeError:
+        raise TypeError(f"axis sizes are integers, got {type(size).__name__}: {size!r}") from None
 
 
 def _as_axis_indexers(indexer: LevelIndexer) -> tuple[int | slice | None, ...]:
     """A level's indexer as a tuple, one entry per addressed axis."""
     return indexer if isinstance(indexer, tuple) else (indexer,)
+
+
+def _normalise_indexer(indexer: Any, size: int, axis: int, shape: tuple[int, ...]) -> int | slice:
+    """One axis indexer as a resolved integer or a canonical slice.
+
+    ``None`` and an omitted axis mean the whole axis. An integer is resolved
+    against *size* (so a negative index names the same position as its
+    non-negative twin, and both derive the same name); a slice is resolved to
+    concrete bounds. A ``bool`` is rejected rather than read as ``0`` / ``1``,
+    since a batch axis has no mask indexing for it to mean.
+    """
+    if indexer is None:
+        return slice(0, size, 1)
+    if isinstance(indexer, slice):
+        return slice(*indexer.indices(size))
+    if isinstance(indexer, bool):
+        raise TypeError(
+            f"a batch axis is not indexed by a bool (axis {axis} of batch_shape {shape}); "
+            f"use an integer, a slice, or None"
+        )
+    try:
+        position = operator.index(indexer)
+    except TypeError:
+        raise TypeError(
+            f"a batch axis is indexed by an integer, a slice, or None, not "
+            f"{type(indexer).__name__} (axis {axis} of batch_shape {shape})"
+        ) from None
+    return _check_in_range(position, size, axis, shape)
 
 
 def _check_in_range(index: int, size: int, axis: int, shape: tuple[int, ...]) -> int:
@@ -448,6 +610,76 @@ def _check_in_range(index: int, size: int, axis: int, shape: tuple[int, ...]) ->
     if not 0 <= resolved < size:
         raise IndexError(f"index {index} is out of range for axis {axis} of batch_shape {shape}")
     return resolved
+
+
+def _canonical_slice(start: int, stop: int, step: int) -> slice:
+    """One canonical slice per set of selected positions.
+
+    A derived name is a function of the selection, so two slices spanning the
+    same positions must be the same slice. Bounds are pinned to the first and
+    last position actually selected, and a selection of one position or none
+    takes the single form for it.
+    """
+    selected = range(start, stop, step)
+    if not selected:
+        return slice(0, 0, 1)
+    if len(selected) == 1:
+        return slice(selected[0], selected[0] + 1, 1)
+    return slice(selected[0], selected[-1] + (1 if step > 0 else -1), step)
+
+
+def _whole_of(spec: BatchSpec) -> tuple[slice, ...]:
+    """The selection of a batch that selects all of itself: every axis whole."""
+    return tuple(slice(0, size, 1) for size in spec.batch_shape)
+
+
+def _is_whole_axis(entry: int | slice, size: int) -> bool:
+    """Whether *entry* selects a whole axis of *size*, in order."""
+    return isinstance(entry, slice) and entry.start == 0 and entry.stop == size and entry.step == 1
+
+
+def _render_axis(entry: int | slice) -> str:
+    """One axis of a selection: its position, or the slice of positions."""
+    if isinstance(entry, int):
+        return str(entry)
+    if entry.step == 1:
+        return f"{entry.start}:{entry.stop}"
+    return f"{entry.start}:{entry.stop}:{entry.step}"
+
+
+def _render_index(root_spec: BatchSpec, selection: tuple[int | slice, ...]) -> str:
+    """A selection as ``level=positions`` per touched level, in level order.
+
+    Levels selected whole are left out, and the levels that remain appear in the
+    batch's own order rather than the order they were indexed in, so the reading
+    identifies the object and not the route to it. A level of several axes
+    renders its axes as a tuple. The result is empty when the selection is the
+    whole batch.
+    """
+    parts: list[str] = []
+    start = 0
+    for level_name, group in zip(root_spec.level_names, root_spec.axis_groups, strict=True):
+        entries = selection[start : start + len(group)]
+        start += len(group)
+        if all(_is_whole_axis(entry, size) for entry, size in zip(entries, group, strict=True)):
+            continue
+        rendered = tuple(_render_axis(entry) for entry in entries)
+        positions = rendered[0] if len(rendered) == 1 else f"({', '.join(rendered)})"
+        parts.append(f"{level_name}={positions}")
+    return ", ".join(parts)
+
+
+def _carry_provenance(view: Any, provenance: Provenance | None) -> Any:
+    """Record the indexing on a derived view that carries no provenance of its own.
+
+    An element that is a bare value has nothing to record on, and a subclass that
+    supplied its own provenance keeps it.
+    """
+    if provenance is None or not isinstance(view, TrackedTerm):
+        return view
+    if view.provenance is not None:
+        return view
+    return view.with_provenance(provenance)
 
 
 def _sliced_size(indexer: int | slice, size: int) -> int | None:
