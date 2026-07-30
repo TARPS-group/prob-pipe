@@ -52,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and always reported invalid. `FunctionSpec` declares no check on its output,
   so nothing there is expressible-but-unsatisfiable.
 
-- **`Batch[E]` — the generic multiplicity axis (#350 W1.2).** New
+- **`Batch[E]` — the generic multiplicity axis (#350).** New
   `probpipe.core._batch` module holding the tracked nd-collection ABC the
   concrete batch types will specialize. A batch says *how many* objects there
   are, separately from what one object contains, so `len` / `iter` /
@@ -64,12 +64,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   their flat concatenation — so `N` laws of `S` draws each are `(N,)` of `(S,)`
   rather than one anonymous `(N, S)`, and anything stated over `batch_shape`
   applies to a multi-level batch unchanged. Each level carries a name
-  (`level_names`, repinned by `with_level_names`, which raises on a collision,
-  while `Batch.disambiguate_level_name` supplies the smallest free integer
-  suffix an operation uses when minting a duplicate). `at_levels(**levels)`
-  indexes by level name and returns a view — the by-name counterpart of
-  positional `[]`, and the level analogue of `NamedTree.at_path`. An element
-  view derives its name as `name[i]`, composing across levels as `name[i][j]`.
+  (`level_names`, repinned by `with_level_names`), and names are unique within a
+  batch: an operation minting a level takes the name to give it, and a name
+  already present raises rather than being altered, exactly as a rename onto an
+  existing name does. `at_levels(**levels)` indexes by level name and returns a
+  view — the by-name counterpart of positional `[]`, and the level analogue of
+  `NamedTree.at_path`; `[]` also accepts a tuple, addressing the leading axes in
+  order.
+
+  A view is **named by what it selects**, naming the level each selection
+  addresses: `posterior[chain=0]` for a sub-batch, `posterior[chain=0, draw=7]`
+  for an element, `posterior[draw=1:3]` for a range. Levels selected whole are
+  left out, so selecting all of a batch derives the batch's own name, and the
+  levels that appear are listed in the batch's own order. The selection is
+  tracked against the batch the name is rooted in, so a derived name is a
+  function of what the view selects: indexing two levels in one call, in two
+  calls, or in the other order all read alike, and two different selections of
+  one batch never do. Each view also records the indexing in its `provenance`.
 
   A batch's **specification is its own**, at the *family* kind: the new
   `BatchSpec` term spec carries the element's specification together with that
