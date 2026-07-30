@@ -7,12 +7,16 @@ elements are plain values and so carry no identity to derive.
 
 from __future__ import annotations
 
+import copy
+import itertools
+import pickle
 from typing import get_type_hints
 
 import pytest
 
-from probpipe import ArraySpec, OpaqueSpec, TermSpec
+from probpipe import ArraySpec, EventTemplate, OpaqueSpec, TermSpec
 from probpipe.core._batch import Batch, BatchSpec
+from probpipe.core._fingerprint import fingerprint
 from probpipe.core.tracked import TrackedTerm
 
 # The doubles' element type is neither a Record, a Distribution, nor a Function,
@@ -57,13 +61,22 @@ class _ListBatch(Batch[_Leaf]):
         return _Leaf(self._store[self._flat(index)], name=name, name_is_auto=True)
 
     def _sub_batch_at(self, index, *, spec, name):
-        shape = self.batch_shape
+        # The index is honoured in the order it presents its positions, so a
+        # descending selection stores its elements descending.
         kept = [
             self._store[self._flat(position)]
-            for position in _positions(shape)
-            if _selected(position, index, shape)
+            for position in itertools.product(*_selected(index, self.batch_shape))
         ]
         return type(self)(kept, spec, name=name, name_is_auto=True)
+
+
+class _NestedBatch(_ListBatch):
+    """A batch whose elements are batches, which take the name derived for them."""
+
+    __slots__ = ()
+
+    def _element_at(self, index, *, name):
+        return self._store[self._flat(index)].with_name(name)
 
 
 class _BareBatch(_ListBatch):
@@ -75,22 +88,12 @@ class _BareBatch(_ListBatch):
         return self._store[self._flat(index)]
 
 
-def _positions(shape):
-    if not shape:
-        yield ()
-        return
-    for head in range(shape[0]):
-        for rest in _positions(shape[1:]):
-            yield (head, *rest)
-
-
-def _selected(position, index, shape):
-    return all(
-        coordinate == indexer
-        if isinstance(indexer, int)
-        else coordinate in range(*indexer.indices(size))
-        for coordinate, indexer, size in zip(position, index, shape, strict=True)
-    )
+def _selected(index, shape):
+    """The positions each axis selects, in the order the index presents them."""
+    return [
+        [indexer] if isinstance(indexer, int) else list(range(*indexer.indices(size)))
+        for indexer, size in zip(index, shape, strict=True)
+    ]
 
 
 @pytest.fixture
@@ -521,9 +524,20 @@ class TestViewProvenance:
         assert view.provenance.metadata["selection"] == "chain=1"
 
     def test_an_element_records_the_indexing(self, nested, full_provenance_mode):
-        element = nested[1][2]
+        element = nested.at_levels(chain=1, draw=2)
         assert element.provenance is not None
         assert element.provenance.metadata["selection"] == "chain=1, draw=2"
+
+    def test_the_selection_recorded_reads_against_the_parent_recorded(self, nested):
+        """A two-step index records what was selected *from the batch it names*."""
+        element = nested[1][2]
+        assert element.provenance.metadata["selection"] == "draw=2"
+        assert [parent.name for parent in element.provenance.parents] == ["b[chain=1]"]
+
+    def test_selecting_the_whole_batch_records_no_indexing(self, nested):
+        """Nothing happened, so no lineage node claims otherwise."""
+        assert nested.at_levels().provenance is None
+        assert nested[:].provenance is None
 
     def test_the_batch_indexed_is_the_parent(self, nested, full_provenance_mode):
         view = nested[1]
@@ -580,3 +594,367 @@ class TestSpecValidation:
 
         with pytest.raises(ValueError, match="must name every level"):
             replace(_spec([(2,)], ["draw"]), level_names=("a", "b"))
+
+
+class TestDescendingSelections:
+    """A negative step selects the same positions, in the reverse order.
+
+    The positions a selection spans are carried as a ``range``, so nothing
+    re-reads a slice's from-the-end bound and a reversal keeps its elements.
+    """
+
+    @pytest.mark.parametrize(
+        ("indexer", "expected"),
+        [
+            (slice(None, None, -1), [3, 2, 1, 0]),
+            (slice(2, None, -1), [2, 1, 0]),
+            (slice(3, 1, -1), [3, 2]),
+            (slice(None, None, -2), [3, 1]),
+            (slice(None, None, 2), [0, 2]),
+        ],
+    )
+    def test_a_reverse_slice_keeps_its_positions_in_order(self, flat, indexer, expected):
+        view = flat[indexer]
+        assert view.batch_shape == (len(expected),)
+        assert [element.value for element in view] == expected
+
+    def test_a_reverse_slice_keeps_its_level(self, flat):
+        assert flat[::-1].level_names == ("draw",)
+
+    @pytest.mark.parametrize(
+        "indexer", [slice(None, None, -1), slice(2, None, -1), slice(3, 1, -1)]
+    )
+    def test_a_reverse_name_reads_back_as_the_same_selection(self, flat, indexer):
+        """The rendered name is an index that reselects the same positions."""
+        view = flat[indexer]
+        spelled = view.name.removeprefix("b[draw=").removesuffix("]")
+        start, stop, step = (part or None for part in spelled.split(":"))
+        reselected = flat[slice(*(None if p is None else int(p) for p in (start, stop, step)))]
+        assert reselected.name == view.name
+        assert [e.value for e in reselected] == [e.value for e in view]
+
+    def test_an_element_of_a_reverse_view_is_named_for_its_position(self, flat):
+        element = flat[::-1][0]
+        assert element.name == "b[draw=3]"
+        assert element.value == 3
+
+    def test_a_reverse_selection_composes_with_a_forward_one(self, flat):
+        view = flat[::-1][1:3]
+        assert [element.value for element in view] == [2, 1]
+        assert view.name == flat[2:0:-1].name
+
+    def test_reversing_twice_restores_the_order(self, flat):
+        assert [element.value for element in flat[::-1][::-1]] == [0, 1, 2, 3]
+        assert flat[::-1][::-1].name == "b"
+
+    def test_a_reverse_selection_on_one_of_two_levels(self, nested):
+        view = nested.at_levels(draw=slice(None, None, -1))
+        assert view.batch_shape == (2, 3)
+        assert view.name == "b[draw=2::-1]"
+        assert [element.value for element in view[0]] == [2, 1, 0]
+
+
+class TestSerialization:
+    """A batch is immutable, and still round-trips through copy and pickle."""
+
+    def test_a_batch_round_trips_through_pickle(self, nested):
+        restored = pickle.loads(pickle.dumps(nested))
+        assert restored.name == nested.name
+        assert restored.spec == nested.spec
+        assert [element.value for element in restored[0]] == [0, 1, 2]
+
+    def test_a_view_round_trips_with_the_names_it_derives_from(self, nested):
+        view = nested[1]
+        restored = pickle.loads(pickle.dumps(view))
+        assert restored.name == view.name == "b[chain=1]"
+        assert restored[2].name == view[2].name == "b[chain=1, draw=2]"
+
+    def test_a_batch_is_copyable(self, nested):
+        assert copy.copy(nested).spec == nested.spec
+        assert copy.deepcopy(nested).name == nested.name
+
+    def test_the_immutability_message_names_the_concrete_class(self, flat):
+        with pytest.raises(AttributeError, match="_ListBatch is immutable"):
+            flat._spec = None
+
+
+class TestRenamingAView:
+    def test_a_renamed_view_and_its_own_views_read_the_level_alike(self, nested):
+        renamed = nested[0:1].with_level_names(chain="group")
+        assert renamed.name == "b[group=0:1]"
+        assert renamed[0:1].name == "b[group=0:1]"
+        assert renamed.at_levels().name == renamed.name
+
+    def test_renaming_records_itself_and_leaves_room_for_more(self, nested, full_provenance_mode):
+        view = nested[1]
+        renamed = view.with_level_names(draw="d")
+        assert renamed.provenance.operation == "with_level_names"
+        assert [parent.name for parent in renamed.provenance.parents] == [view.name]
+        assert renamed.provenance is not view.provenance
+
+    def test_renaming_onto_a_dropped_root_level_name_says_why(self, nested):
+        """The view's own levels allow it, but the name it derives from would not."""
+        view = nested[1]
+        assert view.level_names == ("draw",)
+        with pytest.raises(ValueError, match="derives its name from but no longer carries"):
+            view.with_level_names(draw="chain")
+
+    def test_the_same_rename_is_fine_once_the_view_is_its_own_root(self, nested):
+        assert nested[1].with_name("inner").with_level_names(draw="chain").level_names == ("chain",)
+
+
+class TestBatchSpecFingerprint:
+    def test_equal_specs_fingerprint_alike(self):
+        one = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
+        two = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
+        assert fingerprint(one) == fingerprint(two)
+
+    def test_the_multiplicity_is_part_of_the_digest(self):
+        base = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
+        assert fingerprint(base) != fingerprint(_spec([(4,)], ["draw"], ArraySpec(shape=(2,))))
+        assert fingerprint(base) != fingerprint(_spec([(3,)], ["chain"], ArraySpec(shape=(2,))))
+        assert fingerprint(base) != fingerprint(_spec([(3,)], ["draw"], ArraySpec(shape=(5,))))
+
+    def test_a_spec_in_a_template_fingerprints_by_content(self):
+        one = EventTemplate(post=_spec([(3,)], ["draw"], ArraySpec(shape=(2,))), y=(2,))
+        two = EventTemplate(post=_spec([(3,)], ["draw"], ArraySpec(shape=(2,))), y=(2,))
+        assert fingerprint(one) == fingerprint(two)
+
+
+class TestASlicedViewHoldsWhatItSelected:
+    """Shapes and names agreeing is not enough: the elements must be the ones
+    selected. These read values out of sliced views, so a selection that keeps
+    the wrong positions cannot pass on shape alone."""
+
+    def test_a_sliced_level_of_a_multi_level_batch(self, nested):
+        view = nested.at_levels(draw=slice(0, 2))
+        assert view.batch_shape == (2, 2)
+        assert [[element.value for element in row] for row in view] == [[0, 1], [3, 4]]
+
+    def test_a_sliced_outer_level_keeps_whole_inner_rows(self, nested):
+        view = nested.at_levels(chain=slice(1, 2))
+        assert [[element.value for element in row] for row in view] == [[3, 4, 5]]
+
+    def test_a_slice_on_a_multi_axis_level(self, two_axis):
+        view = two_axis.at_levels(draw=(slice(0, 2), slice(1, 3)))
+        assert view.batch_shape == (2, 2)
+        assert [element.value for element in view[0]] == [1, 2]
+        assert [element.value for element in view[1]] == [4, 5]
+
+    def test_a_scalar_fill_on_a_multi_axis_level_selects_that_row(self, two_axis):
+        view = two_axis.at_levels(draw=1)
+        assert [element.value for element in view] == [3, 4, 5]
+
+    def test_a_partially_dropped_multi_axis_level_keeps_the_other_axis(self, two_axis):
+        view = two_axis.at_levels(draw=(1, slice(0, 2)))
+        assert view.level_names == ("draw",)
+        assert view.batch_shape == (2,)
+        assert [element.value for element in view] == [3, 4]
+
+    def test_an_unnamed_level_keeps_all_of_its_elements(self, nested):
+        view = nested.at_levels(chain=0)
+        assert [element.value for element in view] == [0, 1, 2]
+
+    def test_a_chain_of_mixed_selections_tracks_its_elements(self, nested):
+        step = nested.at_levels(draw=slice(0, 2))
+        assert [element.value for element in step[1]] == [3, 4]
+        assert step[1][1].value == 4
+        assert step[1][1].name == "b[chain=1, draw=1]"
+
+    def test_the_same_element_by_three_routes(self, nested):
+        one = nested.at_levels(chain=1, draw=2)
+        two = nested.at_levels(draw=slice(1, 3))[1][1]
+        three = nested[1][::-1][0]
+        assert one.value == two.value == three.value == 5
+        assert one.name == two.name == three.name == "b[chain=1, draw=2]"
+
+
+class TestNamesStayOneFormPerSelection:
+    """Every selection of one batch reads one way, and no two read alike."""
+
+    def test_one_position_reads_alike_however_it_was_reached(self, flat):
+        assert flat[0:1].name == flat[0:2:2].name == "b[draw=0:1]"
+        assert flat[3:4].name == flat[3:2:-1].name == "b[draw=3:4]"
+
+    def test_no_selection_reads_alike_however_it_was_written(self, flat):
+        assert flat[2:2].name == flat[1:1].name == "b[draw=0:0]"
+
+    def test_a_step_selection_is_not_read_as_the_whole_level(self, flat):
+        """It spans 2 of 4 positions, so it cannot borrow the batch's own name."""
+        assert flat[0:4:3].batch_shape == (2,)
+        assert flat[0:4:3].name != flat.name
+
+    def test_selections_and_names_correspond_one_to_one(self, flat):
+        """Views spanning the same positions read alike; different ones differ."""
+        views = [(f"{i}:{j}", flat[i:j]) for i in range(4) for j in range(i, 5)]
+        by_name: dict[str, set[tuple[int, ...]]] = {}
+        for _, view in views:
+            content = tuple(element.value for element in view)
+            by_name.setdefault(view.name, set()).add(content)
+        assert all(len(contents) == 1 for contents in by_name.values())
+        assert len(by_name) == len({tuple(e.value for e in v) for _, v in views})
+
+    def test_an_element_and_a_one_element_sub_batch_read_differently(self, flat):
+        """Same value, different objects, so the readings must not collide."""
+        assert flat[1].name == "b[draw=1]"
+        assert flat[1:2].name == "b[draw=1:2]"
+
+
+@pytest.fixture
+def three_level():
+    """Three levels, so a middle one can be dropped with survivors either side."""
+    return _ListBatch(range(24), _spec([(2,), (3,), (4,)], ["chain", "draw", "coord"]))
+
+
+class TestALevelBetweenOthers:
+    def test_dropping_a_middle_level_keeps_the_levels_either_side(self, three_level):
+        view = three_level.at_levels(draw=1)
+        assert view.axis_groups == ((2,), (4,))
+        assert view.level_names == ("chain", "coord")
+        assert view.name == "b[draw=1]"
+        assert [element.value for element in view[0]] == [4, 5, 6, 7]
+
+    def test_an_element_of_a_middle_dropped_view(self, three_level):
+        element = three_level.at_levels(draw=1)[0][2]
+        assert element.name == "b[chain=0, draw=1, coord=2]"
+        assert element.value == 6
+
+    def test_three_levels_reach_one_element_by_three_routes(self, three_level):
+        one = three_level.at_levels(chain=1, draw=1, coord=3)
+        two = three_level.at_levels(draw=1).at_levels(chain=1, coord=3)
+        three = three_level[1, 1, 3]
+        assert one.value == two.value == three.value == 19
+        assert one.name == two.name == three.name == "b[chain=1, draw=1, coord=3]"
+
+    def test_a_middle_level_selected_empty_is_kept(self, three_level):
+        """A size-0 axis still survives, so the level stays and is named."""
+        view = three_level.at_levels(draw=slice(2, 2))
+        assert view.axis_groups == ((2,), (0,), (4,))
+        assert view.at_levels(chain=1, coord=2).name == "b[chain=1, draw=0:0, coord=2]"
+
+
+class TestLongerMixedChains:
+    """Reverse, step, forward and whole selections composed, checked on both the
+    derived name and the elements at the end of the chain."""
+
+    @pytest.fixture
+    def eight(self):
+        return _ListBatch(range(8), _spec([(8,)], ["draw"]))
+
+    @pytest.mark.parametrize(
+        ("chain", "expected_name", "expected"),
+        [
+            (lambda b: b[::-1][1:6][::2], "b[draw=6:1:-2]", [6, 4, 2]),
+            (lambda b: b[1:7][::-1][1:4][:], "b[draw=5:2:-1]", [5, 4, 3]),
+            (lambda b: b[7:0:-2][1:][::-1], "b[draw=1:6:2]", [1, 3, 5]),
+            (lambda b: b[:][::2][::-1], "b[draw=6::-2]", [6, 4, 2, 0]),
+        ],
+    )
+    def test_a_chain_keeps_its_name_and_its_elements(self, eight, chain, expected_name, expected):
+        view = chain(eight)
+        assert view.name == expected_name
+        assert [element.value for element in view] == expected
+
+    def test_a_whole_selection_mid_chain_changes_nothing(self, eight):
+        assert eight[:][::2][::-1][1].name == eight[::2][::-1][1].name
+
+    def test_an_element_at_the_end_of_a_chain(self, eight):
+        element = eight[::-1][1:6][::2][1]
+        assert element.name == "b[draw=4]"
+        assert element.value == 4
+
+
+class TestDegenerateAxesInUse:
+    def test_an_empty_view_can_be_indexed_further_and_stays_empty(self, flat):
+        empty = flat[2:2]
+        assert empty[0:0].name == empty[:].name == empty[::-1].name == "b[draw=0:0]"
+        assert list(empty[:]) == []
+        with pytest.raises(IndexError, match="out of range"):
+            empty[0]
+
+    def test_an_empty_inner_level_leaves_the_outer_one_iterable(self, nested):
+        view = nested.at_levels(draw=slice(1, 1))
+        assert (view.axis_groups, view.batch_size) == (((2,), (0,)), 0)
+        assert [inner.name for inner in view] == ["b[chain=0, draw=0:0]", "b[chain=1, draw=0:0]"]
+
+    def test_an_empty_level_can_still_be_renamed(self, nested):
+        assert nested.at_levels(draw=slice(1, 1)).with_level_names(draw="d").name == "b[d=0:0]"
+
+    def test_reversing_a_single_element_axis_selects_all_of_it(self):
+        """One position in the same order is the whole axis, so nothing is derived."""
+        one = _ListBatch([7], _spec([(1,)], ["draw"]))
+        assert one[::-1].name == "b"
+        assert one[::-1].provenance is None
+        assert one[0].name == "b[draw=0]"
+
+    def test_reversing_a_zero_length_axis_selects_all_of_it(self):
+        empty = _ListBatch([], _spec([(2,), (0,)], ["chain", "draw"]))
+        assert empty.at_levels(draw=slice(None, None, -1)).name == "b"
+
+
+class TestMultiAxisLevelIndexers:
+    def test_none_inside_a_level_tuple_keeps_that_axis(self, two_axis):
+        view = two_axis.at_levels(draw=(None, 1))
+        assert view.name == "b[draw=(0:2, 1)]"
+        assert [element.value for element in view] == [1, 4]
+        assert view.name == two_axis.at_levels(draw=(slice(0, 2), 1)).name
+
+    def test_a_three_axis_level_addresses_its_axes_in_order(self):
+        deep = _ListBatch(range(24), _spec([(2, 3, 4)], ["draw"]))
+        view = deep.at_levels(draw=(1, None, 2))
+        assert view.name == "b[draw=(1, 0:3, 2)]"
+        assert [element.value for element in view] == [14, 18, 22]
+
+    def test_a_partially_dropped_level_takes_the_indexers_it_has_left(self):
+        deep = _ListBatch(range(24), _spec([(2, 3, 4)], ["draw"]))
+        once = deep.at_levels(draw=1)
+        assert once.axis_groups == ((3, 4),)
+        assert once.at_levels(draw=(2, 3)).name == deep.at_levels(draw=(1, 2, 3)).name
+        with pytest.raises(ValueError, match="has 2 axes but got 3 indexers"):
+            once.at_levels(draw=(0, 0, 0))
+
+    def test_a_multi_axis_level_beside_a_single_axis_one(self):
+        both = _ListBatch(range(24), _spec([(2, 3), (4,)], ["draw", "coord"]))
+        assert both[1, 2, 3].name == both.at_levels(draw=(1, 2), coord=3).name
+        assert both[1, 2, 3].value == 23
+
+
+class TestALevelNamedLikeAParameter:
+    def test_a_level_may_be_named_self(self):
+        """The receiver is positional-only, so no level name is out of reach."""
+        batch = _ListBatch(range(3), _spec([(3,)], ["self"]))
+        assert batch.at_levels(self=1).name == batch[1].name == "b[self=1]"
+        assert batch.at_levels(self=1).value == 1
+
+    def test_a_level_named_self_beside_another(self):
+        batch = _ListBatch(range(6), _spec([(2,), (3,)], ["self", "draw"]))
+        assert batch.at_levels(self=1, draw=2).value == 5
+
+
+class TestABatchOfBatches:
+    """Nesting needs no dedicated class: a batch is a tracked term, so a batch
+    whose elements are batches is admitted as it stands."""
+
+    @pytest.fixture
+    def outer(self):
+        inner_spec = _spec([(3,)], ["draw"])
+        laws = [_ListBatch(range(i * 3, i * 3 + 3), inner_spec, name=f"law{i}") for i in range(2)]
+        return _NestedBatch(laws, BatchSpec(inner_spec, [(2,)], ["law"]), name="outer")
+
+    def test_the_element_spec_is_itself_a_batch_spec(self, outer):
+        assert isinstance(outer.element_spec, BatchSpec)
+        assert outer.spec.is_valid(outer)
+
+    def test_an_element_is_the_inner_batch(self, outer):
+        inner = outer[1]
+        assert isinstance(inner, _ListBatch)
+        assert inner.name == "outer[law=1]"
+        assert [element.value for element in inner] == [3, 4, 5]
+
+    def test_indexing_through_both_batches(self, outer):
+        assert outer[1][2].name == "outer[law=1][draw=2]"
+        assert outer[1][2].value == 5
+
+    def test_a_whole_selection_of_the_outer_batch_keeps_its_name(self, outer):
+        assert outer[0:2].name == "outer"
+        assert outer[0:1].name == "outer[law=0:1]"
