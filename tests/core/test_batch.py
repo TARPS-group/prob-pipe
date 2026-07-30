@@ -1228,3 +1228,73 @@ class TestRepr:
         assert repr(unreadable) == "_ListBatch(name='b', chain=2, draw=3)"
         with pytest.raises(IndexError):
             unreadable[0, 0]
+
+    def test_renaming_a_level_shows_in_both_the_levels_and_the_name(self, nested):
+        renamed = nested[1].with_level_names(draw="step")
+        assert repr(renamed) == "_ListBatch(name='b[chain=1]', step=3)"
+
+
+class TestTheTwoWaysOfIndexingCompose:
+    """A name and a position address orthogonal things, so either can follow the other."""
+
+    @pytest.fixture
+    def fields(self):
+        return _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
+
+    def test_a_name_addresses_the_fields_of_a_view(self, fields):
+        # The view is a _FieldBatch too, so it answers a name over just the
+        # elements it selected.
+        assert fields[1]["value"] == (3, 4, 5)
+        assert fields[:, 1:]["value"] == (1, 2, 4, 5)
+
+    def test_a_name_addresses_the_fields_of_a_descending_view(self, fields):
+        assert fields.at_levels(draw=slice(None, None, -1))[0]["value"] == (2, 1, 0)
+
+    def test_a_renamed_level_does_not_disturb_the_fields(self, fields):
+        assert fields.with_level_names(draw="step")["value"] == (0, 1, 2, 3, 4, 5)
+
+    def test_a_mixed_tuple_is_refused_whichever_comes_first(self, fields):
+        for key in [(0, "value"), ("value", 0)]:
+            with pytest.raises(TypeError, match="mixes field names with axis indexers"):
+                fields[key]
+
+
+class TestAViewOverSharedStorageBehavesLikeAnyBatch:
+    """The ABC's promises hold for a batch that stores a selection rather than elements."""
+
+    @pytest.fixture
+    def viewed(self):
+        return _ViewBatch(list(range(6)), _spec([(2,), (3,)], ["chain", "draw"]))
+
+    def test_a_view_round_trips_through_pickle(self, viewed):
+        # A second storage shape, to pin that the slot walk carries whatever a
+        # subclass declares rather than the doubles' one list.
+        view = viewed[1]
+        restored = pickle.loads(pickle.dumps(view))
+        assert restored.name == view.name == "b[chain=1]"
+        assert [leaf.value for leaf in restored] == [3, 4, 5]
+
+    def test_a_view_is_copyable(self, viewed):
+        assert [leaf.value for leaf in copy.copy(viewed[1])] == [3, 4, 5]
+        assert copy.deepcopy(viewed[1]).name == "b[chain=1]"
+
+    def test_a_dropped_middle_level_still_resolves_the_axes_that_remain(self):
+        # Three levels, the middle one indexed away: the axes on either side of
+        # the gap must still line up with the store they are read from.
+        spec = _spec([(2,), (2,), (2,)], ["law", "chain", "draw"])
+        viewed = _ViewBatch(list(range(8)), spec)
+        selected = viewed.at_levels(chain=1)
+        assert selected.level_names == ("law", "draw")
+        assert selected.name == "b[chain=1]"
+        assert [[leaf.value for leaf in inner] for inner in selected] == [[2, 3], [6, 7]]
+        assert selected[1, 0].value == 6
+        assert selected._root_store is viewed._root_store
+
+    def test_a_level_renamed_on_a_view_keeps_reading_the_same_store(self, viewed):
+        renamed = viewed[1].with_level_names(draw="step")
+        assert renamed.level_names == ("step",)
+        assert [leaf.value for leaf in renamed] == [3, 4, 5]
+        assert renamed._root_store is viewed._root_store
+
+    def test_the_repr_names_the_concrete_class(self, viewed):
+        assert repr(viewed) == "_ViewBatch(name='b', chain=2, draw=3)"
