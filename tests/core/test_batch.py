@@ -1,8 +1,10 @@
 """Tests for the `Batch[E]` ABC — the level algebra, not any concrete storage.
 
-These tests exercise the shared contract through two minimal
-doubles: `_ListBatch`, whose elements are tracked terms, and `_BareBatch`, whose
-elements are plain values and so carry no identity to derive.
+These tests exercise the shared contract through minimal doubles, each supplying
+only what its case needs: `_ListBatch`, whose elements are tracked terms;
+`_BareBatch`, whose elements are plain values and so carry no identity to derive;
+`_NestedBatch`, whose elements are batches; `_FieldBatch`, whose elements answer a
+named key; and `_ViewBatch`, which copies nothing and reads one shared store.
 """
 
 from __future__ import annotations
@@ -86,6 +88,91 @@ class _BareBatch(_ListBatch):
 
     def _element_at(self, index, *, name):
         return self._store[self._flat(index)]
+
+
+class _FieldBatch(_ListBatch):
+    """A batch that answers a named key, as a batch of records will.
+
+    The elements here have one field, ``value``, and a name reaches it across the
+    whole batch. Supplying the field side of ``[]`` is all a concrete batch does;
+    what a *position* means stays the ABC's.
+    """
+
+    __slots__ = ()
+
+    def _at_fields(self, path):
+        if path != ("value",):
+            raise KeyError(f"{path!r} is not a field of these elements")
+        return tuple(self._store)
+
+
+class _ViewBatch(Batch[_Leaf]):
+    """A batch that stores no elements of its own: one root store and a selection.
+
+    A sub-batch is contracted to be a *view*, so this double copies nothing. It
+    keeps the root's list, the root's shape, and which root position each of its
+    axes now spans — an integer where an axis has been dropped — and resolves an
+    element only when asked. That the level algebra is implementable without
+    materialising anything is a fact about the ABC rather than about storage, so it
+    is checked here rather than left to the concrete batches.
+    """
+
+    __slots__ = ("_root_shape", "_root_store", "_store_selection")
+
+    def __init__(
+        self, store, spec, *, name="b", name_is_auto=False, root_shape=None, store_selection=None
+    ):
+        object.__setattr__(self, "_root_store", store)
+        object.__setattr__(self, "_root_shape", root_shape or spec.batch_shape)
+        object.__setattr__(
+            self,
+            "_store_selection",
+            store_selection
+            if store_selection is not None
+            else tuple(range(size) for size in spec.batch_shape),
+        )
+        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+
+    def _offset(self, index):
+        """Where this view's positional *index* lands in the root store."""
+        positions = []
+        view_axis = 0
+        for entry in self._store_selection:
+            if isinstance(entry, int):
+                positions.append(entry)
+                continue
+            positions.append(entry[index[view_axis]])
+            view_axis += 1
+        offset = 0
+        for position, size in zip(positions, self._root_shape, strict=True):
+            offset = offset * size + position
+        return offset
+
+    # -- the storage seam --
+
+    def _element_at(self, index, *, name):
+        return _Leaf(self._root_store[self._offset(index)], name=name, name_is_auto=True)
+
+    def _sub_batch_at(self, index, *, spec, name):
+        # Nothing is read and nothing is copied: composing a range with the
+        # indexer records which root positions the new view spans, and a range
+        # sliced by a descending slice descends, so the order survives too.
+        composed = []
+        view_axis = 0
+        for entry in self._store_selection:
+            if isinstance(entry, int):
+                composed.append(entry)
+                continue
+            composed.append(entry[index[view_axis]])
+            view_axis += 1
+        return type(self)(
+            self._root_store,
+            spec,
+            name=name,
+            name_is_auto=True,
+            root_shape=self._root_shape,
+            store_selection=tuple(composed),
+        )
 
 
 def _selected(index, shape):
@@ -487,13 +574,13 @@ class TestDerivedNamesIdentifyTheObject:
 
 
 class TestIndexerValidation:
-    @pytest.mark.parametrize("indexer", ["draw", 1.5, object()])
-    def test_an_indexer_must_be_an_integer_a_slice_or_none(self, flat, indexer):
-        with pytest.raises(TypeError, match="indexed by an integer, a slice, or None"):
+    @pytest.mark.parametrize("indexer", [1.5, object()])
+    def test_an_indexer_must_be_an_integer_or_a_slice(self, flat, indexer):
+        with pytest.raises(TypeError, match="indexed by an integer or a slice"):
             flat[indexer]
 
     def test_at_levels_rejects_the_same_indexers(self, flat):
-        with pytest.raises(TypeError, match="indexed by an integer, a slice, or None"):
+        with pytest.raises(TypeError, match="indexed by an integer or a slice"):
             flat.at_levels(draw="first")
 
     def test_a_bool_is_not_an_index(self, flat):
@@ -958,3 +1045,186 @@ class TestABatchOfBatches:
     def test_a_whole_selection_of_the_outer_batch_keeps_its_name(self, outer):
         assert outer[0:2].name == "outer"
         assert outer[0:1].name == "outer[law=0:1]"
+
+
+class TestIndexingDispatchesOnTheKeyType:
+    """A name addresses a field within the elements, a position addresses the axes.
+
+    The two namespaces never collide, an axis having no name and a field no
+    position, which is what lets one ``[]`` serve both.
+    """
+
+    def test_a_name_reaches_the_elements_rather_than_an_axis(self, flat):
+        with pytest.raises(TypeError, match="have no fields to address by name"):
+            flat["x"]
+
+    def test_a_path_of_names_reaches_the_elements_too(self, flat):
+        with pytest.raises(TypeError, match=r"\('outer', 'a'\) indexes nothing"):
+            flat["outer", "a"]
+
+    def test_the_refusal_says_where_the_axes_are_addressed(self, flat):
+        with pytest.raises(TypeError, match="at_levels addresses them by level name"):
+            flat["x"]
+
+    def test_a_batch_whose_elements_have_fields_answers_a_name(self):
+        fields = _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
+        assert fields["value"] == (0, 1, 2, 3, 4, 5)
+        with pytest.raises(KeyError, match="not a field of these elements"):
+            fields["nope"]
+
+    def test_supplying_the_field_side_leaves_the_axis_side_alone(self):
+        fields = _FieldBatch(range(6), _spec([(2,), (3,)], ["chain", "draw"]))
+        assert fields[1, 2].value == 5
+        assert fields[1].level_names == ("draw",)
+        assert fields[:, 1].name == "b[draw=1]"
+
+    def test_a_tuple_mixing_names_and_positions_addresses_neither(self, nested):
+        with pytest.raises(TypeError, match="mixes field names with axis indexers"):
+            nested[0, "x"]
+
+    def test_a_mixed_tuple_is_blamed_on_the_mix_and_not_on_the_count(self, flat):
+        # One axis and two entries, so a complaint about arity would fire first
+        # and blame the count rather than the name that indexes no axis.
+        with pytest.raises(TypeError, match="mixes field names"):
+            flat[0, "x"]
+
+    def test_an_empty_tuple_selects_the_whole_batch(self, nested):
+        assert nested[()].batch_shape == (2, 3)
+        assert nested[()].name == "b"
+
+
+class TestNoneSpellsAWholeAxisByKeywordAlone:
+    """``:`` is how a whole axis is written; ``None`` says it only in ``at_levels``."""
+
+    def test_a_positional_none_is_refused(self, flat):
+        with pytest.raises(TypeError, match="not indexed by None"):
+            flat[None]
+
+    def test_the_refusal_gives_the_spelling_to_use(self, flat):
+        with pytest.raises(TypeError, match="write ':' for the whole axis"):
+            flat[None]
+
+    def test_a_none_inside_a_positional_tuple_is_refused(self, nested):
+        # The case that motivates refusing it: an unset argument read as *all of
+        # it* answers a question the caller never asked.
+        with pytest.raises(TypeError, match="not indexed by None"):
+            nested[0, None]
+
+    def test_a_colon_keeps_the_axis_whole(self, nested):
+        assert nested[:].name == "b"
+        assert nested[:, 1].name == "b[draw=1]"
+        assert nested[:, 1].batch_shape == (2,)
+
+    def test_an_omitted_axis_is_still_kept_whole(self, nested):
+        assert nested[1,].name == "b[chain=1]"
+
+    def test_at_levels_still_spells_a_whole_axis_none(self, nested):
+        assert nested.at_levels(chain=None).batch_shape == (2, 3)
+        assert nested.at_levels(chain=None).name == "b"
+        assert nested.at_levels(chain=None, draw=1).name == "b[draw=1]"
+
+    def test_none_inside_a_level_tuple_is_a_whole_axis(self, two_axis):
+        assert two_axis.at_levels(draw=(None, 1)).batch_shape == (2,)
+        assert two_axis.at_levels(draw=(None, 1)).name == "b[draw=(0:2, 1)]"
+
+
+class TestAnIndexerIsBlamedWhereItWasGiven:
+    """An error names the position the caller addressed, in the caller's own terms."""
+
+    def test_at_levels_names_the_level(self, nested):
+        with pytest.raises(IndexError, match=r"out of range for level 'draw' of size 3"):
+            nested.at_levels(draw=3)
+
+    def test_at_levels_names_the_axis_within_a_multi_axis_level(self, two_axis):
+        with pytest.raises(IndexError, match=r"axis 1 of level 'draw', axes \(2, 3\)"):
+            two_axis.at_levels(draw=(0, 3))
+
+    def test_a_positional_index_speaks_flat_axes(self, nested):
+        with pytest.raises(IndexError, match=r"out of range for axis 1 of batch_shape \(2, 3\)"):
+            nested[0, 3]
+
+    def test_a_positional_index_does_not_claim_a_level(self, nested):
+        with pytest.raises(IndexError, match="out of range") as raised:
+            nested[0, 3]
+        assert "level" not in str(raised.value)
+
+    def test_a_type_error_is_placed_the_same_way(self, nested):
+        with pytest.raises(TypeError, match=r"level 'chain' of size 2"):
+            nested.at_levels(chain=1.5)
+
+
+class TestASubBatchCanBeAView:
+    """The storage hook presents a view: the elements are not copied to select them."""
+
+    @pytest.fixture
+    def viewed(self):
+        return _ViewBatch(list(range(6)), _spec([(2,), (3,)], ["chain", "draw"]))
+
+    def test_a_view_shares_the_store_it_was_taken_from(self, viewed):
+        assert viewed[1]._root_store is viewed._root_store
+        assert viewed[:, 1:]._root_store is viewed._root_store
+
+    def test_selecting_the_whole_batch_copies_nothing(self, viewed):
+        # Which is why the whole selection needs no short-circuit: reaching the
+        # hook costs nothing once the hook returns a view.
+        assert viewed[:]._root_store is viewed._root_store
+
+    def test_a_view_reads_the_elements_it_selected(self, viewed):
+        assert [leaf.value for leaf in viewed[1]] == [3, 4, 5]
+        assert viewed.at_levels(chain=1, draw=2).value == 5
+
+    def test_a_chain_of_views_composes_over_the_one_store(self, viewed):
+        descending = viewed.at_levels(draw=slice(None, None, -1))
+        assert [leaf.value for leaf in descending[0]] == [2, 1, 0]
+        assert descending[0]._root_store is viewed._root_store
+
+    @pytest.mark.parametrize(
+        "index",
+        [
+            1,
+            (0, 2),
+            (slice(None), 1),
+            (slice(None, None, -1), 0),
+            (slice(1, 2), slice(None, None, -1)),
+            (),
+        ],
+    )
+    def test_a_view_and_a_copy_agree_on_names_and_elements(self, viewed, nested, index):
+        # The algebra is the ABC's, so how a batch stores its elements cannot
+        # change which elements a selection holds or what it is called.
+        as_view, as_copy = viewed[index], nested[index]
+        assert as_view.name == as_copy.name
+        assert _values(as_view) == _values(as_copy)
+        if isinstance(as_copy, Batch):
+            assert as_view.batch_shape == as_copy.batch_shape
+            assert as_view.level_names == as_copy.level_names
+
+
+def _values(batch_or_element):
+    """Every element value of a batch, flat, or the one value of an element."""
+    if isinstance(batch_or_element, Batch):
+        return [_values(batch_or_element[index]) for index in range(len(batch_or_element))]
+    return batch_or_element.value
+
+
+class TestRepr:
+    def test_the_repr_names_the_class_the_batch_and_its_levels(self, nested):
+        assert repr(nested) == "_ListBatch(name='b', chain=2, draw=3)"
+
+    def test_a_multi_axis_level_shows_its_axes(self, two_axis):
+        assert repr(two_axis) == "_ListBatch(name='b', draw=(2, 3))"
+
+    def test_a_view_reprs_under_the_name_it_derived(self, nested):
+        assert repr(nested[1]) == "_ListBatch(name='b[chain=1]', draw=3)"
+        assert (
+            repr(nested.at_levels(draw=slice(0, 2)))
+            == "_ListBatch(name='b[draw=0:2]', chain=2, draw=2)"
+        )
+
+    def test_the_repr_reads_no_element(self):
+        # A store too short for the shape: reading one would raise, and the repr
+        # must not, since with_provenance interpolates the batch into an error.
+        unreadable = _ListBatch([], _spec([(2,), (3,)], ["chain", "draw"]))
+        assert repr(unreadable) == "_ListBatch(name='b', chain=2, draw=3)"
+        with pytest.raises(IndexError):
+            unreadable[0, 0]

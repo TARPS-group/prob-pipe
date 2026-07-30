@@ -70,7 +70,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   existing name does. `at_levels(**levels)` indexes by level name and returns a
   view — the by-name counterpart of positional `[]`, and the level analogue of
   `NamedTree.at_path`; `[]` also accepts a tuple, addressing the leading axes in
-  order.
+  order. `[]` dispatches on whether the key is a **position** or a **name**: a
+  position (an integer, a slice, or a tuple of those) addresses the batch axes,
+  while a name (a string, or a tuple of strings for a path) addresses a field
+  within every element, which a batch of records supplies and the base reports
+  these elements do not have. A tuple mixing the two addresses neither and says
+  so. A whole axis is written `:` positionally; `None` spells it in `at_levels`
+  alone, where a keyword cannot take a `:` literal.
 
   A view is **named by what it selects**, naming the level each selection
   addresses: `posterior[chain=0]` for a sub-batch, `posterior[chain=0, draw=7]`
@@ -92,9 +98,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same, a raw-value `element_spec` being as well formed as a term spec.
 
   Element storage is the concrete class's business — the only thing left to a
-  subclass, through the two `_element_at` / `_sub_batch_at` hooks; renaming a
-  level touches no storage, so it defaults to a shallow copy.
-  `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow separately.
+  subclass, through the two `_element_at` / `_sub_batch_at` hooks, the second
+  presenting a *view* that shares the store rather than copying out of it, which
+  is why selecting all of a batch needs no special case; indexing an element's
+  fields by name is a third hook, `_at_fields`, supplied only where the elements
+  have fields. Renaming a level touches no storage, so it defaults to a shallow
+  copy. `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow
+  separately.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time

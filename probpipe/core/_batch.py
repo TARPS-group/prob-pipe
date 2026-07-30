@@ -32,11 +32,14 @@ and no two distinct selections of one batch read alike.
 **Storage is the concrete class's business, and only storage.** This module
 owns the level algebra: the shape invariants, the naming rules, index
 normalisation for :meth:`Batch.at_levels`, and the identity a view derives. A
-concrete batch supplies exactly two hooks, :meth:`Batch._element_at` and
-:meth:`Batch._sub_batch_at`, which materialise an element or a sub-batch view
-from a normalised positional index. Renaming a level needs no hook: it touches
-no axes and no elements, so :meth:`Batch._with_level_names` defaults to a
-shallow copy.
+concrete batch supplies two hooks, :meth:`Batch._element_at` and
+:meth:`Batch._sub_batch_at`, which present an element or a sub-batch — a view
+over the same storage, not a copy of it — at a normalised positional index. A
+third, :meth:`Batch._at_fields`, addresses the *fields* of an element and is
+supplied only by a batch whose elements have any: ``[]`` dispatches on the key
+type, so a name reaches the elements and a position reaches the axes. Renaming a
+level needs no hook at all: it touches no axes and no elements, so
+:meth:`Batch._with_level_names` defaults to a shallow copy.
 
 See design II.5.
 """
@@ -58,7 +61,8 @@ from .tracked import TrackedTerm
 __all__ = ["Batch", "BatchSpec"]
 
 # One indexer per level: a single value addresses the level's first axis, a
-# tuple addresses its axes in order. ``None`` means the whole axis, as ``:``.
+# tuple addresses its axes in order. ``None`` means the whole axis — the form ``:``
+# takes where a keyword cannot spell it, and the one place ``None`` says this.
 type LevelIndexer = int | slice | tuple[int | slice | None, ...] | None
 
 
@@ -380,6 +384,24 @@ class Batch[E](TrackedTerm, ABC):
         object.__setattr__(renamed, "_root_selection", _whole_of(renamed._spec))
         return renamed
 
+    # -- reading ------------------------------------------------------------
+
+    def __repr__(self) -> str:
+        """The class, the batch's name, and each level with its sizes.
+
+        Says what a batch *is* — how many of what, under which names — and reads
+        no element, so it costs the same on a batch of any size and cannot raise
+        from storage. That matters beyond convenience: ``with_provenance``
+        interpolates the batch into its write-once complaint, so a ``repr`` that
+        could fail would fail there. A multi-axis level renders its axes as a
+        tuple, the way a derived name renders them.
+        """
+        levels = ", ".join(
+            f"{level_name}={group[0] if len(group) == 1 else group}"
+            for level_name, group in zip(self.level_names, self.axis_groups, strict=True)
+        )
+        return f"{type(self).__name__}(name={self.name!r}, {levels})"
+
     # -- indexing -----------------------------------------------------------
 
     def __len__(self) -> int:
@@ -390,14 +412,24 @@ class Batch[E](TrackedTerm, ABC):
         """Iterate the leading batch axis, yielding views."""
         return (self[index] for index in range(len(self)))
 
-    def __getitem__(self, index: Any) -> E | Self:
-        """Index the batch axes positionally, returning an element or a sub-batch view.
+    def __getitem__(self, key: Any) -> Any:
+        """Index the batch axes by position, or an element's fields by name.
 
-        A single indexer addresses the leading axis; a tuple addresses the
-        leading axes in order, as ``batch[i, j]`` does for an array. Each
-        indexer is an integer, a slice, or ``None``; an integer drops its axis
-        and a slice or ``None`` keeps it. :meth:`at_levels` is the by-name
-        counterpart.
+        ``[]`` addresses two orthogonal things, and the key says which: a
+        **position** addresses the batch axes, and a **name** addresses a path
+        within every element. The two never collide, an axis having no name and a
+        field no position, so the axis side is stated once here and the field side
+        left to :meth:`_at_fields`, which only a batch whose elements have named
+        fields answers.
+
+        By position, a single indexer addresses the leading axis and a tuple the
+        leading axes in order, as ``batch[i, j]`` does for an array. Each indexer
+        is an integer or a slice; an integer drops its axis and a slice keeps it.
+        A whole axis is written ``:``, ``None`` being reserved for
+        :meth:`at_levels`, the by-name counterpart over *levels*.
+
+        By name, ``batch["x"]`` and ``batch["outer", "a"]`` address a field and a
+        path of fields respectively. A tuple mixing the two addresses neither.
 
         Raises
         ------
@@ -405,9 +437,24 @@ class Batch[E](TrackedTerm, ABC):
             If more indexers are given than there are batch axes, or an integer
             is out of range for its axis.
         TypeError
-            If an indexer is not an integer, a slice, or ``None``.
+            If an indexer is not an integer or a slice, if a tuple mixes field
+            names with axis indexers, or if a name is given to a batch whose
+            elements have no fields.
         """
-        return self._at_axes(index if isinstance(index, tuple) else (index,))
+        if isinstance(key, str):
+            return self._at_fields((key,))
+        if not isinstance(key, tuple):
+            return self._at_axes((key,))
+        named = [entry for entry in key if isinstance(entry, str)]
+        if not named:
+            return self._at_axes(key)
+        if len(named) == len(key):
+            return self._at_fields(key)
+        raise TypeError(
+            f"{key!r} mixes field names with axis indexers: a tuple key addresses either a "
+            f"path of fields within an element or the batch axes in order, not both. Index "
+            f"the axes and the fields in separate steps"
+        )
 
     def at_levels(self, /, **levels: LevelIndexer) -> E | Self:
         """Index by named level, returning an element or a sub-batch view.
@@ -419,7 +466,9 @@ class Batch[E](TrackedTerm, ABC):
 
         Each indexer is an integer, a slice, ``None``, or a tuple of these
         addressing the level's axes in order. An integer drops its axis; a slice
-        or ``None`` keeps it, ``None`` meaning the whole axis as ``:`` does. A
+        or ``None`` keeps it, ``None`` spelling a whole axis here because a
+        keyword cannot take a ``:`` literal — which is why it means that only
+        here, positional ``[]`` writing ``:`` and rejecting ``None``. A
         shorter tuple fills the level's leading axes and leaves the rest whole,
         so a scalar ``draw=i`` on a two-axis ``draw`` level means
         ``draw=(i, None)``. A level not named is kept whole, and a level whose
@@ -448,6 +497,10 @@ class Batch[E](TrackedTerm, ABC):
             )
 
         axis_index: list[int | slice] = [slice(None)] * len(self.batch_shape)
+        # Where each addressed axis came from, so a complaint about an indexer
+        # names the level it was given for rather than the flat axis it landed on.
+        # Only addressed axes carry one; the rest cannot fail, being whole.
+        where: list[str | None] = [None] * len(self.batch_shape)
         start = 0
         for level_name, group in zip(self.level_names, self.axis_groups, strict=True):
             if level_name in levels:
@@ -458,9 +511,14 @@ class Batch[E](TrackedTerm, ABC):
                         f"{len(indexers)} indexers"
                     )
                 for offset, indexer in enumerate(indexers):
-                    axis_index[start + offset] = indexer
+                    axis_index[start + offset] = slice(None) if indexer is None else indexer
+                    where[start + offset] = (
+                        f"level {level_name!r} of size {group[0]}"
+                        if len(group) == 1
+                        else f"axis {offset} of level {level_name!r}, axes {group}"
+                    )
             start += len(group)
-        return self._at_axes(tuple(axis_index))
+        return self._at_axes(tuple(axis_index), where=tuple(where))
 
     # -- the concrete-storage seam ------------------------------------------
 
@@ -488,20 +546,55 @@ class Batch[E](TrackedTerm, ABC):
         *name* is the derived identity, taken marked auto-derived. A subclass
         stores both as given rather than recomputing either; the names a further
         view derives from are re-pointed at this view's own root afterwards.
+
+        **A view, not a copy.** The result shares this batch's storage wherever
+        the storage affords it — a numpy or JAX slice, or a list re-indexed over
+        the same objects — so that a batch stays the single source of its elements
+        (``D7``) and a selection does not pay for what it selects. Selecting the
+        whole batch reaches this hook like any other selection, which costs
+        nothing once the result is a view; it is deliberately not short-circuited
+        to ``self``, since the view carries a name and provenance of its own and
+        ``self`` already has both.
         """
+
+    def _at_fields(self, path: tuple[str, ...]) -> Any:
+        """The batched field at *path* within every element, for a named ``[]`` key.
+
+        A batch whose elements have named fields answers this; the default
+        reports that these elements have none. Only the *field* side of ``[]``
+        lands here — the axis side is this class's own, so a subclass gains
+        indexing by name without restating what indexing by position means.
+        """
+        addressed = path[0] if len(path) == 1 else path
+        raise TypeError(
+            f"the elements of this {type(self).__name__} have no fields to address by name, "
+            f"so {addressed!r} indexes nothing. [] addresses the batch axes by position, and "
+            f"at_levels addresses them by level name"
+        )
 
     # -- internals ----------------------------------------------------------
 
-    def _at_axes(self, index: tuple[int | slice | None, ...]) -> E | Self:
-        """Resolve a positional index over the batch axes to an element or view."""
+    def _at_axes(
+        self, index: tuple[int | slice | None, ...], *, where: tuple[str | None, ...] = ()
+    ) -> E | Self:
+        """Resolve a positional index over the batch axes to an element or view.
+
+        *where* optionally says where each indexer came from, for the error
+        messages: :meth:`at_levels` names the level it was given for, and a
+        positional index falls back to the flat axis it addressed.
+        """
         shape = self.batch_shape
         if len(index) > len(shape):
             raise IndexError(f"too many indices for batch_shape {shape}: got {len(index)}")
 
         normalised: list[int | range] = []
         for axis, size in enumerate(shape):
-            indexer = index[axis] if axis < len(index) else None
-            normalised.append(_normalise_indexer(indexer, size, axis, shape))
+            indexer = index[axis] if axis < len(index) else slice(None)
+            normalised.append(
+                _normalise_indexer(
+                    indexer, size, axis, shape, where[axis] if axis < len(where) else None
+                )
+            )
 
         selection = self._compose_selection(normalised)
         label = _render_index(self._root_spec, selection)
@@ -645,44 +738,68 @@ def _as_axis_indexers(indexer: LevelIndexer) -> tuple[int | slice | None, ...]:
     return indexer if isinstance(indexer, tuple) else (indexer,)
 
 
-def _normalise_indexer(indexer: Any, size: int, axis: int, shape: tuple[int, ...]) -> int | range:
+def _normalise_indexer(
+    indexer: Any, size: int, axis: int, shape: tuple[int, ...], where: str | None = None
+) -> int | range:
     """One axis indexer as a resolved integer or the ``range`` of positions it selects.
 
-    ``None`` and an omitted axis mean the whole axis. An integer is resolved
+    An omitted axis and ``:`` both mean the whole axis. An integer is resolved
     against *size* (so a negative index names the same position as its
     non-negative twin, and both derive the same name); a slice is resolved to the
     positions it selects, in order. A ``bool`` is rejected rather than read as
-    ``0`` / ``1``, since a batch axis has no mask indexing for it to mean.
+    ``0`` / ``1``, since a batch axis has no mask indexing for it to mean, and a
+    bare ``None`` is rejected here because :meth:`Batch.at_levels`, the one place
+    it spells a whole axis, has already turned it into ``:``: silently reading a
+    ``None`` left by an unset argument as *all of it* would answer a question the
+    caller never asked.
 
     Resolving to a ``range`` rather than a bounded slice is what keeps a
     descending selection intact: ``slice.indices`` reports the stop of a reverse
     slice as ``-1``, a bound only meaningful once, so anything that resolved it a
     second time would read that as the last position and select nothing.
     """
-    if indexer is None:
-        return range(size)
     if isinstance(indexer, slice):
         return range(*indexer.indices(size))
+    if indexer is None:
+        raise TypeError(
+            f"a batch axis is not indexed by None ({_location(axis, shape, where)}); write "
+            f"':' for the whole axis. None spells it in at_levels alone, where a keyword "
+            f"cannot take a ':' literal"
+        )
     if isinstance(indexer, bool):
         raise TypeError(
-            f"a batch axis is not indexed by a bool (axis {axis} of batch_shape {shape}); "
-            f"use an integer, a slice, or None"
+            f"a batch axis is not indexed by a bool ({_location(axis, shape, where)}); use "
+            f"an integer or a slice"
         )
     try:
         position = operator.index(indexer)
     except TypeError:
         raise TypeError(
-            f"a batch axis is indexed by an integer, a slice, or None, not "
-            f"{type(indexer).__name__} (axis {axis} of batch_shape {shape})"
+            f"a batch axis is indexed by an integer or a slice, not "
+            f"{type(indexer).__name__} ({_location(axis, shape, where)})"
         ) from None
-    return _check_in_range(position, size, axis, shape)
+    return _check_in_range(position, size, axis, shape, where)
 
 
-def _check_in_range(index: int, size: int, axis: int, shape: tuple[int, ...]) -> int:
+def _location(axis: int, shape: tuple[int, ...], where: str | None) -> str:
+    """Where an indexer was given, as an error names it.
+
+    *where* is the caller's own account of the position — the level a keyword
+    addressed, say — and the flat axis is the fallback for an index given
+    positionally, which is the only reading available there. Either way the phrase
+    carries the sizes it is judged against. Formatted on the error path alone, so
+    naming a position costs nothing when nothing is wrong.
+    """
+    return where if where is not None else f"axis {axis} of batch_shape {shape}"
+
+
+def _check_in_range(
+    index: int, size: int, axis: int, shape: tuple[int, ...], where: str | None = None
+) -> int:
     """Resolve a possibly-negative integer index, or raise ``IndexError``."""
     resolved = index + size if index < 0 else index
     if not 0 <= resolved < size:
-        raise IndexError(f"index {index} is out of range for axis {axis} of batch_shape {shape}")
+        raise IndexError(f"index {index} is out of range for {_location(axis, shape, where)}")
     return resolved
 
 
