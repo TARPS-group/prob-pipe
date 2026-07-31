@@ -63,7 +63,7 @@ class _ListBatch(Batch[_Leaf]):
         return _Leaf(self._store[self._flat(index)], name=name, name_is_auto=True)
 
     def _sub_batch_at(self, index, *, spec, name):
-        # The index is honoured in the order it presents its positions, so a
+        # The index is honored in the order it presents its positions, so a
         # descending selection stores its elements descending.
         kept = [
             self._store[self._flat(position)]
@@ -113,7 +113,7 @@ class _ViewBatch(Batch[_Leaf]):
     keeps the root's list, the root's shape, and which root position each of its
     axes now spans — an integer where an axis has been dropped — and resolves an
     element only when asked. That the level algebra is implementable without
-    materialising anything is a fact about the ABC rather than about storage, so it
+    materializing anything is a fact about the ABC rather than about storage, so it
     is checked here rather than left to the concrete batches.
     """
 
@@ -258,7 +258,7 @@ class TestSpec:
         assert bare.element_spec == ArraySpec(shape=())
         assert isinstance(bare.spec, BatchSpec)
 
-    def test_axis_groups_are_normalised_to_tuples(self):
+    def test_axis_groups_are_normalized_to_tuples(self):
         assert _spec([[2], [3]], ["chain", "draw"]).axis_groups == ((2,), (3,))
 
     def test_the_multiplicity_fields_are_declared_at_the_types_they_store(self):

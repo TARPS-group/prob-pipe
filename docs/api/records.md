@@ -32,10 +32,10 @@ that the constructor reads back.
 `Batch` is the shared substrate for collections: it says *how many* objects
 there are, separately from what one object contains, so `len` / `iter` /
 `batch_shape` / `batch_size` speak only about the batch axes. Axes are
-partitioned into ordered, named **levels**, indexed by name with `at_levels`,
-and a view is named by what it selects — `posterior[chain=0, draw=7]`. A
-batch's type is a `BatchSpec`: the element's specification together with that
-named multiplicity.
+partitioned into ordered, named **levels**, addressed by name with `at_levels`
+or by position with `[]`, and indexing returns a view named by what it selected
+— draw 7 of chain 0 is named `"posterior[chain=0, draw=7]"`. A batch's type is a
+`BatchSpec`: the element's specification together with that named multiplicity.
 
 ::: probpipe.Batch
 

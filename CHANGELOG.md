@@ -67,26 +67,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`level_names`, repinned by `with_level_names`), and names are unique within a
   batch: an operation minting a level takes the name to give it, and a name
   already present raises rather than being altered, exactly as a rename onto an
-  existing name does. `at_levels(**levels)` indexes by level name and returns a
-  view — the by-name counterpart of positional `[]`, and the level analogue of
-  `NamedTree.at_path`; `[]` also accepts a tuple, addressing the leading axes in
-  order. `[]` dispatches on whether the key is a **position** or a **name**: a
-  position (an integer, a slice, or a tuple of those) addresses the batch axes,
-  while a name (a string, or a tuple of strings for a path) addresses a field
-  within every element, which a batch of records supplies and the base reports
-  these elements do not have. A tuple mixing the two addresses neither and says
-  so. A whole axis is written `:` positionally; `None` spells it in `at_levels`
-  alone, where a keyword cannot take a `:` literal.
+  existing name does.
+
+  Indexing has two entry points. `at_levels(**levels)` takes one indexer per
+  named level and returns a view — the by-name counterpart of positional `[]`,
+  and the level analogue of `NamedTree.at_path`. `[]` itself dispatches on
+  whether the key is a **position** or a **name**: a position (an integer, a
+  slice, or a tuple of those) addresses the batch axes, while a name (a string,
+  or a tuple of strings for a path) addresses a field within every element —
+  which a batch of records will answer and a batch of anything else refuses. A
+  tuple mixing the two addresses neither, and is refused as a mix rather than as
+  a wrong number of indices. A whole axis is written `:` positionally; `None`
+  spells it in `at_levels` alone, where a keyword cannot take a `:` literal.
 
   A view is **named by what it selects**, naming the level each selection
-  addresses: `posterior[chain=0]` for a sub-batch, `posterior[chain=0, draw=7]`
-  for an element, `posterior[draw=1:3]` for a range. Levels selected whole are
-  left out, so selecting all of a batch derives the batch's own name, and the
-  levels that appear are listed in the batch's own order. The selection is
-  tracked against the batch the name is rooted in, so a derived name is a
-  function of what the view selects: indexing two levels in one call, in two
-  calls, or in the other order all read alike, and two different selections of
-  one batch never do. Each view also records the indexing in its `provenance`.
+  addresses — `"posterior[chain=0]"` for a sub-batch,
+  `"posterior[chain=0, draw=7]"` for an element, `"posterior[draw=1:3]"` for a
+  range. Levels selected whole are left out, so selecting all of a batch derives
+  the batch's own name, and the levels that appear are listed in the batch's own
+  order. The selection is tracked against the batch the name is rooted in, so a
+  derived name is a function of what the view selects: indexing two levels in one
+  call, in two calls, or in the other order all read alike, and two different
+  selections of one batch never do. Each view also records the indexing in its
+  `provenance`.
 
   A batch's **specification is its own**, at the *family* kind: the new
   `BatchSpec` term spec carries the element's specification together with that
@@ -98,13 +101,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same, a raw-value `element_spec` being as well formed as a term spec.
 
   Element storage is the concrete class's business — the only thing left to a
-  subclass, through the two `_element_at` / `_sub_batch_at` hooks, the second
-  presenting a *view* that shares the store rather than copying out of it, which
-  is why selecting all of a batch needs no special case; indexing an element's
-  fields by name is a third hook, `_at_fields`, supplied only where the elements
-  have fields. Renaming a level touches no storage, so it defaults to a shallow
-  copy. `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow
-  separately.
+  subclass, through the `_element_at` and `_sub_batch_at` hooks. The second
+  presents a *view* that shares the store rather than copying out of it, which is
+  why selecting all of a batch needs no special case. A third hook, `_at_fields`,
+  is supplied only where the elements have fields to address by name. Renaming a
+  level touches no storage, so it defaults to a shallow copy.
+
+  A batch is immutable, round-trips through `pickle` and `copy`, and reprs as its
+  class, its name, and each level with its sizes, reading no element.
+  `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow separately.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
