@@ -244,6 +244,22 @@ class Batch[E](TrackedTerm, ABC):
         "_spec",
     )
 
+    # The three ``_root_*`` slots are the machinery of view naming: the name and
+    # spec of the batch a derivation starts from, and which of *that* batch's
+    # positions this object selects — one entry per root axis, an integer where an
+    # axis has been dropped and a range of positions where one is kept. ``_name``
+    # is read off them, which is what makes two routes to one selection agree: the
+    # reading is a function of the selection, not of the calls that reached it.
+    #
+    # They are never ``None``, not even on a batch nobody has indexed. Such a batch
+    # is its own root and selects all of itself, so its derived name is the name it
+    # was given, and composing a further selection needs no special case at the
+    # head of the chain. Leaving them unset for a non-view would put a
+    # "means everything" reading on ``None`` — the reading positional ``[]``
+    # refuses — and every site that composes or renders a selection would carry a
+    # branch for it. :meth:`with_name` re-roots a view: a user-given name replaces
+    # the derivation and discards the selection accumulated before it.
+
     def __setattr__(self, name: str, value: Any) -> None:
         raise AttributeError(f"{type(self).__name__} is immutable")
 
@@ -483,10 +499,20 @@ class Batch[E](TrackedTerm, ABC):
         :meth:`_at_fields`. ``None`` is not a position: it spells a whole axis in
         :meth:`at_levels` alone, where a keyword cannot take a ``:`` literal.
         """
+        # A lone key is decided by its type: a string is a one-element field path,
+        # and anything else is an indexer for the leading axis. A non-position is
+        # not rejected here — _at_axes reports it against the axis it was given
+        # for, which is more than this method knows.
         if isinstance(key, str):
             return self._at_fields((key,))
         if not isinstance(key, tuple):
             return self._at_axes((key,))
+        # A tuple is the one key legal on both sides — a path of field names, or
+        # one indexer per leading axis — so what is inside it decides rather than
+        # its type. All names is a path; no names is an index, which is also what
+        # gives ``batch[()]`` the whole batch instead of an empty path; and a
+        # mixture is neither, so it is refused as the mixture it is rather than
+        # left for the axis side to complain about the count.
         named = [entry for entry in key if isinstance(entry, str)]
         if not named:
             return self._at_axes(key)
@@ -554,7 +580,8 @@ class Batch[E](TrackedTerm, ABC):
         start = 0
         for level_name, group in zip(self.level_names, self.axis_groups, strict=True):
             if level_name in levels:
-                indexers = _as_axis_indexers(levels[level_name])
+                given = levels[level_name]
+                indexers = given if isinstance(given, tuple) else (given,)
                 if len(indexers) > len(group):
                     raise ValueError(
                         f"level {level_name!r} has {len(group)} axes but got "
@@ -783,11 +810,6 @@ def _axis_size(size: Any) -> int:
         raise TypeError(f"axis sizes are integers, got {type(size).__name__}: {size!r}") from None
 
 
-def _as_axis_indexers(indexer: LevelIndexer) -> tuple[int | slice | None, ...]:
-    """A level's indexer as a tuple, one entry per addressed axis."""
-    return indexer if isinstance(indexer, tuple) else (indexer,)
-
-
 def _normalize_indexer(
     indexer: Any, size: int, axis: int, shape: tuple[int, ...], where: str | None = None
 ) -> int | range:
@@ -828,7 +850,10 @@ def _normalize_indexer(
             f"a batch axis is indexed by an integer or a slice, not "
             f"{type(indexer).__name__} ({_location(axis, shape, where)})"
         ) from None
-    return _check_in_range(position, size, axis, shape, where)
+    resolved = position + size if position < 0 else position
+    if not 0 <= resolved < size:
+        raise IndexError(f"index {position} is out of range for {_location(axis, shape, where)}")
+    return resolved
 
 
 def _location(axis: int, shape: tuple[int, ...], where: str | None) -> str:
@@ -841,16 +866,6 @@ def _location(axis: int, shape: tuple[int, ...], where: str | None) -> str:
     naming a position costs nothing when nothing is wrong.
     """
     return where if where is not None else f"axis {axis} of batch_shape {shape}"
-
-
-def _check_in_range(
-    index: int, size: int, axis: int, shape: tuple[int, ...], where: str | None = None
-) -> int:
-    """Resolve a possibly-negative integer index, or raise ``IndexError``."""
-    resolved = index + size if index < 0 else index
-    if not 0 <= resolved < size:
-        raise IndexError(f"index {index} is out of range for {_location(axis, shape, where)}")
-    return resolved
 
 
 def _bounds(selected: range) -> tuple[int, int | None, int]:
@@ -892,11 +907,6 @@ def _whole_of(spec: BatchSpec) -> tuple[range, ...]:
     return tuple(range(size) for size in spec.batch_shape)
 
 
-def _is_whole_axis(entry: int | range, size: int) -> bool:
-    """Whether *entry* selects a whole axis of *size*, in order."""
-    return isinstance(entry, range) and entry == range(size)
-
-
 def _render_axis(entry: int | range) -> str:
     """One axis of a selection: its position, or the positions it spans.
 
@@ -928,7 +938,10 @@ def _render_index(root_spec: BatchSpec, selection: tuple[int | range, ...]) -> s
     for level_name, group in zip(root_spec.level_names, root_spec.axis_groups, strict=True):
         entries = selection[start : start + len(group)]
         start += len(group)
-        if all(_is_whole_axis(entry, size) for entry, size in zip(entries, group, strict=True)):
+        # A level selected whole is left out, an axis counting as whole only when
+        # it spans every position *in order* — a reversal is a selection, not a
+        # no-op, so ``range(size)`` is compared rather than the count of positions.
+        if all(entry == range(size) for entry, size in zip(entries, group, strict=True)):
             continue
         rendered = tuple(_render_axis(entry) for entry in entries)
         positions = rendered[0] if len(rendered) == 1 else f"({', '.join(rendered)})"
