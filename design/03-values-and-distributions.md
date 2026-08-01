@@ -77,6 +77,8 @@ An object declares `SupportsDifferentiation` at construction to state which valu
 
 Every value spec has a **batch form**. Since an `ArraySpec` value batches natively, as an array with the batch axes leading, no class is needed. Function-valued and opaque values have no native stacking, so two thin `Batch` specializations provide it. Each is `Batch` over its element type and carries the shared spec its elements satisfy, adding no other interface.
 
+Both **store** their elements rather than materializing them, which fixes two things II.5 leaves to the storage. Indexing one element hands back the object that was put in, under its own name and lineage: these are the storing case of the identity rule, so a `Function` selected out of a `FunctionBatch` is the same object under the same name, while a *sub-batch* takes the derived name as any view does. And every element is checked against the shared `element_spec` at construction, reporting the position that failed, since the batch asserts that spec of all of them — one element that fails it would make the batch's own spec a false statement.
+
 ```python
 class FunctionBatch(Batch[Callable]):
     @property

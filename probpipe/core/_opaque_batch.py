@@ -40,10 +40,15 @@ class OpaqueBatch(_ObjectBatch[Any]):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not an :class:`OpaqueSpec`, if an element is a
-        mapping, or for any reason :class:`_ObjectBatch` refuses ``elements``.
+        If ``element_spec`` is not an :class:`OpaqueSpec`; if an element is a
+        mapping, naming the position that failed; if ``elements`` is a string, a
+        mapping, or an array that is not ``dtype=object`` — each iterates into
+        something other than its elements — or is not iterable at all.
     ValueError
-        For any reason :class:`_ObjectBatch` refuses the shape or the levels.
+        If ``elements`` is empty, or is a zero-dimensional array (one object with
+        no batch axis); if ``axis_groups`` does not tile the shape the elements are
+        stored in; or if ``axis_groups`` is omitted and the number of level names
+        does not match the number of axes.
 
     Notes
     -----
@@ -54,6 +59,11 @@ class OpaqueBatch(_ObjectBatch[Any]):
     This is the case a batch's own spec exists for: an ``OpaqueSpec`` names no
     ProbPipe kind, yet the batch is specified all the same, at the family kind
     over it.
+
+    This batch **stores** its elements, so ``batch[i]`` is the object that was
+    put in — the same object, under whatever identity it already had, not a copy
+    renamed to its position. A sub-batch is a view and takes a derived name as any
+    view does.
 
     Examples
     --------

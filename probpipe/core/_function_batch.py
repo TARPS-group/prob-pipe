@@ -40,10 +40,15 @@ class FunctionBatch(_ObjectBatch[Callable]):
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`FunctionSpec`, if an element is not
-        callable, or for any reason :class:`_ObjectBatch` refuses ``elements``.
+        If ``element_spec`` is not a :class:`FunctionSpec`; if an element is not
+        callable, naming the position that failed; if ``elements`` is a string, a
+        mapping, or an array that is not ``dtype=object`` — each iterates into
+        something other than its elements — or is not iterable at all.
     ValueError
-        For any reason :class:`_ObjectBatch` refuses the shape or the levels.
+        If ``elements`` is empty, or is a zero-dimensional array (one object with
+        no batch axis); if ``axis_groups`` does not tile the shape the elements are
+        stored in; or if ``axis_groups`` is omitted and the number of level names
+        does not match the number of axes.
 
     Notes
     -----
@@ -51,6 +56,11 @@ class FunctionBatch(_ObjectBatch[Callable]):
     than an array. The spec is callable-generic: a plain lambda, a NumPy
     function, and a ``Function`` are all admitted, the wrapper being one such
     element and not the required type.
+
+    This batch **stores** its elements, so ``batch[i]`` is the callable that was
+    put in — the same object, under its own name and lineage, not a copy renamed
+    to its position. A sub-batch is a view and takes a derived name as any view
+    does.
 
     Examples
     --------

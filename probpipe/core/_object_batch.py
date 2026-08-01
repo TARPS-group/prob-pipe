@@ -65,9 +65,10 @@ class _ObjectBatch[E](Batch[E]):
         which iterates into something other than its elements — if it is not
         iterable at all, or if an ndarray of elements is not ``dtype=object``.
     ValueError
-        If ``elements`` is empty or a single object, if ``axis_groups`` does not
-        tile the stored shape, or if ``axis_groups`` is omitted and the number of
-        names does not match the number of axes.
+        If ``elements`` is empty, or is a zero-dimensional array (one object with
+        no batch axis), if ``axis_groups`` does not tile the stored shape, or if
+        ``axis_groups`` is omitted and the number of names does not match the
+        number of axes.
 
     Notes
     -----
@@ -120,16 +121,20 @@ class _ObjectBatch[E](Batch[E]):
     # -- the storage seam ---------------------------------------------------
 
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
-        """The stored object at *index*, as it was given.
+        """The stored object at *index*: the caller's own, under its own identity.
 
-        *name* is unused, which is the whole of the identity rule for a batch
-        that **stores** its elements: the object handed back is the caller's own,
-        so whatever identity it arrived with is what it keeps. A tracked element
-        takes a derived name where a batch *materializes* one per index — a row
-        of columnar storage has no identity until it is built — but a callable
-        placed here by name already means something, and renaming it to its
-        position would lose that and hand back a copy besides. The batch remains
-        the one place the position is recorded.
+        *name*, the identity derived for the position, is unused, and no
+        provenance is written — this is the *storing* side of both rules
+        :meth:`~probpipe.core._batch.Batch._element_at` states.
+
+        Notes
+        -----
+        A derived name belongs to an element a batch *materializes*, since a row
+        of columnar storage has no identity until it is built. An object placed
+        here already means something, so renaming it to its position would lose
+        that and hand back a copy besides. The batch stays the one place the
+        position is recorded — in the name of a sub-batch, which is a view rather
+        than a caller's object.
         """
         return self._store[index]
 
