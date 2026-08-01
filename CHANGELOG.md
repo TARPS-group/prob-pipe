@@ -88,8 +88,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   order. The selection is tracked against the batch the name is rooted in, so a
   derived name is a function of what the view selects: indexing two levels in one
   call, in two calls, or in the other order all read alike, and two different
-  selections of one batch never do. Each view also records the indexing in its
-  `provenance`.
+  selections of one batch never do. A selection carries the *lineage* of the batch it came
+  out of rather than a node recording the read: nothing is computed by reading one
+  position out of a collection, and which position it was is what the name says.
 
   A batch's **specification is its own**, at the *family* kind: the new
   `BatchSpec` term spec carries the element's specification together with that

@@ -19,6 +19,7 @@ import pytest
 from probpipe import ArraySpec, EventTemplate, OpaqueSpec, TermSpec
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._fingerprint import fingerprint
+from probpipe.core.provenance import Provenance
 from probpipe.core.tracked import TrackedTerm
 
 # The doubles' element type is neither a Record, a Distribution, nor a Function,
@@ -60,7 +61,8 @@ class _ListBatch(Batch[_Leaf]):
         return offset
 
     def _element_at(self, index, *, name):
-        return _Leaf(self._store[self._flat(index)], name=name, name_is_auto=True)
+        built = _Leaf(self._store[self._flat(index)], name=name, name_is_auto=True)
+        return self._inherit_provenance(built)
 
     def _sub_batch_at(self, index, *, spec, name):
         # The index is honored in the order it presents its positions, so a
@@ -78,7 +80,7 @@ class _NestedBatch(_ListBatch):
     __slots__ = ()
 
     def _element_at(self, index, *, name):
-        return self._store[self._flat(index)].with_name(name)
+        return self._inherit_provenance(self._store[self._flat(index)].with_name(name))
 
 
 class _BareBatch(_ListBatch):
@@ -151,7 +153,8 @@ class _ViewBatch(Batch[_Leaf]):
     # -- the storage seam --
 
     def _element_at(self, index, *, name):
-        return _Leaf(self._root_store[self._offset(index)], name=name, name_is_auto=True)
+        built = _Leaf(self._root_store[self._offset(index)], name=name, name_is_auto=True)
+        return self._inherit_provenance(built)
 
     def _sub_batch_at(self, index, *, spec, name):
         # Nothing is read and nothing is copied: composing a range with the
@@ -604,35 +607,75 @@ class TestIndexerValidation:
 
 
 class TestViewProvenance:
-    def test_a_view_records_the_indexing(self, nested, full_provenance_mode):
-        view = nested[1]
-        assert view.provenance is not None
-        assert view.provenance.operation == "index"
-        assert view.provenance.metadata["selection"] == "chain=1"
+    """A selection inherits the lineage of the batch it came out of.
 
-    def test_an_element_records_the_indexing(self, nested, full_provenance_mode):
-        element = nested.at_levels(chain=1, draw=2)
-        assert element.provenance is not None
-        assert element.provenance.metadata["selection"] == "chain=1, draw=2"
+    Reading one position out of a collection computes nothing, so no node records
+    the reading; which position it was is carried by the name.
+    """
 
-    def test_the_selection_recorded_reads_against_the_parent_recorded(self, nested):
-        """A two-step index records what was selected *from the batch it names*."""
-        element = nested[1][2]
-        assert element.provenance.metadata["selection"] == "draw=2"
-        assert [parent.name for parent in element.provenance.parents] == ["b[chain=1]"]
+    @staticmethod
+    def _from_an_operation(batch):
+        """The batch as an operation would hand it over: carrying provenance."""
+        return batch.with_provenance(Provenance.create("sample", parents=[]))
 
-    def test_selecting_the_whole_batch_records_no_indexing(self, nested):
-        """Nothing happened, so no lineage node claims otherwise."""
-        assert nested.at_levels().provenance is None
-        assert nested[:].provenance is None
+    def test_a_view_inherits_the_batch_provenance(self, nested, full_provenance_mode):
+        produced = self._from_an_operation(nested)
 
-    def test_the_batch_indexed_is_the_parent(self, nested, full_provenance_mode):
-        view = nested[1]
-        assert [parent.name for parent in view.provenance.parents] == ["b"]
+        assert produced[1].provenance is produced.provenance
 
-    def test_a_bare_element_has_nothing_to_record_on(self, full_provenance_mode):
+    def test_an_element_inherits_it_too(self, nested, full_provenance_mode):
+        produced = self._from_an_operation(nested)
+
+        assert produced.at_levels(chain=1, draw=2).provenance is produced.provenance
+
+    def test_no_node_claims_the_indexing_happened(self, nested, full_provenance_mode):
+        """The lineage names the operation that produced the batch, not the read."""
+        produced = self._from_an_operation(nested)
+
+        assert produced[1].provenance.operation == "sample"
+
+    def test_a_view_of_a_batch_with_no_provenance_has_none(self, nested):
+        """Nothing to inherit, and the reading itself was not an event."""
+        assert nested.provenance is None
+        assert nested[1].provenance is None
+        assert nested.at_levels(chain=1, draw=2).provenance is None
+
+    def test_selecting_the_whole_batch_inherits_the_same_way(self, nested, full_provenance_mode):
+        """Nothing distinguishes the degenerate selection: it was never a special case."""
+        produced = self._from_an_operation(nested)
+
+        assert produced.at_levels().provenance is produced.provenance
+        assert produced[:].provenance is produced.provenance
+
+    def test_a_view_two_steps_down_still_reads_the_root_operation(
+        self, nested, full_provenance_mode
+    ):
+        """Lineage does not lengthen with the route taken through the batch."""
+        produced = self._from_an_operation(nested)
+
+        assert produced[1][2].provenance is produced.provenance
+
+    def test_a_bare_element_has_nowhere_to_carry_it(self, full_provenance_mode):
         bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
-        assert bare[1] == 1
+        produced = self._from_an_operation(bare)
+
+        assert produced[1] == 1
+
+    def test_a_lineage_the_element_already_carries_is_not_overwritten(self, full_provenance_mode):
+        """The batch adds nothing where the element brought its own record.
+
+        `_NestedBatch` renames its element, and a rename carries its own
+        provenance naming the original as parent — so the chain back to the
+        element's origin stands, and the batch does not replace it.
+        """
+        inner = _ListBatch(range(2), _spec([(2,)], ["draw"]), name="inner")
+        inner.with_provenance(Provenance.create("fit", parents=[]))
+        outer = _NestedBatch([inner, inner], _spec([(2,)], ["chain"]), name="outer")
+        self._from_an_operation(outer)
+
+        element = outer[0]
+        assert element.provenance.operation == "with_name"
+        assert [parent.name for parent in element.provenance.parents] == ["inner"]
 
 
 class TestImmutability:

@@ -50,6 +50,12 @@ type, so a name reaches the elements and a position reaches the axes. Renaming a
 level needs no hook at all: it touches no axes and no elements, so
 :meth:`Batch._with_level_names` defaults to a shallow copy.
 
+**A selection inherits, it does not record.** Reading one position out of a
+collection computes nothing, so no provenance node claims it happened: a view
+carries the lineage of the batch it came out of, and which position it was is
+carried by its name. Element provenance is :meth:`Batch._element_at`'s own,
+since only that hook knows whether it built the element or borrowed it.
+
 See design II.5.
 """
 
@@ -606,6 +612,14 @@ class Batch[E](TrackedTerm, ABC):
         *name* is the identity this class derived for the element view. A
         tracked element takes it, marked auto-derived; an element that is a bare
         value has no identity to carry and ignores it.
+
+        **Provenance is this hook's own**, because only it knows whether the
+        element was built or borrowed. A batch that *materializes* an element —
+        a row of columnar storage does not exist until it is built — calls
+        :meth:`_inherit_provenance` on what it built. A batch that *stores* its
+        elements returns the stored object untouched: it did not produce that
+        object, so it cannot truthfully claim its lineage, and writing to it
+        would reach into something the caller still holds.
         """
 
     @abstractmethod
@@ -633,6 +647,38 @@ class Batch[E](TrackedTerm, ABC):
         the view carries a name and provenance of its own and ``self`` already has
         both.
         """
+
+    def _inherit_provenance[T](self, produced: T) -> T:
+        """Give something this batch *produced* the batch's own provenance.
+
+        Selecting is not a step in a computation. Nothing is computed by reading
+        one position out of a collection, so no node records the reading, and
+        what a selection carries is the lineage of the batch it came out of.
+        *Which* position was selected is carried by the name, which states it
+        exactly — ``posterior[chain=0, draw=7]`` — so nothing is lost by not
+        recording it twice.
+
+        This class applies it to every sub-batch view, which it manufactures. An
+        element is :meth:`_element_at`'s to attribute, since only that hook knows
+        whether it built the element or borrowed it from storage.
+
+        A *produced* object that already carries provenance keeps it, and one
+        that is not a tracked term has nowhere to carry it, so neither pays for a
+        record that would be discarded.
+
+        Notes
+        -----
+        The consequence worth knowing: a view's lineage is indistinguishable from
+        its batch's, and ``provenance.parents`` does not point at the batch. That
+        is the intended reading of "selection is not an event" — there is no edge
+        because there was no computation — but it does mean a lineage walk shows
+        no selection step, and only the name says a view is one.
+        """
+        if self._provenance is None or not isinstance(produced, TrackedTerm):
+            return produced
+        if produced.provenance is not None:
+            return produced
+        return produced.with_provenance(self._provenance)
 
     def _at_fields(self, path: tuple[str, ...]) -> Any:
         """The batched field at *path* within every element, for a named ``[]`` key.
@@ -676,14 +722,10 @@ class Batch[E](TrackedTerm, ABC):
         selection = self._compose_selection(normalized)
         label = _render_index(self._root_spec, selection)
         name = f"{self._root_name}[{label}]" if label else self._root_name
-        # Recorded against the batch indexed, so the selection reads against the
-        # parent this provenance names; the derived name is stated against the
-        # root instead, which is what makes it route-independent.
-        step = _render_index(self._spec, tuple(normalized))
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
-            return _carry_provenance(self._element_at(dropped, name=name), self, step)
+            return self._element_at(dropped, name=name)
 
         groups, names = self._surviving_levels(normalized)
         spec = replace(self._spec, axis_groups=groups, level_names=names)
@@ -694,13 +736,11 @@ class Batch[E](TrackedTerm, ABC):
         object.__setattr__(view, "_root_spec", self._root_spec)
         object.__setattr__(view, "_root_selection", selection)
         if not label:
-            # Selecting the whole batch derives nothing: the view carries the
-            # name it came with, so a user-given name stays user-given and is
-            # not re-derived by a later transform, and no indexing is recorded
-            # because none happened.
+            # Selecting the whole batch derives nothing, so the view keeps the
+            # name it came with: a user-given name stays user-given and is not
+            # re-derived by a later transform.
             object.__setattr__(view, "_name_is_auto", self._name_is_auto)
-            return view
-        return _carry_provenance(view, self, step)
+        return self._inherit_provenance(view)
 
     def _compose_selection(self, normalized: list[int | range]) -> tuple[int | range, ...]:
         """This view's selection composed with *normalized*, in root coordinates.
@@ -947,17 +987,3 @@ def _render_index(root_spec: BatchSpec, selection: tuple[int | range, ...]) -> s
         positions = rendered[0] if len(rendered) == 1 else f"({', '.join(rendered)})"
         parts.append(f"{level_name}={positions}")
     return ", ".join(parts)
-
-
-def _carry_provenance(view: Any, indexed: Batch, selection: str) -> Any:
-    """Record the indexing on a derived view that carries no provenance of its own.
-
-    The record is built only once there is something to carry it: an element that
-    is a bare value has no identity to record on, and a subclass that supplied its
-    own provenance keeps it, so neither pays for a node that would be discarded.
-    """
-    if not isinstance(view, TrackedTerm) or view.provenance is not None:
-        return view
-    return view.with_provenance(
-        Provenance.create("index", parents=[indexed], metadata={"selection": selection})
-    )
