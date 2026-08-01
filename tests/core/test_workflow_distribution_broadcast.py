@@ -13,6 +13,8 @@ from probpipe import (
     Function,
     Normal,
     ProductDistribution,
+    Record,
+    RecordEmpiricalDistribution,
 )
 from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
 from probpipe.core.config import WorkflowKind
@@ -384,6 +386,21 @@ class TestCoSamplingThroughACall:
             np.asarray(result.input_samples["a"]), np.asarray(result.input_samples["b"])
         )
 
+    def test_identical_but_distinct_laws_are_distinct_roots(self):
+        """A group is object identity, not structural equality.
+
+        Two separately constructed laws are two random variables however alike
+        their parameters and names, so they sample the product; only a shared
+        object is one variable.
+        """
+        first = Normal(loc=0.0, scale=1.0, name="x")
+        second = Normal(loc=0.0, scale=1.0, name="x")
+
+        assert not np.allclose(np.asarray(self._difference()(first, second).samples), 0.0)
+        np.testing.assert_array_equal(
+            np.asarray(self._difference()(first, first).samples), np.zeros(8)
+        )
+
     def test_unrelated_laws_still_sample_the_product(self):
         """The complementary case: independence must survive the fix."""
         result = self._difference()(
@@ -434,6 +451,38 @@ class TestCoSamplingThroughACall:
         )
 
         np.testing.assert_array_equal(np.asarray(lifted(joint, joint["x"]).samples), np.zeros(8))
+
+    def test_a_record_valued_empirical_enumerates(self):
+        """Enumerated rows stack per argument, and a record row is not an array.
+
+        Atoms of a record-valued empirical are ``Record``s, which ``jnp.stack``
+        cannot take; they stack through ``RecordArray.stack`` instead.
+        """
+        empirical = RecordEmpiricalDistribution(
+            Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
+            name="e",
+        )
+        lifted = Function(
+            func=lambda a: a["y"], dispatch="sequential", n_broadcast_samples=8, seed=0
+        )
+
+        np.testing.assert_array_equal(
+            np.asarray(lifted(empirical).samples).ravel(), np.array([10.0, 20.0, 30.0])
+        )
+
+    def test_a_record_valued_empirical_passed_twice_shares_its_atom(self):
+        empirical = RecordEmpiricalDistribution(
+            Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
+            name="e",
+        )
+        lifted = Function(
+            func=lambda a, b: a["y"] - b["y"],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+            seed=0,
+        )
+
+        np.testing.assert_array_equal(np.asarray(lifted(empirical, empirical).samples), np.zeros(3))
 
     def test_an_aliased_empirical_counts_its_weight_once(self):
         """Weights are per group, so an alias does not square them."""

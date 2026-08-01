@@ -449,7 +449,7 @@ def _broadcast_enumerate(
     results = _workflow_execution.execute_many(request)
 
     all_input_samples = {
-        ref.label: jnp.stack(
+        ref.label: _stack_rows(
             [_workflow_call.input_ref_value(call_values, ref) for call_values in call_value_list]
         )
         for ref in all_broadcast_args
@@ -505,6 +505,22 @@ def _broadcast_sample(
         broadcast_args=[ref.label for ref in broadcast_args],
         output_template=output_template,
     )
+
+
+def _stack_rows(rows: list[Any]) -> Any:
+    """Stack one argument's per-row values into a single batched value.
+
+    ``jnp.stack`` covers array-valued rows. A record-valued row is not an array
+    — a ``Record`` has fields, not a shape — so those stack through
+    ``RecordArray.stack``, giving a batch whose ``batch_shape`` is ``(n,)`` and
+    whose fields are the per-row leaves.
+    """
+    from ._record_array import RecordArray
+    from .record import Record
+
+    if rows and isinstance(rows[0], Record):
+        return RecordArray.stack(rows)
+    return jnp.stack(rows)
 
 
 def _index_sample(s: Any, i: int) -> Any:

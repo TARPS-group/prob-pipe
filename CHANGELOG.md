@@ -30,18 +30,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   returning wrong values change their output.
 
 - **A record-valued law can be lifted.** Passing a record-valued
-  `Distribution` as an argument raised `TypeError: NumericRecordArray with 2
-  fields is not array-like`, because broadcast assembly read the row count from
-  the samples' `shape` — which a record batch refuses unless it holds exactly
-  one leaf. The count now comes from `batch_shape`, the one accessor that means
-  the same thing for every batched value. (Not `len`: on a `RecordArray` that is
-  the *field* count, which would have made `num_atoms` silently wrong.)
+  `Distribution` as an argument raised `TypeError: ... is not array-like`, from
+  two places that assumed every argument's samples were an array. Broadcast
+  assembly read the row count from the samples' `shape`, which a record batch
+  refuses unless it holds exactly one leaf; the count now comes from
+  `batch_shape`, the one accessor that means the same thing for every batched
+  value. (Not `len`: on a `RecordArray` that is the *field* count, which would
+  have made `num_atoms` silently wrong.) And enumeration stacked each
+  argument's per-row values with `jnp.stack`, which a `Record` row is not; those
+  now stack through `RecordArray.stack`.
 
-  This is what kept `f(d, d["x"])` — a parent alongside its own view, the
-  remaining co-sampling case above — from running end to end once its draws were
-  shared. A record-valued argument now lifts under `auto`, `sequential`, and
-  `thread` dispatch; explicit `dispatch="jax"` reports the usual
-  not-traceable error when the wrapped function indexes a record.
+  The first of those is what kept `f(d, d["x"])` — a parent alongside its own
+  view, the remaining co-sampling case above — from running end to end once its
+  draws were shared. Record-valued laws now lift under `auto`, `sequential`, and
+  `thread` dispatch, including record-valued empiricals, whether enumerated or
+  passed twice. Explicit `dispatch="jax"` reports the usual not-traceable error
+  when the wrapped function indexes a record.
+
+  One shape is still unsupported: a record-valued empirical passed alongside a
+  field view of itself. That group routes to sampling rather than enumeration,
+  and `RecordEmpiricalDistribution._sample` returns a single `Record` rather
+  than a batch of them, so there are no rows to index. That is a distribution-
+  layer contract gap rather than a broadcast one.
 
 - **Value specs are fingerprinted by declaration, not identity (#381).** The
   spec hasher now covers `RecordSpec` and recurses into a stored declaration
