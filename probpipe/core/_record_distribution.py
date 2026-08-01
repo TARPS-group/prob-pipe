@@ -30,7 +30,7 @@ from .protocols import (
     SupportsVariance,
 )
 from .record import Record
-from .tracked import _TrackedMeta
+from .tracked import _TrackedTermMeta
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
 
@@ -351,7 +351,7 @@ def _build_event_template(
 # ---------------------------------------------------------------------------
 
 
-class _RecordDistributionMeta(_TrackedMeta):
+class _RecordDistributionMeta(_TrackedTermMeta):
     """Metaclass adding the ``event_template`` set-or-derivable check
     on top of the base ``name`` check.
 

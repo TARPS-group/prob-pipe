@@ -103,7 +103,7 @@ condition_on_nutpie = Function(
 )
 ```
 
-Treat a public `Function` as an immutable, first-class `Tracked` / `Annotated`
+Treat a public `Function` as an immutable, first-class `TrackedTerm` / `Annotated`
 computation term. Its construction-time `inspect.Signature` is the Python
 calling contract; optional `input_template` and `output_template` declarations
 are authoritative schemas but never derive or replace that signature. Use

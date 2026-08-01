@@ -52,7 +52,7 @@ from .event_template import (
     _unify_event_template_with_value,
 )
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
-from .tracked import Annotated, Tracked
+from .tracked import Annotated, TrackedTerm
 
 if TYPE_CHECKING:
     from ._numeric_record import NumericRecord
@@ -149,7 +149,7 @@ def _canonical_dtype_str(leaf: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-class Record(NamedTree[Any], Tracked, Annotated):
+class Record(NamedTree[Any], TrackedTerm, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection
@@ -220,7 +220,7 @@ class Record(NamedTree[Any], Tracked, Annotated):
 
     Metadata: identity and annotations
     ----------------------------------
-    A record is a tracked term: it is :class:`~probpipe.core.tracked.Tracked`,
+    A record is a tracked term: it is :class:`~probpipe.core.tracked.TrackedTerm`,
     carrying a human-readable :attr:`name` — with :attr:`name_is_auto`
     recording whether the name was auto-derived rather than user-given — and,
     optionally, a :attr:`provenance`, the
@@ -574,7 +574,7 @@ class Record(NamedTree[Any], Tracked, Annotated):
     #
     # ``name`` / ``name_is_auto`` / ``provenance`` / ``with_name`` /
     # ``with_provenance`` are provided by the
-    # :class:`~probpipe.core.tracked.Tracked` mixin, and ``annotations`` by
+    # :class:`~probpipe.core.tracked.TrackedTerm` mixin, and ``annotations`` by
     # :class:`~probpipe.core.tracked.Annotated`. Semantic transformations
     # (``replace``, ``merge``, ``without``, ``map``, ``map_with_keys``)
     # return a *new* Record with no provenance; the caller attaches fresh

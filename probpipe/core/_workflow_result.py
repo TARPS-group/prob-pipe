@@ -21,7 +21,7 @@ from ._record_array import RecordArray
 from .event_template import EventTemplate
 from .provenance import Provenance
 from .record import Record
-from .tracked import Tracked
+from .tracked import TrackedTerm
 
 # Broadcast modes: how a value reached ``_coerce_output``. Named
 # constants so callsites use the same spelling and typos fail loudly.
@@ -48,7 +48,7 @@ def _wrap_as_record(
       ``Distribution``) retain their structure here. ``_coerce_output``
       copies a directly returned tracked value before attaching call
       provenance.
-    - Other ``Tracked`` values are event payloads, not direct term results.
+    - Other ``TrackedTerm`` values are event payloads, not direct term results.
       They follow the ordinary wrapping rules until an explicit term-result
       plan selects their atom and aggregate families (#369).
     - ``dict`` (non-empty) → a ``Record`` keyed by the caller's keys; a
@@ -140,20 +140,20 @@ def _coerce_output(
         # Only the schema-carrying event/result containers retained by
         # _wrap_as_record reach this identity branch. Arbitrary tracked terms
         # were wrapped as event payloads above.
-        if value is raw_value and isinstance(value, Tracked):
+        if value is raw_value and isinstance(value, TrackedTerm):
             value = _copy_result_term(value, output_template=output_template)
-    elif isinstance(value, Tracked) and value.provenance is not None:
+    elif isinstance(value, TrackedTerm) and value.provenance is not None:
         value = _copy_result_term(value)
-    if provenance is not None and isinstance(value, Tracked):
+    if provenance is not None and isinstance(value, TrackedTerm):
         value.with_provenance(provenance)
     return value
 
 
 def _copy_result_term(
-    value: Tracked,
+    value: TrackedTerm,
     *,
     output_template: EventTemplate | None = None,
-) -> Tracked:
+) -> TrackedTerm:
     """Copy a retained tracked container into an independent result term."""
     clone = value._shallow_copy()
     if output_template is not None:

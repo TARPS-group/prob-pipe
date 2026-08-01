@@ -1,21 +1,21 @@
-"""Identity and metadata mixins: ``Tracked`` and ``Annotated``.
+"""Identity and metadata mixins: ``TrackedTerm`` and ``Annotated``.
 
 Every object a ProbPipe operation returns is a **tracked term**: it carries a
-:attr:`~Tracked.name` (what the object is called) and, optionally, a
-:attr:`~Tracked.provenance` (how it was produced). Some objects additionally
+:attr:`~TrackedTerm.name` (what the object is called) and, optionally, a
+:attr:`~TrackedTerm.provenance` (how it was produced). Some objects additionally
 carry free-form :attr:`~Annotated.annotations` (auxiliary information supplied
 by the user or an algorithm). These identity and metadata attributes are orthogonal
 to what an object *is* mathematically, so they are defined once, here, as two
 mixins:
 
-- :class:`Tracked` — name + provenance. Every ProbPipe value, distribution,
-  and batch is ``Tracked``.
+- :class:`TrackedTerm` — name + provenance. Every ProbPipe value, distribution,
+  and batch is ``TrackedTerm``.
 - :class:`Annotated` — free-form annotations. Carried by the single value and
   distribution types (``Record``, ``Distribution``), not required of batches.
 
 Classes mix these in alongside their mathematical base (e.g. ``class
-Record(NamedTree, Tracked, Annotated)``) and initialize the identity state in
-their constructor via :meth:`Tracked._init_tracked`.
+Record(NamedTree, TrackedTerm, Annotated)``) and initialize the identity state in
+their constructor via :meth:`TrackedTerm._init_tracked`.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from typing import Any, Self, _ProtocolMeta
 
 from .provenance import Provenance
 
-__all__ = ["Annotated", "Tracked", "auto_name"]
+__all__ = ["Annotated", "TrackedTerm", "auto_name"]
 
 
 def auto_name(name: str | None, default: str) -> tuple[str, bool]:
@@ -44,7 +44,7 @@ def auto_name(name: str | None, default: str) -> tuple[str, bool]:
     returns ``(name, False)`` when *name* was supplied (a user-given name)
     and ``(default, True)`` when it was ``None`` (an auto-derived name),
     ready to pass to ``__init__(name=..., name_is_auto=...)`` or
-    :meth:`Tracked._init_tracked`.
+    :meth:`TrackedTerm._init_tracked`.
 
     Parameters
     ----------
@@ -63,19 +63,19 @@ def auto_name(name: str | None, default: str) -> tuple[str, bool]:
     return name, False
 
 
-class _TrackedMeta(_ProtocolMeta):
-    """Metaclass enforcing that every ``Tracked`` instance has a
+class _TrackedTermMeta(_ProtocolMeta):
+    """Metaclass enforcing that every ``TrackedTerm`` instance has a
     non-empty ``name`` set by the time construction returns.
 
     The check runs after ``__init__`` so it covers every construction
     path: classes that call ``super().__init__(name=...)``, classes that
-    call :meth:`Tracked._init_tracked` directly, and classes that assign
+    call :meth:`TrackedTerm._init_tracked` directly, and classes that assign
     ``self._name`` themselves. The only failure case is a class that
     finishes ``__init__`` without setting ``_name`` to a non-empty
     string — then construction raises ``TypeError``.
 
     Extends ``typing._ProtocolMeta`` (rather than the more obvious
-    ``ABCMeta``) so ``Tracked`` hosts can mix in ``@runtime_checkable``
+    ``ABCMeta``) so ``TrackedTerm`` hosts can mix in ``@runtime_checkable``
     protocols (``SupportsSampling``, ``SupportsLogProb``, …) without a
     metaclass conflict. ``_ProtocolMeta`` is itself an ``ABCMeta``
     subclass.
@@ -94,10 +94,10 @@ class _TrackedMeta(_ProtocolMeta):
         return instance
 
 
-class Tracked(metaclass=_TrackedMeta):
+class TrackedTerm(metaclass=_TrackedTermMeta):
     """Identity mixin: a :attr:`name` and a write-once :attr:`provenance`.
 
-    A ``Tracked`` object carries, alongside its mathematical content, the two
+    A ``TrackedTerm`` object carries, alongside its mathematical content, the two
     pieces of identity every ProbPipe object needs: a human-readable **name**
     and an optional **provenance** describing how it was produced. Any such
     object is a *tracked term* — the kind of object ProbPipe operations
@@ -141,7 +141,7 @@ class Tracked(metaclass=_TrackedMeta):
     block normal attribute assignment.
 
     The non-empty-name guarantee is enforced at construction by the mixin's
-    metaclass (:class:`_TrackedMeta`): finishing ``__init__`` without a
+    metaclass (:class:`_TrackedTermMeta`): finishing ``__init__`` without a
     non-empty ``_name`` raises ``TypeError``. Host classes therefore never
     need their own name check.
     """
@@ -343,7 +343,7 @@ class Annotated:
     results under its own key and never overwrite mathematical state or
     another writer's entries.
 
-    Like :class:`Tracked`, the mixin holds no storage of its own
+    Like :class:`TrackedTerm`, the mixin holds no storage of its own
     (``__slots__ = ()``); the state lives in the ``_annotations`` attribute,
     which a slotted host class declares in its ``__slots__``.
     """

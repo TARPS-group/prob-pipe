@@ -21,7 +21,7 @@ from .distribution import BroadcastDistribution, Distribution
 from .event_template import EventTemplate
 from .provenance import Provenance
 from .record import Record
-from .tracked import Tracked
+from .tracked import TrackedTerm
 
 
 def execute_sweep(
@@ -44,7 +44,7 @@ def execute_sweep(
     n_broadcast_samples: int,
     include_inputs: bool = False,
     output_template: EventTemplate | None = None,
-    provenance_parents: list[Tracked] | None = None,
+    provenance_parents: list[TrackedTerm] | None = None,
     provenance_inputs: Mapping[str, Any] | None = None,
 ) -> Any:
     """Execute pure or nested sweep regimes for one workflow call."""
@@ -266,7 +266,7 @@ def make_sweep_provenance(
     workflow_name: str,
     batch_shape: tuple[int, ...],
     k: int,
-    parents: list[Tracked] | None = None,
+    parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
 ) -> Provenance | None:
     """Build provenance metadata for pure and nested sweep outputs.
