@@ -407,6 +407,34 @@ class TestCoSamplingThroughACall:
         assert samples.size == 3
         np.testing.assert_array_equal(samples, np.zeros(3))
 
+    def test_a_record_valued_law_can_be_lifted(self):
+        """Assembly counts rows by ``batch_shape``, which a record batch answers.
+
+        Its ``len`` is the field count and its ``shape`` raises, so the row count
+        had to come from somewhere that means one thing for every batched value.
+        """
+        joint = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
+        )
+        lifted = Function(
+            func=lambda a: a["x"], dispatch="sequential", n_broadcast_samples=8, seed=0
+        )
+
+        assert np.asarray(lifted(joint).samples).shape[0] == 8
+
+    def test_a_parent_and_its_own_view_lift_together(self):
+        """The remaining IV.2 case, end to end: ``f(d, d["x"])`` is one draw."""
+        joint = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
+        )
+        lifted = Function(
+            func=lambda a, b: a["x"] - b, dispatch="sequential", n_broadcast_samples=8, seed=0
+        )
+
+        np.testing.assert_array_equal(np.asarray(lifted(joint, joint["x"]).samples), np.zeros(8))
+
     def test_an_aliased_empirical_counts_its_weight_once(self):
         """Weights are per group, so an alias does not square them."""
         empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="e")

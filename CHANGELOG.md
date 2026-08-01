@@ -29,6 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one consumes exactly one key split, as before. Only calls that were already
   returning wrong values change their output.
 
+- **A record-valued law can be lifted.** Passing a record-valued
+  `Distribution` as an argument raised `TypeError: NumericRecordArray with 2
+  fields is not array-like`, because broadcast assembly read the row count from
+  the samples' `shape` — which a record batch refuses unless it holds exactly
+  one leaf. The count now comes from `batch_shape`, the one accessor that means
+  the same thing for every batched value. (Not `len`: on a `RecordArray` that is
+  the *field* count, which would have made `num_atoms` silently wrong.)
+
+  This is what kept `f(d, d["x"])` — a parent alongside its own view, the
+  remaining co-sampling case above — from running end to end once its draws were
+  shared. A record-valued argument now lifts under `auto`, `sequential`, and
+  `thread` dispatch; explicit `dispatch="jax"` reports the usual
+  not-traceable error when the wrapped function indexes a record.
+
 - **Value specs are fingerprinted by declaration, not identity (#381).** The
   spec hasher now covers `RecordSpec` and recurses into a stored declaration
   (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec

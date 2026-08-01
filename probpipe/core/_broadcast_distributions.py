@@ -954,10 +954,19 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         self._output_distributions = output_distributions
         self._output_template = output_template
 
-        # Determine n from first broadcast arg
+        # The row count, taken from the first broadcast arg. A record batch
+        # answers neither of the obvious questions the way one would hope: its
+        # ``len`` is the field count, and its ``shape`` raises unless it holds a
+        # single leaf — and raises a ``TypeError``, which ``hasattr`` propagates
+        # rather than swallowing. ``batch_shape`` is the one accessor that means
+        # the same thing for every batched value.
         first_key = next(iter(broadcast_args))
         first_arr = input_samples[first_key]
-        n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
+        batch_shape = getattr(first_arr, "batch_shape", None)
+        if batch_shape:
+            n = batch_shape[0]
+        else:
+            n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         name, name_is_auto = auto_name(name, "broadcast")
