@@ -15,6 +15,7 @@ from probpipe import (
     ProductDistribution,
     Record,
     RecordEmpiricalDistribution,
+    sample,
 )
 from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
 from probpipe.core.config import WorkflowKind
@@ -469,6 +470,39 @@ class TestCoSamplingThroughACall:
         np.testing.assert_array_equal(
             np.asarray(lifted(empirical).samples).ravel(), np.array([10.0, 20.0, 30.0])
         )
+
+    def test_a_record_valued_lift_can_be_resampled(self):
+        """The joint over a record-valued input is a distribution, so it samples.
+
+        Reading ``.samples`` goes through the output marginal and says nothing
+        about the joint: resampling gathers rows from every component, and a
+        record-valued input carries its rows in fields rather than along a shape.
+        """
+        empirical = RecordEmpiricalDistribution(
+            Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
+            name="e",
+        )
+        lifted = Function(
+            func=lambda a: a["y"],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+            seed=0,
+            include_inputs=True,
+        )
+
+        joint = lifted(empirical)
+        drawn = sample(joint, sample_shape=(6,))
+
+        # Every drawn row is one atom of the empirical, and the output is that
+        # atom's own ``y`` — the pairing a joint exists to preserve.
+        x, y = np.asarray(drawn["a/x"]), np.asarray(drawn["a/y"])
+        np.testing.assert_allclose(y, x * 10)
+        np.testing.assert_allclose(np.asarray(drawn["_output"]).ravel(), y)
+        assert set(x.tolist()) <= {1.0, 2.0, 3.0}
+
+        one = sample(joint)
+        assert np.asarray(one["a/x"]).shape == ()
+        np.testing.assert_allclose(float(np.asarray(one["_output"])), float(np.asarray(one["a/y"])))
 
     def test_a_record_valued_empirical_passed_twice_shares_its_atom(self):
         empirical = RecordEmpiricalDistribution(

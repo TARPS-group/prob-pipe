@@ -47,6 +47,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   passed twice. Explicit `dispatch="jax"` reports the usual not-traceable error
   when the wrapped function indexes a record.
 
+  **The joint those lifts produce also resamples.** `include_inputs=True` keeps
+  every input beside the output, and drawing from that joint gathers the same
+  rows from each, which is what keeps a drawn tuple paired. A record-shaped
+  component has fields rather than a shape, so handing it an array of rows raised
+  `TypeError: key must be str, tuple, or int`. Every component now goes through
+  one gather that reads the container it is given: an array indexes directly, a
+  list of per-row objects gathers positionally, and a record is rebuilt from its
+  gathered leaves. The rebuild is deliberate rather than a `jax.tree.map` — a
+  `RecordArray` stores its row count and a `Record` its event template, both in
+  pytree aux data, so mapping over the leaves alone would have produced a batch
+  quietly claiming the rows it started with. The same gather covers the output
+  side, where a vectorized broadcast over a record-returning function leaves the
+  output a batched `Record`. A single draw is unwrapped to one record rather than
+  a one-row batch, its field names intact.
+
   One shape is still unsupported: a record-valued empirical passed alongside a
   field view of itself. That group routes to sampling rather than enumeration,
   and `RecordEmpiricalDistribution._sample` returns a single `Record` rather
