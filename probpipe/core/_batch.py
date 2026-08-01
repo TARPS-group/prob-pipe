@@ -61,7 +61,6 @@ See design II.5.
 
 from __future__ import annotations
 
-import contextlib
 import operator
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
@@ -93,6 +92,26 @@ class BatchSpec(TermSpec):
     This is the single stored source of a batch's type, so it specifies the
     *collection* rather than one element, and :class:`Batch` keeps no second copy
     of the multiplicity: its shape and level accessors read the stored spec.
+
+    Parameters
+    ----------
+    element_spec : ValueSpec
+        What every element of the batch satisfies. A raw-value spec is admitted
+        as readily as a term spec.
+    axis_groups : iterable of iterable of int
+        The axis *sizes* each level holds, in order, outermost level first. Every
+        level holds at least one axis, and there is at least one axis in all.
+        Stored as a tuple of tuples, which is what makes the spec hashable.
+    level_names : iterable of str
+        One name per level, aligned with *axis_groups*. Each is a non-empty
+        identifier, unique within the batch.
+
+    Attributes
+    ----------
+    batch_shape : tuple of int
+        The batch axes, flat: the concatenation of ``axis_groups``.
+    batch_size : int
+        The total element count, ``prod(batch_shape)``.
 
     Raises
     ------
@@ -272,31 +291,39 @@ class Batch[E](TrackedTerm, ABC):
     def __delattr__(self, name: str) -> None:
         raise AttributeError(f"{type(self).__name__} is immutable")
 
-    def __getstate__(self) -> tuple[None, dict[str, Any]]:
-        """Every assigned slot, for ``pickle`` and ``copy``.
+    def __getstate__(self) -> Any:
+        """This batch's whole state, for ``pickle`` and ``copy``.
 
-        A batch has no instance dictionary, so the state is the slots declared
-        across the class hierarchy — a subclass's storage included, without it
-        having to say so.
+        Delegates to :meth:`object.__getstate__`, which reports every assigned
+        slot declared anywhere in the class hierarchy — a subclass's storage
+        included, without it having to say so — together with an instance
+        dictionary if the subclass has one.
+
+        Notes
+        -----
+        Only :meth:`__setstate__` needs overriding here; ``__getstate__`` is
+        defined alongside it so that the pair reads as one, and so that walking
+        the hierarchy by hand is not reintroduced. That walk is easy to get
+        subtly wrong: ``__slots__`` may be a bare string naming one slot, which
+        iterates into characters rather than into that name, and a subclass that
+        declares no ``__slots__`` keeps its attributes in a dictionary that no
+        walk over ``__slots__`` would find. Either would drop state silently,
+        since a missing attribute is indistinguishable from an unassigned slot.
         """
-        state: dict[str, Any] = {}
-        for klass in type(self).__mro__:
-            for slot in getattr(klass, "__slots__", ()):
-                if slot in state or slot in ("__dict__", "__weakref__"):
-                    continue
-                with contextlib.suppress(AttributeError):
-                    state[slot] = getattr(self, slot)
-        return None, state
+        return object.__getstate__(self)
 
-    def __setstate__(self, state: tuple[None, dict[str, Any]]) -> None:
-        """Restore the slots through ``object.__setattr__``.
+    def __setstate__(self, state: Any) -> None:
+        """Restore *state* through ``object.__setattr__``.
 
         ``pickle`` and ``copy`` restore state by assignment, which the
         immutability guard refuses, so the write has to go around it exactly as
-        construction does.
+        construction does. Both halves of the state are restored: the instance
+        dictionary, where a subclass has one, and the slots.
         """
-        _, slots = state
-        for slot, value in slots.items():
+        instance_dict, slots = state if isinstance(state, tuple) else (state, None)
+        for attribute, value in (instance_dict or {}).items():
+            object.__setattr__(self, attribute, value)
+        for slot, value in (slots or {}).items():
             object.__setattr__(self, slot, value)
 
     # -- construction -------------------------------------------------------
@@ -377,6 +404,21 @@ class Batch[E](TrackedTerm, ABC):
         Accepts a positional mapping, keyword pairs, or both. Every name given must
         be a level of this batch, and the result must still name each level once.
 
+        Parameters
+        ----------
+        mapping : Mapping of str to str, optional
+            Renames as ``{old: new}``, positional so that any level name is
+            addressable even where it is not a valid keyword.
+        **kwargs : str
+            Renames as ``old="new"``, for the common case. A level named in both
+            must be given the same new name in each.
+
+        Returns
+        -------
+        Self
+            A shallow copy over the same axes and elements, specified over the new
+            level names, with its own derived name re-read under them.
+
         Raises
         ------
         KeyError
@@ -427,7 +469,25 @@ class Batch[E](TrackedTerm, ABC):
         A user-given name overrides derivation, so the copy selects all of
         itself: its own name is *name*, and a view of it reads
         ``name[level=...]`` rather than carrying any selection the original had
-        accumulated.
+        accumulated. This is the way to rename a level a view derives its name
+        from but no longer carries, which :meth:`with_level_names` refuses.
+
+        Parameters
+        ----------
+        name : str
+            The new name, taken as user-given: the copy's ``name_is_auto`` is
+            ``False``, so no later transform re-derives it.
+
+        Returns
+        -------
+        Self
+            A shallow copy over the same axes, elements, and spec, named *name*
+            and rooted at itself.
+
+        Raises
+        ------
+        TypeError
+            If *name* is not a non-empty string.
         """
         renamed = super().with_name(name)
         object.__setattr__(renamed, "_root_name", name)
@@ -496,6 +556,8 @@ class Batch[E](TrackedTerm, ABC):
             If an indexer is not an integer or a slice, if a tuple mixes field
             names with axis indexers, or if a name is given to a batch whose
             elements have no fields.
+        ValueError
+            If a slice has a step of zero.
 
         Notes
         -----
@@ -556,7 +618,8 @@ class Batch[E](TrackedTerm, ABC):
         KeyError
             If a keyword is not a level of this batch.
         ValueError
-            If a level is given more indexers than it has axes.
+            If a level is given more indexers than it has axes, or a slice has a
+            step of zero.
         IndexError
             If an integer is out of range for its axis.
         TypeError
@@ -609,9 +672,13 @@ class Batch[E](TrackedTerm, ABC):
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
         """The single element at a fully-integer positional *index*.
 
-        *name* is the identity this class derived for the element view. A
-        tracked element takes it, marked auto-derived; an element that is a bare
-        value has no identity to carry and ignores it.
+        *name* is the identity this class derived for the element view, and the
+        same split governs it as governs provenance below. A batch that
+        *materializes* an element gives it that name, marked auto-derived. A batch
+        that *stores* its elements hands back the stored object under the name it
+        already carries: renaming it would mean returning a copy, and an object
+        placed in a batch by name already means something. An element that is a
+        bare value has no identity to carry either way.
 
         **Provenance is this hook's own**, because only it knows whether the
         element was built or borrowed. A batch that *materializes* an element —
@@ -871,6 +938,14 @@ def _normalize_indexer(
     second time would read that as the last position and select nothing.
     """
     if isinstance(indexer, slice):
+        if indexer.step == 0:
+            # ``slice.indices`` would raise this itself, but naming neither the
+            # batch nor the axis the step was given for.
+            raise ValueError(
+                f"a batch axis is not selected with a step of zero "
+                f"({_location(axis, shape, where)}); a step is how far apart the selected "
+                f"positions are, so zero selects nothing and no position twice"
+            )
         return range(*indexer.indices(size))
     if indexer is None:
         raise TypeError(

@@ -178,6 +178,45 @@ class _ViewBatch(Batch[_Leaf]):
         )
 
 
+class _StoringBatch(Batch[_Leaf]):
+    """A batch that hands back the very element the caller put in.
+
+    The elements are stored, not built, so ``batch[i]`` is the caller's own
+    object: it keeps the name and the provenance it arrived with, and nothing is
+    copied. This is the storing side of the identity rule, which the doubles above
+    cannot exercise — each of them builds a fresh element per index, so they would
+    keep passing if the ABC ever renamed or re-attributed a borrowed object.
+    """
+
+    __slots__ = ("_store",)
+
+    def __init__(self, elements, spec, *, name="b", name_is_auto=False):
+        object.__setattr__(self, "_store", list(elements))
+        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+
+    def _element_at(self, index, *, name):
+        return self._store[index[0]]
+
+    def _sub_batch_at(self, index, *, spec, name):
+        return type(self)(self._store[index[0]], spec, name=name, name_is_auto=True)
+
+
+class _StringSlotsBatch(_ListBatch):
+    """A double whose ``__slots__`` names its one slot as a bare string."""
+
+    __slots__ = "_store"  # a bare string, deliberately: the point of the double
+
+    def _element_at(self, index, *, name):
+        return self._store[self._flat(index)]
+
+
+class _DictBatch(_ListBatch):
+    """A double that declares no ``__slots__``, so its instances carry a dict."""
+
+    def _element_at(self, index, *, name):
+        return self._store[self._flat(index)]
+
+
 def _selected(index, shape):
     """The positions each axis selects, in the order the index presents them."""
     return [
@@ -807,6 +846,34 @@ class TestSerialization:
         with pytest.raises(AttributeError, match="_ListBatch is immutable"):
             flat._spec = None
 
+    @pytest.mark.parametrize("round_trip", [copy.copy, lambda b: pickle.loads(pickle.dumps(b))])
+    def test_a_string_slots_declaration_carries_its_storage(self, round_trip):
+        """``__slots__`` may name one slot as a bare string, which is not a list of one.
+
+        Walking ``__slots__`` by hand iterates that string into characters, none
+        of which is an attribute, so the storage would be dropped in silence — a
+        missing attribute being indistinguishable from an unassigned slot.
+        """
+        batch = _StringSlotsBatch(range(3), _spec([(3,)], ["draw"]))
+
+        restored = round_trip(batch)
+        assert restored._store == [0, 1, 2]
+        assert [element for element in restored] == [0, 1, 2]
+
+    @pytest.mark.parametrize("round_trip", [copy.copy, lambda b: pickle.loads(pickle.dumps(b))])
+    def test_a_subclass_without_slots_carries_its_instance_dict(self, round_trip):
+        """A subclass that declares no ``__slots__`` keeps its attributes in a dict.
+
+        No walk over ``__slots__`` would find them, so the state has two halves
+        and both have to be restored.
+        """
+        batch = _DictBatch(range(3), _spec([(3,)], ["draw"]))
+        object.__setattr__(batch, "extra", "kept in __dict__")
+
+        restored = round_trip(batch)
+        assert restored.extra == "kept in __dict__"
+        assert restored._store == [0, 1, 2]
+
 
 class TestRenamingAView:
     def test_a_renamed_view_and_its_own_views_read_the_level_alike(self, nested):
@@ -1341,3 +1408,46 @@ class TestAViewOverSharedStorageBehavesLikeAnyBatch:
 
     def test_the_repr_names_the_concrete_class(self, viewed):
         assert repr(viewed) == "_ViewBatch(name='b', chain=2, draw=3)"
+
+
+class TestAStoredElementKeepsItsOwnIdentity:
+    """A batch that stores its elements hands one back exactly as it arrived.
+
+    The other doubles build an element per index, so they say nothing about this:
+    the ABC could start renaming or re-attributing a borrowed object and every one
+    of them would still pass.
+    """
+
+    @pytest.fixture
+    def stored(self):
+        self.leaves = [
+            _Leaf(value, name=f"given{value}").with_provenance(
+                Provenance.create("author", parents=[])
+            )
+            for value in range(3)
+        ]
+        return _StoringBatch(self.leaves, _spec([(3,)], ["draw"]), name="b")
+
+    def test_the_element_is_the_object_that_was_stored(self, stored):
+        assert stored[1] is self.leaves[1]
+
+    def test_the_element_keeps_the_name_it_arrived_with(self, stored):
+        """Not ``b[draw=1]``: renaming it would mean handing back a copy."""
+        assert stored[1].name == "given1"
+        assert stored.at_levels(draw=2).name == "given2"
+
+    def test_the_element_keeps_the_provenance_it_arrived_with(self, stored):
+        assert stored[1].provenance.operation == "author"
+        assert stored[1].provenance is self.leaves[1].provenance
+
+    def test_selecting_twice_does_not_accumulate_anything(self, stored):
+        """The borrowed object is not written to, so reading it again is the same."""
+        once, twice = stored[1], stored[1]
+        assert once is twice
+        assert once.name == twice.name == "given1"
+        assert once.provenance is twice.provenance
+
+    def test_a_sub_batch_still_takes_a_derived_name(self, stored):
+        """The view is the batch's own, so it is named by what it selects."""
+        assert stored[0:2].name == "b[draw=0:2]"
+        assert stored[0:2][0] is self.leaves[0]
