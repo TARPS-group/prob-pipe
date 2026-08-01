@@ -41,6 +41,17 @@ or by position with `[]`, and indexing returns a view named by what it selected
 
 ::: probpipe.BatchSpec
 
+### Batch forms that store objects
+
+A numeric array batches natively, with the batch axes leading, so it needs no
+class. A callable and an opaque object have no such form — there is nothing to
+stack them into — so each gets a thin `Batch` that stores its elements and
+carries the one specification they all satisfy, adding no other interface.
+
+::: probpipe.FunctionBatch
+
+::: probpipe.OpaqueBatch
+
 ## Record arrays
 
 ::: probpipe.RecordArray

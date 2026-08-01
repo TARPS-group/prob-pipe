@@ -24,6 +24,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`FunctionBatch` and `OpaqueBatch` — the batch forms that store objects.** A
+  numeric array batches natively, with the batch axes leading, so it needs no
+  class; a callable and an opaque object have no such form, so each gets a thin
+  `Batch` that stores its elements and carries the one `element_spec` they all
+  satisfy, adding no interface beyond it. Elements go in as a flat sequence or
+  as an object array of any shape, with a name required for every level — a
+  placeholder would read as meaning something while naming nothing, the same
+  reason a level clash is not resolved by suffixing.
+
+  Storage is a numpy object array, chosen for the contract rather than for
+  arrays: numpy basic indexing returns a **view**, so a sub-batch shares its
+  parent's store, and it honors a descending or stepped slice in the order
+  given, which is the order a view's derived names are stated in. Elements are
+  never unpacked, so a batch of arrays or of lists stays a batch of two things
+  rather than becoming one 2-d array. An element comes back as the object that
+  was stored: identity is derived where a batch materializes an element per
+  index, and these store theirs.
+
+  `OpaqueBatch` is the case a batch's own spec exists for — an `OpaqueSpec`
+  names no ProbPipe kind, yet the batch is specified all the same, at the family
+  kind over it. Every element is checked against the shared spec at construction,
+  reporting the position that failed, since a batch asserts that spec of *all*
+  of them.
+
 - **`TermSpec` — the term-spec sub-hierarchy, and declarations stored as specs
   (#381).** `ValueSpec` now splits into *raw-value specs* (`ArraySpec`,
   `OpaqueSpec`), which name no ProbPipe kind, and *term specs*, one per kind,

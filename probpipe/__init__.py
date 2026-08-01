@@ -39,7 +39,9 @@ from probpipe.core._array_backend import (
 )
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._distribution_array import DistributionArray
+from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_array import NumericRecordArray, RecordArray
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
@@ -199,18 +201,15 @@ from probpipe.validation import predictive_check
 
 __all__ = [
     "Annotated",
-    # Inference
     "ApproximateDistribution",
     "ArrayBackend",
     "ArrayRandomFunction",
     "ArraySpec",
     "Batch",
     "BatchSpec",
-    # Array-backend registry
     "BayesFlowLikelihood",
     "BayesFlowModel",
     "BayesFlowRatio",
-    # Discrete
     "Bernoulli",
     "Beta",
     "Binomial",
@@ -220,15 +219,12 @@ __all__ = [
     "Categorical",
     "Cauchy",
     "ConditionallyIndependentLikelihood",
-    # Constraints
     "Constraint",
     "ConversionInfo",
     "ConversionMethod",
     "Converter",
-    # Record-based designs
     "Design",
     "Dirichlet",
-    # Base classes
     "Distribution",
     "DistributionArray",
     "DistributionSpec",
@@ -239,8 +235,8 @@ __all__ = [
     "FlattenedDistributionView",
     "FullFactorialDesign",
     "Function",
+    "FunctionBatch",
     "FunctionSpec",
-    # Modeling
     "GLMLikelihood",
     "Gamma",
     "GaussianRandomFunction",
@@ -251,7 +247,6 @@ __all__ = [
     "InverseGamma",
     "JointEmpirical",
     "JointGaussian",
-    # KDE
     "KDEDistribution",
     "Laplace",
     "Likelihood",
@@ -260,11 +255,9 @@ __all__ = [
     "MinibatchedDistribution",
     "Module",
     "Multinomial",
-    # Multivariate
     "MultivariateNormal",
     "NamedTree",
     "NegativeBinomial",
-    # Continuous
     "Normal",
     "NumericEventTemplate",
     "NumericJointEmpirical",
@@ -273,20 +266,17 @@ __all__ = [
     "NumericRecordArray",
     "NumericRecordDistribution",
     "NumericRecordDistributionView",
+    "OpaqueBatch",
     "OpaqueSpec",
     "ParentInfo",
     "Pareto",
     "Poisson",
     "ProbabilisticModel",
-    # Joint
     "ProductDistribution",
     "Provenance",
     "ProvenanceMode",
-    # Random functions
     "RandomFunction",
-    # Random measures
     "RandomMeasure",
-    # Record
     "Record",
     "RecordArray",
     "RecordBootstrapReplicateDistribution",
@@ -300,7 +290,6 @@ __all__ = [
     "SupportsArrayBackend",
     "SupportsConditioning",
     "SupportsCovariance",
-    # Protocols
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",
@@ -313,23 +302,19 @@ __all__ = [
     "TFPDistribution",
     "TermSpec",
     "TrackedTerm",
-    # Transformed
     "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
     "ValueSpec",
     "VonMisesFisher",
-    # Weights
     "Weights",
     "Wishart",
-    # Configuration
     "WorkflowKind",
     "abstract_workflow_method",
     "array_backend_for",
     "bijector_for",
     "boolean",
     "condition_on_nutpie",
-    # Converters
     "converter_registry",
     "elliptical_slice",
     "function",
@@ -337,7 +322,6 @@ __all__ = [
     "inference_method_registry",
     "integer_interval",
     "interval",
-    # Transition / iteration
     "iterate",
     "learn_amortized_likelihood",
     "learn_amortized_posterior",
@@ -346,10 +330,8 @@ __all__ = [
     "non_negative_integer",
     "positive",
     "positive_definite",
-    # Validation
     "predictive_check",
     "prefect_config",
-    # Provenance
     "provenance_ancestors",
     "provenance_config",
     "provenance_dag",
