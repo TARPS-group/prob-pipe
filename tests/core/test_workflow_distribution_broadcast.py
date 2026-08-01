@@ -7,7 +7,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import BroadcastDistribution, EmpiricalDistribution, Normal, ProductDistribution
+from probpipe import (
+    BroadcastDistribution,
+    EmpiricalDistribution,
+    Function,
+    Normal,
+    ProductDistribution,
+)
 from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
 from probpipe.core.config import WorkflowKind
 
@@ -275,6 +281,138 @@ class TestExecuteDistributionBroadcast:
 
         assert isinstance(result, BroadcastDistribution)
         assert result.num_atoms == 3
+
+
+class TestCoSamplingGroups:
+    """One joint draw per co-sampling group, per design IV.2.
+
+    Arguments are grouped by root ancestor: the same distribution passed twice,
+    sibling views of one parent, and a parent passed alongside its own view all
+    fall in one group, and each group is drawn once. Arguments with no common
+    root are drawn independently, which samples the product of their laws.
+    """
+
+    @staticmethod
+    def _joint():
+        return ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=10.0, scale=1.0, name="y"),
+        )
+
+    @staticmethod
+    def _sample(values, names, *, n=8, seed=3):
+        return _workflow_distribution_broadcast._sample_broadcast_args(
+            values, [_ref(name) for name in names], n, jax.random.PRNGKey(seed)
+        )
+
+    def test_the_same_distribution_passed_twice_is_drawn_once(self):
+        """The alias case: two references to one law denote one random variable."""
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        sampled = self._sample({"a": dist, "b": dist}, ("a", "b"))
+
+        np.testing.assert_array_equal(sampled[_ref("a")], sampled[_ref("b")])
+
+    def test_a_parent_and_its_own_view_share_one_draw(self):
+        """The view's values are the parent draw's projection, not a second draw."""
+        joint = self._joint()
+        sampled = self._sample({"a": joint, "b": joint["x"]}, ("a", "b"))
+
+        np.testing.assert_array_equal(sampled[_ref("a")]["x"], sampled[_ref("b")])
+
+    def test_grouping_does_not_depend_on_argument_order(self):
+        """A group is a set of references, so the view may come first."""
+        joint = self._joint()
+        parent_first = self._sample({"a": joint, "b": joint["x"]}, ("a", "b"))
+        view_first = self._sample({"a": joint["x"], "b": joint}, ("a", "b"))
+
+        np.testing.assert_array_equal(view_first[_ref("b")]["x"], view_first[_ref("a")])
+        np.testing.assert_array_equal(parent_first[_ref("b")], view_first[_ref("a")])
+
+    def test_sibling_views_come_from_one_parent_draw(self):
+        """Distinct fields differ, but both project the same joint draw."""
+        joint = self._joint()
+        sampled = self._sample({"a": joint["x"], "b": joint["y"], "c": joint}, ("a", "b", "c"))
+
+        parent = sampled[_ref("c")]
+        np.testing.assert_array_equal(sampled[_ref("a")], parent["x"])
+        np.testing.assert_array_equal(sampled[_ref("b")], parent["y"])
+        assert not np.array_equal(sampled[_ref("a")], sampled[_ref("b")])
+
+    def test_arguments_with_no_common_root_are_drawn_independently(self):
+        """Separate groups sample the product law, one subkey per group in order.
+
+        Pinning the subkeys, not just their difference: a group of one consumes
+        exactly one split, so an aliased group cannot perturb the stream that
+        unrelated arguments already receive.
+        """
+        first = Normal(loc=0.0, scale=1.0, name="x")
+        second = Normal(loc=0.0, scale=1.0, name="y")
+        sampled = self._sample({"a": first, "b": second}, ("a", "b"))
+
+        key = jax.random.PRNGKey(3)
+        key, subkey_a = jax.random.split(key)
+        _key, subkey_b = jax.random.split(key)
+        np.testing.assert_array_equal(sampled[_ref("a")], first._sample(subkey_a, (8,)))
+        np.testing.assert_array_equal(sampled[_ref("b")], second._sample(subkey_b, (8,)))
+
+
+class TestCoSamplingThroughACall:
+    """The same contract as seen by a caller of a lifted ``Function``."""
+
+    @staticmethod
+    def _difference(**controls):
+        return Function(
+            func=lambda a, b: a - b,
+            dispatch="sequential",
+            n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
+            seed=0,
+            **controls,
+        )
+
+    def test_a_law_passed_twice_approximates_f_of_one_variable(self):
+        """``f(d, d)`` is ``X - X``, not ``X1 - X2``."""
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        result = self._difference()(dist, dist)
+
+        np.testing.assert_array_equal(np.asarray(result.samples), np.zeros(8))
+
+    def test_include_inputs_reports_one_realization_under_both_names(self):
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        result = self._difference(include_inputs=True)(dist, dist)
+
+        np.testing.assert_array_equal(
+            np.asarray(result.input_samples["a"]), np.asarray(result.input_samples["b"])
+        )
+
+    def test_unrelated_laws_still_sample_the_product(self):
+        """The complementary case: independence must survive the fix."""
+        result = self._difference()(
+            Normal(loc=0.0, scale=1.0, name="x"), Normal(loc=0.0, scale=1.0, name="y")
+        )
+
+        assert not np.allclose(np.asarray(result.samples), 0.0)
+
+    @pytest.mark.parametrize("n_broadcast_samples", [16, 8, 3])
+    def test_an_empirical_passed_twice_enumerates_one_axis(self, n_broadcast_samples):
+        """One enumeration axis per group: the diagonal, not the squared grid.
+
+        Parameterized across the budget because the old behaviour degraded
+        differently as ``n_broadcast_samples`` fell below the product size —
+        enumerating both, then enumerating one and sampling the other.
+        """
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="e")
+        result = self._difference(n_broadcast_samples=n_broadcast_samples)(empirical, empirical)
+
+        samples = np.asarray(result.samples).ravel()
+        assert samples.size == 3
+        np.testing.assert_array_equal(samples, np.zeros(3))
+
+    def test_an_aliased_empirical_counts_its_weight_once(self):
+        """Weights are per group, so an alias does not square them."""
+        empirical = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="e")
+        result = self._difference(include_inputs=True)(empirical, empirical)
+
+        np.testing.assert_allclose(np.asarray(result.weights), np.full(3, 1 / 3))
 
 
 class TestIndexSampleHelper:

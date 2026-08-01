@@ -24,7 +24,6 @@ except ImportError:
 
 from ..custom_types import Array, PRNGKey
 from . import _workflow_call, _workflow_execution, _workflow_plan
-from ._record_distribution import _RecordDistributionView
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution, EmpiricalDistribution
 from .event_template import EventTemplate
@@ -117,7 +116,7 @@ def execute_distribution_broadcast(
     broadcast_args = list(broadcast_args)
     _validate_n_broadcast_samples(n_broadcast_samples)
 
-    empirical_args, sample_args, product_size = _split_empirical_args(
+    empirical_groups, sample_args, product_size = _split_empirical_args(
         values=values,
         broadcast_args=broadcast_args,
         n_broadcast_samples=n_broadcast_samples,
@@ -126,9 +125,9 @@ def execute_distribution_broadcast(
     dispatch = resolve_dispatch(
         values,
         broadcast_args,
-        jax_supported=not empirical_args,
+        jax_supported=not empirical_groups,
     )
-    if requested_dispatch == "jax" and empirical_args:
+    if requested_dispatch == "jax" and empirical_groups:
         raise ValueError(
             "dispatch='jax' does not support exact empirical enumeration; "
             "use dispatch='auto', 'sequential', or 'thread' for this path."
@@ -136,11 +135,11 @@ def execute_distribution_broadcast(
 
     # Enumeration preserves exact empirical weights and must run in all row-wise
     # dispatch modes; otherwise cartesian-product semantics vary by dispatch.
-    if empirical_args:
+    if empirical_groups:
         result = _broadcast_enumerate(
             func=func,
             values=values,
-            empirical_args=empirical_args,
+            empirical_groups=empirical_groups,
             sample_args=sample_args,
             product_size=product_size,
             n_broadcast_samples=n_broadcast_samples,
@@ -214,30 +213,51 @@ def _split_empirical_args(
     broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
     n_broadcast_samples: int,
 ) -> tuple[
-    dict[_workflow_call.WorkflowInputRef, EmpiricalDistribution],
+    tuple[tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]], ...],
     dict[_workflow_call.WorkflowInputRef, Distribution],
     int,
 ]:
-    candidates: list[tuple[_workflow_call.WorkflowInputRef, EmpiricalDistribution]] = []
-    sample_args: dict[_workflow_call.WorkflowInputRef, Distribution] = {}
-    for ref in broadcast_args:
-        dist = _workflow_call.input_ref_value(values, ref)
-        if isinstance(dist, EmpiricalDistribution) and dist.num_atoms <= n_broadcast_samples:
-            candidates.append((ref, dist))
-        else:
-            sample_args[ref] = dist
-    candidates.sort(key=lambda pair: pair[1].num_atoms)
+    """Split the broadcast arguments into enumerable empirical groups and the rest.
 
-    empirical_args: dict[_workflow_call.WorkflowInputRef, EmpiricalDistribution] = {}
+    A **co-sampling group** is enumerated or sampled as a unit, never split, so
+    the same empirical passed twice contributes one enumeration axis rather than
+    a squared grid. A group is enumerable when its root is an empirical small
+    enough to enumerate and every member *is* that root: a group holding a view
+    goes to the sampling path whole, which keeps a parent and its view on one
+    draw instead of enumerating one and sampling the other.
+
+    Groups are enumerated smallest-first while the running product fits the
+    budget; a group that does not fit falls through to sampling, where its
+    members still co-sample.
+    """
+    candidates: list[tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]]] = []
+    sample_args: dict[_workflow_call.WorkflowInputRef, Distribution] = {}
+    for root, arg_refs in _workflow_plan.group_by_root(values=values, refs=broadcast_args):
+        enumerable = (
+            isinstance(root, EmpiricalDistribution)
+            and root.num_atoms <= n_broadcast_samples
+            and all(_workflow_call.input_ref_value(values, ref) is root for ref in arg_refs)
+        )
+        if enumerable:
+            candidates.append((root, arg_refs))
+        else:
+            for ref in arg_refs:
+                sample_args[ref] = _workflow_call.input_ref_value(values, ref)
+    candidates.sort(key=lambda pair: pair[0].num_atoms)
+
+    empirical_groups: list[
+        tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]]
+    ] = []
     product_size = 1
-    for name, dist in candidates:
+    for dist, arg_refs in candidates:
         if product_size * dist.num_atoms <= n_broadcast_samples:
-            empirical_args[name] = dist
+            empirical_groups.append((dist, arg_refs))
             product_size *= dist.num_atoms
         else:
-            sample_args[name] = dist
+            for ref in arg_refs:
+                sample_args[ref] = dist
 
-    return empirical_args, sample_args, product_size
+    return tuple(empirical_groups), sample_args, product_size
 
 
 def _make_broadcast_provenance(
@@ -272,37 +292,37 @@ def _sample_broadcast_args(
     n: int,
     key: PRNGKey,
 ) -> dict[_workflow_call.WorkflowInputRef, Array]:
-    """Sample all broadcast arguments, handling view reconnection.
+    """Sample all broadcast arguments, one joint draw per co-sampling group.
 
-    Sibling views from the same parent distribution share one parent draw,
-    preserving cross-field correlation. Plain non-view distributions are
-    sampled independently per kwarg, even if the same object is passed under
-    multiple names.
+    Arguments are grouped by root ancestor, so the same distribution passed
+    twice, sibling views of one parent, and a parent passed alongside its own
+    view all fall in one group. Each group is drawn **once**, from its root, and
+    every member takes its own value out of that draw — the root itself whole, a
+    view through its field path. Dependence within a group therefore flows
+    through the wrapped function instead of being broken by independent
+    sampling, so ``f(d, d)`` approximates ``f(X, X)`` rather than ``f(X1, X2)``.
+
+    Groups with no common root are drawn from separate subkeys, which samples the
+    product of their laws.
     """
     sampled: dict[_workflow_call.WorkflowInputRef, Array] = {}
-    for arg_refs in _workflow_plan.group_by_parent(
-        values=values,
-        refs=broadcast_args,
-    ).values():
-        first = _workflow_call.input_ref_value(values, arg_refs[0])
-        if not isinstance(first, _RecordDistributionView):
-            for ref in arg_refs:
-                key, subkey = jax.random.split(key)
-                dist = _workflow_call.input_ref_value(values, ref)
-                sampled[ref] = dist._sample(subkey, (n,))
-            continue
+    for root, arg_refs in _workflow_plan.group_by_root(values=values, refs=broadcast_args):
         key, subkey = jax.random.split(key)
-        structured = first.parent._sample(subkey, (n,))
+        drawn = root._sample(subkey, (n,))
         for ref in arg_refs:
-            view = _workflow_call.input_ref_value(values, ref)
-            if hasattr(view, "_extract"):
-                sampled[ref] = view._extract(structured)
-            else:
-                val = structured
-                for k in getattr(view, "_key_path", (view.field,)):
-                    val = val[k]
-                sampled[ref] = val
+            member = _workflow_call.input_ref_value(values, ref)
+            sampled[ref] = drawn if member is root else _project_from_root(member, drawn)
     return sampled
+
+
+def _project_from_root(view: Any, drawn: Any) -> Array:
+    """A view's own draw, taken out of its root's joint draw."""
+    if hasattr(view, "_extract"):
+        return view._extract(drawn)
+    projected = drawn
+    for key_name in getattr(view, "_key_path", (view.field,)):
+        projected = projected[key_name]
+    return projected
 
 
 def _broadcast_jax(
@@ -364,7 +384,9 @@ def _broadcast_enumerate(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    empirical_args: dict[_workflow_call.WorkflowInputRef, EmpiricalDistribution],
+    empirical_groups: tuple[
+        tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]], ...
+    ],
     sample_args: dict[_workflow_call.WorkflowInputRef, Distribution],
     product_size: int,
     n_broadcast_samples: int,
@@ -375,10 +397,14 @@ def _broadcast_enumerate(
     ],
     output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
-    """Enumerate empirical distributions and sample any remaining inputs."""
+    """Enumerate empirical distributions and sample any remaining inputs.
+
+    One axis of the cartesian product per co-sampling group, so every reference in
+    a group takes the same atom and contributes its weight once.
+    """
     key = get_key()
-    emp_names = list(empirical_args.keys())
-    emp_dists = [empirical_args[name] for name in emp_names]
+    emp_dists = [dist for dist, _refs in empirical_groups]
+    emp_refs = [arg_refs for _dist, arg_refs in empirical_groups]
 
     reps_per_combo = max(1, n_broadcast_samples // product_size) if sample_args else 1
     total = product_size * reps_per_combo
@@ -393,18 +419,20 @@ def _broadcast_enumerate(
     weights = []
     sample_idx = 0
 
-    all_broadcast_args = emp_names + sample_arg_names
+    all_broadcast_args = [ref for arg_refs in emp_refs for ref in arg_refs] + sample_arg_names
 
     for combo in cartesian_product(*(range(d.num_atoms) for d in emp_dists)):
         emp_weight = 1.0
-        for _ref, dist, i in zip(emp_names, emp_dists, combo):
+        for dist, i in zip(emp_dists, combo, strict=True):
             emp_weight *= float(dist.weights[i])
 
         for _ in range(reps_per_combo):
             replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
 
-            for ref, dist, i in zip(emp_names, emp_dists, combo):
-                replacements[ref] = _index_sample(dist.samples, i)
+            for dist, arg_refs, i in zip(emp_dists, emp_refs, combo, strict=True):
+                atom = _index_sample(dist.samples, i)
+                for ref in arg_refs:
+                    replacements[ref] = atom
 
             for ref in sample_args:
                 replacements[ref] = _index_sample(sampled[ref], sample_idx)

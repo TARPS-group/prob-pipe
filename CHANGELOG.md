@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
+  references to the same law denote one random variable, so they must come from
+  one draw. Passing the same `Distribution` to two arguments sampled it twice
+  instead, so `f(d, d)` approximated `f(X1, X2)` — a silently wrong answer, with
+  `difference(dist, dist)` returning a spread around zero rather than zero.
+
+  Arguments were already grouped by root ancestor, as the co-sampling contract
+  requires; the grouping was then discarded for plain distributions and honored
+  only for field views. Each group is now drawn **once**, from its root, with
+  every member taking its own value out of that draw. Two further cases follow
+  from the same change: a parent passed alongside its own view no longer raises
+  (it was projected as though the parent were a view), and an empirical passed
+  twice contributes **one** enumeration axis rather than a squared grid — over
+  three atoms, `f(e, e)` enumerates 3 points instead of 9, each weighted once
+  instead of squared.
+
+  Arguments with no common root are unaffected, down to the subkeys: a group of
+  one consumes exactly one key split, as before. Only calls that were already
+  returning wrong values change their output.
+
 - **Value specs are fingerprinted by declaration, not identity (#381).** The
   spec hasher now covers `RecordSpec` and recurses into a stored declaration
   (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec
