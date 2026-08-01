@@ -25,8 +25,11 @@ from probpipe import (
     FunctionSpec,
     OpaqueBatch,
     OpaqueSpec,
+    Record,
+    TermSpec,
     TrackedTerm,
 )
+from probpipe.core.provenance import Provenance
 
 
 @pytest.fixture
@@ -39,6 +42,16 @@ def functions():
 def labels():
     """Three opaque values under one `site` level."""
     return OpaqueBatch(["north", "east", "south"], "site", name="s")
+
+
+@pytest.fixture
+def function_grid():
+    """A 2x2 FunctionBatch, so multi-axis behavior is pinned for both classes."""
+    store = np.empty((2, 2), dtype=object)
+    for row in range(2):
+        for column in range(2):
+            store[row, column] = lambda x, r=row, c=column: 10 * r + c + x
+    return FunctionBatch(store, ["chain", "draw"], name="fg")
 
 
 @pytest.fixture
@@ -85,6 +98,25 @@ class TestConstruction:
         assert labels.name == "s"
         assert not labels.name_is_auto
 
+    def test_a_given_name_can_still_be_marked_auto(self):
+        """The shape an operation deriving a batch name needs: named, but re-derivable."""
+        batch = OpaqueBatch(["a"], "site", name="given", name_is_auto=True)
+
+        assert batch.name == "given"
+        assert batch.name_is_auto
+
+    def test_a_provenance_is_carried_as_given(self):
+        record = Provenance.create("sample", parents=[])
+        batch = OpaqueBatch(["a"], "site", provenance=record)
+
+        assert batch.provenance is record
+
+    def test_a_generator_is_materialized_into_one_axis(self):
+        batch = OpaqueBatch((str(i) for i in range(3)), "site")
+
+        assert batch.batch_shape == (3,)
+        assert [batch[i] for i in range(3)] == ["0", "1", "2"]
+
 
 class TestConstructionRefusals:
     def test_a_non_callable_element_names_its_position(self):
@@ -95,13 +127,19 @@ class TestConstructionRefusals:
         with pytest.raises(TypeError, match="denotes a subtree"):
             OpaqueBatch([{"a": 1}], "site")
 
-    def test_a_multi_axis_position_is_reported_as_a_tuple(self):
+    @pytest.mark.parametrize(
+        ("cls", "good", "bad"),
+        [(OpaqueBatch, "x", {"a": 1}), (FunctionBatch, lambda x: x, 3)],
+        ids=["opaque", "function"],
+    )
+    def test_a_multi_axis_position_is_reported_as_a_tuple(self, cls, good, bad):
+        """Both classes render the position the same way, from the shared check."""
         store = np.empty((2, 2), dtype=object)
-        store[...] = "x"
-        store[1, 0] = {"a": 1}
+        store[...] = good
+        store[1, 0] = bad
 
         with pytest.raises(TypeError, match=r"element at \(1, 0\)"):
-            OpaqueBatch(store, ["chain", "draw"])
+            cls(store, ["chain", "draw"])
 
     def test_no_elements_is_refused(self):
         with pytest.raises(ValueError, match="at least one element"):
@@ -130,6 +168,44 @@ class TestConstructionRefusals:
         with pytest.raises(TypeError, match=match):
             cls([lambda: 1], "variant", element_spec=spec)
 
+    @pytest.mark.parametrize(
+        ("axis_groups", "why"),
+        [
+            ([(5, 7)], "sizes disagree with the store"),
+            ([(2,)], "an axis is left out"),
+            ([(2,), (3,), (4,)], "an axis is invented"),
+            ([(3,), (2,)], "the sizes are transposed"),
+        ],
+        ids=["wrong-sizes", "too-few-axes", "too-many-axes", "transposed"],
+    )
+    def test_axis_groups_must_tile_the_stored_shape(self, axis_groups, why):
+        """A grouping that disagrees would make every accessor a false statement."""
+        store = np.empty((2, 3), dtype=object)
+        store[...] = "x"
+
+        with pytest.raises(ValueError, match="must tile the shape"):
+            OpaqueBatch(store, ["a", "b"][: len(axis_groups)], axis_groups=axis_groups)
+
+    @pytest.mark.parametrize(
+        ("elements", "match"),
+        [
+            ("north", "iterates into its parts"),
+            (b"ab", "iterates into its parts"),
+            ({"a": 1, "b": 2}, "iterates into its parts"),
+            (np.zeros(3), "must have dtype=object"),
+            (jnp.zeros(3), "must have dtype=object"),
+        ],
+        ids=["str", "bytes", "mapping", "ndarray", "jax"],
+    )
+    def test_a_container_that_iterates_into_its_parts_is_refused(self, elements, match):
+        """Each would give a batch of pieces of one object, not a batch of objects."""
+        with pytest.raises(TypeError, match=match):
+            OpaqueBatch(elements, "site")
+
+    def test_something_not_iterable_at_all_is_refused(self):
+        with pytest.raises(TypeError, match="iterable of elements"):
+            OpaqueBatch(3, "site")
+
 
 class TestSpec:
     def test_the_batch_is_specified_at_the_family_kind(self, functions):
@@ -140,6 +216,7 @@ class TestSpec:
         assert isinstance(functions.element_spec, FunctionSpec)
         assert isinstance(labels.element_spec, OpaqueSpec)
         assert functions.element_spec is functions.spec.element_spec
+        assert labels.element_spec is labels.spec.element_spec
 
     def test_an_element_spec_may_be_given(self):
         declared = FunctionSpec(EventTemplate(x=()), EventTemplate(y=()))
@@ -149,13 +226,20 @@ class TestSpec:
         assert batch.spec.element_spec == declared
 
     def test_a_batch_naming_no_kind_is_specified_all_the_same(self, labels):
-        """The case `BatchSpec` exists for: `OpaqueSpec` names no kind."""
-        assert not isinstance(labels.element_spec, type(labels.spec))
-        assert labels.spec.is_valid(labels)
+        """The case `BatchSpec` exists for: `OpaqueSpec` names no kind, the batch does."""
+        assert not isinstance(labels.element_spec, TermSpec)
+        assert isinstance(labels.spec, TermSpec)
 
-    def test_is_valid_reads_the_whole_multiplicity(self, functions):
+    def test_is_valid_reads_every_part_of_the_spec(self, functions):
+        """All three fields: the element spec, the axis sizes, and the level names."""
+        three = [lambda x: x, lambda x: 2 * x, lambda x: 3 * x]
+
         assert functions.spec.is_valid(functions)
-        assert not functions.spec.is_valid(FunctionBatch([lambda x: x], "variant", name="other"))
+        assert not functions.spec.is_valid(FunctionBatch(three[:1], "variant"))
+        assert not functions.spec.is_valid(FunctionBatch(three, "flavor"))
+        assert not functions.spec.is_valid(
+            FunctionBatch(three, "variant", element_spec=FunctionSpec(EventTemplate(x=())))
+        )
 
 
 class TestElements:
@@ -224,6 +308,25 @@ class TestTheStorageContractIsSatisfiable:
     def test_a_view_of_a_view_still_shares(self, grid):
         assert np.shares_memory(grid[0:2][1:3]._store, grid._store)
 
+    @pytest.mark.parametrize(
+        "select",
+        [
+            lambda b: b[0:2],
+            lambda b: b[0],
+            lambda b: b.at_levels(draw=1),
+            lambda b: b.at_levels(chain=0, draw=slice(1, 3)),
+            lambda b: b[::-1],
+        ],
+        ids=["slice", "integer-outer", "integer-inner", "mixed", "reversed"],
+    )
+    def test_every_indexing_form_shares_the_store(self, grid, select):
+        """Not slices alone: an integer index drops an axis and must still view."""
+        assert np.shares_memory(select(grid)._store, grid._store)
+
+    def test_a_function_batch_shares_too(self, function_grid):
+        """The contract is the base's, so it holds for both classes."""
+        assert np.shares_memory(function_grid[0]._store, function_grid._store)
+
     def test_a_descending_slice_is_presented_in_the_order_given(self, labels):
         assert [labels[::-1][i] for i in range(3)] == ["south", "east", "north"]
 
@@ -236,6 +339,34 @@ class TestTheStorageContractIsSatisfiable:
         assert whole is not labels
         assert np.shares_memory(whole._store, labels._store)
         assert [whole[i] for i in range(3)] == [labels[i] for i in range(3)]
+
+    def test_the_store_cannot_be_written_through(self, labels):
+        """A view shares the buffer, so a writable store would reach the parent."""
+        with pytest.raises(ValueError, match="read-only"):
+            labels._store[0] = {"a": 1}
+        with pytest.raises(ValueError, match="read-only"):
+            labels[0:2]._store[0] = {"a": 1}
+
+    def test_the_array_a_caller_passes_is_copied(self):
+        """Otherwise the caller could write past the per-element check."""
+        store = np.empty(2, dtype=object)
+        store[0], store[1] = "north", "south"
+        batch = OpaqueBatch(store, "site")
+
+        store[1] = {"a": 1}
+
+        assert batch[1] == "south"
+        assert batch.element_spec.is_valid(batch[1])
+
+    def test_an_empty_selection_is_a_batch_of_nothing(self, labels):
+        """Reachable by selection though the constructor refuses it — see Notes."""
+        empty = labels[0:0]
+
+        assert empty.batch_shape == (0,)
+        assert empty.level_names == ("site",)
+        assert len(empty) == 0
+        assert list(empty) == []
+        assert empty._store.size == 0
 
     def test_a_view_carries_the_spec_the_abc_computed(self, grid):
         assert grid.at_levels(chain=0).spec == BatchSpec(OpaqueSpec(), ((3,),), ("draw",))
@@ -273,9 +404,13 @@ class TestFieldKeys:
 
 
 class TestRoundTrips:
-    @pytest.mark.parametrize("clone", [pickle.loads, copy.copy], ids=["pickle", "copy"])
+    @pytest.mark.parametrize(
+        "clone",
+        [lambda b: pickle.loads(pickle.dumps(b)), copy.copy, copy.deepcopy],
+        ids=["pickle", "copy", "deepcopy"],
+    )
     def test_a_batch_survives(self, labels, clone):
-        restored = clone(pickle.dumps(labels)) if clone is pickle.loads else clone(labels)
+        restored = clone(labels)
 
         assert restored.name == labels.name
         assert restored.level_names == labels.level_names
@@ -290,6 +425,33 @@ class TestRoundTrips:
     def test_the_store_travels_without_being_declared(self, labels):
         """`Batch.__getstate__` walks the MRO, so `_store` needs no restating."""
         assert "_store" in labels.__getstate__()[1]
+
+
+class TestProvenance:
+    """A stored element is not the batch's to attribute (design II.5)."""
+
+    def test_a_view_inherits_the_batch_lineage(self, labels, full_provenance_mode):
+        produced = labels.with_provenance(Provenance.create("collect", parents=[]))
+
+        assert produced[0:2].provenance is produced.provenance
+
+    def test_reading_an_element_leaves_the_caller_object_untouched(self, full_provenance_mode):
+        """These batches store what they were given, so a read writes to nothing."""
+        element = Record("r", x=1.0)
+        batch = OpaqueBatch([element, Record("r2", x=2.0)], "site", name="recs")
+        batch.with_provenance(Provenance.create("collect", parents=[]))
+
+        assert batch[0] is element
+        assert element.provenance is None
+
+    def test_the_caller_can_still_set_its_own_provenance_afterwards(self, full_provenance_mode):
+        """The write-once slot stays the caller's to spend."""
+        element = Record("r", x=1.0)
+        batch = OpaqueBatch([element], "site")
+        batch[0]
+
+        own = Provenance.create("fit", parents=[])
+        assert element.with_provenance(own).provenance is own
 
 
 class TestImmutability:
@@ -316,10 +478,21 @@ class TestTheseAreBatches:
         added = {
             name
             for cls in (FunctionBatch, OpaqueBatch)
-            for name in vars(cls)
+            for ancestor in cls.__mro__[: cls.__mro__.index(Batch)]
+            for name in vars(ancestor)
             if not name.startswith("_")
         }
         assert added == {"element_spec"}
 
-    def test_repr_reads_the_levels_and_no_elements(self, grid):
-        assert repr(grid) == "OpaqueBatch(name='post', chain=2, draw=3)"
+    def test_repr_reads_the_levels_and_no_elements(self):
+        """Load-bearing: `with_provenance` interpolates the batch into its own error."""
+
+        class _Unreadable:
+            def __repr__(self):
+                raise AssertionError("repr must not read an element")
+
+        store = np.empty(2, dtype=object)
+        store[0] = store[1] = _Unreadable()
+        batch = OpaqueBatch(store, "site", name="s")
+
+        assert repr(batch) == "OpaqueBatch(name='s', site=2)"

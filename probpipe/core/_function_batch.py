@@ -5,7 +5,7 @@ See design III.1.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 
 import numpy as np
 
@@ -19,29 +19,38 @@ __all__ = ["FunctionBatch"]
 class FunctionBatch(_ObjectBatch[Callable]):
     """A batch of callables sharing one :class:`FunctionSpec`.
 
-    A callable has no native stacked form, so the collection is a batch rather
-    than an array. Every element satisfies the shared ``element_spec``, and the
-    spec is callable-generic: a plain lambda, a NumPy function, and a
-    ``Function`` are all admitted, the wrapper being one such element and not the
-    required type.
-
     Parameters
     ----------
-    elements : numpy.ndarray or sequence of callable
-        The callables, as an object array of any shape or a flat sequence.
-    level_names : str or sequence of str
+    elements : numpy.ndarray or iterable of callable
+        The callables, as an object array of any shape or a flat iterable.
+    level_names : str or iterable of str
         One name per level, outermost first.
     element_spec : FunctionSpec, optional
         What every element satisfies. Defaults to ``FunctionSpec()``, which
         specifies a callable and neither of its templates.
-    axis_groups : sequence of sequence of int, optional
-        The axes each level holds; defaults to one axis per level.
+    axis_groups : iterable of iterable of int, optional
+        The axis sizes each level holds; defaults to one axis per level.
+    name : str, optional
+        The batch's name; defaults to ``"functionbatch"``, marked auto-derived.
+    name_is_auto : bool, default False
+        Whether *name* is auto-derived rather than user-given.
+    provenance : Provenance, optional
+        How this batch was produced.
 
     Raises
     ------
     TypeError
-        If ``element_spec`` is not a :class:`FunctionSpec`, or an element is not
-        callable.
+        If ``element_spec`` is not a :class:`FunctionSpec`, if an element is not
+        callable, or for any reason :class:`_ObjectBatch` refuses ``elements``.
+    ValueError
+        For any reason :class:`_ObjectBatch` refuses the shape or the levels.
+
+    Notes
+    -----
+    A callable has no native stacked form, so the collection is a batch rather
+    than an array. The spec is callable-generic: a plain lambda, a NumPy
+    function, and a ``Function`` are all admitted, the wrapper being one such
+    element and not the required type.
 
     Examples
     --------
@@ -54,9 +63,11 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     __slots__ = ()
 
+    _element_rule = "be callable"
+
     def __init__(
         self,
-        elements: np.ndarray | Sequence[Callable],
+        elements: np.ndarray | Iterable[Callable],
         level_names: str | Iterable[str],
         *,
         element_spec: FunctionSpec | None = None,
@@ -81,7 +92,6 @@ class FunctionBatch(_ObjectBatch[Callable]):
             name_is_auto=name_is_auto,
             provenance=provenance,
         )
-        _require_callable(self)
 
     @property
     def element_spec(self) -> FunctionSpec:
@@ -89,20 +99,3 @@ class FunctionBatch(_ObjectBatch[Callable]):
         spec = self._spec.element_spec
         assert isinstance(spec, FunctionSpec)  # narrowed at construction
         return spec
-
-
-def _require_callable(batch: FunctionBatch) -> None:
-    """Fail at construction on any element the shared spec does not admit.
-
-    Checked here rather than left to ``is_valid`` because a batch asserts that
-    *every* element satisfies one spec: an element that does not makes the
-    batch's own spec a false statement about it, and the position it sits at is
-    what a caller needs to hear about.
-    """
-    for index, element in np.ndenumerate(batch._store):
-        if not batch.element_spec.is_valid(element):
-            position = index[0] if len(index) == 1 else index
-            raise TypeError(
-                f"every element of a FunctionBatch is callable; the element at "
-                f"{position} is a {type(element).__name__}"
-            )

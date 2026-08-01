@@ -5,7 +5,7 @@ See design III.1.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable
 from typing import Any
 
 import numpy as np
@@ -20,28 +20,40 @@ __all__ = ["OpaqueBatch"]
 class OpaqueBatch(_ObjectBatch[Any]):
     """A batch of opaque objects sharing one :class:`OpaqueSpec`.
 
-    An opaque value exposes no structure, so there is nothing to stack it into
-    and the collection is a batch. This is the case a batch's own spec exists
-    for: an ``OpaqueSpec`` names no ProbPipe kind, yet the batch is specified all
-    the same, at the family kind over it.
-
     Parameters
     ----------
-    elements : numpy.ndarray or sequence
-        The objects, as an object array of any shape or a flat sequence.
-    level_names : str or sequence of str
+    elements : numpy.ndarray or iterable
+        The objects, as an object array of any shape or a flat iterable.
+    level_names : str or iterable of str
         One name per level, outermost first.
     element_spec : OpaqueSpec, optional
         What every element satisfies. Defaults to ``OpaqueSpec()``.
-    axis_groups : sequence of sequence of int, optional
-        The axes each level holds; defaults to one axis per level.
+    axis_groups : iterable of iterable of int, optional
+        The axis sizes each level holds; defaults to one axis per level.
+    name : str, optional
+        The batch's name; defaults to ``"opaquebatch"``, marked auto-derived.
+    name_is_auto : bool, default False
+        Whether *name* is auto-derived rather than user-given.
+    provenance : Provenance, optional
+        How this batch was produced.
 
     Raises
     ------
     TypeError
-        If ``element_spec`` is not an :class:`OpaqueSpec`, or an element is a
-        mapping — which denotes tree structure, never a leaf, as everywhere else
-        in the value layer.
+        If ``element_spec`` is not an :class:`OpaqueSpec`, if an element is a
+        mapping, or for any reason :class:`_ObjectBatch` refuses ``elements``.
+    ValueError
+        For any reason :class:`_ObjectBatch` refuses the shape or the levels.
+
+    Notes
+    -----
+    An opaque value exposes no structure, so there is nothing to stack it into
+    and the collection is a batch. An element may be any value except a mapping,
+    which the value layer reads as a subtree rather than a leaf.
+
+    This is the case a batch's own spec exists for: an ``OpaqueSpec`` names no
+    ProbPipe kind, yet the batch is specified all the same, at the family kind
+    over it.
 
     Examples
     --------
@@ -54,9 +66,11 @@ class OpaqueBatch(_ObjectBatch[Any]):
 
     __slots__ = ()
 
+    _element_rule = "be any value but a mapping, which denotes a subtree"
+
     def __init__(
         self,
-        elements: np.ndarray | Sequence[Any],
+        elements: np.ndarray | Iterable[Any],
         level_names: str | Iterable[str],
         *,
         element_spec: OpaqueSpec | None = None,
@@ -80,7 +94,6 @@ class OpaqueBatch(_ObjectBatch[Any]):
             name_is_auto=name_is_auto,
             provenance=provenance,
         )
-        _reject_mappings(self)
 
     @property
     def element_spec(self) -> OpaqueSpec:
@@ -88,20 +101,3 @@ class OpaqueBatch(_ObjectBatch[Any]):
         spec = self._spec.element_spec
         assert isinstance(spec, OpaqueSpec)  # narrowed at construction
         return spec
-
-
-def _reject_mappings(batch: OpaqueBatch) -> None:
-    """Fail at construction on any element the shared spec does not admit.
-
-    ``OpaqueSpec`` accepts every value except a mapping, which the value layer
-    reads as a subtree rather than a leaf. Reporting it here names the position,
-    which is what a caller needs; leaving it to ``is_valid`` would make the
-    batch's own spec a false statement about one of its elements.
-    """
-    for index, element in np.ndenumerate(batch._store):
-        if not batch.element_spec.is_valid(element):
-            position = index[0] if len(index) == 1 else index
-            raise TypeError(
-                f"an opaque element is any value but a mapping, which denotes a subtree; "
-                f"the element at {position} is a {type(element).__name__}"
-            )
