@@ -37,6 +37,7 @@ from probpipe.core._array_backend import (
     array_backend_for,
     register_array_backend,
 )
+from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import NumericRecordArray, RecordArray
@@ -203,6 +204,8 @@ __all__ = [
     "ArrayBackend",
     "ArrayRandomFunction",
     "ArraySpec",
+    "Batch",
+    "BatchSpec",
     # Array-backend registry
     "BayesFlowLikelihood",
     "BayesFlowModel",

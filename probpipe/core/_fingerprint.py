@@ -358,6 +358,7 @@ def _update_value_spec(
     state: _FingerprintState,
 ) -> None:
     """Hash a built-in ValueSpec by the declaration fields that define it."""
+    from ._batch import BatchSpec
     from .event_template import (
         ArraySpec,
         DistributionSpec,
@@ -389,6 +390,12 @@ def _update_value_spec(
     elif isinstance(spec, FunctionSpec):
         _update(h, spec.input_template, depth + 1, max_array_bytes, state)
         _update(h, spec.output_spec, depth + 1, max_array_bytes, state)
+    elif isinstance(spec, BatchSpec):
+        _update(h, spec.element_spec, depth + 1, max_array_bytes, state)
+        h.update(b":axis_groups=")
+        _update(h, spec.axis_groups, depth + 1, max_array_bytes, state)
+        h.update(b":level_names=")
+        _update(h, spec.level_names, depth + 1, max_array_bytes, state)
     else:
         _update_weak_identity(h, spec, state)
 

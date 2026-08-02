@@ -28,7 +28,7 @@ probpipe/
 │   ├── _specs.py              #   ValueSpec, TermSpec, ArraySpec, OpaqueSpec (II.2)
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (II.3)
 │   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.4)
-│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, select (II.5)
+│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries (II.6)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.6)
 │   └── _config.py             #   library configuration

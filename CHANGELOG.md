@@ -52,6 +52,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and always reported invalid. `FunctionSpec` declares no check on its output,
   so nothing there is expressible-but-unsatisfiable.
 
+- **`Batch[E]` — the generic multiplicity axis (#350).** New
+  `probpipe.core._batch` module holding the tracked nd-collection ABC the
+  concrete batch types will specialize. A batch says *how many* objects there
+  are, separately from what one object contains, so `len` / `iter` /
+  `batch_shape` / `batch_size` speak only about the batch axes and never about
+  an element's structure.
+
+  Axes are partitioned into ordered **levels**: `axis_groups` tiles
+  `batch_shape` into contiguous groups, outermost first, with `batch_shape`
+  their flat concatenation — so `N` laws of `S` draws each are `(N,)` of `(S,)`
+  rather than one anonymous `(N, S)`, and anything stated over `batch_shape`
+  applies to a multi-level batch unchanged. Each level carries a name
+  (`level_names`, repinned by `with_level_names`), and names are unique within a
+  batch: an operation minting a level takes the name to give it, and a name
+  already present raises rather than being altered, exactly as a rename onto an
+  existing name does.
+
+  Indexing has two entry points. `at_levels(**levels)` takes one indexer per
+  named level and returns a view — the by-name counterpart of positional `[]`,
+  and the level analogue of `NamedTree.at_path`. `[]` itself dispatches on
+  whether the key is a **position** or a **name**: a position (an integer, a
+  slice, or a tuple of those) addresses the batch axes, while a name (a string,
+  or a tuple of strings for a path) addresses a field within every element —
+  which a batch of records will answer and a batch of anything else refuses. A
+  tuple mixing the two addresses neither, and is refused as a mix rather than as
+  a wrong number of indices. A whole axis is written `:` positionally; `None`
+  spells it in `at_levels` alone, where a keyword cannot take a `:` literal.
+
+  A view is **named by what it selects**, naming the level each selection
+  addresses — `"posterior[chain=0]"` for a sub-batch,
+  `"posterior[chain=0, draw=7]"` for an element, `"posterior[draw=1:3]"` for a
+  range. Levels selected whole are left out, so selecting all of a batch derives
+  the batch's own name, and the levels that appear are listed in the batch's own
+  order. The selection is tracked against the batch the name is rooted in, so a
+  derived name is a function of what the view selects: indexing two levels in one
+  call, in two calls, or in the other order all read alike, and two different
+  selections of one batch never do. A selection carries the *lineage* of the batch it came
+  out of rather than a node recording the read: nothing is computed by reading one
+  position out of a collection, and which position it was is what the name says.
+
+  A batch's **specification is its own**, at the *family* kind: the new
+  `BatchSpec` term spec carries the element's specification together with that
+  named multiplicity, and a batch stores it as the single source of its type.
+  `spec` therefore names the collection, just as any other term's spec names the
+  term, while `element_spec`, `axis_groups`, `level_names`, `batch_shape`, and
+  `batch_size` are views on it; the level invariants are the spec's own, checked
+  when it is constructed. A batch of values naming no kind is specified all the
+  same, a raw-value `element_spec` being as well formed as a term spec.
+
+  Element storage is the concrete class's business — the only thing left to a
+  subclass, through the `_element_at` and `_sub_batch_at` hooks. The second
+  presents a *view* that shares the store rather than copying out of it, which is
+  why selecting all of a batch needs no special case. A third hook, `_at_fields`,
+  is supplied only where the elements have fields to address by name. Renaming a
+  level touches no storage, so it defaults to a shallow copy.
+
+  A batch is immutable, round-trips through `pickle` and `copy`, and reprs as its
+  class, its name, and each level with its sizes, reading no element.
+  `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow separately.
+
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
   Python `signature`, optional authoritative `input_template` and
