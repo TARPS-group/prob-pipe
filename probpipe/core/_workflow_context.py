@@ -99,6 +99,14 @@ _ACTIVE_WORKFLOW_FRAME: ContextVar[_WorkflowFrame | None] = ContextVar(
     "probpipe_active_workflow_frame",
     default=None,
 )
+_STOCHASTIC_PROBE_ACTIVE: ContextVar[bool] = ContextVar(
+    "probpipe_stochastic_probe_active",
+    default=False,
+)
+
+
+class _StochasticProbeSignal(RuntimeError):
+    """Signal that JAX probing reached workflow-owned randomness."""
 
 
 class _WorkflowRunScope:
@@ -176,8 +184,27 @@ def _ephemeral_workflow_run() -> Iterator[None]:
         yield
 
 
+@contextmanager
+def _workflow_probe() -> Iterator[None]:
+    """Prevent a route probe from committing workflow stochastic state."""
+    token = _STOCHASTIC_PROBE_ACTIVE.set(True)
+    try:
+        yield
+    finally:
+        _STOCHASTIC_PROBE_ACTIVE.reset(token)
+
+
+def _has_active_workflow_frame() -> bool:
+    """Return whether the current task has a workflow frame installed."""
+    return _ACTIVE_WORKFLOW_FRAME.get() is not None
+
+
 def _commit_stochastic_invocation() -> _WorkflowInvocation:
     """Commit one stochastic invocation in the active workflow frame."""
+    if _STOCHASTIC_PROBE_ACTIVE.get():
+        raise _StochasticProbeSignal(
+            "JAX route probing reached a workflow-owned stochastic operation"
+        )
     frame = _ACTIVE_WORKFLOW_FRAME.get()
     if frame is None:
         raise RuntimeError("a stochastic invocation requires an active workflow context")

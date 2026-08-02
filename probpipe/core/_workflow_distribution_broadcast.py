@@ -376,7 +376,6 @@ def _broadcast_enumerate(
     output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
     """Enumerate empirical distributions and sample any remaining inputs."""
-    key = get_key()
     emp_names = list(empirical_args.keys())
     emp_dists = [empirical_args[name] for name in emp_names]
 
@@ -385,6 +384,7 @@ def _broadcast_enumerate(
 
     sample_arg_names = list(sample_args.keys())
     if sample_arg_names:
+        key = get_key()
         sampled = _sample_broadcast_args(values, sample_arg_names, total, key)
     else:
         sampled = {}

@@ -12,6 +12,8 @@ from probpipe import workflow_run
 from probpipe.core._workflow_context import (
     _commit_stochastic_invocation,
     _ephemeral_workflow_run,
+    _StochasticProbeSignal,
+    _workflow_probe,
 )
 
 
@@ -127,3 +129,15 @@ class TestWorkflowOccurrences:
                 return _claim_key_words()
 
         assert inner_key(1) == inner_key(2)
+
+    def test_probe_attempt_does_not_commit_or_shift_an_occurrence(self):
+        with workflow_run(seed=7):
+            baseline = (_claim_key_words(), _claim_key_words())
+
+        with workflow_run(seed=7):
+            first = _claim_key_words()
+            with pytest.raises(_StochasticProbeSignal), _workflow_probe():
+                _claim_key_words()
+            second = _claim_key_words()
+
+        assert (first, second) == baseline

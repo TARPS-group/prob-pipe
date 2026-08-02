@@ -25,6 +25,7 @@ except ImportError:
 
 from . import (
     _workflow_call,
+    _workflow_context,
     _workflow_distribution_broadcast,
     _workflow_distribution_normalization,
     _workflow_execution,
@@ -293,7 +294,7 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None = None,  # default number of samples for broadcasting
         dispatch: _FunctionDispatch = "auto",  # "auto" | "jax" | "sequential" | "thread"
         max_workers: int | None = None,  # ThreadPoolExecutor worker count
-        seed: int = 0,  # JAX PRNG seed for broadcasting
+        seed: int | None = None,
         include_inputs: bool = False,  # True → return BroadcastDistribution (joint over inputs+outputs)
         input_template: EventTemplate | None = None,
         output_template: EventTemplate | None = None,
@@ -339,7 +340,7 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None = None,
         dispatch: _FunctionDispatch = "auto",
         max_workers: int | None = None,
-        seed: int = 0,
+        seed: int | None = None,
         include_inputs: bool = False,
     ) -> Function:
         """Construct an ordinary Function from a private implementation.
@@ -388,7 +389,7 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None,
         dispatch: _FunctionDispatch,
         max_workers: int | None,
-        seed: int,
+        seed: int | None,
         include_inputs: bool,
         input_template: EventTemplate | None,
         output_template: EventTemplate | None,
@@ -669,6 +670,23 @@ class Function(Node, TrackedTerm, Annotated):
         call_inputs: dict[str, Any],
         options: _workflow_call.WorkflowCallOptions,
     ) -> Any:
+        context_was_active = _workflow_context._has_active_workflow_frame()
+        with _workflow_context._ephemeral_workflow_run():
+            return self._call_with_options_in_context(
+                args,
+                call_inputs,
+                options,
+                context_was_active=context_was_active,
+            )
+
+    def _call_with_options_in_context(
+        self,
+        args: tuple[Any, ...],
+        call_inputs: dict[str, Any],
+        options: _workflow_call.WorkflowCallOptions,
+        *,
+        context_was_active: bool,
+    ) -> Any:
         call = _workflow_call.resolve_workflow_call(
             self._signature_info,
             args,
@@ -681,12 +699,34 @@ class Function(Node, TrackedTerm, Annotated):
             default_include_inputs=self._include_inputs,
             options=options,
         )
-        key = jax.random.PRNGKey(self._seed if call.overrides.seed is None else call.overrides.seed)
+        legacy_seed = self._seed if call.overrides.seed is None else call.overrides.seed
+        legacy_key = (
+            jax.random.PRNGKey(legacy_seed)
+            if legacy_seed is not None and not context_was_active
+            else None
+        )
+        stochastic_invocation: _workflow_context._WorkflowInvocation | None = None
+        key_request_ordinal = 0
 
         def get_key():
-            nonlocal key
-            key, subkey = jax.random.split(key)
-            return subkey
+            nonlocal key_request_ordinal, legacy_key, stochastic_invocation
+            if legacy_key is not None:
+                legacy_key, subkey = jax.random.split(legacy_key)
+                return subkey
+
+            if stochastic_invocation is None:
+                stochastic_invocation = _workflow_context._commit_stochastic_invocation()
+            logical_unit_id = (
+                ("singleton",)
+                if key_request_ordinal == 0
+                else ("planner-unit", key_request_ordinal)
+            )
+            key = stochastic_invocation.key_for(
+                stochastic_source_id=("source-group", 0),
+                logical_unit_id=logical_unit_id,
+            )
+            key_request_ordinal += 1
+            return key
 
         values = _workflow_distribution_normalization.normalize_distribution_values(
             values=call.values,
@@ -925,7 +965,8 @@ class Function(Node, TrackedTerm, Annotated):
                     else:
                         replacement = v
                     dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
-            jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
+            with _workflow_context._workflow_probe():
+                jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
         except Exception as exc:
             return exc
         return None
