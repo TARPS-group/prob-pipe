@@ -129,6 +129,15 @@ class BatchSpec(TermSpec):
     ``element_spec`` is as well formed here as a term spec, which is what lets a
     batch of opaque values carry a term spec of its own.
 
+    An axis size may be a **symbolic dimension name** instead of an integer, as
+    an ``ArraySpec`` shape entry may, so that a declaration can fix the number of
+    levels while deferring how many elements each holds — "returns a batch of
+    ``S`` draws" before ``S`` is known. The names share one scope with the
+    element's schema, so a batch of ``("n",)`` over arrays of shape ``("n",)`` is
+    square by declaration. A *declaration* may be polymorphic; a live
+    :class:`Batch` may not, since it holds elements at positions, so
+    :meth:`Batch._init_batch` refuses a spec with free dimensions.
+
     A duplicate level name is an error rather than something this class resolves.
     An operation that mints a level takes the name to give it, so a name already
     in use means the caller must supply another, and
@@ -136,7 +145,7 @@ class BatchSpec(TermSpec):
     """
 
     element_spec: ValueSpec
-    axis_groups: tuple[tuple[int, ...], ...]
+    axis_groups: tuple[tuple[int | str, ...], ...]
     level_names: tuple[str, ...]
 
     def __init__(
@@ -180,7 +189,7 @@ class BatchSpec(TermSpec):
             if not group:
                 raise ValueError(f"every level holds at least one axis; got axis_groups={groups}")
             for size in group:
-                if size < 0:
+                if isinstance(size, int) and size < 0:
                     raise ValueError(f"axis sizes are non-negative; got axis_groups={groups}")
         if len(names) != len(groups):
             raise ValueError(
@@ -210,14 +219,41 @@ class BatchSpec(TermSpec):
         object.__setattr__(self, "level_names", names)
 
     @property
-    def batch_shape(self) -> tuple[int, ...]:
+    def batch_shape(self) -> tuple[int | str, ...]:
         """The batch axes, flat: the concatenation of :attr:`axis_groups`."""
         return tuple(size for group in self.axis_groups for size in group)
 
     @property
     def batch_size(self) -> int:
-        """The total element count, ``prod(batch_shape)``."""
-        return prod(self.batch_shape)
+        """The total element count, ``prod(batch_shape)``.
+
+        Raises
+        ------
+        ValueError
+            If the multiplicity is polymorphic. A count is a number, and a
+            declaration that defers a size has none until it is bound — the same
+            reason a polymorphic ``NumericEventTemplate`` has no flat layout.
+        """
+        if self.free_dims:
+            dimensions = ", ".join(sorted(self.free_dims))
+            raise ValueError(
+                f"batch_size is undefined for a polymorphic BatchSpec; "
+                f"unbound dimensions: {dimensions}"
+            )
+        return prod(size for size in self.batch_shape if isinstance(size, int))
+
+    @property
+    def free_dims(self) -> frozenset[str]:
+        """The unbound dimensions of the element's schema and of the multiplicity.
+
+        One scope, as everywhere: a name shared between an axis size and the
+        element's schema is one dimension, so a batch declared as ``("n",)`` of
+        arrays of shape ``("n",)`` states that it is square.
+        """
+        axes = frozenset(
+            size for group in self.axis_groups for size in group if isinstance(size, str)
+        )
+        return self.element_spec.free_dims | axes
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a :class:`Batch` whose own spec equals this one.
@@ -375,6 +411,13 @@ class Batch[E](TrackedTerm, ABC):
         """
         if not isinstance(spec, BatchSpec):
             raise TypeError(f"a Batch is specified by a BatchSpec, got {type(spec).__name__}")
+        if spec.free_dims:
+            dimensions = ", ".join(sorted(spec.free_dims))
+            raise ValueError(
+                f"a Batch holds elements at positions, so its multiplicity is concrete; "
+                f"this spec leaves {dimensions} unbound. A polymorphic BatchSpec is a "
+                f"declaration — bind it before building the batch it describes"
+            )
         object.__setattr__(self, "_spec", spec)
         object.__setattr__(self, "_root_name", name)
         object.__setattr__(self, "_root_spec", spec)
@@ -930,12 +973,27 @@ class Batch[E](TrackedTerm, ABC):
         return renamed
 
 
-def _axis_size(size: Any) -> int:
-    """An axis size as an ``int``, rejecting anything not integral."""
+def _axis_size(size: Any) -> int | str:
+    """An axis size as an ``int``, or a symbolic dimension name as a ``str``.
+
+    The two spellings ``ArraySpec.shape`` accepts, for the same reason: a
+    declaration may defer a size while fixing the rank. A name must be a
+    non-empty identifier, as a level name must be.
+    """
+    if isinstance(size, str):
+        if not size.isidentifier():
+            raise ValueError(
+                f"a symbolic axis size must be an identifier, so that with_dims can "
+                f"bind it by keyword; got {size!r}"
+            )
+        return size
     try:
         return operator.index(size)
     except TypeError:
-        raise TypeError(f"axis sizes are integers, got {type(size).__name__}: {size!r}") from None
+        raise TypeError(
+            f"axis sizes are integers or symbolic dimension names, "
+            f"got {type(size).__name__}: {size!r}"
+        ) from None
 
 
 def _normalize_indexer(

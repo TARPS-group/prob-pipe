@@ -127,7 +127,8 @@ class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
 
 class BatchSpec(TermSpec):     # a Batch; is_valid accepts a matching batch
     element_spec: ValueSpec               # the spec every element satisfies
-    axis_groups: tuple[tuple[int, ...], ...]   # the multiplicity, tiled into levels (II.5)
+    axis_groups: tuple[tuple[int | str, ...], ...]  # the multiplicity, tiled into levels (II.5);
+                                          #   a str names a symbolic dimension, as in ArraySpec
     level_names: tuple[str, ...]
 # DistributionSpec and ConditionalDistributionSpec are the other two term specs (Part III).
 ```
@@ -189,6 +190,7 @@ class EventTemplate(NamedTree[ValueSpec]):
     def is_concrete(self) -> bool: ...                      # False when any dimension is symbolic
     @property
     def free_dims(self) -> frozenset[str]: ...              # the unbound symbolic dimensions
+    def with_dims(self, **sizes: int) -> EventTemplate: ... # bind them; a new template
     def numeric_subset(self) -> NumericEventTemplate: ...   # remove non-ArraySpec leaves
 ```
 
@@ -208,7 +210,9 @@ Checking a value against a polymorphic template cannot be done leaf by leaf, bec
 
 The work splits accordingly. A leaf's `is_valid` checks its own rank and dtype, and nothing else — an `ArraySpec`'s `support` is descriptive metadata, unchecked. Sizes belong to the one pass, since only it sees every occurrence of a name.
 
-Binding returns a new template rather than mutating the original, so refinement is monotone. Until every name is bound the template is not concrete, so a `NumericEventTemplate` has no flat layout: an operation that needs sizes raises, naming the free dimensions.
+**Every spec reports its own dimensions**, through `ValueSpec.free_dims`: an `ArraySpec` its symbolic shape entries, a term spec those of the schema it carries, and a spec that declares neither none at all. So the scope reaches through a term-spec boundary — a name inside a `DistributionSpec`'s event declaration is the same dimension as that name beside it, binds once, and raises on a disagreement — and the one pass binds through the boundary in the same step. This follows from *any* symbolic entry making a template polymorphic; a term spec is not a wall the rule stops at.
+
+Binding returns a new template rather than mutating the original, so refinement is monotone. `with_dims(**sizes)` binds explicitly, naming any dimension left unbound; a value binds by unification. Until every name is bound the template is not concrete, so a `NumericEventTemplate` has no flat layout: an operation that needs sizes raises, naming the free dimensions.
 
 ### Rationale
 
@@ -295,6 +299,8 @@ class Batch[E](TrackedTerm):
 ```
 
 **Axis groups.** A batch's axes are partitioned into ordered **levels**. `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and positional `[]` address the leading **axis**, `batch_shape[0]`, rather than the leading level. The two coincide when the outermost level holds one axis: iterating `(N,)` of `(S,)` then walks the `N`, yielding each inner batch of `S` as a view. When the outermost level spans several axes, the leading axis is only the first of them, so indexing drops that axis and leaves the level in place, one axis shorter. Nesting needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store.
+
+**A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, exactly as an `ArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds — "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A declaration may be polymorphic; a live `Batch` may not, since it holds elements at positions, so construction refuses a spec with free dimensions and `batch_size` is undefined until they are bound.
 
 **The batch's own type.** A batch stores a `BatchSpec` (II.2), which carries the element spec and the named multiplicity together; `element_spec`, `axis_groups`, and `level_names` are views on it. This keeps the storage rule reading the same way for a batch as for any other term — `spec` is the batch's *own* type, not its element's — which is what makes `OpaqueBatch` well typed even though an `OpaqueSpec` names no kind. It also mirrors the model, where a batch inhabits the *family* kind over its element's kind rather than the element kind itself.
 

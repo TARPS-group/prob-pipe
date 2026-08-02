@@ -9,6 +9,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
+  A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
+  `DistributionSpec`'s event declaration, a `FunctionSpec`'s either side — was
+  invisible to `free_dims`, so `EventTemplate(law=DistributionSpec(x=("obs",)))`
+  reported itself concrete. Design II.3 draws no line at a term-spec boundary:
+  *any* symbolic entry makes a template polymorphic.
+
+  `free_dims` is now a property of every `ValueSpec`, and `EventTemplate`'s is
+  the union over its children, so a name is reported wherever it is declared.
+  Three things follow. Substitution reaches through a term spec, so every
+  dimension reported is bindable. **Unification binds through one too**: a term
+  spec's declared schema unifies against the actual term's own, in the shared
+  binding scope, so a name inside a `DistributionSpec` is the same dimension as
+  that name beside it — it binds once, and a disagreement raises. And a
+  `BatchSpec` axis size may now be a symbolic name, joining the same scope, so a
+  batch of `("n",)` over arrays of shape `("n",)` is square by declaration.
+
+  This brings the term specs into line with `ArraySpec`, which has always
+  accepted a concrete value against a symbolic shape and left the sizes to the
+  single pass, per II.3's division of labor. A polymorphic term-spec declaration
+  was previously unsatisfiable: `is_valid` compared inner templates for exact
+  equality, so a symbolic declaration never matched a concrete value.
+
+  A live `Batch` still requires a concrete multiplicity — it holds elements at
+  positions — so construction refuses a polymorphic `BatchSpec`, and
+  `batch_size` raises until the dimensions are bound.
+
 - **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
   references to the same law denote one random variable, so they must come from
   one draw. Passing the same `Distribution` to two arguments sampled it twice
@@ -90,6 +117,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-memory jit cache keys and provenance only, never persisted.
 
 ### Added
+
+- **`EventTemplate.with_dims(**sizes)`** binds symbolic dimensions explicitly,
+  returning a new template so refinement stays monotone, and naming any
+  dimension left unbound. It reaches through a term spec, and auto-promotes to
+  `NumericEventTemplate` when the bound template is all-numeric, so a bound
+  template gains its flat layout. The law-level `with_dims` design 03 names on
+  `Distribution` will delegate to it.
 
 - **`FunctionBatch` and `OpaqueBatch` — the batch forms that store objects.** A
   numeric array batches natively, with the batch axes leading, so it needs no

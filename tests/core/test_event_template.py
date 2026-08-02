@@ -1604,3 +1604,136 @@ def test_public_exports():
     for name in ("TermSpec", "RecordSpec"):
         assert hasattr(probpipe, name), name
         assert name in probpipe.__all__, name
+
+
+class TestFreeDimsReachThroughTermSpecs:
+    """A name is visible wherever it is declared, not only at the outermost level.
+
+    Design II.3: "A template with **any** symbolic entry is polymorphic, with
+    `is_concrete` false and `free_dims` listing the unbound names." A term spec
+    carries a schema, so a symbolic dimension inside one is such an entry.
+    """
+
+    @staticmethod
+    def _symbolic():
+        return EventTemplate(x=ArraySpec(shape=("obs",)))
+
+    @pytest.mark.parametrize(
+        "declare",
+        [
+            lambda sym: EventTemplate(x=ArraySpec(shape=("obs",))),
+            lambda sym: EventTemplate(r=RecordSpec(sym)),
+            lambda sym: EventTemplate(law=DistributionSpec(sym)),
+            lambda sym: EventTemplate(f=FunctionSpec(sym, None)),
+            lambda sym: EventTemplate(f=FunctionSpec(None, RecordSpec(sym))),
+            lambda sym: EventTemplate(law=DistributionSpec(RecordSpec(sym))),
+        ],
+        ids=["array", "record", "distribution", "function-in", "function-out", "nested"],
+    )
+    def test_a_symbolic_dimension_is_reported_wherever_it_is_declared(self, declare):
+        template = declare(self._symbolic())
+
+        assert template.free_dims == frozenset({"obs"})
+        assert not template.is_concrete
+
+    def test_one_scope_across_a_term_spec_boundary(self):
+        """The same name inside and outside a term spec is one dimension."""
+        template = EventTemplate(
+            data=ArraySpec(shape=("obs",)),
+            law=DistributionSpec(self._symbolic()),
+        )
+
+        assert template.free_dims == frozenset({"obs"})
+
+    def test_a_concrete_term_spec_reports_nothing(self):
+        assert EventTemplate(law=DistributionSpec(EventTemplate(x=(3,)))).is_concrete
+
+    def test_a_spec_declaring_no_dimensions_reports_none(self):
+        assert OpaqueSpec().free_dims == frozenset()
+        assert ArraySpec(shape=(3,)).free_dims == frozenset()
+
+
+class TestWithDims:
+    def test_binding_reaches_through_a_term_spec(self):
+        sym = EventTemplate(x=ArraySpec(shape=("obs",)))
+        template = EventTemplate(law=DistributionSpec(sym), data=ArraySpec(shape=("obs",)))
+
+        bound = template.with_dims(obs=4)
+
+        assert bound.is_concrete
+        assert bound["data"].shape == (4,)
+        assert bound["law"].event_spec.event_template["x"].shape == (4,)
+
+    def test_binding_returns_a_new_template(self):
+        template = EventTemplate(x=ArraySpec(shape=("obs",)))
+
+        assert template.with_dims(obs=2) is not template
+        assert not template.is_concrete
+
+    def test_an_all_numeric_bound_template_gains_its_flat_layout(self):
+        bound = EventTemplate(x=ArraySpec(shape=("n",))).with_dims(n=3)
+
+        assert isinstance(bound, NumericEventTemplate)
+        assert bound.vector_size == 3
+
+    def test_an_unbound_dimension_is_named(self):
+        template = EventTemplate(x=ArraySpec(shape=("obs",)), y=ArraySpec(shape=("features",)))
+
+        with pytest.raises(ValueError, match="unbound symbolic dimensions: features, obs"):
+            template.with_dims()
+
+    def test_a_name_the_template_does_not_declare_is_ignored(self):
+        """So one mapping can bind several templates."""
+        assert EventTemplate(x=ArraySpec(shape=("n",))).with_dims(n=2, other=9).is_concrete
+
+
+class TestInferenceThroughTermSpecs:
+    """Sizes are bound from the term a spec is matched against, as for an array.
+
+    `ArraySpec` has always accepted a concrete value against a symbolic shape and
+    left the binding to the one pass; these tests hold the term specs to the same
+    rule.
+    """
+
+    @staticmethod
+    def _law(size=3):
+        import jax.numpy as jnp
+
+        from probpipe import MultivariateNormal
+
+        return MultivariateNormal(jnp.zeros(size), jnp.eye(size), name="x")
+
+    def test_a_distribution_binds_the_declared_dimension(self):
+        sym = EventTemplate(x=ArraySpec(shape=("obs",)))
+        record = Record(
+            "r", law=self._law(3), event_template=EventTemplate(law=DistributionSpec(sym))
+        )
+
+        assert record.event_template.is_concrete
+        assert record.event_template["law"].event_spec.event_template["x"].shape == (3,)
+
+    def test_a_name_shared_across_the_boundary_binds_once(self):
+        declared = EventTemplate(
+            data=ArraySpec(shape=("obs",)),
+            law=DistributionSpec(EventTemplate(x=ArraySpec(shape=("obs",)))),
+        )
+        record = Record("r", data=jnp.zeros(3), law=self._law(3), event_template=declared)
+
+        assert record.event_template["data"].shape == (3,)
+
+    def test_a_disagreement_across_the_boundary_raises(self):
+        """The point of one scope: 5 outside and 3 inside is a contradiction."""
+        declared = EventTemplate(
+            data=ArraySpec(shape=("obs",)),
+            law=DistributionSpec(EventTemplate(x=ArraySpec(shape=("obs",)))),
+        )
+
+        with pytest.raises(ValueError, match="binds symbolic dimension 'obs'"):
+            Record("r", data=jnp.zeros(5), law=self._law(3), event_template=declared)
+
+    def test_a_concrete_declaration_still_requires_an_exact_match(self):
+        """Inference is for the symbolic case; a fixed size is still a fixed size."""
+        declared = EventTemplate(law=DistributionSpec(EventTemplate(x=ArraySpec(shape=(4,)))))
+
+        with pytest.raises(ValueError, match="does not conform"):
+            Record("r", law=self._law(3), event_template=declared)
