@@ -450,7 +450,8 @@ def _broadcast_enumerate(
 
     all_input_samples = {
         ref.label: _stack_rows(
-            [_workflow_call.input_ref_value(call_values, ref) for call_values in call_value_list]
+            [_workflow_call.input_ref_value(call_values, ref) for call_values in call_value_list],
+            arg_name=ref.label,
         )
         for ref in all_broadcast_args
     }
@@ -507,7 +508,7 @@ def _broadcast_sample(
     )
 
 
-def _stack_rows(rows: list[Any]) -> Any:
+def _stack_rows(rows: list[Any], *, arg_name: str) -> Any:
     """Stack one argument's per-row values into a single batched value.
 
     ``jnp.stack`` covers array-valued rows. A record-valued row is not an array
@@ -519,7 +520,17 @@ def _stack_rows(rows: list[Any]) -> Any:
     from .record import Record
 
     if rows and isinstance(rows[0], Record):
-        return RecordArray.stack(rows)
+        try:
+            return RecordArray.stack(rows)
+        except TypeError as exc:
+            # ``stack`` reports what the container cannot do; the caller needs to
+            # hear which argument of theirs it was, and that the shape is the one
+            # a record batch does not represent yet rather than a mistake.
+            raise TypeError(
+                f"lifting {arg_name!r} would batch a record with nested fields, which a record "
+                f"batch does not represent yet; flatten the law's fields, or pass the nested "
+                f"parts as separate arguments ({exc})"
+            ) from exc
     return jnp.stack(rows)
 
 

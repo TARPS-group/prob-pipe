@@ -62,7 +62,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   output a batched `Record`. A single draw is unwrapped to one record rather than
   a one-row batch, its field names intact.
 
-  One shape is still unsupported: a record-valued empirical passed alongside a
+  Two shapes are still unsupported. A record with **nested** fields cannot be
+  batched at all, since a record batch is keyed by its top-level children rather
+  than by leaf path, so lifting such a law is refused with a message naming the
+  argument rather than surfacing what the container said. That is #340, and a
+  strict `xfail` in the broadcast tests marks the case so it reports the day
+  record batches become leaf-keyed.
+
+  The other: a record-valued empirical passed alongside a
   field view of itself. That group routes to sampling rather than enumeration,
   and `RecordEmpiricalDistribution._sample` returns a single `Record` rather
   than a batch of them, so there are no rows to index. That is a distribution-

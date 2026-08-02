@@ -504,6 +504,51 @@ class TestCoSamplingThroughACall:
         assert np.asarray(one["a/x"]).shape == ()
         np.testing.assert_allclose(float(np.asarray(one["_output"])), float(np.asarray(one["a/y"])))
 
+    def test_a_nested_record_valued_law_is_refused_until_batches_nest(self):
+        """A record batch is child-keyed, so it cannot hold a nested record yet.
+
+        The refusal names the argument and the shape rather than surfacing what
+        the container said, which mentions neither. Flip this to the working case
+        once record batches are leaf-keyed (#340).
+        """
+        empirical = RecordEmpiricalDistribution(
+            Record(
+                "r", group={"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.array([10.0, 20.0, 30.0])}
+            ),
+            name="e",
+        )
+        lifted = Function(
+            func=lambda a: a["group/y"], dispatch="sequential", n_broadcast_samples=6, seed=0
+        )
+
+        with pytest.raises(TypeError, match=r"lifting 'a' would batch a record with nested fields"):
+            lifted(empirical)
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason="record batches are child-keyed, so a nested record cannot be batched (#340)",
+    )
+    def test_a_nested_record_valued_law_lifts(self):
+        """The case above, as it should read once record batches nest."""
+        empirical = RecordEmpiricalDistribution(
+            Record(
+                "r", group={"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.array([10.0, 20.0, 30.0])}
+            ),
+            name="e",
+        )
+        lifted = Function(
+            func=lambda a: a["group/y"],
+            dispatch="sequential",
+            n_broadcast_samples=6,
+            seed=0,
+            include_inputs=True,
+        )
+
+        drawn = sample(lifted(empirical), sample_shape=(4,))
+        np.testing.assert_allclose(
+            np.asarray(drawn["_output"]).ravel(), np.asarray(drawn["a/group/y"])
+        )
+
     def test_a_record_valued_empirical_passed_twice_shares_its_atom(self):
         empirical = RecordEmpiricalDistribution(
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),

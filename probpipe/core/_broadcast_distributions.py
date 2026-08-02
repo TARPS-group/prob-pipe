@@ -913,8 +913,12 @@ def _take_rows(component: Any, indices: Array) -> Any:
     if isinstance(component, list):
         return [component[int(i)] for i in indices]
     if isinstance(component, RecordArray):
+        # Keyed by the template, which is leaf-keyed, rather than by ``fields``,
+        # which names the top-level children and is retained only for the
+        # migration. The two agree while a record batch is flat and will not once
+        # one can nest; ``_RecordMarginal`` peels a batch the same way.
         return type(component)(
-            {path: component[path][indices] for path in component.fields},
+            {path: component[path][indices] for path in component.template},
             batch_shape=(indices.shape[0], *component.batch_shape[1:]),
             template=component.template,
         )
@@ -968,10 +972,15 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
 
     Parameters
     ----------
-    input_samples : dict[str, Array]
-        ``{arg_name: (n, *event_shape)}`` for each broadcast argument.
-    output_samples : Array or list
-        ``(n, *event_shape)`` for array outputs, or a list of length *n*.
+    input_samples : dict[str, Array or RecordArray or list]
+        ``{arg_name: rows}`` for each broadcast argument, every value batched
+        over the same leading axis of length ``n``: an array of shape
+        ``(n, *event_shape)``, a record batch of ``batch_shape == (n,)`` for a
+        record-valued argument, or a list of ``n`` objects.
+    output_samples : Array, Record, or list
+        The outputs, batched over the same axis: ``(n, *event_shape)`` for array
+        outputs, a record whose leaves carry that axis for record-returning
+        functions, or a list of length *n*.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalized internally).  A pre-built
         :class:`~probpipe.Weights` object is also accepted.  Mutually
