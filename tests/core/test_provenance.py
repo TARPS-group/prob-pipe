@@ -318,7 +318,7 @@ class TestBroadcastingProvenance:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=20, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=20)
         result = wf(x=n)
         assert hasattr(result, "samples")
         assert result.provenance is not None
@@ -338,7 +338,7 @@ class TestBroadcastingProvenance:
         def double(x: float) -> float:
             return 2.0 * x
 
-        wf = Function(func=double, dispatch="jax", n_broadcast_samples=20, seed=42)
+        wf = Function(func=double, dispatch="jax", n_broadcast_samples=20)
         result = wf(x=n)
         assert hasattr(result, "samples")
         assert result.provenance is not None
@@ -352,7 +352,7 @@ class TestBroadcastingProvenance:
         def shift(x: float, offset: float = 2.0) -> float:
             return x + offset
 
-        wf = Function(func=shift, dispatch=dispatch, n_broadcast_samples=5, seed=42)
+        wf = Function(func=shift, dispatch=dispatch, n_broadcast_samples=5)
 
         result = wf(n)
 
@@ -367,7 +367,7 @@ class TestBroadcastingProvenance:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20, seed=42)
+        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20)
         result = wf(x=a, y=b)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 3
@@ -381,7 +381,7 @@ class TestBroadcastingProvenance:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20, seed=42)
+        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20)
         result = wf(a=ed, b=n)
         assert hasattr(result, "samples")
         assert result.provenance is not None
@@ -410,7 +410,7 @@ class TestBroadcastingProvenance:
         def add_noise(row, random_value: float, offset: float = 2.0) -> float:
             return row["value"] + random_value + offset
 
-        wf = Function(func=add_noise, dispatch="sequential", n_broadcast_samples=5, seed=42)
+        wf = Function(func=add_noise, dispatch="sequential", n_broadcast_samples=5)
 
         result = wf(rows, noise)
 
@@ -450,7 +450,7 @@ class TestProvenanceChains:
         def log_val(x: float) -> float:
             return jnp.log(x)
 
-        wf = Function(func=log_val, dispatch="sequential", n_broadcast_samples=20, seed=42)
+        wf = Function(func=log_val, dispatch="sequential", n_broadcast_samples=20)
         result = wf(x=td)
         # result → broadcast → td → transform → base
         assert result.provenance.operation == "broadcast"
@@ -607,7 +607,7 @@ class TestProvenanceAncestors:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=td)
         ancestors = provenance_ancestors(result)
         # result → Function and result → td → base.
@@ -626,7 +626,7 @@ class TestProvenanceAncestors:
         def add(x: float, y: float) -> float:
             return x + y
 
-        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=add, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
         # The Function comes first; n appears as both args but is deduplicated.
@@ -711,7 +711,7 @@ class TestProvenanceDag:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=td)
         dag = provenance_dag(result)
         # result <- Function and result <- td <- base: 4 nodes, 3 edges.
@@ -777,7 +777,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=n)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 2
@@ -795,7 +795,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=n)
         parent = result.provenance.parents[1]
         assert parent is not n
@@ -822,7 +822,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=n)
         ancestors = provenance_ancestors(result)
         assert len(ancestors) == 2
@@ -841,7 +841,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=n)
         dag = provenance_dag(result)
         num_nodes, num_edges = _count_dag_entries(dag)
@@ -856,7 +856,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=n)
         assert result.provenance is None
 
@@ -915,7 +915,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=n)
         assert provenance_ancestors(result) == []
 
@@ -928,7 +928,7 @@ class TestProvenanceModes:
         def identity(x: float) -> float:
             return x
 
-        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10, seed=42)
+        wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
         result = wf(x=n)
         dag = provenance_dag(result)
         num_nodes, num_edges = _count_dag_entries(dag)

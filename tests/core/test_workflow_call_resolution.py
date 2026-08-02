@@ -12,7 +12,7 @@ from typing import Any
 import jax.numpy as jnp
 import pytest
 
-from probpipe import BroadcastDistribution, Normal
+from probpipe import BroadcastDistribution, Normal, workflow_run
 from probpipe.core import _workflow_call
 from probpipe.core.node import Function, Module, Node, workflow_method
 
@@ -202,7 +202,7 @@ class TestWorkflowCallHelpers:
         with pytest.raises(TypeError, match="unexpected keyword argument"):
             _resolve_call(identity_func, "value", n_broadcast_samples=6)
 
-    def test_workflow_option_names_bind_when_declared(self):
+    def test_control_like_names_bind_when_declared(self):
         def identity(x, n_broadcast_samples, include_inputs, seed):
             return x
 
@@ -222,7 +222,6 @@ class TestWorkflowCallHelpers:
         }
         assert call.overrides.n_broadcast_samples == 20
         assert call.overrides.include_inputs is False
-        assert call.overrides.seed is None
 
     def test_bind_module_and_function_defaults_resolve_in_precedence_order(self):
         dep = DataNode()
@@ -349,19 +348,17 @@ class TestCallOptions:
             func=identity_func,
             n_broadcast_samples=20,
             dispatch="sequential",
-            seed=42,
         )
 
         result = wf.with_options(
             n_broadcast_samples=6,
             include_inputs=True,
-            seed=42,
         )(normal_dist)
 
         assert isinstance(result, BroadcastDistribution)
         assert result.num_atoms == 6
 
-    def test_seed_override_restarts_sampling_state_for_a_call(
+    def test_workflow_run_reproduces_sampling_state_for_a_call(
         self,
         identity_func,
         normal_dist,
@@ -370,10 +367,11 @@ class TestCallOptions:
             func=identity_func,
             n_broadcast_samples=8,
             dispatch="sequential",
-            seed=42,
         )
 
-        first = wf.with_options(seed=42)(normal_dist)
-        second = wf.with_options(seed=42)(normal_dist)
+        with workflow_run(seed=42):
+            first = wf(normal_dist)
+        with workflow_run(seed=42):
+            second = wf(normal_dist)
 
         assert jnp.allclose(first.samples, second.samples)

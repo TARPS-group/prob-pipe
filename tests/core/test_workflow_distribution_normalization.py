@@ -225,7 +225,6 @@ class TestUnhintedExternalDistribution:
             func=double,
             n_broadcast_samples=8,
             dispatch="sequential",
-            seed=42,
         )
         external = tfd.Normal(loc=1.0, scale=0.1)
 
@@ -262,7 +261,6 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
         func=consume,
         n_broadcast_samples=8,
         dispatch="sequential",
-        seed=12,
     )
 
     result = wrapped(Normal(0, 1, name="x"))

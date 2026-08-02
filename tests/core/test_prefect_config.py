@@ -220,7 +220,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(func=noop, dispatch="sequential", seed=0)
+        wf = Function(func=noop, dispatch="sequential")
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_explicit_task_overrides_global(self):
@@ -236,7 +236,6 @@ class TestEffectiveWorkflowKind:
             func=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            seed=0,
         )
         import probpipe.core.node as node_mod
 
@@ -256,7 +255,6 @@ class TestEffectiveWorkflowKind:
             func=noop,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
-            seed=0,
         )
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -276,7 +274,6 @@ class TestEffectiveWorkflowKind:
             func=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            seed=0,
         )
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             kind = wf.effective_workflow_kind
@@ -296,7 +293,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(func=noop, dispatch="sequential", seed=0)
+        wf = Function(func=noop, dispatch="sequential")
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_global_flow_applies_to_default_instance(self):
@@ -308,7 +305,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(func=noop, dispatch="sequential", seed=0)
+        wf = Function(func=noop, dispatch="sequential")
         import probpipe.core.node as node_mod
 
         if node_mod.task is not None:
@@ -321,7 +318,7 @@ class TestEffectiveWorkflowKind:
         def noop(x):
             return x
 
-        wf = Function(func=noop, dispatch="sequential", seed=0)
+        wf = Function(func=noop, dispatch="sequential")
         prefect_config.workflow_kind = WorkflowKind.OFF
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -351,7 +348,6 @@ class TestWorkflowKindConstructorValidation:
                 func=noop,
                 workflow_kind="task",
                 dispatch="sequential",
-                seed=0,
             )
 
     def test_function_rejects_none(self):
@@ -365,7 +361,6 @@ class TestWorkflowKindConstructorValidation:
                 func=noop,
                 workflow_kind=None,
                 dispatch="sequential",
-                seed=0,
             )
 
     def test_module_rejects_string(self):

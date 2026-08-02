@@ -395,7 +395,6 @@ class TestFunctionExecutionConfig:
                 workflow_kind=WorkflowKind.OFF,
                 max_workers=3,
                 n_broadcast_samples=8,
-                seed=0,
             )
 
         result = wf(x=Normal(loc=0.0, scale=1.0, name="x"))

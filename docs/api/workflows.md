@@ -31,7 +31,7 @@ def score(x, seed):
 Use `@function(...)` for definition-time controls:
 
 ```python
-@function(dispatch="jax", n_broadcast_samples=1_000, seed=0)
+@function(dispatch="jax", n_broadcast_samples=1_000)
 def score(x, seed):
     return x + seed
 ```
@@ -39,7 +39,7 @@ def score(x, seed):
 Use `workflow.with_options(...)(...)` for one-call overrides:
 
 ```python
-result = score.with_options(seed=42, n_broadcast_samples=2_000)(x, seed=7)
+result = score.with_options(n_broadcast_samples=2_000)(x, seed=7)
 ```
 
 Keyword arguments in the final workflow call belong to the wrapped user
@@ -47,10 +47,21 @@ function whenever they can bind to that function. This keeps common names
 such as `seed`, `name`, `dispatch`, `n_broadcast_samples`, and
 `include_inputs` available for user APIs.
 
-Seeds are invocation-local. Repeating a call with the same construction seed,
-or the same `with_options(seed=...)` override, produces the same sampling key
-sequence without mutating the `Function`; concurrent calls do not share RNG or
-automatic-dispatch state.
+Randomness belongs to a workflow execution rather than to a `Function`. Use an
+explicit run for reproducible lifted calls:
+
+```python
+from probpipe import workflow_run
+
+with workflow_run(seed=42):
+    result = score(dist, seed=7)
+```
+
+`Function(..., seed=...)` and `with_options(seed=...)` are not supported. A
+wrapped function's own `seed` parameter remains an ordinary input. The current
+staged implementation routes sequential Function lifting through this context;
+the remaining automatic-key operations will migrate to the same broker before
+the RNG restoration work is release-ready.
 
 ## Raw application and authoritative templates
 

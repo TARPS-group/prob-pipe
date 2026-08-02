@@ -79,7 +79,6 @@ class TestPrefectTaskRowWise:
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
-            seed=0,
         )
         result = wf(x=normal_dist)
         assert hasattr(result, "samples")
@@ -91,7 +90,6 @@ class TestPrefectTaskRowWise:
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=200,
-            seed=1,
         )
         result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 + 1.0)
@@ -107,7 +105,6 @@ class TestPrefectTaskRowWise:
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=30,
-            seed=2,
         )
         d2 = Normal(loc=2.0, scale=0.3, name="y")
         result = wf(x=normal_dist, y=d2)
@@ -129,7 +126,6 @@ class TestPrefectFlowRowWise:
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=25,
-            seed=10,
         )
         result = wf(x=normal_dist)
         assert hasattr(result, "samples")
@@ -141,7 +137,6 @@ class TestPrefectFlowRowWise:
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=200,
-            seed=11,
         )
         result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 * 2)
@@ -166,7 +161,6 @@ class TestPrefectTaskJax:
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
             n_broadcast_samples=30,
-            seed=20,
         )
         result = wf(x=normal_dist)
         assert hasattr(result, "samples")
@@ -178,7 +172,6 @@ class TestPrefectTaskJax:
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
             n_broadcast_samples=200,
-            seed=21,
         )
         result = wf(x=normal_dist)
         np.testing.assert_allclose(
@@ -202,7 +195,6 @@ class TestPrefectFlowJax:
             workflow_kind=WorkflowKind.FLOW,
             dispatch="jax",
             n_broadcast_samples=25,
-            seed=30,
         )
         result = wf(x=normal_dist)
         assert hasattr(result, "samples")
@@ -214,7 +206,6 @@ class TestPrefectFlowJax:
             workflow_kind=WorkflowKind.FLOW,
             dispatch="jax",
             n_broadcast_samples=200,
-            seed=31,
         )
         result = wf(x=normal_dist)
         np.testing.assert_allclose(
@@ -238,7 +229,6 @@ class TestPrefectProvenance:
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=20,
-            seed=40,
         )
         result = wf(x=normal_dist)
         assert result.provenance is not None
@@ -252,7 +242,6 @@ class TestPrefectProvenance:
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=20,
-            seed=41,
         )
         result = wf(x=normal_dist)
         assert result.provenance is not None
@@ -264,7 +253,6 @@ class TestPrefectProvenance:
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
             n_broadcast_samples=20,
-            seed=42,
         )
         result = wf(x=normal_dist)
         assert result.provenance is not None
@@ -284,7 +272,6 @@ class TestPrefectNonBroadcast:
             func=add_one,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
-            seed=50,
         )
         # Pass concrete value, not a distribution — no broadcasting
         result = wf(x=jnp.array(5.0))
@@ -295,7 +282,6 @@ class TestPrefectNonBroadcast:
             func=double_it,
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
-            seed=51,
         )
         result = wf(x=jnp.array(3.0))
         np.testing.assert_allclose(float(result), 6.0)
@@ -320,7 +306,6 @@ class TestPrefectImportGuard:
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
             n_broadcast_samples=10,
-            seed=60,
         )
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
@@ -337,7 +322,6 @@ class TestPrefectImportGuard:
             workflow_kind=WorkflowKind.FLOW,
             dispatch="sequential",
             n_broadcast_samples=10,
-            seed=61,
         )
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
@@ -354,7 +338,6 @@ class TestPrefectImportGuard:
             workflow_kind=WorkflowKind.TASK,
             dispatch="jax",
             n_broadcast_samples=10,
-            seed=62,
         )
         with pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)

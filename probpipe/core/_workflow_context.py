@@ -170,6 +170,11 @@ def workflow_run(seed: int | None = None) -> _WorkflowRunScope:
     -------
     context manager
         A synchronous workflow execution scope.
+
+    Notes
+    -----
+    Sequential Function lifting uses this scope now. Other omitted-key paths
+    will migrate to the same workflow broker before this feature is complete.
     """
     return _WorkflowRunScope(seed)
 
@@ -192,11 +197,6 @@ def _workflow_probe() -> Iterator[None]:
         yield
     finally:
         _STOCHASTIC_PROBE_ACTIVE.reset(token)
-
-
-def _has_active_workflow_frame() -> bool:
-    """Return whether the current task has a workflow frame installed."""
-    return _ACTIVE_WORKFLOW_FRAME.get() is not None
 
 
 def _commit_stochastic_invocation() -> _WorkflowInvocation:

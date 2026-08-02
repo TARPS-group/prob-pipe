@@ -31,7 +31,6 @@ class WorkflowCallOptions:
 
     n_broadcast_samples: int | None = None
     include_inputs: bool | None = None
-    seed: int | None = None
 
 
 @dataclass(frozen=True)
@@ -40,7 +39,6 @@ class WorkflowCallOverrides:
 
     n_broadcast_samples: int
     include_inputs: bool
-    seed: int | None
 
 
 @dataclass(frozen=True)
@@ -247,7 +245,6 @@ def bind_call_inputs(
             "include_inputs",
             default_include_inputs,
         ),
-        seed=resolve_option("seed"),
     )
 
     bound = info.signature.bind_partial(*args, **call_inputs)

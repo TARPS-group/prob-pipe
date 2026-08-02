@@ -456,7 +456,6 @@ class TestBroadcastingReconnection:
             func=subtract,
             dispatch="sequential",
             n_broadcast_samples=30,
-            seed=42,
         )
         result = wf(a=joint["z"], b=joint["x"])
         assert hasattr(result, "samples")
@@ -487,7 +486,6 @@ class TestBroadcastingReconnection:
             func=subtract,
             dispatch="jax",
             n_broadcast_samples=30,
-            seed=55,
         )
         with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
             wf(a=joint["z"], b=joint["x"])
@@ -512,7 +510,6 @@ class TestBroadcastingReconnection:
             func=subtract,
             dispatch="auto",
             n_broadcast_samples=30,
-            seed=55,
         )
         result = wf(a=joint["z"], b=joint["x"])
         assert hasattr(result, "samples")

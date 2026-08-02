@@ -400,7 +400,6 @@ class TestBroadcasting:
             func=add,
             dispatch="sequential",
             n_broadcast_samples=30,
-            seed=42,
         )
         result = wf(a=je["x"], b=je["y"])
         assert hasattr(result, "samples")

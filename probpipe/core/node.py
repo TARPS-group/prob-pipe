@@ -133,7 +133,7 @@ def function(
         Users should not pass this argument by keyword.
     **kwargs : Any
         Construction-time ``Function`` controls and declarations such as
-        ``dispatch``, ``seed``, ``n_broadcast_samples``, ``include_inputs``,
+        ``dispatch``, ``n_broadcast_samples``, ``include_inputs``,
         ``workflow_kind``, ``input_template``, and ``output_template``.
 
     Returns
@@ -249,10 +249,6 @@ class Function(Node, TrackedTerm, Annotated):
         ``"thread"`` and execution resolves to local thread dispatch. JAX
         ``vmap``, local sequential dispatch, Prefect, Ray, and Dask do not
         use this setting.
-    seed : int
-        Random seed for invocation-local JAX PRNG key management during
-        broadcasting. Repeated calls with the same seed use the same key
-        sequence without mutating the Function.
     include_inputs : bool
         Whether distribution broadcasting includes sampled inputs in the
         returned joint distribution by default.
@@ -272,7 +268,7 @@ class Function(Node, TrackedTerm, Annotated):
     Keyword arguments passed to a workflow call belong to the wrapped user
     function whenever they can bind to that function. Use
     ``with_options(...)`` for call-time ProbPipe controls such as
-    ``seed``, ``n_broadcast_samples``, and ``include_inputs``.
+    ``n_broadcast_samples`` and ``include_inputs``.
 
     Raises
     ------
@@ -294,7 +290,6 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None = None,  # default number of samples for broadcasting
         dispatch: _FunctionDispatch = "auto",  # "auto" | "jax" | "sequential" | "thread"
         max_workers: int | None = None,  # ThreadPoolExecutor worker count
-        seed: int | None = None,
         include_inputs: bool = False,  # True → return BroadcastDistribution (joint over inputs+outputs)
         input_template: EventTemplate | None = None,
         output_template: EventTemplate | None = None,
@@ -318,7 +313,6 @@ class Function(Node, TrackedTerm, Annotated):
             n_broadcast_samples=n_broadcast_samples,
             dispatch=dispatch,
             max_workers=max_workers,
-            seed=seed,
             include_inputs=include_inputs,
             input_template=input_template,
             output_template=output_template,
@@ -340,7 +334,6 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None = None,
         dispatch: _FunctionDispatch = "auto",
         max_workers: int | None = None,
-        seed: int | None = None,
         include_inputs: bool = False,
     ) -> Function:
         """Construct an ordinary Function from a private implementation.
@@ -367,7 +360,6 @@ class Function(Node, TrackedTerm, Annotated):
             n_broadcast_samples=n_broadcast_samples,
             dispatch=dispatch,
             max_workers=max_workers,
-            seed=seed,
             include_inputs=include_inputs,
             input_template=input_template,
             output_template=output_template,
@@ -389,7 +381,6 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None,
         dispatch: _FunctionDispatch,
         max_workers: int | None,
-        seed: int | None,
         include_inputs: bool,
         input_template: EventTemplate | None,
         output_template: EventTemplate | None,
@@ -448,7 +439,6 @@ class Function(Node, TrackedTerm, Annotated):
         )
         self._dispatch = dispatch
         self._max_workers = max_workers
-        self._seed = seed
         self._include_inputs = include_inputs
         self._input_template = input_template
         self._output_template = output_template
@@ -625,7 +615,6 @@ class Function(Node, TrackedTerm, Annotated):
         *,
         n_broadcast_samples: int | None = None,
         include_inputs: bool | None = None,
-        seed: int | None = None,
     ) -> _FunctionCallWithOptions:
         """Return a callable view with temporary call-time workflow options.
 
@@ -640,8 +629,6 @@ class Function(Node, TrackedTerm, Annotated):
         include_inputs : bool or None
             Temporary override for returning the joint input/output broadcast
             distribution.
-        seed : int or None
-            Temporary PRNG seed override for one workflow call.
 
         Returns
         -------
@@ -653,7 +640,6 @@ class Function(Node, TrackedTerm, Annotated):
             _workflow_call.WorkflowCallOptions(
                 n_broadcast_samples=n_broadcast_samples,
                 include_inputs=include_inputs,
-                seed=seed,
             ),
         )
 
@@ -670,13 +656,11 @@ class Function(Node, TrackedTerm, Annotated):
         call_inputs: dict[str, Any],
         options: _workflow_call.WorkflowCallOptions,
     ) -> Any:
-        context_was_active = _workflow_context._has_active_workflow_frame()
         with _workflow_context._ephemeral_workflow_run():
             return self._call_with_options_in_context(
                 args,
                 call_inputs,
                 options,
-                context_was_active=context_was_active,
             )
 
     def _call_with_options_in_context(
@@ -684,8 +668,6 @@ class Function(Node, TrackedTerm, Annotated):
         args: tuple[Any, ...],
         call_inputs: dict[str, Any],
         options: _workflow_call.WorkflowCallOptions,
-        *,
-        context_was_active: bool,
     ) -> Any:
         call = _workflow_call.resolve_workflow_call(
             self._signature_info,
@@ -699,21 +681,11 @@ class Function(Node, TrackedTerm, Annotated):
             default_include_inputs=self._include_inputs,
             options=options,
         )
-        legacy_seed = self._seed if call.overrides.seed is None else call.overrides.seed
-        legacy_key = (
-            jax.random.PRNGKey(legacy_seed)
-            if legacy_seed is not None and not context_was_active
-            else None
-        )
         stochastic_invocation: _workflow_context._WorkflowInvocation | None = None
         key_request_ordinal = 0
 
         def get_key():
-            nonlocal key_request_ordinal, legacy_key, stochastic_invocation
-            if legacy_key is not None:
-                legacy_key, subkey = jax.random.split(legacy_key)
-                return subkey
-
+            nonlocal key_request_ordinal, stochastic_invocation
             if stochastic_invocation is None:
                 stochastic_invocation = _workflow_context._commit_stochastic_invocation()
             logical_unit_id = (
