@@ -5,7 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, Normal, Provenance, Record, provenance_ancestors
+from probpipe import EventTemplate, Normal, Provenance, Record, RecordSpec, provenance_ancestors
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -1045,6 +1045,113 @@ class TestProvenance:
         ancestors = provenance_ancestors(outer)
         names = [getattr(a, "name", None) for a in ancestors]
         assert names == [middle.name, "prior"]
+
+
+# ---------------------------------------------------------------------------
+# The stored spec
+# ---------------------------------------------------------------------------
+
+
+class TestSpecStorage:
+    """``spec`` is the single stored source of a record's type; ``event_template``
+    is a view on it, so the two cannot disagree.
+    """
+
+    def test_spec_is_a_record_spec_over_the_event_template(self):
+        r = Record("r", x=jnp.asarray(1.0), label="a")
+        assert isinstance(r.spec, RecordSpec)
+        assert r.spec.event_template is r.event_template
+
+    def test_event_template_is_a_view_on_the_spec(self):
+        tpl = EventTemplate(x=())
+        r = Record("r", {"x": jnp.asarray(1.0)}, event_template=tpl)
+        assert r.event_template is r.spec.event_template
+
+    def test_a_bare_template_is_stored_wrapped(self):
+        tpl = EventTemplate(x=())
+        r = Record("r", {"x": jnp.asarray(1.0)}, event_template=tpl)
+        assert r.spec == RecordSpec(tpl)
+        assert r.event_template is tpl
+
+    def test_a_concrete_spec_is_stored_verbatim(self):
+        spec = RecordSpec(EventTemplate(x=()))
+        r = Record("r", {"x": jnp.asarray(1.0)}, event_template=spec)
+        assert r.spec is spec
+
+    def test_the_two_declaration_forms_agree(self):
+        tpl = EventTemplate(x=(2,), label=None)
+        fields = {"x": jnp.zeros(2), "label": "a"}
+        assert Record("r", dict(fields), event_template=tpl) == Record(
+            "r", dict(fields), event_template=RecordSpec(tpl)
+        )
+
+    def test_spec_admits_the_record_it_types(self):
+        r = Record("r", x=jnp.asarray(1.0), label="a")
+        assert r.spec.is_valid(r)
+
+    def test_a_spec_declaration_still_drives_numeric_promotion(self):
+        from probpipe import NumericRecord
+
+        numeric = RecordSpec(EventTemplate(x=(2,)))
+        assert isinstance(Record("r", {"x": jnp.zeros(2)}, event_template=numeric), NumericRecord)
+        # A non-numeric leaf in the declaration vetoes promotion, as a bare
+        # template does: the spec wrapping changes nothing about the reading.
+        mixed = RecordSpec(EventTemplate(x=(2,), label=None))
+        r = Record("r", {"x": jnp.zeros(2), "label": "a"}, event_template=mixed)
+        assert not isinstance(r, NumericRecord)
+
+    def test_a_polymorphic_declaration_is_stored_bound(self):
+        spec = RecordSpec(EventTemplate(x=("obs", 2), y=("obs",)))
+        r = Record("r", {"x": jnp.zeros((5, 2)), "y": jnp.zeros(5)}, event_template=spec)
+        assert r.spec.event_template.is_concrete
+        assert r.spec != spec  # the stored declaration is the bound one
+
+    def test_a_nested_record_carries_its_own_spec(self):
+        r = Record("r", theta=Record("theta", loc=jnp.zeros(2)), obs=jnp.zeros(5))
+        child = r.at_path("theta")
+        assert isinstance(child.spec, RecordSpec)
+        assert child.spec.event_template == r.event_template.at_path("theta")
+
+    def test_the_spec_rides_in_the_pytree_aux(self):
+        r = Record("r", x=jnp.asarray(1.0), label="a")
+        leaves, treedef = jax.tree_util.tree_flatten(r)
+        rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+        assert rebuilt.spec == r.spec
+
+    def test_records_sharing_a_spec_share_a_treedef(self):
+        tpl = EventTemplate(x=(2,))
+        first = Record("a", {"x": jnp.zeros(2)}, event_template=tpl)
+        second = Record("a", {"x": jnp.ones(2)}, event_template=tpl)
+        assert jax.tree_util.tree_structure(first) == jax.tree_util.tree_structure(second)
+
+    def test_the_spec_survives_a_pickle_roundtrip(self):
+        import pickle
+
+        from probpipe.core.event_template import ArraySpec
+
+        # An explicit dtype is not recoverable by inference, so the spec must
+        # be the thing that was serialized.
+        spec = RecordSpec(EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float32)))
+        r = Record("r", {"x": jnp.asarray(1.0, dtype=jnp.float32)}, event_template=spec)
+        rebuilt = pickle.loads(pickle.dumps(r))
+        assert rebuilt.spec == spec
+
+    def test_numeric_record_accepts_a_spec_declaration(self):
+        from probpipe import NumericRecord
+
+        spec = RecordSpec(EventTemplate(x=(2,), y=()))
+        nr = NumericRecord("nr", {"x": jnp.zeros(2), "y": jnp.asarray(1.0)}, event_template=spec)
+        assert nr.spec is spec
+        assert nr.spec.event_template is nr.event_template
+
+    def test_a_batch_carries_no_record_spec(self):
+        from probpipe import NumericRecord, RecordArray
+
+        ra = RecordArray.stack([NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)])
+        with pytest.raises(AttributeError, match="carries no RecordSpec"):
+            _ = ra.spec
+        # The element schema is still reachable, under its own name.
+        assert ra.event_template.fields == ("x",)
 
 
 # ---------------------------------------------------------------------------

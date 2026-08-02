@@ -48,7 +48,10 @@ from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, arra
 from .event_template import (
     EventTemplate,
     NumericEventTemplate,
+    RecordSpec,
     _full_array_shape_or_none,
+    _record_declaration_for,
+    _record_declaration_template,
     _unify_event_template_with_value,
 )
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
@@ -310,13 +313,15 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     name_is_auto : bool, optional
         ``True`` when *name* was derived by the producing operation rather
         than supplied by the user. Defaults to ``False``.
-    event_template : EventTemplate, optional
-        The value's authoritative schema. When omitted it is inferred from the
-        field data at construction (via :meth:`EventTemplate.infer_from`); when
+    event_template : EventTemplate or RecordSpec, optional
+        The value's authoritative schema, as a bare template or as the
+        :class:`RecordSpec` that stores one — the two denote the same space, and
+        a bare template is wrapped at construction. When omitted the schema is
+        inferred from the field data (via :meth:`EventTemplate.infer_from`); when
         supplied — e.g. carried forward from the distribution that produced the
-        value — it is validated against the field names and stored. Either way it
-        is fixed for the life of the record; read it back via
-        :attr:`event_template`.
+        value — it is validated against the field names. Either way it is fixed
+        for the life of the record; read it back via :attr:`spec`, or its
+        structure via :attr:`event_template`.
 
     Raises
     ------
@@ -345,8 +350,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     coincide when every field is an array (e.g. :class:`NumericRecord`).
 
     The PyTree registration's children are the field values and its static aux
-    data is the ``(event_template, name, name_is_auto)`` triple, so the
-    template and name survive a ``tree_flatten`` / ``tree_unflatten``
+    data is the ``(spec, name, name_is_auto)`` triple, so the declared type and
+    the name survive a ``tree_flatten`` / ``tree_unflatten``
     round-trip. :attr:`provenance` and :attr:`annotations` do **not** cross a
     JAX transform boundary; re-attach provenance on the reconstructed Record
     if you need to preserve the chain. On a :class:`NumericRecord`, the
@@ -356,10 +361,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     __slots__ = (
         "_annotations",
-        "_event_template",
         "_name",
         "_name_is_auto",
         "_provenance",
+        "_spec",
         "_tree",
     )
 
@@ -384,7 +389,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                     "e.g. Record('my_record', x=...); the name= keyword and "
                     "name-less forms were removed."
                 )
-            event_template = kwargs.get("event_template")
+            event_template = _record_declaration_template(kwargs.get("event_template"))
             if len(args) > 1 and args[1] is not None:
                 source: Mapping[str, Any] = args[1]
             else:
@@ -414,11 +419,17 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         _fields: Mapping[str, _FieldValue] | None = None,
         /,
         *,
-        event_template: EventTemplate | None = None,
+        event_template: EventTemplate | RecordSpec | None = None,
         name_is_auto: bool = False,
         _validate_leaves: bool = True,
         **fields: _FieldValue,
     ):
+        # Work in templates and store a spec: the two forms denote the same
+        # space, and every check below reads structure. ``declared`` keeps the
+        # form the caller gave, so the spec stored at the end is that object
+        # when they supplied one and the template still describes the record.
+        declared = event_template
+        event_template = _record_declaration_template(declared)
         if _fields is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
@@ -499,7 +510,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 object.__setattr__(
                     self, "_tree", {k: field_map[k] for k in event_template.children}
                 )
-        object.__setattr__(self, "_event_template", event_template)
+        object.__setattr__(self, "_spec", _record_declaration_for(event_template, declared))
 
     @staticmethod
     def _named_by_key(field_name: str, child: Record) -> Record:
@@ -581,24 +592,36 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # provenance there if desired.
 
     @property
+    def spec(self) -> RecordSpec:
+        """This record's own :class:`RecordSpec` — the single stored source of its type.
+
+        Fixed at construction and always present. A declaration given as a bare
+        :class:`EventTemplate` is stored wrapped, the two forms denoting the same
+        space, so after construction only the spec remains and the record's
+        declared kind is the stored spec's class. :attr:`event_template` is a view
+        on it and cannot disagree with it.
+        """
+        return self._spec
+
+    @property
     def event_template(self) -> EventTemplate:
         """The authoritative :class:`EventTemplate` describing this value's structure.
 
-        Fixed at construction and always present. When a template was supplied
-        (carried forward from the producing generator) that template is
-        returned; otherwise one was inferred from the data at construction (via
-        :meth:`EventTemplate.infer_from`) and stored.
+        A view on :attr:`spec`, fixed at construction and always present. When a
+        declaration was supplied (carried forward from the producing generator)
+        it describes that structure; otherwise one was inferred from the field
+        data at construction (via :meth:`EventTemplate.infer_from`).
 
         Notes
         -----
         Inference is a lossy fallback (it cannot recover an ``ArraySpec``'s
         ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
-        ``RecordSpec`` / ``DistributionSpec`` / ``FunctionSpec``). The template rides in the
+        ``RecordSpec`` / ``DistributionSpec`` / ``FunctionSpec``). The spec rides in the
         JAX pytree aux data, so a value reconstructed by ``tree_unflatten``
-        carries this same template; unpickling instead infers a fresh
+        carries this same structure; unpickling instead infers a fresh
         template from the rebuilt data.
         """
-        return self._event_template
+        return self._spec.event_template
 
     # -- Immutability -------------------------------------------------------
 
@@ -609,10 +632,10 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         raise AttributeError("Record is immutable")
 
     def __reduce__(self):
-        # Serialize the authoritative template so a pickled record keeps its
-        # exact schema (and equality) instead of re-inferring a weaker one on
-        # load — an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta`` is
-        # not recoverable by ``infer_from``.
+        # Serialize the authoritative spec so a pickled record keeps its exact
+        # schema (and equality) instead of re-inferring a weaker one on load —
+        # an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta`` is not
+        # recoverable by ``infer_from``.
         return (
             _unpickle_record,
             (
@@ -620,7 +643,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 self._name,
                 self._name_is_auto,
                 self._provenance,
-                self._event_template,
+                self._spec,
             ),
         )
 
@@ -1221,12 +1244,12 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_record(
-    store: dict, name: str, name_is_auto: bool, provenance, event_template=None
-) -> Record:
-    # ``event_template`` defaults to None so an in-flight pickle from before the
-    # template was serialized still loads (falling back to inference).
-    r = Record(name, store, event_template=event_template)
+def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance, spec=None) -> Record:
+    # ``spec`` defaults to None so an in-flight pickle from before the
+    # declaration was serialized still loads (falling back to inference), and
+    # construction accepts either form, so one written as a bare template loads
+    # unchanged.
+    r = Record(name, store, event_template=spec)
     return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 
 
@@ -1235,29 +1258,29 @@ def _unpickle_record(
 # ---------------------------------------------------------------------------
 
 
-def _record_flatten(v: Record) -> tuple[list, tuple[EventTemplate, str, bool]]:
+def _record_flatten(v: Record) -> tuple[list, tuple[RecordSpec, str, bool]]:
     """Flatten Record for JAX pytree traversal.
 
     The children are the stored field values exactly as-is; JAX further
     traverses any nested ``Record`` children because ``Record`` is a
     registered pytree type, and non-pytree objects (strings, opaque objects,
     native containers) become pytree leaves themselves. The static aux data
-    is the ``(event_template, name, name_is_auto)`` triple — the template and
-    name survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
+    is the ``(spec, name, name_is_auto)`` triple — the record's declared type
+    and name survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
     provenance and annotations do not cross a JAX transform boundary.
     (``NumericRecord`` registers its own flatten, which converts native
     leaves to ``jax.Array`` at this boundary.)
     """
     # Emit children in the template's field order so they realign with the
-    # aux template on unflatten. ``_tree`` order normally matches, but a
+    # aux spec on unflatten. ``_tree`` order normally matches, but a
     # record built with an explicit template ordered differently would
     # otherwise zip each value against the wrong field name.
-    children = [v._tree[name] for name in v._event_template.children]
-    return children, (v._event_template, v._name, v._name_is_auto)
+    children = [v._tree[name] for name in v.event_template.children]
+    return children, (v._spec, v._name, v._name_is_auto)
 
 
-def _record_unflatten(aux: tuple[EventTemplate, str, bool], children: list) -> Record:
-    """Unflatten Record from JAX pytree traversal, threading the aux template.
+def _record_unflatten(aux: tuple[RecordSpec, str, bool], children: list) -> Record:
+    """Unflatten Record from JAX pytree traversal, threading the aux spec.
 
     Reconstructs a plain ``Record`` unconditionally — JAX requires the
     unflattened tree to reproduce the flattened treedef, so this path must
@@ -1265,12 +1288,12 @@ def _record_unflatten(aux: tuple[EventTemplate, str, bool], children: list) -> R
     ``xarray.DataArray``, has a numeric template but was flattened as a
     plain ``Record``).
     """
-    template, name, name_is_auto = aux
+    spec, name, name_is_auto = aux
     r = object.__new__(Record)
     r.__init__(
         name,
-        dict(zip(tuple(template.children), children)),
-        event_template=template,
+        dict(zip(tuple(spec.event_template.children), children)),
+        event_template=spec,
         _validate_leaves=False,
     )
     return r._restore_identity(name_is_auto=name_is_auto, provenance=None)
