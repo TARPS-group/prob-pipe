@@ -900,6 +900,26 @@ def _record_rows(record: Record, rows: Any) -> Record:
     )
 
 
+def _row_count(component: Any) -> int:
+    """How many rows one batched component holds.
+
+    Every component is batched along its leading axis, but what reports that
+    axis differs. An array has a ``shape`` and a list a ``len``. A record batch
+    has neither that means the right thing — its ``len`` is the *field* count and
+    its ``shape`` raises unless it holds a single leaf — so it reports
+    ``batch_shape``. A plain record batched on its leaves has no ``batch_shape``
+    either, which is the form ``RecordEmpiricalDistribution._sample`` returns, so
+    its rows are read off a leaf.
+    """
+    batch_shape = getattr(component, "batch_shape", None)
+    if batch_shape:
+        return batch_shape[0]
+    if isinstance(component, Record):
+        leaf = next(iter(component.values()))
+        return leaf.shape[0]
+    return component.shape[0] if hasattr(component, "shape") else len(component)
+
+
 def _take_rows(component: Any, indices: Array) -> Any:
     """Gather the rows *indices* of one batched component, keeping its container.
 
@@ -1017,19 +1037,8 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         self._output_distributions = output_distributions
         self._output_template = output_template
 
-        # The row count, taken from the first broadcast arg. A record batch
-        # answers neither of the obvious questions the way one would hope: its
-        # ``len`` is the field count, and its ``shape`` raises unless it holds a
-        # single leaf — and raises a ``TypeError``, which ``hasattr`` propagates
-        # rather than swallowing. ``batch_shape`` is the one accessor that means
-        # the same thing for every batched value.
-        first_key = next(iter(broadcast_args))
-        first_arr = input_samples[first_key]
-        batch_shape = getattr(first_arr, "batch_shape", None)
-        if batch_shape:
-            n = batch_shape[0]
-        else:
-            n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
+        # The row count, taken from the first broadcast arg.
+        n = _row_count(input_samples[next(iter(broadcast_args))])
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         name, name_is_auto = auto_name(name, "broadcast")

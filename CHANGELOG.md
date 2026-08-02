@@ -71,8 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The other: a record-valued empirical passed alongside a
   field view of itself. That group routes to sampling rather than enumeration,
-  and `RecordEmpiricalDistribution._sample` returns a single `Record` rather
-  than a batch of them, so there are no rows to index. That is a distribution-
+  where `RecordEmpiricalDistribution._sample` hands back a plain record batched
+  on its leaves rather than a record batch — deliberately, so a vmap'd caller
+  can flatten it — and the view half of the group has no rows to project from. That is a distribution-
   layer contract gap rather than a broadcast one.
 
 - **Value specs are fingerprinted by declaration, not identity (#381).** The

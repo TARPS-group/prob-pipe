@@ -504,6 +504,31 @@ class TestCoSamplingThroughACall:
         assert np.asarray(one["a/x"]).shape == ()
         np.testing.assert_allclose(float(np.asarray(one["_output"])), float(np.asarray(one["a/y"])))
 
+    def test_a_record_valued_empirical_bigger_than_the_budget_samples(self):
+        """Too many atoms to enumerate, so the group routes to sampling.
+
+        That path hands back a plain record batched on its leaves rather than a
+        record batch, which reports no ``batch_shape`` — the rows are on a leaf.
+        """
+        empirical = RecordEmpiricalDistribution(
+            Record("r", x=jnp.arange(10.0), y=jnp.arange(10.0) * 10), name="e"
+        )
+        lifted = Function(
+            func=lambda a: a["y"], dispatch="sequential", n_broadcast_samples=5, seed=0
+        )
+
+        result = lifted(empirical)
+        assert result.num_atoms == 5
+        assert np.asarray(result.samples).shape == (5,)
+
+    def test_a_flat_record_that_will_not_stack_is_not_blamed_on_nesting(self):
+        """``stack`` refuses more than nesting, and flattening cannot help here."""
+        rows = [Record("r", x=jnp.array(1.0), tag="a"), Record("r", x=jnp.array(2.0), tag="b")]
+
+        with pytest.raises(TypeError) as raised:
+            _workflow_distribution_broadcast._stack_rows(rows, arg_name="a")
+        assert "nested fields" not in str(raised.value)
+
     def test_a_nested_record_valued_law_is_refused_until_batches_nest(self):
         """A record batch is child-keyed, so it cannot hold a nested record yet.
 

@@ -520,17 +520,17 @@ def _stack_rows(rows: list[Any], *, arg_name: str) -> Any:
     from .record import Record
 
     if rows and isinstance(rows[0], Record):
-        try:
-            return RecordArray.stack(rows)
-        except TypeError as exc:
-            # ``stack`` reports what the container cannot do; the caller needs to
-            # hear which argument of theirs it was, and that the shape is the one
-            # a record batch does not represent yet rather than a mistake.
+        # Checked rather than caught: ``stack`` refuses a nested template, but it
+        # refuses other things too, and attributing every refusal to nesting
+        # would advise flattening a record that is already flat. A leaf path
+        # differs from a child name exactly when the record nests.
+        if tuple(rows[0].keys()) != rows[0].fields:
             raise TypeError(
                 f"lifting {arg_name!r} would batch a record with nested fields, which a record "
                 f"batch does not represent yet; flatten the law's fields, or pass the nested "
-                f"parts as separate arguments ({exc})"
-            ) from exc
+                f"parts as separate arguments"
+            )
+        return RecordArray.stack(rows)
     return jnp.stack(rows)
 
 
