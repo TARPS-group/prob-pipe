@@ -453,6 +453,10 @@ class Batch[E](TrackedTerm, ABC):
                 f"not levels of this batch: {sorted(unknown)}; have {list(self.level_names)}"
             )
         for new in renames.values():
+            # Type before emptiness: None, 0 and [] are all falsy, and reporting
+            # them as empty names would describe the wrong problem.
+            if not isinstance(new, str):
+                raise TypeError(f"level names are strings, got {type(new).__name__}: {new!r}")
             if not new:
                 raise ValueError("level names must be non-empty")
 

@@ -201,13 +201,26 @@ class _StoringBatch(Batch[_Leaf]):
         return type(self)(self._store[index[0]], spec, name=name, name_is_auto=True)
 
 
-class _StringSlotsBatch(_ListBatch):
-    """A double whose ``__slots__`` names its one slot as a bare string."""
+class _StringSlotsBatch(Batch[int]):
+    """A double whose ``__slots__`` names its one slot as a bare string.
+
+    It derives from :class:`Batch` directly, not from another double: a parent
+    declaring the same slot in the tuple form would supply the name the string
+    form fails to, and the double would pass whether or not the string was read
+    correctly.
+    """
 
     __slots__ = "_store"  # a bare string, deliberately: the point of the double
 
+    def __init__(self, store, spec, *, name="b", name_is_auto=False):
+        object.__setattr__(self, "_store", list(store))
+        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+
     def _element_at(self, index, *, name):
-        return self._store[self._flat(index)]
+        return self._store[index[0]]
+
+    def _sub_batch_at(self, index, *, spec, name):
+        return type(self)(self._store[index[0]], spec, name=name, name_is_auto=True)
 
 
 class _DictBatch(_ListBatch):
@@ -408,6 +421,16 @@ class TestLevelNames:
     def test_an_empty_new_name_raises(self, nested):
         with pytest.raises(ValueError, match="must be non-empty"):
             nested.with_level_names(chain="")
+
+    @pytest.mark.parametrize("new", [None, 0, [], 3.5], ids=["None", "zero", "empty-list", "float"])
+    def test_a_new_name_that_is_not_a_string_is_reported_as_one(self, nested, new):
+        """A falsy non-string is a wrong type, not an empty name.
+
+        ``None``, ``0`` and ``[]`` are all falsy, so an emptiness check reached
+        first would describe the wrong problem.
+        """
+        with pytest.raises(TypeError, match="level names are strings"):
+            nested.with_level_names(chain=new)
 
     def test_two_renames_onto_one_name_raise(self, nested):
         with pytest.raises(ValueError, match="would duplicate a level name"):
@@ -846,21 +869,39 @@ class TestSerialization:
         with pytest.raises(AttributeError, match="_ListBatch is immutable"):
             flat._spec = None
 
-    @pytest.mark.parametrize("round_trip", [copy.copy, lambda b: pickle.loads(pickle.dumps(b))])
-    def test_a_string_slots_declaration_carries_its_storage(self, round_trip):
+    @pytest.mark.parametrize(
+        "derive",
+        [
+            pytest.param(copy.copy, id="copy"),
+            pytest.param(lambda b: pickle.loads(pickle.dumps(b)), id="pickle"),
+            pytest.param(lambda b: b.with_name("renamed"), id="with_name"),
+            pytest.param(lambda b: b.with_level_names(draw="step"), id="with_level_names"),
+        ],
+    )
+    def test_a_string_slots_declaration_carries_its_storage(self, derive):
         """``__slots__`` may name one slot as a bare string, which is not a list of one.
 
         Walking ``__slots__`` by hand iterates that string into characters, none
         of which is an attribute, so the storage would be dropped in silence — a
-        missing attribute being indistinguishable from an unassigned slot.
+        missing attribute being indistinguishable from an unassigned slot. Every
+        way of deriving a new object from an old one has to read it: ``copy`` and
+        ``pickle`` go through the state round-trip, while ``with_name`` and
+        ``with_level_names`` go through ``_shallow_copy``.
         """
         batch = _StringSlotsBatch(range(3), _spec([(3,)], ["draw"]))
 
-        restored = round_trip(batch)
-        assert restored._store == [0, 1, 2]
-        assert [element for element in restored] == [0, 1, 2]
+        derived = derive(batch)
+        assert derived._store == [0, 1, 2]
+        assert [element for element in derived] == [0, 1, 2]
 
-    @pytest.mark.parametrize("round_trip", [copy.copy, lambda b: pickle.loads(pickle.dumps(b))])
+    @pytest.mark.parametrize(
+        "round_trip",
+        [
+            pytest.param(copy.copy, id="copy"),
+            pytest.param(lambda b: pickle.loads(pickle.dumps(b)), id="pickle"),
+            pytest.param(lambda b: b.with_name("renamed"), id="with_name"),
+        ],
+    )
     def test_a_subclass_without_slots_carries_its_instance_dict(self, round_trip):
         """A subclass that declares no ``__slots__`` keeps its attributes in a dict.
 
