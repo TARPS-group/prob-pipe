@@ -154,7 +154,24 @@ class BatchSpec(TermSpec):
             raise TypeError(
                 f"BatchSpec.element_spec must be a ValueSpec, got {type(element_spec).__name__}"
             )
-        groups = tuple(tuple(_axis_size(size) for size in group) for group in axis_groups)
+        if isinstance(level_names, str):
+            raise TypeError(
+                f"level_names holds one name per level, so the string {level_names!r} would be "
+                f"read as one name per character; write a tuple, as ({level_names!r},) for a "
+                f"single level"
+            )
+        groups: list[tuple[int, ...]] = []
+        for group in axis_groups:
+            if not isinstance(group, Iterable):
+                # A flat batch_shape is the natural thing to reach for here, and
+                # descending into it would fail without saying what was wrong.
+                raise TypeError(
+                    f"axis_groups holds one group of axis sizes per level, so {group!r} is not "
+                    f"a group; a flat shape such as (4,) is one level of one axis, written "
+                    f"((4,),)"
+                )
+            groups.append(tuple(_axis_size(size) for size in group))
+        groups = tuple(groups)
         names = tuple(level_names)
 
         if not groups:
@@ -950,7 +967,16 @@ def _normalize_indexer(
                 f"({_location(axis, shape, where)}); a step is how far apart the selected "
                 f"positions are, so zero selects nothing and no position twice"
             )
-        return range(*indexer.indices(size))
+        try:
+            return range(*indexer.indices(size))
+        except TypeError:
+            # ``slice.indices`` would raise this itself, naming neither the batch
+            # nor the axis -- and a bound computed with ``/`` is a float, which is
+            # the ordinary way to arrive here.
+            raise TypeError(
+                f"a batch axis is sliced by integers, and {indexer!r} is not "
+                f"({_location(axis, shape, where)})"
+            ) from None
     if indexer is None:
         raise TypeError(
             f"a batch axis is not indexed by None ({_location(axis, shape, where)}); write "

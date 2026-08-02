@@ -287,6 +287,16 @@ class TestShapeAndLevels:
         with pytest.raises(ValueError, match=match):
             _spec(groups, names)
 
+    def test_a_flat_shape_is_not_a_grouping(self):
+        """``batch_shape`` is the natural thing to reach for, and is one nesting short."""
+        with pytest.raises(TypeError, match=r"is not a group"):
+            _spec((4,), ("draw",))
+
+    def test_a_bare_string_is_not_one_name_per_character(self):
+        """``tuple("ab")`` is two names, which is never what a caller means."""
+        with pytest.raises(TypeError, match="one name per character"):
+            _spec([(2,)], "ab")
+
 
 class TestSpec:
     """The stored ``BatchSpec`` is the single source of a batch's type."""
@@ -647,6 +657,14 @@ class TestIndexerValidation:
     def test_at_levels_rejects_the_same_indexers(self, flat):
         with pytest.raises(TypeError, match="indexed by an integer or a slice"):
             flat.at_levels(draw="first")
+
+    @pytest.mark.parametrize("bound", [2.5, "2"], ids=["float", "str"])
+    def test_a_slice_bound_that_is_not_an_integer_is_placed(self, nested, bound):
+        """A bound computed with ``/`` is a float, the ordinary way to arrive here."""
+        with pytest.raises(TypeError, match=r"sliced by integers.*batch_shape \(2, 3\)"):
+            nested[0:bound]
+        with pytest.raises(TypeError, match=r"sliced by integers.*level 'draw'"):
+            nested.at_levels(draw=slice(0, bound))
 
     def test_a_bool_is_not_an_index(self, flat):
         with pytest.raises(TypeError, match="not indexed by a bool"):
