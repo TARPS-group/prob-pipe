@@ -342,6 +342,24 @@ def _materialize_path(frame: _WorkflowFrame) -> tuple[Any, ...]:
         return frame.state.path_prefix
 
 
+def _materialize_descendant_path(
+    frame: _WorkflowFrame,
+    ancestor: _WorkflowFrame,
+) -> tuple[Any, ...]:
+    """Return a lazily materialized path relative to one managed ancestor."""
+    cursor = frame
+    while cursor is not ancestor:
+        if cursor.parent is None:
+            raise RuntimeError("workflow frame is not below its managed work-item frame")
+        cursor = cursor.parent
+
+    ancestor_path = _materialize_path(ancestor)
+    descendant_path = _materialize_path(frame)
+    if descendant_path[: len(ancestor_path)] != ancestor_path:
+        raise RuntimeError("workflow descendant path does not extend its managed ancestor")
+    return descendant_path[len(ancestor_path) :]
+
+
 def _current_workflow_owner() -> _WorkflowOwner:
     """Return the current thread/task identity for admission checks."""
     try:

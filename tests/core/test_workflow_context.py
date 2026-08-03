@@ -18,6 +18,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
+from probpipe.core import _workflow_context
 from probpipe.core._workflow_context import (
     _commit_stochastic_invocation,
     _ephemeral_workflow_run,
@@ -41,6 +42,11 @@ def _identity(value):
 
 def _nested_draw(value):
     return sample(Normal(loc=value, scale=1.0, name="draw"))
+
+
+def _nested_seeded_draw(value):
+    with workflow_run(seed=42):
+        return sample(Normal(loc=value, scale=1.0, name="draw"))["sample"]
 
 
 class TestWorkflowRunBoundary:
@@ -217,6 +223,46 @@ class TestWorkflowOccurrences:
                 return _claim_key_words()
 
         assert inner_key(1) == inner_key(2)
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "thread"])
+    def test_explicit_nested_seed_inside_managed_function_replaces_outer_root(
+        self,
+        dispatch,
+    ):
+        workflow = Function(func=_nested_seeded_draw, dispatch=dispatch)
+        occurrence_paths = []
+        original_key_for = _workflow_context._WorkflowInvocation.key_for
+
+        def recording_key_for(
+            invocation,
+            *,
+            stochastic_source_id,
+            logical_unit_id,
+        ):
+            occurrence_paths.append(invocation.occurrence_path)
+            return original_key_for(
+                invocation,
+                stochastic_source_id=stochastic_source_id,
+                logical_unit_id=logical_unit_id,
+            )
+
+        values = []
+        with patch.object(
+            _workflow_context._WorkflowInvocation,
+            "key_for",
+            new=recording_key_for,
+        ):
+            for outer_seed in (1, 2):
+                with workflow_run(seed=outer_seed):
+                    values.append(float(workflow(0.0)["_nested_seeded_draw"]))
+
+        assert values[0] == values[1]
+        assert len(occurrence_paths) == 2
+        assert occurrence_paths[0] == occurrence_paths[1]
+        assert any(
+            isinstance(segment, tuple) and segment[:1] == ("scope",)
+            for segment in occurrence_paths[0]
+        )
 
     def test_probe_attempt_does_not_commit_or_shift_an_occurrence(self):
         with workflow_run(seed=7):

@@ -55,6 +55,11 @@ def _claim_automatic_scalar():
     return jax.random.key_data(key)[0]
 
 
+def _claim_nested_seeded_scalar():
+    with workflow_run(seed=42):
+        return _claim_automatic_scalar()
+
+
 class RecordingExecutor:
     instances: ClassVar[list[RecordingExecutor]] = []
 
@@ -299,6 +304,25 @@ class TestManagedRetryClaims:
             return words
 
         request = make_request(calls=[{}], func=fail_once_after_claim)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            with pytest.raises(RuntimeError, match="retry me"):
+                execution_mod.execute_many(request)
+            retried = execution_mod.execute_many(request)[0]
+
+        assert seen == [retried, retried]
+
+    def test_failed_attempt_reuses_nested_scope_claim(self):
+        seen = []
+
+        def fail_once_after_nested_claim():
+            with workflow_run(seed=42):
+                words = _claim_automatic_words()
+            seen.append(words)
+            if len(seen) == 1:
+                raise RuntimeError("retry me")
+            return words
+
+        request = make_request(calls=[{}], func=fail_once_after_nested_claim)
         with workflow_run(seed=17), broker_mod._function_stochastic_scope():
             with pytest.raises(RuntimeError, match="retry me"):
                 execution_mod.execute_many(request)
@@ -619,6 +643,24 @@ class TestPrefectMapping:
                 return execution_mod.execute_many(request)[0]
 
         assert run("sequential") == run("thread") == run("prefect_task")
+
+    def test_nested_seeded_scope_matches_across_local_and_prefect(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+
+        def run(mode, outer_seed):
+            workflow = Function(
+                func=_claim_nested_seeded_scalar,
+                workflow_kind=(WorkflowKind.TASK if mode == "prefect" else WorkflowKind.OFF),
+                dispatch="sequential",
+            )
+            with workflow_run(seed=outer_seed):
+                return int(workflow()["_claim_nested_seeded_scalar"])
+
+        local = run("local", 1)
+        assert run("local", 2) == local
+        assert run("prefect", 1) == local
+        assert run("prefect", 2) == local
 
     def test_prefect_transport_payload_is_pickleable(self):
         request = make_request(calls=[{}], func=_claim_automatic_words)
