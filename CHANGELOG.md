@@ -10,9 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed (breaking)
 
 - **Workflow-scoped structural RNG, co-sampling, and validated replay (#389).**
-  `Function(..., seed=...)`, call-time `seed=...`, and
-  `Function.with_options(seed=...)` have been removed without a deprecation
-  shim. Reproducible ProbPipe-owned randomness now belongs to a run:
+  Function-owned RNG controls—`Function(..., seed=...)`, the former reserved
+  call-level RNG option, and `Function.with_options(seed=...)`—have been removed
+  without a deprecation shim. Reproducible ProbPipe-owned randomness now belongs
+  to a run:
 
   ```python
   from probpipe import workflow_run
