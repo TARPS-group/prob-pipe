@@ -11,7 +11,8 @@ from ._workflow_managed import ManagedEffectClaim
 from ._workflow_rng import RandomEventIdentity, encode_random_event
 from .config import ProvenanceMode, provenance_config
 
-_RECIPE_ABI = "probpipe.workflow_rng_recipe/v1"
+_RNG_RECIPE_ABI = "probpipe.rng_recipe/v1"
+_REPLAY_ANCHOR_ABI = "probpipe.replay_anchor/v1"
 _STOCHASTIC_PLAN_ABI = "probpipe.stochastic_plan/v1"
 _MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
 
@@ -50,29 +51,53 @@ def provenance_recipe_fields(
         }
         for contract in snapshot.execution_contracts
     ]
-    recipe = {
-        "abi": _RECIPE_ABI,
+    anchor = snapshot.callable_anchor
+    callable_controls = (
+        anchor.controls()
+        if anchor is not None
+        else {
+            "supported": False,
+            "module": None,
+            "qualname": None,
+            "definition_abi": "probpipe.callable_definition/v1",
+            "form": "missing_function_anchor",
+        }
+    )
+    random_recipe = {
+        "schema": _RNG_RECIPE_ABI,
         "rng_abi": "ProbPipe-RNG-v1",
         "root_words": list(snapshot.root_words),
         "occurrence_path": _json_value(snapshot.occurrence_path),
-        "stochastic_plan": serialize_stochastic_plan(stochastic_plan),
-        "events": [_serialize_effect(effect) for effect in effects],
+        "events": [_serialize_random_event(effect) for effect in effects],
         "expected_event_count": len(effects),
-        "execution_capabilities": compatibility_contracts,
-        "managed_child_policy": _MANAGED_CHILD_POLICY_ABI,
-        "key_ownership": "automatic",
-        "standalone_eligible": not nested_automatic_parent,
-        "standalone_restriction": (
-            "nested_automatic_function" if nested_automatic_parent else None
-        ),
+    }
+    replay_anchor = {
+        "schema": _REPLAY_ANCHOR_ABI,
+        "standalone": {
+            "eligibility": (
+                "nested_workflow_rng_execution" if nested_automatic_parent else "supported"
+            ),
+            "restriction": ("nested_automatic_function" if nested_automatic_parent else None),
+        },
+        "callable": callable_controls,
+        "plan": {
+            "schema": _STOCHASTIC_PLAN_ABI,
+            "canonical_fields": serialize_stochastic_plan(stochastic_plan),
+            "expected_effects": [_serialize_effect_anchor(effect) for effect in effects],
+        },
+        "compatibility": {
+            "execution_contract": "probpipe.workflow_rng_execution/v1",
+            "capabilities": compatibility_contracts,
+            "sampling_abi": _ordered_unique([effect.sampling_abi for effect in effects]),
+            "provider_abi": _ordered_unique([effect.provider_abi for effect in effects]),
+        },
     }
     return (
-        {"workflow_rng": recipe},
+        {"randomness": random_recipe, "replay": replay_anchor},
         {
-            "workflow_rng": {
-                "rng_origin": snapshot.rng_origin,
-                "execution": execution_diagnostics,
-            }
+            "rng_origin": snapshot.rng_origin,
+            "callable_source": anchor.diagnostics() if anchor is not None else {},
+            "execution": execution_diagnostics,
         },
     )
 
@@ -83,7 +108,6 @@ def serialize_stochastic_plan(
     """Serialize only canonical plan fields under the version-1 plan ABI."""
     if plan is None:
         return {
-            "abi": _STOCHASTIC_PLAN_ABI,
             "kind": "direct_operation",
             "evaluation_mode": None,
             "arg_refs": [],
@@ -99,7 +123,6 @@ def serialize_stochastic_plan(
             "key_ownership": "automatic",
         }
     return {
-        "abi": _STOCHASTIC_PLAN_ABI,
         "kind": "function_lifting",
         "evaluation_mode": plan.evaluation_mode,
         "arg_refs": [_serialize_ref(ref) for ref in plan.arg_refs],
@@ -148,26 +171,23 @@ def _serialize_ref(ref: Any) -> dict[str, Any]:
     }
 
 
-def _serialize_effect(effect: ManagedEffectClaim) -> dict[str, Any]:
-    identity = RandomEventIdentity(
-        occurrence_path=effect.occurrence_path,
-        stochastic_source_id=effect.stochastic_source_id,
-        logical_unit_id=effect.logical_unit_id,
-    )
+def _serialize_random_event(effect: ManagedEffectClaim) -> dict[str, Any]:
     return {
-        "identity_hex": encode_random_event(identity).hex(),
         "occurrence_path": _json_value(effect.occurrence_path),
         "occurrence_kind": effect.occurrence_kind,
-        "stochastic_source_id": _json_value(effect.stochastic_source_id),
-        "logical_unit_id": _json_value(effect.logical_unit_id),
-        "effect": {
-            "operation_kind": effect.operation_kind,
-            "execution_mode": effect.execution_mode,
-            "sample_shape": _json_value(effect.sample_shape),
-            "sampling_abi": effect.sampling_abi,
-            "provider_abi": effect.provider_abi,
-        },
+        "source": _json_value(effect.stochastic_source_id),
+        "unit": _json_value(effect.logical_unit_id),
         "key_ownership": "automatic",
+    }
+
+
+def _serialize_effect_anchor(effect: ManagedEffectClaim) -> dict[str, Any]:
+    return {
+        "operation_kind": effect.operation_kind,
+        "execution_mode": effect.execution_mode,
+        "sample_shape": _json_value(effect.sample_shape),
+        "sampling_abi": effect.sampling_abi,
+        "provider_abi": effect.provider_abi,
     }
 
 
@@ -214,6 +234,10 @@ def _unique_json_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for value in values:
         unique.setdefault(_canonical_json(value), value)
     return list(unique.values())
+
+
+def _ordered_unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
 
 
 def _canonical_json(value: Any) -> bytes:

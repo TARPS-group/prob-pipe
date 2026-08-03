@@ -13,6 +13,7 @@ from ..custom_types import PRNGKey
 from . import _workflow_context
 
 if TYPE_CHECKING:
+    from ._workflow_callable import CallableAnchor
     from ._workflow_execution_contract import WorkflowRngExecutionContract
 from ._workflow_managed import (
     ManagedAttemptState,
@@ -105,9 +106,10 @@ class _BrokerRecipeSnapshot:
 
     root_words: tuple[int, int]
     occurrence_path: tuple[Any, ...]
-    rng_origin: str
+    rng_origin: dict[str, str | int | None]
     effects: tuple[ManagedEffectClaim, ...]
     execution_contracts: tuple[WorkflowRngExecutionContract, ...]
+    callable_anchor: CallableAnchor | None
 
 
 def _singleton_effect_plan(
@@ -146,6 +148,7 @@ class _AutomaticKeyBroker:
     _effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(default_factory=dict)
     _effects_lock: Any = field(default_factory=Lock, repr=False)
     _lock: Any = field(default_factory=Lock, repr=False)
+    _callable_anchor: CallableAnchor | None = None
 
     def key_for(self, plan: StochasticEffectPlan) -> PRNGKey:
         """Return the workflow-owned key for one planned effect."""
@@ -207,6 +210,12 @@ class _AutomaticKeyBroker:
         """Record one distinct capability-checked route for later diagnostics."""
         if contract not in self._execution_contracts:
             self._execution_contracts.append(contract)
+
+    def set_callable_anchor(self, anchor: CallableAnchor) -> None:
+        """Attach the immutable definition anchor for this public Function."""
+        if self._callable_anchor is not None:
+            raise RuntimeError("a Function broker already has a callable anchor")
+        self._callable_anchor = anchor
 
     def record_managed_effect(self, effect: ManagedEffectClaim) -> None:
         """Aggregate one local or transported child effect on the parent broker."""
@@ -549,9 +558,10 @@ def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
     return _BrokerRecipeSnapshot(
         root_words=_workflow_context._resolve_root_words(invocation.frame),
         occurrence_path=invocation.occurrence_path,
-        rng_origin=invocation.frame.kind,
+        rng_origin=_workflow_context._describe_rng_origin(invocation.frame),
         effects=effects,
         execution_contracts=tuple(broker._execution_contracts),
+        callable_anchor=broker._callable_anchor,
     )
 
 

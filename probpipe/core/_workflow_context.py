@@ -417,3 +417,34 @@ def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
                     int.from_bytes(entropy[4:], "big"),
                 )
         return frame.state.root_words
+
+
+def _describe_rng_origin(frame: _WorkflowFrame) -> dict[str, str | int | None]:
+    """Describe the effective root source without runtime ownership state."""
+    cursor = frame
+    while cursor.seed_words is None and cursor.parent is not None:
+        cursor = cursor.parent
+    if cursor.seed_words is not None:
+        supplied_seed = cursor.seed_words[0] << 32 | cursor.seed_words[1]
+        return {
+            "context_kind": "seeded_run",
+            "root_source": "user_seed",
+            "supplied_seed": supplied_seed,
+        }
+    if cursor.kind == "anonymous":
+        return {
+            "context_kind": "anonymous_run",
+            "root_source": "os_entropy",
+            "supplied_seed": None,
+        }
+    if cursor.kind == "ephemeral":
+        return {
+            "context_kind": "ephemeral_bare_call",
+            "root_source": "os_entropy",
+            "supplied_seed": None,
+        }
+    return {
+        "context_kind": "transported_run",
+        "root_source": "transported_authority",
+        "supplied_seed": None,
+    }

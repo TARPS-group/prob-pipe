@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import functools
+import inspect
 import json
 from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
+import pytest
 from tensorflow_probability.substrates.jax import bijectors as tfb
 
 import probpipe
@@ -21,6 +24,11 @@ from probpipe import (
     TransformedDistribution,
     sample,
     workflow_run,
+)
+from probpipe.core import _workflow_callable
+from tests.core._workflow_replay_fixtures import (
+    replayable_affine,
+    replayable_identity,
 )
 
 
@@ -47,9 +55,14 @@ def _nested_automatic(value):
     return _INNER_DRAW(value=value)["_draw_value"]
 
 
-def _recipe(result):
+def _randomness(result):
     assert result.provenance is not None
-    return result.provenance.controls["workflow_rng"]
+    return result.provenance.controls["randomness"]
+
+
+def _replay(result):
+    assert result.provenance is not None
+    return result.provenance.controls["replay"]
 
 
 def _record_array():
@@ -66,15 +79,16 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=7):
             result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
-        recipe = _recipe(result)
-        assert recipe["abi"] == "probpipe.workflow_rng_recipe/v1"
+        recipe = _randomness(result)
+        assert recipe["schema"] == "probpipe.rng_recipe/v1"
         assert recipe["root_words"] == [0, 7]
         assert recipe["occurrence_path"] == [["invocation", 0]]
         assert recipe["expected_event_count"] == 1
         assert len(recipe["events"]) == 1
-        assert recipe["events"][0]["effect"]["sample_shape"] == [11]
-        assert recipe["stochastic_plan"]["abi"] == "probpipe.stochastic_plan/v1"
-        assert recipe["stochastic_plan"]["n_evaluations"] == 11
+        replay = _replay(result)
+        assert replay["plan"]["schema"] == "probpipe.stochastic_plan/v1"
+        assert replay["plan"]["canonical_fields"]["n_evaluations"] == 11
+        assert replay["plan"]["expected_effects"][0]["sample_shape"] == [11]
 
     def test_anonymous_and_ephemeral_roots_are_recorded_only_after_success(self):
         workflow = Function(func=_identity, n_broadcast_samples=5)
@@ -88,10 +102,12 @@ class TestWorkflowRecipeRecording:
                 anonymous = workflow(value=Normal(loc=0.0, scale=1.0, name="x"))
             ephemeral = workflow(value=Normal(loc=0.0, scale=1.0, name="x"))
 
-        assert _recipe(anonymous)["root_words"] == [0x01234567, 0x89ABCDEF]
-        assert _recipe(ephemeral)["root_words"] == [0x01234567, 0x89ABCDEF]
-        assert anonymous.provenance.diagnostics["workflow_rng"]["rng_origin"] == ("anonymous")
-        assert ephemeral.provenance.diagnostics["workflow_rng"]["rng_origin"] == ("ephemeral")
+        assert _randomness(anonymous)["root_words"] == [0x01234567, 0x89ABCDEF]
+        assert _randomness(ephemeral)["root_words"] == [0x01234567, 0x89ABCDEF]
+        assert anonymous.provenance.diagnostics["rng_origin"]["context_kind"] == "anonymous_run"
+        assert (
+            ephemeral.provenance.diagnostics["rng_origin"]["context_kind"] == "ephemeral_bare_call"
+        )
         assert urandom.call_count == 2
 
     def test_deterministic_exact_and_caller_keyed_calls_have_no_recipe(self):
@@ -111,10 +127,10 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=4):
             result = sample(Normal(loc=0.0, scale=1.0, name="x"))
 
-        recipe = _recipe(result)
-        assert recipe["stochastic_plan"]["kind"] == "direct_operation"
-        assert recipe["events"][0]["effect"]["operation_kind"] == "sample"
-        assert recipe["standalone_eligible"] is True
+        replay = _replay(result)
+        assert replay["plan"]["canonical_fields"]["kind"] == "direct_operation"
+        assert replay["plan"]["expected_effects"][0]["operation_kind"] == "sample"
+        assert replay["standalone"]["eligibility"] == "supported"
 
     def test_mixed_plan_records_only_the_sampled_root_event(self):
         workflow = Function(func=_difference, n_broadcast_samples=5)
@@ -124,10 +140,11 @@ class TestWorkflowRecipeRecording:
                 right=Normal(loc=0.0, scale=1.0, name="right"),
             )
 
-        recipe = _recipe(result)
+        recipe = _randomness(result)
         assert recipe["expected_event_count"] == 1
         assert [
-            group["execution_mode"] for group in recipe["stochastic_plan"]["source_groups"]
+            group["execution_mode"]
+            for group in _replay(result)["plan"]["canonical_fields"]["source_groups"]
         ] == ["exact", "sampled"]
 
     def test_alias_and_supported_descendant_share_one_recipe_source(self):
@@ -138,7 +155,7 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=3):
             result = workflow(left=root, right=descendant)
 
-        plan = _recipe(result)["stochastic_plan"]
+        plan = _replay(result)["plan"]["canonical_fields"]
         assert len(plan["source_groups"]) == 1
         assert len(plan["source_groups"][0]["consumers"]) == 2
         descriptor = plan["source_groups"][0]["consumers"][1]["descendant_descriptor"]
@@ -153,9 +170,9 @@ class TestWorkflowRecipeRecording:
                 noise=Normal(loc=0.0, scale=1.0, name="noise"),
             )
 
-        recipe = _recipe(result)
+        recipe = _randomness(result)
         assert recipe["expected_event_count"] == 2
-        assert [event["logical_unit_id"] for event in recipe["events"]] == [
+        assert [event["unit"] for event in recipe["events"]] == [
             ["cell", 0],
             ["cell", 1],
         ]
@@ -165,9 +182,9 @@ class TestWorkflowRecipeRecording:
         with workflow_run(seed=21):
             result = workflow(value=1.0)
 
-        recipe = _recipe(result)
-        assert recipe["standalone_eligible"] is False
-        assert recipe["standalone_restriction"] == "nested_automatic_function"
+        replay = _replay(result)
+        assert replay["standalone"]["eligibility"] == "nested_workflow_rng_execution"
+        assert replay["standalone"]["restriction"] == "nested_automatic_function"
 
     def test_recipe_roundtrip_contains_no_operational_ownership_state(self):
         workflow = Function(func=_identity, dispatch="thread", n_broadcast_samples=5)
@@ -197,3 +214,137 @@ class TestWorkflowRecipeRecording:
             result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
         assert result.provenance is None
+
+
+class TestWorkflowCallableAnchor:
+    def test_module_level_definition_has_hard_coded_golden_digest(self):
+        workflow = Function(func=replayable_affine, n_broadcast_samples=5)
+
+        with workflow_run(seed=19):
+            result = workflow(
+                value=Normal(loc=0.0, scale=1.0, name="value"),
+                offset=1.25,
+            )
+
+        callable_anchor = _replay(result)["callable"]
+        assert callable_anchor == {
+            "supported": True,
+            "module": "tests.core._workflow_replay_fixtures",
+            "qualname": "replayable_affine",
+            "definition_abi": "probpipe.callable_definition/v1",
+            "sha256": "b35e9fc0142a8f4555f83589225d74134723e1dcfb3595e337f8cea061212bba",
+            "signature_and_templates": {
+                "parameters": [
+                    {
+                        "name": "value",
+                        "kind": "POSITIONAL_OR_KEYWORD",
+                        "default": {"tag": "empty"},
+                        "annotation": {"tag": "str", "value": "float"},
+                    },
+                    {
+                        "name": "offset",
+                        "kind": "POSITIONAL_OR_KEYWORD",
+                        "default": {"tag": "float", "value": "0x1.4000000000000p+0"},
+                        "annotation": {"tag": "str", "value": "float"},
+                    },
+                ],
+                "return_annotation": {"tag": "str", "value": "float"},
+                "input_template": {"tag": "none"},
+                "output_template": {"tag": "none"},
+            },
+            "python_replay_abi": "cpython-3.12",
+            "probpipe_replay_abi": "probpipe.replay/v1",
+        }
+        source = result.provenance.diagnostics["callable_source"]
+        assert source["source_location"].endswith("tests/core/_workflow_replay_fixtures.py")
+        assert len(source["source_artifact_digest"]) == 64
+
+    def test_function_templates_participate_in_definition_digest(self):
+        plain = Function(func=replayable_identity, n_broadcast_samples=5)
+        declared = Function(
+            func=replayable_identity,
+            n_broadcast_samples=5,
+            input_template=probpipe.EventTemplate(value=()),
+        )
+
+        with workflow_run(seed=4):
+            plain_result = plain(value=Normal(loc=0.0, scale=1.0, name="value"))
+        with workflow_run(seed=4):
+            declared_result = declared(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        assert (
+            _replay(plain_result)["callable"]["sha256"]
+            != _replay(declared_result)["callable"]["sha256"]
+        )
+
+    def test_unsupported_lambda_executes_but_records_no_weak_digest(self):
+        workflow = Function(func=lambda value: value, n_broadcast_samples=5)
+
+        with workflow_run(seed=6):
+            result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        callable_anchor = _replay(result)["callable"]
+        assert callable_anchor["supported"] is False
+        assert callable_anchor["form"] == "lambda"
+        assert "sha256" not in callable_anchor
+
+    @pytest.mark.parametrize(
+        ("factory", "form"),
+        [
+            (lambda: _local_function(), "local_function"),
+            (lambda: _closure(), "closure"),
+            (lambda: _CallableFixture().method, "bound_method"),
+            (lambda: functools.partial(replayable_identity), "partial"),
+            (lambda: _CallableFixture(), "callable_object"),
+            (lambda: float, "class"),
+            (lambda: abs, "builtin"),
+        ],
+    )
+    def test_other_unsupported_forms_have_no_digest(self, factory, form):
+        anchor = _workflow_callable.capture_function_anchor(Function(func=factory()))
+
+        assert anchor.controls()["supported"] is False
+        assert anchor.controls()["form"] == form
+        assert "sha256" not in anchor.controls()
+
+    def test_private_function_implementation_has_no_digest(self):
+        workflow = Function._from_implementation(
+            _PrivateImplementation(),
+            signature=inspect.Signature(),
+            name="private",
+        )
+
+        anchor = _workflow_callable.capture_function_anchor(workflow)
+
+        assert anchor.controls()["form"] == "private_function_implementation"
+        assert "sha256" not in anchor.controls()
+
+
+class _CallableFixture:
+    def __call__(self, value):
+        return value
+
+    def method(self, value):
+        return value
+
+
+class _PrivateImplementation:
+    def invoke(self, bound_inputs, *, context):
+        del bound_inputs, context
+        return 1.0
+
+
+def _local_function():
+    def local(value):
+        return value
+
+    return local
+
+
+def _closure():
+    captured = 1.0
+
+    def closure(value):
+        return value + captured
+
+    return closure

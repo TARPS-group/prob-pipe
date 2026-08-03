@@ -26,6 +26,7 @@ except ImportError:
 from . import (
     _workflow_broker,
     _workflow_call,
+    _workflow_callable,
     _workflow_context,
     _workflow_distribution_broadcast,
     _workflow_distribution_normalization,
@@ -679,8 +680,9 @@ class Function(Node, TrackedTerm, Annotated):
     ) -> Any:
         with (
             _workflow_context._ephemeral_workflow_run(),
-            _workflow_broker._function_stochastic_scope(),
+            _workflow_broker._function_stochastic_scope() as broker,
         ):
+            broker.set_callable_anchor(_workflow_callable.capture_function_anchor(self))
             return self._call_with_options_in_context(
                 args,
                 call_inputs,
