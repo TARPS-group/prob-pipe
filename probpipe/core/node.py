@@ -30,6 +30,7 @@ from . import (
     _workflow_distribution_broadcast,
     _workflow_distribution_normalization,
     _workflow_execution,
+    _workflow_execution_contract,
     _workflow_plan,
     _workflow_result,
     _workflow_sweep,
@@ -880,6 +881,7 @@ class Function(Node, TrackedTerm, Annotated):
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,
                 provenance_inputs=provenance_inputs,
+                workflow_kind=self.effective_workflow_kind,
             )
 
         # Non-broadcast call — one function invocation, then wrap. TrackedTerm
@@ -888,13 +890,19 @@ class Function(Node, TrackedTerm, Annotated):
         # Known harmless duplication: the distribution-broadcast module builds
         # the same request shape. A later execution cleanup can centralize this
         # without reintroducing private facade wrappers.
+        execution = self._make_execution_config()
         request = _workflow_execution.WorkflowExecutionRequest(
             func=invoke_point,
             work_items=_workflow_execution.make_managed_work_items(
                 [values],
                 unit_segments=(_workflow_execution.point_unit_segment(),),
             ),
-            execution=self._make_execution_config(),
+            execution=execution,
+            contract=_workflow_execution_contract.make_execution_contract(
+                evaluator="rowwise",
+                transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+                stochastic_plan=None,
+            ),
         )
         result = _workflow_execution.execute_many(request)[0]
         name = self._name
@@ -990,6 +998,12 @@ class Function(Node, TrackedTerm, Annotated):
         trace_error = self._jax_traceability_error(values, broadcast_args, func=func)
         if trace_error is None:
             return
+        if isinstance(trace_error, _workflow_context._StochasticProbeSignal):
+            raise TypeError(
+                "dispatch='jax' cannot execute a wrapped function that requests "
+                "workflow-owned randomness with key=None. Pass an explicit key, "
+                "or use dispatch='auto', 'sequential', or 'thread'."
+            ) from trace_error
         raise ValueError(
             "dispatch='jax' failed while tracing the wrapped function with JAX; "
             "ensure the function is JAX-traceable, or use dispatch='auto', "

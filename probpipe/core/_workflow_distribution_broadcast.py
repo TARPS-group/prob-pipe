@@ -22,7 +22,14 @@ except ImportError:
     task = flow = None
 
 from ..custom_types import Array, PRNGKey
-from . import _workflow_call, _workflow_execution, _workflow_plan
+from . import (
+    _workflow_broker,
+    _workflow_call,
+    _workflow_context,
+    _workflow_execution,
+    _workflow_execution_contract,
+    _workflow_plan,
+)
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution, EmpiricalDistribution
 from .event_template import EventTemplate
@@ -116,10 +123,19 @@ def execute_distribution_broadcast(
     n_broadcast_samples = stochastic_plan.n_broadcast_samples
     _validate_n_broadcast_samples(n_broadcast_samples)
 
+    jax_contract = _workflow_execution_contract.make_execution_contract(
+        evaluator="jax_vmap",
+        transport=_workflow_execution_contract.transport_for_workflow_kind(workflow_kind),
+        stochastic_plan=stochastic_plan,
+    )
+    jax_supported = _workflow_execution_contract.supports_execution_contract(
+        jax_contract,
+        stochastic_plan,
+    )
     dispatch = resolve_dispatch(
         values,
         broadcast_args,
-        jax_supported=stochastic_plan.evaluation_mode == "sampled",
+        jax_supported=jax_supported,
     )
     if requested_dispatch == "jax" and stochastic_plan.evaluation_mode != "sampled":
         raise ValueError(
@@ -140,6 +156,7 @@ def execute_distribution_broadcast(
             output_template=output_template,
         )
     elif dispatch == "jax":
+        _workflow_broker._record_active_execution_contract(jax_contract)
         if requested_dispatch == "jax":
             require_jax_traceable(values, broadcast_args)
         result = _broadcast_jax(
@@ -290,7 +307,8 @@ def _broadcast_jax(
     batch = tuple(sampled[ref] for ref in broadcast_args)
 
     def run_vmap():
-        return jax.vmap(single_call)(batch)
+        with _workflow_context._workflow_jax_runtime_guard():
+            return jax.vmap(single_call)(batch)
 
     if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
         if workflow_kind == WorkflowKind.TASK:
@@ -389,6 +407,7 @@ def _broadcast_enumerate(
             call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
             sample_idx += 1
 
+    execution = make_execution_config()
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
         work_items=_workflow_execution.make_managed_work_items(
@@ -401,7 +420,12 @@ def _broadcast_enumerate(
                 for index in range(len(call_value_list))
             ),
         ),
-        execution=make_execution_config(),
+        execution=execution,
+        contract=_workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+            stochastic_plan=stochastic_plan,
+        ),
     )
     results = _workflow_execution.execute_many(request)
 
@@ -452,6 +476,7 @@ def _broadcast_sample(
         replacements = {ref: _index_sample(samples_per_arg[ref], i) for ref in broadcast_args}
         call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
 
+    execution = make_execution_config()
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
         work_items=_workflow_execution.make_managed_work_items(
@@ -464,7 +489,12 @@ def _broadcast_sample(
                 for index in range(len(call_value_list))
             ),
         ),
-        execution=make_execution_config(),
+        execution=execution,
+        contract=_workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+            stochastic_plan=stochastic_plan,
+        ),
     )
     results = _workflow_execution.execute_many(request)
 

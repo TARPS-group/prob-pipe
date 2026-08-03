@@ -14,10 +14,24 @@ from typing import Any
 
 import jax
 
-from . import _workflow_call, _workflow_execution, _workflow_plan, _workflow_result
+try:
+    from prefect import flow, task
+except ImportError:
+    task = flow = None
+
+from . import (
+    _workflow_broker,
+    _workflow_call,
+    _workflow_context,
+    _workflow_execution,
+    _workflow_execution_contract,
+    _workflow_plan,
+    _workflow_result,
+)
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import _RecordArrayView
+from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution
 from .event_template import EventTemplate
 from .provenance import Provenance
@@ -52,6 +66,7 @@ def execute_sweep(
     output_template: EventTemplate | None = None,
     provenance_parents: list[TrackedTerm] | None = None,
     provenance_inputs: Mapping[str, Any] | None = None,
+    workflow_kind: WorkflowKind = WorkflowKind.OFF,
 ) -> Any:
     """Execute pure or nested sweep regimes for one workflow call."""
     if plan.regime not in ("sweep", "nested"):
@@ -77,6 +92,8 @@ def execute_sweep(
             requested_dispatch=requested_dispatch,
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
+            workflow_kind=workflow_kind,
+            workflow_name=workflow_name,
         )
         aggregate = _make_stack(
             per_row,
@@ -187,6 +204,8 @@ def execute_sweep_rows(
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
+    workflow_kind: WorkflowKind = WorkflowKind.OFF,
+    workflow_name: str = "workflow",
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
     has_dist_array = any(
@@ -197,8 +216,18 @@ def execute_sweep_rows(
         isinstance(_workflow_call.input_ref_value(values, ref), _RecordArrayView)
         for ref in array_args
     )
-    jax_supported = not (
+    jax_structure_supported = not (
         has_dist_array or has_view or len(plan.array_groups) > 1 or len(array_args) > 1
+    )
+    jax_contract = _workflow_execution_contract.make_execution_contract(
+        evaluator="jax_vmap",
+        transport=_workflow_execution_contract.transport_for_workflow_kind(workflow_kind),
+        stochastic_plan=None,
+    )
+    jax_supported = _workflow_execution_contract.supports_execution_contract(
+        jax_contract,
+        None,
+        jax_structure_supported=jax_structure_supported,
     )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
@@ -213,6 +242,7 @@ def execute_sweep_rows(
     )
 
     if dispatch == "jax":
+        _workflow_broker._record_active_execution_contract(jax_contract)
         if requested_dispatch == "jax":
             require_jax_traceable(values, array_args)
         return execute_sweep_rows_jax(
@@ -220,6 +250,8 @@ def execute_sweep_rows(
             values=values,
             array_args=array_args,
             n_total=plan.n_sweep,
+            workflow_kind=workflow_kind,
+            workflow_name=workflow_name,
         )
 
     per_row_values = [
@@ -230,6 +262,7 @@ def execute_sweep_rows(
         )
         for i in range(plan.n_sweep)
     ]
+    execution = make_execution_config()
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
         work_items=_workflow_execution.make_managed_work_items(
@@ -241,7 +274,12 @@ def execute_sweep_rows(
                 )
             ),
         ),
-        execution=make_execution_config(),
+        execution=execution,
+        contract=_workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+            stochastic_plan=None,
+        ),
     )
     return _workflow_execution.execute_many(request)
 
@@ -252,6 +290,8 @@ def execute_sweep_rows_jax(
     values: dict[str, Any],
     array_args: list[_workflow_call.WorkflowInputRef],
     n_total: int,
+    workflow_kind: WorkflowKind = WorkflowKind.OFF,
+    workflow_name: str = "workflow",
 ) -> Any:
     """Execute the limited single-RecordArray sweep through ``jax.vmap``."""
 
@@ -272,7 +312,26 @@ def execute_sweep_rows_jax(
                 for leaf in array_value.event_template
             }
         )
-    return jax.vmap(single_call)(tuple(vmap_input))
+
+    def run_vmap():
+        with _workflow_context._workflow_jax_runtime_guard():
+            return jax.vmap(single_call)(tuple(vmap_input))
+
+    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
+        if task is None or flow is None:
+            raise RuntimeError(
+                "Prefect task or flow execution was requested, but Prefect is not "
+                "installed. Install with: pip install probpipe[prefect]"
+            )
+        if workflow_kind is WorkflowKind.TASK:
+            run_vmap = task(name=f"{workflow_name}_vmap")(run_vmap)
+        else:
+            runner = prefect_config.resolve_task_runner()
+            run_vmap = flow(
+                name=f"{workflow_name}_vmap",
+                **({"task_runner": runner} if runner is not None else {}),
+            )(run_vmap)
+    return run_vmap()
 
 
 def make_sweep_provenance(

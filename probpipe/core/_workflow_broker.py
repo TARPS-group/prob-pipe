@@ -7,10 +7,13 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..custom_types import PRNGKey
 from . import _workflow_context
+
+if TYPE_CHECKING:
+    from ._workflow_execution_contract import WorkflowRngExecutionContract
 from ._workflow_managed import (
     ManagedAttemptState,
     ManagedClaimReport,
@@ -127,12 +130,14 @@ class _AutomaticKeyBroker:
     _invocation: _workflow_context._WorkflowInvocation | None = None
     _managed_attempt: _ManagedAttemptContext | None = None
     _managed_claims: _ManagedClaimRegistry = field(default_factory=_ManagedClaimRegistry)
+    _execution_contracts: list[WorkflowRngExecutionContract] = field(default_factory=list)
     _lock: Any = field(default_factory=Lock, repr=False)
 
     def key_for(self, plan: StochasticEffectPlan) -> PRNGKey:
         """Return the workflow-owned key for one planned effect."""
         if not isinstance(plan, StochasticEffectPlan):
             raise TypeError("automatic key requests require a StochasticEffectPlan")
+        _workflow_context._guard_automatic_key_request()
         if _REMOTE_COORDINATION_PROBE.get():
             raise _ManagedCoordinationRequired
         with self._lock:
@@ -168,6 +173,11 @@ class _AutomaticKeyBroker:
                     existing = _ManagedUnitClaimState(frame=item.frame)
                     self._managed_claims.by_unit[unit] = existing
                     self._managed_claims.by_token[item.frame.token] = existing
+
+    def record_execution_contract(self, contract: WorkflowRngExecutionContract) -> None:
+        """Record one distinct capability-checked route for later diagnostics."""
+        if contract not in self._execution_contracts:
+            self._execution_contracts.append(contract)
 
     def begin_managed_attempt(self, attempt: ManagedAttemptState) -> ManagedUnitFrame:
         """Admit one fresh attempt for a previously registered work-item token."""
@@ -435,6 +445,15 @@ def _capture_active_broker() -> _AutomaticKeyBroker | None:
     """Capture the admitted parent broker for managed execution transport."""
     _workflow_context._assert_workflow_admission()
     return _ACTIVE_AUTOMATIC_KEY_BROKER.get()
+
+
+def _record_active_execution_contract(
+    contract: WorkflowRngExecutionContract,
+) -> None:
+    """Attach an actual route contract to the current public invocation."""
+    broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
+    if broker is not None:
+        broker.record_execution_contract(contract)
 
 
 @contextmanager

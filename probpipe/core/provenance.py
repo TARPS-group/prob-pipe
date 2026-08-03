@@ -207,6 +207,10 @@ class Provenance:
         mode = provenance_config.mode
         if mode is ProvenanceMode.OFF:
             return None
+        from . import _workflow_context
+
+        if _workflow_context._workflow_side_effects_forbidden():
+            return None
         keep = mode is ProvenanceMode.FULL
 
         from ._fingerprint import _fingerprint_with_strength

@@ -131,6 +131,11 @@ _STOCHASTIC_PROBE_STATE: ContextVar[_StochasticProbeState | None] = ContextVar(
     default=None,
 )
 
+_JAX_RUNTIME_GUARD: ContextVar[bool] = ContextVar(
+    "probpipe_jax_runtime_guard",
+    default=False,
+)
+
 
 class _StochasticProbeSignal(RuntimeError):
     """Signal that JAX probing reached workflow-owned randomness."""
@@ -237,6 +242,31 @@ def _workflow_probe() -> Iterator[None]:
             )
     finally:
         _STOCHASTIC_PROBE_STATE.reset(token)
+
+
+@contextmanager
+def _workflow_jax_runtime_guard() -> Iterator[None]:
+    """Forbid omitted-key effects and managed submission inside actual JAX execution."""
+    token = _JAX_RUNTIME_GUARD.set(True)
+    try:
+        yield
+    finally:
+        _JAX_RUNTIME_GUARD.reset(token)
+
+
+def _workflow_side_effects_forbidden() -> bool:
+    """Return whether execution is a side-effect-free probe or JAX body."""
+    return _STOCHASTIC_PROBE_STATE.get() is not None or _JAX_RUNTIME_GUARD.get()
+
+
+def _guard_automatic_key_request() -> None:
+    """Reject omitted-key randomness during actual JAX execution."""
+    if _JAX_RUNTIME_GUARD.get():
+        raise TypeError(
+            "JAX workflow execution cannot request workflow-owned randomness with "
+            "key=None. Pass an explicit key, or use dispatch='auto', 'sequential', "
+            "or 'thread'."
+        )
 
 
 def _commit_stochastic_invocation(
