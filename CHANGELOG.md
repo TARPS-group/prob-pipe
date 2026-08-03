@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **Workflow-scoped structural RNG, co-sampling, and validated replay (#389).**
+  `Function(..., seed=...)`, call-time `seed=...`, and
+  `Function.with_options(seed=...)` have been removed without a deprecation
+  shim. Reproducible ProbPipe-owned randomness now belongs to a run:
+
+  ```python
+  from probpipe import workflow_run
+
+  with workflow_run(seed=42):
+      result = workflow(distribution_input)
+  ```
+
+  A bare omitted-key stochastic call receives a fresh ephemeral root; seeded,
+  anonymous, and nested `workflow_run` scopes derive keys from stable call,
+  source, and logical-unit identities. All omitted-key sampling, conversion,
+  validation, and diagnostics routes use the same broker. Explicit sampling
+  keys and inference `random_seed` arguments remain caller-owned, are passed
+  through unchanged, and do not advance the workflow stream. A wrapped user
+  callable's own `seed` parameter is still an ordinary input.
+
+  Repeated aliases, record views, empirical weights, and the supported closed
+  set of transformed descendants now co-sample from one root realization.
+  Managed thread/Prefect work items preserve logical RNG identity across
+  scheduling and retries, while rejecting unmanaged copied concurrent
+  contexts. JAX probing cannot consume workflow RNG state.
+
+  Successful workflow-owned stochastic results store an exact provenance RNG
+  recipe in FULL and LIGHTWEIGHT modes. `replay_run(provenance)` validates the
+  callable, plan, execution capability, provider ABI, and expected events
+  before re-deriving keys; OFF and legacy provenance without a recipe are not
+  guessed. The new public failures are
+  `UnmanagedConcurrentWorkflowEntryError`, `ReplayCompatibilityError`, and
+  `ReplayUnsupportedCallableError`.
+
+  RNG ABI v1 has no call-local replacement that recreates the old exact
+  sibling-realization behavior. Put related quantities in one joint Function
+  call, retain the resulting joint distribution, or materialize and reuse
+  samples explicitly when a shared realization is required.
+
 ### Fixed
 
 - **Value specs are fingerprinted by declaration, not identity (#381).** The
