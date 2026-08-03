@@ -3,11 +3,9 @@
 Handles conversions between ProbPipe distribution types:
 
 - **Same-class**: returns the source unchanged (no copy, no provenance).
-- **Cross-family**: moment-matches using the source's ``_mean()`` and
-  ``_variance()`` methods, which delegate to TFP for analytical moments
-  or fall back to Monte Carlo via the protocol defaults.
-  When MC is used, the resulting ``BootstrapDistribution`` is stored
-  in provenance metadata so users can inspect conversion error.
+- **Cross-family**: moment-matches using analytical source moments when
+  available. Known Monte Carlo moment implementations instead draw one
+  conversion-owned batch and reuse it for every required moment.
 
 Registered at priority 100 so it is always tried first for ProbPipe types.
 """
@@ -15,6 +13,7 @@ Registered at priority 100 so it is always tried first for ProbPipe types.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 from typing import Any
 
 import jax.numpy as jnp
@@ -26,6 +25,7 @@ from ..core.distribution import (
 )
 from ..core.provenance import Provenance
 from ..distributions._tfp_base import _allow_batched_tfp_init
+from ..distributions.transformed import TransformedDistribution
 from ._registry import (
     _PROBPIPE_PROVIDER_ABI,
     ConversionInfo,
@@ -40,6 +40,83 @@ from ._registry import (
 
 # Default sample count for moment-matching conversions
 DEFAULT_NUM_SAMPLES = 1024
+
+_SAMPLED_MOMENT_BATCH_KWARG = "_sampled_moment_batch"
+_MOMENT_MATCH_TARGETS = frozenset(
+    {
+        "Normal",
+        "Beta",
+        "Gamma",
+        "InverseGamma",
+        "Exponential",
+        "LogNormal",
+        "StudentT",
+        "Uniform",
+        "Cauchy",
+        "Laplace",
+        "HalfNormal",
+        "TruncatedNormal",
+        "Bernoulli",
+        "Binomial",
+        "Poisson",
+        "NegativeBinomial",
+        "MultivariateNormal",
+        "Dirichlet",
+        "Multinomial",
+        "VonMisesFisher",
+    }
+)
+_TOTAL_COUNT_TARGETS = frozenset({"Binomial", "NegativeBinomial", "Multinomial"})
+
+
+@dataclass(frozen=True)
+class _SampledMomentBatch:
+    """One shared Monte Carlo realization for a conversion's moments."""
+
+    samples: Any
+
+    def mean(self) -> Any:
+        return jnp.mean(self.samples, axis=0)
+
+    def variance(self) -> Any:
+        return jnp.var(self.samples, axis=0)
+
+    def covariance(self) -> Any:
+        mean = self.mean()
+        diff = self.samples - mean
+        return jnp.einsum("ni,nj->ij", diff, diff) / self.samples.shape[0]
+
+
+def _requires_sampled_moments(source: Any, target_name: str) -> bool:
+    """Return whether a known ProbPipe moment implementation uses MC."""
+    return (
+        isinstance(source, TransformedDistribution)
+        and source._tfp_transformed is None
+        and target_name in _MOMENT_MATCH_TARGETS
+    )
+
+
+def _sampled_moment_batch(kw: dict[str, Any]) -> _SampledMomentBatch | None:
+    """Return the conversion-owned batch, when moment matching sampled."""
+    batch = kw.get(_SAMPLED_MOMENT_BATCH_KWARG)
+    if batch is not None and not isinstance(batch, _SampledMomentBatch):
+        raise TypeError("invalid private sampled-moment batch")
+    return batch
+
+
+def _source_mean(source: Any, kw: dict[str, Any]) -> Any:
+    batch = _sampled_moment_batch(kw)
+    return source._mean() if batch is None else batch.mean()
+
+
+def _source_variance(source: Any, kw: dict[str, Any]) -> Any:
+    batch = _sampled_moment_batch(kw)
+    return source._variance() if batch is None else batch.variance()
+
+
+def _source_covariance(source: Any, kw: dict[str, Any]) -> Any:
+    batch = _sampled_moment_batch(kw)
+    return source._cov() if batch is None else batch.covariance()
 
 
 def _conditional_conversion_plan(num_samples: Any) -> _ConversionExecutionPlan:
@@ -59,6 +136,22 @@ def _probpipe_sampled_plan(num_samples: Any) -> _ConversionExecutionPlan:
         num_samples,
         provider_abi=_PROBPIPE_PROVIDER_ABI,
     )
+
+
+def _sampled_moment_plan(
+    source: Any,
+    target_name: str,
+    kwargs: dict[str, Any],
+) -> _ConversionExecutionPlan | None:
+    """Plan one known Monte Carlo moment-matching conversion."""
+    if not _requires_sampled_moments(source, target_name):
+        return None
+    if target_name in _TOTAL_COUNT_TARGETS and kwargs.get("total_count") is None:
+        raise ValueError(
+            f"total_count is required when converting to {target_name} "
+            f"from a non-{target_name} source."
+        )
+    return _probpipe_sampled_plan(kwargs.get("num_samples", DEFAULT_NUM_SAMPLES))
 
 
 def _probpipe_nonrandom_plan(
@@ -124,7 +217,7 @@ def _convert_to_normal(source, key, **kw):
     if isinstance(source, Normal):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Normal(loc=m, scale=jnp.sqrt(v), name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source, m_raw, v_raw))
@@ -137,7 +230,7 @@ def _convert_to_beta(source, key, **kw):
     if isinstance(source, Beta):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     common = m * (1.0 - m) / v - 1.0
     alpha = jnp.maximum(m * common, 0.01)
@@ -153,7 +246,7 @@ def _convert_to_gamma(source, key, **kw):
     if isinstance(source, Gamma):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Gamma(concentration=m**2 / v, rate=m / v, name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source, m_raw, v_raw))
@@ -166,7 +259,7 @@ def _convert_to_inverse_gamma(source, key, **kw):
     if isinstance(source, InverseGamma):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     conc = m**2 / v + 2
     scale = m * (m**2 / v + 1)
@@ -181,7 +274,7 @@ def _convert_to_exponential(source, key, **kw):
     if isinstance(source, Exponential):
         return source
     kw.pop("num_samples", None)
-    m_raw = source._mean()
+    m_raw = _source_mean(source, kw)
     m = _point_estimate(m_raw)
     r = Exponential(rate=1.0 / m, name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source, m_raw))
@@ -194,7 +287,7 @@ def _convert_to_lognormal(source, key, **kw):
     if isinstance(source, LogNormal):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     scale = jnp.sqrt(jnp.log(1.0 + v / (m**2)))
     loc = jnp.log(m) - scale**2 / 2.0
@@ -209,7 +302,7 @@ def _convert_to_studentt(source, key, **kw):
     if isinstance(source, StudentT):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     # var = scale^2 * df/(df-2) for df>2, so scale = sqrt(var * (df-2)/df)
     df = 5.0
@@ -226,7 +319,7 @@ def _convert_to_uniform(source, key, **kw):
     if isinstance(source, Uniform):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     half = jnp.sqrt(3.0 * v)
     r = Uniform(low=m - half, high=m + half, name=kw.get("name") or source.name)
@@ -240,7 +333,7 @@ def _convert_to_cauchy(source, key, **kw):
     if isinstance(source, Cauchy):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Cauchy(loc=m, scale=jnp.sqrt(v) / 2.0, name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source, m_raw, v_raw))
@@ -253,7 +346,7 @@ def _convert_to_laplace(source, key, **kw):
     if isinstance(source, Laplace):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Laplace(loc=m, scale=jnp.sqrt(v / 2.0), name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source, m_raw, v_raw))
@@ -266,7 +359,7 @@ def _convert_to_halfnormal(source, key, **kw):
     if isinstance(source, HalfNormal):
         return source
     kw.pop("num_samples", None)
-    v_raw = source._variance()
+    v_raw = _source_variance(source, kw)
     v = _point_estimate(v_raw)
     # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
     r = HalfNormal(scale=jnp.sqrt(v / (1.0 - 2.0 / jnp.pi)), name=kw.get("name") or source.name)
@@ -317,9 +410,12 @@ def _convert_to_truncatednormal(source, key, **kw):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
     plan = _probpipe_sampled_plan(num_samples)
-    m_raw, v_raw = source._mean(), source._variance()
+    batch = _sampled_moment_batch(kw)
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
-    samples = _sample_probpipe_conversion_source(source, key, plan)
+    samples = (
+        _sample_probpipe_conversion_source(source, key, plan) if batch is None else batch.samples
+    )
     r = TruncatedNormal(
         loc=m,
         scale=jnp.sqrt(v),
@@ -340,7 +436,7 @@ def _convert_to_bernoulli(source, key, **kw):
     if isinstance(source, Bernoulli):
         return source
     kw.pop("num_samples", None)
-    r = Bernoulli(probs=source._mean(), name=kw.get("name") or source.name)
+    r = Bernoulli(probs=_source_mean(source, kw), name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
     return r
 
@@ -356,7 +452,7 @@ def _convert_to_binomial(source, key, **kw):
             "total_count is required when converting to Binomial from a non-Binomial source."
         )
     kw.pop("num_samples", None)
-    probs = source._mean() / total_count
+    probs = _source_mean(source, kw) / total_count
     r = Binomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
     return r
@@ -368,7 +464,7 @@ def _convert_to_poisson(source, key, **kw):
     if isinstance(source, Poisson):
         return source
     kw.pop("num_samples", None)
-    r = Poisson(rate=source._mean(), name=kw.get("name") or source.name)
+    r = Poisson(rate=_source_mean(source, kw), name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
     return r
 
@@ -403,7 +499,7 @@ def _convert_to_negativebinomial(source, key, **kw):
             "total_count is required when converting to NegativeBinomial from a non-NegativeBinomial source."
         )
     kw.pop("num_samples", None)
-    m = source._mean()
+    m = _source_mean(source, kw)
     probs = total_count / (total_count + m)
     r = NegativeBinomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
@@ -421,16 +517,16 @@ def _convert_to_multivariatenormal(source, key, **kw):
     if isinstance(source, MultivariateNormal):
         return source
     if isinstance(source, RecordEmpiricalDistribution):
-        loc = source._mean()
-        cov_mat = source._cov()
+        loc = _source_mean(source, kw)
+        cov_mat = _source_covariance(source, kw)
         r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
         r.with_provenance(_mm_provenance(source))
         return r
     # General case: use _mean() and _cov() directly
-    m_raw = source._mean()
+    m_raw = _source_mean(source, kw)
     loc = _point_estimate(m_raw)
     try:
-        cov_mat = source._cov()
+        cov_mat = _source_covariance(source, kw)
     except (NotImplementedError, AttributeError):
         # Fallback to sample-based covariance
         samples = _sample_probpipe_conversion_source(
@@ -453,7 +549,7 @@ def _convert_to_dirichlet(source, key, **kw):
     if isinstance(source, Dirichlet):
         return source
     kw.pop("num_samples", None)
-    m_raw, v_raw = source._mean(), source._variance()
+    m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     conc0 = m[0] * (1.0 - m[0]) / (v[0] + 1e-8) - 1.0
     conc0 = jnp.maximum(conc0, 0.01)
@@ -474,7 +570,7 @@ def _convert_to_multinomial(source, key, **kw):
             "total_count is required when converting to Multinomial from a non-Multinomial source."
         )
     kw.pop("num_samples", None)
-    m_raw = source._mean()
+    m_raw = _source_mean(source, kw)
     m = _point_estimate(m_raw)
     probs = m / total_count
     probs = probs / probs.sum()
@@ -513,7 +609,7 @@ def _convert_to_vonmisesfisher(source, key, **kw):
     if isinstance(source, VonMisesFisher):
         return source
     kw.pop("num_samples", None)
-    m_raw = source._mean()
+    m_raw = _source_mean(source, kw)
     mean_vec = _point_estimate(m_raw)
     R = jnp.linalg.norm(mean_vec)
     mean_dir = mean_vec / jnp.maximum(R, 1e-8)
@@ -716,6 +812,10 @@ class ProbPipeConverter(Converter):
             return _probpipe_nonrandom_plan("exact")
 
         target_name = target_type.__name__
+        sampled_moment_plan = _sampled_moment_plan(source, target_name, kwargs)
+        if sampled_moment_plan is not None:
+            return sampled_moment_plan
+
         sampled_targets = {
             "HalfCauchy",
             "Pareto",
@@ -749,6 +849,12 @@ class ProbPipeConverter(Converter):
             raise TypeError(f"ProbPipeConverter: no conversion for target {target_name}")
 
         check_support = kwargs.pop("check_support", True)
+        sampled_moment_plan = _sampled_moment_plan(source, target_name, kwargs)
+        if sampled_moment_plan is not None:
+            samples = _sample_probpipe_conversion_source(source, key, sampled_moment_plan)
+            kwargs[_SAMPLED_MOMENT_BATCH_KWARG] = _SampledMomentBatch(
+                jnp.asarray(_point_estimate(samples))
+            )
 
         # Some converters (e.g., ``_convert_to_normal``) fabricate
         # TFP-backed scalars from a source's ``_mean`` / ``_variance``.

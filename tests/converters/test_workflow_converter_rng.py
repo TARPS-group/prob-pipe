@@ -12,6 +12,7 @@ import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
+    Binomial,
     ConversionInfo,
     ConversionMethod,
     Converter,
@@ -25,6 +26,7 @@ from probpipe import (
     workflow_run,
 )
 from probpipe.converters import ConverterRegistry
+from probpipe.converters._probpipe import ProbPipeConverter
 from probpipe.core import _workflow_context
 from probpipe.core.distribution import Distribution
 
@@ -33,6 +35,18 @@ class _RecordingNormal(Normal):
     def __init__(self, calls):
         self.calls = calls
         super().__init__(loc=0.0, scale=1.0, name="x")
+
+    def _sample(self, key, sample_shape=()):
+        self.calls.append((key, tuple(sample_shape)))
+        return super()._sample(key, sample_shape)
+
+
+class _RecordingEmpirical(RecordEmpiricalDistribution):
+    def __init__(self, calls, values=None):
+        self.calls = calls
+        if values is None:
+            values = [-1.0, 0.0, 1.0, 2.0]
+        super().__init__(jnp.asarray(values), name="x")
 
     def _sample(self, key, sample_shape=()):
         self.calls.append((key, tuple(sample_shape)))
@@ -255,6 +269,115 @@ class TestBuiltInConversionPlanning:
 
         expected = descendant._sample(explicit, (8,))
         np.testing.assert_allclose(converted.flat_samples[:, 0], expected)
+
+    def test_mc_moment_conversion_plans_and_reuses_one_sample_batch(self):
+        calls = []
+        root = _RecordingEmpirical(calls)
+        descendant = TransformedDistribution(root, tfb.Exp())
+        converter = ProbPipeConverter()
+
+        plan = converter._workflow_plan_conversion(
+            descendant,
+            Normal,
+            {"num_samples": 16},
+        )
+
+        with (
+            patch(
+                "probpipe.core._workflow_context._commit_stochastic_invocation",
+                wraps=_workflow_context._commit_stochastic_invocation,
+            ) as commit,
+            patch.object(
+                _workflow_context._WorkflowInvocation,
+                "key_for",
+                autospec=True,
+                wraps=_workflow_context._WorkflowInvocation.key_for,
+            ) as key_for,
+            workflow_run(seed=41),
+        ):
+            converted = converter_registry.convert(
+                descendant,
+                Normal,
+                num_samples=16,
+                check_support=False,
+            )
+
+        assert plan.execution_mode == "sampled"
+        assert plan.sample_shape == (16,)
+        commit.assert_called_once_with("operation")
+        assert key_for.call_count == 1
+        assert [shape for _key, shape in calls] == [(16,)]
+
+        root_key = calls[0][0]
+        root_samples = RecordEmpiricalDistribution._sample(root, root_key, (16,))
+        expected = descendant.bijector.forward(root_samples)
+        np.testing.assert_allclose(converted._mean(), jnp.mean(expected, axis=0))
+        np.testing.assert_allclose(converted._variance(), jnp.var(expected, axis=0))
+
+    @pytest.mark.parametrize(
+        "key_factory", [lambda: jax.random.key(43), lambda: jax.random.PRNGKey(43)]
+    )
+    def test_mc_moment_conversion_preserves_explicit_key(self, key_factory):
+        calls = []
+        root = _RecordingEmpirical(calls)
+        descendant = TransformedDistribution(root, tfb.Exp())
+        explicit = key_factory()
+
+        with patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit:
+            converter_registry.convert(
+                descendant,
+                Normal,
+                key=explicit,
+                num_samples=16,
+                check_support=False,
+            )
+
+        commit.assert_not_called()
+        assert [shape for _key, shape in calls] == [(16,)]
+        assert calls[0][0] is explicit
+
+    def test_mc_covariance_conversion_reuses_the_moment_batch(self):
+        calls = []
+        root = _RecordingEmpirical(
+            calls,
+            values=[[-1.0, 0.0], [0.0, 1.0], [1.0, 2.0], [2.0, 3.0]],
+        )
+        descendant = TransformedDistribution(root, tfb.Exp())
+
+        with workflow_run(seed=47):
+            converted = converter_registry.convert(
+                descendant,
+                MultivariateNormal,
+                num_samples=16,
+                check_support=False,
+            )
+
+        assert [shape for _key, shape in calls] == [(16,)]
+        root_key = calls[0][0]
+        root_samples = RecordEmpiricalDistribution._sample(root, root_key, (16,))
+        expected = descendant.bijector.forward(root_samples)
+        expected_mean = jnp.mean(expected, axis=0)
+        diff = expected - expected_mean
+        expected_cov = jnp.einsum("ni,nj->ij", diff, diff) / expected.shape[0]
+        expected_cov = expected_cov + 1e-6 * jnp.eye(expected_cov.shape[0])
+        np.testing.assert_allclose(converted._mean(), expected_mean, rtol=1e-6, atol=1e-6)
+        np.testing.assert_allclose(converted._cov(), expected_cov, rtol=1e-6, atol=1e-6)
+
+    def test_mc_moment_target_preflight_fails_before_randomness(self):
+        calls = []
+        root = _RecordingEmpirical(calls)
+        descendant = TransformedDistribution(root, tfb.Exp())
+
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            pytest.raises(ValueError, match="total_count is required"),
+        ):
+            converter_registry.convert(descendant, Binomial, num_samples=16)
+
+        urandom.assert_not_called()
+        commit.assert_not_called()
+        assert calls == []
 
 
 class TestConverterCertification:
