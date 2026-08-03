@@ -18,6 +18,7 @@ from probpipe import (
     log_prob,
     sample,
     unnormalized_log_prob,
+    workflow_run,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import Function
@@ -457,7 +458,8 @@ class TestBroadcastingReconnection:
             dispatch="sequential",
             n_broadcast_samples=30,
         )
-        result = wf(a=joint["z"], b=joint["x"])
+        with workflow_run(seed=42):
+            result = wf(a=joint["z"], b=joint["x"])
         assert hasattr(result, "samples")
         # z and x are jointly sampled, x ≈ z, so a - b ≈ 0
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=0.15)
@@ -511,7 +513,8 @@ class TestBroadcastingReconnection:
             dispatch="auto",
             n_broadcast_samples=30,
         )
-        result = wf(a=joint["z"], b=joint["x"])
+        with workflow_run(seed=55):
+            result = wf(a=joint["z"], b=joint["x"])
         assert hasattr(result, "samples")
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=0.15)
 

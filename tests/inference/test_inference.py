@@ -25,6 +25,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.core.distribution import _RecordDistributionView
 from probpipe.core.event_template import ArraySpec
@@ -1328,7 +1329,8 @@ class TestEndToEndValuesPipeline:
         def predict(params, x):
             return params[0] + params[1] * x
 
-        result = predict(**posterior.select("params"), x=0.5)
+        with workflow_run(seed=0):
+            result = predict(**posterior.select("params"), x=0.5)
         assert result.num_atoms == 100
         # predict([~0.91, ~1.82], 0.5) ≈ 0.91 + 1.82*0.5 ≈ 1.82
         analytical = 10 / 11 + 0.5 * 20 / 11
@@ -1348,7 +1350,8 @@ class TestEndToEndValuesPipeline:
             return a - b
 
         sel = posterior.select(a="params", b="params")
-        result = identity_pair(**sel)
+        with workflow_run(seed=0):
+            result = identity_pair(**sel)
         # Mean check: necessary but insufficient
         np.testing.assert_allclose(np.asarray(mean(result)), 0.0, atol=1e-5)
         # Variance check: this is what actually validates correlation
@@ -1388,10 +1391,11 @@ class TestEndToEndValuesPipeline:
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 
-        result = noisy_predict(
-            **posterior.select("params"),
-            noise=Normal(0, 0.01, name="noise"),
-        )
+        with workflow_run(seed=0):
+            result = noisy_predict(
+                **posterior.select("params"),
+                noise=Normal(0, 0.01, name="noise"),
+            )
         assert result.num_atoms == 50
         # Mean should be close to predict without noise
         analytical = 10 / 11 + 0.5 * 20 / 11

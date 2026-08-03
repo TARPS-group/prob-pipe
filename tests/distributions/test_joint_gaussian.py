@@ -18,6 +18,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.core.node import Function
 
@@ -486,7 +487,8 @@ class TestBroadcasting:
             dispatch="sequential",
             n_broadcast_samples=50,
         )
-        result = wf(a=jg["x"], b=jg["y"])
+        with workflow_run(seed=42):
+            result = wf(a=jg["x"], b=jg["y"])
         assert hasattr(result, "samples")
         # Both ~ N(0,1) with corr=0.9, so sum ~ N(0, 1+1+2*0.9) = N(0, 2.8)
         assert abs(float(jnp.mean(result.samples))) < 1.5

@@ -47,7 +47,8 @@ class TestBroadcastingBasic:
 
         w = Function(func=add_one, n_broadcast_samples=200, dispatch="sequential")
         g = Normal(loc=0.0, scale=0.1, name="x")
-        result = w(x=g)
+        with workflow_run(seed=1):
+            result = w(x=g)
         # Mean should be ~1.0 (0 + 1)
         assert abs(float(jnp.mean(result.samples)) - 1.0) < 0.1
 
@@ -104,7 +105,8 @@ class TestBroadcastingMultipleArgs:
         w = Function(func=add_them, n_broadcast_samples=100, dispatch="sequential")
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
-        result = w(a=g1, b=g2)
+        with workflow_run(seed=3):
+            result = w(a=g1, b=g2)
         assert result.num_atoms == 100
         assert abs(float(jnp.mean(result.samples)) - 3.0) < 0.2
 
@@ -116,7 +118,8 @@ class TestBroadcastingMixedArgs:
 
         w = Function(func=scale, n_broadcast_samples=50, dispatch="sequential")
         g = Normal(loc=5.0, scale=0.1, name="x")
-        result = w(x=g, factor=3.0)
+        with workflow_run(seed=4):
+            result = w(x=g, factor=3.0)
         assert result.num_atoms == 50
         assert abs(float(jnp.mean(result.samples)) - 15.0) < 1.0
 
@@ -360,7 +363,8 @@ class TestBroadcastingJAX:
 
         w = Function(func=add_one, n_broadcast_samples=200, dispatch="jax")
         g = Normal(loc=0.0, scale=0.1, name="x")
-        result = w(x=g)
+        with workflow_run(seed=21):
+            result = w(x=g)
         assert abs(float(jnp.mean(result.samples)) - 1.0) < 0.1
 
     def test_vmap_multiple_args(self):
@@ -370,7 +374,8 @@ class TestBroadcastingJAX:
         w = Function(func=add_them, n_broadcast_samples=100, dispatch="jax")
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
-        result = w(a=g1, b=g2)
+        with workflow_run(seed=22):
+            result = w(a=g1, b=g2)
         assert result.num_atoms == 100
         assert abs(float(jnp.mean(result.samples)) - 3.0) < 0.2
 
@@ -380,7 +385,8 @@ class TestBroadcastingJAX:
 
         w = Function(func=scale, n_broadcast_samples=50, dispatch="jax")
         g = Normal(loc=5.0, scale=0.1, name="x")
-        result = w(x=g, factor=3.0)
+        with workflow_run(seed=23):
+            result = w(x=g, factor=3.0)
         assert result.num_atoms == 50
         assert abs(float(jnp.mean(result.samples)) - 15.0) < 1.0
 
@@ -390,7 +396,8 @@ class TestBroadcastingJAX:
 
         w = Function(func=halve, n_broadcast_samples=30, dispatch="jax")
         mvn = MultivariateNormal(loc=jnp.array([4.0, 6.0]), cov=0.01 * jnp.eye(2), name="x")
-        result = w(x=mvn)
+        with workflow_run(seed=24):
+            result = w(x=mvn)
         assert result.num_atoms == 30
         assert result.dim == 2
         mean = jnp.mean(result.samples, axis=0)

@@ -573,7 +573,8 @@ class TestBroadcastingReconnection:
             dispatch="sequential",
             n_broadcast_samples=50,
         )
-        result = wf(a=joint["x"], b=joint["y"], c=independent)
+        with workflow_run(seed=77):
+            result = wf(a=joint["x"], b=joint["y"], c=independent)
         assert hasattr(result, "samples")
         # x ~ N(0,1), y ~ N(5,1), c ~ N(100, 0.1) => sum ~ N(105, ...)
         mean_val = float(jnp.mean(result.samples))
@@ -594,7 +595,8 @@ class TestBroadcastingReconnection:
             dispatch="jax",
             n_broadcast_samples=50,
         )
-        result = wf(a=joint["x"], b=joint["y"])
+        with workflow_run(seed=55):
+            result = wf(a=joint["x"], b=joint["y"])
         assert hasattr(result, "samples")
         mean_val = float(jnp.mean(result.samples))
         assert abs(mean_val - 10.0) < 2.0
