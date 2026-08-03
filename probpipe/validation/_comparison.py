@@ -41,6 +41,10 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, ArrayLike, PRNGKey
+from ._workflow_rng import (
+    _SLICED_WASSERSTEIN_PROVIDER_ABI,
+    _resolve_validation_key,
+)
 
 __all__ = [
     "Reference",
@@ -380,10 +384,38 @@ def score_posterior(
     than erroring, so one call serves analytic, long-NUTS, and sandwich
     references. Reused by the test suite and the ``probpipe-benchmark`` harness.
     """
-    if key is None:
-        key = jax.random.PRNGKey(0)
+    metric_names = tuple(metrics)
+    supported_metrics = {
+        "standardized_mean_error",
+        "relative_cov_error",
+        "std_ratios",
+        "sliced_wasserstein",
+        "mmd",
+        "ksd",
+    }
+    for name in metric_names:
+        if name not in supported_metrics:
+            raise ValueError(f"unknown metric {name!r}")
+
+    sliced_inputs: tuple[Array, Array] | None = None
+    if "sliced_wasserstein" in metric_names and reference.draws is not None:
+        sliced_inputs = (_as_draws(approx), _as_draws(reference.draws))
+        if sliced_inputs[0].shape[1] != sliced_inputs[1].shape[1]:
+            raise ValueError(
+                "x and y must share a dimension, got "
+                f"{sliced_inputs[0].shape[1]} and {sliced_inputs[1].shape[1]}"
+            )
+        if key is None:
+            key = _resolve_validation_key(
+                None,
+                operation_kind="score-posterior",
+                execution_mode="sliced-wasserstein",
+                sample_shape=(128,),
+                provider_abi=_SLICED_WASSERSTEIN_PROVIDER_ABI,
+            )
+
     out: dict[str, Array] = {}
-    for name in metrics:
+    for name in metric_names:
         # The moment metrics ``_require`` their reference pieces and raise
         # ``_MissingReference`` when absent; catch that to skip them. The
         # sample/score metrics take the relevant piece directly, so guard on it.
@@ -395,16 +427,15 @@ def score_posterior(
             elif name == "std_ratios":
                 out[name] = std_ratios(approx, reference)
             elif name == "sliced_wasserstein":
-                if reference.draws is not None:
-                    out[name] = sliced_wasserstein(approx, reference.draws, key=key)
+                if sliced_inputs is not None:
+                    assert key is not None
+                    out[name] = sliced_wasserstein(*sliced_inputs, key=key)
             elif name == "mmd":
                 if reference.draws is not None:
                     out[name] = mmd(approx, reference.draws)
             elif name == "ksd":
                 if reference.score_fn is not None:
                     out[name] = ksd(approx, reference.score_fn)
-            else:
-                raise ValueError(f"unknown metric {name!r}")
         except _MissingReference:
             continue
     return out

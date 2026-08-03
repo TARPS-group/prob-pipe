@@ -288,7 +288,13 @@ class TestInputHandling:
             assert float(jax.jit(metric)(approx, ref)) == pytest.approx(
                 float(metric(approx, ref)), abs=1e-5
             )
-        card = jax.jit(score_posterior)(approx, ref)
+        card = jax.jit(
+            lambda draws, reference: score_posterior(
+                draws,
+                reference,
+                key=jax.random.PRNGKey(0),
+            )
+        )(approx, ref)
         assert set(card) == {"standardized_mean_error", "relative_cov_error"} | {
             "sliced_wasserstein",
             "mmd",
