@@ -196,8 +196,24 @@ When every element is a `NumericRecord`, the batch is a `NumericRecordBatch`: a 
 class NumericRecordBatch(RecordBatch):
     def to_vector(self) -> Array: ...
     @classmethod
-    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecordBatch: ...
+    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array, *,
+                    level_names: str | Iterable[str],
+                    axis_groups: Iterable[Iterable[int]] | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
+```
+
+An operation that mints a level takes the name to give it (II.5), so both of the
+constructions that mint one require it: `from_vector` names the levels it
+reconstructs, which is what lets a multi-level batch round-trip, and `stack`
+names the single level it introduces.
+
+```python
+class RecordBatch(Batch[Record]):
+    @classmethod
+    def stack(cls, records: list[Record], *, level_name: str,
+              element_spec: RecordSpec | EventTemplate | None = None) -> RecordBatch: ...
+    # one level of (len(records),); the element spec is taken from the first record
+    # when omitted, and every record's fields must be exactly its fields
 ```
 
 ### Rationale

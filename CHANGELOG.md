@@ -113,18 +113,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `at_path` — and the field structure is read from `event_template`, where it
   belongs. What `[]` does depends on the key: a position addresses the batch axes,
   a name addresses a field within every element. `select` / `select_all` survive as
-  the field-splatting selector, returning one-column batch *views* that carry the
-  parent's level names, so an operation aligning operands by level name lines them
-  up.
+  the field-splatting selector, resolving a path as `Record.select` does — a key
+  gives a one-column view, a partial path the sub-batch under it — and returning
+  batch *views* that carry the parent's level names, so an operation aligning
+  operands by level name lines them up. `select_all` keys by top-level name, as
+  the record's does, since a `/`-path could not bind to a parameter.
 
   An element is **materialized** rather than stored, which is the other side of the
   rule the batch base states: it takes the derived name (`"post[draw=1]"`), marked
   auto, and inherits the batch's provenance. It is built against the batch's own
   `element_spec`, so batch and element share one spec object — schema agreement is
   structural, and a row costs no declaration to build. `NumericRecordBatch` adds
-  the batched flat layout, `to_vector` giving `(*batch_shape, vector_size)` with
-  the levels flattened outermost-first, and is a bare array pytree, so it passes
-  through `jit` / `vmap` / `grad` unchanged.
+  the batched flat layout: `to_vector` gives `(*batch_shape, vector_size)` with the
+  flat dimension last and the levels kept as the leading axes, and `from_vector`
+  inverts it, naming the levels it reconstructs so a multi-level batch round-trips.
+  It is a bare array pytree, so it passes through `jit` / `vmap` / `grad` unchanged.
+
+  A batch holds what it validated. Every column is checked against the field it
+  belongs to — shape against the declared event shape, and, for a field that is
+  not an array, each entry against its spec, naming the field and the position
+  that failed. An object column is copied and frozen, so a caller keeping a handle
+  on what they passed cannot write a value in afterwards that the spec refuses.
+  The field's *spec* decides a column's form rather than its values, which is what
+  keeps an opaque field opaque when its values happen to be numeric.
 
   This is additive: the existing `RecordArray` / `NumericRecordArray` are untouched
   and still what the library uses, and the new classes are not yet exported.

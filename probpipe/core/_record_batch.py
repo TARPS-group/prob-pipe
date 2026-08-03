@@ -36,6 +36,7 @@ from ..custom_types import Array
 from ._array_backend import _is_numeric_dtype
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._function_batch import FunctionBatch
+from ._object_batch import _from_iterable
 from ._opaque_batch import OpaqueBatch
 from .event_template import (
     ArraySpec,
@@ -60,12 +61,13 @@ class RecordBatch(Batch[Record]):
 
     Parameters
     ----------
-    columns : Mapping
+    columns : Mapping of str to array
         The field columns, keyed by **leaf path** (``"outer/a"``) or given as a
         nested mapping, which is flattened to leaf paths. Each column holds one
         field's values across the batch, shaped ``(*batch_shape, *event_shape)``
         where the event shape is the field spec's for an ``ArraySpec`` and empty
-        otherwise. The keys must be exactly the fields of *element_spec*.
+        otherwise — so a field that is not an array takes an object array, one
+        entry per element. The keys must be exactly the fields of *element_spec*.
     level_names : str or iterable of str
         One name per level, outermost first; a single string names a single
         level. There is no default, for the reason
@@ -101,14 +103,17 @@ class RecordBatch(Batch[Record]):
     Raises
     ------
     TypeError
-        If *element_spec* is not a ``RecordSpec`` or ``EventTemplate``, if
-        *columns* is not a mapping, or if a column is missing the ``shape`` a
-        batch axis is read from.
+        If *element_spec* is not a ``RecordSpec`` or ``EventTemplate``; if
+        *columns* is not a mapping; if a column reports no ``shape``, which is
+        what a batch axis is read from; or if an entry of a non-array column is
+        not admitted by its field's spec.
     ValueError
-        If *columns* is empty, if its keys are not exactly the fields of
-        *element_spec*, if the columns disagree on ``batch_shape``, if a column
-        is not shaped ``(*batch_shape, *event_shape)``, if there are no batch
-        axes, or if *axis_groups* does not tile ``batch_shape``.
+        If *columns* is empty; if its keys are not exactly the fields of
+        *element_spec*; if a column's trailing axes are not the event shape its
+        field declares; if two columns disagree on the batch axes; if a field
+        declares a symbolic dimension, which gives its event shape no size to
+        split by; if a column leaves no batch axis; or if *axis_groups* does not
+        tile ``batch_shape``.
 
     Notes
     -----
@@ -116,6 +121,16 @@ class RecordBatch(Batch[Record]):
     allowed: ``batch[0:0]`` is a batch of nothing, as the level algebra intends.
     The asymmetry is the one the object batches state — an empty literal is
     almost always a mistake, and a shape cannot be inferred from it.
+
+    An **object** column is copied and frozen, so a caller keeping a handle on
+    what they passed cannot afterwards write a value the batch's spec refuses.
+    Only the pointer array is copied, so the elements stay shared. An array
+    column is stored as given: a JAX array is already immutable, and a numpy one
+    follows the aliasing convention the single-record types set.
+
+    Reading one element materializes it from the columns, which costs one gather
+    per field, so iterating a batch is proportional to elements × fields. Reading
+    a *column* costs nothing of the sort — prefer it where a whole field will do.
 
     Examples
     --------
@@ -135,8 +150,9 @@ class RecordBatch(Batch[Record]):
 
     __slots__ = ("_columns",)
 
-    #: What this batch's columns must be, phrased for the refusal a bad one earns.
-    _column_rule = "conform to its field spec"
+    #: What every entry of a non-array column must be, phrased for the refusal a
+    #: bad one earns. A subclass narrowing the admissible columns supplies its own.
+    _entry_rule = "satisfy its field's specification"
 
     def __init__(
         self,
@@ -148,22 +164,26 @@ class RecordBatch(Batch[Record]):
         name: str | None = None,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
-        _validate: bool = True,
     ) -> None:
-        spec = _record_element_spec(element_spec, kind=type(self).__name__)
+        kind = type(self).__name__
+        spec = _record_element_spec(element_spec, kind=kind)
         template = spec.event_template
-        store = _leaf_keyed_columns(columns, template, kind=type(self).__name__)
+        store = _leaf_keyed_columns(columns, template, kind=kind)
         names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
 
-        batch_shape = _batch_shape_of(store, template, kind=type(self).__name__)
-        groups = _axis_groups_for(batch_shape, names, axis_groups, kind=type(self).__name__)
+        batch_shape = _batch_shape_of(store, template, kind=kind)
+        groups = _axis_groups_for(batch_shape, names, axis_groups, kind=kind)
+        type(self)._check_columns(store, template, kind=kind)
+        # An object column is frozen against later writes; see the helper.
+        store = {
+            path: _frozen_object_column(column) if _is_object_array(column) else column
+            for path, column in store.items()
+        }
 
         object.__setattr__(self, "_columns", store)
-        if _validate:
-            type(self)._check_columns(store, template, batch_shape, kind=type(self).__name__)
         self._init_batch(
             BatchSpec(spec, groups, names),
-            name=name if name is not None else type(self).__name__.lower(),
+            name=name if name is not None else kind.lower(),
             name_is_auto=name is None or name_is_auto,
             provenance=provenance,
         )
@@ -185,31 +205,39 @@ class RecordBatch(Batch[Record]):
     # -- validation ---------------------------------------------------------
 
     @classmethod
-    def _check_columns(
-        cls,
-        store: dict[str, Any],
-        template: EventTemplate,
-        batch_shape: tuple[int, ...],
-        *,
-        kind: str,
-    ) -> None:
-        """Fail on the first column that does not match its field spec.
+    def _check_columns(cls, store: dict[str, Any], template: EventTemplate, *, kind: str) -> None:
+        """Fail on the first column entry its field's spec does not admit.
 
         Checked at construction rather than left to ``is_valid`` because a batch
-        asserts its ``element_spec`` of *every* element: a column that does not
-        carry the declared event shape makes the batch's own spec a false
-        statement, and which field it was is what a caller needs to hear.
-        The base checks shape alone; ``NumericRecordBatch`` adds dtype.
+        asserts its ``element_spec`` of *every* element: an entry the field's spec
+        refuses makes the batch's own spec a false statement, and where it sits is
+        what a caller needs to hear. The shapes are already settled by then, by
+        the batch-axis derivation.
+
+        An **array** column carries no entries to walk — its spec's shape and the
+        column's are the whole of what it declares, and the derivation has checked
+        that. A **non-array** column is walked entry by entry, the counterpart of
+        what ``_ObjectBatch`` does for a batch that stores its elements.
+        ``NumericRecordBatch`` adds the dtype check its columns are narrowed by.
+
+        Raises
+        ------
+        TypeError
+            If an entry of a non-array column does not satisfy its field's spec,
+            naming the field and the position.
         """
         for path, column in store.items():
-            expected = (*batch_shape, *_event_shape(template[path]))
-            actual = _column_shape(column)
-            if actual is not None and actual != expected:
-                raise ValueError(
-                    f"{kind}: the column at {path!r} has shape {actual}, expected {expected} "
-                    f"(batch_shape={batch_shape}, "
-                    f"event_shape={_event_shape(template[path])})"
-                )
+            spec = template[path]
+            if isinstance(spec, ArraySpec) or not _is_object_array(column):
+                continue
+            for index, entry in np.ndenumerate(column):
+                if not spec.is_valid(entry):
+                    position = index[0] if len(index) == 1 else index
+                    raise TypeError(
+                        f"{kind}: every entry of the column at {path!r} must "
+                        f"{cls._entry_rule}; the entry at {position} is a "
+                        f"{type(entry).__name__}"
+                    )
 
     # -- the storage seam ---------------------------------------------------
 
@@ -229,7 +257,16 @@ class RecordBatch(Batch[Record]):
         """
         row = {path: column[index] for path, column in self._columns.items()}
         return self._inherit_provenance(
-            Record(name, row, event_template=self.element_spec, name_is_auto=True)
+            Record(
+                name,
+                row,
+                event_template=self.element_spec,
+                name_is_auto=True,
+                # The columns were checked against the element spec at
+                # construction, so re-checking each row's leaves repeats work that
+                # iteration pays per element.
+                _validate_leaves=False,
+            )
         )
 
     def _sub_batch_at(self, index: tuple[int | slice, ...], *, spec: BatchSpec, name: str) -> Self:
@@ -353,34 +390,55 @@ class RecordBatch(Batch[Record]):
         )
         return self._inherit_provenance(view)
 
-    def select(self, *fields: str, **mapping: str) -> dict[str, Self]:
-        """Fields as single-field batch views, ready to splat into a call.
+    def select(self, *paths: str, **mapping: str) -> dict[str, Self]:
+        """Batch views of the named parts, ready to splat into a call.
 
-        The batch counterpart of :meth:`~probpipe.Record.select`: each entry is a
-        one-column ``RecordBatch`` view rather than a bare column, so splatting
-        the result into a ``Function`` call carries the level names an operation
-        aligns operands by. Keywords remap, as on a record:
-        ``select(x="r") == {"x": self["r"]}`` in structure, with the view in
-        place of the column.
+        The batch counterpart of :meth:`~probpipe.Record.select`, and it resolves
+        a path the same way: a **key** reaching a field gives a one-column view,
+        and a **partial path** gives the sub-batch under it. Each entry is a
+        ``RecordBatch`` view rather than a bare column, so splatting the result
+        into a ``Function`` call carries the level names an operation aligns
+        operands by. Keywords remap, as on a record: ``select(x="r")`` keys the
+        view of ``r`` under ``"x"``.
 
         Raises
         ------
         KeyError
-            If a name is not a field of this batch.
+            If a path addresses neither a field nor an interior node.
         """
-        selected = {field: field for field in fields}
+        selected = {path: path for path in paths}
         selected.update(mapping)
-        for key in selected.values():
-            if key not in self._columns:
-                raise KeyError(
-                    f"no field {key!r} in this {type(self).__name__}; "
-                    f"its fields are {list(self.event_template.keys())}"
-                )
-        return {argument: self._single_field_view(key) for argument, key in selected.items()}
+        return {argument: self._view_at(path) for argument, path in selected.items()}
 
     def select_all(self) -> dict[str, Self]:
-        """Every field as a single-field batch view, keyed by its own path."""
-        return self.select(*self.event_template.keys())
+        """Every **top-level** part as a batch view, keyed by its own name.
+
+        Keyed by top-level name rather than by leaf path, as
+        :meth:`~probpipe.Record.select_all` is, so the result splats into a call:
+        a name binds to a parameter where a ``/``-path could not. A top-level
+        name that is an interior node gives the sub-batch beneath it, so the parts
+        cover the batch between them.
+        """
+        return self.select(*self.event_template.children)
+
+    def _view_at(self, path: str) -> Self:
+        """A batch view of the field or subtree at *path*.
+
+        The single-field case is not ``self[path]``, which yields the column: a
+        view keeps the levels, which is what an operation aligns by.
+        """
+        if path in self._columns:
+            return self._single_field_view(path)
+        template = self.event_template
+        prefix = path + _PATH_SEP
+        if any(key.startswith(prefix) for key in self._columns):
+            node = template.at_path(path)
+            assert isinstance(node, EventTemplate)  # a prefix of a key is an interior node
+            return self._field_view(path, node)
+        raise KeyError(
+            f"{path!r} is neither a field nor an interior node of this "
+            f"{type(self).__name__}; its fields are {list(template.keys())}"
+        )
 
     # -- construction from elements -----------------------------------------
 
@@ -414,7 +472,8 @@ class RecordBatch(Batch[Record]):
         Raises
         ------
         ValueError
-            If *records* is empty, or a record's fields do not match the spec.
+            If *records* is empty, or a record's fields are not exactly the
+            spec's, naming the record's position and what differs.
 
         Notes
         -----
@@ -423,14 +482,34 @@ class RecordBatch(Batch[Record]):
         """
         if not records:
             raise ValueError(f"{cls.__name__}.stack needs at least one record")
+        kind = f"{cls.__name__}.stack"
         spec = _record_element_spec(
-            element_spec if element_spec is not None else records[0].event_template,
-            kind=f"{cls.__name__}.stack",
+            element_spec if element_spec is not None else records[0].event_template, kind=kind
         )
-        columns: dict[str, Any] = {}
-        for key in spec.event_template:
-            values = [record[key] for record in records]
-            columns[key] = _stack_column(values)
+        template = spec.event_template
+        fields = template.keys()
+        for position, record in enumerate(records):
+            # Checked rather than left to a KeyError from the column loop: a
+            # record with *extra* fields raises nothing at all there, and the
+            # batch's spec would silently become a false statement about it.
+            if tuple(record.keys()) != tuple(fields):
+                missing = [key for key in fields if key not in record]
+                extra = [key for key in record if key not in fields]
+                parts = []
+                if missing:
+                    parts.append(f"missing {missing}")
+                if extra:
+                    parts.append(f"unexpected {extra}")
+                if not parts:
+                    parts.append(f"ordered {list(record.keys())}")
+                raise ValueError(
+                    f"{kind}: the record at {position} must have exactly the fields "
+                    f"{list(fields)} — {'; '.join(parts)}"
+                )
+        columns = {
+            key: _stack_column([record[key] for record in records], template[key], kind=kind)
+            for key in fields
+        }
         return cls(columns, (level_name,), element_spec=spec)
 
     # -- equality -----------------------------------------------------------
@@ -449,6 +528,11 @@ class RecordBatch(Batch[Record]):
         if type(self) is not type(other):
             return NotImplemented
         if self._spec != other._spec:
+            return False
+        if self._columns.keys() != other._columns.keys():
+            # Equal specs with unequal stored columns means one of the two is
+            # malformed. Comparing only the columns *self* has would call it
+            # equal, and the mirror comparison would raise.
             return False
         for path, column in self._columns.items():
             if not _columns_equal(column, other._columns[path]):
@@ -484,20 +568,6 @@ class NumericRecordBatch(RecordBatch):
 
     __slots__ = ()
 
-    @property
-    def element_spec(self) -> RecordSpec:
-        """The :class:`RecordSpec` every element satisfies, over a numeric template."""
-        spec = self._spec.element_spec
-        assert isinstance(spec, RecordSpec)  # narrowed at construction
-        return spec
-
-    @property
-    def event_template(self) -> NumericEventTemplate:
-        """The numeric structure of one element — a view on :attr:`element_spec`."""
-        template = self.element_spec.event_template
-        assert isinstance(template, NumericEventTemplate)  # narrowed at construction
-        return template
-
     def __init__(
         self,
         columns: Mapping[str, Any],
@@ -508,7 +578,6 @@ class NumericRecordBatch(RecordBatch):
         name: str | None = None,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
-        _validate: bool = True,
     ) -> None:
         template = _record_element_spec(element_spec, kind=type(self).__name__).event_template
         if not isinstance(template, NumericEventTemplate):
@@ -525,21 +594,24 @@ class NumericRecordBatch(RecordBatch):
             name=name,
             name_is_auto=name_is_auto,
             provenance=provenance,
-            _validate=_validate,
         )
 
+    # ``element_spec`` is not overridden: it already reports the ``RecordSpec``
+    # this class stores, and there is nothing narrower to say. Only
+    # ``event_template`` narrows, to the numeric template construction required.
+
+    @property
+    def event_template(self) -> NumericEventTemplate:
+        """The numeric structure of one element — a view on :attr:`element_spec`."""
+        template = self.element_spec.event_template
+        assert isinstance(template, NumericEventTemplate)  # narrowed at construction
+        return template
+
     @classmethod
-    def _check_columns(
-        cls,
-        store: dict[str, Any],
-        template: EventTemplate,
-        batch_shape: tuple[int, ...],
-        *,
-        kind: str,
-    ) -> None:
-        """Require a numeric dtype on every column, then check shapes as the base does."""
+    def _check_columns(cls, store: dict[str, Any], template: EventTemplate, *, kind: str) -> None:
+        """Require a numeric dtype on every column, then check entries as the base does."""
         for path, column in store.items():
-            if not hasattr(column, "dtype") or not hasattr(column, "shape"):
+            if not hasattr(column, "dtype"):
                 raise TypeError(
                     f"{kind}: the column at {path!r} must be a numeric array, "
                     f"got {type(column).__name__}"
@@ -548,7 +620,7 @@ class NumericRecordBatch(RecordBatch):
                 raise TypeError(
                     f"{kind}: the column at {path!r} has the non-numeric dtype {column.dtype!r}"
                 )
-        super()._check_columns(store, template, batch_shape, kind=kind)
+        super()._check_columns(store, template, kind=kind)
 
     # -- flat layout --------------------------------------------------------
 
@@ -566,15 +638,22 @@ class NumericRecordBatch(RecordBatch):
         Notes
         -----
         Distinct from reading the columns, which keeps each field whole and its
-        event axes intact. Because ``batch_shape`` is the flat concatenation of
-        the axis levels, a multi-level batch vectorizes exactly as a single-level
-        one does, its levels flattened outermost-first.
+        event axes intact. The batch axes are left as they are: a multi-level
+        batch keeps its levels as the leading axes of the result, so the flat
+        dimension is always the last one and the levels read outermost-first.
         """
         batch_shape = self.batch_shape
+        template = self.event_template
+        leaf_shapes = template.leaf_shapes
         return jnp.concatenate(
             [
-                jnp.reshape(jnp.asarray(self._columns[key]), (*batch_shape, -1))
-                for key in self.event_template
+                # The field's own flat width rather than ``-1``: an empty batch
+                # axis leaves nothing for ``-1`` to be inferred from.
+                jnp.reshape(
+                    jnp.asarray(self._columns[key]),
+                    (*batch_shape, int(np.prod(leaf_shapes[key], dtype=int))),
+                )
+                for key in template
             ],
             axis=-1,
         )
@@ -586,9 +665,11 @@ class NumericRecordBatch(RecordBatch):
         template: NumericEventTemplate,
         vec: Array,
         *,
-        level_name: str,
+        level_names: str | Iterable[str],
+        axis_groups: Iterable[Iterable[int]] | None = None,
     ) -> Self:
-        """Rebuild a batch from its elements' flat vectors.
+        """Rebuild a batch from its elements' flat vectors — the inverse of
+        :meth:`to_vector`.
 
         Parameters
         ----------
@@ -598,10 +679,15 @@ class NumericRecordBatch(RecordBatch):
             The flat layout: field names, event shapes, and canonical order.
         vec : Array
             Shape ``(*batch_shape, vector_size)`` — the trailing axis is the flat
-            dimension, and the leading axes are the batch.
-        level_name : str
-            Names the level the reconstruction mints. Required for the reason
-            :meth:`RecordBatch.stack` states.
+            dimension, and every leading axis is a batch axis.
+        level_names : str or iterable of str
+            One name per level of the reconstructed batch, outermost first; a
+            single string names a single level. Required for the reason
+            :meth:`RecordBatch.stack` states, and plural because *vec* may carry
+            several batch axes: naming them is how a multi-level batch round-trips.
+        axis_groups : iterable of iterable of int, optional
+            The axis sizes each level holds, as for the constructor. Defaults to
+            one axis per level.
 
         Returns
         -------
@@ -614,7 +700,22 @@ class NumericRecordBatch(RecordBatch):
             If *vec* has no batch axis — reconstruct a single value with
             ``NumericRecord.from_vector``.
         ValueError
-            If the trailing axis is not ``template.vector_size``.
+            If the trailing axis is not ``template.vector_size``, or if the level
+            names do not account for *vec*'s leading axes.
+
+        Examples
+        --------
+        A two-level batch round-trips when both levels are named:
+
+        >>> import jax.numpy as jnp
+        >>> from probpipe import EventTemplate
+        >>> template = EventTemplate(x=(2,))
+        >>> batch = NumericRecordBatch({"x": jnp.zeros((4, 5, 2))}, ("chain", "draw"),
+        ...                            element_spec=template)
+        >>> rebuilt = NumericRecordBatch.from_vector(
+        ...     "post", template, batch.to_vector(), level_names=("chain", "draw"))
+        >>> rebuilt.batch_shape
+        (4, 5)
         """
         vec = jnp.asarray(vec)
         if vec.ndim < 2:
@@ -636,7 +737,13 @@ class NumericRecordBatch(RecordBatch):
             block = vec[..., offset : offset + size]
             columns[key] = jnp.reshape(block, (*batch_shape, *event_shape))
             offset += size
-        return cls(columns, (level_name,), element_spec=template, name=name)
+        return cls(
+            columns,
+            level_names,
+            element_spec=template,
+            axis_groups=axis_groups,
+            name=name,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -706,13 +813,31 @@ def _flatten_columns(columns: Mapping[str, Any]) -> dict[str, Any]:
     return flat
 
 
-def _event_shape(spec: ValueSpec) -> tuple[int, ...]:
+def _event_shape(spec: ValueSpec, *, path: str, kind: str) -> tuple[int, ...]:
     """The event shape a column carries beyond the batch axes.
 
     An ``ArraySpec`` declares one; every other leaf kind exposes no shape, so its
     column is one entry per element and the batch axes are all of it.
+
+    Raises
+    ------
+    ValueError
+        If the field's shape carries a symbolic dimension. Splitting a column into
+        batch and event axes needs sizes, and an unbound name is not one, so it is
+        refused where it can be named rather than compared against an integer
+        further on.
     """
-    return tuple(spec.shape) if isinstance(spec, ArraySpec) else ()
+    if not isinstance(spec, ArraySpec):
+        return ()
+    shape = tuple(spec.shape)
+    symbolic = [entry for entry in shape if not isinstance(entry, int)]
+    if symbolic:
+        raise ValueError(
+            f"{kind}: the field {path!r} declares the symbolic dimension "
+            f"{symbolic[0]!r}, so its event shape has no size to split a column by; bind the "
+            f"template's dimensions before batching against it"
+        )
+    return shape
 
 
 def _column_shape(column: Any) -> tuple[int, ...] | None:
@@ -724,68 +849,143 @@ def _column_shape(column: Any) -> tuple[int, ...] | None:
 def _batch_shape_of(
     store: dict[str, Any], template: EventTemplate, *, kind: str
 ) -> tuple[int, ...]:
-    """The batch axes the columns agree on, read off the first one.
+    """The batch axes every column agrees on, checking each against the first.
 
     A column is ``(*batch_shape, *event_shape)``, so its batch axes are whatever
-    its shape has beyond the event shape its spec declares. The first column
-    fixes them and the rest are checked against it at validation, which is where
-    a disagreement is reported against the field that disagreed.
+    its shape carries beyond the event shape its spec declares. Every column is
+    read, not just the first: a shape is what a batch axis is derived *from*, so
+    a column that reports none, or one whose batch axes disagree, is refused here
+    rather than passed on to fail somewhere that cannot say what went wrong. A
+    disagreement names both fields, since which of the two is wrong is the
+    caller's to know.
+
+    Raises
+    ------
+    TypeError
+        If a column reports no shape.
+    ValueError
+        If a column is too short to carry its event shape, if its event shape
+        accounts for the whole column so no batch axis is left, or if two
+        columns disagree on the batch axes.
     """
+    batch_shape: tuple[int, ...] | None = None
+    first: str = ""
     for path, column in store.items():
         shape = _column_shape(column)
         if shape is None:
             raise TypeError(
-                f"{kind}: the column at {path!r} reports no shape, so its batch axes cannot be "
-                f"read; a column is an array, or an object array for a non-array field"
+                f"{kind}: the column at {path!r} is a {type(column).__name__}, which reports no "
+                f"shape, so its batch axes cannot be read; a column is an array, or an object "
+                f"array for a field that is not an array"
             )
-        event_rank = len(_event_shape(template[path]))
-        if event_rank > len(shape):
+        event_shape = _event_shape(template[path], path=path, kind=kind)
+        if len(event_shape) > len(shape):
             raise ValueError(
                 f"{kind}: the column at {path!r} has shape {shape}, which is too short to carry "
-                f"its event shape {_event_shape(template[path])} after any batch axis"
+                f"its event shape {event_shape} after any batch axis"
             )
-        batch_shape = shape[: len(shape) - event_rank] if event_rank else shape
-        if not batch_shape:
+        split = len(shape) - len(event_shape)
+        if tuple(shape[split:]) != tuple(event_shape):
+            raise ValueError(
+                f"{kind}: the column at {path!r} has shape {shape}, whose trailing axes "
+                f"{tuple(shape[split:])} are not the event shape {event_shape} its field "
+                f"declares; a column is (*batch_shape, *event_shape)"
+            )
+        candidate = shape[:split] if event_shape else shape
+        if not candidate:
             raise ValueError(
                 f"{kind}: a batch has at least one batch axis, but the column at {path!r} has "
-                f"shape {shape}, which its event shape "
-                f"{_event_shape(template[path])} accounts for entirely"
+                f"shape {shape}, which its event shape {event_shape} accounts for entirely"
             )
-        return batch_shape
-    raise AssertionError("unreachable: an empty store is refused before this")
+        if batch_shape is None:
+            batch_shape, first = candidate, path
+        elif candidate != batch_shape:
+            raise ValueError(
+                f"{kind}: the columns disagree on the batch axes — {first!r} carries "
+                f"{batch_shape} and {path!r} carries {candidate}. Every column holds one value "
+                f"per element, so all of them span the same batch axes"
+            )
+    if batch_shape is None:
+        raise AssertionError("unreachable: an empty store is refused before this")
+    return batch_shape
 
 
-def _stack_column(values: list[Any]) -> Any:
+def _stack_column(values: list[Any], spec: ValueSpec, *, kind: str) -> Any:
     """One field's values across the elements, stacked into a column.
 
-    Numeric values stack natively into an array. Anything else has no stacked
-    form, so it goes into an object array, one entry per element, which is what
-    the object batches present a non-array column as.
+    The field's *spec* decides the form, not the values: an ``ArraySpec`` field
+    batches natively into an array with the batch axis leading, and every other
+    leaf kind goes into an object array, one entry per element, which is the form
+    the object batches present. Reading the spec rather than the values is what
+    keeps an opaque field opaque when its values happen to be numeric — a case
+    ``OpaqueSpec`` admits — so the column comes back as the batch form its spec
+    calls for and an element comes back as the object that was put in.
     """
-    if all(
-        hasattr(value, "shape") or isinstance(value, (int, float, complex, bool))
-        for value in values
-    ):
-        try:
-            return jnp.stack([jnp.asarray(value) for value in values])
-        except (TypeError, ValueError):
-            pass
-    store = np.empty(len(values), dtype=object)
-    for position, value in enumerate(values):
-        store[position] = value
+    if isinstance(spec, ArraySpec):
+        return jnp.stack([jnp.asarray(value) for value in values])
+    # The same object-array construction the object batches use, frozen for the
+    # reason ``_frozen_object_column`` gives.
+    store = _from_iterable(values, kind=kind)
     store.setflags(write=False)
     return store
 
 
+def _frozen_object_column(column: np.ndarray) -> np.ndarray:
+    """*column* as an object array nobody can write through.
+
+    A batch holds the columns it validated. An object column is the one kind a
+    caller can still mutate after construction — a JAX array is already immutable
+    and a numpy numeric column follows the aliasing convention the single-record
+    types already set — so it is copied and frozen, for the reason
+    ``_ObjectBatch`` states: a caller keeping a handle on what they passed cannot
+    write a value into the batch that its spec does not admit. Only the pointer
+    array is copied, so the elements stay shared.
+    """
+    frozen = np.array(column, dtype=object, subok=False)
+    frozen.setflags(write=False)
+    return frozen
+
+
 def _columns_equal(left: Any, right: Any) -> bool:
-    """Whether two columns hold equal values, elementwise where they are arrays."""
+    """Whether two columns hold equal values, elementwise.
+
+    An array column compares with ``jnp.array_equal``. An **object** column
+    cannot: its entries may be arrays, so a vectorized ``==`` yields an array of
+    arrays that reduces to no single truth value. Those compare entry by entry
+    instead, each entry by value where it has one and by identity where it does
+    not, which is what lets a batch of arbitrary objects be compared at all.
+
+    Notes
+    -----
+    NaN is not equal to itself here, as it is not for ``numpy``: two
+    independently built batches carrying NaN in the same place compare unequal.
+    ``RecordBatch.__eq__`` short-circuits on identity, so a batch still equals
+    itself.
+    """
+    if left is right:
+        return True
+    if _is_object_array(left) or _is_object_array(right):
+        if not (_is_object_array(left) and _is_object_array(right)):
+            return False
+        if left.shape != right.shape:
+            return False
+        return all(_entries_equal(a, b) for a, b in zip(left.flat, right.flat, strict=True))
+    return bool(jnp.array_equal(left, right))
+
+
+def _is_object_array(column: Any) -> bool:
+    """Whether *column* is a numpy array of objects, the non-array column form."""
+    return isinstance(column, np.ndarray) and column.dtype == object
+
+
+def _entries_equal(left: Any, right: Any) -> bool:
+    """Whether two object-column entries are equal, by value where they have one."""
     if left is right:
         return True
     try:
-        return bool(jnp.array_equal(left, right))
-    except Exception:
-        left_array, right_array = np.asarray(left, dtype=object), np.asarray(right, dtype=object)
-        return left_array.shape == right_array.shape and bool((left_array == right_array).all())
+        return bool(np.array_equal(left, right))
+    except (TypeError, ValueError):
+        return False
 
 
 # ---------------------------------------------------------------------------
@@ -802,8 +1002,10 @@ def _record_batch_flatten(batch: RecordBatch) -> tuple[list, tuple[BatchSpec, st
     type and its name survive a round-trip, while provenance does not cross a
     JAX transform boundary.
     """
-    keys = batch.event_template.keys()
-    return [batch._columns[key] for key in keys], (batch._spec, batch._name, batch._name_is_auto)
+    # ``_columns`` is already in the template's canonical order at every
+    # construction site, so the order the aux spec expects needs no second walk —
+    # this runs at every jit / vmap / grad boundary and every ``tree_map``.
+    return list(batch._columns.values()), (batch._spec, batch._name, batch._name_is_auto)
 
 
 def _unflatten_with(cls: type[RecordBatch]):
@@ -820,7 +1022,10 @@ def _unflatten_with(cls: type[RecordBatch]):
         assert isinstance(spec.element_spec, RecordSpec)
         keys = spec.element_spec.event_template.keys()
         batch = object.__new__(cls)
-        object.__setattr__(batch, "_columns", dict(zip(keys, children, strict=False)))
+        # ``strict``: a child count that disagrees with the spec's fields would
+        # otherwise truncate the columns silently, leaving a batch whose own spec
+        # is a false statement about it.
+        object.__setattr__(batch, "_columns", dict(zip(keys, children, strict=True)))
         batch._init_batch(spec, name=name, name_is_auto=name_is_auto)
         return batch
 
