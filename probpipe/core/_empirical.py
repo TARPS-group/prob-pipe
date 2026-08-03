@@ -382,7 +382,7 @@ class EmpiricalDistribution[T](
                 raise TypeError(f"num_evaluations must be an integer; got {num_evaluations!r}")
             if num_evaluations <= 0:
                 raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
-        if num_evaluations is not None and num_evaluations < self.n:
+        if num_evaluations is not None and num_evaluations < self.num_atoms:
             if key is None:
                 key = _workflow_broker._resolve_automatic_key(
                     None,
@@ -392,7 +392,7 @@ class EmpiricalDistribution[T](
                         sample_shape=(num_evaluations,),
                     ),
                 )
-            idx = jax.random.choice(key, self.n, shape=(num_evaluations,), replace=False)
+            idx = jax.random.choice(key, self.num_atoms, shape=(num_evaluations,), replace=False)
             f_vals = self._eval_f(f, self._samples[idx])
             sub_w = self._w.subsample(idx)
 

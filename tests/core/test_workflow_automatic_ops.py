@@ -181,6 +181,19 @@ class TestAutomaticExpectation:
 
         commit.assert_called_once_with("invocation")
 
+    def test_generic_empirical_subsample_uses_num_atoms(self):
+        dist = EmpiricalDistribution(["a", "bb", "ccc"])
+
+        with workflow_run(seed=7):
+            result = expectation(
+                dist,
+                len,
+                num_evaluations=2,
+                return_dist=False,
+            )
+
+        assert float(result) in (1.5, 2.0, 2.5)
+
     def test_monte_carlo_expectation_claims_one_batched_event(self):
         calls = []
         dist = _RecordingNormal(calls)
