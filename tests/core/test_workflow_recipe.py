@@ -28,7 +28,11 @@ from probpipe import (
 from probpipe.core import _workflow_callable
 from tests.core._workflow_replay_fixtures import (
     replayable_affine,
+    replayable_cyclic_default,
     replayable_identity,
+    replayable_numeric_array_default,
+    replayable_object_array_default,
+    replayable_structured_array_default,
 )
 
 
@@ -287,6 +291,39 @@ class TestWorkflowCallableAnchor:
         assert callable_anchor["supported"] is False
         assert callable_anchor["form"] == "lambda"
         assert "sha256" not in callable_anchor
+
+    def test_cyclic_definition_state_executes_but_records_no_weak_digest(self):
+        workflow = Function(func=replayable_cyclic_default, n_broadcast_samples=5)
+
+        with workflow_run(seed=6):
+            result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        callable_anchor = _replay(result)["callable"]
+        assert callable_anchor["supported"] is False
+        assert callable_anchor["form"] == "unsupported_definition_state"
+        assert "sha256" not in callable_anchor
+
+    def test_plain_numeric_array_default_remains_strongly_encoded(self):
+        anchor = _workflow_callable.capture_function_anchor(
+            Function(func=replayable_numeric_array_default)
+        )
+
+        assert anchor.controls()["supported"] is True
+        assert len(anchor.controls()["sha256"]) == 64
+
+    @pytest.mark.parametrize(
+        "callable_fixture",
+        [
+            replayable_object_array_default,
+            replayable_structured_array_default,
+        ],
+    )
+    def test_nonportable_numpy_defaults_are_closed_unsupported(self, callable_fixture):
+        anchor = _workflow_callable.capture_function_anchor(Function(func=callable_fixture))
+
+        assert anchor.controls()["supported"] is False
+        assert anchor.controls()["form"] == "unsupported_definition_state"
+        assert "sha256" not in anchor.controls()
 
     @pytest.mark.parametrize(
         ("factory", "form"),

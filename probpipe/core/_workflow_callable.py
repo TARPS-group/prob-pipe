@@ -220,6 +220,10 @@ def _signature_and_templates(function: Any, candidate: Any) -> dict[str, Any]:
 
 
 def _canonical_value(value: Any) -> dict[str, Any]:
+    return _canonical_value_inner(value, set())
+
+
+def _canonical_value_inner(value: Any, active_ids: set[int]) -> dict[str, Any]:
     if value is inspect.Parameter.empty or value is inspect.Signature.empty:
         return {"tag": "empty"}
     if value is None:
@@ -242,79 +246,107 @@ def _canonical_value(value: Any) -> dict[str, Any]:
         return {"tag": "str", "value": value}
     if isinstance(value, bytes):
         return {"tag": "bytes", "base64": base64.b64encode(value).decode("ascii")}
-    if isinstance(value, tuple):
-        return {"tag": "tuple", "items": [_canonical_value(item) for item in value]}
-    if isinstance(value, list):
-        return {"tag": "list", "items": [_canonical_value(item) for item in value]}
-    if isinstance(value, (set, frozenset)):
-        items = [_canonical_value(item) for item in value]
-        items.sort(key=_canonical_json)
-        return {
-            "tag": "frozenset" if isinstance(value, frozenset) else "set",
-            "items": items,
-        }
-    if isinstance(value, Mapping):
-        entries = [[_canonical_value(key), _canonical_value(item)] for key, item in value.items()]
-        entries.sort(key=lambda entry: _canonical_json(entry[0]))
-        return {"tag": "mapping", "entries": entries}
-    if isinstance(value, types.CodeType):
-        return _canonical_code(value)
-    if isinstance(value, np.dtype):
-        return {
-            "tag": "numpy_dtype",
-            "value": value.str,
-            "descr": _canonical_value(value.descr) if value.fields else {"tag": "none"},
-        }
-    if isinstance(value, np.generic):
-        return _canonical_array(np.asarray(value), tag="numpy_scalar")
-    if isinstance(value, np.ndarray):
-        return _canonical_array(value, tag="numpy_array")
-    if isinstance(value, EventTemplate):
-        return {
-            "tag": "event_template",
-            "type": _type_identity(type(value)),
-            "children": [[name, _canonical_value(child)] for name, child in value.children.items()],
-        }
-    if dataclasses.is_dataclass(value) and not isinstance(value, type):
-        return {
-            "tag": "dataclass",
-            "type": _type_identity(type(value)),
-            "fields": [
-                [field.name, _canonical_value(getattr(value, field.name))]
-                for field in dataclasses.fields(value)
-            ],
-        }
-    if isinstance(value, Constraint):
-        return {
-            "tag": "constraint",
-            "type": _type_identity(type(value)),
-            "state": _canonical_value(vars(value)),
-        }
-    if isinstance(value, Enum):
-        return {
-            "tag": "enum",
-            "type": _type_identity(type(value)),
-            "name": value.name,
-        }
-    if isinstance(value, (types.GenericAlias, types.UnionType)):
-        return {
-            "tag": "generic",
-            "origin": _canonical_value(typing.get_origin(value)),
-            "args": _canonical_value(typing.get_args(value)),
-        }
-    origin = typing.get_origin(value)
-    if origin is not None:
-        return {
-            "tag": "typing",
-            "origin": _canonical_value(origin),
-            "args": _canonical_value(typing.get_args(value)),
-        }
-    if isinstance(value, type):
-        return {"tag": "type", "value": _type_identity(value)}
-    raise _UnsupportedDefinition(f"unsupported callable-definition value {type(value).__name__}")
+    object_id = id(value)
+    if object_id in active_ids:
+        raise _UnsupportedDefinition("cyclic callable-definition state")
+    active_ids.add(object_id)
+    try:
+        if isinstance(value, tuple):
+            return {
+                "tag": "tuple",
+                "items": [_canonical_value_inner(item, active_ids) for item in value],
+            }
+        if isinstance(value, list):
+            return {
+                "tag": "list",
+                "items": [_canonical_value_inner(item, active_ids) for item in value],
+            }
+        if isinstance(value, (set, frozenset)):
+            items = [_canonical_value_inner(item, active_ids) for item in value]
+            items.sort(key=_canonical_json)
+            return {
+                "tag": "frozenset" if isinstance(value, frozenset) else "set",
+                "items": items,
+            }
+        if isinstance(value, Mapping):
+            entries = [
+                [
+                    _canonical_value_inner(key, active_ids),
+                    _canonical_value_inner(item, active_ids),
+                ]
+                for key, item in value.items()
+            ]
+            entries.sort(key=lambda entry: _canonical_json(entry[0]))
+            return {"tag": "mapping", "entries": entries}
+        if isinstance(value, types.CodeType):
+            return _canonical_code(value, active_ids)
+        if isinstance(value, np.dtype):
+            return {
+                "tag": "numpy_dtype",
+                "value": value.str,
+                "descr": (
+                    _canonical_value_inner(value.descr, active_ids)
+                    if value.fields
+                    else {"tag": "none"}
+                ),
+            }
+        if isinstance(value, np.generic):
+            return _canonical_array(np.asarray(value), tag="numpy_scalar")
+        if isinstance(value, np.ndarray):
+            return _canonical_array(value, tag="numpy_array")
+        if isinstance(value, EventTemplate):
+            return {
+                "tag": "event_template",
+                "type": _type_identity(type(value)),
+                "children": [
+                    [name, _canonical_value_inner(child, active_ids)]
+                    for name, child in value.children.items()
+                ],
+            }
+        if dataclasses.is_dataclass(value) and not isinstance(value, type):
+            return {
+                "tag": "dataclass",
+                "type": _type_identity(type(value)),
+                "fields": [
+                    [field.name, _canonical_value_inner(getattr(value, field.name), active_ids)]
+                    for field in dataclasses.fields(value)
+                ],
+            }
+        if isinstance(value, Constraint):
+            return {
+                "tag": "constraint",
+                "type": _type_identity(type(value)),
+                "state": _canonical_value_inner(vars(value), active_ids),
+            }
+        if isinstance(value, Enum):
+            return {
+                "tag": "enum",
+                "type": _type_identity(type(value)),
+                "name": value.name,
+            }
+        if isinstance(value, (types.GenericAlias, types.UnionType)):
+            return {
+                "tag": "generic",
+                "origin": _canonical_value_inner(typing.get_origin(value), active_ids),
+                "args": _canonical_value_inner(typing.get_args(value), active_ids),
+            }
+        origin = typing.get_origin(value)
+        if origin is not None:
+            return {
+                "tag": "typing",
+                "origin": _canonical_value_inner(origin, active_ids),
+                "args": _canonical_value_inner(typing.get_args(value), active_ids),
+            }
+        if isinstance(value, type):
+            return {"tag": "type", "value": _type_identity(value)}
+        raise _UnsupportedDefinition(
+            f"unsupported callable-definition value {type(value).__name__}"
+        )
+    finally:
+        active_ids.remove(object_id)
 
 
-def _canonical_code(code: types.CodeType) -> dict[str, Any]:
+def _canonical_code(code: types.CodeType, active_ids: set[int]) -> dict[str, Any]:
     return {
         "tag": "code",
         "name": code.co_name,
@@ -324,23 +356,29 @@ def _canonical_code(code: types.CodeType) -> dict[str, Any]:
         "nlocals": code.co_nlocals,
         "stacksize": code.co_stacksize,
         "flags": code.co_flags,
-        "code": _canonical_value(code.co_code),
-        "exceptiontable": _canonical_value(code.co_exceptiontable),
-        "consts": _canonical_value(code.co_consts),
-        "names": _canonical_value(code.co_names),
-        "varnames": _canonical_value(code.co_varnames),
-        "freevars": _canonical_value(code.co_freevars),
-        "cellvars": _canonical_value(code.co_cellvars),
+        "code": _canonical_value_inner(code.co_code, active_ids),
+        "exceptiontable": _canonical_value_inner(code.co_exceptiontable, active_ids),
+        "consts": _canonical_value_inner(code.co_consts, active_ids),
+        "names": _canonical_value_inner(code.co_names, active_ids),
+        "varnames": _canonical_value_inner(code.co_varnames, active_ids),
+        "freevars": _canonical_value_inner(code.co_freevars, active_ids),
+        "cellvars": _canonical_value_inner(code.co_cellvars, active_ids),
     }
 
 
 def _canonical_array(value: np.ndarray, *, tag: str) -> dict[str, Any]:
+    if type(value) is not np.ndarray:
+        raise _UnsupportedDefinition("numpy array subclasses are not strongly encoded")
     contiguous = np.ascontiguousarray(value)
     dtype = contiguous.dtype
-    if dtype.byteorder == ">" or (dtype.byteorder == "=" and sys.byteorder == "big"):
-        little_dtype = dtype.newbyteorder("<")
+    if dtype.hasobject:
+        raise _UnsupportedDefinition("object numpy dtypes are not portable")
+    if dtype.fields is not None or dtype.subdtype is not None or dtype.metadata is not None:
+        raise _UnsupportedDefinition("structured numpy dtypes are not strongly encoded")
+    little_dtype = dtype.newbyteorder("<")
+    if dtype != little_dtype:
         contiguous = contiguous.astype(little_dtype, copy=False)
-        dtype = little_dtype
+    dtype = little_dtype
     return {
         "tag": tag,
         "dtype": dtype.str,
