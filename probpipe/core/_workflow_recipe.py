@@ -26,18 +26,14 @@ def provenance_recipe_fields(
     if snapshot is None:
         return {}, {}
 
-    effects = _sort_effects(snapshot.effects, stochastic_plan)
+    observed_effects = _sort_effects(snapshot.effects, stochastic_plan)
     nested_automatic_parent = any(
-        (
-            effect.occurrence_kind == "invocation"
-            and effect.occurrence_path != snapshot.occurrence_path
-        )
-        or sum(
-            isinstance(segment, tuple) and len(segment) > 0 and segment[0] == "managed-unit"
-            for segment in effect.occurrence_path
-        )
-        > 1
-        for effect in effects
+        _is_nested_automatic_effect(effect, snapshot.occurrence_path) for effect in observed_effects
+    )
+    effects = tuple(
+        effect
+        for effect in observed_effects
+        if not _is_nested_automatic_effect(effect, snapshot.occurrence_path)
     )
     compatibility_contracts = _unique_json_values(
         [_contract_controls(contract) for contract in snapshot.execution_contracts]
@@ -225,6 +221,19 @@ def _sort_effects(
         )
 
     return tuple(sorted(effects, key=key))
+
+
+def _is_nested_automatic_effect(
+    effect: ManagedEffectClaim,
+    parent_occurrence_path: tuple[Any, ...],
+) -> bool:
+    """Return whether an effect belongs to a nested public Function invocation."""
+    return (
+        effect.occurrence_kind == "invocation" and effect.occurrence_path != parent_occurrence_path
+    ) or sum(
+        isinstance(segment, tuple) and len(segment) > 0 and segment[0] == "managed-unit"
+        for segment in effect.occurrence_path
+    ) > 1
 
 
 def _contract_controls(contract: Any) -> dict[str, Any]:

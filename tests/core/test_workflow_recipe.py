@@ -189,6 +189,26 @@ class TestWorkflowRecipeRecording:
         replay = _replay(result)
         assert replay["standalone"]["eligibility"] == "nested_workflow_rng_execution"
         assert replay["standalone"]["restriction"] == "nested_automatic_function"
+        assert _randomness(result)["events"] == []
+        assert _randomness(result)["expected_event_count"] == 0
+        assert replay["plan"]["expected_effects"] == []
+
+    def test_parent_recipe_keeps_only_its_own_lifting_event(self):
+        workflow = Function(
+            func=_nested_automatic,
+            dispatch="sequential",
+            n_broadcast_samples=5,
+        )
+        with workflow_run(seed=21):
+            result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        replay = _replay(result)
+        randomness = _randomness(result)
+        assert replay["standalone"]["eligibility"] == "nested_workflow_rng_execution"
+        assert randomness["expected_event_count"] == 1
+        assert len(randomness["events"]) == 1
+        assert randomness["events"][0]["occurrence_path"] == randomness["occurrence_path"]
+        assert len(replay["plan"]["expected_effects"]) == 1
 
     def test_recipe_roundtrip_contains_no_operational_ownership_state(self):
         workflow = Function(func=_identity, dispatch="thread", n_broadcast_samples=5)
