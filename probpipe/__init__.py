@@ -37,8 +37,11 @@ from probpipe.core._array_backend import (
     array_backend_for,
     register_array_backend,
 )
+from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._distribution_array import DistributionArray
+from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_array import NumericRecordArray, RecordArray
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
@@ -203,6 +206,8 @@ __all__ = [
     "ArrayBackend",
     "ArrayRandomFunction",
     "ArraySpec",
+    "Batch",
+    "BatchSpec",
     # Array-backend registry
     "BayesFlowLikelihood",
     "BayesFlowModel",
@@ -236,6 +241,7 @@ __all__ = [
     "FlattenedDistributionView",
     "FullFactorialDesign",
     "Function",
+    "FunctionBatch",
     "FunctionSpec",
     # Modeling
     "GLMLikelihood",
@@ -270,6 +276,7 @@ __all__ = [
     "NumericRecordArray",
     "NumericRecordDistribution",
     "NumericRecordDistributionView",
+    "OpaqueBatch",
     "OpaqueSpec",
     "ParentInfo",
     "Pareto",

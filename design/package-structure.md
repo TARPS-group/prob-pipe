@@ -28,13 +28,14 @@ probpipe/
 │   ├── _specs.py              #   ValueSpec, TermSpec, ArraySpec, OpaqueSpec (II.2)
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (II.3)
 │   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.4)
-│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, select (II.5)
+│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries (II.6)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.6)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.3)
 │   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
 │   │                          #     plain evaluation), FunctionSpec, and the function capabilities
+│   ├── _object_batch.py       #   object-array storage the two batch forms share
 │   ├── _function_batch.py     #   FunctionBatch (III.1)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.1)
 │   ├── _record.py             #   Record, NumericRecord (III.2), RecordSpec (II.2)

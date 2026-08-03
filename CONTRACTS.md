@@ -95,7 +95,9 @@ if it were user-guide reference text.
 | `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
 | `EventTemplate` / `NumericEventTemplate` / `ValueSpec` (raw-value: `ArraySpec`·`OpaqueSpec`; `TermSpec`: `RecordSpec`·`DistributionSpec`·`FunctionSpec`) | docstrings in `probpipe/core/event_template.py`; #235 Chapter 1 |
 | `Record` / `NumericRecord` (each stores its type as a `RecordSpec`, with `event_template` a view on it) | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
+| `Batch` / `BatchSpec` (the multiplicity axis: levels, level names, view identity) | docstrings in `probpipe/core/_batch.py`; #235 Chapter 2 |
 | Batch types (`RecordArray`/`NumericRecordArray`/`DistributionArray` → `*Batch`) | docstrings in `_record_array.py`, `_distribution_array.py`; #235 Chapter 2 |
+| `FunctionBatch` / `OpaqueBatch` (the batch forms that *store* their elements, over shared object-array storage) | docstrings in `probpipe/core/_function_batch.py`, `_opaque_batch.py` (storage in `_object_batch.py`); #235 Chapter 2 |
 | `Function` & ops (`sample`, `log_prob`, …) | docstrings in `core/node.py`, `core/ops.py`, `_workflow_result.py`; #235 Chapter 3 |
 | Naming / provenance / annotations (`TrackedTerm` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
 
@@ -106,6 +108,10 @@ if it were user-guide reference text.
 | a 1-D numeric serialization | `vec` |
 | values for leaves dropped by `numeric_subset`, supplied when reconstructing a full value | `non_numeric` |
 | batch dimensions | `batch_shape` |
+| batch axes tiled into levels | `axis_groups` |
+| one name per level of a batch | `level_names` |
+| the spec every element of a batch satisfies | `element_spec` |
+| the objects a batch is built from | `elements` |
 | independent-draw shape prefix for `sample` | `sample_shape` |
 | a distribution's structural schema | `event_template` |
 | PRNG key | `key` |

@@ -9,6 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
+  references to the same law denote one random variable, so they must come from
+  one draw. Passing the same `Distribution` to two arguments sampled it twice
+  instead, so `f(d, d)` approximated `f(X1, X2)` — a silently wrong answer, with
+  `difference(dist, dist)` returning a spread around zero rather than zero.
+
+  Arguments were already grouped by root ancestor, as the co-sampling contract
+  requires; the grouping was then discarded for plain distributions and honored
+  only for field views. Each group is now drawn **once**, from its root, with
+  every member taking its own value out of that draw. Two further cases follow
+  from the same change: a parent passed alongside its own view no longer raises
+  (it was projected as though the parent were a view), and an empirical passed
+  twice contributes **one** enumeration axis rather than a squared grid — over
+  three atoms, `f(e, e)` enumerates 3 points instead of 9, each weighted once
+  instead of squared.
+
+  Arguments with no common root are unaffected, down to the subkeys: a group of
+  one consumes exactly one key split, as before. Only calls that were already
+  returning wrong values change their output.
+
+- **A record-valued law can be lifted.** Passing a record-valued
+  `Distribution` as an argument raised `TypeError: ... is not array-like`, from
+  two places that assumed every argument's samples were an array. Broadcast
+  assembly read the row count from the samples' `shape`, which a record batch
+  refuses unless it holds exactly one leaf; the count now comes from
+  `batch_shape`, the one accessor that means the same thing for every batched
+  value. (Not `len`: on a `RecordArray` that is the *field* count, which would
+  have made `num_atoms` silently wrong.) And enumeration stacked each
+  argument's per-row values with `jnp.stack`, which a `Record` row is not; those
+  now stack through `RecordArray.stack`.
+
+  The first of those is what kept `f(d, d["x"])` — a parent alongside its own
+  view, the remaining co-sampling case above — from running end to end once its
+  draws were shared. Record-valued laws now lift under `auto`, `sequential`, and
+  `thread` dispatch, including record-valued empiricals, whether enumerated or
+  passed twice. Explicit `dispatch="jax"` reports the usual not-traceable error
+  when the wrapped function indexes a record.
+
+  **The joint those lifts produce also resamples.** `include_inputs=True` keeps
+  every input beside the output, and drawing from that joint gathers the same
+  rows from each, which is what keeps a drawn tuple paired. A record-shaped
+  component has fields rather than a shape, so handing it an array of rows raised
+  `TypeError: key must be str, tuple, or int`. Every component now goes through
+  one gather that reads the container it is given: an array indexes directly, a
+  list of per-row objects gathers positionally, and a record is rebuilt from its
+  gathered leaves. The rebuild is deliberate rather than a `jax.tree.map` — a
+  `RecordArray` stores its row count and a `Record` its event template, both in
+  pytree aux data, so mapping over the leaves alone would have produced a batch
+  quietly claiming the rows it started with. The same gather covers the output
+  side, where a vectorized broadcast over a record-returning function leaves the
+  output a batched `Record`. A single draw is unwrapped to one record rather than
+  a one-row batch, its field names intact.
+
+  Two shapes are still unsupported. A record with **nested** fields cannot be
+  batched at all, since a record batch is keyed by its top-level children rather
+  than by leaf path, so lifting such a law is refused with a message naming the
+  argument rather than surfacing what the container said. That is #340, and a
+  strict `xfail` in the broadcast tests marks the case so it reports the day
+  record batches become leaf-keyed.
+
+  The other: a record-valued empirical passed alongside a
+  field view of itself. That group routes to sampling rather than enumeration,
+  where `RecordEmpiricalDistribution._sample` hands back a plain record batched
+  on its leaves rather than a record batch — deliberately, so a vmap'd caller
+  can flatten it — and the view half of the group has no rows to project from. That is a distribution-
+  layer contract gap rather than a broadcast one.
+
 - **Value specs are fingerprinted by declaration, not identity (#381).** The
   spec hasher now covers `RecordSpec` and recurses into a stored declaration
   (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec
@@ -48,6 +115,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   declaration forms, which agree. A pickle written before this change still
   loads, its bare template accepted as the declaration it is.
 
+- **`FunctionBatch` and `OpaqueBatch` — the batch forms that store objects.** A
+  numeric array batches natively, with the batch axes leading, so it needs no
+  class; a callable and an opaque object have no such form, so each gets a thin
+  `Batch` that stores its elements and carries the one `element_spec` they all
+  satisfy, adding no interface beyond it. Elements go in as a flat sequence or
+  as an object array of any shape, with a name required for every level — a
+  placeholder would read as meaning something while naming nothing, the same
+  reason a level clash is not resolved by suffixing.
+
+  Storage is a numpy object array, chosen for the contract rather than for
+  arrays: numpy basic indexing returns a **view**, so a sub-batch shares its
+  parent's store in every indexing form, and it honors a descending or stepped
+  slice in the order given, which is the order a view's derived names are stated
+  in. The store is frozen and a supplied array is copied — only the pointer
+  array, so the elements stay shared — so a batch holds the elements it
+  validated and a view cannot write through to its parent. Elements are never
+  unpacked: a batch of arrays or of lists stays a batch of two things rather than
+  becoming one 2-d array, and a container that iterates into its *parts* rather
+  than into elements (a string, a mapping, a numeric array) is refused, since
+  each would otherwise yield a batch of pieces of one object.
+
+  An element comes back as the object that was stored, untouched — neither
+  renamed nor given provenance. Identity and lineage are derived where a batch
+  *materializes* an element per index; these store theirs, so what the caller put
+  in is what comes out.
+
+  `OpaqueBatch` is the case a batch's own spec exists for — an `OpaqueSpec`
+  names no ProbPipe kind, yet the batch is specified all the same, at the family
+  kind over it. Every element is checked against the shared spec at construction,
+  reporting the position that failed, since a batch asserts that spec of *all*
+  of them, and `axis_groups` must tile the shape the elements are stored in, so
+  the spec cannot describe a shape the storage does not have.
+
 - **`TermSpec` — the term-spec sub-hierarchy, and declarations stored as specs
   (#381).** `ValueSpec` now splits into *raw-value specs* (`ArraySpec`,
   `OpaqueSpec`), which name no ProbPipe kind, and *term specs*, one per kind,
@@ -75,6 +175,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   random-measure declaration is refused at construction rather than accepted
   and always reported invalid. `FunctionSpec` declares no check on its output,
   so nothing there is expressible-but-unsatisfiable.
+
+- **`Batch[E]` — the generic multiplicity axis (#350).** New
+  `probpipe.core._batch` module holding the tracked nd-collection ABC the
+  concrete batch types will specialize. A batch says *how many* objects there
+  are, separately from what one object contains, so `len` / `iter` /
+  `batch_shape` / `batch_size` speak only about the batch axes and never about
+  an element's structure.
+
+  Axes are partitioned into ordered **levels**: `axis_groups` tiles
+  `batch_shape` into contiguous groups, outermost first, with `batch_shape`
+  their flat concatenation — so `N` laws of `S` draws each are `(N,)` of `(S,)`
+  rather than one anonymous `(N, S)`, and anything stated over `batch_shape`
+  applies to a multi-level batch unchanged. Each level carries a name
+  (`level_names`, repinned by `with_level_names`), and names are unique within a
+  batch: an operation minting a level takes the name to give it, and a name
+  already present raises rather than being altered, exactly as a rename onto an
+  existing name does.
+
+  Indexing has two entry points. `at_levels(**levels)` takes one indexer per
+  named level and returns a view — the by-name counterpart of positional `[]`,
+  and the level analogue of `NamedTree.at_path`. `[]` itself dispatches on
+  whether the key is a **position** or a **name**: a position (an integer, a
+  slice, or a tuple of those) addresses the batch axes, while a name (a string,
+  or a tuple of strings for a path) addresses a field within every element —
+  which a batch of records will answer and a batch of anything else refuses. A
+  tuple mixing the two addresses neither, and is refused as a mix rather than as
+  a wrong number of indices. A whole axis is written `:` positionally; `None`
+  spells it in `at_levels` alone, where a keyword cannot take a `:` literal.
+
+  A view is **named by what it selects**, naming the level each selection
+  addresses — `"posterior[chain=0]"` for a sub-batch,
+  `"posterior[chain=0, draw=7]"` for an element, `"posterior[draw=1:3]"` for a
+  range. Levels selected whole are left out, so selecting all of a batch derives
+  the batch's own name, and the levels that appear are listed in the batch's own
+  order. The selection is tracked against the batch the name is rooted in, so a
+  derived name is a function of what the view selects: indexing two levels in one
+  call, in two calls, or in the other order all read alike, and two different
+  selections of one batch never do. A selection carries the *lineage* of the batch it came
+  out of rather than a node recording the read: nothing is computed by reading one
+  position out of a collection, and which position it was is what the name says.
+
+  A batch's **specification is its own**, at the *family* kind: the new
+  `BatchSpec` term spec carries the element's specification together with that
+  named multiplicity, and a batch stores it as the single source of its type.
+  `spec` therefore names the collection, just as any other term's spec names the
+  term, while `element_spec`, `axis_groups`, `level_names`, `batch_shape`, and
+  `batch_size` are views on it; the level invariants are the spec's own, checked
+  when it is constructed. A batch of values naming no kind is specified all the
+  same, a raw-value `element_spec` being as well formed as a term spec.
+
+  Element storage is the concrete class's business — the only thing left to a
+  subclass, through the `_element_at` and `_sub_batch_at` hooks. The second
+  presents a *view* that shares the store rather than copying out of it, which is
+  why selecting all of a batch needs no special case. A third hook, `_at_fields`,
+  is supplied only where the elements have fields to address by name. Renaming a
+  level touches no storage, so it defaults to a shallow copy.
+
+  A batch is immutable, round-trips through `pickle` and `copy`, and reprs as its
+  class, its name, and each level with its sizes, reading no element.
+  `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow separately.
 
 - **First-class, tracked `Function` values (#368).** `Function` is now an
   immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
