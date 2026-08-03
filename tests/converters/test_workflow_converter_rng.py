@@ -173,9 +173,9 @@ class TestBuiltInConversionPlanning:
 
         with (
             patch(
-                "probpipe.core._workflow_context._commit_stochastic_invocation",
-                wraps=_workflow_context._commit_stochastic_invocation,
-            ) as commit,
+                "probpipe.core._workflow_context.derive_event_key_words",
+                wraps=_workflow_context.derive_event_key_words,
+            ) as derive,
             workflow_run(seed=7),
         ):
             converter_registry.convert(
@@ -186,14 +186,14 @@ class TestBuiltInConversionPlanning:
             )
 
         assert len(calls) == (0 if covariance_works else 1)
-        assert commit.call_count == (0 if covariance_works else 1)
+        assert derive.call_count == (0 if covariance_works else 1)
 
     def test_from_distribution_uses_the_function_broker_once(self):
         with (
             patch(
-                "probpipe.core._workflow_context._commit_stochastic_invocation",
-                wraps=_workflow_context._commit_stochastic_invocation,
-            ) as commit,
+                "probpipe.core._workflow_context.derive_event_key_words",
+                wraps=_workflow_context.derive_event_key_words,
+            ) as derive,
             workflow_run(seed=7),
         ):
             result = from_distribution(
@@ -203,7 +203,7 @@ class TestBuiltInConversionPlanning:
             )
 
         assert result.num_atoms == 8
-        commit.assert_called_once_with("invocation")
+        assert derive.call_count == 1
 
     def test_sampled_probpipe_conversion_uses_captured_root_and_forward(self):
         calls = []

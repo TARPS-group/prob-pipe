@@ -57,9 +57,9 @@ class TestPredictiveCheckBroker:
         def run(num_replications):
             with (
                 patch(
-                    "probpipe.core._workflow_context._commit_stochastic_invocation",
-                    wraps=_workflow_context._commit_stochastic_invocation,
-                ) as commit,
+                    "probpipe.core._workflow_context.derive_event_key_words",
+                    wraps=_workflow_context.derive_event_key_words,
+                ) as derive,
                 workflow_run(seed=7),
             ):
                 result = predictive_check(
@@ -69,16 +69,16 @@ class TestPredictiveCheckBroker:
                     num_observations=6,
                     num_replications=num_replications,
                 )
-            return np.asarray(result["replicated_statistics"].flat_samples), commit
+            return np.asarray(result["replicated_statistics"].flat_samples), derive
 
-        first, first_commit = run(8)
-        second, second_commit = run(8)
-        larger, larger_commit = run(16)
+        first, first_derive = run(8)
+        second, second_derive = run(8)
+        larger, larger_derive = run(16)
 
         np.testing.assert_array_equal(first, second)
-        first_commit.assert_called_once_with("invocation")
-        second_commit.assert_called_once_with("invocation")
-        larger_commit.assert_called_once_with("invocation")
+        assert first_derive.call_count == 1
+        assert second_derive.call_count == 1
+        assert larger_derive.call_count == 1
         assert larger.shape == (16, 1)
 
     def test_opaque_provider_requires_explicit_key_before_sampling(self):
