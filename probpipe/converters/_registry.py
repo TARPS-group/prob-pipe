@@ -5,7 +5,79 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Literal
+
+from ..core import _workflow_broker
+
+_ConversionExecutionMode = Literal[
+    "exact",
+    "analytic",
+    "sampled",
+    "conditional",
+    "delegated",
+]
+
+_PROBPIPE_PROVIDER_ABI = "probpipe.distribution/v1"
+_TFP_PROVIDER_ABI = "tensorflow_probability.substrates.jax/v1"
+_SCIPY_PROVIDER_ABI = "scipy.stats.seedsequence-pcg64/v1"
+_DECLARED_CONVERTER_ABI = "probpipe.converter.declared/v1"
+
+
+@dataclass(frozen=True)
+class _ConversionExecutionPlan:
+    """Private stochastic contract for one selected conversion."""
+
+    execution_mode: _ConversionExecutionMode
+    sample_shape: tuple[int, ...] | None
+    provider_abi: str
+    automatic_key_certified: bool
+
+
+def _validate_conversion_sample_count(value: Any) -> int:
+    """Validate and return a conversion sample count before RNG commit."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"num_samples must be an integer; got {value!r}")
+    if value <= 0:
+        raise ValueError(f"num_samples must be positive; got {value!r}")
+    return value
+
+
+def _sampled_conversion_plan(
+    num_samples: Any,
+    *,
+    provider_abi: str,
+    automatic_key_certified: bool = True,
+) -> _ConversionExecutionPlan:
+    """Build a validated sampled-conversion execution plan."""
+    count = _validate_conversion_sample_count(num_samples)
+    return _ConversionExecutionPlan(
+        execution_mode="sampled",
+        sample_shape=(count,),
+        provider_abi=provider_abi,
+        automatic_key_certified=automatic_key_certified,
+    )
+
+
+def _resolve_conversion_key(
+    key: Any | None,
+    plan: _ConversionExecutionPlan,
+) -> Any:
+    """Preserve a caller key or claim the singleton conversion event."""
+    if key is not None:
+        return key
+    if plan.execution_mode not in ("sampled", "conditional"):
+        raise TypeError("a non-sampling conversion cannot request an automatic key")
+    if not plan.automatic_key_certified:
+        raise TypeError("an uncertified converter cannot request an automatic key")
+    return _workflow_broker._resolve_automatic_key(
+        None,
+        _workflow_broker._singleton_effect_plan(
+            operation_kind="conversion",
+            execution_mode=plan.execution_mode,
+            sample_shape=plan.sample_shape,
+            provider_abi=plan.provider_abi,
+        ),
+    )
 
 
 class ConversionMethod(Enum):
@@ -129,10 +201,29 @@ class ConverterRegistry:
 
         Raises ``TypeError`` if no converter can handle the pair.
         """
-        for conv in self._find_converters(type(source)):
-            info = conv.check(source, target_type)
-            if info.feasible:
-                return conv.convert(source, target_type, key=key, **kwargs)
+        with _workflow_broker._managed_stochastic_scope():
+            for conv in self._find_converters(type(source)):
+                info = conv.check(source, target_type)
+                if not info.feasible:
+                    continue
+                plan = self._plan_conversion(
+                    conv,
+                    info,
+                    source,
+                    target_type,
+                    kwargs,
+                    validate_declared_sample=key is None,
+                )
+                resolved_key = key
+                if key is None and plan.execution_mode == "sampled":
+                    if not plan.automatic_key_certified:
+                        raise TypeError(
+                            f"{type(conv).__name__} declares a sampled conversion but "
+                            "is not certified for workflow-owned randomness; pass an "
+                            "explicit key= value."
+                        )
+                    resolved_key = _resolve_conversion_key(None, plan)
+                return conv.convert(source, target_type, key=resolved_key, **kwargs)
         raise TypeError(
             f"No converter registered for {type(source).__name__} -> {target_type.__name__}"
         )
@@ -161,6 +252,47 @@ class ConverterRegistry:
                 if any(issubclass(source_type, st) for st in c.source_types())
             ]
         return self._type_cache[source_type]
+
+    @staticmethod
+    def _plan_conversion(
+        converter: Converter,
+        info: ConversionInfo,
+        source: Any,
+        target_type: type,
+        kwargs: dict[str, Any],
+        *,
+        validate_declared_sample: bool,
+    ) -> _ConversionExecutionPlan:
+        """Resolve one converter's private execution contract exactly once."""
+        planner = getattr(converter, "_workflow_plan_conversion", None)
+        if planner is not None:
+            plan = planner(source, target_type, dict(kwargs))
+            if not isinstance(plan, _ConversionExecutionPlan):
+                raise TypeError(
+                    f"{type(converter).__name__} returned an invalid private "
+                    "conversion execution plan"
+                )
+            return plan
+
+        if info.method is ConversionMethod.SAMPLE:
+            if validate_declared_sample:
+                return _sampled_conversion_plan(
+                    kwargs.get("num_samples", 1024),
+                    provider_abi=_DECLARED_CONVERTER_ABI,
+                    automatic_key_certified=False,
+                )
+            return _ConversionExecutionPlan(
+                execution_mode="sampled",
+                sample_shape=None,
+                provider_abi=_DECLARED_CONVERTER_ABI,
+                automatic_key_certified=False,
+            )
+        return _ConversionExecutionPlan(
+            execution_mode=("exact" if info.method is ConversionMethod.EXACT else "analytic"),
+            sample_shape=None,
+            provider_abi=_DECLARED_CONVERTER_ABI,
+            automatic_key_certified=True,
+        )
 
 
 # Module-level singleton

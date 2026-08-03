@@ -11,13 +11,34 @@ from typing import Any
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from .._utils import _auto_key
 from ..core.distribution import (
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
 )
 from ..core.provenance import Provenance
-from ._registry import ConversionInfo, ConversionMethod, Converter
+from ._registry import (
+    _TFP_PROVIDER_ABI,
+    ConversionInfo,
+    ConversionMethod,
+    Converter,
+    _ConversionExecutionMode,
+    _ConversionExecutionPlan,
+    _resolve_conversion_key,
+    _sampled_conversion_plan,
+)
+
+
+def _tfp_nonrandom_plan(
+    execution_mode: _ConversionExecutionMode,
+) -> _ConversionExecutionPlan:
+    """Build a non-consuming TFP conversion plan."""
+    return _ConversionExecutionPlan(
+        execution_mode=execution_mode,
+        sample_shape=None,
+        provider_abi=_TFP_PROVIDER_ABI,
+        automatic_key_certified=True,
+    )
+
 
 # ---------------------------------------------------------------------------
 # TFP → ProbPipe mapping: (ProbPipe class, parameter extractor)
@@ -200,6 +221,28 @@ class TFPConverter(Converter):
 
         return ConversionInfo(feasible=False)
 
+    def _workflow_plan_conversion(
+        self,
+        source: Any,
+        target_type: type,
+        kwargs: dict[str, Any],
+    ) -> _ConversionExecutionPlan:
+        """Capture the TFP adapter path before any sampling occurs."""
+        if isinstance(source, tfd.Distribution) and not isinstance(
+            source, NumericRecordDistribution
+        ):
+            src_cls = type(source)
+            if src_cls not in self._tfp_map:
+                return _sampled_conversion_plan(
+                    kwargs.get("num_samples", 1024),
+                    provider_abi=_TFP_PROVIDER_ABI,
+                )
+            pp_cls, _ = self._tfp_map[src_cls]
+            if target_type is pp_cls or issubclass(pp_cls, target_type):
+                return _tfp_nonrandom_plan("exact")
+            return _tfp_nonrandom_plan("delegated")
+        return _tfp_nonrandom_plan("exact")
+
     def convert(
         self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
     ) -> Any:
@@ -223,9 +266,11 @@ class TFPConverter(Converter):
                     return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
                 # Unknown TFP: sample -> RecordEmpiricalDistribution
-                if key is None:
-                    key = _auto_key()
                 n = kwargs.pop("num_samples", 1024)
+                key = _resolve_conversion_key(
+                    key,
+                    _sampled_conversion_plan(n, provider_abi=_TFP_PROVIDER_ABI),
+                )
                 samples = source.sample(seed=key, sample_shape=(n,))
                 emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
                 emp = RecordEmpiricalDistribution(samples, name=emp_name)

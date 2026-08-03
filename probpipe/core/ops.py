@@ -23,7 +23,6 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 
-from .._utils import _auto_key
 from ..custom_types import Array, PRNGKey
 from . import _workflow_broker
 from .distribution import Distribution, RandomFunction
@@ -542,8 +541,6 @@ def from_distribution(
     """
     from ..converters import converter_registry
 
-    if key is None:
-        key = _auto_key()
     return converter_registry.convert(
         source, target_type, key=key, check_support=check_support, **kwargs
     )

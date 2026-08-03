@@ -19,7 +19,6 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from .._utils import _auto_key
 from ..core.distribution import (
     Distribution,
     EmpiricalDistribution,
@@ -27,10 +26,51 @@ from ..core.distribution import (
 )
 from ..core.provenance import Provenance
 from ..distributions._tfp_base import _allow_batched_tfp_init
-from ._registry import ConversionInfo, ConversionMethod, Converter
+from ._registry import (
+    _PROBPIPE_PROVIDER_ABI,
+    ConversionInfo,
+    ConversionMethod,
+    Converter,
+    _ConversionExecutionMode,
+    _ConversionExecutionPlan,
+    _resolve_conversion_key,
+    _sampled_conversion_plan,
+    _validate_conversion_sample_count,
+)
 
 # Default sample count for moment-matching conversions
 DEFAULT_NUM_SAMPLES = 1024
+
+
+def _conditional_conversion_plan(num_samples: Any) -> _ConversionExecutionPlan:
+    """Build the conditional covariance-fallback plan."""
+    count = _validate_conversion_sample_count(num_samples)
+    return _ConversionExecutionPlan(
+        execution_mode="conditional",
+        sample_shape=(count,),
+        provider_abi=_PROBPIPE_PROVIDER_ABI,
+        automatic_key_certified=True,
+    )
+
+
+def _probpipe_sampled_plan(num_samples: Any) -> _ConversionExecutionPlan:
+    """Build the standard ProbPipe sampled-conversion plan."""
+    return _sampled_conversion_plan(
+        num_samples,
+        provider_abi=_PROBPIPE_PROVIDER_ABI,
+    )
+
+
+def _probpipe_nonrandom_plan(
+    execution_mode: _ConversionExecutionMode = "analytic",
+) -> _ConversionExecutionPlan:
+    """Build a non-consuming ProbPipe conversion plan."""
+    return _ConversionExecutionPlan(
+        execution_mode=execution_mode,
+        sample_shape=None,
+        provider_abi=_PROBPIPE_PROVIDER_ABI,
+        automatic_key_certified=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -240,8 +280,7 @@ def _convert_to_halfcauchy(source, key, **kw):
     if isinstance(source, HalfCauchy):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    if key is None:
-        key = _auto_key()
+    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
     samples = source._sample(key, (num_samples,))
     med = jnp.median(samples)
     r = HalfCauchy(loc=0.0, scale=jnp.maximum(med, 0.01), name=kw.get("name") or source.name)
@@ -255,8 +294,7 @@ def _convert_to_pareto(source, key, **kw):
     if isinstance(source, Pareto):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    if key is None:
-        key = _auto_key()
+    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
     samples = source._sample(key, (num_samples,))
     n = samples.shape[0]
     scale = jnp.maximum(jnp.min(samples), 1e-6)
@@ -272,8 +310,7 @@ def _convert_to_truncatednormal(source, key, **kw):
     if isinstance(source, TruncatedNormal):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    if key is None:
-        key = _auto_key()
+    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     samples = source._sample(key, (num_samples,))
@@ -336,6 +373,7 @@ def _convert_to_categorical(source, key, **kw):
     if isinstance(source, Categorical):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
+    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
     samples = source._sample(key, (num_samples,))
     n_cat = int(jnp.max(samples)) + 1
     counts = jnp.array([(samples == k).sum() for k in range(n_cat)])
@@ -386,8 +424,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
         cov_mat = source._cov()
     except (NotImplementedError, AttributeError):
         # Fallback to sample-based covariance
-        if key is None:
-            key = _auto_key()
+        key = _resolve_conversion_key(key, _conditional_conversion_plan(num_samples))
         samples = source._sample(key, (num_samples,))
         diff = samples - loc
         cov_mat = jnp.einsum("ni,nj->ij", diff, diff) / num_samples
@@ -440,6 +477,7 @@ def _convert_to_wishart(source, key, **kw):
     if isinstance(source, Wishart):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
+    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
     samples = source._sample(key, (num_samples,))
     mean_mat = jnp.mean(samples, axis=0)
     d = mean_mat.shape[-1]
@@ -479,8 +517,7 @@ def _convert_to_empirical(source, key, **kw):
     if isinstance(source, RecordEmpiricalDistribution):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    if key is None:
-        key = _auto_key()
+    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
     samples = source._sample(key, (num_samples,))
     r = RecordEmpiricalDistribution(samples, name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
@@ -533,8 +570,7 @@ def _convert_to_kde(source, key, **kw):
         )
 
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    if key is None:
-        key = _auto_key()
+    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
     samples = source._sample(key, (num_samples,))
     r = KDEDistribution(samples, bandwidth=bandwidth, name=name)
     r.with_provenance(_mm_provenance(source))
@@ -648,11 +684,44 @@ class ProbPipeConverter(Converter):
             description=f"Moment-match {type(source).__name__} -> {target_name}",
         )
 
+    def _workflow_plan_conversion(
+        self,
+        source: Any,
+        target_type: type,
+        kwargs: dict[str, Any],
+    ) -> _ConversionExecutionPlan:
+        """Classify the selected path before converter execution."""
+        if isinstance(source, target_type):
+            return _probpipe_nonrandom_plan("exact")
+
+        target_name = target_type.__name__
+        sampled_targets = {
+            "HalfCauchy",
+            "Pareto",
+            "TruncatedNormal",
+            "Categorical",
+            "Wishart",
+            "EmpiricalDistribution",
+            "RecordEmpiricalDistribution",
+        }
+        if target_name in sampled_targets:
+            return _probpipe_sampled_plan(kwargs.get("num_samples", DEFAULT_NUM_SAMPLES))
+
+        if target_name == "KDEDistribution":
+            if isinstance(source, EmpiricalDistribution):
+                return _probpipe_nonrandom_plan()
+            return _probpipe_sampled_plan(kwargs.get("num_samples", DEFAULT_NUM_SAMPLES))
+
+        if target_name == "MultivariateNormal":
+            if isinstance(source, RecordEmpiricalDistribution):
+                return _probpipe_nonrandom_plan()
+            return _conditional_conversion_plan(kwargs.get("num_samples", DEFAULT_NUM_SAMPLES))
+
+        return _probpipe_nonrandom_plan()
+
     def convert(
         self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
     ) -> Distribution:
-        if key is None:
-            key = _auto_key()
         target_name = target_type.__name__
         fn = self._table.get(target_name)
         if fn is None:
