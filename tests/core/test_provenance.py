@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -47,6 +49,19 @@ class TestProvenanceBasics:
 
         assert p.metadata == {"key": "val"}
         assert p.inputs == {}
+
+    def test_controls_and_diagnostics_follow_inputs_positionally(self):
+        p = Provenance(
+            "test_op",
+            (),
+            {"key": "val"},
+            {},
+            {"recipe": {"abi": "v1"}},
+            {"route": "thread"},
+        )
+
+        assert p.controls == {"recipe": {"abi": "v1"}}
+        assert p.diagnostics == {"route": "thread"}
 
     def test_plain_input_fingerprints_are_content_sensitive(self):
         first = Provenance.create(
@@ -554,6 +569,54 @@ class TestSerialization:
 
         assert restored.inputs == {}
         assert restored.metadata["_inputs_info"] == {}
+        assert restored.controls == {}
+        assert restored.diagnostics == {}
+
+    def test_controls_and_diagnostics_roundtrip_as_exact_json(self):
+        controls = {
+            "recipe": {
+                "root_words": [0, 2**32 - 1],
+                "events": [
+                    {"source": ["source-group", 0], "shape": [7]},
+                    {"source": ["source-group", 1], "shape": None},
+                ],
+            }
+        }
+        diagnostics = {
+            "execution": {"evaluator": "rowwise", "drift": False},
+        }
+        provenance = Provenance(
+            "workflow.test",
+            controls=controls,
+            diagnostics=diagnostics,
+        )
+
+        payload = provenance.to_dict()
+        serialized = json.loads(json.dumps(payload))
+        restored = Provenance.from_dict(serialized)
+
+        assert payload["controls"] == controls
+        assert payload["diagnostics"] == diagnostics
+        assert restored.controls == controls
+        assert restored.diagnostics == diagnostics
+
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("controls", {"bad": (1, 2)}),
+            ("controls", {1: "non-string key"}),
+            ("diagnostics", {"bad": jnp.asarray([1, 2])}),
+        ],
+    )
+    def test_control_fields_reject_non_json_native_values(self, field, value):
+        kwargs = {field: value}
+
+        with pytest.raises(TypeError, match="JSON-native"):
+            Provenance("op", **kwargs)
+
+    def test_control_fields_reject_non_finite_numbers(self):
+        with pytest.raises(ValueError, match="finite"):
+            Provenance("op", controls={"bad": float("nan")})
 
     def test_to_dict_fingerprint_included(self):
         """fingerprint is serialized when set on a ParentInfo."""
