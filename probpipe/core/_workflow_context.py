@@ -99,9 +99,18 @@ _ACTIVE_WORKFLOW_FRAME: ContextVar[_WorkflowFrame | None] = ContextVar(
     "probpipe_active_workflow_frame",
     default=None,
 )
-_STOCHASTIC_PROBE_ACTIVE: ContextVar[bool] = ContextVar(
-    "probpipe_stochastic_probe_active",
-    default=False,
+
+
+@dataclass
+class _StochasticProbeState:
+    """Observable stochastic effects reached during one route probe."""
+
+    effect_observed: bool = False
+
+
+_STOCHASTIC_PROBE_STATE: ContextVar[_StochasticProbeState | None] = ContextVar(
+    "probpipe_stochastic_probe_state",
+    default=None,
 )
 
 
@@ -192,16 +201,26 @@ def _ephemeral_workflow_run() -> Iterator[None]:
 @contextmanager
 def _workflow_probe() -> Iterator[None]:
     """Prevent a route probe from committing workflow stochastic state."""
-    token = _STOCHASTIC_PROBE_ACTIVE.set(True)
+    state = _StochasticProbeState()
+    token = _STOCHASTIC_PROBE_STATE.set(state)
     try:
         yield
+    except _StochasticProbeSignal:
+        raise
+    else:
+        if state.effect_observed:
+            raise _StochasticProbeSignal(
+                "JAX route probing reached a workflow-owned stochastic operation"
+            )
     finally:
-        _STOCHASTIC_PROBE_ACTIVE.reset(token)
+        _STOCHASTIC_PROBE_STATE.reset(token)
 
 
 def _commit_stochastic_invocation() -> _WorkflowInvocation:
     """Commit one stochastic invocation in the active workflow frame."""
-    if _STOCHASTIC_PROBE_ACTIVE.get():
+    probe_state = _STOCHASTIC_PROBE_STATE.get()
+    if probe_state is not None:
+        probe_state.effect_observed = True
         raise _StochasticProbeSignal(
             "JAX route probing reached a workflow-owned stochastic operation"
         )

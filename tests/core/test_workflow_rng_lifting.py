@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
 from unittest.mock import patch
 
 import jax.numpy as jnp
 import pytest
 
-from probpipe import EmpiricalDistribution, Normal, function, workflow_run
+from probpipe import EmpiricalDistribution, Function, Normal, function, workflow_run
 
 
 class TestSequentialLiftingWorkflowRun:
@@ -76,3 +77,40 @@ class TestSequentialLiftingWorkflowRun:
 
         assert jnp.array_equal(actual[0].samples, expected[0].samples)
         assert jnp.array_equal(actual[1].samples, expected[1].samples)
+
+
+def test_auto_probe_detects_nested_randomness_caught_by_user_code():
+    @function(n_broadcast_samples=5, dispatch="sequential")
+    def inner_identity(value):
+        return value
+
+    nested_dist = Normal(loc=0.0, scale=1.0, name="nested")
+
+    def call_nested_and_catch(value):
+        with suppress(Exception):
+            inner_identity(nested_dist)
+        return value
+
+    auto = Function(
+        func=call_nested_and_catch,
+        n_broadcast_samples=5,
+        dispatch="auto",
+    )
+    sequential = Function(
+        func=call_nested_and_catch,
+        n_broadcast_samples=5,
+        dispatch="sequential",
+    )
+
+    @function(n_broadcast_samples=5, dispatch="sequential")
+    def following_identity(value):
+        return value
+
+    outer_dist = Normal(loc=0.0, scale=1.0, name="outer")
+
+    def following_samples(workflow):
+        with workflow_run(seed=7):
+            workflow(outer_dist)
+            return following_identity(outer_dist).samples["marginal"]
+
+    assert jnp.array_equal(following_samples(auto), following_samples(sequential))
