@@ -9,6 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
+  references to the same law denote one random variable, so they must come from
+  one draw. Passing the same `Distribution` to two arguments sampled it twice
+  instead, so `f(d, d)` approximated `f(X1, X2)` — a silently wrong answer, with
+  `difference(dist, dist)` returning a spread around zero rather than zero.
+
+  Arguments were already grouped by root ancestor, as the co-sampling contract
+  requires; the grouping was then discarded for plain distributions and honored
+  only for field views. Each group is now drawn **once**, from its root, with
+  every member taking its own value out of that draw. Two further cases follow
+  from the same change: a parent passed alongside its own view no longer raises
+  (it was projected as though the parent were a view), and an empirical passed
+  twice contributes **one** enumeration axis rather than a squared grid — over
+  three atoms, `f(e, e)` enumerates 3 points instead of 9, each weighted once
+  instead of squared.
+
+  Arguments with no common root are unaffected, down to the subkeys: a group of
+  one consumes exactly one key split, as before. Only calls that were already
+  returning wrong values change their output.
+
+- **A record-valued law can be lifted.** Passing a record-valued
+  `Distribution` as an argument raised `TypeError: ... is not array-like`, from
+  two places that assumed every argument's samples were an array. Broadcast
+  assembly read the row count from the samples' `shape`, which a record batch
+  refuses unless it holds exactly one leaf; the count now comes from
+  `batch_shape`, the one accessor that means the same thing for every batched
+  value. (Not `len`: on a `RecordArray` that is the *field* count, which would
+  have made `num_atoms` silently wrong.) And enumeration stacked each
+  argument's per-row values with `jnp.stack`, which a `Record` row is not; those
+  now stack through `RecordArray.stack`.
+
+  The first of those is what kept `f(d, d["x"])` — a parent alongside its own
+  view, the remaining co-sampling case above — from running end to end once its
+  draws were shared. Record-valued laws now lift under `auto`, `sequential`, and
+  `thread` dispatch, including record-valued empiricals, whether enumerated or
+  passed twice. Explicit `dispatch="jax"` reports the usual not-traceable error
+  when the wrapped function indexes a record.
+
+  **The joint those lifts produce also resamples.** `include_inputs=True` keeps
+  every input beside the output, and drawing from that joint gathers the same
+  rows from each, which is what keeps a drawn tuple paired. A record-shaped
+  component has fields rather than a shape, so handing it an array of rows raised
+  `TypeError: key must be str, tuple, or int`. Every component now goes through
+  one gather that reads the container it is given: an array indexes directly, a
+  list of per-row objects gathers positionally, and a record is rebuilt from its
+  gathered leaves. The rebuild is deliberate rather than a `jax.tree.map` — a
+  `RecordArray` stores its row count and a `Record` its event template, both in
+  pytree aux data, so mapping over the leaves alone would have produced a batch
+  quietly claiming the rows it started with. The same gather covers the output
+  side, where a vectorized broadcast over a record-returning function leaves the
+  output a batched `Record`. A single draw is unwrapped to one record rather than
+  a one-row batch, its field names intact.
+
+  Two shapes are still unsupported. A record with **nested** fields cannot be
+  batched at all, since a record batch is keyed by its top-level children rather
+  than by leaf path, so lifting such a law is refused with a message naming the
+  argument rather than surfacing what the container said. That is #340, and a
+  strict `xfail` in the broadcast tests marks the case so it reports the day
+  record batches become leaf-keyed.
+
+  The other: a record-valued empirical passed alongside a
+  field view of itself. That group routes to sampling rather than enumeration,
+  where `RecordEmpiricalDistribution._sample` hands back a plain record batched
+  on its leaves rather than a record batch — deliberately, so a vmap'd caller
+  can flatten it — and the view half of the group has no rows to project from. That is a distribution-
+  layer contract gap rather than a broadcast one.
+
 - **Value specs are fingerprinted by declaration, not identity (#381).** The
   spec hasher now covers `RecordSpec` and recurses into a stored declaration
   (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec
