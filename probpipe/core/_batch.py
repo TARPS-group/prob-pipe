@@ -261,9 +261,7 @@ class BatchSpec(TermSpec):
         An element's own schema may stay polymorphic: how many elements there are
         is a different question from what one of them looks like.
         """
-        return frozenset(
-            size for group in self.axis_groups for size in group if isinstance(size, str)
-        )
+        return frozenset(size for size in self.batch_shape if isinstance(size, str))
 
     def with_bound_dims(self, bindings: Mapping[str, int]) -> BatchSpec:
         """This spec with both its element schema and its axis sizes substituted."""
