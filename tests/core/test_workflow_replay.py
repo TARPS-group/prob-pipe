@@ -109,6 +109,24 @@ class TestReplayScope:
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
+    def test_nested_managed_result_has_a_standalone_replay_recipe(self):
+        captured = []
+
+        def outer(value):
+            result = sample(Normal(loc=value, scale=1.0, name="value"))
+            captured.append(result)
+            return result["sample"]
+
+        workflow = Function(func=outer, dispatch="sequential")
+        with workflow_run(seed=17):
+            workflow(value=0.0)
+        nested = captured[0]
+
+        with replay_run(nested.provenance):
+            replayed = sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(nested))
+
     def test_empty_second_root_and_apply_are_rejected(self):
         original = _draw()
 

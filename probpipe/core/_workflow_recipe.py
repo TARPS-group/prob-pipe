@@ -244,12 +244,22 @@ def _is_nested_automatic_effect(
     parent_occurrence_path: tuple[Any, ...],
 ) -> bool:
     """Return whether an effect belongs to a nested public Function invocation."""
-    return (
-        effect.occurrence_kind == "invocation" and effect.occurrence_path != parent_occurrence_path
-    ) or sum(
-        isinstance(segment, tuple) and len(segment) > 0 and segment[0] == "managed-unit"
-        for segment in effect.occurrence_path
-    ) > 1
+    if effect.occurrence_path[: len(parent_occurrence_path)] != parent_occurrence_path:
+        return True
+    relative_path = effect.occurrence_path[len(parent_occurrence_path) :]
+    nested_invocation = effect.occurrence_kind == "invocation" and bool(relative_path)
+    nested_scope = any(
+        isinstance(segment, tuple) and len(segment) > 0 and segment[0] == "scope"
+        for segment in relative_path
+    )
+    nested_managed_depth = (
+        sum(
+            isinstance(segment, tuple) and len(segment) > 0 and segment[0] == "managed-unit"
+            for segment in relative_path
+        )
+        > 1
+    )
+    return nested_invocation or nested_scope or nested_managed_depth
 
 
 def _ordered_unique(values: list[str]) -> list[str]:
