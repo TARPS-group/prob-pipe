@@ -506,6 +506,7 @@ class Function(Node, TrackedTerm, Annotated):
         ValueError
             If an authoritative input or output template is violated.
         """
+        _workflow_context._assert_workflow_admission()
         _workflow_replay._reject_function_apply()
         with (
             _workflow_context._ephemeral_workflow_run(),
@@ -680,6 +681,7 @@ class Function(Node, TrackedTerm, Annotated):
         call_inputs: dict[str, Any],
         options: _workflow_call.WorkflowCallOptions,
     ) -> Any:
+        _workflow_context._assert_workflow_admission()
         with _workflow_replay._function_replay_scope() as replay_call:
             occurrence_path = None if replay_call is None else replay_call.occurrence_path
             with (

@@ -335,10 +335,15 @@ class _ReplayRunScope:
         token = self._state_token
         frame_scope = self._frame_scope
         pending: BaseException | None = None
-        if exc_type is None and not state.root_started:
-            pending = ReplayCompatibilityError(
-                "replay_run must contain exactly one top-level Function.__call__"
-            )
+        if exc_type is None:
+            if not state.root_started:
+                pending = ReplayCompatibilityError(
+                    "replay_run must contain exactly one top-level Function.__call__"
+                )
+            elif not state.root_completed:
+                pending = ReplayCompatibilityError(
+                    "the top-level Function call in replay_run did not complete successfully"
+                )
         try:
             _ACTIVE_REPLAY_STATE.reset(token)
         finally:

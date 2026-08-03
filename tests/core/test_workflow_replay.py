@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import json
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from unittest.mock import patch
 
 import jax
@@ -21,6 +24,7 @@ from probpipe import (
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
     TransformedDistribution,
+    UnmanagedConcurrentWorkflowEntryError,
     replay_run,
     sample,
     workflow_run,
@@ -135,6 +139,53 @@ class TestReplayScope:
                 pass
             sample(Normal(loc=0.0, scale=1.0, name="value"))
 
+    def test_caught_failed_root_is_rejected_when_scope_exits(self):
+        original = _draw()
+        changed = Function(func=replayable_affine, n_broadcast_samples=5)
+
+        with (
+            pytest.raises(ReplayCompatibilityError, match="did not complete"),
+            replay_run(original.provenance),
+            pytest.raises(ReplayCompatibilityError, match="callable"),
+        ):
+            changed(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+
+class TestReplayOwnership:
+    def test_rejected_copied_thread_context_does_not_consume_owner_root(self):
+        original = _draw()
+
+        with replay_run(original.provenance):
+            copied = copy_context()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(
+                    copied.run,
+                    sample,
+                    Normal(loc=0.0, scale=1.0, name="value"),
+                )
+                with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
+                    future.result()
+            replayed = sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
+
+    def test_rejected_copied_task_context_does_not_consume_owner_root(self):
+        original = _draw()
+
+        async def run_replay():
+            with replay_run(original.provenance):
+
+                async def call_in_child():
+                    return sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+                with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
+                    await asyncio.create_task(call_in_child())
+                return sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+        replayed = asyncio.run(run_replay())
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
+
 
 class TestReplayAdmission:
     def test_legacy_unknown_and_malformed_recipes_fail_at_entry(self):
@@ -198,8 +249,8 @@ class TestReplayPreflight:
         changed = Function(func=replayable_affine, n_broadcast_samples=5)
 
         with (
-            replay_run(original.provenance),
             pytest.raises(ReplayCompatibilityError, match="callable"),
+            replay_run(original.provenance),
         ):
             changed(value=Normal(loc=0.0, scale=1.0, name="value"))
 
@@ -212,8 +263,8 @@ class TestReplayPreflight:
 
         with (
             patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            replay_run(original.provenance),
             pytest.raises(ReplayCompatibilityError, match="stochastic plan"),
+            replay_run(original.provenance),
         ):
             changed(value=candidate)
 
@@ -266,8 +317,8 @@ class TestReplayPreflight:
         candidate = Normal(loc=0.0, scale=1.0, name="value")
         with (
             patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            replay_run(changed),
             pytest.raises(ReplayCompatibilityError, match="execution contract"),
+            replay_run(changed),
         ):
             sample(candidate)
 
@@ -297,8 +348,8 @@ class TestReplayEventRegistry:
         original = _draw()
 
         with (
-            replay_run(original.provenance),
             pytest.raises(ReplayCompatibilityError, match="missing expected"),
+            replay_run(original.provenance),
         ):
             sample(
                 Normal(loc=0.0, scale=1.0, name="value"),
@@ -324,8 +375,8 @@ class TestReplayEventRegistry:
         candidate = Normal(loc=0.0, scale=1.0, name="value")
         with (
             patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            replay_run(changed),
             pytest.raises(ReplayCompatibilityError, match=r"unexpected|provider ABI"),
+            replay_run(changed),
         ):
             sample(candidate)
 
@@ -391,8 +442,8 @@ class TestReplayEventRegistry:
         )
 
         with (
-            replay_run(original.provenance),
             pytest.raises(ReplayCompatibilityError, match="unexpected replay event"),
+            replay_run(original.provenance),
         ):
             workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
 
