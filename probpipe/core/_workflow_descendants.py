@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import operator
 import struct
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -245,10 +246,15 @@ def _capture_bijector(
         raise TypeError("Cyclic TFP Chain descendant graph is unsupported")
     _reject_instance_overrides(bijector, _FORWARD_OVERRIDE_NAMES)
 
+    raw_event_ndims = bijector.forward_min_event_ndims
+    if isinstance(raw_event_ndims, (bool, np.bool_)):
+        raise TypeError("Bijector forward_min_event_ndims must be a concrete non-boolean integer")
     try:
-        event_ndims = int(bijector.forward_min_event_ndims)
-    except (TypeError, ValueError) as exc:
-        raise TypeError("Bijector forward_min_event_ndims must be a concrete integer") from exc
+        event_ndims = operator.index(raw_event_ndims)
+    except TypeError as exc:
+        raise TypeError(
+            "Bijector forward_min_event_ndims must be a concrete non-boolean integer"
+        ) from exc
     if event_ndims != 0:
         raise TypeError(
             "Automatic transformed-descendant lifting requires "

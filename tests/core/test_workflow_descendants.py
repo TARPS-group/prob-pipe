@@ -321,6 +321,16 @@ def test_nonzero_forward_event_rank_fails_closed():
         _workflow_descendants.capture_stochastic_consumer(descendant)
 
 
+@pytest.mark.parametrize("event_rank", [False, 0.5, "0"])
+def test_non_integer_forward_event_rank_fails_closed(event_rank):
+    bijector = tfb.Exp()
+    object.__setattr__(bijector, "_forward_min_event_ndims", event_rank)
+    descendant = TransformedDistribution(Normal(0.0, 1.0, name="base"), bijector)
+
+    with pytest.raises(TypeError, match="concrete non-boolean integer"):
+        _workflow_descendants.capture_stochastic_consumer(descendant)
+
+
 def test_unencodable_semantic_state_fails_closed():
     bijector = tfb.Shift(1.0)
     object.__setattr__(bijector, "_shift", object())
