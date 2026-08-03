@@ -91,6 +91,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`RecordBatch` / `NumericRecordBatch` — a batch of records, stored columnar.**
+  A batch of records that all conform to one `EventTemplate`: the batched value a
+  `Function` produces and consumes, such as the many draws a `sample` yields. It
+  is a `Batch`, so `len`, `iter`, and `batch_shape` speak about the collection and
+  never about what one record contains, and its own type is a `BatchSpec` over the
+  `RecordSpec` its elements satisfy.
+
+  **Storage is columnar and keyed by leaf path** — one column per *field*, not per
+  top-level child, each shaped `(*batch_shape, *event_shape)`. A field access
+  hands back that column directly, and an element is assembled from the columns on
+  demand rather than stored twice. Keying by leaf path is what makes a nested field
+  reachable: `batch["outer/a"]` is a column like any other and `batch["outer"]` is
+  the sub-batch over the columns beneath it, so a nested record batches and reads
+  back. A column comes back in the batch form its spec calls for: the array itself
+  for an array field, a `FunctionBatch` or an `OpaqueBatch` for a field with no
+  native stacked form.
+
+  **A batch is a collection, not a named tree**, so there is no field-keyed
+  `Mapping` protocol — no `keys()` / `values()` / `items()` / `children` /
+  `at_path` — and the field structure is read from `event_template`, where it
+  belongs. What `[]` does depends on the key: a position addresses the batch axes,
+  a name addresses a field within every element. `select` / `select_all` survive as
+  the field-splatting selector, returning one-column batch *views* that carry the
+  parent's level names, so an operation aligning operands by level name lines them
+  up.
+
+  An element is **materialized** rather than stored, which is the other side of the
+  rule the batch base states: it takes the derived name (`"post[draw=1]"`), marked
+  auto, and inherits the batch's provenance. It is built against the batch's own
+  `element_spec`, so batch and element share one spec object — schema agreement is
+  structural, and a row costs no declaration to build. `NumericRecordBatch` adds
+  the batched flat layout, `to_vector` giving `(*batch_shape, vector_size)` with
+  the levels flattened outermost-first, and is a bare array pytree, so it passes
+  through `jit` / `vmap` / `grad` unchanged.
+
+  This is additive: the existing `RecordArray` / `NumericRecordArray` are untouched
+  and still what the library uses, and the new classes are not yet exported.
+
 - **A `Record` stores its `RecordSpec`.** `Record.spec` is the single stored
   source of a record's type, and `event_template` becomes a view on it, so the
   two cannot disagree. Construction accepts either form of a record
