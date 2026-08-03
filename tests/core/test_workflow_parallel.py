@@ -4,9 +4,12 @@ import pickle
 from dataclasses import FrozenInstanceError, fields
 from typing import ClassVar
 
+import jax
 import pytest
 
+import probpipe.core._workflow_broker as broker_mod
 import probpipe.core._workflow_execution as execution_mod
+import probpipe.core._workflow_managed as managed_mod
 import probpipe.core.node as node_mod
 from probpipe import Normal, workflow_run
 from probpipe.core.config import WorkflowKind, prefect_config
@@ -19,6 +22,18 @@ def add_one(x):
 
 def add_xy(x, y):
     return x + y
+
+
+def _claim_automatic_words():
+    key = broker_mod._resolve_automatic_key(
+        None,
+        broker_mod._singleton_effect_plan(
+            operation_kind="managed-test",
+            execution_mode="sampled",
+            sample_shape=(),
+        ),
+    )
+    return tuple(int(word) for word in jax.random.key_data(key))
 
 
 class RecordingExecutor:
@@ -178,6 +193,104 @@ class TestExecutionRequestShape:
         assert seen["request"].func is not add_one
         assert not isinstance(seen["request"].func, Function)
         assert seen["request"].execution.mode == "sequential"
+
+
+class TestManagedRetryClaims:
+    def test_same_work_item_token_retries_the_same_child_claim(self):
+        request = make_request(calls=[{}], func=_claim_automatic_words)
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            first = execution_mod.execute_many(request)[0]
+            second = execution_mod.execute_many(request)[0]
+
+            state = parent._managed_claims.by_unit[request.work_items[0].frame.unit_segment]
+            occurrence_path = state.child_invocations[0].occurrence_path
+
+        assert first == second
+        assert occurrence_path == (
+            ("invocation", 0),
+            request.work_items[0].frame.unit_segment,
+            ("child", 0),
+        )
+
+    def test_different_token_cannot_reuse_a_managed_unit(self):
+        first_request = make_request(calls=[{}], func=lambda: None)
+        second_request = make_request(calls=[{}], func=lambda: None)
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            execution_mod.execute_many(first_request)
+            with pytest.raises(RuntimeError, match="different token"):
+                execution_mod.execute_many(second_request)
+
+    def test_same_attempt_cannot_enter_twice(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            with (
+                broker_mod._managed_work_item_stochastic_scope(
+                    parent,
+                    item.frame,
+                    attempt=attempt,
+                ),
+                pytest.raises(RuntimeError, match="active attempt"),
+                broker_mod._managed_work_item_stochastic_scope(
+                    parent,
+                    item.frame,
+                    attempt=attempt,
+                ),
+            ):
+                pass
+
+    def test_deterministic_attempt_does_not_consume_child_ordinal(self):
+        state = {"random": False}
+
+        def maybe_claim():
+            return _claim_automatic_words() if state["random"] else None
+
+        request = make_request(calls=[{}], func=maybe_claim)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            assert execution_mod.execute_many(request) == [None]
+            state["random"] = True
+            after_deterministic = execution_mod.execute_many(request)[0]
+
+        baseline = make_request(calls=[{}], func=_claim_automatic_words)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            first_child = execution_mod.execute_many(baseline)[0]
+
+        assert after_deterministic == first_child
+
+    def test_failed_attempt_reuses_existing_child_claim(self):
+        seen = []
+
+        def fail_once_after_claim():
+            words = _claim_automatic_words()
+            seen.append(words)
+            if len(seen) == 1:
+                raise RuntimeError("retry me")
+            return words
+
+        request = make_request(calls=[{}], func=fail_once_after_claim)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            with pytest.raises(RuntimeError, match="retry me"):
+                execution_mod.execute_many(request)
+            retried = execution_mod.execute_many(request)[0]
+
+        assert seen == [retried, retried]
+
+    def test_parent_cancels_unstarted_items_before_releasing(self):
+        def fail(value):
+            if value == 1:
+                raise RuntimeError("stop")
+            return value
+
+        request = make_request(calls=[{"value": 1}, {"value": 2}], func=fail)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            with pytest.raises(RuntimeError, match="stop"):
+                execution_mod.execute_many(request)
+            parent.assert_managed_items_joined(request.work_items)
 
 
 class TestSequentialExecution:

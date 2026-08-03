@@ -17,7 +17,7 @@ try:
 except ImportError:
     task = flow = None
 
-from . import _workflow_context
+from . import _workflow_broker, _workflow_context
 from ._workflow_managed import (
     ManagedWorkItem,
     lifted_evaluation_unit_segment,
@@ -65,26 +65,45 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     if not request.work_items:
         return []
     parent_frame = _workflow_context._capture_active_workflow_frame()
+    parent_broker = _workflow_broker._capture_active_broker()
+    if parent_broker is not None:
+        parent_broker.register_managed_work_items(request.work_items)
 
-    match request.execution.mode:
-        case "sequential":
-            return [
-                _execute_work_item(request.func, item, parent_frame) for item in request.work_items
-            ]
-        case "thread":
-            return execute_many_threaded(request, parent_frame=parent_frame)
-        case "prefect_task":
-            return execute_many_prefect_task(request)
-        case "prefect_flow":
-            return execute_many_prefect_flow(request)
-        case unknown:
-            raise ValueError(f"Unknown workflow execution mode: {unknown!r}")
+    try:
+        match request.execution.mode:
+            case "sequential":
+                return [
+                    _execute_work_item(
+                        request.func,
+                        item,
+                        parent_frame,
+                        parent_broker,
+                    )
+                    for item in request.work_items
+                ]
+            case "thread":
+                return execute_many_threaded(
+                    request,
+                    parent_frame=parent_frame,
+                    parent_broker=parent_broker,
+                )
+            case "prefect_task":
+                return execute_many_prefect_task(request)
+            case "prefect_flow":
+                return execute_many_prefect_flow(request)
+            case unknown:
+                raise ValueError(f"Unknown workflow execution mode: {unknown!r}")
+    finally:
+        if parent_broker is not None:
+            parent_broker.cancel_unstarted_managed_items(request.work_items)
+            parent_broker.assert_managed_items_joined(request.work_items)
 
 
 def execute_many_threaded(
     request: WorkflowExecutionRequest,
     *,
     parent_frame: _workflow_context._WorkflowFrame | None = None,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
 ) -> list[Any]:
     """Execute call dictionaries through ``ThreadPoolExecutor``."""
     if not request.work_items:
@@ -93,10 +112,19 @@ def execute_many_threaded(
     max_workers = _validate_max_workers(request.execution.max_workers)
     if parent_frame is None:
         parent_frame = _workflow_context._capture_active_workflow_frame()
+    if parent_broker is None:
+        parent_broker = _workflow_broker._capture_active_broker()
+        if parent_broker is not None:
+            parent_broker.register_managed_work_items(request.work_items)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         return list(
             pool.map(
-                lambda item: _execute_work_item(request.func, item, parent_frame),
+                lambda item: _execute_work_item(
+                    request.func,
+                    item,
+                    parent_frame,
+                    parent_broker,
+                ),
                 request.work_items,
             )
         )
@@ -174,6 +202,7 @@ def _execute_work_item(
     func: Callable[..., Any],
     item: ManagedWorkItem,
     parent_frame: _workflow_context._WorkflowFrame | None = None,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
 ) -> Any:
     """Execute one frozen work item without changing its canonical identity."""
     if parent_frame is None:
@@ -182,7 +211,13 @@ def _execute_work_item(
         parent_frame,
         item.frame.unit_segment,
     ):
-        return func(**item.call_values())
+        if parent_broker is None:
+            return func(**item.call_values())
+        with _workflow_broker._managed_work_item_stochastic_scope(
+            parent_broker,
+            item.frame,
+        ):
+            return func(**item.call_values())
 
 
 def _ensure_prefect_available() -> None:

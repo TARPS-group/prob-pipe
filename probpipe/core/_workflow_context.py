@@ -253,6 +253,14 @@ def _commit_stochastic_invocation(
     if frame is None:
         raise RuntimeError("a stochastic invocation requires an active workflow context")
     _assert_workflow_admission(frame)
+    return _commit_stochastic_invocation_in_frame(frame, occurrence_kind)
+
+
+def _commit_stochastic_invocation_in_frame(
+    frame: _WorkflowFrame,
+    occurrence_kind: Literal["invocation", "operation"],
+) -> _WorkflowInvocation:
+    """Commit against a previously admitted frame for a managed child."""
     path_prefix = _materialize_path(frame)
     ordinal = frame.ledger.commit()
     return _WorkflowInvocation(
