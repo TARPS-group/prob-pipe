@@ -306,26 +306,27 @@ def _execute_prefect_payload(
             report=ManagedClaimReport(item.frame, attempt, 0),
         )
 
-    with (
-        _workflow_context._transported_workflow_frame(payload.parent.root_words),
-        _workflow_broker._remote_managed_work_item_stochastic_scope(
-            payload.parent,
-            attempt,
-        ) as remote_parent,
-    ):
+    with _workflow_context._transported_workflow_frame(payload.parent.root_words):
+        remote_parent = None
         try:
-            value = func(**item.call_values())
+            with _workflow_broker._remote_managed_work_item_stochastic_scope(
+                payload.parent,
+                attempt,
+            ) as remote_parent:
+                value = func(**item.call_values())
         except Exception as error:
+            if remote_parent is None:
+                raise
             return ManagedExecutionOutcome(
                 index=item.index,
                 error=error,
                 report=remote_parent.report(),
             )
-    return ManagedExecutionOutcome(
-        index=item.index,
-        value=value,
-        report=remote_parent.report(),
-    )
+        return ManagedExecutionOutcome(
+            index=item.index,
+            value=value,
+            report=remote_parent.report(),
+        )
 
 
 def _resolve_prefect_outcomes(

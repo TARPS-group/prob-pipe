@@ -306,6 +306,45 @@ class TestManagedRetryClaims:
 
         assert seen == [retried, retried]
 
+    def test_failed_attempt_only_effect_is_not_persisted_by_later_success(self):
+        state = {"claim": True, "fail": True}
+
+        def conditional_attempt():
+            if state["claim"]:
+                _claim_automatic_words()
+            if state["fail"]:
+                raise RuntimeError("retry me")
+            return 1
+
+        request = make_request(calls=[{}], func=conditional_attempt)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            with pytest.raises(RuntimeError, match="retry me"):
+                execution_mod.execute_many(request)
+            state.update(claim=False, fail=False)
+            assert execution_mod.execute_many(request) == [1]
+            snapshot = broker_mod._snapshot_active_recipe_state()
+
+        assert snapshot is None
+
+    def test_caught_failed_nested_function_effect_is_not_persisted(self):
+        def fail_after_claim():
+            _claim_automatic_words()
+            raise RuntimeError("nested failure")
+
+        nested = Function(func=fail_after_claim)
+
+        def catch_nested_failure():
+            with pytest.raises(RuntimeError, match="nested failure"):
+                nested()
+            return 1
+
+        request = make_request(calls=[{}], func=catch_nested_failure)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            assert execution_mod.execute_many(request) == [1]
+            snapshot = broker_mod._snapshot_active_recipe_state()
+
+        assert snapshot is None
+
     def test_parent_cancels_unstarted_items_before_releasing(self):
         def fail(value):
             if value == 1:
@@ -488,6 +527,28 @@ class TestPrefectMapping:
         urandom.assert_called_once_with(8)
         assert FakeMappedTask.map_calls == 2
 
+    def test_failed_prefect_effect_remains_transient(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+
+        def fail_after_claim():
+            _claim_automatic_words()
+            raise RuntimeError("remote failure")
+
+        request = make_request(
+            mode="prefect_task",
+            calls=[{}],
+            func=fail_after_claim,
+        )
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            with pytest.raises(RuntimeError, match="remote failure"):
+                execution_mod.execute_many(request)
+            snapshot = broker_mod._snapshot_active_recipe_state()
+            claim_state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+
+        assert snapshot is None
+        assert len(claim_state.effect_claims_by_identity) == 1
+
     def test_managed_keys_match_across_sequential_thread_and_prefect(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
@@ -573,8 +634,8 @@ class TestPrefectMapping:
                 "probpipe.core._workflow_context.derive_event_key_words",
                 side_effect=AssertionError("derived key before replay validation"),
             ),
-            replay_run(changed),
             pytest.raises(ReplayCompatibilityError, match="assigned event namespace"),
+            replay_run(changed),
         ):
             remote()
 

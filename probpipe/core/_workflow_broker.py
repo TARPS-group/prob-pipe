@@ -67,6 +67,9 @@ class _ManagedUnitClaimState:
     child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
     active_attempt: bytes | None = None
     seen_attempts: set[bytes] = field(default_factory=set)
+    effect_claims_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
+        default_factory=dict
+    )
     has_started: bool = False
     joined: bool = False
 
@@ -88,6 +91,9 @@ class _ManagedAttemptContext:
     frame: ManagedUnitFrame
     attempt: ManagedAttemptState
     next_child_ordinal: int = 0
+    successful_effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
+        default_factory=dict
+    )
 
     def claim_child_invocation(self) -> _workflow_context._WorkflowInvocation:
         """Claim or retry the next child occurrence in canonical order."""
@@ -98,6 +104,40 @@ class _ManagedAttemptContext:
             attempt=self.attempt,
             child_ordinal=ordinal,
         )
+
+    def claim_effect(self, effect: ManagedEffectClaim) -> None:
+        """Retain one attempt claim without making it durable recipe state."""
+        self.parent_broker.claim_managed_effect(
+            effect,
+            frame=self.frame,
+            attempt=self.attempt,
+        )
+
+    def accept_successful_effects(self, effects: tuple[ManagedEffectClaim, ...]) -> None:
+        """Collect effects from child scopes that completed successfully."""
+        for effect in effects:
+            identity = _effect_identity(effect)
+            existing = self.successful_effects_by_identity.get(identity)
+            if existing is not None and existing != effect:
+                raise RuntimeError(
+                    "a stochastic event identity completed with a different effect plan"
+                )
+            self.successful_effects_by_identity[identity] = effect
+
+    def publish_successful_effects(self) -> None:
+        """Promote successful effects through the containing broker boundary."""
+        self.parent_broker.accept_successful_managed_effects(
+            tuple(self.successful_effects_by_identity.values())
+        )
+
+
+def _effect_identity(effect: ManagedEffectClaim) -> tuple[Any, ...]:
+    """Return the canonical identity shared by retry and recipe ledgers."""
+    return (
+        effect.occurrence_path,
+        effect.stochastic_source_id,
+        effect.logical_unit_id,
+    )
 
 
 @dataclass(frozen=True)
@@ -196,7 +236,8 @@ class _AutomaticKeyBroker:
                     effect,
                     attempt=self._managed_attempt.attempt,
                 )
-            parent_broker.record_managed_effect(effect)
+            self._managed_attempt.claim_effect(effect)
+            self._record_effect(effect)
         return invocation.key_for(
             stochastic_source_id=plan.event.stochastic_source_id,
             logical_unit_id=plan.event.logical_unit_id,
@@ -253,18 +294,68 @@ class _AutomaticKeyBroker:
 
         _workflow_replay._claim_effect_before_derivation(effect, attempt=attempt)
 
-    def record_managed_effect(self, effect: ManagedEffectClaim) -> None:
-        """Aggregate one local or transported child effect on the parent broker."""
-        self._record_effect(effect)
-        if self._managed_attempt is not None:
-            self._managed_attempt.parent_broker.record_managed_effect(effect)
+    def claim_managed_effect(
+        self,
+        effect: ManagedEffectClaim,
+        *,
+        frame: ManagedUnitFrame,
+        attempt: ManagedAttemptState,
+    ) -> None:
+        """Retain retry compatibility state before deriving a managed key."""
+        with self._managed_claims.lock:
+            state = self._managed_claims.by_token.get(attempt.work_item_token)
+            if (
+                state is None
+                or state.frame != frame
+                or state.active_attempt != attempt.attempt_token
+            ):
+                raise RuntimeError("managed effect claim does not own the active attempt")
+            identity = _effect_identity(effect)
+            existing = state.effect_claims_by_identity.get(identity)
+            if existing is not None and existing != effect:
+                raise RuntimeError(
+                    "a stochastic event identity was retried with a different effect plan"
+                )
+            state.effect_claims_by_identity[identity] = effect
+
+    def accept_successful_managed_effects(
+        self,
+        effects: tuple[ManagedEffectClaim, ...],
+    ) -> None:
+        """Make effects from one successful managed boundary recipe-visible."""
+        with self._effects_lock:
+            for effect in effects:
+                existing = self._effects_by_identity.get(_effect_identity(effect))
+                if existing is not None and existing != effect:
+                    raise RuntimeError(
+                        "a stochastic event identity completed with a different effect plan"
+                    )
+            self._effects_by_identity.update(
+                (_effect_identity(effect), effect) for effect in effects
+            )
+
+    def _publish_managed_effects(self) -> None:
+        """Publish this successful broker's effects to its managed attempt."""
+        if self._managed_attempt is None:
+            return
+        with self._effects_lock:
+            effects = tuple(self._effects_by_identity.values())
+        self._managed_attempt.accept_successful_effects(effects)
+
+    def _mark_replay_effects_successful(self) -> None:
+        """Confirm the recipe-visible effects of a successful replay root."""
+        if (
+            self._replay_state is None
+            or self._invocation is None
+            or self._invocation.occurrence_path != self._replay_state.occurrence_path
+        ):
+            return
+        with self._effects_lock:
+            effects = tuple(self._effects_by_identity.values())
+        self._replay_state.mark_successful_effects(effects)
 
     def _record_effect(self, effect: ManagedEffectClaim) -> None:
-        identity = (
-            effect.occurrence_path,
-            effect.stochastic_source_id,
-            effect.logical_unit_id,
-        )
+        identity = _effect_identity(effect)
         with self._effects_lock:
             existing = self._effects_by_identity.get(identity)
             if existing is not None and existing != effect:
@@ -339,6 +430,7 @@ class _AutomaticKeyBroker:
             state = self._managed_claims.by_token.get(frame.token)
             if state is None or state.frame.unit_segment != frame.unit_segment:
                 raise RuntimeError("remote managed unit is not registered by this parent")
+            retry_effects = tuple(state.effect_claims_by_identity.values())
         parent_invocation = self._ensure_parent_invocation()
         from . import _workflow_replay
 
@@ -350,6 +442,7 @@ class _AutomaticKeyBroker:
                 parent_invocation.occurrence_path,
                 frame.unit_segment,
             ),
+            retry_effects=retry_effects,
         )
 
     def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
@@ -365,6 +458,15 @@ class _AutomaticKeyBroker:
             state.seen_attempts.add(report.attempt.attempt_token)
             state.has_started = True
             state.joined = True
+
+            for effect in report.effects:
+                identity = _effect_identity(effect)
+                existing = state.effect_claims_by_identity.get(identity)
+                if existing is not None and existing != effect:
+                    raise RuntimeError(
+                        "a remote stochastic event was retried with a different effect plan"
+                    )
+                state.effect_claims_by_identity[identity] = effect
 
             if report.child_count > 0:
                 parent_invocation = self._ensure_parent_invocation()
@@ -382,7 +484,7 @@ class _AutomaticKeyBroker:
                     )
         for effect in report.effects:
             self.claim_replay_effect(effect, attempt=report.attempt)
-            self.record_managed_effect(effect)
+        self.accept_successful_managed_effects(report.successful_effects)
 
     def _claim_managed_child(
         self,
@@ -461,7 +563,12 @@ class _RemoteManagedParent:
     attempt: ManagedAttemptState
     workflow_frame: _workflow_context._WorkflowFrame
     child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
-    effects: list[ManagedEffectClaim] = field(default_factory=list)
+    effect_claims_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
+        default_factory=dict
+    )
+    successful_effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
+        default_factory=dict
+    )
 
     def _claim_managed_child(
         self,
@@ -485,30 +592,42 @@ class _RemoteManagedParent:
         self.child_invocations.append(invocation)
         return invocation
 
-    def record_managed_effect(self, effect: ManagedEffectClaim) -> None:
-        """Collect a worker effect for the parent claim report."""
-        identity = (
-            effect.occurrence_path,
-            effect.stochastic_source_id,
-            effect.logical_unit_id,
-        )
-        existing = next(
+    def claim_managed_effect(
+        self,
+        effect: ManagedEffectClaim,
+        *,
+        frame: ManagedUnitFrame,
+        attempt: ManagedAttemptState,
+    ) -> None:
+        """Validate and retain one remote retry claim before key derivation."""
+        if frame != self.envelope.frame or attempt != self.attempt:
+            raise RuntimeError("remote managed effect does not own its envelope")
+        identity = _effect_identity(effect)
+        retry_effect = next(
             (
                 candidate
-                for candidate in self.effects
-                if (
-                    candidate.occurrence_path,
-                    candidate.stochastic_source_id,
-                    candidate.logical_unit_id,
-                )
-                == identity
+                for candidate in self.envelope.retry_effects
+                if _effect_identity(candidate) == identity
             ),
             None,
         )
+        if retry_effect is not None and retry_effect != effect:
+            raise RuntimeError("remote event identity changed effect plan during retry")
+        existing = self.effect_claims_by_identity.get(identity)
         if existing is not None and existing != effect:
             raise RuntimeError("remote event identity changed effect plan during retry")
-        if existing is None:
-            self.effects.append(effect)
+        self.effect_claims_by_identity[identity] = effect
+
+    def accept_successful_managed_effects(
+        self,
+        effects: tuple[ManagedEffectClaim, ...],
+    ) -> None:
+        """Mark the worker effects that crossed a successful scope boundary."""
+        for effect in effects:
+            identity = _effect_identity(effect)
+            if self.effect_claims_by_identity.get(identity) != effect:
+                raise RuntimeError("a successful remote effect was not claimed by its attempt")
+            self.successful_effects_by_identity[identity] = effect
 
     def report(self) -> ManagedClaimReport:
         """Return the serializable claim count for parent reconciliation."""
@@ -516,7 +635,8 @@ class _RemoteManagedParent:
             frame=self.envelope.frame,
             attempt=self.attempt,
             child_count=len(self.child_invocations),
-            effects=tuple(self.effects),
+            effects=tuple(self.effect_claims_by_identity.values()),
+            successful_effects=tuple(self.successful_effects_by_identity.values()),
         )
 
 
@@ -546,11 +666,15 @@ def _function_stochastic_scope(
     token: Token[_AutomaticKeyBroker | None] = _ACTIVE_AUTOMATIC_KEY_BROKER.set(broker)
     try:
         yield broker
+    except BaseException:
+        broker.assert_all_managed_items_joined()
+        raise
+    else:
+        broker.assert_all_managed_items_joined()
+        broker._publish_managed_effects()
+        broker._mark_replay_effects_successful()
     finally:
-        try:
-            broker.assert_all_managed_items_joined()
-        finally:
-            _ACTIVE_AUTOMATIC_KEY_BROKER.reset(token)
+        _ACTIVE_AUTOMATIC_KEY_BROKER.reset(token)
 
 
 @contextmanager
@@ -571,6 +695,10 @@ def _managed_stochastic_scope() -> Iterator[_AutomaticKeyBroker]:
         token: Token[_AutomaticKeyBroker | None] = _ACTIVE_AUTOMATIC_KEY_BROKER.set(broker)
         try:
             yield broker
+        except BaseException:
+            raise
+        else:
+            broker._publish_managed_effects()
         finally:
             _ACTIVE_AUTOMATIC_KEY_BROKER.reset(token)
         return
@@ -668,6 +796,10 @@ def _remote_managed_work_item_stochastic_scope(
             attempt,
         ):
             yield parent
+    except BaseException:
+        raise
+    else:
+        state.publish_successful_effects()
     finally:
         _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
         _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)
@@ -695,6 +827,10 @@ def _managed_work_item_stochastic_scope(
     broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
     try:
         yield attempt
+    except BaseException:
+        raise
+    else:
+        state.publish_successful_effects()
     finally:
         _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
         _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)

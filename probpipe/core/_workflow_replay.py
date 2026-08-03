@@ -66,6 +66,7 @@ class _ReplayEventClaim:
     direct_claimed: bool = False
     work_item_token: bytes | None = None
     attempt_tokens: set[bytes] = field(default_factory=set)
+    successful: bool = False
 
 
 @dataclass
@@ -207,14 +208,28 @@ class _ReplayState:
     def assert_all_events_claimed(self) -> None:
         """Reject a successful invocation that omitted any expected event."""
         with self.claims_lock:
-            missing_count = sum(
-                not claim.direct_claimed and claim.work_item_token is None
-                for claim in self.claims.values()
-            )
+            missing_count = sum(not claim.successful for claim in self.claims.values())
         if missing_count:
             raise ReplayCompatibilityError(
                 f"workflow replay completed with {missing_count} missing expected event(s)"
             )
+
+    def mark_successful_effects(self, effects: tuple[ManagedEffectClaim, ...]) -> None:
+        """Confirm the exact events retained by the successful root invocation."""
+        with self.claims_lock:
+            for effect in effects:
+                encoded = _encoded_effect_identity(effect)
+                claim = self.claims.get(encoded)
+                if claim is None:
+                    raise ReplayCompatibilityError(
+                        "workflow execution completed with an unexpected replay event"
+                    )
+                _require_matching_effect(claim.expected, effect)
+                if not claim.direct_claimed and claim.work_item_token is None:
+                    raise ReplayCompatibilityError(
+                        "workflow execution completed an unclaimed replay event"
+                    )
+                claim.successful = True
 
     def expected_effects_for_unit(
         self,

@@ -88,6 +88,7 @@ class ManagedParentEnvelope:
     parent_occurrence_path: tuple[Any, ...]
     frame: ManagedUnitFrame
     replay_expected_effects: tuple[ManagedEffectClaim, ...] | None = None
+    retry_effects: tuple[ManagedEffectClaim, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -109,6 +110,10 @@ class ManagedParentEnvelope:
             )
         ):
             raise TypeError("managed replay expectations must be effect tuples or None")
+        if not isinstance(self.retry_effects, tuple) or any(
+            not isinstance(effect, ManagedEffectClaim) for effect in self.retry_effects
+        ):
+            raise TypeError("managed retry effects must be an effect tuple")
 
 
 @dataclass(frozen=True)
@@ -145,6 +150,7 @@ class ManagedClaimReport:
     attempt: ManagedAttemptState
     child_count: int
     effects: tuple[ManagedEffectClaim, ...] = ()
+    successful_effects: tuple[ManagedEffectClaim, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -153,8 +159,16 @@ class ManagedClaimReport:
             or self.child_count < 0
         ):
             raise TypeError("managed child counts must be non-negative integers")
-        if not isinstance(self.effects, tuple):
+        if not isinstance(self.effects, tuple) or any(
+            not isinstance(effect, ManagedEffectClaim) for effect in self.effects
+        ):
             raise TypeError("managed effect reports must contain a tuple of effects")
+        if not isinstance(self.successful_effects, tuple) or any(
+            not isinstance(effect, ManagedEffectClaim) for effect in self.successful_effects
+        ):
+            raise TypeError("managed successful effects must contain a tuple of effects")
+        if any(effect not in self.effects for effect in self.successful_effects):
+            raise ValueError("managed successful effects must be claimed by the same attempt")
 
 
 @dataclass(frozen=True)
