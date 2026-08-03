@@ -41,8 +41,21 @@ class TestStochasticEffectPlan:
         assert isinstance(plan.sample_shape, tuple)
         assert isinstance(plan.event.stochastic_source_id, tuple)
         assert isinstance(plan.event.logical_unit_id, tuple)
+        assert plan.record_path == ()
+        assert plan.descendant_descriptor is None
         with pytest.raises(FrozenInstanceError):
             plan.operation_kind = "changed"
+
+        with pytest.raises(TypeError, match="record paths"):
+            StochasticEffectPlan(
+                operation_kind="test",
+                execution_mode="sampled",
+                event=plan.event,
+                sample_shape=(1,),
+                sampling_abi="test-sampling/v1",
+                provider_abi="test-provider/v1",
+                record_path=["field"],
+            )
 
 
 class TestAutomaticKeyOwnership:

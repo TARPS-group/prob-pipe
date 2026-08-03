@@ -152,6 +152,27 @@ class TestWorkflowRecipeRecording:
         assert replay["plan"]["expected_effects"][0]["operation_kind"] == "sample"
         assert replay["standalone"]["eligibility"] == "supported"
 
+    def test_direct_transformed_sample_records_its_closed_descendant_plan(self):
+        transformed = TransformedDistribution(
+            Normal(loc=0.0, scale=1.0, name="root"),
+            tfb.Exp(),
+        )
+
+        with workflow_run(seed=4):
+            result = sample(transformed)
+
+        replay = _replay(result)
+        effect = replay["plan"]["expected_effects"][0]
+        assert effect["record_path"] == []
+        assert effect["descendant_descriptor"][0] == "transformed-descendant"
+        assert replay["compatibility"]["descendant_adapter_abi"] == [
+            "probpipe.transformed_descendant/v1"
+        ]
+        assert replay["compatibility"]["provider_abi"] == [
+            "probpipe.distribution/v1",
+            "tensorflow_probability.substrates.jax.bijector.forward/v1",
+        ]
+
     def test_mixed_plan_records_only_the_sampled_root_event(self):
         workflow = Function(func=_difference, n_broadcast_samples=5)
         with workflow_run(seed=9):

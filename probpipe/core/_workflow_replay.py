@@ -55,6 +55,8 @@ class _ExpectedReplayEvent:
             sample_shape=None if sample_shape is None else tuple(sample_shape),
             sampling_abi=self.effect["sampling_abi"],
             provider_abi=self.effect["provider_abi"],
+            record_path=tuple(self.effect["record_path"]),
+            descendant_descriptor=_descriptor_tuple(self.effect["descendant_descriptor"]),
         )
 
 
@@ -144,7 +146,10 @@ class _ReplayState:
             contract.abi != self.execution_contract_abi
             or contract.rng_abi != _RNG_ABI
             or contract.jax_key_abi != self.key_adapter_abi
-            or tuple(contract.descendant_adapter_abis) != self.descendant_adapter_abis
+            or (
+                self.canonical_plan.get("kind") != "direct_operation"
+                and tuple(contract.descendant_adapter_abis) != self.descendant_adapter_abis
+            )
         ):
             raise ReplayCompatibilityError(
                 "the current evaluator or transport cannot satisfy the recorded "
@@ -163,6 +168,20 @@ class _ReplayState:
         }
         if route not in self.actual_execution:
             self.actual_execution.append(route)
+
+    def validate_effect_plan(self, plan: Any) -> None:
+        """Match one planned effect before its stochastic occurrence is committed."""
+        current_effect = _effect_plan_anchor(plan)
+        if not any(
+            expected.source == plan.event.stochastic_source_id
+            and expected.unit == plan.event.logical_unit_id
+            and expected.effect == current_effect
+            for expected in self.expected_events
+        ):
+            raise ReplayCompatibilityError(
+                "unexpected replay event: the current stochastic effect plan differs "
+                "from the recorded replay plan"
+            )
 
     def record_requested_execution(self, dispatch: str, workflow_kind: str) -> None:
         """Capture current request diagnostics before route resolution."""
@@ -280,6 +299,19 @@ class _RemoteReplayClaims:
     expected_by_identity: dict[bytes, ManagedEffectClaim]
     attempt: ManagedAttemptState
     claimed: set[bytes] = field(default_factory=set)
+
+    def validate_plan(self, plan: Any) -> None:
+        """Validate a transported plan before its child occurrence is committed."""
+        current_effect = _effect_plan_anchor(plan)
+        if not any(
+            effect.stochastic_source_id == plan.event.stochastic_source_id
+            and effect.logical_unit_id == plan.event.logical_unit_id
+            and _managed_effect_anchor(effect) == current_effect
+            for effect in self.expected_by_identity.values()
+        ):
+            raise ReplayCompatibilityError(
+                "the remote stochastic effect plan differs from its assigned event namespace"
+            )
 
     def claim(
         self,
@@ -523,6 +555,17 @@ def _claim_effect_before_derivation(
         state.claim_effect(effect, attempt=attempt)
 
 
+def _validate_effect_plan_before_commit(plan: Any) -> None:
+    """Validate effect semantics without allocating an occurrence or deriving a key."""
+    remote = _REMOTE_REPLAY_CLAIMS.get()
+    if remote is not None:
+        remote.validate_plan(plan)
+        return
+    state = _ACTIVE_REPLAY_STATE.get()
+    if state is not None:
+        state.validate_effect_plan(plan)
+
+
 def _expected_effects_for_managed_unit(
     parent_occurrence_path: tuple[Any, ...],
     unit_segment: tuple[Any, ...],
@@ -653,16 +696,17 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     if key_adapter_abi != _workflow_execution_contract.key_adapter_abi():
         raise ReplayCompatibilityError("recorded workflow key-adapter ABI is incompatible")
 
+    compatibility_material = (canonical_plan, [event.effect for event in expected_events])
     expected_sampling_abis = _ordered_unique(
         [event.effect["sampling_abi"] for event in expected_events]
-        + list(_iter_named_abi(canonical_plan, "sampling_abi"))
+        + list(_iter_named_abi(compatibility_material, "sampling_abi"))
     )
     expected_provider_abis = _ordered_unique(
         [event.effect["provider_abi"] for event in expected_events]
-        + list(_iter_named_abi(canonical_plan, "provider_abi"))
+        + list(_iter_named_abi(compatibility_material, "provider_abi"))
     )
     expected_descendant_adapter_abis = _ordered_unique(
-        list(_iter_named_abi(canonical_plan, "descendant_adapter_abi"))
+        list(_iter_named_abi(compatibility_material, "descendant_adapter_abi"))
     )
     if sampling_abis != expected_sampling_abis:
         raise ReplayCompatibilityError(
@@ -759,6 +803,17 @@ def _expected_events(
 
 
 def _validate_effect(effect: dict[str, Any], *, index: int) -> None:
+    expected_fields = {
+        "operation_kind",
+        "execution_mode",
+        "sample_shape",
+        "sampling_abi",
+        "provider_abi",
+        "record_path",
+        "descendant_descriptor",
+    }
+    if set(effect) != expected_fields:
+        raise ReplayCompatibilityError(f"recorded replay effect {index} has incompatible fields")
     for field_name in (
         "operation_kind",
         "execution_mode",
@@ -777,6 +832,12 @@ def _validate_effect(effect: dict[str, Any], *, index: int) -> None:
             raise ReplayCompatibilityError(
                 f"recorded replay effect {index} has invalid sample_shape"
             )
+    record_path = effect.get("record_path")
+    if not isinstance(record_path, list) or any(
+        not isinstance(field, str) for field in record_path
+    ):
+        raise ReplayCompatibilityError(f"recorded replay effect {index} has invalid record_path")
+    _validate_descriptor_value(effect.get("descendant_descriptor"), index=index)
 
 
 def _encoded_effect_identity(effect: ManagedEffectClaim) -> bytes:
@@ -797,16 +858,75 @@ def _require_matching_effect(
         raise ReplayCompatibilityError(
             "workflow replay event occurrence kind differs from the recorded recipe"
         )
-    current_effect = {
-        "operation_kind": actual.operation_kind,
-        "execution_mode": actual.execution_mode,
-        "sample_shape": (None if actual.sample_shape is None else list(actual.sample_shape)),
-        "sampling_abi": actual.sampling_abi,
-        "provider_abi": actual.provider_abi,
-    }
+    current_effect = _managed_effect_anchor(actual)
     if current_effect != expected.effect:
         raise ReplayCompatibilityError(
             "workflow replay effect or provider ABI differs from the recorded plan"
+        )
+
+
+def _effect_plan_anchor(plan: Any) -> dict[str, Any]:
+    return {
+        "operation_kind": plan.operation_kind,
+        "execution_mode": plan.execution_mode,
+        "sample_shape": None if plan.sample_shape is None else list(plan.sample_shape),
+        "sampling_abi": plan.sampling_abi,
+        "provider_abi": plan.provider_abi,
+        "record_path": list(plan.record_path),
+        "descendant_descriptor": _effect_json_value(plan.descendant_descriptor),
+    }
+
+
+def _managed_effect_anchor(effect: ManagedEffectClaim) -> dict[str, Any]:
+    return {
+        "operation_kind": effect.operation_kind,
+        "execution_mode": effect.execution_mode,
+        "sample_shape": None if effect.sample_shape is None else list(effect.sample_shape),
+        "sampling_abi": effect.sampling_abi,
+        "provider_abi": effect.provider_abi,
+        "record_path": list(effect.record_path),
+        "descendant_descriptor": _effect_json_value(effect.descendant_descriptor),
+    }
+
+
+def _effect_json_value(value: Any) -> Any:
+    if isinstance(value, tuple):
+        return [_effect_json_value(item) for item in value]
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    raise TypeError(
+        f"stochastic effect descriptor contains unsupported value {type(value).__name__}"
+    )
+
+
+def _descriptor_tuple(value: Any) -> tuple[Any, ...] | None:
+    if value is None:
+        return None
+    return tuple(_descriptor_item(item) for item in value)
+
+
+def _descriptor_item(value: Any) -> Any:
+    if isinstance(value, list):
+        return tuple(_descriptor_item(item) for item in value)
+    return value
+
+
+def _validate_descriptor_value(value: Any, *, index: int) -> None:
+    if value is None:
+        return
+    if not isinstance(value, list):
+        raise ReplayCompatibilityError(
+            f"recorded replay effect {index} has invalid descendant_descriptor"
+        )
+
+    def validate(item: Any) -> bool:
+        if isinstance(item, list):
+            return all(validate(child) for child in item)
+        return item is None or isinstance(item, (str, bool, int, float))
+
+    if not validate(value):
+        raise ReplayCompatibilityError(
+            f"recorded replay effect {index} has invalid descendant_descriptor"
         )
 
 
@@ -888,7 +1008,7 @@ def _iter_named_abi(value: Any, field_name: str):
                 yield item
             yield from _iter_named_abi(item, field_name)
         return
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         if len(value) == 2 and value[0] == field_name and isinstance(value[1], str):
             yield value[1]
         for item in value:

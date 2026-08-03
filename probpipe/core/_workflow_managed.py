@@ -129,6 +129,8 @@ class ManagedEffectClaim:
     sample_shape: tuple[int, ...] | None
     sampling_abi: str
     provider_abi: str
+    record_path: tuple[str, ...] = ()
+    descendant_descriptor: tuple[Any, ...] | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.occurrence_path, tuple):
@@ -140,6 +142,13 @@ class ManagedEffectClaim:
             raise TypeError("managed effect source and unit identities must be tuples")
         if self.sample_shape is not None and not isinstance(self.sample_shape, tuple):
             raise TypeError("managed effect sample shapes must be tuples or None")
+        if not isinstance(self.record_path, tuple):
+            raise TypeError("managed effect record paths must be tuples")
+        if self.descendant_descriptor is not None and not isinstance(
+            self.descendant_descriptor,
+            tuple,
+        ):
+            raise TypeError("managed effect descendant descriptors must be tuples or None")
 
 
 @dataclass(frozen=True)

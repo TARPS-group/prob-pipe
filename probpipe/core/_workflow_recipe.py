@@ -36,16 +36,18 @@ def provenance_recipe_fields(
         if not _is_nested_automatic_effect(effect, snapshot.occurrence_path)
     )
     canonical_plan = serialize_stochastic_plan(stochastic_plan)
+    effect_anchors = [_serialize_effect_anchor(effect) for effect in effects]
+    compatibility_material = (canonical_plan, effect_anchors)
     sampling_abis = _ordered_unique(
         [effect.sampling_abi for effect in effects]
-        + list(_iter_named_abi(canonical_plan, "sampling_abi"))
+        + list(_iter_named_abi(compatibility_material, "sampling_abi"))
     )
     provider_abis = _ordered_unique(
         [effect.provider_abi for effect in effects]
-        + list(_iter_named_abi(canonical_plan, "provider_abi"))
+        + list(_iter_named_abi(compatibility_material, "provider_abi"))
     )
     descendant_adapter_abis = _ordered_unique(
-        list(_iter_named_abi(canonical_plan, "descendant_adapter_abi"))
+        list(_iter_named_abi(compatibility_material, "descendant_adapter_abi"))
     )
     execution_diagnostics = [
         {
@@ -89,7 +91,7 @@ def provenance_recipe_fields(
         "plan": {
             "schema": _STOCHASTIC_PLAN_ABI,
             "canonical_fields": canonical_plan,
-            "expected_effects": [_serialize_effect_anchor(effect) for effect in effects],
+            "expected_effects": effect_anchors,
         },
         "compatibility": {
             "execution_contract": _workflow_execution_contract.execution_contract_abi(),
@@ -201,6 +203,8 @@ def _serialize_effect_anchor(effect: ManagedEffectClaim) -> dict[str, Any]:
         "sample_shape": _json_value(effect.sample_shape),
         "sampling_abi": effect.sampling_abi,
         "provider_abi": effect.provider_abi,
+        "record_path": list(effect.record_path),
+        "descendant_descriptor": _json_value(effect.descendant_descriptor),
     }
 
 
@@ -260,7 +264,7 @@ def _iter_named_abi(value: Any, field_name: str):
                 yield item
             yield from _iter_named_abi(item, field_name)
         return
-    if isinstance(value, list):
+    if isinstance(value, (list, tuple)):
         if len(value) == 2 and value[0] == field_name and isinstance(value[1], str):
             yield value[1]
         for item in value:

@@ -268,6 +268,62 @@ class TestReplayPreflight:
         ):
             changed(value=candidate)
 
+    def test_direct_descendant_drift_fails_before_key_derivation(self):
+        original_dist = TransformedDistribution(
+            Normal(loc=0.0, scale=1.0, name="root"),
+            tfb.Exp(),
+        )
+        with workflow_run(seed=4):
+            original = sample(original_dist)
+
+        with replay_run(original.provenance):
+            replayed = sample(
+                TransformedDistribution(
+                    Normal(loc=0.0, scale=1.0, name="root"),
+                    tfb.Exp(),
+                )
+            )
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
+
+        candidate_root = Normal(loc=0.0, scale=1.0, name="root")
+        candidate = TransformedDistribution(candidate_root, tfb.Square())
+        with (
+            patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words",
+                side_effect=AssertionError("derived key"),
+            ),
+            pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),
+            replay_run(original.provenance),
+        ):
+            sample(candidate)
+
+    def test_direct_record_projection_drift_fails_before_key_derivation(self):
+        original_root = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=2.0, scale=1.0, name="y"),
+        )
+        with workflow_run(seed=4):
+            original = sample(original_root["x"])
+        assert original.provenance.controls["replay"]["plan"]["expected_effects"][0][
+            "record_path"
+        ] == ["x"]
+
+        candidate_root = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=2.0, scale=1.0, name="y"),
+        )
+        with (
+            patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words",
+                side_effect=AssertionError("derived key"),
+            ),
+            pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),
+            replay_run(original.provenance),
+        ):
+            sample(candidate_root["y"])
+
     def test_route_drift_is_diagnostic_and_preserves_values(self):
         original_workflow = Function(
             func=replayable_identity,

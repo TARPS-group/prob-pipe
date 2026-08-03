@@ -61,6 +61,8 @@ def _sampled_conversion_plan(
 def _resolve_conversion_key(
     key: Any | None,
     plan: _ConversionExecutionPlan,
+    *,
+    captured: _workflow_descendants.CapturedStochasticConsumer | None = None,
 ) -> Any:
     """Preserve a caller key or claim the singleton conversion event."""
     if key is not None:
@@ -76,6 +78,8 @@ def _resolve_conversion_key(
             execution_mode=plan.execution_mode,
             sample_shape=plan.sample_shape,
             provider_abi=plan.provider_abi,
+            record_path=() if captured is None else captured.record_path,
+            descendant_descriptor=(None if captured is None else captured.descendant_descriptor),
         ),
     )
 
@@ -92,7 +96,7 @@ def _sample_probpipe_conversion_source(
     if key is not None:
         return source._sample(key, sample_shape)
     captured = _workflow_descendants.capture_stochastic_consumer(source)
-    resolved_key = _resolve_conversion_key(None, plan)
+    resolved_key = _resolve_conversion_key(None, plan, captured=captured)
     return _workflow_descendants.sample_captured_consumer(
         captured,
         resolved_key,

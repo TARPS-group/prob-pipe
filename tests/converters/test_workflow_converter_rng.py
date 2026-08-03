@@ -234,6 +234,23 @@ class TestBuiltInConversionPlanning:
             atol=1e-6,
         )
 
+    def test_from_distribution_recipe_keeps_the_captured_descendant_plan(self):
+        descendant = TransformedDistribution(
+            Normal(loc=0.0, scale=1.0, name="root"),
+            tfb.Exp(),
+        )
+
+        with workflow_run(seed=31):
+            converted = from_distribution(
+                descendant,
+                RecordEmpiricalDistribution,
+                num_samples=12,
+            )
+
+        effect = converted.provenance.controls["replay"]["plan"]["expected_effects"][0]
+        assert effect["operation_kind"] == "conversion"
+        assert effect["descendant_descriptor"][0] == "transformed-descendant"
+
     def test_unsupported_descendant_conversion_fails_before_entropy(self):
         calls = []
         root = _RecordingNormal(calls)

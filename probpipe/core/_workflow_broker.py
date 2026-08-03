@@ -57,6 +57,17 @@ class StochasticEffectPlan:
     sample_shape: tuple[int, ...] | None
     sampling_abi: str
     provider_abi: str
+    record_path: tuple[str, ...] = ()
+    descendant_descriptor: tuple[Any, ...] | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.record_path, tuple):
+            raise TypeError("stochastic effect record paths must be tuples")
+        if self.descendant_descriptor is not None and not isinstance(
+            self.descendant_descriptor,
+            tuple,
+        ):
+            raise TypeError("stochastic effect descendant descriptors must be tuples or None")
 
 
 @dataclass
@@ -184,6 +195,8 @@ def _singleton_effect_plan(
     source_index: int = 0,
     sampling_abi: str = _DISTRIBUTION_SAMPLING_ABI,
     provider_abi: str = _PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
+    record_path: tuple[str, ...] = (),
+    descendant_descriptor: tuple[Any, ...] | None = None,
 ) -> StochasticEffectPlan:
     """Build the standard singleton event plan for a direct operation."""
     return StochasticEffectPlan(
@@ -196,6 +209,8 @@ def _singleton_effect_plan(
         sample_shape=sample_shape,
         sampling_abi=sampling_abi,
         provider_abi=provider_abi,
+        record_path=record_path,
+        descendant_descriptor=descendant_descriptor,
     )
 
 
@@ -224,6 +239,7 @@ class _AutomaticKeyBroker:
         _workflow_context._guard_automatic_key_request()
         if _REMOTE_COORDINATION_PROBE.get():
             raise _ManagedCoordinationRequired
+        self.validate_replay_effect_plan(plan)
         with self._lock:
             if self._invocation is None:
                 self._invocation = self._claim_own_invocation()
@@ -238,6 +254,8 @@ class _AutomaticKeyBroker:
             sample_shape=plan.sample_shape,
             sampling_abi=plan.sampling_abi,
             provider_abi=plan.provider_abi,
+            record_path=plan.record_path,
+            descendant_descriptor=plan.descendant_descriptor,
         )
         if self._managed_attempt is None:
             self.claim_replay_effect(effect, attempt=None)
@@ -322,6 +340,21 @@ class _AutomaticKeyBroker:
         from . import _workflow_replay
 
         _workflow_replay._claim_effect_before_derivation(effect, attempt=attempt)
+
+    def validate_replay_effect_plan(self, plan: StochasticEffectPlan) -> None:
+        """Reject direct-operation plan drift before committing its occurrence."""
+        if self._replay_state is not None:
+            self._replay_state.validate_effect_plan(plan)
+            return
+        if self._managed_attempt is not None:
+            parent = self._managed_attempt.parent_broker
+            parent_validate = getattr(parent, "validate_replay_effect_plan", None)
+            if parent_validate is not None:
+                parent_validate(plan)
+                return
+        from . import _workflow_replay
+
+        _workflow_replay._validate_effect_plan_before_commit(plan)
 
     def claim_managed_effect(
         self,

@@ -152,6 +152,8 @@ def _mc_expectation(
                 operation_kind="expectation",
                 execution_mode="monte_carlo",
                 sample_shape=(n,),
+                record_path=captured.record_path,
+                descendant_descriptor=captured.descendant_descriptor,
             ),
         )
         samples = _workflow_descendants.sample_captured_consumer(captured, key, (n,))
@@ -1147,13 +1149,15 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 raise ValueError(f"num_evaluations must be positive; got {n!r}")
             sample_key = key
             if sample_key is None:
-                _workflow_descendants.capture_stochastic_consumer(self)
+                captured = _workflow_descendants.capture_stochastic_consumer(self)
                 sample_key = _workflow_broker._resolve_automatic_key(
                     None,
                     _workflow_broker._singleton_effect_plan(
                         operation_kind="expectation",
                         execution_mode="monte_carlo",
                         sample_shape=(n,),
+                        record_path=captured.record_path,
+                        descendant_descriptor=captured.descendant_descriptor,
                     ),
                 )
             base_samples = self._base._sample(sample_key, sample_shape=(n,))

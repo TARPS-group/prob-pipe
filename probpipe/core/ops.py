@@ -106,6 +106,8 @@ def sample(
                 operation_kind="sample",
                 execution_mode="sampled",
                 sample_shape=sample_shape,
+                record_path=captured.record_path,
+                descendant_descriptor=captured.descendant_descriptor,
             ),
         )
         return _workflow_descendants.sample_captured_consumer(captured, key, sample_shape)
