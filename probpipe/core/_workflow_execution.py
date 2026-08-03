@@ -17,6 +17,21 @@ try:
 except ImportError:
     task = flow = None
 
+from ._workflow_managed import (
+    ManagedWorkItem,
+    lifted_evaluation_unit_segment,
+    make_managed_work_items,
+    point_unit_segment,
+    sweep_unit_segment,
+)
+
+__all__ = (
+    "lifted_evaluation_unit_segment",
+    "make_managed_work_items",
+    "point_unit_segment",
+    "sweep_unit_segment",
+)
+
 WorkflowExecutionMode = Literal[
     "sequential",
     "thread",
@@ -37,21 +52,21 @@ class WorkflowExecutionConfig:
 
 @dataclass(frozen=True)
 class WorkflowExecutionRequest:
-    """A backend-neutral request to run a function over call dictionaries."""
+    """A backend-neutral request to execute ordered managed work items."""
 
     func: Callable[..., Any]
-    call_value_list: list[dict[str, Any]]
+    work_items: tuple[ManagedWorkItem, ...]
     execution: WorkflowExecutionConfig
 
 
 def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     """Execute all call dictionaries using the configured dispatch mode."""
-    if not request.call_value_list:
+    if not request.work_items:
         return []
 
     match request.execution.mode:
         case "sequential":
-            return [request.func(**values) for values in request.call_value_list]
+            return [_execute_work_item(request.func, item) for item in request.work_items]
         case "thread":
             return execute_many_threaded(request)
         case "prefect_task":
@@ -64,12 +79,14 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
 
 def execute_many_threaded(request: WorkflowExecutionRequest) -> list[Any]:
     """Execute call dictionaries through ``ThreadPoolExecutor``."""
-    if not request.call_value_list:
+    if not request.work_items:
         return []
 
     max_workers = _validate_max_workers(request.execution.max_workers)
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
-        return list(pool.map(lambda kwargs: request.func(**kwargs), request.call_value_list))
+        return list(
+            pool.map(lambda item: _execute_work_item(request.func, item), request.work_items)
+        )
 
 
 def map_task(
@@ -78,7 +95,7 @@ def map_task(
     task_name: str | None = None,
 ) -> list[Any]:
     """Create a Prefect task, map keyword arguments over calls, and resolve futures."""
-    if not request.call_value_list:
+    if not request.work_items:
         return []
 
     _ensure_prefect_available()
@@ -86,22 +103,16 @@ def map_task(
     func = request.func
 
     @task(name=task_name or request.execution.name)
-    def run_func(**kwargs):
-        return func(**kwargs)
+    def run_func(work_item):
+        return _execute_work_item(func, work_item)
 
-    # The first row defines the mapped parameter columns. Prefect maps keyword
-    # columns, so Ray via Prefect relies on this rectangular kwargs shape.
-    keys = request.call_value_list[0].keys()
-    kwargs_by_param = {
-        key: [call_values[key] for call_values in request.call_value_list] for key in keys
-    }
-    futures = run_func.map(**kwargs_by_param)
+    futures = run_func.map(work_item=list(request.work_items))
     return [future.result() for future in futures]
 
 
 def execute_many_prefect_task(request: WorkflowExecutionRequest) -> list[Any]:
     """Use Prefect ``task.map()`` inside a lightweight flow."""
-    if not request.call_value_list:
+    if not request.work_items:
         return []
 
     _ensure_prefect_available()
@@ -119,7 +130,7 @@ def execute_many_prefect_task(request: WorkflowExecutionRequest) -> list[Any]:
 
 def execute_many_prefect_flow(request: WorkflowExecutionRequest) -> list[Any]:
     """Wrap a mapped task inside a named Prefect flow."""
-    if not request.call_value_list:
+    if not request.work_items:
         return []
 
     _ensure_prefect_available()
@@ -144,6 +155,11 @@ def _validate_max_workers(max_workers: int | None) -> int | None:
     if max_workers < 1:
         raise ValueError(f"max_workers must be None or a positive int; got {max_workers!r}")
     return max_workers
+
+
+def _execute_work_item(func: Callable[..., Any], item: ManagedWorkItem) -> Any:
+    """Execute one frozen work item without changing its canonical identity."""
+    return func(**item.call_values())
 
 
 def _ensure_prefect_available() -> None:

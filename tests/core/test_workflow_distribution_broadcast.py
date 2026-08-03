@@ -240,7 +240,7 @@ class TestExecuteDistributionBroadcast:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [request.func(**call_values) for call_values in request.call_value_list]
+            return [request.func(**item.call_values()) for item in request.work_items]
 
         monkeypatch.setattr(
             _workflow_distribution_broadcast._workflow_execution,
@@ -267,11 +267,9 @@ class TestExecuteDistributionBroadcast:
         assert isinstance(result, BroadcastDistribution)
         assert request.func is shift
         assert request.execution is execution
-        assert len(request.call_value_list) == 5
-        assert all(call_values["offset"] == 2.0 for call_values in request.call_value_list)
-        assert all(
-            not isinstance(call_values["x"], Normal) for call_values in request.call_value_list
-        )
+        assert len(request.work_items) == 5
+        assert all(item.call_values()["offset"] == 2.0 for item in request.work_items)
+        assert all(not isinstance(item.call_values()["x"], Normal) for item in request.work_items)
         assert result.provenance.metadata == {
             "dispatch": "thread",
             "orchestrate": "off",

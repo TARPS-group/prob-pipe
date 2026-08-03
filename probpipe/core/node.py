@@ -890,7 +890,10 @@ class Function(Node, TrackedTerm, Annotated):
         # without reintroducing private facade wrappers.
         request = _workflow_execution.WorkflowExecutionRequest(
             func=invoke_point,
-            call_value_list=[values],
+            work_items=_workflow_execution.make_managed_work_items(
+                [values],
+                unit_segments=(_workflow_execution.point_unit_segment(),),
+            ),
             execution=self._make_execution_config(),
         )
         result = _workflow_execution.execute_many(request)[0]

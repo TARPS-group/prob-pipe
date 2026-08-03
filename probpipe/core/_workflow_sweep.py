@@ -9,6 +9,7 @@ outer sweep layer of nested array + distribution broadcasts.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
+from itertools import product as cartesian_product
 from typing import Any
 
 import jax
@@ -231,7 +232,15 @@ def execute_sweep_rows(
     ]
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
-        call_value_list=per_row_values,
+        work_items=_workflow_execution.make_managed_work_items(
+            per_row_values,
+            unit_segments=tuple(
+                _workflow_execution.sweep_unit_segment(tuple(coordinates))
+                for coordinates in cartesian_product(
+                    *(range(axis) for axis in plan.sweep_batch_shape)
+                )
+            ),
+        ),
         execution=make_execution_config(),
     )
     return _workflow_execution.execute_many(request)

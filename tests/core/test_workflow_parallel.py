@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import fields
+import pickle
+from dataclasses import FrozenInstanceError, fields
 from typing import ClassVar
 
 import pytest
@@ -95,9 +96,18 @@ def make_request(
     name="add_one",
     prefect_task_runner=None,
 ):
+    call_values = calls if calls is not None else [{"x": 1}, {"x": 2}]
+    unit_segments = (
+        (execution_mod.point_unit_segment(),)
+        if len(call_values) == 1
+        else tuple(execution_mod.sweep_unit_segment((index,)) for index in range(len(call_values)))
+    )
     return execution_mod.WorkflowExecutionRequest(
         func=func,
-        call_value_list=calls if calls is not None else [{"x": 1}, {"x": 2}],
+        work_items=execution_mod.make_managed_work_items(
+            call_values,
+            unit_segments=unit_segments,
+        ),
         execution=execution_mod.WorkflowExecutionConfig(
             mode=mode,
             max_workers=max_workers,
@@ -123,6 +133,22 @@ def _reset_fakes():
 
 
 class TestExecutionRequestShape:
+    def test_managed_work_items_are_frozen_tuple_only_and_pickleable(self):
+        request = make_request(calls=[{"x": 1}])
+
+        assert isinstance(request.work_items, tuple)
+        assert request.work_items[0].values == (("x", 1),)
+        assert request.work_items[0].frame.unit_segment == (
+            "managed-unit",
+            "probpipe.managed_work_item/v1",
+            "point",
+            0,
+        )
+        assert len(request.work_items[0].frame.token.value) == 16
+        assert pickle.loads(pickle.dumps(request.work_items)) == request.work_items
+        with pytest.raises(FrozenInstanceError):
+            request.work_items[0].index = 9
+
     def test_execution_config_has_resolved_execution_fields_only(self):
         field_names = {field.name for field in fields(execution_mod.WorkflowExecutionConfig)}
 
@@ -140,7 +166,7 @@ class TestExecutionRequestShape:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [request.func(**request.call_value_list[0])]
+            return [request.func(**request.work_items[0].call_values())]
 
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)
         wf = Function(func=add_one, dispatch="sequential")
@@ -410,7 +436,7 @@ class TestFunctionExecutionConfig:
 
         def fake_execute_many(request):
             seen_modes.append(request.execution.mode)
-            return [request.func(**request.call_value_list[0])]
+            return [request.func(**request.work_items[0].call_values())]
 
         monkeypatch.setattr(node_mod, "task", object())
         monkeypatch.setattr(execution_mod, "execute_many", fake_execute_many)

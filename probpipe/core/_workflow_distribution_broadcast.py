@@ -391,7 +391,16 @@ def _broadcast_enumerate(
 
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
-        call_value_list=call_value_list,
+        work_items=_workflow_execution.make_managed_work_items(
+            call_value_list,
+            unit_segments=tuple(
+                _workflow_execution.lifted_evaluation_unit_segment(
+                    logical_unit.logical_unit_id,
+                    index,
+                )
+                for index in range(len(call_value_list))
+            ),
+        ),
         execution=make_execution_config(),
     )
     results = _workflow_execution.execute_many(request)
@@ -445,7 +454,16 @@ def _broadcast_sample(
 
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
-        call_value_list=call_value_list,
+        work_items=_workflow_execution.make_managed_work_items(
+            call_value_list,
+            unit_segments=tuple(
+                _workflow_execution.lifted_evaluation_unit_segment(
+                    logical_unit.logical_unit_id,
+                    index,
+                )
+                for index in range(len(call_value_list))
+            ),
+        ),
         execution=make_execution_config(),
     )
     results = _workflow_execution.execute_many(request)
