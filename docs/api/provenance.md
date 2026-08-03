@@ -45,9 +45,9 @@ How much history is retained is controlled by a global `ProvenanceMode`:
 
 | Mode | What is stored | Memory cost |
 |------|----------------|-------------|
-| `LIGHTWEIGHT` (default) | `ParentInfo` descriptors for tracked parents and plain inputs; tracked parents also carry their own provenance chain | Low — parent and input values can be GC'd |
-| `FULL` | `ParentInfo` plus a live reference to each tracked parent or plain input via `.parent` | Higher — full ancestry and call inputs stay in memory |
-| `OFF` | Nothing — `dist.provenance` is `None` | Zero |
+| `LIGHTWEIGHT` (default) | `ParentInfo` descriptors, exact controls, and diagnostics; tracked parents also carry their own provenance chain | Low — parent and input values can be GC'd |
+| `FULL` | The same controls and diagnostics, plus a live reference to each tracked parent or plain input via `.parent` | Higher — full ancestry and call inputs stay in memory |
+| `OFF` | Nothing — `dist.provenance` is `None`, including no RNG recipe | Zero |
 
 Set the mode once at startup:
 
@@ -104,8 +104,86 @@ info = conditioned.provenance.inputs["**kwargs['x']"]
 print(info.fingerprint)  # differs from the fingerprint for x=5.0
 ```
 
-Operation controls such as dispatch and sample count remain in provenance
-`metadata`; they are not duplicated in `inputs`.
+Descriptive operation controls such as dispatch and sample count remain in
+provenance `metadata`; they are not duplicated in `inputs`. A stochastic result
+may separately encode the canonical replay plan in exact `controls`.
+
+## Metadata, controls, and diagnostics
+
+These three mappings have deliberately different authority:
+
+- `metadata` holds descriptive operation information. Serialization preserves
+  common JSON values but may stringify unsupported objects, so replay never
+  treats metadata as an exact compatibility record.
+- `controls` holds exact JSON-native data that can affect reproducibility or
+  replay compatibility. Workflow RNG recipes and callable/plan anchors live
+  here. Construction and serialization reject non-JSON-native values rather
+  than weakening them.
+- `diagnostics` holds exact JSON-native observations that must not define the
+  mathematical call: the route used, source-artifact locations, and replay
+  drift observations, for example. Route changes can therefore be reported
+  without changing RNG identity.
+
+`FULL` and `LIGHTWEIGHT` record equivalent `controls` and `diagnostics`.
+`OFF` creates no provenance and therefore no replay recipe. Records written by
+older ProbPipe versions remain readable; absent fields are restored as empty
+mappings.
+
+## Workflow RNG recipes and replay
+
+A successful workflow-owned stochastic call records its structural RNG root,
+event identities, stochastic plan, execution capability, and strong callable
+anchor in `Provenance.controls`. The recipe records how ProbPipe-owned keys were
+derived; it does not store raw derived keys, worker ownership, retry attempts,
+or runtime ledgers. Deterministic, wholly exact, and exclusively caller-keyed
+operations do not create an RNG recipe.
+
+Recipes survive a JSON serialization round-trip and can drive a validated
+re-execution:
+
+```python
+import json
+
+from probpipe import Normal, Provenance, replay_run, sample, workflow_run
+
+with workflow_run(seed=42):
+    original = sample(Normal(loc=0.0, scale=1.0, name="draw"))
+
+payload = json.loads(json.dumps(original.provenance.to_dict()))
+restored = Provenance.from_dict(payload)
+
+with replay_run(restored):
+    repeated = sample(Normal(loc=0.0, scale=1.0, name="draw"))
+```
+
+The replay scope restores the recorded root and occurrence path, then checks
+the current callable, canonical stochastic plan, execution capability, and
+every expected random event before key derivation. The caller still supplies
+and executes the current code and inputs: `replay_run` neither loads code nor
+reconstructs a call from provenance.
+
+One replay scope must contain exactly one top-level `Function.__call__`.
+An empty scope, a second top-level call, `Function.apply`, or nesting with
+`workflow_run` is rejected. A parent callable containing a nested automatic-key
+call is not eligible for standalone replay.
+
+Strong callable anchors are intentionally narrow. Replayable user definitions
+must be importable, module-level, closure-free Python `def` functions that
+still resolve to the same definition. Lambdas, local functions, closures,
+bound methods, partials, callable objects, classes, and builtins may execute
+normally, but replay raises `ReplayUnsupportedCallableError` rather than using
+a weak identity.
+
+The recorded execution route is diagnostic, not authoritative. Replay may move
+between compatible rowwise, thread, JAX, or Prefect routes; any drift is written
+to the new result's diagnostics. This validates structural RNG identity and
+declared provider contracts, but it is not a semantic replay facility and does
+not promise bit-identical floating-point results across execution routes.
+Malformed or incompatible recipes, plan/provider drift, and unexpected or
+duplicate events raise `ReplayCompatibilityError` before the affected random
+event is sampled. Missing expected events are reported when the invocation
+completes. Legacy records and `ProvenanceMode.OFF` results have no recipe to
+guess from and are rejected explicitly.
 
 ## Migration from the pre-LIGHTWEIGHT API
 
@@ -182,6 +260,12 @@ content identity.
 ::: probpipe.ParentInfo
 
 ::: probpipe.Provenance
+
+::: probpipe.replay_run
+
+::: probpipe.ReplayCompatibilityError
+
+::: probpipe.ReplayUnsupportedCallableError
 
 ::: probpipe.provenance_ancestors
 

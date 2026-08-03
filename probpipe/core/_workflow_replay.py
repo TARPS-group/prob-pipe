@@ -373,7 +373,35 @@ class _ReplayRunScope:
 
 
 def replay_run(provenance: Provenance) -> _ReplayRunScope:
-    """Restore and validate one recorded workflow-owned stochastic invocation."""
+    """Replay one recorded workflow-owned stochastic invocation.
+
+    Parameters
+    ----------
+    provenance : Provenance
+        Provenance from a successful workflow-owned stochastic result. The
+        record must contain a compatible RNG recipe and replay anchor.
+
+    Returns
+    -------
+    context manager
+        A synchronous scope in which exactly one top-level
+        :meth:`Function.__call__ <probpipe.Function.__call__>` must run.
+
+    Raises
+    ------
+    ReplayCompatibilityError
+        If the record, stochastic plan, execution capability, or observed
+        events are incompatible with the replay attempt.
+    ReplayUnsupportedCallableError
+        If the recorded or supplied callable lacks a strong replay anchor.
+
+    Notes
+    -----
+    Replay restores ProbPipe's structural RNG root and validates the current
+    call before deriving keys. It does not load user code or inputs from the
+    provenance record. The caller must invoke the same supported Function
+    definition with compatible arguments inside the scope.
+    """
     return _ReplayRunScope(provenance)
 
 
