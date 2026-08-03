@@ -31,6 +31,14 @@ class _RecordingNormal(Normal):
         return super()._sample(key, sample_shape)
 
 
+class _FailOnceNormal(_RecordingNormal):
+    def _sample(self, key, sample_shape=()):
+        self.calls.append((key, tuple(sample_shape)))
+        if len(self.calls) == 1:
+            raise RuntimeError("planned sample failure")
+        return Normal._sample(self, key, sample_shape)
+
+
 class TestAutomaticSample:
     def test_seeded_runs_reproduce_distinct_sample_occurrences(self):
         dist = Normal(loc=0.0, scale=1.0, name="x")
@@ -105,6 +113,19 @@ class TestAutomaticSample:
 
         assert not jnp.array_equal(first, second)
         assert urandom.call_count == 2
+
+    def test_direct_reentry_after_post_commit_failure_uses_a_new_path(self):
+        calls = []
+        dist = _FailOnceNormal(calls)
+
+        with workflow_run(seed=7):
+            with pytest.raises(RuntimeError, match="planned sample failure"):
+                sample(dist)
+            sample(dist)
+
+        words = [tuple(int(word) for word in jax.random.key_data(key)) for key, _shape in calls]
+        assert len(words) == 2
+        assert words[0] != words[1]
 
     def test_supported_descendant_samples_captured_root_and_forward(self):
         calls = []

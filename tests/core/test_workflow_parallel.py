@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pickle
 from dataclasses import FrozenInstanceError, fields
+from threading import Event
 from typing import ClassVar
 from unittest.mock import patch
 
@@ -436,6 +437,40 @@ class TestThreadExecution:
         assert execution_mod.execute_many(request) == [2, 3]
         assert len(RecordingExecutor.instances) == 1
         assert RecordingExecutor.instances[0].max_workers == 3
+
+    def test_reverse_completion_preserves_keys_and_canonical_result_order(self):
+        second_completed = Event()
+        completion_order = []
+
+        def claim_in_order(value):
+            return value, _claim_automatic_words()
+
+        def claim_in_reverse(value):
+            if value == 0:
+                assert second_completed.wait(timeout=5)
+            else:
+                completion_order.append(value)
+                second_completed.set()
+            result = value, _claim_automatic_words()
+            if value == 0:
+                completion_order.append(value)
+            return result
+
+        def run(mode, func):
+            request = make_request(
+                mode=mode,
+                max_workers=2 if mode == "thread" else None,
+                calls=[{"value": 0}, {"value": 1}],
+                func=func,
+            )
+            with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+                return execution_mod.execute_many(request)
+
+        expected = run("sequential", claim_in_order)
+        actual = run("thread", claim_in_reverse)
+
+        assert completion_order == [1, 0]
+        assert actual == expected
 
     def test_execute_many_accepts_true_max_workers_as_positive_int(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)

@@ -178,6 +178,16 @@ class TestWorkflowOccurrences:
         assert first == second
         assert first[0] != first[1]
 
+    def test_changing_seed_changes_each_structural_occurrence(self):
+        def run(seed: int) -> tuple[tuple[int, int], ...]:
+            with workflow_run(seed=seed):
+                return tuple(_claim_key_words() for _ in range(3))
+
+        first = run(7)
+        second = run(8)
+
+        assert all(left != right for left, right in zip(first, second, strict=True))
+
     def test_empty_nested_scope_does_not_shift_outer_occurrences(self):
         with workflow_run(seed=7):
             baseline = (_claim_key_words(), _claim_key_words())

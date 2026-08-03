@@ -13,9 +13,11 @@ import pytest
 from probpipe import (
     BroadcastDistribution,
     EmpiricalDistribution,
+    Function,
     Normal,
     ProductDistribution,
     Record,
+    workflow_run,
 )
 from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
@@ -138,6 +140,27 @@ class TestExecuteDistributionBroadcast:
         assert len(first_calls) == len(second_calls) == 1
         assert len(events) == 2
         assert not np.array_equal(result.input_samples["first"], result.input_samples["second"])
+
+    @pytest.mark.parametrize("lookalike_attribute", ["parent", "base"])
+    def test_unregistered_descendant_lookalikes_remain_independent(self, lookalike_attribute):
+        first_calls = []
+        second_calls = []
+        first = _RecordingNormal(first_calls, name="first")
+        second = _RecordingNormal(second_calls, name="second")
+        setattr(second, lookalike_attribute, first)
+        workflow = Function(
+            func=lambda left, right: left - right,
+            dispatch="sequential",
+            n_broadcast_samples=12,
+        )
+
+        with workflow_run(seed=19):
+            result = workflow(left=first, right=second)
+
+        plan = result.provenance.controls["replay"]["plan"]["canonical_fields"]
+        assert len(plan["source_groups"]) == 2
+        assert len(first_calls) == len(second_calls) == 1
+        assert not np.array_equal(first_calls[0][0], second_calls[0][0])
 
     def test_root_and_nested_view_use_the_same_sampled_realization(self):
         joint = ProductDistribution(

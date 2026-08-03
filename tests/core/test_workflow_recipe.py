@@ -282,6 +282,17 @@ class TestWorkflowRecipeRecording:
 
         assert result.provenance is None
 
+    def test_full_and_lightweight_modes_record_equivalent_controls(self):
+        workflow = Function(func=_identity, dispatch="sequential", n_broadcast_samples=8)
+
+        def controls_for(mode):
+            probpipe.provenance_config.mode = mode
+            with workflow_run(seed=7):
+                result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+            return result.provenance.controls
+
+        assert controls_for(ProvenanceMode.FULL) == controls_for(ProvenanceMode.LIGHTWEIGHT)
+
 
 class TestWorkflowCallableAnchor:
     def test_module_level_definition_has_hard_coded_golden_digest(self):
