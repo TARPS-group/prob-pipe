@@ -886,6 +886,84 @@ def _make_stack(
 # ---------------------------------------------------------------------------
 
 
+def _record_rows(record: Record, rows: Any) -> Record:
+    """*record* with every leaf reduced to *rows*, its specification re-derived.
+
+    A record's pytree aux data carries its event template, whose shapes describe
+    the leaves it was built from, so ``jax.tree.map`` would rebuild a record
+    claiming the shapes it started with while holding gathered ones. Rebuilding by
+    path lets the template be re-derived from the leaves that survived.
+    """
+    paths = tuple(record.event_template.keys())
+    return type(record)(
+        record.name, {path: record[path][rows] for path in paths}, name_is_auto=True
+    )
+
+
+def _row_count(component: Any) -> int:
+    """How many rows one batched component holds.
+
+    Every component is batched along its leading axis, but what reports that
+    axis differs. An array has a ``shape`` and a list a ``len``. A record batch
+    has neither that means the right thing — its ``len`` is the *field* count and
+    its ``shape`` raises unless it holds a single leaf — so it reports
+    ``batch_shape``. A plain record batched on its leaves has no ``batch_shape``
+    either, which is the form ``RecordEmpiricalDistribution._sample`` returns, so
+    its rows are read off a leaf.
+    """
+    batch_shape = getattr(component, "batch_shape", None)
+    if batch_shape:
+        return batch_shape[0]
+    if isinstance(component, Record):
+        leaf = next(iter(component.values()))
+        return leaf.shape[0]
+    return component.shape[0] if hasattr(component, "shape") else len(component)
+
+
+def _take_rows(component: Any, indices: Array) -> Any:
+    """Gather the rows *indices* of one batched component, keeping its container.
+
+    A component of a broadcast is batched along its leading axis, but what carries
+    that axis depends on what the component holds. An array is indexed directly. A
+    list holds one object per row and is gathered positionally. A record has fields
+    rather than a shape, so its leaves are gathered and the record rebuilt around
+    them — a ``RecordArray`` stating the row count it now holds, since that count
+    is stored rather than read off the leaves.
+    """
+    if isinstance(component, list):
+        return [component[int(i)] for i in indices]
+    if isinstance(component, RecordArray):
+        # Keyed by the template, which is leaf-keyed, rather than by ``fields``,
+        # which names the top-level children and is retained only for the
+        # migration. The two agree while a record batch is flat and will not once
+        # one can nest; ``_RecordMarginal`` peels a batch the same way.
+        return type(component)(
+            {path: component[path][indices] for path in component.template},
+            batch_shape=(indices.shape[0], *component.batch_shape[1:]),
+            template=component.template,
+        )
+    if isinstance(component, Record):
+        return _record_rows(component, indices)
+    return component[indices]
+
+
+def _one_row(component: Any) -> Any:
+    """One drawn row of a component, presented on its own.
+
+    ``sample_shape=()`` asks for a single draw rather than a batch of one, so the
+    row is unwrapped: a record of that row rather than a one-row batch of records,
+    and the object itself rather than a one-element list. Field names survive —
+    one draw of a record-valued component is a record, whatever its field count.
+    """
+    if isinstance(component, RecordArray):
+        return component[0]
+    if isinstance(component, Record):
+        return _record_rows(component, 0)
+    if isinstance(component, list):
+        return component[0]
+    return component[0] if hasattr(component, "__getitem__") else component
+
+
 class BroadcastDistribution(Distribution[dict], SupportsSampling):
     """Joint distribution over broadcast inputs and function output.
 
@@ -914,10 +992,15 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
 
     Parameters
     ----------
-    input_samples : dict[str, Array]
-        ``{arg_name: (n, *event_shape)}`` for each broadcast argument.
-    output_samples : Array or list
-        ``(n, *event_shape)`` for array outputs, or a list of length *n*.
+    input_samples : dict[str, Array or RecordArray or list]
+        ``{arg_name: rows}`` for each broadcast argument, every value batched
+        over the same leading axis of length ``n``: an array of shape
+        ``(n, *event_shape)``, a record batch of ``batch_shape == (n,)`` for a
+        record-valued argument, or a list of ``n`` objects.
+    output_samples : Array, Record, or list
+        The outputs, batched over the same axis: ``(n, *event_shape)`` for array
+        outputs, a record whose leaves carry that axis for record-returning
+        functions, or a list of length *n*.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalized internally).  A pre-built
         :class:`~probpipe.Weights` object is also accepted.  Mutually
@@ -954,16 +1037,8 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         self._output_distributions = output_distributions
         self._output_template = output_template
 
-        # Determine n from first broadcast arg
-        first_key = next(iter(broadcast_args))
-        first_arr = input_samples[first_key]
-        if isinstance(first_arr, RecordArray):
-            n = prod(first_arr.batch_shape)
-        elif isinstance(first_arr, Record):
-            first_leaf = jax.tree.leaves(first_arr)[0]
-            n = first_leaf.shape[0] if hasattr(first_leaf, "shape") else len(first_leaf)
-        else:
-            n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
+        # The row count, taken from the first broadcast arg.
+        n = _row_count(input_samples[next(iter(broadcast_args))])
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         name, name_is_auto = auto_name(name, "broadcast")
@@ -1011,25 +1086,22 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
     # -- joint sampling -----------------------------------------------------
 
     def _sample(self, key, sample_shape=()):
-        """Resample paired input–output tuples."""
+        """Resample paired input–output tuples.
+
+        Every component is batched along the same leading axis, so one set of
+        drawn rows is gathered from each — the inputs and the output alike, which
+        is what keeps a drawn tuple paired.
+        """
         n_draws = prod(sample_shape) if sample_shape else 1
         indices = self._w.choice(key, shape=(n_draws,))
 
-        result = {}
-        for arg_name in self._broadcast_args:
-            arr = self._input_samples[arg_name]
-            result[arg_name] = arr[indices]
-
-        # Output
-        if isinstance(self._output_samples, jnp.ndarray):
-            result["_output"] = self._output_samples[indices]
-        elif isinstance(self._output_samples, list):
-            result["_output"] = [self._output_samples[int(i)] for i in indices]
-        else:
-            result["_output"] = self._output_samples[indices]
+        result = {
+            name: _take_rows(self._input_samples[name], indices) for name in self._broadcast_args
+        }
+        result["_output"] = _take_rows(self._output_samples, indices)
 
         if sample_shape == ():
-            return jax.tree.map(lambda x: x[0] if hasattr(x, "__getitem__") else x, result)
+            return {name: _one_row(component) for name, component in result.items()}
         return result
 
     # -- marginalization ----------------------------------------------------

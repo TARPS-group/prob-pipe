@@ -39,7 +39,9 @@ from probpipe.core._array_backend import (
 )
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._distribution_array import DistributionArray
+from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_array import NumericRecordArray, RecordArray
 from probpipe.core._workflow_context import workflow_run
 from probpipe.core._workflow_errors import (
@@ -246,6 +248,7 @@ __all__ = [
     "FlattenedDistributionView",
     "FullFactorialDesign",
     "Function",
+    "FunctionBatch",
     "FunctionSpec",
     # Modeling
     "GLMLikelihood",
@@ -280,6 +283,7 @@ __all__ = [
     "NumericRecordArray",
     "NumericRecordDistribution",
     "NumericRecordDistributionView",
+    "OpaqueBatch",
     "OpaqueSpec",
     "ParentInfo",
     "Pareto",

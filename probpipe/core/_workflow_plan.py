@@ -362,18 +362,30 @@ def _validate_stochastic_sample_count(n_broadcast_samples: int) -> None:
         )
 
 
-def group_by_parent(
+def group_by_root(
     *,
     values: Mapping[str, Any],
     refs: Sequence[_workflow_call.WorkflowInputRef],
-) -> dict[int, list[_workflow_call.WorkflowInputRef]]:
-    """Group input references by the identity of their source parent."""
-    groups: dict[int, list[_workflow_call.WorkflowInputRef]] = {}
+) -> list[tuple[Any, tuple[_workflow_call.WorkflowInputRef, ...]]]:
+    """Group input references by root ancestor, with the root of each group.
+
+    A value with no parent is its own root, so one group holds every reference
+    that denotes the same underlying random variable: the same distribution
+    passed twice, sibling views of one parent, and a parent passed alongside its
+    own view. References with no common root land in separate groups. Groups and
+    their members keep argument order, so the grouping is a deterministic
+    function of the call.
+
+    A root is found by a single ``parent`` lookup, which is exact for the view
+    types that exist: a view's parent is always a distribution, never another
+    view. A nested view type would need this walked transitively.
+    """
+    groups: dict[int, tuple[Any, list[_workflow_call.WorkflowInputRef]]] = {}
     for ref in refs:
         value = _workflow_call.input_ref_value(values, ref)
-        parent = getattr(value, "parent", value)
-        groups.setdefault(id(parent), []).append(ref)
-    return groups
+        root = getattr(value, "parent", value)
+        groups.setdefault(id(root), (root, []))[1].append(ref)
+    return [(root, tuple(group_refs)) for root, group_refs in groups.values()]
 
 
 def group_array_args_by_parent(
@@ -383,7 +395,7 @@ def group_array_args_by_parent(
 ) -> tuple[ArrayBroadcastGroup, ...]:
     """Build parent-identity groups for array-valued sweep arguments."""
     groups: list[ArrayBroadcastGroup] = []
-    for arg_refs in group_by_parent(values=values, refs=refs).values():
+    for _root, arg_refs in group_by_root(values=values, refs=refs):
         first = _workflow_call.input_ref_value(values, arg_refs[0])
         batch_shape = tuple(first.batch_shape)
         groups.append(

@@ -12,6 +12,7 @@ from probpipe import (
     ProductDistribution,
     Provenance,
     Record,
+    RecordArray,
     SupportsCovariance,
     SupportsLogProb,
     SupportsMean,
@@ -156,6 +157,82 @@ class TestBroadcastDistributionSampling:
         batch = bd._sample(key, (100,))
         # For each resampled pair, output should be 10x input
         np.testing.assert_allclose(batch["_output"], batch["x"] * 10, atol=1e-5)
+
+
+class TestResamplingARecordValuedComponent:
+    """A component may be record-shaped, which has fields rather than a shape."""
+
+    @staticmethod
+    def _paired(**controls):
+        """A batch of three rows whose record input determines the output."""
+        rows = [Record("r", x=jnp.array(float(i)), y=jnp.array(10.0 * i)) for i in range(1, 4)]
+        return BroadcastDistribution(
+            input_samples={"a": RecordArray.stack(rows)},
+            output_samples=jnp.array([10.0, 20.0, 30.0]),
+            weights=None,
+            broadcast_args=["a"],
+            **controls,
+        )
+
+    def test_a_record_valued_input_resamples(self, key):
+        batch = self._paired()._sample(key, (5,))
+
+        assert isinstance(batch["a"], RecordArray)
+        assert batch["a"].batch_shape == (5,)
+        assert batch["_output"].shape == (5,)
+
+    def test_the_drawn_rows_stay_paired(self, key):
+        """Every field and the output are gathered at the same rows, or not paired."""
+        batch = self._paired()._sample(key, (50,))
+
+        x, y = np.asarray(batch["a"]["x"]), np.asarray(batch["a"]["y"])
+        np.testing.assert_allclose(y, x * 10, atol=1e-5)
+        np.testing.assert_allclose(np.asarray(batch["_output"]), y, atol=1e-5)
+        assert set(x.tolist()) <= {1.0, 2.0, 3.0}
+
+    def test_the_resampled_batch_states_the_rows_it_holds(self, key):
+        """A RecordArray stores its row count, so a gather has to restate it.
+
+        Rebuilding through ``jax.tree.map`` would carry the count over from the
+        pytree aux data and claim three rows while holding five.
+        """
+        batch = self._paired()._sample(key, (5,))
+
+        assert batch["a"].batch_shape == (batch["a"]["x"].shape[0],)
+        assert all(spec.shape == () for spec in batch["a"].template.values())
+
+    def test_one_draw_is_a_record_rather_than_a_one_row_batch(self, key):
+        drawn = self._paired()._sample(key, ())
+
+        assert isinstance(drawn["a"], Record)
+        assert not isinstance(drawn["a"], RecordArray)
+        assert drawn["a"]["x"].shape == ()
+        np.testing.assert_allclose(
+            float(np.asarray(drawn["_output"])), float(np.asarray(drawn["a"]["y"])), atol=1e-5
+        )
+
+    def test_a_record_valued_output_resamples_too(self, key):
+        """The output side takes the same gather, and keeps its field names.
+
+        A vectorized broadcast over a record-returning function leaves the output
+        a batched ``Record``, whose ``[]`` addresses a field rather than a row.
+        """
+        bd = BroadcastDistribution(
+            input_samples={"a": jnp.array([1.0, 2.0, 3.0])},
+            output_samples=Record("o", z=jnp.array([10.0, 20.0, 30.0])),
+            weights=None,
+            broadcast_args=["a"],
+        )
+
+        batch = bd._sample(key, (5,))
+        assert batch["_output"]["z"].shape == (5,)
+        np.testing.assert_allclose(
+            np.asarray(batch["_output"]["z"]), np.asarray(batch["a"]) * 10, atol=1e-5
+        )
+
+        drawn = bd._sample(key, ())
+        assert drawn["_output"]["z"].shape == ()
+        assert drawn["_output"].event_template["z"].shape == ()
 
 
 # ---------------------------------------------------------------------------

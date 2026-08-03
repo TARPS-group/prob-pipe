@@ -441,8 +441,9 @@ def _broadcast_enumerate(
     results = _workflow_execution.execute_many(request)
 
     all_input_samples = {
-        ref.label: _stack_input_rows(
-            [_workflow_call.input_ref_value(call_values, ref) for call_values in call_value_list]
+        ref.label: _stack_rows(
+            [_workflow_call.input_ref_value(call_values, ref) for call_values in call_value_list],
+            arg_name=ref.label,
         )
         for ref in all_broadcast_args
     }
@@ -518,6 +519,35 @@ def _broadcast_sample(
     )
 
 
+def _stack_rows(rows: list[Any], *, arg_name: str) -> Any:
+    """Stack one argument's per-row values into a single batched value.
+
+    ``jnp.stack`` covers array-valued rows. A record-valued row is not an array
+    — a ``Record`` has fields, not a shape — so those stack through
+    ``RecordArray.stack``, giving a batch whose ``batch_shape`` is ``(n,)`` and
+    whose fields are the per-row leaves.
+    """
+    from ._record_array import RecordArray
+    from .record import Record
+
+    if rows and isinstance(rows[0], Record):
+        try:
+            return RecordArray.stack(rows)
+        except TypeError:
+            # ``RecordArray`` is child-keyed, while a sampled nested Record is
+            # leaf-keyed. Preserve that structure by stacking its pytree leaves.
+            # Other stack failures must retain their original diagnosis.
+            if tuple(rows[0].keys()) == rows[0].fields:
+                raise
+            try:
+                return jax.tree.map(lambda *leaves: jnp.stack(leaves), *rows)
+            except (TypeError, ValueError) as nested_error:
+                raise TypeError(
+                    f"lifting {arg_name!r} could not batch its nested record rows"
+                ) from nested_error
+    return jnp.stack(rows)
+
+
 def _index_sample(s: Any, i: int) -> Any:
     """Index row ``i`` of a per-argument sample batch."""
     from .record import Record
@@ -530,16 +560,3 @@ def _index_sample(s: Any, i: int) -> Any:
             return s[leaf_paths[0]][i]
         return Record(s.name, {p: s[p][i] for p in leaf_paths}, name_is_auto=True)
     return s[i]
-
-
-def _stack_input_rows(rows: list[Any]) -> Any:
-    """Stack exact input rows while preserving Record-valued roots."""
-    from ._record_array import RecordArray
-    from .record import Record
-
-    if rows and all(isinstance(row, Record) for row in rows):
-        try:
-            return RecordArray.stack(rows)
-        except TypeError:
-            return jax.tree.map(lambda *leaves: jnp.stack(leaves), *rows)
-    return jnp.stack(rows)
