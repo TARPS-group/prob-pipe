@@ -287,6 +287,21 @@ class TestElements:
         assert batch.batch_shape == (2,)
         np.testing.assert_array_equal(np.asarray(batch[1]), np.ones(3))
 
+    def test_an_object_array_of_arrays_is_not_unpacked(self):
+        """The other input path: a supplied object array, copied rather than built.
+
+        `_as_object_array` has two branches, and this is the one numpy could
+        silently re-stack — a plain `np.asarray` of an object array of equal-shaped
+        arrays descends into them and returns one 2-d numeric array.
+        """
+        store = np.empty(2, dtype=object)
+        store[0], store[1] = jnp.zeros(3), jnp.ones(3)
+
+        batch = OpaqueBatch(store, "site")
+
+        assert batch.batch_shape == (2,)
+        np.testing.assert_array_equal(np.asarray(batch[1]), np.ones(3))
+
     def test_elements_holding_sequences_are_not_unpacked(self):
         batch = OpaqueBatch([[1, 2], [3, 4]], "site")
 
