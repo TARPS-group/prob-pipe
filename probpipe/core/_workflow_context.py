@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+from os import urandom as _os_urandom
 from threading import Lock
 from types import TracebackType
 from typing import Any, Literal
@@ -262,7 +262,7 @@ def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
             elif frame.parent is not None:
                 frame.state.root_words = _resolve_root_words(frame.parent)
             else:
-                entropy = os.urandom(8)
+                entropy = _os_urandom(8)
                 if len(entropy) != 8:  # pragma: no cover - OS contract guard
                     raise RuntimeError("OS entropy provider did not return 8 bytes")
                 frame.state.root_words = (

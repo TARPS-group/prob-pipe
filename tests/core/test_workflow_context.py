@@ -40,7 +40,7 @@ class TestWorkflowRunBoundary:
                 pass
 
     def test_empty_anonymous_run_does_not_read_os_entropy(self):
-        with patch("probpipe.core._workflow_context.os.urandom") as urandom, workflow_run():
+        with patch("probpipe.core._workflow_context._os_urandom") as urandom, workflow_run():
             pass
 
         urandom.assert_not_called()
@@ -48,7 +48,7 @@ class TestWorkflowRunBoundary:
     def test_anonymous_root_reads_exactly_eight_entropy_bytes_on_first_claim(self):
         with (
             patch(
-                "probpipe.core._workflow_context.os.urandom",
+                "probpipe.core._workflow_context._os_urandom",
                 return_value=bytes.fromhex("0123456789abcdef"),
             ) as urandom,
             workflow_run(),
@@ -60,7 +60,7 @@ class TestWorkflowRunBoundary:
 
     def test_independent_ephemeral_runs_receive_independent_roots(self):
         with patch(
-            "probpipe.core._workflow_context.os.urandom",
+            "probpipe.core._workflow_context._os_urandom",
             side_effect=[bytes(8), bytes.fromhex("0000000000000001")],
         ) as urandom:
             with _ephemeral_workflow_run():

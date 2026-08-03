@@ -37,7 +37,7 @@ class TestSequentialLiftingWorkflowRun:
 
         dist = Normal(loc=0.0, scale=1.0, name="x")
         with patch(
-            "probpipe.core._workflow_context.os.urandom",
+            "probpipe.core._workflow_context._os_urandom",
             side_effect=[bytes(8), bytes.fromhex("0000000000000001")],
         ) as urandom:
             first = identity(dist)
