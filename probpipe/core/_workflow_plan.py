@@ -354,7 +354,7 @@ def _build_logical_units(broadcast_plan: BroadcastPlan) -> tuple[LogicalUnit, ..
 
 
 def _validate_stochastic_sample_count(n_broadcast_samples: int) -> None:
-    if not isinstance(n_broadcast_samples, int):
+    if isinstance(n_broadcast_samples, bool) or not isinstance(n_broadcast_samples, int):
         raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
     if n_broadcast_samples <= 0:
         raise ValueError(

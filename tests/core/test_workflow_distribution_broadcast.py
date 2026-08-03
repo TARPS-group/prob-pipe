@@ -465,6 +465,8 @@ class TestExecuteDistributionBroadcast:
     @pytest.mark.parametrize(
         ("n_broadcast_samples", "error_type", "message"),
         [
+            (True, TypeError, "n_broadcast_samples must be an integer"),
+            (False, TypeError, "n_broadcast_samples must be an integer"),
             (2.5, TypeError, "n_broadcast_samples must be an integer"),
             (0, ValueError, "n_broadcast_samples must be a positive integer"),
             (-1, ValueError, "n_broadcast_samples must be a positive integer"),
