@@ -217,6 +217,9 @@ class TestReplayAdmission:
             [],
             [["unknown-segment", 0]],
             [["operation", 0]],
+            [["child", 0]],
+            [["scope", 0], ["child", 0]],
+            [["invocation", 0], ["invocation", 1]],
         ],
     )
     def test_malformed_function_occurrence_paths_fail_at_entry(self, occurrence_path):

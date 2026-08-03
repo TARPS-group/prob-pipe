@@ -972,14 +972,36 @@ def _structural_tuple(value: Any, *, field_name: str) -> tuple[Any, ...]:
 def _validate_function_occurrence_path(path: tuple[Any, ...]) -> None:
     """Reject paths that cannot identify a committed public Function call."""
     _validate_occurrence_path(path)
-    if any(segment[0] == "operation" for segment in path):
+    index = 0
+    while index < len(path) and path[index][0] == "scope":
+        index += 1
+    if index == len(path) or path[index][0] != "invocation":
         raise ReplayCompatibilityError(
-            "recorded randomness.occurrence_path cannot anchor a managed operation"
+            "recorded randomness.occurrence_path has no root Function invocation"
         )
-    if path[-1][0] not in ("invocation", "child"):
-        raise ReplayCompatibilityError(
-            "recorded randomness.occurrence_path does not end at a Function invocation"
-        )
+    index += 1
+
+    while index < len(path):
+        if path[index][0] != "managed-unit":
+            raise ReplayCompatibilityError(
+                "recorded randomness.occurrence_path has a dangling Function segment"
+            )
+        index += 1
+        if index == len(path) or path[index][0] != "child":
+            raise ReplayCompatibilityError(
+                "recorded randomness.occurrence_path has a dangling managed unit"
+            )
+        index += 1
+
+        scope_start = index
+        while index < len(path) and path[index][0] == "scope":
+            index += 1
+        if index != scope_start:
+            if index == len(path) or path[index][0] != "invocation":
+                raise ReplayCompatibilityError(
+                    "recorded randomness.occurrence_path has a dangling nested scope"
+                )
+            index += 1
 
 
 def _validate_occurrence_path(path: tuple[Any, ...]) -> None:
