@@ -34,6 +34,7 @@ from . import (
     _workflow_execution_contract,
     _workflow_plan,
     _workflow_recipe,
+    _workflow_replay,
     _workflow_result,
     _workflow_sweep,
 )
@@ -505,6 +506,7 @@ class Function(Node, TrackedTerm, Annotated):
         ValueError
             If an authoritative input or output template is violated.
         """
+        _workflow_replay._reject_function_apply()
         with (
             _workflow_context._ephemeral_workflow_run(),
             _workflow_broker._function_stochastic_scope(),
@@ -678,16 +680,23 @@ class Function(Node, TrackedTerm, Annotated):
         call_inputs: dict[str, Any],
         options: _workflow_call.WorkflowCallOptions,
     ) -> Any:
-        with (
-            _workflow_context._ephemeral_workflow_run(),
-            _workflow_broker._function_stochastic_scope() as broker,
-        ):
-            broker.set_callable_anchor(_workflow_callable.capture_function_anchor(self))
-            return self._call_with_options_in_context(
-                args,
-                call_inputs,
-                options,
-            )
+        with _workflow_replay._function_replay_scope() as replay_call:
+            occurrence_path = None if replay_call is None else replay_call.occurrence_path
+            with (
+                _workflow_context._ephemeral_workflow_run(),
+                _workflow_broker._function_stochastic_scope(
+                    occurrence_path=occurrence_path
+                ) as broker,
+            ):
+                anchor = _workflow_callable.capture_function_anchor(self)
+                broker.set_callable_anchor(anchor)
+                if replay_call is not None:
+                    replay_call.validate_callable(anchor)
+                return self._call_with_options_in_context(
+                    args,
+                    call_inputs,
+                    options,
+                )
 
     def _call_with_options_in_context(
         self,
@@ -733,6 +742,9 @@ class Function(Node, TrackedTerm, Annotated):
             values,
             broadcast_plan,
             call.overrides.n_broadcast_samples,
+        )
+        _workflow_replay._validate_active_plan(
+            _workflow_recipe.serialize_stochastic_plan(stochastic_plan)
         )
         _, invocation_bindings = _bind_planned_function_inputs(
             function_name=self._name,

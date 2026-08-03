@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from typing import Any
 
-from . import _workflow_broker, _workflow_plan
+from . import _workflow_broker, _workflow_execution_contract, _workflow_plan
 from ._workflow_managed import ManagedEffectClaim
 from ._workflow_rng import RandomEventIdentity, encode_random_event
 from .config import ProvenanceMode, provenance_config
@@ -92,13 +91,19 @@ def provenance_recipe_fields(
             "provider_abi": _ordered_unique([effect.provider_abi for effect in effects]),
         },
     }
+    diagnostics = {
+        "rng_origin": snapshot.rng_origin,
+        "callable_source": anchor.diagnostics() if anchor is not None else {},
+        "execution": execution_diagnostics,
+    }
+    from . import _workflow_replay
+
+    replay_diagnostics = _workflow_replay._active_replay_diagnostics()
+    if replay_diagnostics is not None:
+        diagnostics["replay"] = replay_diagnostics
     return (
         {"randomness": random_recipe, "replay": replay_anchor},
-        {
-            "rng_origin": snapshot.rng_origin,
-            "callable_source": anchor.diagnostics() if anchor is not None else {},
-            "execution": execution_diagnostics,
-        },
+        diagnostics,
     )
 
 
@@ -223,10 +228,7 @@ def _sort_effects(
 
 
 def _contract_controls(contract: Any) -> dict[str, Any]:
-    raw = asdict(contract)
-    raw.pop("evaluator", None)
-    raw.pop("transport", None)
-    return _json_value(raw)
+    return _workflow_execution_contract.execution_capability_fields(contract)
 
 
 def _unique_json_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:

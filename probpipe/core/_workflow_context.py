@@ -28,6 +28,7 @@ _WorkflowContextKind = Literal[
     "ephemeral",
     "nested",
     "managed",
+    "replay",
 ]
 
 
@@ -158,6 +159,12 @@ class _WorkflowRunScope:
     def __enter__(self) -> None:
         if self._token is not None:
             raise RuntimeError("workflow_run context is already active")
+        from . import _workflow_replay
+
+        if _workflow_replay._replay_is_active():
+            from ._workflow_errors import ReplayCompatibilityError
+
+            raise ReplayCompatibilityError("workflow_run cannot be nested inside replay_run")
         parent = _ACTIVE_WORKFLOW_FRAME.get()
         _assert_workflow_admission(parent)
         seed_words = None if self._seed is None else seed_to_root_words(self._seed)
@@ -397,6 +404,25 @@ def _transported_workflow_frame(
         _ACTIVE_WORKFLOW_FRAME.reset(token)
 
 
+@contextmanager
+def _replay_workflow_frame(root_words: tuple[int, int]) -> Iterator[None]:
+    """Install one standalone root restored from replay provenance."""
+    frame = _WorkflowFrame(
+        kind="replay",
+        seed_words=None,
+        parent=None,
+        owner=_current_workflow_owner(),
+        state=_WorkflowFrameState(path_prefix=(), root_words=root_words),
+    )
+    token = _ACTIVE_WORKFLOW_FRAME.set(frame)
+    try:
+        yield
+    finally:
+        if _ACTIVE_WORKFLOW_FRAME.get() is not frame:
+            raise RuntimeError("replay workflow frames must exit in nesting order")
+        _ACTIVE_WORKFLOW_FRAME.reset(token)
+
+
 def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
     root_words = frame.state.root_words
     if root_words is not None:
@@ -441,6 +467,12 @@ def _describe_rng_origin(frame: _WorkflowFrame) -> dict[str, str | int | None]:
         return {
             "context_kind": "ephemeral_bare_call",
             "root_source": "os_entropy",
+            "supplied_seed": None,
+        }
+    if cursor.kind == "replay":
+        return {
+            "context_kind": "replay_run",
+            "root_source": "replay_recipe",
             "supplied_seed": None,
         }
     return {

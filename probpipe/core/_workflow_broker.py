@@ -478,14 +478,25 @@ class _RemoteManagedParent:
 
 
 @contextmanager
-def _function_stochastic_scope() -> Iterator[_AutomaticKeyBroker]:
+def _function_stochastic_scope(
+    *,
+    occurrence_path: tuple[Any, ...] | None = None,
+) -> Iterator[_AutomaticKeyBroker]:
     """Install a lazy broker for one public Function invocation."""
     _workflow_context._assert_workflow_admission()
+    frame = _workflow_context._capture_active_workflow_frame()
     broker = _AutomaticKeyBroker(
         "invocation",
-        _frame=_workflow_context._capture_active_workflow_frame(),
+        _frame=frame,
         _managed_attempt=_ACTIVE_MANAGED_ATTEMPT.get(),
     )
+    if occurrence_path is not None:
+        if frame is None or broker._managed_attempt is not None:
+            raise RuntimeError("a replay occurrence requires a standalone workflow frame")
+        broker._invocation = _workflow_context._WorkflowInvocation(
+            frame=frame,
+            occurrence_path=occurrence_path,
+        )
     token: Token[_AutomaticKeyBroker | None] = _ACTIVE_AUTOMATIC_KEY_BROKER.set(broker)
     try:
         yield broker
@@ -540,6 +551,9 @@ def _record_active_execution_contract(
     contract: WorkflowRngExecutionContract,
 ) -> None:
     """Attach an actual route contract to the current public invocation."""
+    from . import _workflow_replay
+
+    _workflow_replay._validate_active_execution_contract(contract)
     broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
     if broker is not None:
         broker.record_execution_contract(contract)
