@@ -1116,7 +1116,10 @@ class TestSpecStorage:
         r = Record("r", x=jnp.asarray(1.0), label="a")
         leaves, treedef = jax.tree_util.tree_flatten(r)
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
-        assert rebuilt.spec == r.spec
+        # ``is``, not ``==``: the aux spec is reused rather than re-wrapped, so
+        # crossing a JAX transform boundary allocates no declaration. An equality
+        # check would still pass if that reuse were lost.
+        assert rebuilt.spec is r.spec
 
     def test_records_sharing_a_spec_share_a_treedef(self):
         tpl = EventTemplate(x=(2,))
@@ -1136,6 +1139,22 @@ class TestSpecStorage:
         rebuilt = pickle.loads(pickle.dumps(r))
         assert rebuilt.spec == spec
 
+    def test_a_pickle_carrying_a_bare_template_still_loads(self):
+        """A payload written when the declaration was serialized as a bare
+        template loads under the spec-storing reader, which accepts either form.
+
+        Exercised through the reconstructors directly: no current code emits that
+        payload, so nothing else would reach this path.
+        """
+        from probpipe.core._numeric_record import _unpickle_numeric_record
+        from probpipe.core.record import _unpickle_record
+
+        tpl = EventTemplate(x=())
+        loaded = _unpickle_record({"x": jnp.asarray(1.0)}, "r", False, None, tpl)
+        assert loaded.spec == RecordSpec(tpl)
+        loaded_numeric = _unpickle_numeric_record({"x": jnp.asarray(1.0)}, "r", False, None, tpl)
+        assert loaded_numeric.spec == RecordSpec(tpl)
+
     def test_numeric_record_accepts_a_spec_declaration(self):
         from probpipe import NumericRecord
 
@@ -1145,11 +1164,19 @@ class TestSpecStorage:
         assert nr.spec.event_template is nr.event_template
 
     def test_a_batch_carries_no_record_spec(self):
+        """Interim: a batch subclasses ``Record`` without being one record, so it
+        refuses the accessor rather than reporting an element's spec as its own.
+
+        This case goes away with the subclassing, when the batch types become
+        collections in their own right — and so does this test.
+        """
         from probpipe import NumericRecord, RecordArray
 
         ra = RecordArray.stack([NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)])
         with pytest.raises(AttributeError, match="carries no RecordSpec"):
             _ = ra.spec
+        # Raising AttributeError is what makes the absence readable to a probe.
+        assert not hasattr(ra, "spec")
         # The element schema is still reachable, under its own name.
         assert ra.event_template.fields == ("x",)
 

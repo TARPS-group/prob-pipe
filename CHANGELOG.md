@@ -33,19 +33,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   This is the storage rule the tracked types share — a term carries the spec of
   its kind, and its schema accessors are views on that one object — reaching
-  the record side. `Record` is the second adopter after `Batch`; a
-  `Distribution`'s `event_spec` and a `Function`'s `output_spec` follow with
-  their own layers, and the slot moves onto the tracked base once every kind
-  carries one. A batched record inherits `Record` for now but is not one
-  record, so `RecordArray.spec` raises rather than reporting an element's spec
-  as the batch's own type — a batch's type specifies the collection.
+  the record side. A `Distribution`'s `event_spec` and a `Function`'s
+  `output_spec` follow with their own layers, and the slot moves onto the
+  tracked base once every kind carries one. A batched record still subclasses
+  `Record` and is not one record, so `RecordArray.spec` raises rather than
+  reporting an element's spec as the batch's own type: a batch's type specifies
+  the collection. That override goes away with the subclassing, when the batch
+  types become collections rather than records.
 
   The JAX pytree aux data is now the `(spec, name, name_is_auto)` triple rather
   than `(event_template, …)`, and pickled records serialize the spec. Aux stays
-  hashable and equal-for-equal-declarations, so treedefs still compare by
-  value; their digest changes, and fingerprints are in-memory jit cache keys
-  and provenance only, never persisted. A pickle written before this change
-  still loads, its bare template accepted as the declaration it is.
+  hashable and equal for equal declarations, so treedefs still compare by value
+  and a jit cache keyed on one is unaffected — including across the two
+  declaration forms, which agree. A pickle written before this change still
+  loads, its bare template accepted as the declaration it is.
 
 - **`TermSpec` — the term-spec sub-hierarchy, and declarations stored as specs
   (#381).** `ValueSpec` now splits into *raw-value specs* (`ArraySpec`,

@@ -195,9 +195,14 @@ class RecordArray(Record):
         Raises
         ------
         AttributeError
-            Always. Interim: batched records inherit :class:`Record`, which
-            stores a ``RecordSpec``, and the two part company when the batch
-            types are reworked onto the generic ``Batch``.
+            Always, so ``hasattr`` reports ``False`` and ``getattr`` with a
+            default falls back to it.
+
+        Notes
+        -----
+        Interim: a batch subclasses :class:`Record`, which stores a
+        ``RecordSpec``, without being one record. Both the subclassing and this
+        override end when the batch types become collections in their own right.
         """
         raise AttributeError(
             f"{type(self).__name__} carries no RecordSpec: a batch's own type specifies "

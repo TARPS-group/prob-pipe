@@ -156,10 +156,12 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection
-    of fields. Every record stores an :attr:`event_template`, which encodes
-    the structure of the value: the names, how the fields are stored, and
-    specs on the structure of the fields themselves. A record is immutable
-    and its :attr:`event_template` is fixed at construction.
+    of fields. Every record stores its type as a :attr:`spec`, a
+    :class:`RecordSpec` over the :attr:`event_template` that encodes the
+    structure of the value: the names, how the fields are stored, and specs on
+    the structure of the fields themselves. :attr:`event_template` is a view on
+    that one stored object, so the two cannot disagree. A record is immutable
+    and its :attr:`spec` is fixed at construction.
 
     A named collection of values
     ----------------------------
@@ -425,11 +427,13 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         **fields: _FieldValue,
     ):
         # Work in templates and store a spec: the two forms denote the same
-        # space, and every check below reads structure. ``declared`` keeps the
-        # form the caller gave, so the spec stored at the end is that object
-        # when they supplied one and the template still describes the record.
-        declared = event_template
-        event_template = _record_declaration_template(declared)
+        # space, and every check below reads structure. ``declaration`` keeps the
+        # form the caller gave, so the spec stored at the end is that object when
+        # they supplied one and the template still describes the record. One
+        # convention throughout: a *declaration* is the caller's form, spec or
+        # template, and a *template* is the structure it denotes.
+        declaration = event_template
+        event_template = _record_declaration_template(declaration)
         if _fields is not None:
             if fields:
                 raise ValueError("Cannot pass both positional dict and keyword arguments")
@@ -510,7 +514,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 object.__setattr__(
                     self, "_tree", {k: field_map[k] for k in event_template.children}
                 )
-        object.__setattr__(self, "_spec", _record_declaration_for(event_template, declared))
+        object.__setattr__(self, "_spec", _record_declaration_for(event_template, declaration))
 
     @staticmethod
     def _named_by_key(field_name: str, child: Record) -> Record:
@@ -600,6 +604,14 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         space, so after construction only the spec remains and the record's
         declared kind is the stored spec's class. :attr:`event_template` is a view
         on it and cannot disagree with it.
+
+        Notes
+        -----
+        Interim: a batched record subclasses ``Record`` without being one record,
+        and overrides this to raise, since a batch's own type specifies the
+        collection rather than one element. The override goes away with the
+        subclassing — a batch is a collection, not a record — so this accessor is
+        contractually total on records.
         """
         return self._spec
 

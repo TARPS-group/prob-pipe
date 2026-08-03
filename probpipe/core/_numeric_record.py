@@ -193,10 +193,12 @@ class NumericRecord(Record):
         _validate_leaves: bool = True,
         **fields: ArrayLike | NumericRecord,
     ):
-        # Read the declaration as a template for the child lookups below;
+        # The declaration read as a template, for the child lookups below.
         # ``event_template`` itself is forwarded in the form the caller gave, so
-        # ``Record.__init__`` can store a supplied spec verbatim.
-        declared = _record_declaration_template(event_template)
+        # ``Record.__init__`` can store a supplied spec verbatim. Same split as
+        # there, same names: the caller's form is the declaration, and
+        # ``declared_template`` is the structure it denotes.
+        declared_template = _record_declaration_template(event_template)
         # Build the validated field dict *before* Record's __init__ runs, so
         # ``_fields`` is populated exactly once and the "constructed once,
         # never touched" invariant implied by ``__slots__`` + the
@@ -217,8 +219,8 @@ class NumericRecord(Record):
             if isinstance(value, Mapping):
                 # A mapping value is nested structure: materialise the child.
                 sub_template: EventTemplate | None = None
-                if declared is not None:
-                    child = declared.children.get(field_name)
+                if declared_template is not None:
+                    child = declared_template.children.get(field_name)
                     if isinstance(child, EventTemplate):
                         sub_template = child
                 raw_fields[field_name] = type(self)(
