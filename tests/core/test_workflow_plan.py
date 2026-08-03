@@ -3,17 +3,35 @@
 from __future__ import annotations
 
 import inspect
+from dataclasses import FrozenInstanceError
 from typing import Any
+from unittest.mock import patch
 
 import jax.numpy as jnp
+import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordArray
+from probpipe import (
+    DistributionArray,
+    EmpiricalDistribution,
+    Normal,
+    NumericRecord,
+    NumericRecordArray,
+    ProductDistribution,
+)
 from probpipe.core import _workflow_call
 from probpipe.core._workflow_distribution_normalization import (
     normalize_distribution_values,
 )
-from probpipe.core._workflow_plan import ArrayBroadcastGroup, build_broadcast_plan
+from probpipe.core._workflow_plan import (
+    ArrayBroadcastGroup,
+    LogicalUnit,
+    PlannedRandomEvent,
+    StochasticPlan,
+    StochasticSourceGroup,
+    build_broadcast_plan,
+    build_stochastic_plan,
+)
 from probpipe.core.distribution import Distribution
 from probpipe.core.protocols import SupportsSampling
 
@@ -37,6 +55,14 @@ def _plan(values, hints=None):
         hints=hints,
     )
     return build_broadcast_plan(values=values, signature_info=signature_info)
+
+
+def _stochastic_plan(values, n_broadcast_samples=16):
+    return build_stochastic_plan(
+        values,
+        _plan(values),
+        n_broadcast_samples,
+    )
 
 
 class TestBroadcastRegime:
@@ -190,3 +216,265 @@ class TestPlanPurity:
         assert values["x"] is external
         assert raw_plan.regime == "none"
         assert normalized_plan.regime == "distribution"
+
+
+class TestStochasticPlanStructure:
+    def test_none_and_pure_sweep_have_no_stochastic_plan(self):
+        assert _stochastic_plan({"x": 1.0}) is None
+        assert _stochastic_plan({"rows": _numeric_record_array("x", range(2))}) is None
+
+    def test_sampled_singleton_plan_is_frozen_and_tuple_only(self):
+        plan = _stochastic_plan(
+            {
+                "a": Normal(loc=0.0, scale=1.0, name="a"),
+                "b": Normal(loc=1.0, scale=1.0, name="b"),
+            },
+            n_broadcast_samples=12,
+        )
+
+        assert isinstance(plan, StochasticPlan)
+        assert plan.evaluation_mode == "sampled"
+        assert plan.arg_refs == (_ref("a"), _ref("b"))
+        assert plan.source_groups == (
+            StochasticSourceGroup(0, (_ref("a"),), "direct", "sampled", None),
+            StochasticSourceGroup(1, (_ref("b"),), "direct", "sampled", None),
+        )
+        assert plan.logical_units == (LogicalUnit("singleton", 0, ()),)
+        assert plan.n_broadcast_samples == 12
+        assert plan.sample_shape == (12,)
+        assert plan.exact_group_order == ()
+        assert plan.exact_combination_order == ((),)
+        assert plan.repetitions_per_combination == 12
+        assert plan.n_evaluations == 12
+        assert plan.random_events == (
+            PlannedRandomEvent(("source-group", 0), ("singleton",)),
+            PlannedRandomEvent(("source-group", 1), ("singleton",)),
+        )
+        assert isinstance(plan.arg_refs, tuple)
+        assert isinstance(plan.source_groups, tuple)
+        assert isinstance(plan.logical_units, tuple)
+        assert isinstance(plan.exact_group_order, tuple)
+        assert isinstance(plan.exact_combination_order, tuple)
+        assert all(isinstance(combo, tuple) for combo in plan.exact_combination_order)
+        assert all(isinstance(group.arg_refs, tuple) for group in plan.source_groups)
+        assert all(isinstance(unit.coordinates, tuple) for unit in plan.logical_units)
+        assert isinstance(plan.random_events, tuple)
+
+        with pytest.raises(FrozenInstanceError):
+            plan.n_evaluations = 99
+        with pytest.raises(FrozenInstanceError):
+            plan.source_groups[0].index = 99
+        with pytest.raises(FrozenInstanceError):
+            plan.logical_units[0].flat_index = 99
+
+    def test_nested_plan_uses_row_major_canonical_sweep_units(self):
+        values = {
+            "left": _numeric_record_array("x", range(2)),
+            "right": _numeric_record_array("y", range(3)),
+            "noise": Normal(loc=0.0, scale=1.0, name="noise"),
+        }
+
+        plan = _stochastic_plan(values, n_broadcast_samples=7)
+
+        assert plan.logical_units == tuple(
+            LogicalUnit("canonical_sweep", flat_index, coordinates)
+            for flat_index, coordinates in enumerate(
+                ((0, 0), (0, 1), (0, 2), (1, 0), (1, 1), (1, 2))
+            )
+        )
+        assert tuple(unit.logical_unit_id for unit in plan.logical_units) == (
+            ("cell", 0, 0),
+            ("cell", 0, 1),
+            ("cell", 0, 2),
+            ("cell", 1, 0),
+            ("cell", 1, 1),
+            ("cell", 1, 2),
+        )
+        assert len(plan.random_events) == 6
+
+
+class TestStochasticSourceGrouping:
+    def test_record_views_share_their_known_parent_group(self):
+        joint = ProductDistribution(
+            x=Normal(loc=0.0, scale=1.0, name="x"),
+            y=Normal(loc=1.0, scale=1.0, name="y"),
+        )
+
+        plan = _stochastic_plan(
+            {
+                "x": joint["x"],
+                "independent": Normal(loc=2.0, scale=1.0, name="independent"),
+                "y": joint["y"],
+            }
+        )
+
+        assert plan.source_groups == (
+            StochasticSourceGroup(
+                0,
+                (_ref("x"), _ref("y")),
+                "record_view",
+                "sampled",
+                None,
+            ),
+            StochasticSourceGroup(
+                1,
+                (_ref("independent"),),
+                "direct",
+                "sampled",
+                None,
+            ),
+        )
+
+    def test_direct_aliases_remain_separate_in_this_wave(self):
+        shared = Normal(loc=0.0, scale=1.0, name="shared")
+
+        plan = _stochastic_plan({"first": shared, "second": shared})
+
+        assert tuple(group.arg_refs for group in plan.source_groups) == (
+            (_ref("first"),),
+            (_ref("second"),),
+        )
+        assert tuple(group.stochastic_source_id for group in plan.source_groups) == (
+            ("source-group", 0),
+            ("source-group", 1),
+        )
+
+
+class TestStochasticEvaluationPlanning:
+    def test_wholly_exact_empiricals_record_cartesian_order_and_no_events(self):
+        values = {
+            "a": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="a"),
+            "b": EmpiricalDistribution(jnp.asarray([10.0, 20.0, 30.0]), name="b"),
+        }
+
+        plan = _stochastic_plan(values, n_broadcast_samples=10)
+
+        assert plan.evaluation_mode == "exact"
+        assert tuple(group.execution_mode for group in plan.source_groups) == (
+            "exact",
+            "exact",
+        )
+        assert tuple(group.exact_size for group in plan.source_groups) == (2, 3)
+        assert plan.exact_group_order == (0, 1)
+        assert plan.exact_combination_order == (
+            (0, 0),
+            (0, 1),
+            (0, 2),
+            (1, 0),
+            (1, 1),
+            (1, 2),
+        )
+        assert plan.repetitions_per_combination == 1
+        assert plan.n_evaluations == 6
+        assert plan.sample_shape is None
+        assert plan.random_events == ()
+
+    def test_mixed_plan_preserves_stable_greedy_order_and_actual_sample_shape(self):
+        values = {
+            "large_first": EmpiricalDistribution(jnp.arange(5.0), name="large_first"),
+            "small_second": EmpiricalDistribution(jnp.arange(2.0), name="small_second"),
+            "sampled": Normal(loc=0.0, scale=1.0, name="sampled"),
+        }
+
+        plan = _stochastic_plan(values, n_broadcast_samples=23)
+
+        assert plan.evaluation_mode == "mixed_exact_sampled"
+        assert plan.exact_group_order == (1, 0)
+        assert plan.exact_combination_order[:6] == (
+            (0, 0),
+            (0, 1),
+            (0, 2),
+            (0, 3),
+            (0, 4),
+            (1, 0),
+        )
+        assert plan.repetitions_per_combination == 2
+        assert plan.n_evaluations == 20
+        assert plan.sample_shape == (20,)
+        assert plan.random_events == (PlannedRandomEvent(("source-group", 2), ("singleton",)),)
+
+    def test_over_budget_empirical_is_sampled(self):
+        plan = _stochastic_plan(
+            {"x": EmpiricalDistribution(jnp.arange(20.0), name="x")},
+            n_broadcast_samples=5,
+        )
+
+        assert plan.evaluation_mode == "sampled"
+        assert plan.source_groups[0].execution_mode == "sampled"
+        assert plan.source_groups[0].exact_size is None
+        assert plan.sample_shape == (5,)
+        assert len(plan.random_events) == 1
+
+    def test_equal_size_empiricals_keep_first_consumer_order_at_greedy_cutoff(self):
+        plan = _stochastic_plan(
+            {
+                "first": EmpiricalDistribution(jnp.arange(3.0), name="first"),
+                "second": EmpiricalDistribution(jnp.arange(3.0), name="second"),
+                "third": EmpiricalDistribution(jnp.arange(3.0), name="third"),
+            },
+            n_broadcast_samples=10,
+        )
+
+        assert plan.exact_group_order == (0, 1)
+        assert tuple(group.execution_mode for group in plan.source_groups) == (
+            "exact",
+            "exact",
+            "sampled",
+        )
+        assert plan.n_evaluations == 9
+        assert plan.sample_shape == (9,)
+        assert plan.random_events == (PlannedRandomEvent(("source-group", 2), ("singleton",)),)
+
+    def test_event_count_is_sampled_sources_times_units_not_draw_count(self):
+        values = {
+            "rows": _numeric_record_array("x", range(3)),
+            "a": Normal(loc=0.0, scale=1.0, name="a"),
+            "b": Normal(loc=1.0, scale=1.0, name="b"),
+        }
+
+        small = _stochastic_plan(values, n_broadcast_samples=5)
+        large = _stochastic_plan(values, n_broadcast_samples=500)
+
+        assert len(small.random_events) == 2 * 3
+        assert small.random_events == large.random_events
+        assert small.sample_shape == (5,)
+        assert large.sample_shape == (500,)
+
+    @pytest.mark.parametrize(
+        ("n_broadcast_samples", "error", "message"),
+        [
+            (2.5, TypeError, "n_broadcast_samples must be an integer"),
+            (0, ValueError, "n_broadcast_samples must be a positive integer"),
+            (-1, ValueError, "n_broadcast_samples must be a positive integer"),
+        ],
+    )
+    def test_invalid_sample_counts_fail_during_planning(
+        self,
+        n_broadcast_samples,
+        error,
+        message,
+    ):
+        values = {"x": Normal(loc=0.0, scale=1.0, name="x")}
+
+        with pytest.raises(error, match=message):
+            _stochastic_plan(values, n_broadcast_samples=n_broadcast_samples)
+
+
+class TestStochasticPlanPurity:
+    def test_planner_does_not_read_entropy_claim_keys_or_mutate_inputs(self):
+        source = Normal(loc=0.0, scale=1.0, name="x")
+        values = {"x": source}
+
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            patch(
+                "probpipe.core._workflow_context._commit_stochastic_invocation"
+            ) as commit_invocation,
+        ):
+            plan = _stochastic_plan(values)
+
+        assert plan.random_events == (PlannedRandomEvent(("source-group", 0), ("singleton",)),)
+        assert values == {"x": source}
+        assert values["x"] is source
+        urandom.assert_not_called()
+        commit_invocation.assert_not_called()
