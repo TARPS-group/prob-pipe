@@ -35,6 +35,7 @@ probpipe/
 ├── values/                    # the value layer (III.1–III.3)
 │   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
 │   │                          #     plain evaluation), FunctionSpec, and the function capabilities
+│   ├── _object_batch.py       #   object-array storage the two batch forms share
 │   ├── _function_batch.py     #   FunctionBatch (III.1)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.1)
 │   ├── _record.py             #   Record, NumericRecord (III.2), RecordSpec (II.2)
