@@ -64,6 +64,31 @@ def test_function_rng_seed_controls_are_removed():
         wf.with_options(seed=42)
 
 
+def test_function_construction_seed_is_rejected_when_user_parameter_can_bind_it():
+    def add_seed(x, seed):
+        return x + seed
+
+    with pytest.raises(TypeError, match="seed"):
+        Function(func=add_seed, dispatch="sequential", seed=42)
+
+
+def test_decorator_construction_seed_is_rejected_for_variadic_user_kwargs():
+    with pytest.raises(TypeError, match="seed"):
+
+        @function(seed=42)
+        def collect_seed(x, **kwargs):
+            return x + kwargs["seed"]
+
+
+def test_function_bind_can_still_supply_user_seed_parameter():
+    def add_seed(x, seed):
+        return x + seed
+
+    wf = Function(func=add_seed, dispatch="sequential", bind={"seed": 42})
+
+    assert float(wf(1.0)) == 43.0
+
+
 def test_bare_decorator_forms_wrap_functions():
     @function
     def bare(x):

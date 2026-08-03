@@ -297,6 +297,12 @@ class Function(Node, TrackedTerm, Annotated):
     ):
         if not callable(func):
             raise TypeError(f"func must be callable, got {type(func).__name__}")
+        if "seed" in kwargs:
+            raise TypeError(
+                "seed is no longer a Function construction option; "
+                "use workflow_run(seed=...) for workflow randomness, or pass a "
+                "wrapped-function seed at call time or through bind={'seed': ...}"
+            )
         signature_info = _workflow_call.make_signature_info(func)
         implementation = _CallableFunctionImplementation(func)
         resolved_name, name_is_auto = auto_name(
