@@ -33,7 +33,7 @@ from ._registry import (
     Converter,
     _ConversionExecutionMode,
     _ConversionExecutionPlan,
-    _resolve_conversion_key,
+    _sample_probpipe_conversion_source,
     _sampled_conversion_plan,
     _validate_conversion_sample_count,
 )
@@ -280,8 +280,11 @@ def _convert_to_halfcauchy(source, key, **kw):
     if isinstance(source, HalfCauchy):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
-    samples = source._sample(key, (num_samples,))
+    samples = _sample_probpipe_conversion_source(
+        source,
+        key,
+        _probpipe_sampled_plan(num_samples),
+    )
     med = jnp.median(samples)
     r = HalfCauchy(loc=0.0, scale=jnp.maximum(med, 0.01), name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
@@ -294,8 +297,11 @@ def _convert_to_pareto(source, key, **kw):
     if isinstance(source, Pareto):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
-    samples = source._sample(key, (num_samples,))
+    samples = _sample_probpipe_conversion_source(
+        source,
+        key,
+        _probpipe_sampled_plan(num_samples),
+    )
     n = samples.shape[0]
     scale = jnp.maximum(jnp.min(samples), 1e-6)
     conc = jnp.maximum(n / jnp.sum(jnp.log(samples / scale)), 0.01)
@@ -310,10 +316,10 @@ def _convert_to_truncatednormal(source, key, **kw):
     if isinstance(source, TruncatedNormal):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
+    plan = _probpipe_sampled_plan(num_samples)
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
-    samples = source._sample(key, (num_samples,))
+    samples = _sample_probpipe_conversion_source(source, key, plan)
     r = TruncatedNormal(
         loc=m,
         scale=jnp.sqrt(v),
@@ -373,8 +379,11 @@ def _convert_to_categorical(source, key, **kw):
     if isinstance(source, Categorical):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
-    samples = source._sample(key, (num_samples,))
+    samples = _sample_probpipe_conversion_source(
+        source,
+        key,
+        _probpipe_sampled_plan(num_samples),
+    )
     n_cat = int(jnp.max(samples)) + 1
     counts = jnp.array([(samples == k).sum() for k in range(n_cat)])
     probs = counts / counts.sum()
@@ -424,8 +433,11 @@ def _convert_to_multivariatenormal(source, key, **kw):
         cov_mat = source._cov()
     except (NotImplementedError, AttributeError):
         # Fallback to sample-based covariance
-        key = _resolve_conversion_key(key, _conditional_conversion_plan(num_samples))
-        samples = source._sample(key, (num_samples,))
+        samples = _sample_probpipe_conversion_source(
+            source,
+            key,
+            _conditional_conversion_plan(num_samples),
+        )
         diff = samples - loc
         cov_mat = jnp.einsum("ni,nj->ij", diff, diff) / num_samples
     cov_mat = 0.5 * (cov_mat + cov_mat.T)
@@ -477,8 +489,11 @@ def _convert_to_wishart(source, key, **kw):
     if isinstance(source, Wishart):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
-    samples = source._sample(key, (num_samples,))
+    samples = _sample_probpipe_conversion_source(
+        source,
+        key,
+        _probpipe_sampled_plan(num_samples),
+    )
     mean_mat = jnp.mean(samples, axis=0)
     d = mean_mat.shape[-1]
     df = d + 2.0
@@ -517,8 +532,11 @@ def _convert_to_empirical(source, key, **kw):
     if isinstance(source, RecordEmpiricalDistribution):
         return source
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
-    samples = source._sample(key, (num_samples,))
+    samples = _sample_probpipe_conversion_source(
+        source,
+        key,
+        _probpipe_sampled_plan(num_samples),
+    )
     r = RecordEmpiricalDistribution(samples, name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
     return r
@@ -570,8 +588,11 @@ def _convert_to_kde(source, key, **kw):
         )
 
     num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    key = _resolve_conversion_key(key, _probpipe_sampled_plan(num_samples))
-    samples = source._sample(key, (num_samples,))
+    samples = _sample_probpipe_conversion_source(
+        source,
+        key,
+        _probpipe_sampled_plan(num_samples),
+    )
     r = KDEDistribution(samples, bandwidth=bandwidth, name=name)
     r.with_provenance(_mm_provenance(source))
     return r

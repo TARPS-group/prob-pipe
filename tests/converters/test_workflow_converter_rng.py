@@ -8,6 +8,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import (
@@ -18,6 +19,7 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     RecordEmpiricalDistribution,
+    TransformedDistribution,
     converter_registry,
     from_distribution,
     workflow_run,
@@ -188,6 +190,71 @@ class TestBuiltInConversionPlanning:
 
         assert result.num_atoms == 8
         commit.assert_called_once_with("invocation")
+
+    def test_sampled_probpipe_conversion_uses_captured_root_and_forward(self):
+        calls = []
+        root = _RecordingNormal(calls)
+        descendant = TransformedDistribution(root, tfb.Exp())
+
+        with (
+            patch.object(
+                type(descendant),
+                "_sample",
+                side_effect=AssertionError("sampled descendant directly"),
+            ),
+            workflow_run(seed=31),
+        ):
+            converted = converter_registry.convert(
+                descendant,
+                RecordEmpiricalDistribution,
+                num_samples=12,
+            )
+
+        assert [shape for _key, shape in calls] == [(12,)]
+        root_key = calls[0][0]
+        expected = jnp.exp(Normal._sample(root, root_key, (12,)))
+        np.testing.assert_allclose(
+            converted.flat_samples[:, 0],
+            expected,
+            rtol=1e-6,
+            atol=1e-6,
+        )
+
+    def test_unsupported_descendant_conversion_fails_before_entropy(self):
+        calls = []
+        root = _RecordingNormal(calls)
+        descendant = TransformedDistribution(root, tfb.Tanh())
+
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            workflow_run(),
+            pytest.raises(TypeError, match="does not support this bijector type"),
+        ):
+            converter_registry.convert(
+                descendant,
+                RecordEmpiricalDistribution,
+                num_samples=8,
+            )
+
+        urandom.assert_not_called()
+        commit.assert_not_called()
+        assert calls == []
+
+    def test_explicit_key_conversion_keeps_direct_descendant_sampling(self):
+        root = Normal(loc=0.0, scale=1.0, name="base")
+        descendant = TransformedDistribution(root, tfb.Tanh())
+        explicit = jax.random.key(37)
+
+        converted = converter_registry.convert(
+            descendant,
+            RecordEmpiricalDistribution,
+            key=explicit,
+            num_samples=8,
+        )
+
+        expected = descendant._sample(explicit, (8,))
+        np.testing.assert_allclose(converted.flat_samples[:, 0], expected)
 
 
 class TestConverterCertification:

@@ -208,9 +208,11 @@ def build_stochastic_plan(
 
     _validate_stochastic_sample_count(n_broadcast_samples)
     arg_refs = tuple(broadcast_plan.dist_args)
-    grouped_consumers, source_values, runtime_evaluators = _group_stochastic_sources(
-        values=values,
-        refs=arg_refs,
+    grouped_consumers, source_values, runtime_samplers, runtime_evaluators = (
+        _group_stochastic_sources(
+            values=values,
+            refs=arg_refs,
+        )
     )
 
     candidates = [
@@ -242,7 +244,7 @@ def build_stochastic_plan(
     runtime_bindings = tuple(
         StochasticRuntimeBinding(
             root=source,
-            sample_root=source._sample,
+            sample_root=runtime_samplers[index],
             consumer_evaluators=tuple(runtime_evaluators[index]),
         )
         for index, source in enumerate(source_values)
@@ -292,11 +294,13 @@ def _group_stochastic_sources(
 ) -> tuple[
     list[list[StochasticConsumerPlan]],
     list[Distribution],
+    list[Callable[[Any, tuple[int, ...]], Any]],
     list[list[Callable[[Any], Any]]],
 ]:
     """Discover live roots while keeping object IDs out of canonical plans."""
     grouped_consumers: list[list[StochasticConsumerPlan]] = []
     source_values: list[Distribution] = []
+    runtime_samplers: list[Callable[[Any, tuple[int, ...]], Any]] = []
     runtime_evaluators: list[list[Callable[[Any], Any]]] = []
     group_by_root: dict[int, int] = {}
 
@@ -312,6 +316,7 @@ def _group_stochastic_sources(
             group_by_root[root_identity] = group_index
             grouped_consumers.append([])
             source_values.append(root)
+            runtime_samplers.append(captured.sample_root)
             runtime_evaluators.append([])
         descendant_descriptor = captured.descendant_descriptor
         if descendant_descriptor is not None:
@@ -329,7 +334,7 @@ def _group_stochastic_sources(
         )
         runtime_evaluators[group_index].append(captured.evaluator)
 
-    return grouped_consumers, source_values, runtime_evaluators
+    return grouped_consumers, source_values, runtime_samplers, runtime_evaluators
 
 
 def _build_logical_units(broadcast_plan: BroadcastPlan) -> tuple[LogicalUnit, ...]:

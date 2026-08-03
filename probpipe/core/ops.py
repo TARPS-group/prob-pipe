@@ -24,7 +24,7 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from . import _workflow_broker
+from . import _workflow_broker, _workflow_descendants
 from .distribution import Distribution, RandomFunction
 from .node import function
 from .protocols import (
@@ -99,6 +99,7 @@ def sample(
     if any(axis < 0 for axis in sample_shape):
         raise ValueError(f"sample_shape dimensions must be non-negative; got {sample_shape!r}")
     if key is None:
+        captured = _workflow_descendants.capture_stochastic_consumer(dist)
         key = _workflow_broker._resolve_automatic_key(
             None,
             _workflow_broker._singleton_effect_plan(
@@ -107,6 +108,7 @@ def sample(
                 sample_shape=sample_shape,
             ),
         )
+        return _workflow_descendants.sample_captured_consumer(captured, key, sample_shape)
     return dist._sample(key, sample_shape)
 
 

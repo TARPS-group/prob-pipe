@@ -12,11 +12,15 @@ import pytest
 import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
+    EmpiricalDistribution,
     Function,
     MultivariateNormal,
     Normal,
     NumericEventTemplate,
+    NumericRecord,
+    NumericRecordArray,
     ProductDistribution,
+    Record,
     TransformedDistribution,
     workflow_run,
 )
@@ -31,6 +35,26 @@ def _stochastic_plan(values, n_broadcast_samples=16):
     signature_info = _workflow_call.make_signature_info_from_signature(signature)
     broadcast_plan = build_broadcast_plan(values=values, signature_info=signature_info)
     return build_stochastic_plan(values, broadcast_plan, n_broadcast_samples)
+
+
+class _RecordingNormal(Normal):
+    def __init__(self, calls, *, name="base"):
+        self.calls = calls
+        super().__init__(loc=0.0, scale=1.0, name=name)
+
+    def _sample(self, key, sample_shape=()):
+        self.calls.append((key, tuple(sample_shape)))
+        return super()._sample(key, sample_shape)
+
+
+class _RecordingMultivariateNormal(MultivariateNormal):
+    def __init__(self, calls):
+        self.calls = calls
+        super().__init__(loc=jnp.zeros(2), cov=jnp.eye(2), name="base")
+
+    def _sample(self, key, sample_shape=()):
+        self.calls.append((key, tuple(sample_shape)))
+        return super()._sample(key, sample_shape)
 
 
 @pytest.mark.parametrize(
@@ -357,3 +381,208 @@ def test_unsupported_preflight_does_not_read_entropy_or_sample():
 
     urandom.assert_not_called()
     sample_root.assert_not_called()
+
+
+@pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+def test_function_co_samples_root_and_multiple_descendants(dispatch):
+    calls = []
+    root = _RecordingNormal(calls)
+    exponentiated = TransformedDistribution(root, tfb.Exp())
+    shifted = TransformedDistribution(root, tfb.Shift(2.0))
+    workflow = Function(
+        func=lambda base, exp_base, shifted_base: jnp.stack(
+            (
+                exp_base - jnp.exp(base),
+                shifted_base - (base + 2.0),
+            )
+        ),
+        dispatch=dispatch,
+        n_broadcast_samples=16,
+    )
+
+    with workflow_run(seed=37):
+        result = workflow(root, exponentiated, shifted)
+
+    assert [shape for _key, shape in calls] == [(16,)]
+    np.testing.assert_allclose(result.samples, 0.0, atol=1e-6)
+
+
+def test_function_descendant_only_samples_its_captured_root_once():
+    calls = []
+    root = _RecordingNormal(calls)
+    descendant = TransformedDistribution(root, tfb.Exp())
+    workflow = Function(
+        func=lambda value: value,
+        dispatch="sequential",
+        n_broadcast_samples=14,
+        include_inputs=True,
+    )
+
+    with workflow_run(seed=39):
+        result = workflow(descendant)
+
+    assert [shape for _key, shape in calls] == [(14,)]
+    root_key = calls[0][0]
+    expected = jnp.exp(Normal._sample(root, root_key, (14,)))
+    np.testing.assert_allclose(result.input_samples["value"], expected, rtol=1e-6)
+    np.testing.assert_allclose(result.samples, expected, rtol=1e-6)
+
+
+def test_sequential_and_jax_consume_the_same_captured_graph():
+    calls = []
+    root = _RecordingNormal(calls)
+    exponentiated = TransformedDistribution(root, tfb.Exp())
+
+    def difference(base, exp_base):
+        return exp_base - jnp.exp(base)
+
+    def run(dispatch):
+        workflow = Function(
+            func=difference,
+            dispatch=dispatch,
+            n_broadcast_samples=16,
+            include_inputs=True,
+        )
+        with workflow_run(seed=41):
+            return workflow(root, exponentiated)
+
+    sequential = run("sequential")
+    jax_result = run("jax")
+
+    assert [shape for _key, shape in calls] == [(16,), (16,)]
+    np.testing.assert_array_equal(
+        sequential.input_samples["base"],
+        jax_result.input_samples["base"],
+    )
+    np.testing.assert_array_equal(
+        sequential.input_samples["exp_base"],
+        jax_result.input_samples["exp_base"],
+    )
+    np.testing.assert_allclose(sequential.samples, 0.0, atol=1e-6)
+    np.testing.assert_allclose(jax_result.samples, 0.0, atol=1e-6)
+
+
+def test_exact_empirical_root_and_descendant_keep_weights_once():
+    root = EmpiricalDistribution(
+        jnp.asarray([1.0, 4.0]),
+        weights=jnp.asarray([0.2, 0.8]),
+        name="base",
+    )
+    exponentiated = TransformedDistribution(root, tfb.Exp())
+    workflow = Function(
+        func=lambda base, exp_base: exp_base - jnp.exp(base),
+        dispatch="sequential",
+        n_broadcast_samples=16,
+        include_inputs=True,
+    )
+
+    with patch.object(type(root), "_sample", side_effect=AssertionError("sampled exact root")):
+        result = workflow(root, exponentiated)
+
+    assert result.num_atoms == 2
+    np.testing.assert_allclose(result.samples, 0.0, atol=1e-6)
+    np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
+    np.testing.assert_allclose(
+        result.input_samples["exp_base"],
+        jnp.exp(result.input_samples["base"]),
+        rtol=1e-6,
+    )
+
+
+def test_exact_record_projection_then_transform_stays_diagonal():
+    root = EmpiricalDistribution(
+        Record(
+            "draws",
+            x=jnp.asarray([1.0, 4.0]),
+            y=jnp.asarray([10.0, 40.0]),
+        ),
+        weights=jnp.asarray([0.3, 0.7]),
+        name="joint",
+    )
+    x = root["x"]
+    exponentiated_x = TransformedDistribution(x, tfb.Exp())
+    workflow = Function(
+        func=lambda joint, x_value, exp_x: jnp.stack(
+            (joint["x"] - x_value, exp_x - jnp.exp(x_value))
+        ),
+        dispatch="sequential",
+        n_broadcast_samples=16,
+        include_inputs=True,
+    )
+
+    result = workflow(root, x, exponentiated_x)
+
+    assert result.num_atoms == 2
+    np.testing.assert_allclose(result.samples, 0.0, atol=1e-6)
+    np.testing.assert_allclose(result.weights, jnp.asarray([0.3, 0.7]))
+
+
+def test_mixed_empirical_descendant_multiplies_root_weight_once():
+    exact_root = EmpiricalDistribution(
+        jnp.asarray([1.0, 4.0]),
+        weights=jnp.asarray([0.2, 0.8]),
+        name="exact",
+    )
+    exponentiated = TransformedDistribution(exact_root, tfb.Exp())
+    sampled_calls = []
+    sampled = _RecordingNormal(sampled_calls, name="sampled")
+    workflow = Function(
+        func=lambda exact, exp_exact, noise: jnp.stack((exp_exact - jnp.exp(exact), noise)),
+        dispatch="sequential",
+        n_broadcast_samples=12,
+        include_inputs=True,
+    )
+
+    with workflow_run(seed=45):
+        result = workflow(exact_root, exponentiated, sampled)
+
+    assert result.num_atoms == 12
+    assert [shape for _key, shape in sampled_calls] == [(12,)]
+    np.testing.assert_allclose(result.samples["marginal"][:, 0], 0.0, atol=1e-6)
+    np.testing.assert_allclose(
+        result.input_samples["exp_exact"],
+        jnp.exp(result.input_samples["exact"]),
+        rtol=1e-6,
+    )
+    np.testing.assert_allclose(
+        result.weights,
+        jnp.repeat(jnp.asarray([0.2, 0.8]) / 6.0, 6),
+        rtol=1e-6,
+    )
+
+
+def test_elementwise_transform_of_vector_event_matches_direct_sampling():
+    calls = []
+    root = _RecordingMultivariateNormal(calls)
+    descendant = TransformedDistribution(root, tfb.Exp())
+    captured = _workflow_descendants.capture_stochastic_consumer(descendant)
+    key = jax.random.key(43)
+
+    actual = _workflow_descendants.sample_captured_consumer(captured, key, (9,))
+    expected = descendant._sample(key, (9,))
+
+    assert [shape for _key, shape in calls] == [(9,)]
+    np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
+
+
+@pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+def test_nested_sweep_samples_shared_transform_root_once_per_cell(dispatch):
+    rows = NumericRecordArray.stack(
+        [NumericRecord("row", offset=float(index)) for index in range(3)]
+    )
+    calls = []
+    root = _RecordingNormal(calls)
+    exponentiated = TransformedDistribution(root, tfb.Exp())
+    workflow = Function(
+        func=lambda row, base, exp_base: exp_base - jnp.exp(base),
+        dispatch=dispatch,
+        n_broadcast_samples=12,
+    )
+
+    with workflow_run(seed=47):
+        result = workflow(rows, root, exponentiated)
+
+    assert result.batch_shape == (3,)
+    assert [shape for _key, shape in calls] == [(12,), (12,), (12,)]
+    for component in result.components:
+        np.testing.assert_allclose(component.samples, 0.0, atol=1e-6)

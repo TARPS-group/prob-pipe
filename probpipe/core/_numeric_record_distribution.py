@@ -145,6 +145,7 @@ def _mc_expectation(
     if n <= 0:
         raise ValueError(f"num_evaluations must be positive; got {n!r}")
     if key is None:
+        captured = _workflow_descendants.capture_stochastic_consumer(dist)
         key = _workflow_broker._resolve_automatic_key(
             None,
             _workflow_broker._singleton_effect_plan(
@@ -153,7 +154,9 @@ def _mc_expectation(
                 sample_shape=(n,),
             ),
         )
-    samples = dist._sample(key, sample_shape=(n,))
+        samples = _workflow_descendants.sample_captured_consumer(captured, key, (n,))
+    else:
+        samples = dist._sample(key, sample_shape=(n,))
     evals = jax.vmap(f)(samples)
 
     rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
@@ -1144,6 +1147,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 raise ValueError(f"num_evaluations must be positive; got {n!r}")
             sample_key = key
             if sample_key is None:
+                _workflow_descendants.capture_stochastic_consumer(self)
                 sample_key = _workflow_broker._resolve_automatic_key(
                     None,
                     _workflow_broker._singleton_effect_plan(

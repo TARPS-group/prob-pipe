@@ -8,8 +8,16 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
-from probpipe import EmpiricalDistribution, Normal, expectation, sample, workflow_run
+from probpipe import (
+    EmpiricalDistribution,
+    Normal,
+    TransformedDistribution,
+    expectation,
+    sample,
+    workflow_run,
+)
 from probpipe.core import _workflow_context
 
 
@@ -98,6 +106,48 @@ class TestAutomaticSample:
         assert not jnp.array_equal(first, second)
         assert urandom.call_count == 2
 
+    def test_supported_descendant_samples_captured_root_and_forward(self):
+        calls = []
+        root = _RecordingNormal(calls)
+        descendant = TransformedDistribution(root, tfb.Exp())
+
+        with (
+            patch.object(
+                type(descendant),
+                "_sample",
+                side_effect=AssertionError("sampled descendant directly"),
+            ),
+            workflow_run(seed=17),
+        ):
+            actual = sample(descendant, sample_shape=12)
+
+        assert [shape for _key, shape in calls] == [(12,)]
+        root_key = calls[0][0]
+        expected = jnp.exp(Normal._sample(root, root_key, (12,)))
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
+
+    def test_unsupported_descendant_fails_before_entropy_but_explicit_key_is_direct(self):
+        calls = []
+        root = _RecordingNormal(calls)
+        descendant = TransformedDistribution(root, tfb.Tanh())
+
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            workflow_run(),
+            pytest.raises(TypeError, match="does not support this bijector type"),
+        ):
+            sample(descendant, sample_shape=8)
+
+        urandom.assert_not_called()
+        commit.assert_not_called()
+        assert calls == []
+
+        explicit = jax.random.key(19)
+        actual = sample(descendant, key=explicit, sample_shape=8)
+        expected = descendant._sample(explicit, (8,))
+        np.testing.assert_array_equal(actual, expected)
+
 
 class TestAutomaticExpectation:
     def test_exact_empirical_expectation_claims_no_event(self):
@@ -160,3 +210,61 @@ class TestAutomaticExpectation:
             )
 
         commit.assert_not_called()
+
+    def test_supported_descendant_mc_uses_captured_root_and_forward(self):
+        calls = []
+        root = _RecordingNormal(calls)
+        descendant = TransformedDistribution(root, tfb.Exp())
+
+        with (
+            patch.object(
+                type(descendant),
+                "_sample",
+                side_effect=AssertionError("sampled descendant directly"),
+            ),
+            workflow_run(seed=23),
+        ):
+            actual = expectation(
+                descendant,
+                lambda value: value,
+                num_evaluations=16,
+                return_dist=False,
+            )
+
+        assert [shape for _key, shape in calls] == [(16,)]
+        root_key = calls[0][0]
+        expected = jnp.mean(jnp.exp(Normal._sample(root, root_key, (16,))))
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)
+
+    def test_unsupported_descendant_mc_fails_before_entropy_and_explicit_key_works(self):
+        calls = []
+        root = _RecordingNormal(calls)
+        descendant = TransformedDistribution(root, tfb.Tanh())
+
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            workflow_run(),
+            pytest.raises(TypeError, match="does not support this bijector type"),
+        ):
+            expectation(
+                descendant,
+                lambda value: value,
+                num_evaluations=8,
+                return_dist=False,
+            )
+
+        urandom.assert_not_called()
+        commit.assert_not_called()
+        assert calls == []
+
+        explicit = jax.random.key(29)
+        actual = expectation(
+            descendant,
+            lambda value: value,
+            key=explicit,
+            num_evaluations=8,
+            return_dist=False,
+        )
+        expected = jnp.mean(descendant._sample(explicit, (8,)))
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=1e-6)

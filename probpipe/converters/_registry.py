@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Literal
 
-from ..core import _workflow_broker
+from ..core import _workflow_broker, _workflow_descendants
 
 _ConversionExecutionMode = Literal[
     "exact",
@@ -77,6 +77,26 @@ def _resolve_conversion_key(
             sample_shape=plan.sample_shape,
             provider_abi=plan.provider_abi,
         ),
+    )
+
+
+def _sample_probpipe_conversion_source(
+    source: Any,
+    key: Any | None,
+    plan: _ConversionExecutionPlan,
+) -> Any:
+    """Sample a ProbPipe source through its closed root graph when keyless."""
+    sample_shape = plan.sample_shape
+    if sample_shape is None:
+        raise TypeError("a sampled conversion requires a sample shape")
+    if key is not None:
+        return source._sample(key, sample_shape)
+    captured = _workflow_descendants.capture_stochastic_consumer(source)
+    resolved_key = _resolve_conversion_key(None, plan)
+    return _workflow_descendants.sample_captured_consumer(
+        captured,
+        resolved_key,
+        sample_shape,
     )
 
 
@@ -214,7 +234,6 @@ class ConverterRegistry:
                     kwargs,
                     validate_declared_sample=key is None,
                 )
-                resolved_key = key
                 if key is None and plan.execution_mode == "sampled":
                     if not plan.automatic_key_certified:
                         raise TypeError(
@@ -222,8 +241,11 @@ class ConverterRegistry:
                             "is not certified for workflow-owned randomness; pass an "
                             "explicit key= value."
                         )
-                    resolved_key = _resolve_conversion_key(None, plan)
-                return conv.convert(source, target_type, key=resolved_key, **kwargs)
+                # Certified built-ins resolve the omitted key at the last
+                # pre-sampling boundary. This lets conditional converters defer
+                # their event and lets ProbPipe descendants validate/capture the
+                # closed root graph before committing workflow randomness.
+                return conv.convert(source, target_type, key=key, **kwargs)
         raise TypeError(
             f"No converter registered for {type(source).__name__} -> {target_type.__name__}"
         )

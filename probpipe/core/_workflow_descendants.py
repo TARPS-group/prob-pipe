@@ -46,6 +46,11 @@ class CapturedStochasticConsumer:
     """One live root plus a canonical and executable descendant path."""
 
     root: Distribution = field(compare=False, hash=False, repr=False)
+    sample_root: Callable[[Any, tuple[int, ...]], Any] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
     record_path: tuple[str, ...]
     descendant_descriptor: tuple[Any, ...] | None
     evaluator: Callable[[Any], Any] = field(compare=False, hash=False, repr=False)
@@ -64,6 +69,15 @@ def _register_unsupported_descendant_type(distribution_type: type, label: str) -
 def capture_stochastic_consumer(value: Distribution) -> CapturedStochasticConsumer:
     """Capture a supported root/projection/transform graph without executing it."""
     return _capture_stochastic_consumer(value, active_descendants=set())
+
+
+def sample_captured_consumer(
+    captured: CapturedStochasticConsumer,
+    key: Any,
+    sample_shape: tuple[int, ...],
+) -> Any:
+    """Sample a captured root once and evaluate its live descendant path."""
+    return captured.evaluator(captured.sample_root(key, sample_shape))
 
 
 def descriptor_digest(descriptor: tuple[Any, ...]) -> str:
@@ -154,6 +168,7 @@ def _capture_stochastic_consumer(
             )
         return CapturedStochasticConsumer(
             root=captured_parent.root,
+            sample_root=captured_parent.sample_root,
             record_path=tuple(value._key_path),
             descendant_descriptor=descriptor,
             evaluator=evaluator,
@@ -161,6 +176,7 @@ def _capture_stochastic_consumer(
 
     return CapturedStochasticConsumer(
         root=value,
+        sample_root=value._sample,
         record_path=(),
         descendant_descriptor=None,
         evaluator=_identity,
@@ -201,6 +217,7 @@ def _capture_transformed_distribution(
     )
     return CapturedStochasticConsumer(
         root=captured_base.root,
+        sample_root=captured_base.sample_root,
         record_path=captured_base.record_path,
         descendant_descriptor=descriptor,
         evaluator=_compose(captured_base.evaluator, forward),
