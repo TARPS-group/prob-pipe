@@ -450,7 +450,8 @@ class TestApplyContract:
             n_broadcast_samples=5,
         )
 
-        result = wrapped(SupportAnnotatedNormal(0, 1, name="x"))
+        with workflow_run(seed=0):
+            result = wrapped(SupportAnnotatedNormal(0, 1, name="x"))
 
         assert result.num_atoms == 5
 
@@ -726,7 +727,8 @@ class TestSymbolicCalls:
             n_broadcast_samples=8,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=4):
+            result = wrapped(Normal(0, 1, name="x"))
 
         assert result.event_template == EventTemplate(pair=(2,))
         assert result.num_atoms == 8
@@ -776,7 +778,8 @@ class TestSymbolicCalls:
             n_broadcast_samples=8,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=11):
+            result = wrapped(Normal(0, 1, name="x"))
 
         assert result.provenance.metadata["dispatch"] == "sequential"
         assert result.event_template == EventTemplate(y=ArraySpec((), support=positive))
@@ -871,7 +874,8 @@ class TestSymbolicCalls:
             n_broadcast_samples=8,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=7):
+            result = wrapped(Normal(0, 1, name="x"))
 
         assert result.event_template == EventTemplate(
             stats=EventTemplate(value=(), doubled=()),
@@ -899,7 +903,8 @@ class TestSymbolicCalls:
             n_broadcast_samples=8,
         )
 
-        broadcast = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"))
+        with workflow_run(seed=3):
+            broadcast = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"))
         result = broadcast.marginalize()
 
         assert result.event_template == EventTemplate(y=())
@@ -968,7 +973,8 @@ class TestSymbolicCalls:
             n_broadcast_samples=8,
         )
 
-        result = wrapped(rows, Normal(0, 1, name="noise"))
+        with workflow_run(seed=5):
+            result = wrapped(rows, Normal(0, 1, name="noise"))
 
         assert isinstance(result, DistributionArray)
         assert result.event_template == EventTemplate(prediction=())
@@ -1253,7 +1259,8 @@ class TestVariadicPlanning:
             n_broadcast_samples=8,
         )
 
-        result = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"), 2.0)
+        with workflow_run(seed=11):
+            result = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"), 2.0)
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
@@ -1398,7 +1405,8 @@ class TestVariadicPlanning:
             n_broadcast_samples=8,
         )
 
-        result = wrapped()
+        with workflow_run(seed=13):
+            result = wrapped()
 
         assert result.num_atoms == 8
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
@@ -1410,7 +1418,8 @@ class TestVariadicPlanning:
             n_broadcast_samples=8,
         )
 
-        result = wrapped(x=Normal(0, 1, name="x"), offset=2.0)
+        with workflow_run(seed=17):
+            result = wrapped(x=Normal(0, 1, name="x"), offset=2.0)
 
         assert result.num_atoms == 8
         assert result.provenance.metadata["broadcast_args"] == ["**extras['x']"]

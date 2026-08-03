@@ -350,10 +350,11 @@ class TestCallOptions:
             dispatch="sequential",
         )
 
-        result = wf.with_options(
-            n_broadcast_samples=6,
-            include_inputs=True,
-        )(normal_dist)
+        with workflow_run(seed=42):
+            result = wf.with_options(
+                n_broadcast_samples=6,
+                include_inputs=True,
+            )(normal_dist)
 
         assert isinstance(result, BroadcastDistribution)
         assert result.num_atoms == 6

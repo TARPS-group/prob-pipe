@@ -24,6 +24,7 @@ from probpipe import (
     from_distribution,
     provenance_ancestors,
     provenance_dag,
+    workflow_run,
 )
 from probpipe.core.node import Function
 from probpipe.core.provenance import ParentInfo
@@ -319,7 +320,8 @@ class TestBroadcastingProvenance:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=20)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         assert hasattr(result, "samples")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
@@ -339,7 +341,8 @@ class TestBroadcastingProvenance:
             return 2.0 * x
 
         wf = Function(func=double, dispatch="jax", n_broadcast_samples=20)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         assert hasattr(result, "samples")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
@@ -354,7 +357,8 @@ class TestBroadcastingProvenance:
 
         wf = Function(func=shift, dispatch=dispatch, n_broadcast_samples=5)
 
-        result = wf(n)
+        with workflow_run(seed=42):
+            result = wf(n)
 
         assert result.provenance is not None
         assert tuple(result.provenance.inputs) == ("offset",)
@@ -368,7 +372,8 @@ class TestBroadcastingProvenance:
             return x + y
 
         wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20)
-        result = wf(x=a, y=b)
+        with workflow_run(seed=42):
+            result = wf(x=a, y=b)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 3
         assert [parent.name for parent in result.provenance.parents] == ["add", "a", "b"]
@@ -382,7 +387,8 @@ class TestBroadcastingProvenance:
             return a + b
 
         wf = Function(func=add, dispatch="sequential", n_broadcast_samples=20)
-        result = wf(a=ed, b=n)
+        with workflow_run(seed=42):
+            result = wf(a=ed, b=n)
         assert hasattr(result, "samples")
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
@@ -412,7 +418,8 @@ class TestBroadcastingProvenance:
 
         wf = Function(func=add_noise, dispatch="sequential", n_broadcast_samples=5)
 
-        result = wf(rows, noise)
+        with workflow_run(seed=42):
+            result = wf(rows, noise)
 
         assert result.provenance is not None
         assert result.components[0].provenance is not None
@@ -451,7 +458,8 @@ class TestProvenanceChains:
             return jnp.log(x)
 
         wf = Function(func=log_val, dispatch="sequential", n_broadcast_samples=20)
-        result = wf(x=td)
+        with workflow_run(seed=42):
+            result = wf(x=td)
         # result → broadcast → td → transform → base
         assert result.provenance.operation == "broadcast"
         assert result.provenance.parents[0].parent is wf
@@ -608,7 +616,8 @@ class TestProvenanceAncestors:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=td)
+        with workflow_run(seed=42):
+            result = wf(x=td)
         ancestors = provenance_ancestors(result)
         # result → Function and result → td → base.
         assert len(ancestors) == 3
@@ -627,7 +636,8 @@ class TestProvenanceAncestors:
             return x + y
 
         wf = Function(func=add, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=n, y=n)
+        with workflow_run(seed=42):
+            result = wf(x=n, y=n)
         ancestors = provenance_ancestors(result)
         # The Function comes first; n appears as both args but is deduplicated.
         assert len(ancestors) == 2
@@ -712,7 +722,8 @@ class TestProvenanceDag:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=td)
+        with workflow_run(seed=42):
+            result = wf(x=td)
         dag = provenance_dag(result)
         # result <- Function and result <- td <- base: 4 nodes, 3 edges.
         num_nodes, num_edges = _count_dag_entries(dag)
@@ -778,7 +789,8 @@ class TestProvenanceModes:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         assert result.provenance is not None
         assert len(result.provenance.parents) == 2
         function_parent, parent = result.provenance.parents
@@ -796,7 +808,8 @@ class TestProvenanceModes:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         parent = result.provenance.parents[1]
         assert parent is not n
 
@@ -823,7 +836,8 @@ class TestProvenanceModes:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         ancestors = provenance_ancestors(result)
         assert len(ancestors) == 2
         assert isinstance(ancestors[0], ParentInfo)
@@ -842,7 +856,8 @@ class TestProvenanceModes:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         dag = provenance_dag(result)
         num_nodes, num_edges = _count_dag_entries(dag)
         assert num_nodes == 3
@@ -857,7 +872,8 @@ class TestProvenanceModes:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         assert result.provenance is None
 
     def test_mode_setter_rejects_non_enum(self):
@@ -916,7 +932,8 @@ class TestProvenanceModes:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         assert provenance_ancestors(result) == []
 
     def test_off_mode_dag_single_node(self):
@@ -929,7 +946,8 @@ class TestProvenanceModes:
             return x
 
         wf = Function(func=identity, dispatch="sequential", n_broadcast_samples=10)
-        result = wf(x=n)
+        with workflow_run(seed=42):
+            result = wf(x=n)
         dag = provenance_dag(result)
         num_nodes, num_edges = _count_dag_entries(dag)
         assert num_nodes == 1

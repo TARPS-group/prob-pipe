@@ -35,7 +35,8 @@ def test_function_decorator_sets_construction_defaults():
     def identity(x):
         return x
 
-    result = identity(Normal(loc=0.0, scale=1.0, name="x"))
+    with workflow_run(seed=0):
+        result = identity(Normal(loc=0.0, scale=1.0, name="x"))
 
     assert result.num_atoms == 7
 
@@ -114,10 +115,11 @@ def test_with_options_controls_sample_count_and_include_inputs():
         dispatch="sequential",
     )
 
-    result = wf.with_options(
-        n_broadcast_samples=6,
-        include_inputs=True,
-    )(Normal(loc=0.0, scale=1.0, name="x"))
+    with workflow_run(seed=0):
+        result = wf.with_options(
+            n_broadcast_samples=6,
+            include_inputs=True,
+        )(Normal(loc=0.0, scale=1.0, name="x"))
 
     assert isinstance(result, BroadcastDistribution)
     assert result.num_atoms == 6
@@ -206,12 +208,13 @@ def test_var_keyword_receives_workflow_control_names():
     )
     normal = Normal(loc=0.0, scale=1.0, name="x")
 
-    result = wf.with_options(n_broadcast_samples=5)(
-        x=normal,
-        seed=42,
-        n_broadcast_samples=99,
-        include_inputs=True,
-    )
+    with workflow_run(seed=0):
+        result = wf.with_options(n_broadcast_samples=5)(
+            x=normal,
+            seed=42,
+            n_broadcast_samples=99,
+            include_inputs=True,
+        )
 
     assert result.num_atoms == 5
     assert (
@@ -248,6 +251,7 @@ def test_bindable_workflow_control_name_does_not_override():
     )
     normal = Normal(loc=0.0, scale=1.0, name="x")
 
-    result = wf(x=normal, n_broadcast_samples=4)
+    with workflow_run(seed=0):
+        result = wf(x=normal, n_broadcast_samples=4)
 
     assert result.num_atoms == 5

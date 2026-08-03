@@ -552,7 +552,8 @@ class TestBroadcastingReconnection:
             dispatch="sequential",
             n_broadcast_samples=20,
         )
-        result = wf(a=view_x, b=view_x)
+        with workflow_run(seed=99):
+            result = wf(a=view_x, b=view_x)
         assert hasattr(result, "samples")
         # a and b are the same samples, so a - b = 0 for every sample
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
@@ -617,7 +618,8 @@ class TestBroadcastingReconnection:
             dispatch="jax",
             n_broadcast_samples=20,
         )
-        result = wf(a=view_x, b=view_x)
+        with workflow_run(seed=88):
+            result = wf(a=view_x, b=view_x)
         assert hasattr(result, "samples")
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
 
@@ -1025,7 +1027,8 @@ class TestEnumerateWithDistributionViews:
             dispatch="sequential",
             n_broadcast_samples=50,
         )
-        result = wf(a=view_x, b=view_y, c=ed)
+        with workflow_run(seed=123):
+            result = wf(a=view_x, b=view_y, c=ed)
         assert hasattr(result, "samples")
         assert result.num_atoms == 50
 
@@ -1361,7 +1364,8 @@ class TestNestedProductDistribution:
             dispatch="sequential",
             n_broadcast_samples=30,
         )
-        result = wf(a=view_force, b=view_obs)
+        with workflow_run(seed=42):
+            result = wf(a=view_force, b=view_obs)
         assert hasattr(result, "samples")
         assert result.num_atoms == 30
 

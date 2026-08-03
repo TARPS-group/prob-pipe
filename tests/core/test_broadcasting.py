@@ -36,7 +36,8 @@ class TestBroadcastingBasic:
 
         w = Function(func=double_it, n_broadcast_samples=50, dispatch="sequential")
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g)
+        with workflow_run(seed=0):
+            result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert hasattr(result, "samples")
         assert result.num_atoms == 50
@@ -58,7 +59,8 @@ class TestBroadcastingBasic:
 
         w = Function(func=compute_norm, n_broadcast_samples=20, dispatch="sequential")
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="x")
-        result = w(x=mvn)
+        with workflow_run(seed=2):
+            result = w(x=mvn)
         assert not isinstance(result, BroadcastDistribution)
         assert result.dim == 1
 
@@ -83,7 +85,8 @@ class TestBroadcastingBasic:
 
         # Positional with distribution triggers broadcasting
         g = Normal(loc=0.0, scale=0.1, name="x")
-        result = add(g, y=jnp.array(1.0))
+        with workflow_run(seed=5):
+            result = add(g, y=jnp.array(1.0))
         assert hasattr(result, "samples")
         assert result.num_atoms == 30
 
@@ -93,7 +96,8 @@ class TestBroadcastingBasic:
 
         w = Function(func=double_it, n_broadcast_samples=20, dispatch="sequential")
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g)
+        with workflow_run(seed=0):
+            result = w(x=g)
         assert not hasattr(result, "input_samples")
 
 
@@ -131,7 +135,8 @@ class TestBroadcastingNSamples:
 
         w = Function(func=identity, dispatch="sequential")
         g = Normal(loc=0.0, scale=1.0, name="x")
-        result = w(x=g)
+        with workflow_run(seed=5):
+            result = w(x=g)
         assert result.num_atoms == Function.DEFAULT_N_BROADCAST_SAMPLES
 
     def test_call_time_override(self):
@@ -140,7 +145,8 @@ class TestBroadcastingNSamples:
 
         w = Function(func=identity, n_broadcast_samples=100, dispatch="sequential")
         g = Normal(loc=0.0, scale=1.0, name="x")
-        result = w.with_options(n_broadcast_samples=10)(x=g)
+        with workflow_run(seed=6):
+            result = w.with_options(n_broadcast_samples=10)(x=g)
         assert result.num_atoms == 10
 
     def test_call_time_override_rejects_non_integer(self):
@@ -287,7 +293,8 @@ class TestBroadcastingEnumeration:
         )  # n=20
 
         w = Function(func=sum_three, n_broadcast_samples=50, dispatch="sequential")
-        result = w(a=ed_small, b=ed_medium, c=ed_large)
+        with workflow_run(seed=9):
+            result = w(a=ed_small, b=ed_medium, c=ed_large)
         # 2*5=10 enumerated, 50//10=5 reps from ed_large per combo → 50 total
         assert result.num_atoms == 50
 
@@ -299,7 +306,8 @@ class TestBroadcastingEnumeration:
         g = Normal(loc=0.0, scale=1.0, name="b")
 
         w = Function(func=add_them, n_broadcast_samples=30, dispatch="sequential")
-        result = w(a=ed, b=g)
+        with workflow_run(seed=10):
+            result = w(a=ed, b=g)
         # 3 empirical combos, 30//3=10 reps each → 30 total
         assert result.num_atoms == 30
 
@@ -334,7 +342,8 @@ class TestBroadcastingNonNumeric:
 
         w = Function(func=describe, n_broadcast_samples=5, dispatch="sequential")
         g = Normal(loc=0.0, scale=1.0, name="x")
-        result = w(x=g)
+        with workflow_run(seed=11):
+            result = w(x=g)
         # Non-numeric results still return a marginal (ListMarginal)
         assert not isinstance(result, BroadcastDistribution)
         assert len(result.items) == 5
@@ -353,7 +362,8 @@ class TestBroadcastingJAX:
 
         w = Function(func=double_it, n_broadcast_samples=50, dispatch="jax")
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g)
+        with workflow_run(seed=20):
+            result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert result.num_atoms == 50
 
@@ -411,7 +421,8 @@ class TestBroadcastingJAX:
 
         w = Function(func=double_it, n_broadcast_samples=30, dispatch="jax")
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w.with_options(include_inputs=True)(x=g)
+        with workflow_run(seed=20):
+            result = w.with_options(include_inputs=True)(x=g)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
         assert result.input_samples["x"].shape[0] == 30
@@ -432,7 +443,8 @@ class TestAutoDispatch:
 
         w = Function(func=pure_jax, n_broadcast_samples=20, dispatch="auto")
         g = Normal(loc=0.0, scale=1.0, name="x")
-        result = w(x=g)
+        with workflow_run(seed=30):
+            result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert not hasattr(w, "_resolved_dispatch")
 
@@ -444,7 +456,8 @@ class TestAutoDispatch:
 
         w = Function(func=scipy_fn, n_broadcast_samples=20, dispatch="auto")
         g = Normal(loc=2.0, scale=0.1, name="x")
-        result = w(x=g)
+        with workflow_run(seed=31):
+            result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert not hasattr(w, "_resolved_dispatch")
 
@@ -485,7 +498,7 @@ class TestAutoDispatch:
         )
         # Probing fails gracefully (NotImplementedError caught inside
         # ``_resolve_dispatch``) and the call-local planner falls back.
-        with suppress(Exception):
+        with workflow_run(seed=32), suppress(Exception):
             w(joint=joint)
         assert not hasattr(w, "_resolved_dispatch")
 
@@ -541,7 +554,8 @@ class TestIncludeInputsArgument:
             include_inputs=True,
         )
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g)
+        with workflow_run(seed=0):
+            result = w(x=g)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
         assert result.num_atoms == 20
@@ -552,7 +566,8 @@ class TestIncludeInputsArgument:
 
         w = Function(func=double_it, n_broadcast_samples=20, dispatch="sequential")
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w.with_options(include_inputs=True)(x=g)
+        with workflow_run(seed=0):
+            result = w.with_options(include_inputs=True)(x=g)
         assert isinstance(result, BroadcastDistribution)
         assert "x" in result.input_samples
 
@@ -562,7 +577,8 @@ class TestIncludeInputsArgument:
 
         w = Function(func=double_it, n_broadcast_samples=20, dispatch="sequential")
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w(x=g)
+        with workflow_run(seed=0):
+            result = w(x=g)
         assert not isinstance(result, BroadcastDistribution)
         assert not hasattr(result, "input_samples")
 
@@ -573,7 +589,8 @@ class TestIncludeInputsArgument:
         w = Function(func=add_them, n_broadcast_samples=20, dispatch="sequential")
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
-        result = w.with_options(include_inputs=True)(a=g1, b=g2)
+        with workflow_run(seed=0):
+            result = w.with_options(include_inputs=True)(a=g1, b=g2)
         assert isinstance(result, BroadcastDistribution)
         assert "a" in result.fields
         assert "b" in result.fields
@@ -593,7 +610,8 @@ class TestNamedComponents:
         w = Function(func=add_them, n_broadcast_samples=20, dispatch="sequential")
         g1 = Normal(loc=1.0, scale=0.1, name="a")
         g2 = Normal(loc=2.0, scale=0.1, name="b")
-        result = w.with_options(include_inputs=True)(a=g1, b=g2)
+        with workflow_run(seed=0):
+            result = w.with_options(include_inputs=True)(a=g1, b=g2)
         assert "a" in result.fields
         assert "b" in result.fields
         assert "_output" in result.fields
@@ -604,7 +622,8 @@ class TestNamedComponents:
 
         w = Function(func=double_it, n_broadcast_samples=20, dispatch="sequential")
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w.with_options(include_inputs=True)(x=g)
+        with workflow_run(seed=0):
+            result = w.with_options(include_inputs=True)(x=g)
         x_marginal = result["x"]
         assert isinstance(x_marginal, EmpiricalDistribution)
         assert x_marginal.num_atoms == 20
@@ -615,7 +634,8 @@ class TestNamedComponents:
 
         w = Function(func=double_it, n_broadcast_samples=20, dispatch="sequential")
         g = Normal(loc=1.0, scale=0.5, name="x")
-        result = w.with_options(include_inputs=True)(x=g)
+        with workflow_run(seed=0):
+            result = w.with_options(include_inputs=True)(x=g)
         out = result["_output"]
         assert hasattr(out, "samples")
 
@@ -721,7 +741,8 @@ class TestDispatchConsistency:
         g = Normal(loc=0.0, scale=1.0, name="b")
 
         for mode in self.ROWWISE_DISPATCH_MODES:
-            r = self._run(mode, add_them, a=ed, b=g, n_broadcast_samples=30)
+            with workflow_run(seed=0):
+                r = self._run(mode, add_them, a=ed, b=g, n_broadcast_samples=30)
             # 3 empirical combos x 10 reps each = 30 evaluations.
             assert r.num_atoms == 30, f"{mode}: expected n=30, got {r.num_atoms}"
             np.testing.assert_allclose(float(r.weights.sum()), 1.0, atol=1e-5)
@@ -736,7 +757,8 @@ class TestDispatchConsistency:
 
         big = EmpiricalDistribution(jnp.arange(200).reshape(-1, 1).astype(jnp.float32), name="x")
         for mode in self.SAMPLE_DISPATCH_MODES:
-            r = self._run(mode, identity, x=big, n_broadcast_samples=20)
+            with workflow_run(seed=0):
+                r = self._run(mode, identity, x=big, n_broadcast_samples=20)
             assert r.num_atoms == 20, f"{mode}: expected n=20, got {r.num_atoms}"
 
     def test_no_empiricals_all_modes_same_count(self):
@@ -750,7 +772,8 @@ class TestDispatchConsistency:
         n1 = Normal(loc=0.0, scale=1.0, name="a")
         n2 = Normal(loc=5.0, scale=1.0, name="b")
         for mode in self.SAMPLE_DISPATCH_MODES:
-            r = self._run(mode, add_them, a=n1, b=n2, n_broadcast_samples=50)
+            with workflow_run(seed=0):
+                r = self._run(mode, add_them, a=n1, b=n2, n_broadcast_samples=50)
             assert r.num_atoms == 50, f"{mode}: expected n=50, got {r.num_atoms}"
 
     def test_jax_dispatch_rejects_exact_empirical_enumeration(self):

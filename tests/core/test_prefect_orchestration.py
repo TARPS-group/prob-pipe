@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, WorkflowKind
+from probpipe import Normal, WorkflowKind, workflow_run
 from probpipe.core.node import Function
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
@@ -80,7 +80,8 @@ class TestPrefectTaskRowWise:
             dispatch="sequential",
             n_broadcast_samples=30,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=0):
+            result = wf(x=normal_dist)
         assert hasattr(result, "samples")
         assert result.num_atoms == 30
 
@@ -91,7 +92,8 @@ class TestPrefectTaskRowWise:
             dispatch="sequential",
             n_broadcast_samples=200,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=1):
+            result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 + 1.0)
         np.testing.assert_allclose(
             float(jnp.mean(result.samples)),
@@ -107,7 +109,8 @@ class TestPrefectTaskRowWise:
             n_broadcast_samples=30,
         )
         d2 = Normal(loc=2.0, scale=0.3, name="y")
-        result = wf(x=normal_dist, y=d2)
+        with workflow_run(seed=2):
+            result = wf(x=normal_dist, y=d2)
         assert hasattr(result, "samples")
         assert result.num_atoms == 30
 
@@ -127,7 +130,8 @@ class TestPrefectFlowRowWise:
             dispatch="sequential",
             n_broadcast_samples=25,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=10):
+            result = wf(x=normal_dist)
         assert hasattr(result, "samples")
         assert result.num_atoms == 25
 
@@ -138,7 +142,8 @@ class TestPrefectFlowRowWise:
             dispatch="sequential",
             n_broadcast_samples=200,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=11):
+            result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 * 2)
         np.testing.assert_allclose(
             float(jnp.mean(result.samples)),
@@ -162,7 +167,8 @@ class TestPrefectTaskJax:
             dispatch="jax",
             n_broadcast_samples=30,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=20):
+            result = wf(x=normal_dist)
         assert hasattr(result, "samples")
         assert result.num_atoms == 30
 
@@ -173,7 +179,8 @@ class TestPrefectTaskJax:
             dispatch="jax",
             n_broadcast_samples=200,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=21):
+            result = wf(x=normal_dist)
         np.testing.assert_allclose(
             float(jnp.mean(result.samples)),
             2.0,
@@ -196,7 +203,8 @@ class TestPrefectFlowJax:
             dispatch="jax",
             n_broadcast_samples=25,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=30):
+            result = wf(x=normal_dist)
         assert hasattr(result, "samples")
         assert result.num_atoms == 25
 
@@ -207,7 +215,8 @@ class TestPrefectFlowJax:
             dispatch="jax",
             n_broadcast_samples=200,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=31):
+            result = wf(x=normal_dist)
         np.testing.assert_allclose(
             float(jnp.mean(result.samples)),
             2.0,
@@ -230,7 +239,8 @@ class TestPrefectProvenance:
             dispatch="sequential",
             n_broadcast_samples=20,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=40):
+            result = wf(x=normal_dist)
         assert result.provenance is not None
         assert result.provenance.operation == "broadcast"
         assert result.provenance.metadata["orchestrate"] == "task"
@@ -243,7 +253,8 @@ class TestPrefectProvenance:
             dispatch="sequential",
             n_broadcast_samples=20,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=41):
+            result = wf(x=normal_dist)
         assert result.provenance is not None
         assert result.provenance.metadata["orchestrate"] == "flow"
 
@@ -254,7 +265,8 @@ class TestPrefectProvenance:
             dispatch="sequential",
             n_broadcast_samples=20,
         )
-        result = wf(x=normal_dist)
+        with workflow_run(seed=42):
+            result = wf(x=normal_dist)
         assert result.provenance is not None
         assert result.provenance.metadata["orchestrate"] == "off"
 
@@ -307,7 +319,7 @@ class TestPrefectImportGuard:
             dispatch="sequential",
             n_broadcast_samples=10,
         )
-        with pytest.warns(UserWarning, match="Prefect is not installed"):
+        with workflow_run(seed=60), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
         assert hasattr(result, "samples")
 
@@ -323,7 +335,7 @@ class TestPrefectImportGuard:
             dispatch="sequential",
             n_broadcast_samples=10,
         )
-        with pytest.warns(UserWarning, match="Prefect is not installed"):
+        with workflow_run(seed=61), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
         assert hasattr(result, "samples")
 
@@ -339,6 +351,6 @@ class TestPrefectImportGuard:
             dispatch="jax",
             n_broadcast_samples=10,
         )
-        with pytest.warns(UserWarning, match="Prefect is not installed"):
+        with workflow_run(seed=62), pytest.warns(UserWarning, match="Prefect is not installed"):
             result = wf(x=normal_dist)
         assert hasattr(result, "samples")

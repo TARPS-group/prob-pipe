@@ -7,7 +7,7 @@ import pytest
 
 import probpipe.core._workflow_execution as execution_mod
 import probpipe.core.node as node_mod
-from probpipe import Normal
+from probpipe import Normal, workflow_run
 from probpipe.core.config import WorkflowKind, prefect_config
 from probpipe.core.node import Function
 
@@ -397,7 +397,8 @@ class TestFunctionExecutionConfig:
                 n_broadcast_samples=8,
             )
 
-        result = wf(x=Normal(loc=0.0, scale=1.0, name="x"))
+        with workflow_run(seed=0):
+            result = wf(x=Normal(loc=0.0, scale=1.0, name="x"))
 
         assert result.num_atoms == 8
 
