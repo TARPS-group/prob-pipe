@@ -29,6 +29,7 @@ def execute_sweep(
     func: Callable[..., Any],
     values: dict[str, Any],
     plan: _workflow_plan.BroadcastPlan,
+    stochastic_plan: _workflow_plan.StochasticPlan | None,
     make_execution_config: Callable[
         [],
         _workflow_execution.WorkflowExecutionConfig,
@@ -37,11 +38,10 @@ def execute_sweep(
     resolve_dispatch: Callable[..., str],
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
     distribution_broadcast: Callable[
-        [dict[str, Any], list[_workflow_call.WorkflowInputRef], int, bool],
+        [dict[str, Any], _workflow_plan.StochasticPlan, bool],
         BroadcastDistribution | Distribution,
     ],
     workflow_name: str,
-    n_broadcast_samples: int,
     include_inputs: bool = False,
     output_template: EventTemplate | None = None,
     provenance_parents: list[TrackedTerm] | None = None,
@@ -96,17 +96,19 @@ def execute_sweep(
             field_name=workflow_name,
         )
 
+    if stochastic_plan is None:  # pragma: no cover - Function planning contract guard
+        raise RuntimeError("nested sweep is missing its stochastic plan")
+
     per_row_marginals: list[Distribution] = []
-    for i in range(plan.n_sweep):
+    for logical_unit in stochastic_plan.logical_units:
         row_values = slice_sweep_values(
             values=values,
-            index=i,
+            index=logical_unit.flat_index,
             array_groups=plan.array_groups,
         )
         inner = distribution_broadcast(
             row_values,
-            dist_args,
-            n_broadcast_samples,
+            stochastic_plan,
             True,
         )
         if isinstance(inner, BroadcastDistribution):
@@ -128,7 +130,7 @@ def execute_sweep(
         dist_args=dist_args,
         workflow_name=workflow_name,
         batch_shape=plan.sweep_batch_shape,
-        k=n_broadcast_samples,
+        k=stochastic_plan.n_broadcast_samples,
         parents=provenance_parents,
         inputs=provenance_inputs,
     )

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Callable, Mapping, Sequence
-from itertools import product as cartesian_product
 from typing import Any
 
 import jax
@@ -24,7 +23,6 @@ except ImportError:
 
 from ..custom_types import Array, PRNGKey
 from . import _workflow_call, _workflow_execution, _workflow_plan
-from ._record_distribution import _RecordDistributionView
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution, EmpiricalDistribution
 from .event_template import EventTemplate
@@ -38,8 +36,7 @@ def execute_distribution_broadcast(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
-    n_broadcast_samples: int,
+    stochastic_plan: _workflow_plan.StochasticPlan,
     include_inputs: bool,
     get_key: Callable[[], PRNGKey],
     make_execution_config: Callable[
@@ -71,11 +68,9 @@ def execute_distribution_broadcast(
         Resolved workflow inputs. Entries named in ``broadcast_args`` must be
         scalar ``Distribution`` values; all other entries are passed through to
         every call row.
-    broadcast_args : sequence of WorkflowInputRef
-        Distribution-valued input slots to broadcast over.
-    n_broadcast_samples : int
-        Number of Monte Carlo rows to draw. Small positive values are accepted
-        with a warning; non-integers and non-positive values raise.
+    stochastic_plan : StochasticPlan
+        Immutable source grouping, exact/sample classification, combination
+        order, and sample-shape decisions for this lifted call.
     include_inputs : bool
         If ``True``, return the full ``BroadcastDistribution`` containing both
         sampled inputs and outputs. If ``False``, return the marginalized output
@@ -114,21 +109,16 @@ def execute_distribution_broadcast(
         The full broadcast distribution when ``include_inputs`` is true;
         otherwise the output marginal distribution.
     """
-    broadcast_args = list(broadcast_args)
+    broadcast_args = list(stochastic_plan.arg_refs)
+    n_broadcast_samples = stochastic_plan.n_broadcast_samples
     _validate_n_broadcast_samples(n_broadcast_samples)
-
-    empirical_args, sample_args, product_size = _split_empirical_args(
-        values=values,
-        broadcast_args=broadcast_args,
-        n_broadcast_samples=n_broadcast_samples,
-    )
 
     dispatch = resolve_dispatch(
         values,
         broadcast_args,
-        jax_supported=not empirical_args,
+        jax_supported=stochastic_plan.evaluation_mode == "sampled",
     )
-    if requested_dispatch == "jax" and empirical_args:
+    if requested_dispatch == "jax" and stochastic_plan.evaluation_mode != "sampled":
         raise ValueError(
             "dispatch='jax' does not support exact empirical enumeration; "
             "use dispatch='auto', 'sequential', or 'thread' for this path."
@@ -136,14 +126,11 @@ def execute_distribution_broadcast(
 
     # Enumeration preserves exact empirical weights and must run in all row-wise
     # dispatch modes; otherwise cartesian-product semantics vary by dispatch.
-    if empirical_args:
+    if stochastic_plan.evaluation_mode != "sampled":
         result = _broadcast_enumerate(
             func=func,
             values=values,
-            empirical_args=empirical_args,
-            sample_args=sample_args,
-            product_size=product_size,
-            n_broadcast_samples=n_broadcast_samples,
+            stochastic_plan=stochastic_plan,
             get_key=get_key,
             make_execution_config=make_execution_config,
             output_template=output_template,
@@ -154,8 +141,7 @@ def execute_distribution_broadcast(
         result = _broadcast_jax(
             func=func,
             values=values,
-            broadcast_args=broadcast_args,
-            n_broadcast_samples=n_broadcast_samples,
+            stochastic_plan=stochastic_plan,
             get_key=get_key,
             workflow_name=workflow_name,
             workflow_kind=workflow_kind,
@@ -165,8 +151,7 @@ def execute_distribution_broadcast(
         result = _broadcast_sample(
             func=func,
             values=values,
-            broadcast_args=broadcast_args,
-            n_broadcast_samples=n_broadcast_samples,
+            stochastic_plan=stochastic_plan,
             get_key=get_key,
             make_execution_config=make_execution_config,
             output_template=output_template,
@@ -208,38 +193,6 @@ def _validate_n_broadcast_samples(n_broadcast_samples: int) -> None:
         )
 
 
-def _split_empirical_args(
-    *,
-    values: dict[str, Any],
-    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
-    n_broadcast_samples: int,
-) -> tuple[
-    dict[_workflow_call.WorkflowInputRef, EmpiricalDistribution],
-    dict[_workflow_call.WorkflowInputRef, Distribution],
-    int,
-]:
-    candidates: list[tuple[_workflow_call.WorkflowInputRef, EmpiricalDistribution]] = []
-    sample_args: dict[_workflow_call.WorkflowInputRef, Distribution] = {}
-    for ref in broadcast_args:
-        dist = _workflow_call.input_ref_value(values, ref)
-        if isinstance(dist, EmpiricalDistribution) and dist.num_atoms <= n_broadcast_samples:
-            candidates.append((ref, dist))
-        else:
-            sample_args[ref] = dist
-    candidates.sort(key=lambda pair: pair[1].num_atoms)
-
-    empirical_args: dict[_workflow_call.WorkflowInputRef, EmpiricalDistribution] = {}
-    product_size = 1
-    for name, dist in candidates:
-        if product_size * dist.num_atoms <= n_broadcast_samples:
-            empirical_args[name] = dist
-            product_size *= dist.num_atoms
-        else:
-            sample_args[name] = dist
-
-    return empirical_args, sample_args, product_size
-
-
 def _make_broadcast_provenance(
     *,
     values: dict[str, Any],
@@ -266,34 +219,34 @@ def _make_broadcast_provenance(
     )
 
 
-def _sample_broadcast_args(
+def _sample_planned_source_groups(
     values: dict[str, Any],
-    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
-    n: int,
+    source_groups: Sequence[_workflow_plan.StochasticSourceGroup],
+    sample_shape: tuple[int, ...],
     key: PRNGKey,
 ) -> dict[_workflow_call.WorkflowInputRef, Array]:
-    """Sample all broadcast arguments, handling view reconnection.
+    """Sample plan-owned source groups from one transitional parent key.
 
     Sibling views from the same parent distribution share one parent draw,
     preserving cross-field correlation. Plain non-view distributions are
-    sampled independently per kwarg, even if the same object is passed under
-    multiple names.
+    sampled through their separate current-wave source groups. The caller still
+    supplies one parent key in this checkpoint; source/unit event claims replace
+    that transitional split in the next checkpoint.
     """
     sampled: dict[_workflow_call.WorkflowInputRef, Array] = {}
-    for arg_refs in _workflow_plan.group_by_parent(
-        values=values,
-        refs=broadcast_args,
-    ).values():
-        first = _workflow_call.input_ref_value(values, arg_refs[0])
-        if not isinstance(first, _RecordDistributionView):
-            for ref in arg_refs:
+    for group in source_groups:
+        if group.execution_mode != "sampled":
+            continue
+        first = _workflow_call.input_ref_value(values, group.arg_refs[0])
+        if group.source_kind == "direct":
+            for ref in group.arg_refs:
                 key, subkey = jax.random.split(key)
                 dist = _workflow_call.input_ref_value(values, ref)
-                sampled[ref] = dist._sample(subkey, (n,))
+                sampled[ref] = dist._sample(subkey, sample_shape)
             continue
         key, subkey = jax.random.split(key)
-        structured = first.parent._sample(subkey, (n,))
-        for ref in arg_refs:
+        structured = first.parent._sample(subkey, sample_shape)
+        for ref in group.arg_refs:
             view = _workflow_call.input_ref_value(values, ref)
             if hasattr(view, "_extract"):
                 sampled[ref] = view._extract(structured)
@@ -309,8 +262,7 @@ def _broadcast_jax(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    broadcast_args: list[_workflow_call.WorkflowInputRef],
-    n_broadcast_samples: int,
+    stochastic_plan: _workflow_plan.StochasticPlan,
     get_key: Callable[[], PRNGKey],
     workflow_name: str,
     workflow_kind: WorkflowKind,
@@ -323,12 +275,15 @@ def _broadcast_jax(
             "Install with: pip install probpipe[prefect]"
         )
 
-    key = get_key()
-    sampled = _sample_broadcast_args(
+    sample_shape = stochastic_plan.sample_shape
+    if sample_shape is None:  # pragma: no cover - planner/dispatch contract guard
+        raise RuntimeError("sampled stochastic plan is missing sample_shape")
+    broadcast_args = list(stochastic_plan.arg_refs)
+    sampled = _sample_planned_source_groups(
         values,
-        broadcast_args,
-        n_broadcast_samples,
-        key,
+        stochastic_plan.source_groups,
+        sample_shape,
+        get_key(),
     )
 
     def single_call(broadcast_slice):
@@ -364,10 +319,7 @@ def _broadcast_enumerate(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    empirical_args: dict[_workflow_call.WorkflowInputRef, EmpiricalDistribution],
-    sample_args: dict[_workflow_call.WorkflowInputRef, Distribution],
-    product_size: int,
-    n_broadcast_samples: int,
+    stochastic_plan: _workflow_plan.StochasticPlan,
     get_key: Callable[[], PRNGKey],
     make_execution_config: Callable[
         [],
@@ -375,41 +327,54 @@ def _broadcast_enumerate(
     ],
     output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
-    """Enumerate empirical distributions and sample any remaining inputs."""
-    emp_names = list(empirical_args.keys())
-    emp_dists = [empirical_args[name] for name in emp_names]
+    """Execute the plan's exact combinations and sampled repetitions."""
+    exact_entries: list[tuple[_workflow_call.WorkflowInputRef, EmpiricalDistribution]] = []
+    for group_index in stochastic_plan.exact_group_order:
+        group = stochastic_plan.source_groups[group_index]
+        ref = group.arg_refs[0]
+        dist = _workflow_call.input_ref_value(values, ref)
+        if not isinstance(dist, EmpiricalDistribution):  # pragma: no cover - plan contract guard
+            raise RuntimeError("exact stochastic source is not an EmpiricalDistribution")
+        exact_entries.append((ref, dist))
 
-    reps_per_combo = max(1, n_broadcast_samples // product_size) if sample_args else 1
-    total = product_size * reps_per_combo
-
-    sample_arg_names = list(sample_args.keys())
-    if sample_arg_names:
-        key = get_key()
-        sampled = _sample_broadcast_args(values, sample_arg_names, total, key)
+    sampled_groups = tuple(
+        group for group in stochastic_plan.source_groups if group.execution_mode == "sampled"
+    )
+    sample_arg_refs = [ref for group in sampled_groups for ref in group.arg_refs]
+    if sampled_groups:
+        sample_shape = stochastic_plan.sample_shape
+        if sample_shape is None:  # pragma: no cover - planner contract guard
+            raise RuntimeError("mixed stochastic plan is missing sample_shape")
+        sampled = _sample_planned_source_groups(
+            values,
+            sampled_groups,
+            sample_shape,
+            get_key(),
+        )
     else:
         sampled = {}
 
     call_value_list = []
     weights = []
     sample_idx = 0
+    exact_arg_refs = [ref for ref, _dist in exact_entries]
+    all_broadcast_args = exact_arg_refs + sample_arg_refs
 
-    all_broadcast_args = emp_names + sample_arg_names
-
-    for combo in cartesian_product(*(range(d.num_atoms) for d in emp_dists)):
+    for combo in stochastic_plan.exact_combination_order:
         emp_weight = 1.0
-        for _ref, dist, i in zip(emp_names, emp_dists, combo):
+        for (_ref, dist), i in zip(exact_entries, combo):
             emp_weight *= float(dist.weights[i])
 
-        for _ in range(reps_per_combo):
+        for _ in range(stochastic_plan.repetitions_per_combination):
             replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
 
-            for ref, dist, i in zip(emp_names, emp_dists, combo):
+            for (ref, dist), i in zip(exact_entries, combo):
                 replacements[ref] = _index_sample(dist.samples, i)
 
-            for ref in sample_args:
+            for ref in sample_arg_refs:
                 replacements[ref] = _index_sample(sampled[ref], sample_idx)
 
-            weights.append(emp_weight / reps_per_combo)
+            weights.append(emp_weight / stochastic_plan.repetitions_per_combination)
             call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
             sample_idx += 1
 
@@ -440,8 +405,7 @@ def _broadcast_sample(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    broadcast_args: list[_workflow_call.WorkflowInputRef],
-    n_broadcast_samples: int,
+    stochastic_plan: _workflow_plan.StochasticPlan,
     get_key: Callable[[], PRNGKey],
     make_execution_config: Callable[
         [],
@@ -450,16 +414,19 @@ def _broadcast_sample(
     output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
     """Sample distribution arguments and execute one function call per sample."""
-    key = get_key()
-    samples_per_arg = _sample_broadcast_args(
+    sample_shape = stochastic_plan.sample_shape
+    if sample_shape is None:  # pragma: no cover - planner contract guard
+        raise RuntimeError("sampled stochastic plan is missing sample_shape")
+    broadcast_args = list(stochastic_plan.arg_refs)
+    samples_per_arg = _sample_planned_source_groups(
         values,
-        broadcast_args,
-        n_broadcast_samples,
-        key,
+        stochastic_plan.source_groups,
+        sample_shape,
+        get_key(),
     )
 
     call_value_list = []
-    for i in range(n_broadcast_samples):
+    for i in range(stochastic_plan.n_evaluations):
         replacements = {ref: _index_sample(samples_per_arg[ref], i) for ref in broadcast_args}
         call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
 

@@ -4,7 +4,7 @@ import inspect
 import logging
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any, Literal, cast, get_args, overload
 
@@ -714,6 +714,11 @@ class Function(Node, TrackedTerm, Annotated):
             values=values,
             signature_info=self._signature_info,
         )
+        stochastic_plan = _workflow_plan.build_stochastic_plan(
+            values,
+            broadcast_plan,
+            call.overrides.n_broadcast_samples,
+        )
         _, invocation_bindings = _bind_planned_function_inputs(
             function_name=self._name,
             input_template=self._input_template,
@@ -804,15 +809,13 @@ class Function(Node, TrackedTerm, Annotated):
         def execute_distribution_broadcast(
             *,
             row_values: dict[str, Any],
-            dist_args: Sequence[_workflow_call.WorkflowInputRef],
-            n_broadcast_samples: int = call.overrides.n_broadcast_samples,
+            plan: _workflow_plan.StochasticPlan,
             include_inputs: bool = call.overrides.include_inputs,
         ):
             return _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=invoke_point,
                 values=row_values,
-                broadcast_args=dist_args,
-                n_broadcast_samples=n_broadcast_samples,
+                stochastic_plan=plan,
                 include_inputs=include_inputs,
                 get_key=get_key,
                 make_execution_config=self._make_execution_config,
@@ -827,22 +830,22 @@ class Function(Node, TrackedTerm, Annotated):
             )
 
         if broadcast_plan.regime == "distribution":
+            if stochastic_plan is None:  # pragma: no cover - planner contract guard
+                raise RuntimeError("distribution broadcast is missing its stochastic plan")
             return execute_distribution_broadcast(
                 row_values=values,
-                dist_args=broadcast_plan.dist_args,
+                plan=stochastic_plan,
             )
         if broadcast_plan.regime in ("sweep", "nested"):
 
             def distribution_broadcast(
                 row_values: dict[str, Any],
-                dist_args: list[_workflow_call.WorkflowInputRef],
-                n_broadcast_samples: int,
+                plan: _workflow_plan.StochasticPlan,
                 include_inputs: bool,
             ):
                 return execute_distribution_broadcast(
                     row_values=row_values,
-                    dist_args=dist_args,
-                    n_broadcast_samples=n_broadcast_samples,
+                    plan=plan,
                     include_inputs=include_inputs,
                 )
 
@@ -850,13 +853,13 @@ class Function(Node, TrackedTerm, Annotated):
                 func=invoke_point,
                 values=values,
                 plan=broadcast_plan,
+                stochastic_plan=stochastic_plan,
                 make_execution_config=self._make_execution_config,
                 requested_dispatch=self._dispatch,
                 resolve_dispatch=resolve_dispatch,
                 require_jax_traceable=require_jax_traceable,
                 distribution_broadcast=distribution_broadcast,
                 workflow_name=self._name,
-                n_broadcast_samples=call.overrides.n_broadcast_samples,
                 include_inputs=call.overrides.include_inputs,
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,

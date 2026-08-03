@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import inspect
+from dataclasses import replace
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -9,6 +12,7 @@ import pytest
 
 from probpipe import BroadcastDistribution, EmpiricalDistribution, Normal, ProductDistribution
 from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
+from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.core.config import WorkflowKind
 
 
@@ -51,6 +55,15 @@ def _ref(name: str) -> _workflow_call.WorkflowInputRef:
     return _workflow_call.WorkflowInputRef(name)
 
 
+def _stochastic_plan(values, n_broadcast_samples):
+    signature = inspect.Signature(
+        [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
+    )
+    signature_info = _workflow_call.make_signature_info_from_signature(signature)
+    broadcast_plan = build_broadcast_plan(values=values, signature_info=signature_info)
+    return build_stochastic_plan(values, broadcast_plan, n_broadcast_samples)
+
+
 class TestExecuteDistributionBroadcast:
     def test_sample_path_uses_execution_request(self, monkeypatch):
         values = {
@@ -76,8 +89,7 @@ class TestExecuteDistributionBroadcast:
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=shift,
             values=values,
-            broadcast_args=[_ref("x")],
-            n_broadcast_samples=5,
+            stochastic_plan=_stochastic_plan(values, 5),
             include_inputs=True,
             get_key=_key_source(0),
             make_execution_config=lambda: execution,
@@ -125,10 +137,9 @@ class TestExecuteDistributionBroadcast:
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=add,
             values=values,
-            broadcast_args=[_ref("x"), _ref("y")],
-            n_broadcast_samples=10,
+            stochastic_plan=_stochastic_plan(values, 10),
             include_inputs=True,
-            get_key=_key_source(1),
+            get_key=_require_not_called,
             make_execution_config=lambda: _execution_config(name="add"),
             requested_dispatch="sequential",
             resolve_dispatch=_resolve_to("sequential"),
@@ -169,8 +180,7 @@ class TestExecuteDistributionBroadcast:
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=double,
             values=values,
-            broadcast_args=[_ref("x")],
-            n_broadcast_samples=6,
+            stochastic_plan=_stochastic_plan(values, 6),
             include_inputs=True,
             get_key=_key_source(2),
             make_execution_config=lambda: _execution_config(name="double"),
@@ -197,8 +207,7 @@ class TestExecuteDistributionBroadcast:
             _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
-                broadcast_args=[_ref("x")],
-                n_broadcast_samples=6,
+                stochastic_plan=_stochastic_plan(values, 6),
                 include_inputs=True,
                 get_key=_key_source(2),
                 make_execution_config=lambda: _execution_config(name="identity"),
@@ -217,10 +226,11 @@ class TestExecuteDistributionBroadcast:
         view_x = joint["x"]
         values = {"a": view_x, "b": view_x}
 
-        sampled = _workflow_distribution_broadcast._sample_broadcast_args(
+        plan = _stochastic_plan(values, 8)
+        sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
             values,
-            [_ref("a"), _ref("b")],
-            8,
+            plan.source_groups,
+            (8,),
             jax.random.PRNGKey(3),
         )
 
@@ -240,12 +250,17 @@ class TestExecuteDistributionBroadcast:
         error_type,
         message,
     ):
+        values = {"x": Normal(loc=0.0, scale=1.0, name="x")}
+        invalid_plan = replace(
+            _stochastic_plan(values, 5),
+            n_broadcast_samples=n_broadcast_samples,
+        )
+
         with pytest.raises(error_type, match=message):
             _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
-                values={"x": Normal(loc=0.0, scale=1.0, name="x")},
-                broadcast_args=[_ref("x")],
-                n_broadcast_samples=n_broadcast_samples,
+                values=values,
+                stochastic_plan=invalid_plan,
                 include_inputs=True,
                 get_key=_key_source(4),
                 make_execution_config=lambda: _execution_config(name="identity"),
@@ -257,12 +272,12 @@ class TestExecuteDistributionBroadcast:
             )
 
     def test_low_n_broadcast_samples_warns(self):
+        values = {"x": Normal(loc=0.0, scale=1.0, name="x")}
         with pytest.warns(UserWarning, match="n_broadcast_samples=3 is too low"):
             result = _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
-                values={"x": Normal(loc=0.0, scale=1.0, name="x")},
-                broadcast_args=[_ref("x")],
-                n_broadcast_samples=3,
+                values=values,
+                stochastic_plan=_stochastic_plan(values, 3),
                 include_inputs=True,
                 get_key=_key_source(5),
                 make_execution_config=lambda: _execution_config(name="identity"),
@@ -275,6 +290,9 @@ class TestExecuteDistributionBroadcast:
 
         assert isinstance(result, BroadcastDistribution)
         assert result.num_atoms == 3
+
+    def test_executor_has_no_empirical_replanning_helper(self):
+        assert not hasattr(_workflow_distribution_broadcast, "_split_empirical_args")
 
 
 class TestIndexSampleHelper:

@@ -9,9 +9,47 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import EmpiricalDistribution, Function, Normal, function, workflow_run
+from probpipe.core import _workflow_plan
 
 
 class TestSequentialLiftingWorkflowRun:
+    def test_function_builds_one_stochastic_plan_for_a_lifted_call(self):
+        @function(n_broadcast_samples=8, dispatch="sequential")
+        def identity(x):
+            return x
+
+        with (
+            patch(
+                "probpipe.core.node._workflow_plan.build_stochastic_plan",
+                wraps=_workflow_plan.build_stochastic_plan,
+            ) as build_plan,
+            workflow_run(seed=7),
+        ):
+            result = identity(Normal(loc=0.0, scale=1.0, name="x"))
+
+        assert result.num_atoms == 8
+        build_plan.assert_called_once()
+
+    def test_invalid_sample_count_fails_before_probe_or_event_commit(self):
+        workflow = Function(
+            func=lambda x: x,
+            n_broadcast_samples=8,
+            dispatch="auto",
+        )
+
+        with (
+            patch.object(Function, "_resolve_dispatch") as resolve_dispatch,
+            patch(
+                "probpipe.core._workflow_context._commit_stochastic_invocation"
+            ) as commit_invocation,
+            workflow_run(seed=7),
+            pytest.raises(ValueError, match="n_broadcast_samples must be a positive integer"),
+        ):
+            workflow.with_options(n_broadcast_samples=0)(Normal(loc=0.0, scale=1.0, name="x"))
+
+        resolve_dispatch.assert_not_called()
+        commit_invocation.assert_not_called()
+
     def test_seeded_run_reproduces_distinct_lifted_occurrences(self):
         @function(n_broadcast_samples=16, dispatch="sequential")
         def identity(x):
