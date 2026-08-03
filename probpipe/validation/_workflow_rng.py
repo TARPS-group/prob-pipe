@@ -19,7 +19,7 @@ def _validate_positive_int(name: str, value: Any) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise TypeError(f"{name} must be an integer; got {value!r}")
     if value <= 0:
-        raise ValueError(f"{name} must be positive; got {value!r}")
+        raise ValueError(f"{name} must be a positive integer; got {value!r}")
     return value
 
 

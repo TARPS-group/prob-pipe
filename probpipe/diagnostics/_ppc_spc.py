@@ -34,13 +34,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import nullcontext
 from datetime import UTC, datetime
 from typing import Any
 
 import numpy as np
 import xarray as xr
 
-from .._utils import _auto_key
+from ..core import _workflow_broker
 from ..core.distribution import Distribution
 from ..custom_types import PRNGKey
 from ..validation._predictive_check import (
@@ -48,12 +49,17 @@ from ..validation._predictive_check import (
     _predictive_check_loop,
     _supports_key_arg,
 )
+from ..validation._workflow_rng import (
+    _require_certified_generative_provider,
+    _validate_positive_int,
+)
 from ._datatree import _add_group
 from ._utils import (
     _json_dumps_safe,
     _resolve_generative_likelihood,
     _safe_float,
 )
+from ._workflow_rng import _resolve_ppc_key
 
 __all__ = [
     "add_ppc",
@@ -242,65 +248,89 @@ def _ppc_op(
         Diagnostic payload dict containing scalar results, xarray datasets, and
         plotting metadata.
     """
-    gl = _resolve_generative_likelihood(posterior, generative_likelihood)
-
     if callable(test_fns):
-        test_fns = [test_fns]
+        planned_test_fns = (test_fns,)
     else:
-        test_fns = list(test_fns)
+        try:
+            planned_test_fns = tuple(test_fns)
+        except TypeError as exc:
+            raise TypeError("test_fns must be a callable or an iterable of callables") from exc
+    if not planned_test_fns:
+        raise ValueError("test_fns must contain at least one callable")
+    planned_tests: list[tuple[Callable, Any]] = []
+    for index, fn in enumerate(planned_test_fns):
+        if not callable(fn):
+            raise TypeError(f"test_fns[{index}] must be callable; got {type(fn).__name__}")
+        name = getattr(fn, "__name__", None)
+        planned_tests.append((fn, name if name is not None else repr(fn)))
+
+    if num_observations is None:
+        if observed_data is None:
+            raise ValueError("num_observations is required when observed_data is not provided.")
+        num_observations = len(observed_data)
+    n_samples = _validate_positive_int("num_observations", num_observations)
+    n_replications = _validate_positive_int("n_replications", n_replications)
+
+    if not callable(getattr(posterior, "_sample", None)):
+        raise TypeError(f"{type(posterior).__name__} does not support predictive sampling")
+    gl = _resolve_generative_likelihood(posterior, generative_likelihood)
+    if not callable(getattr(gl, "generate_data", None)):
+        raise TypeError(f"{type(gl).__name__} does not provide callable generate_data")
+    supports_key = _supports_key_arg(gl)
+
+    provider_abi = ""
+    if key is None:
+        provider_abi = _require_certified_generative_provider(gl, "add_ppc")
 
     results: dict[str, dict[str, Any]] = {}
     replicated_stats_by_fn: dict[str, np.ndarray | None] = {}
 
-    for fn in test_fns:
-        name = getattr(fn, "__name__", repr(fn))
-
-        if num_observations is None:
-            if observed_data is None:
-                raise ValueError("num_observations is required when observed_data is not provided.")
-            _n_samples = len(observed_data)
-        else:
-            _n_samples = int(num_observations)
-
-        if _n_samples < 1:
-            raise ValueError("num_observations must be a positive integer.")
-
-        _key = key if key is not None else _auto_key()
-
-        if _supports_key_arg(gl):
-            stats_array = _predictive_check_batched(
-                posterior,
-                gl,
-                fn,
-                _n_samples,
-                n_replications,
-                _key,
-            )
-        else:
-            stats_array = _predictive_check_loop(
-                posterior,
-                gl,
-                fn,
-                _n_samples,
-                n_replications,
-                _key,
+    stochastic_scope = (
+        _workflow_broker._managed_stochastic_scope() if key is None else nullcontext()
+    )
+    with stochastic_scope:
+        for source_index, (fn, name) in enumerate(planned_tests):
+            effect_key = _resolve_ppc_key(
+                key,
+                source_index=source_index,
+                n_replications=n_replications,
+                provider_abi=provider_abi,
             )
 
-        p_val = None
-        obs_val = None
-        if observed_data is not None:
-            obs_val = float(fn(observed_data))
-            p_val = float(np.mean(stats_array >= obs_val))
+            if supports_key:
+                stats_array = _predictive_check_batched(
+                    posterior,
+                    gl,
+                    fn,
+                    n_samples,
+                    n_replications,
+                    effect_key,
+                )
+            else:
+                stats_array = _predictive_check_loop(
+                    posterior,
+                    gl,
+                    fn,
+                    n_samples,
+                    n_replications,
+                    effect_key,
+                )
 
-        results[name] = {
-            "p_value": p_val,
-            "observed": obs_val,
-        }
+            p_val = None
+            obs_val = None
+            if observed_data is not None:
+                obs_val = float(fn(observed_data))
+                p_val = float(np.mean(stats_array >= obs_val))
 
-        replicated_stats_by_fn[name] = np.asarray(stats_array, dtype=np.float64)
+            results[name] = {
+                "p_value": p_val,
+                "observed": obs_val,
+            }
 
-        # y_rep_data not available from direct helper calls — skip ArviZ
-        # posterior_predictive population for now.
+            replicated_stats_by_fn[name] = np.asarray(stats_array, dtype=np.float64)
+
+            # y_rep_data not available from direct helper calls — skip ArviZ
+            # posterior_predictive population for now.
 
     # ------------------------------------------------------------------
     # Build optional ArviZ-compatible datasets
