@@ -78,6 +78,7 @@ class _ManagedUnitClaimState:
     child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
     active_attempt: bytes | None = None
     seen_attempts: set[bytes] = field(default_factory=set)
+    active_effect_identities: set[tuple[Any, ...]] = field(default_factory=set)
     effect_claims_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
         default_factory=dict
     )
@@ -378,6 +379,9 @@ class _AutomaticKeyBroker:
                 raise RuntimeError(
                     "a stochastic event identity was retried with a different effect plan"
                 )
+            if identity in state.active_effect_identities:
+                raise RuntimeError("one managed attempt duplicated a stochastic effect claim")
+            state.active_effect_identities.add(identity)
             state.effect_claims_by_identity[identity] = effect
 
     def accept_successful_managed_effects(
@@ -441,6 +445,7 @@ class _AutomaticKeyBroker:
                 raise RuntimeError("a managed attempt token cannot be reused")
             state.seen_attempts.add(attempt.attempt_token)
             state.active_attempt = attempt.attempt_token
+            state.active_effect_identities.clear()
             state.has_started = True
             state.joined = False
             return state.frame
@@ -452,6 +457,7 @@ class _AutomaticKeyBroker:
             if state is None or state.active_attempt != attempt.attempt_token:
                 raise RuntimeError("managed work-item attempt is not active")
             state.active_attempt = None
+            state.active_effect_identities.clear()
             state.joined = True
 
     def cancel_unstarted_managed_items(self, items: tuple[ManagedWorkItem, ...]) -> None:
@@ -686,8 +692,10 @@ class _RemoteManagedParent:
         if retry_effect is not None and retry_effect != effect:
             raise RuntimeError("remote event identity changed effect plan during retry")
         existing = self.effect_claims_by_identity.get(identity)
-        if existing is not None and existing != effect:
-            raise RuntimeError("remote event identity changed effect plan during retry")
+        if existing is not None:
+            if existing != effect:
+                raise RuntimeError("remote event identity changed effect plan during retry")
+            raise RuntimeError("one managed attempt duplicated a stochastic effect claim")
         self.effect_claims_by_identity[identity] = effect
 
     def accept_successful_managed_effects(

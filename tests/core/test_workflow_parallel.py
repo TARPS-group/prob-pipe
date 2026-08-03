@@ -275,6 +275,29 @@ class TestManagedRetryClaims:
             ):
                 pass
 
+    @pytest.mark.parametrize("mode", ["sequential", "prefect_task"])
+    def test_same_attempt_cannot_claim_one_effect_twice(self, mode, monkeypatch):
+        if mode == "prefect_task":
+            monkeypatch.setattr(execution_mod, "task", fake_task)
+            monkeypatch.setattr(execution_mod, "flow", fake_flow)
+
+        def duplicate_effect_claim():
+            with broker_mod._managed_stochastic_scope():
+                _claim_automatic_words()
+                _claim_automatic_words()
+
+        request = make_request(
+            mode=mode,
+            calls=[{}],
+            func=duplicate_effect_claim,
+        )
+        with (
+            workflow_run(seed=17),
+            broker_mod._function_stochastic_scope(),
+            pytest.raises(RuntimeError, match="duplicated a stochastic effect claim"),
+        ):
+            execution_mod.execute_many(request)
+
     def test_deterministic_attempt_does_not_consume_child_ordinal(self):
         state = {"random": False}
 
