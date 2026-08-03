@@ -128,3 +128,13 @@ class TestEventKeyDerivation:
         assert jnp.array_equal(eager, expected)
         assert jnp.array_equal(jitted, expected)
         assert jnp.array_equal(vmapped, jnp.broadcast_to(expected, (3, 2)))
+
+    def test_jax_adapter_rejects_changed_raw_word_values(self, monkeypatch):
+        wrong_key = jax.random.wrap_key_data(
+            jnp.asarray((99, 100), dtype=jnp.uint32),
+            impl="threefry2x32",
+        )
+        monkeypatch.setattr(jax.random, "wrap_key_data", lambda *args, **kwargs: wrong_key)
+
+        with pytest.raises(RuntimeError, match="raw key word values"):
+            jax_key_from_words((1, 2))

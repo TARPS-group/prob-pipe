@@ -107,15 +107,18 @@ def derive_event_key_words(
 def jax_key_from_words(words: tuple[int, int]) -> PRNGKey:
     """Wrap canonical raw words in JAX's checked Threefry typed-key format."""
     validated = _validate_word_pair(words, name="words")
-    key = jax.random.wrap_key_data(
-        jnp.asarray(validated, dtype=jnp.uint32),
-        impl="threefry2x32",
-    )
-    round_trip = jax.random.key_data(key)
-    if str(key.dtype) != "key<fry>" or round_trip.shape != (2,):
-        raise RuntimeError("installed JAX key adapter does not support Threefry2x32 words")
-    if round_trip.dtype != jnp.dtype(jnp.uint32):
-        raise RuntimeError("installed JAX key adapter changed the raw key word dtype")
+    with jax.ensure_compile_time_eval():
+        key = jax.random.wrap_key_data(
+            jnp.asarray(validated, dtype=jnp.uint32),
+            impl="threefry2x32",
+        )
+        round_trip = jax.random.key_data(key)
+        if str(key.dtype) != "key<fry>" or round_trip.shape != (2,):
+            raise RuntimeError("installed JAX key adapter does not support Threefry2x32 words")
+        if round_trip.dtype != jnp.dtype(jnp.uint32):
+            raise RuntimeError("installed JAX key adapter changed the raw key word dtype")
+        if tuple(int(word) for word in round_trip) != validated:
+            raise RuntimeError("installed JAX key adapter changed the raw key word values")
     return key
 
 
