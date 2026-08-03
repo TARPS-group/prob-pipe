@@ -3,7 +3,6 @@
 Provides:
   - ``Distribution[T]`` – Abstract base for all ProbPipe distributions.
   - Global defaults for expectation sampling.
-  - ``_auto_key()`` helper for convenience PRNG key generation.
 """
 
 from __future__ import annotations
