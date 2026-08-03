@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.bijectors as tfb
 import tensorflow_probability.substrates.jax.distributions as tfd
 
+from ..core import _workflow_descendants
 from ..core.constraints import (
     Constraint,
     positive,
@@ -133,6 +134,7 @@ def _transformed_class_for_base(base: NumericRecordDistribution) -> type:
         (TransformedDistribution, *extra_bases),
         extra_methods,
     )
+    _workflow_descendants._register_transformed_distribution_type(cls)
     _TRANSFORMED_CLASS_CACHE[key] = cls
     return cls
 
@@ -283,3 +285,6 @@ class TransformedDistribution(NumericRecordDistribution):
             parts[0] += f", name={self.name!r}"
         parts[0] += f", event_shape={self.event_shape})"
         return parts[0]
+
+
+_workflow_descendants._register_transformed_distribution_type(TransformedDistribution)

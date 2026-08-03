@@ -13,10 +13,9 @@ from itertools import product as cartesian_product
 from math import prod
 from typing import Any, Literal
 
-from . import _workflow_call, _workflow_distribution_normalization
+from . import _workflow_call, _workflow_descendants, _workflow_distribution_normalization
 from ._distribution_array import DistributionArray
 from ._record_array import RecordArray
-from ._record_distribution import _RecordDistributionView
 from .distribution import Distribution, EmpiricalDistribution
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
@@ -303,14 +302,8 @@ def _group_stochastic_sources(
 
     for ref in refs:
         value = _workflow_call.input_ref_value(values, ref)
-        if isinstance(value, _RecordDistributionView):
-            root = value.parent
-            record_path = tuple(value._key_path)
-            evaluator = value._extract
-        else:
-            root = value
-            record_path = ()
-            evaluator = _identity
+        captured = _workflow_descendants.capture_stochastic_consumer(value)
+        root = captured.root
 
         root_identity = id(root)
         group_index = group_by_root.get(root_identity)
@@ -320,20 +313,23 @@ def _group_stochastic_sources(
             grouped_consumers.append([])
             source_values.append(root)
             runtime_evaluators.append([])
+        descendant_descriptor = captured.descendant_descriptor
+        if descendant_descriptor is not None:
+            descendant_descriptor = (
+                "stochastic-descendant",
+                ("base_source_slot", group_index),
+                ("graph", descendant_descriptor),
+            )
         grouped_consumers[group_index].append(
             StochasticConsumerPlan(
                 arg_ref=ref,
-                record_path=record_path,
-                descendant_descriptor=None,
+                record_path=captured.record_path,
+                descendant_descriptor=descendant_descriptor,
             )
         )
-        runtime_evaluators[group_index].append(evaluator)
+        runtime_evaluators[group_index].append(captured.evaluator)
 
     return grouped_consumers, source_values, runtime_evaluators
-
-
-def _identity(value: Any) -> Any:
-    return value
 
 
 def _build_logical_units(broadcast_plan: BroadcastPlan) -> tuple[LogicalUnit, ...]:

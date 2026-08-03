@@ -53,7 +53,7 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
-from . import _workflow_broker
+from . import _workflow_broker, _workflow_descendants
 from ._distribution_base import Distribution
 from ._record_distribution import RecordDistribution, _field_event_shape
 from .constraints import (
@@ -912,6 +912,10 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         (FlattenedDistributionView, *extra_bases),
         extra_methods,
     )
+    _workflow_descendants._register_unsupported_descendant_type(
+        new_cls,
+        "FlattenedDistributionView",
+    )
     _FLATTENED_VIEW_CLASS_CACHE[key] = new_cls
     return new_cls
 
@@ -1178,6 +1182,10 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         (NumericRecordDistributionView, *extra_bases),
         extra_methods,
     )
+    _workflow_descendants._register_unsupported_descendant_type(
+        new_cls,
+        "NumericRecordDistributionView",
+    )
     _LIFTED_VIEW_CLASS_CACHE[type(base)] = new_cls
     return new_cls
 
@@ -1270,3 +1278,13 @@ class NumericRecordDistributionView(NumericRecordDistribution):
             f"NumericRecordDistributionView(base={type(self._base).__name__}, "
             f"template={self.event_template!r})"
         )
+
+
+_workflow_descendants._register_unsupported_descendant_type(
+    FlattenedDistributionView,
+    "FlattenedDistributionView",
+)
+_workflow_descendants._register_unsupported_descendant_type(
+    NumericRecordDistributionView,
+    "NumericRecordDistributionView",
+)
