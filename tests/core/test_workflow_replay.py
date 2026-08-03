@@ -211,6 +211,28 @@ class TestReplayAdmission:
         ):
             pass
 
+    @pytest.mark.parametrize(
+        "occurrence_path",
+        [
+            [],
+            [["unknown-segment", 0]],
+            [["operation", 0]],
+        ],
+    )
+    def test_malformed_function_occurrence_paths_fail_at_entry(self, occurrence_path):
+        payload = _draw().provenance.to_dict()
+        randomness = payload["controls"]["randomness"]
+        original_path = randomness["occurrence_path"]
+        event_suffix = randomness["events"][0]["occurrence_path"][len(original_path) :]
+        randomness["occurrence_path"] = occurrence_path
+        randomness["events"][0]["occurrence_path"] = [*occurrence_path, *event_suffix]
+
+        with (
+            pytest.raises(ReplayCompatibilityError, match="occurrence_path"),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            pass
+
     def test_unsupported_callable_and_nested_automatic_parent_fail_at_entry(self):
         unsupported = Function(func=lambda value: value, n_broadcast_samples=5)
         with workflow_run(seed=3):

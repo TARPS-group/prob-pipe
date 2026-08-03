@@ -18,7 +18,11 @@ from ._workflow_errors import (
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
 )
-from ._workflow_managed import ManagedAttemptState, ManagedEffectClaim
+from ._workflow_managed import (
+    _MANAGED_WORK_ITEM_ABI,
+    ManagedAttemptState,
+    ManagedEffectClaim,
+)
 from ._workflow_rng import RandomEventIdentity, encode_random_event
 from .provenance import Provenance
 
@@ -614,6 +618,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
         randomness.get("occurrence_path"),
         field_name="randomness.occurrence_path",
     )
+    _validate_function_occurrence_path(occurrence_path)
     standalone = _mapping(replay.get("standalone"), "replay.standalone")
     eligibility = standalone.get("eligibility")
     if eligibility != "supported":
@@ -761,9 +766,10 @@ def _expected_events(
             event.get("occurrence_path"),
             field_name=f"randomness.events[{index}].occurrence_path",
         )
+        _validate_occurrence_path(occurrence_path)
         if occurrence_path[: len(outer_occurrence_path)] != outer_occurrence_path:
             raise ReplayCompatibilityError(
-                "recorded replay event is outside its anchored occurrence path"
+                "recorded replay event is outside its anchored occurrence_path"
             )
         occurrence_kind = event.get("occurrence_kind")
         if occurrence_kind not in ("invocation", "operation"):
@@ -961,6 +967,87 @@ def _structural_tuple(value: Any, *, field_name: str) -> tuple[Any, ...]:
         return item
 
     return tuple(convert(item) for item in value)
+
+
+def _validate_function_occurrence_path(path: tuple[Any, ...]) -> None:
+    """Reject paths that cannot identify a committed public Function call."""
+    _validate_occurrence_path(path)
+    if any(segment[0] == "operation" for segment in path):
+        raise ReplayCompatibilityError(
+            "recorded randomness.occurrence_path cannot anchor a managed operation"
+        )
+    if path[-1][0] not in ("invocation", "child"):
+        raise ReplayCompatibilityError(
+            "recorded randomness.occurrence_path does not end at a Function invocation"
+        )
+
+
+def _validate_occurrence_path(path: tuple[Any, ...]) -> None:
+    """Validate the closed version-1 occurrence-path segment grammar."""
+    if not path:
+        raise ReplayCompatibilityError("recorded randomness.occurrence_path must not be empty")
+    for segment in path:
+        if not isinstance(segment, tuple) or not segment:
+            raise ReplayCompatibilityError(
+                "recorded randomness.occurrence_path contains an invalid path segment"
+            )
+        tag = segment[0]
+        if tag in ("scope", "invocation", "operation", "child"):
+            if len(segment) != 2 or not _is_nonnegative_int(segment[1]):
+                raise ReplayCompatibilityError(
+                    f"recorded randomness.occurrence_path contains an invalid {tag!r} segment"
+                )
+            continue
+        if tag == "managed-unit":
+            _validate_managed_unit_segment(segment)
+            continue
+        raise ReplayCompatibilityError(
+            "recorded randomness.occurrence_path contains an unknown path segment"
+        )
+    if path[-1][0] not in ("invocation", "operation", "child"):
+        raise ReplayCompatibilityError(
+            "recorded randomness.occurrence_path does not end at a stochastic occurrence"
+        )
+
+
+def _validate_managed_unit_segment(segment: tuple[Any, ...]) -> None:
+    if len(segment) < 3 or segment[1] != _MANAGED_WORK_ITEM_ABI:
+        raise ReplayCompatibilityError(
+            "recorded randomness.occurrence_path contains an incompatible managed unit"
+        )
+    layout = segment[2]
+    if layout == "point":
+        valid = len(segment) == 4 and segment[3] == 0
+    elif layout == "sweep-cell":
+        valid = len(segment) >= 4 and all(_is_nonnegative_int(item) for item in segment[3:])
+    elif layout == "lifted-evaluation":
+        valid = (
+            len(segment) == 5
+            and _is_logical_unit_id(segment[3])
+            and _is_nonnegative_int(segment[4])
+        )
+    else:
+        valid = False
+    if not valid:
+        raise ReplayCompatibilityError(
+            "recorded randomness.occurrence_path contains an invalid managed unit"
+        )
+
+
+def _is_logical_unit_id(value: Any) -> bool:
+    if not isinstance(value, tuple) or not value:
+        return False
+    if value[0] == "singleton":
+        return len(value) == 1
+    return (
+        value[0] == "cell"
+        and len(value) >= 2
+        and all(_is_nonnegative_int(item) for item in value[1:])
+    )
+
+
+def _is_nonnegative_int(value: Any) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
 
 
 def _mapping(value: Any, field_name: str) -> Mapping[str, Any]:
