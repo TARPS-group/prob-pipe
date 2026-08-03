@@ -29,6 +29,7 @@ from . import (
     _workflow_execution,
     _workflow_execution_contract,
     _workflow_plan,
+    _workflow_recipe,
 )
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution, EmpiricalDistribution
@@ -59,6 +60,7 @@ def execute_distribution_broadcast(
     output_template: EventTemplate | None = None,
     provenance_parents: Sequence[TrackedTerm] = (),
     provenance_inputs: Mapping[str, Any] | None = None,
+    record_recipe: bool = True,
 ) -> BroadcastDistribution | Distribution:
     """Execute one distribution-only broadcasted workflow call.
 
@@ -190,6 +192,8 @@ def execute_distribution_broadcast(
         func=func,
         provenance_parents=provenance_parents,
         provenance_inputs=provenance_inputs,
+        stochastic_plan=stochastic_plan if record_recipe else None,
+        record_recipe=record_recipe,
     )
     result.with_provenance(provenance)
 
@@ -227,7 +231,12 @@ def _make_broadcast_provenance(
     func: Callable[..., Any],
     provenance_parents: Sequence[TrackedTerm],
     provenance_inputs: Mapping[str, Any] | None,
+    stochastic_plan: _workflow_plan.StochasticPlan | None,
+    record_recipe: bool,
 ) -> Provenance | None:
+    controls, diagnostics = (
+        _workflow_recipe.provenance_recipe_fields(stochastic_plan) if record_recipe else ({}, {})
+    )
     return Provenance.create(
         "broadcast",
         parents=list(provenance_parents),
@@ -239,6 +248,8 @@ def _make_broadcast_provenance(
             "broadcast_args": [ref.label for ref in broadcast_args],
         },
         inputs=provenance_inputs,
+        controls=controls,
+        diagnostics=diagnostics,
     )
 
 

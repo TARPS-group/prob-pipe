@@ -103,12 +103,39 @@ class ManagedParentEnvelope:
 
 
 @dataclass(frozen=True)
+class ManagedEffectClaim:
+    """Serializable descriptor of one automatic stochastic effect claim."""
+
+    occurrence_path: tuple[Any, ...]
+    occurrence_kind: str
+    stochastic_source_id: tuple[str | int, ...]
+    logical_unit_id: tuple[str | int, ...]
+    operation_kind: str
+    execution_mode: str
+    sample_shape: tuple[int, ...] | None
+    sampling_abi: str
+    provider_abi: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.occurrence_path, tuple):
+            raise TypeError("managed effect occurrence paths must be tuples")
+        if not isinstance(self.stochastic_source_id, tuple) or not isinstance(
+            self.logical_unit_id,
+            tuple,
+        ):
+            raise TypeError("managed effect source and unit identities must be tuples")
+        if self.sample_shape is not None and not isinstance(self.sample_shape, tuple):
+            raise TypeError("managed effect sample shapes must be tuples or None")
+
+
+@dataclass(frozen=True)
 class ManagedClaimReport:
     """Serializable claim summary returned by one remote attempt."""
 
     frame: ManagedUnitFrame
     attempt: ManagedAttemptState
     child_count: int
+    effects: tuple[ManagedEffectClaim, ...] = ()
 
     def __post_init__(self) -> None:
         if (
@@ -117,6 +144,8 @@ class ManagedClaimReport:
             or self.child_count < 0
         ):
             raise TypeError("managed child counts must be non-negative integers")
+        if not isinstance(self.effects, tuple):
+            raise TypeError("managed effect reports must contain a tuple of effects")
 
 
 @dataclass(frozen=True)

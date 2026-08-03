@@ -26,6 +26,7 @@ from . import (
     _workflow_execution,
     _workflow_execution_contract,
     _workflow_plan,
+    _workflow_recipe,
     _workflow_result,
 )
 from ._broadcast_distributions import _make_stack
@@ -111,6 +112,7 @@ def execute_sweep(
             k=0,
             parents=provenance_parents,
             inputs=provenance_inputs,
+            stochastic_plan=None,
         )
         return _workflow_result._coerce_output(
             aggregate,
@@ -157,6 +159,7 @@ def execute_sweep(
         k=stochastic_plan.n_broadcast_samples,
         parents=provenance_parents,
         inputs=provenance_inputs,
+        stochastic_plan=stochastic_plan,
     )
     return _workflow_result._coerce_output(
         stacked,
@@ -344,6 +347,7 @@ def make_sweep_provenance(
     k: int,
     parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
+    stochastic_plan: _workflow_plan.StochasticPlan | None = None,
 ) -> Provenance | None:
     """Build provenance metadata for pure and nested sweep outputs.
 
@@ -360,6 +364,7 @@ def make_sweep_provenance(
             if isinstance(_workflow_call.input_ref_value(values, ref), Distribution)
         ]
         parents = array_candidates + dist_candidates
+    controls, diagnostics = _workflow_recipe.provenance_recipe_fields(stochastic_plan)
     return Provenance.create(
         f"workflow.{regime}",
         parents=parents,
@@ -371,4 +376,6 @@ def make_sweep_provenance(
             "dist_args": [ref.label for ref in dist_args],
         },
         inputs=inputs,
+        controls=controls,
+        diagnostics=diagnostics,
     )

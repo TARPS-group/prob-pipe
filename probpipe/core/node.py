@@ -32,6 +32,7 @@ from . import (
     _workflow_execution,
     _workflow_execution_contract,
     _workflow_plan,
+    _workflow_recipe,
     _workflow_result,
     _workflow_sweep,
 )
@@ -824,6 +825,7 @@ class Function(Node, TrackedTerm, Annotated):
             plan: _workflow_plan.StochasticPlan,
             logical_unit: _workflow_plan.LogicalUnit,
             include_inputs: bool = call.overrides.include_inputs,
+            record_recipe: bool = True,
         ):
             return _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=invoke_point,
@@ -841,6 +843,7 @@ class Function(Node, TrackedTerm, Annotated):
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,
                 provenance_inputs=provenance_inputs,
+                record_recipe=record_recipe,
             )
 
         if broadcast_plan.regime == "distribution":
@@ -864,6 +867,7 @@ class Function(Node, TrackedTerm, Annotated):
                     plan=plan,
                     logical_unit=logical_unit,
                     include_inputs=include_inputs,
+                    record_recipe=False,
                 )
 
             return _workflow_sweep.execute_sweep(
@@ -906,11 +910,14 @@ class Function(Node, TrackedTerm, Annotated):
         )
         result = _workflow_execution.execute_many(request)[0]
         name = self._name
+        controls, diagnostics = _workflow_recipe.provenance_recipe_fields(None)
         provenance = Provenance.create(
             f"workflow.{name}",
             parents=provenance_parents,
             metadata={"func": name},
             inputs=provenance_inputs,
+            controls=controls,
+            diagnostics=diagnostics,
         )
         return _workflow_result._coerce_output(
             result,

@@ -466,6 +466,7 @@ class TestPrefectMapping:
 
         assert result
         assert envelope.parent_occurrence_path == (("invocation", 0),)
+        assert len(parent._effects_by_identity) == 1
         urandom.assert_called_once_with(8)
         assert FakeMappedTask.map_calls == 2
 

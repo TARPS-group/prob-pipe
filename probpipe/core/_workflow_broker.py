@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 from ._workflow_managed import (
     ManagedAttemptState,
     ManagedClaimReport,
+    ManagedEffectClaim,
     ManagedParentEnvelope,
     ManagedUnitFrame,
     ManagedWorkItem,
@@ -98,6 +99,17 @@ class _ManagedAttemptContext:
         )
 
 
+@dataclass(frozen=True)
+class _BrokerRecipeSnapshot:
+    """Successful-invocation data safe for canonical recipe serialization."""
+
+    root_words: tuple[int, int]
+    occurrence_path: tuple[Any, ...]
+    rng_origin: str
+    effects: tuple[ManagedEffectClaim, ...]
+    execution_contracts: tuple[WorkflowRngExecutionContract, ...]
+
+
 def _singleton_effect_plan(
     *,
     operation_kind: str,
@@ -131,6 +143,8 @@ class _AutomaticKeyBroker:
     _managed_attempt: _ManagedAttemptContext | None = None
     _managed_claims: _ManagedClaimRegistry = field(default_factory=_ManagedClaimRegistry)
     _execution_contracts: list[WorkflowRngExecutionContract] = field(default_factory=list)
+    _effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(default_factory=dict)
+    _effects_lock: Any = field(default_factory=Lock, repr=False)
     _lock: Any = field(default_factory=Lock, repr=False)
 
     def key_for(self, plan: StochasticEffectPlan) -> PRNGKey:
@@ -149,6 +163,21 @@ class _AutomaticKeyBroker:
                 else:
                     self._invocation = self._managed_attempt.claim_child_invocation()
             invocation = self._invocation
+        effect = ManagedEffectClaim(
+            occurrence_path=invocation.occurrence_path,
+            occurrence_kind=self.occurrence_kind,
+            stochastic_source_id=plan.event.stochastic_source_id,
+            logical_unit_id=plan.event.logical_unit_id,
+            operation_kind=plan.operation_kind,
+            execution_mode=plan.execution_mode,
+            sample_shape=plan.sample_shape,
+            sampling_abi=plan.sampling_abi,
+            provider_abi=plan.provider_abi,
+        )
+        if self._managed_attempt is None:
+            self._record_effect(effect)
+        else:
+            self._managed_attempt.parent_broker.record_managed_effect(effect)
         return invocation.key_for(
             stochastic_source_id=plan.event.stochastic_source_id,
             logical_unit_id=plan.event.logical_unit_id,
@@ -178,6 +207,26 @@ class _AutomaticKeyBroker:
         """Record one distinct capability-checked route for later diagnostics."""
         if contract not in self._execution_contracts:
             self._execution_contracts.append(contract)
+
+    def record_managed_effect(self, effect: ManagedEffectClaim) -> None:
+        """Aggregate one local or transported child effect on the parent broker."""
+        self._record_effect(effect)
+        if self._managed_attempt is not None:
+            self._managed_attempt.parent_broker.record_managed_effect(effect)
+
+    def _record_effect(self, effect: ManagedEffectClaim) -> None:
+        identity = (
+            effect.occurrence_path,
+            effect.stochastic_source_id,
+            effect.logical_unit_id,
+        )
+        with self._effects_lock:
+            existing = self._effects_by_identity.get(identity)
+            if existing is not None and existing != effect:
+                raise RuntimeError(
+                    "a stochastic event identity was retried with a different effect plan"
+                )
+            self._effects_by_identity[identity] = effect
 
     def begin_managed_attempt(self, attempt: ManagedAttemptState) -> ManagedUnitFrame:
         """Admit one fresh attempt for a previously registered work-item token."""
@@ -266,21 +315,22 @@ class _AutomaticKeyBroker:
             state.has_started = True
             state.joined = True
 
-            if report.child_count == 0:
-                return
-            parent_invocation = self._ensure_parent_invocation()
-            while len(state.child_invocations) < report.child_count:
-                child_ordinal = len(state.child_invocations)
-                state.child_invocations.append(
-                    _workflow_context._WorkflowInvocation(
-                        frame=parent_invocation.frame,
-                        occurrence_path=(
-                            *parent_invocation.occurrence_path,
-                            report.frame.unit_segment,
-                            ("child", child_ordinal),
-                        ),
+            if report.child_count > 0:
+                parent_invocation = self._ensure_parent_invocation()
+                while len(state.child_invocations) < report.child_count:
+                    child_ordinal = len(state.child_invocations)
+                    state.child_invocations.append(
+                        _workflow_context._WorkflowInvocation(
+                            frame=parent_invocation.frame,
+                            occurrence_path=(
+                                *parent_invocation.occurrence_path,
+                                report.frame.unit_segment,
+                                ("child", child_ordinal),
+                            ),
+                        )
                     )
-                )
+        for effect in report.effects:
+            self.record_managed_effect(effect)
 
     def _claim_managed_child(
         self,
@@ -319,12 +369,15 @@ class _AutomaticKeyBroker:
         """Lazily materialize the containing public Function occurrence."""
         with self._lock:
             if self._invocation is None:
-                if self._frame is None:
-                    raise RuntimeError("parent broker has no workflow frame")
-                self._invocation = _workflow_context._commit_stochastic_invocation_in_frame(
-                    self._frame,
-                    self.occurrence_kind,
-                )
+                if self._managed_attempt is not None:
+                    self._invocation = self._managed_attempt.claim_child_invocation()
+                else:
+                    if self._frame is None:
+                        raise RuntimeError("parent broker has no workflow frame")
+                    self._invocation = _workflow_context._commit_stochastic_invocation_in_frame(
+                        self._frame,
+                        self.occurrence_kind,
+                    )
             return self._invocation
 
 
@@ -356,6 +409,7 @@ class _RemoteManagedParent:
     attempt: ManagedAttemptState
     workflow_frame: _workflow_context._WorkflowFrame
     child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
+    effects: list[ManagedEffectClaim] = field(default_factory=list)
 
     def _claim_managed_child(
         self,
@@ -379,12 +433,38 @@ class _RemoteManagedParent:
         self.child_invocations.append(invocation)
         return invocation
 
+    def record_managed_effect(self, effect: ManagedEffectClaim) -> None:
+        """Collect a worker effect for the parent claim report."""
+        identity = (
+            effect.occurrence_path,
+            effect.stochastic_source_id,
+            effect.logical_unit_id,
+        )
+        existing = next(
+            (
+                candidate
+                for candidate in self.effects
+                if (
+                    candidate.occurrence_path,
+                    candidate.stochastic_source_id,
+                    candidate.logical_unit_id,
+                )
+                == identity
+            ),
+            None,
+        )
+        if existing is not None and existing != effect:
+            raise RuntimeError("remote event identity changed effect plan during retry")
+        if existing is None:
+            self.effects.append(effect)
+
     def report(self) -> ManagedClaimReport:
         """Return the serializable claim count for parent reconciliation."""
         return ManagedClaimReport(
             frame=self.envelope.frame,
             attempt=self.attempt,
             child_count=len(self.child_invocations),
+            effects=tuple(self.effects),
         )
 
 
@@ -454,6 +534,25 @@ def _record_active_execution_contract(
     broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
     if broker is not None:
         broker.record_execution_contract(contract)
+
+
+def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
+    """Snapshot a successful active invocation without operational ownership data."""
+    broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
+    if broker is None or broker._invocation is None:
+        return None
+    with broker._effects_lock:
+        effects = tuple(broker._effects_by_identity.values())
+    if not effects:
+        return None
+    invocation = broker._invocation
+    return _BrokerRecipeSnapshot(
+        root_words=_workflow_context._resolve_root_words(invocation.frame),
+        occurrence_path=invocation.occurrence_path,
+        rng_origin=invocation.frame.kind,
+        effects=effects,
+        execution_contracts=tuple(broker._execution_contracts),
+    )
 
 
 @contextmanager
