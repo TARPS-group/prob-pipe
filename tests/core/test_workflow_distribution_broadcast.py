@@ -29,11 +29,13 @@ def _execution_config(
     )
 
 
-def _key_source(seed: int = 0):
+def _key_source(seed: int = 0, events=None):
     key = jax.random.PRNGKey(seed)
 
-    def get_key():
+    def get_key(event):
         nonlocal key
+        if events is not None:
+            events.append(event)
         key, subkey = jax.random.split(key)
         return subkey
 
@@ -64,6 +66,16 @@ def _stochastic_plan(values, n_broadcast_samples):
     return build_stochastic_plan(values, broadcast_plan, n_broadcast_samples)
 
 
+class _RecordingNormal(Normal):
+    def __init__(self, sample_calls, *, name):
+        self.sample_calls = sample_calls
+        super().__init__(loc=0.0, scale=1.0, name=name)
+
+    def _sample(self, key, sample_shape=()):
+        self.sample_calls.append((key, tuple(sample_shape)))
+        return super()._sample(key, sample_shape)
+
+
 class TestExecuteDistributionBroadcast:
     def test_sample_path_uses_execution_request(self, monkeypatch):
         values = {
@@ -71,6 +83,7 @@ class TestExecuteDistributionBroadcast:
             "offset": 2.0,
         }
         execution = _execution_config(mode="thread", max_workers=2, name="shift")
+        plan = _stochastic_plan(values, 5)
         seen = {}
 
         def shift(x, offset):
@@ -89,7 +102,8 @@ class TestExecuteDistributionBroadcast:
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=shift,
             values=values,
-            stochastic_plan=_stochastic_plan(values, 5),
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
             include_inputs=True,
             get_key=_key_source(0),
             make_execution_config=lambda: execution,
@@ -134,10 +148,12 @@ class TestExecuteDistributionBroadcast:
         def add(x, y):
             return x + y
 
+        plan = _stochastic_plan(values, 10)
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=add,
             values=values,
-            stochastic_plan=_stochastic_plan(values, 10),
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
             include_inputs=True,
             get_key=_require_not_called,
             make_execution_config=lambda: _execution_config(name="add"),
@@ -177,10 +193,12 @@ class TestExecuteDistributionBroadcast:
         def require_jax_traceable(values, broadcast_args):
             seen["required"] = True
 
+        plan = _stochastic_plan(values, 6)
         result = _workflow_distribution_broadcast.execute_distribution_broadcast(
             func=double,
             values=values,
-            stochastic_plan=_stochastic_plan(values, 6),
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
             include_inputs=True,
             get_key=_key_source(2),
             make_execution_config=lambda: _execution_config(name="double"),
@@ -199,6 +217,7 @@ class TestExecuteDistributionBroadcast:
         values = {"x": Normal(loc=1.0, scale=0.5, name="x")}
         monkeypatch.setattr(_workflow_distribution_broadcast, "task", None)
         monkeypatch.setattr(_workflow_distribution_broadcast, "flow", None)
+        plan = _stochastic_plan(values, 6)
 
         with pytest.raises(
             RuntimeError,
@@ -207,7 +226,8 @@ class TestExecuteDistributionBroadcast:
             _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
-                stochastic_plan=_stochastic_plan(values, 6),
+                stochastic_plan=plan,
+                logical_unit=plan.logical_units[0],
                 include_inputs=True,
                 get_key=_key_source(2),
                 make_execution_config=lambda: _execution_config(name="identity"),
@@ -231,10 +251,67 @@ class TestExecuteDistributionBroadcast:
             values,
             plan.source_groups,
             (8,),
-            jax.random.PRNGKey(3),
+            plan.logical_units[0],
+            _key_source(3),
         )
 
         np.testing.assert_allclose(sampled[_ref("a")], sampled[_ref("b")])
+
+    def test_each_sampled_source_group_claims_and_samples_once(self):
+        first_calls = []
+        second_calls = []
+        values = {
+            "first": _RecordingNormal(first_calls, name="first"),
+            "second": _RecordingNormal(second_calls, name="second"),
+        }
+        plan = _stochastic_plan(values, 11)
+        assert plan.sample_shape is not None
+        events = []
+
+        sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
+            values,
+            plan.source_groups,
+            plan.sample_shape,
+            plan.logical_units[0],
+            _key_source(4, events),
+        )
+
+        assert tuple(sampled) == (_ref("first"), _ref("second"))
+        assert [sample_shape for _key, sample_shape in first_calls] == [(11,)]
+        assert [sample_shape for _key, sample_shape in second_calls] == [(11,)]
+        assert events == list(plan.random_events)
+
+    def test_mixed_plan_claims_only_the_sampled_source_event(self):
+        sampled_calls = []
+        values = {
+            "exact": EmpiricalDistribution(
+                jnp.asarray([1.0, 2.0]),
+                name="exact",
+            ),
+            "sampled": _RecordingNormal(sampled_calls, name="sampled"),
+        }
+        plan = _stochastic_plan(values, 5)
+        events = []
+
+        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+            func=lambda exact, sampled: exact + sampled,
+            values=values,
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
+            include_inputs=True,
+            get_key=_key_source(6, events),
+            make_execution_config=lambda: _execution_config(name="add"),
+            requested_dispatch="sequential",
+            resolve_dispatch=_resolve_to("sequential"),
+            require_jax_traceable=_require_not_called,
+            workflow_name="add",
+            workflow_kind=WorkflowKind.OFF,
+        )
+
+        assert result.num_atoms == 4
+        assert [sample_shape for _key, sample_shape in sampled_calls] == [(4,)]
+        assert events == list(plan.random_events)
+        assert events[0].stochastic_source_id == ("source-group", 1)
 
     @pytest.mark.parametrize(
         ("n_broadcast_samples", "error_type", "message"),
@@ -261,6 +338,7 @@ class TestExecuteDistributionBroadcast:
                 func=lambda x: x,
                 values=values,
                 stochastic_plan=invalid_plan,
+                logical_unit=invalid_plan.logical_units[0],
                 include_inputs=True,
                 get_key=_key_source(4),
                 make_execution_config=lambda: _execution_config(name="identity"),
@@ -273,11 +351,13 @@ class TestExecuteDistributionBroadcast:
 
     def test_low_n_broadcast_samples_warns(self):
         values = {"x": Normal(loc=0.0, scale=1.0, name="x")}
+        plan = _stochastic_plan(values, 3)
         with pytest.warns(UserWarning, match="n_broadcast_samples=3 is too low"):
             result = _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=lambda x: x,
                 values=values,
-                stochastic_plan=_stochastic_plan(values, 3),
+                stochastic_plan=plan,
+                logical_unit=plan.logical_units[0],
                 include_inputs=True,
                 get_key=_key_source(5),
                 make_execution_config=lambda: _execution_config(name="identity"),

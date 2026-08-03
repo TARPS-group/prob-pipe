@@ -215,12 +215,14 @@ class TestExecuteSweep:
         def distribution_broadcast(
             row_values,
             received_plan,
+            logical_unit,
             include_inputs,
         ):
             calls.append(
                 {
                     "x": float(row_values["p"]["x"]),
                     "plan": received_plan,
+                    "logical_unit": logical_unit,
                     "include_inputs": include_inputs,
                 }
             )
@@ -255,11 +257,13 @@ class TestExecuteSweep:
             {
                 "x": 0.0,
                 "plan": stochastic_plan,
+                "logical_unit": stochastic_plan.logical_units[0],
                 "include_inputs": True,
             },
             {
                 "x": 1.0,
                 "plan": stochastic_plan,
+                "logical_unit": stochastic_plan.logical_units[1],
                 "include_inputs": True,
             },
         ]

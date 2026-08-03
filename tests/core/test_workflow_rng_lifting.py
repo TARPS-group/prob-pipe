@@ -5,11 +5,31 @@ from __future__ import annotations
 from contextlib import suppress
 from unittest.mock import patch
 
+import jax
 import jax.numpy as jnp
 import pytest
 
-from probpipe import EmpiricalDistribution, Function, Normal, function, workflow_run
-from probpipe.core import _workflow_plan
+from probpipe import (
+    EmpiricalDistribution,
+    Function,
+    Normal,
+    NumericRecord,
+    NumericRecordArray,
+    function,
+    workflow_run,
+)
+from probpipe.core import _workflow_context, _workflow_plan
+
+
+class _RecordingNormal(Normal):
+    def __init__(self, sample_calls, *, name):
+        self.sample_calls = sample_calls
+        super().__init__(loc=0.0, scale=1.0, name=name)
+
+    def _sample(self, key, sample_shape=()):
+        words = tuple(int(word) for word in jax.random.key_data(key))
+        self.sample_calls.append((words, tuple(sample_shape)))
+        return super()._sample(key, sample_shape)
 
 
 class TestSequentialLiftingWorkflowRun:
@@ -49,6 +69,70 @@ class TestSequentialLiftingWorkflowRun:
 
         resolve_dispatch.assert_not_called()
         commit_invocation.assert_not_called()
+
+    def test_nested_sources_claim_raw_keys_by_row_major_logical_unit(self):
+        rows = NumericRecordArray.stack(
+            [NumericRecord("row", offset=float(index)) for index in range(3)]
+        )
+
+        @function(n_broadcast_samples=6, dispatch="sequential")
+        def combine(row, first, second):
+            return row["offset"] + first + second
+
+        first_calls = []
+        second_calls = []
+        first = _RecordingNormal(first_calls, name="first")
+        second = _RecordingNormal(second_calls, name="second")
+        claims = []
+        original_key_for = _workflow_context._WorkflowInvocation.key_for
+
+        def recording_key_for(
+            invocation,
+            *,
+            stochastic_source_id,
+            logical_unit_id,
+        ):
+            key = original_key_for(
+                invocation,
+                stochastic_source_id=stochastic_source_id,
+                logical_unit_id=logical_unit_id,
+            )
+            words = tuple(int(word) for word in jax.random.key_data(key))
+            claims.append((stochastic_source_id, logical_unit_id, words))
+            return key
+
+        with (
+            patch.object(
+                _workflow_context._WorkflowInvocation,
+                "key_for",
+                new=recording_key_for,
+            ),
+            workflow_run(seed=17),
+        ):
+            result = combine(rows, first, second)
+
+        expected_identities = [
+            (("source-group", source), ("cell", cell)) for cell in range(3) for source in range(2)
+        ]
+        assert result.batch_shape == (3,)
+        assert [(source, unit) for source, unit, _words in claims] == expected_identities
+        assert [shape for _words, shape in first_calls] == [(6,)] * 3
+        assert [shape for _words, shape in second_calls] == [(6,)] * 3
+        sampled_words = [
+            words for cell in range(3) for words in (first_calls[cell][0], second_calls[cell][0])
+        ]
+        assert sampled_words == [words for _source, _unit, words in claims]
+        assert len(set(sampled_words)) == 6
+
+        first_key_words = [words for words, _shape in first_calls]
+        second_key_words = [words for words, _shape in second_calls]
+        first_calls.clear()
+        second_calls.clear()
+        with workflow_run(seed=17):
+            combine(rows, first, second)
+
+        assert [words for words, _shape in first_calls] == first_key_words
+        assert [words for words, _shape in second_calls] == second_key_words
 
     def test_seeded_run_reproduces_distinct_lifted_occurrences(self):
         @function(n_broadcast_samples=16, dispatch="sequential")

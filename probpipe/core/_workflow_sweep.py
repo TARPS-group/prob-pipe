@@ -38,7 +38,12 @@ def execute_sweep(
     resolve_dispatch: Callable[..., str],
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
     distribution_broadcast: Callable[
-        [dict[str, Any], _workflow_plan.StochasticPlan, bool],
+        [
+            dict[str, Any],
+            _workflow_plan.StochasticPlan,
+            _workflow_plan.LogicalUnit,
+            bool,
+        ],
         BroadcastDistribution | Distribution,
     ],
     workflow_name: str,
@@ -109,6 +114,7 @@ def execute_sweep(
         inner = distribution_broadcast(
             row_values,
             stochastic_plan,
+            logical_unit,
             True,
         )
         if isinstance(inner, BroadcastDistribution):

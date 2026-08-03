@@ -37,8 +37,9 @@ def execute_distribution_broadcast(
     func: Callable[..., Any],
     values: dict[str, Any],
     stochastic_plan: _workflow_plan.StochasticPlan,
+    logical_unit: _workflow_plan.LogicalUnit,
     include_inputs: bool,
-    get_key: Callable[[], PRNGKey],
+    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
     make_execution_config: Callable[
         [],
         _workflow_execution.WorkflowExecutionConfig,
@@ -71,12 +72,14 @@ def execute_distribution_broadcast(
     stochastic_plan : StochasticPlan
         Immutable source grouping, exact/sample classification, combination
         order, and sample-shape decisions for this lifted call.
+    logical_unit : LogicalUnit
+        Singleton or canonical sweep cell being executed.
     include_inputs : bool
         If ``True``, return the full ``BroadcastDistribution`` containing both
         sampled inputs and outputs. If ``False``, return the marginalized output
         distribution.
     get_key : callable
-        Zero-argument callback that returns the next PRNG key for sampling.
+        Callback that claims the raw key for one planned source/unit event.
     make_execution_config : callable
         Zero-argument callback returning row-wise execution settings for
         sequential, threaded, or Prefect dispatch.
@@ -131,6 +134,7 @@ def execute_distribution_broadcast(
             func=func,
             values=values,
             stochastic_plan=stochastic_plan,
+            logical_unit=logical_unit,
             get_key=get_key,
             make_execution_config=make_execution_config,
             output_template=output_template,
@@ -142,6 +146,7 @@ def execute_distribution_broadcast(
             func=func,
             values=values,
             stochastic_plan=stochastic_plan,
+            logical_unit=logical_unit,
             get_key=get_key,
             workflow_name=workflow_name,
             workflow_kind=workflow_kind,
@@ -152,6 +157,7 @@ def execute_distribution_broadcast(
             func=func,
             values=values,
             stochastic_plan=stochastic_plan,
+            logical_unit=logical_unit,
             get_key=get_key,
             make_execution_config=make_execution_config,
             output_template=output_template,
@@ -223,29 +229,31 @@ def _sample_planned_source_groups(
     values: dict[str, Any],
     source_groups: Sequence[_workflow_plan.StochasticSourceGroup],
     sample_shape: tuple[int, ...],
-    key: PRNGKey,
+    logical_unit: _workflow_plan.LogicalUnit,
+    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
 ) -> dict[_workflow_call.WorkflowInputRef, Array]:
-    """Sample plan-owned source groups from one transitional parent key.
+    """Claim and sample each planned source once in one logical unit.
 
     Sibling views from the same parent distribution share one parent draw,
     preserving cross-field correlation. Plain non-view distributions are
-    sampled through their separate current-wave source groups. The caller still
-    supplies one parent key in this checkpoint; source/unit event claims replace
-    that transitional split in the next checkpoint.
+    sampled through their separate current-wave source groups.
     """
     sampled: dict[_workflow_call.WorkflowInputRef, Array] = {}
     for group in source_groups:
         if group.execution_mode != "sampled":
             continue
+        event = _workflow_plan.PlannedRandomEvent(
+            stochastic_source_id=group.stochastic_source_id,
+            logical_unit_id=logical_unit.logical_unit_id,
+        )
+        key = get_key(event)
         first = _workflow_call.input_ref_value(values, group.arg_refs[0])
         if group.source_kind == "direct":
+            source_sample = first._sample(key, sample_shape)
             for ref in group.arg_refs:
-                key, subkey = jax.random.split(key)
-                dist = _workflow_call.input_ref_value(values, ref)
-                sampled[ref] = dist._sample(subkey, sample_shape)
+                sampled[ref] = source_sample
             continue
-        key, subkey = jax.random.split(key)
-        structured = first.parent._sample(subkey, sample_shape)
+        structured = first.parent._sample(key, sample_shape)
         for ref in group.arg_refs:
             view = _workflow_call.input_ref_value(values, ref)
             if hasattr(view, "_extract"):
@@ -263,7 +271,8 @@ def _broadcast_jax(
     func: Callable[..., Any],
     values: dict[str, Any],
     stochastic_plan: _workflow_plan.StochasticPlan,
-    get_key: Callable[[], PRNGKey],
+    logical_unit: _workflow_plan.LogicalUnit,
+    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
     workflow_name: str,
     workflow_kind: WorkflowKind,
     output_template: EventTemplate | None,
@@ -283,7 +292,8 @@ def _broadcast_jax(
         values,
         stochastic_plan.source_groups,
         sample_shape,
-        get_key(),
+        logical_unit,
+        get_key,
     )
 
     def single_call(broadcast_slice):
@@ -320,7 +330,8 @@ def _broadcast_enumerate(
     func: Callable[..., Any],
     values: dict[str, Any],
     stochastic_plan: _workflow_plan.StochasticPlan,
-    get_key: Callable[[], PRNGKey],
+    logical_unit: _workflow_plan.LogicalUnit,
+    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
     make_execution_config: Callable[
         [],
         _workflow_execution.WorkflowExecutionConfig,
@@ -349,7 +360,8 @@ def _broadcast_enumerate(
             values,
             sampled_groups,
             sample_shape,
-            get_key(),
+            logical_unit,
+            get_key,
         )
     else:
         sampled = {}
@@ -406,7 +418,8 @@ def _broadcast_sample(
     func: Callable[..., Any],
     values: dict[str, Any],
     stochastic_plan: _workflow_plan.StochasticPlan,
-    get_key: Callable[[], PRNGKey],
+    logical_unit: _workflow_plan.LogicalUnit,
+    get_key: Callable[[_workflow_plan.PlannedRandomEvent], PRNGKey],
     make_execution_config: Callable[
         [],
         _workflow_execution.WorkflowExecutionConfig,
@@ -422,7 +435,8 @@ def _broadcast_sample(
         values,
         stochastic_plan.source_groups,
         sample_shape,
-        get_key(),
+        logical_unit,
+        get_key,
     )
 
     call_value_list = []

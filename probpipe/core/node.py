@@ -688,23 +688,15 @@ class Function(Node, TrackedTerm, Annotated):
             options=options,
         )
         stochastic_invocation: _workflow_context._WorkflowInvocation | None = None
-        key_request_ordinal = 0
 
-        def get_key():
-            nonlocal key_request_ordinal, stochastic_invocation
+        def get_key(event: _workflow_plan.PlannedRandomEvent):
+            nonlocal stochastic_invocation
             if stochastic_invocation is None:
                 stochastic_invocation = _workflow_context._commit_stochastic_invocation()
-            logical_unit_id = (
-                ("singleton",)
-                if key_request_ordinal == 0
-                else ("planner-unit", key_request_ordinal)
+            return stochastic_invocation.key_for(
+                stochastic_source_id=event.stochastic_source_id,
+                logical_unit_id=event.logical_unit_id,
             )
-            key = stochastic_invocation.key_for(
-                stochastic_source_id=("source-group", 0),
-                logical_unit_id=logical_unit_id,
-            )
-            key_request_ordinal += 1
-            return key
 
         values = _workflow_distribution_normalization.normalize_distribution_values(
             values=call.values,
@@ -810,12 +802,14 @@ class Function(Node, TrackedTerm, Annotated):
             *,
             row_values: dict[str, Any],
             plan: _workflow_plan.StochasticPlan,
+            logical_unit: _workflow_plan.LogicalUnit,
             include_inputs: bool = call.overrides.include_inputs,
         ):
             return _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=invoke_point,
                 values=row_values,
                 stochastic_plan=plan,
+                logical_unit=logical_unit,
                 include_inputs=include_inputs,
                 get_key=get_key,
                 make_execution_config=self._make_execution_config,
@@ -835,17 +829,20 @@ class Function(Node, TrackedTerm, Annotated):
             return execute_distribution_broadcast(
                 row_values=values,
                 plan=stochastic_plan,
+                logical_unit=stochastic_plan.logical_units[0],
             )
         if broadcast_plan.regime in ("sweep", "nested"):
 
             def distribution_broadcast(
                 row_values: dict[str, Any],
                 plan: _workflow_plan.StochasticPlan,
+                logical_unit: _workflow_plan.LogicalUnit,
                 include_inputs: bool,
             ):
                 return execute_distribution_broadcast(
                     row_values=row_values,
                     plan=plan,
+                    logical_unit=logical_unit,
                     include_inputs=include_inputs,
                 )
 
