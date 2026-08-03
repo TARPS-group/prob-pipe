@@ -87,6 +87,7 @@ class ManagedParentEnvelope:
     root_words: tuple[int, int]
     parent_occurrence_path: tuple[Any, ...]
     frame: ManagedUnitFrame
+    replay_expected_effects: tuple[ManagedEffectClaim, ...] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -100,6 +101,14 @@ class ManagedParentEnvelope:
             raise TypeError("managed parent root words must be two uint32 integers")
         if not isinstance(self.parent_occurrence_path, tuple):
             raise TypeError("managed parent occurrence paths must be tuples")
+        if self.replay_expected_effects is not None and (
+            not isinstance(self.replay_expected_effects, tuple)
+            or any(
+                not isinstance(effect, ManagedEffectClaim)
+                for effect in self.replay_expected_effects
+            )
+        ):
+            raise TypeError("managed replay expectations must be effect tuples or None")
 
 
 @dataclass(frozen=True)

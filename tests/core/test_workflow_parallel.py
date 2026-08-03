@@ -12,7 +12,13 @@ import probpipe.core._workflow_broker as broker_mod
 import probpipe.core._workflow_execution as execution_mod
 import probpipe.core._workflow_managed as managed_mod
 import probpipe.core.node as node_mod
-from probpipe import Normal, workflow_run
+from probpipe import (
+    Normal,
+    Provenance,
+    ReplayCompatibilityError,
+    replay_run,
+    workflow_run,
+)
 from probpipe.core.config import WorkflowKind, prefect_config
 from probpipe.core.node import Function
 
@@ -35,6 +41,18 @@ def _claim_automatic_words():
         ),
     )
     return tuple(int(word) for word in jax.random.key_data(key))
+
+
+def _claim_automatic_scalar():
+    key = broker_mod._resolve_automatic_key(
+        None,
+        broker_mod._singleton_effect_plan(
+            operation_kind="managed-test",
+            execution_mode="sampled",
+            sample_shape=(),
+        ),
+    )
+    return jax.random.key_data(key)[0]
 
 
 class RecordingExecutor:
@@ -497,6 +515,70 @@ class TestPrefectMapping:
             parent.cancel_unstarted_managed_items(request.work_items)
 
         assert pickle.loads(pickle.dumps(payload)) == payload
+
+    def test_replay_prefect_worker_uses_assigned_expected_event_namespace(
+        self,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        local = Function(
+            func=_claim_automatic_scalar,
+            workflow_kind=WorkflowKind.OFF,
+            dispatch="sequential",
+        )
+        remote = Function(
+            func=_claim_automatic_scalar,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+        )
+        with workflow_run(seed=17):
+            original = local()
+
+        with replay_run(original.provenance):
+            replayed = remote()
+
+        assert (
+            replayed.provenance.controls["randomness"] == original.provenance.controls["randomness"]
+        )
+        assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
+        assert FakeMappedTask.map_calls == 2
+
+    def test_replay_prefect_worker_rejects_effect_drift_before_key_derivation(
+        self,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        local = Function(
+            func=_claim_automatic_scalar,
+            workflow_kind=WorkflowKind.OFF,
+            dispatch="sequential",
+        )
+        remote = Function(
+            func=_claim_automatic_scalar,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+        )
+        with workflow_run(seed=17):
+            original = local()
+        payload = original.provenance.to_dict()
+        payload["controls"]["replay"]["plan"]["expected_effects"][0]["provider_abi"] = (
+            "unknown-provider/v99"
+        )
+        changed = Provenance.from_dict(payload)
+
+        with (
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words",
+                side_effect=AssertionError("derived key before replay validation"),
+            ),
+            replay_run(changed),
+            pytest.raises(ReplayCompatibilityError, match="assigned event namespace"),
+        ):
+            remote()
+
+        assert FakeMappedTask.map_calls == 2
 
 
 class TestFunctionExecutionConfig:

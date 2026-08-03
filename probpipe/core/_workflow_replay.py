@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import copy
+import sys
 from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+from threading import Lock
 from types import TracebackType
 from typing import Any
 
@@ -16,6 +18,7 @@ from ._workflow_errors import (
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
 )
+from ._workflow_managed import ManagedAttemptState, ManagedEffectClaim
 from ._workflow_rng import RandomEventIdentity, encode_random_event
 from .provenance import Provenance
 
@@ -39,6 +42,31 @@ class _ExpectedReplayEvent:
     effect: dict[str, Any]
     encoded_identity: bytes
 
+    def managed_effect(self) -> ManagedEffectClaim:
+        """Return the transport-safe expected effect descriptor."""
+        sample_shape = self.effect["sample_shape"]
+        return ManagedEffectClaim(
+            occurrence_path=self.occurrence_path,
+            occurrence_kind=self.occurrence_kind,
+            stochastic_source_id=self.source,
+            logical_unit_id=self.unit,
+            operation_kind=self.effect["operation_kind"],
+            execution_mode=self.effect["execution_mode"],
+            sample_shape=None if sample_shape is None else tuple(sample_shape),
+            sampling_abi=self.effect["sampling_abi"],
+            provider_abi=self.effect["provider_abi"],
+        )
+
+
+@dataclass
+class _ReplayEventClaim:
+    """Transient ownership for one expected logical event."""
+
+    expected: _ExpectedReplayEvent
+    direct_claimed: bool = False
+    work_item_token: bytes | None = None
+    attempt_tokens: set[bytes] = field(default_factory=set)
+
 
 @dataclass
 class _ReplayState:
@@ -58,6 +86,14 @@ class _ReplayState:
     root_failed: bool = False
     source_artifact_drift: bool = False
     actual_execution: list[dict[str, Any]] = field(default_factory=list)
+    claims: dict[bytes, _ReplayEventClaim] = field(init=False)
+    claims_lock: Any = field(default_factory=Lock, repr=False)
+
+    def __post_init__(self) -> None:
+        self.claims = {
+            expected.encoded_identity: _ReplayEventClaim(expected)
+            for expected in self.expected_events
+        }
 
     def validate_callable(self, current: CallableAnchor) -> None:
         """Require the current Function to match the strong recorded anchor."""
@@ -128,6 +164,105 @@ class _ReplayState:
             "current_execution": copy.deepcopy(self.actual_execution),
         }
 
+    def claim_effect(
+        self,
+        effect: ManagedEffectClaim,
+        *,
+        attempt: ManagedAttemptState | None,
+    ) -> None:
+        """Validate and atomically claim an event before key derivation."""
+        encoded = _encoded_effect_identity(effect)
+        with self.claims_lock:
+            claim = self.claims.get(encoded)
+            if claim is None:
+                raise ReplayCompatibilityError(
+                    "workflow execution requested an unexpected replay event"
+                )
+            _require_matching_effect(claim.expected, effect)
+            if attempt is None:
+                if claim.direct_claimed or claim.work_item_token is not None:
+                    raise ReplayCompatibilityError(
+                        "workflow execution duplicated an already claimed replay event"
+                    )
+                claim.direct_claimed = True
+                return
+
+            work_item_token = attempt.work_item_token.value
+            if claim.direct_claimed:
+                raise ReplayCompatibilityError(
+                    "a managed work item cannot reuse a directly claimed replay event"
+                )
+            if claim.work_item_token is None:
+                claim.work_item_token = work_item_token
+            elif claim.work_item_token != work_item_token:
+                raise ReplayCompatibilityError(
+                    "a different managed work-item token attempted to reuse a replay event"
+                )
+            if attempt.attempt_token in claim.attempt_tokens:
+                raise ReplayCompatibilityError(
+                    "one managed attempt duplicated a replay event claim"
+                )
+            claim.attempt_tokens.add(attempt.attempt_token)
+
+    def assert_all_events_claimed(self) -> None:
+        """Reject a successful invocation that omitted any expected event."""
+        with self.claims_lock:
+            missing_count = sum(
+                not claim.direct_claimed and claim.work_item_token is None
+                for claim in self.claims.values()
+            )
+        if missing_count:
+            raise ReplayCompatibilityError(
+                f"workflow replay completed with {missing_count} missing expected event(s)"
+            )
+
+    def expected_effects_for_unit(
+        self,
+        parent_occurrence_path: tuple[Any, ...],
+        unit_segment: tuple[Any, ...],
+    ) -> tuple[ManagedEffectClaim, ...]:
+        """Return the exact replay namespace assigned to one remote work item."""
+        prefix = (*parent_occurrence_path, unit_segment)
+        return tuple(
+            expected.managed_effect()
+            for expected in self.expected_events
+            if expected.occurrence_path[: len(prefix)] == prefix
+        )
+
+
+@dataclass
+class _RemoteReplayClaims:
+    """Worker-local pre-derivation validator for one assigned namespace."""
+
+    expected_by_identity: dict[bytes, ManagedEffectClaim]
+    attempt: ManagedAttemptState
+    claimed: set[bytes] = field(default_factory=set)
+
+    def claim(
+        self,
+        effect: ManagedEffectClaim,
+        attempt: ManagedAttemptState | None,
+    ) -> None:
+        if attempt != self.attempt:
+            raise ReplayCompatibilityError(
+                "remote replay event does not belong to its assigned work-item attempt"
+            )
+        encoded = _encoded_effect_identity(effect)
+        expected = self.expected_by_identity.get(encoded)
+        if expected is None:
+            raise ReplayCompatibilityError(
+                "remote workflow execution requested an unexpected replay event"
+            )
+        if expected != effect:
+            raise ReplayCompatibilityError(
+                "remote workflow replay effect differs from its assigned event namespace"
+            )
+        if encoded in self.claimed:
+            raise ReplayCompatibilityError(
+                "one remote managed attempt duplicated a replay event claim"
+            )
+        self.claimed.add(encoded)
+
 
 @dataclass(frozen=True)
 class _ReplayFunctionCall:
@@ -150,6 +285,10 @@ _ACTIVE_REPLAY_STATE: ContextVar[_ReplayState | None] = ContextVar(
 _REPLAY_FUNCTION_DEPTH: ContextVar[int] = ContextVar(
     "probpipe_replay_function_depth",
     default=0,
+)
+_REMOTE_REPLAY_CLAIMS: ContextVar[_RemoteReplayClaims | None] = ContextVar(
+    "probpipe_remote_replay_claims",
+    default=None,
 )
 
 
@@ -177,7 +316,7 @@ class _ReplayRunScope:
         try:
             token = _ACTIVE_REPLAY_STATE.set(state)
         except BaseException:
-            frame_scope.__exit__(*sys_exc_info())
+            frame_scope.__exit__(*sys.exc_info())
             raise
         self._state = state
         self._state_token = token
@@ -203,10 +342,12 @@ class _ReplayRunScope:
         try:
             _ACTIVE_REPLAY_STATE.reset(token)
         finally:
-            frame_scope.__exit__(exc_type, exc_value, traceback)
-            self._state = None
-            self._state_token = None
-            self._frame_scope = None
+            try:
+                frame_scope.__exit__(exc_type, exc_value, traceback)
+            finally:
+                self._state = None
+                self._state_token = None
+                self._frame_scope = None
         if pending is not None:
             raise pending
 
@@ -218,6 +359,10 @@ def replay_run(provenance: Provenance) -> _ReplayRunScope:
 
 def _replay_is_active() -> bool:
     return _ACTIVE_REPLAY_STATE.get() is not None
+
+
+def _capture_active_replay_state() -> _ReplayState | None:
+    return _ACTIVE_REPLAY_STATE.get()
 
 
 @contextmanager
@@ -245,6 +390,11 @@ def _function_replay_scope() -> Iterator[_ReplayFunctionCall | None]:
         state.root_failed = True
         raise
     else:
+        try:
+            state.assert_all_events_claimed()
+        except BaseException:
+            state.root_failed = True
+            raise
         state.root_completed = True
     finally:
         _REPLAY_FUNCTION_DEPTH.reset(token)
@@ -274,6 +424,51 @@ def _active_replay_diagnostics() -> dict[str, Any] | None:
     if state is None or _REPLAY_FUNCTION_DEPTH.get() != 1:
         return None
     return state.diagnostics()
+
+
+def _claim_effect_before_derivation(
+    effect: ManagedEffectClaim,
+    *,
+    attempt: ManagedAttemptState | None,
+) -> None:
+    """Claim a local or transported event before deriving its key."""
+    remote = _REMOTE_REPLAY_CLAIMS.get()
+    if remote is not None:
+        remote.claim(effect, attempt)
+        return
+    state = _ACTIVE_REPLAY_STATE.get()
+    if state is not None:
+        state.claim_effect(effect, attempt=attempt)
+
+
+def _expected_effects_for_managed_unit(
+    parent_occurrence_path: tuple[Any, ...],
+    unit_segment: tuple[Any, ...],
+) -> tuple[ManagedEffectClaim, ...] | None:
+    state = _ACTIVE_REPLAY_STATE.get()
+    if state is None:
+        return None
+    return state.expected_effects_for_unit(parent_occurrence_path, unit_segment)
+
+
+@contextmanager
+def _remote_replay_claim_scope(
+    expected: tuple[ManagedEffectClaim, ...] | None,
+    attempt: ManagedAttemptState,
+) -> Iterator[None]:
+    """Install a worker-local expected namespace when replay authority exists."""
+    if expected is None:
+        yield
+        return
+    registry = _RemoteReplayClaims(
+        expected_by_identity={_encoded_effect_identity(effect): effect for effect in expected},
+        attempt=attempt,
+    )
+    token = _REMOTE_REPLAY_CLAIMS.set(registry)
+    try:
+        yield
+    finally:
+        _REMOTE_REPLAY_CLAIMS.reset(token)
 
 
 def _validate_provenance(provenance: Provenance) -> _ReplayState:
@@ -462,6 +657,37 @@ def _validate_effect(effect: dict[str, Any], *, index: int) -> None:
             )
 
 
+def _encoded_effect_identity(effect: ManagedEffectClaim) -> bytes:
+    return encode_random_event(
+        RandomEventIdentity(
+            occurrence_path=effect.occurrence_path,
+            stochastic_source_id=effect.stochastic_source_id,
+            logical_unit_id=effect.logical_unit_id,
+        )
+    )
+
+
+def _require_matching_effect(
+    expected: _ExpectedReplayEvent,
+    actual: ManagedEffectClaim,
+) -> None:
+    if expected.occurrence_kind != actual.occurrence_kind:
+        raise ReplayCompatibilityError(
+            "workflow replay event occurrence kind differs from the recorded recipe"
+        )
+    current_effect = {
+        "operation_kind": actual.operation_kind,
+        "execution_mode": actual.execution_mode,
+        "sample_shape": (None if actual.sample_shape is None else list(actual.sample_shape)),
+        "sampling_abi": actual.sampling_abi,
+        "provider_abi": actual.provider_abi,
+    }
+    if current_effect != expected.effect:
+        raise ReplayCompatibilityError(
+            "workflow replay effect or provider ABI differs from the recorded plan"
+        )
+
+
 def _root_words(value: Any) -> tuple[int, int]:
     if (
         not isinstance(value, list)
@@ -517,10 +743,3 @@ def _list_or_empty(value: Any, field_name: str) -> list[Any]:
     if value is None:
         return []
     return _list(value, field_name)
-
-
-def sys_exc_info() -> tuple[type[BaseException] | None, BaseException | None, Any]:
-    """Return exception state without importing sys into the public namespace."""
-    import sys
-
-    return sys.exc_info()

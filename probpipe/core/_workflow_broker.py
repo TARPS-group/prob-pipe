@@ -149,6 +149,7 @@ class _AutomaticKeyBroker:
     _effects_lock: Any = field(default_factory=Lock, repr=False)
     _lock: Any = field(default_factory=Lock, repr=False)
     _callable_anchor: CallableAnchor | None = None
+    _replay_state: Any = None
 
     def key_for(self, plan: StochasticEffectPlan) -> PRNGKey:
         """Return the workflow-owned key for one planned effect."""
@@ -178,9 +179,24 @@ class _AutomaticKeyBroker:
             provider_abi=plan.provider_abi,
         )
         if self._managed_attempt is None:
+            self.claim_replay_effect(effect, attempt=None)
             self._record_effect(effect)
         else:
-            self._managed_attempt.parent_broker.record_managed_effect(effect)
+            parent_broker = self._managed_attempt.parent_broker
+            claim_replay_effect = getattr(parent_broker, "claim_replay_effect", None)
+            if claim_replay_effect is None:
+                from . import _workflow_replay
+
+                _workflow_replay._claim_effect_before_derivation(
+                    effect,
+                    attempt=self._managed_attempt.attempt,
+                )
+            else:
+                claim_replay_effect(
+                    effect,
+                    attempt=self._managed_attempt.attempt,
+                )
+            parent_broker.record_managed_effect(effect)
         return invocation.key_for(
             stochastic_source_id=plan.event.stochastic_source_id,
             logical_unit_id=plan.event.logical_unit_id,
@@ -216,6 +232,26 @@ class _AutomaticKeyBroker:
         if self._callable_anchor is not None:
             raise RuntimeError("a Function broker already has a callable anchor")
         self._callable_anchor = anchor
+
+    def claim_replay_effect(
+        self,
+        effect: ManagedEffectClaim,
+        *,
+        attempt: ManagedAttemptState | None,
+    ) -> None:
+        """Validate one local/transported effect against captured replay state."""
+        if self._replay_state is not None:
+            self._replay_state.claim_effect(effect, attempt=attempt)
+            return
+        if self._managed_attempt is not None:
+            parent = self._managed_attempt.parent_broker
+            parent_claim = getattr(parent, "claim_replay_effect", None)
+            if parent_claim is not None:
+                parent_claim(effect, attempt=attempt)
+                return
+        from . import _workflow_replay
+
+        _workflow_replay._claim_effect_before_derivation(effect, attempt=attempt)
 
     def record_managed_effect(self, effect: ManagedEffectClaim) -> None:
         """Aggregate one local or transported child effect on the parent broker."""
@@ -304,10 +340,16 @@ class _AutomaticKeyBroker:
             if state is None or state.frame.unit_segment != frame.unit_segment:
                 raise RuntimeError("remote managed unit is not registered by this parent")
         parent_invocation = self._ensure_parent_invocation()
+        from . import _workflow_replay
+
         return ManagedParentEnvelope(
             root_words=_workflow_context._resolve_root_words(parent_invocation.frame),
             parent_occurrence_path=parent_invocation.occurrence_path,
             frame=frame,
+            replay_expected_effects=_workflow_replay._expected_effects_for_managed_unit(
+                parent_invocation.occurrence_path,
+                frame.unit_segment,
+            ),
         )
 
     def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
@@ -339,6 +381,7 @@ class _AutomaticKeyBroker:
                         )
                     )
         for effect in report.effects:
+            self.claim_replay_effect(effect, attempt=report.attempt)
             self.record_managed_effect(effect)
 
     def _claim_managed_child(
@@ -485,10 +528,13 @@ def _function_stochastic_scope(
     """Install a lazy broker for one public Function invocation."""
     _workflow_context._assert_workflow_admission()
     frame = _workflow_context._capture_active_workflow_frame()
+    from . import _workflow_replay
+
     broker = _AutomaticKeyBroker(
         "invocation",
         _frame=frame,
         _managed_attempt=_ACTIVE_MANAGED_ATTEMPT.get(),
+        _replay_state=_workflow_replay._capture_active_replay_state(),
     )
     if occurrence_path is not None:
         if frame is None or broker._managed_attempt is not None:
@@ -612,10 +658,16 @@ def _remote_managed_work_item_stochastic_scope(
         frame=envelope.frame,
         attempt=attempt,
     )
+    from . import _workflow_replay
+
     attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(state)
     broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
     try:
-        yield parent
+        with _workflow_replay._remote_replay_claim_scope(
+            envelope.replay_expected_effects,
+            attempt,
+        ):
+            yield parent
     finally:
         _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
         _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)

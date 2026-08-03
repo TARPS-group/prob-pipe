@@ -167,9 +167,9 @@ class TestAutomaticExpectation:
 
         with (
             patch(
-                "probpipe.core._workflow_context._commit_stochastic_invocation",
-                wraps=_workflow_context._commit_stochastic_invocation,
-            ) as commit,
+                "probpipe.core._workflow_context.derive_event_key_words",
+                wraps=_workflow_context.derive_event_key_words,
+            ) as derive,
             workflow_run(seed=7),
         ):
             expectation(
@@ -179,7 +179,7 @@ class TestAutomaticExpectation:
                 return_dist=False,
             )
 
-        commit.assert_called_once_with("invocation")
+        assert derive.call_count == 1
 
     def test_generic_empirical_subsample_uses_num_atoms(self):
         dist = EmpiricalDistribution(["a", "bb", "ccc"])

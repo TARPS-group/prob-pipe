@@ -6,23 +6,36 @@ import copy
 import json
 from unittest.mock import patch
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+from tensorflow_probability.substrates.jax import bijectors as tfb
 
 from probpipe import (
+    EmpiricalDistribution,
     Function,
     Normal,
+    ProductDistribution,
     Provenance,
     ReplayCompatibilityError,
     ReplayUnsupportedCallableError,
+    TransformedDistribution,
     replay_run,
     sample,
     workflow_run,
 )
+from probpipe.core import _workflow_replay
+from probpipe.core._workflow_managed import (
+    ManagedAttemptState,
+    ManagedWorkItemToken,
+)
+from tests.core import _workflow_replay_fixtures
 from tests.core._workflow_replay_fixtures import (
     replayable_affine,
+    replayable_difference,
     replayable_identity,
+    replayable_optional_nested,
 )
 
 
@@ -37,6 +50,12 @@ def _sample_value(result):
 
 def _marginal_values(result):
     return np.asarray(result.samples["marginal"])
+
+
+def _mutate_provenance(provenance, mutate):
+    payload = provenance.to_dict()
+    mutate(payload["controls"])
+    return Provenance.from_dict(payload)
 
 
 class TestReplayScope:
@@ -218,6 +237,206 @@ class TestReplayPreflight:
 
         np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
         assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
+
+    def test_source_artifact_drift_is_diagnostic_only(self):
+        original = _draw()
+
+        def mutate(payload):
+            payload["diagnostics"]["callable_source"]["source_artifact_digest"] = "0" * 64
+
+        payload = original.provenance.to_dict()
+        mutate(payload)
+        changed = Provenance.from_dict(payload)
+
+        with replay_run(changed):
+            replayed = sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
+        assert replayed.provenance.diagnostics["replay"]["source_artifact_drift"] is True
+
+    def test_execution_capability_drift_fails_before_sampling(self):
+        original = _draw()
+
+        def mutate(controls):
+            controls["replay"]["compatibility"]["capabilities"][0]["sampling_abi"] = (
+                "unknown-sampling/v99"
+            )
+
+        changed = _mutate_provenance(original.provenance, mutate)
+        candidate = Normal(loc=0.0, scale=1.0, name="value")
+        with (
+            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            replay_run(changed),
+            pytest.raises(ReplayCompatibilityError, match="execution contract"),
+        ):
+            sample(candidate)
+
+    def test_jax_to_rowwise_route_drift_preserves_values(self):
+        original_workflow = Function(
+            func=replayable_identity,
+            n_broadcast_samples=7,
+            dispatch="jax",
+        )
+        replay_workflow = Function(
+            func=replayable_identity,
+            n_broadcast_samples=7,
+            dispatch="sequential",
+        )
+        with workflow_run(seed=41):
+            original = original_workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        with replay_run(original.provenance):
+            replayed = replay_workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
+        assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
+
+
+class TestReplayEventRegistry:
+    def test_missing_event_is_reported_at_root_completion(self):
+        original = _draw()
+
+        with (
+            replay_run(original.provenance),
+            pytest.raises(ReplayCompatibilityError, match="missing expected"),
+        ):
+            sample(
+                Normal(loc=0.0, scale=1.0, name="value"),
+                key=jax.random.key(9),
+            )
+
+    @pytest.mark.parametrize("drift", ["identity", "effect"])
+    def test_unexpected_identity_and_effect_drift_fail_before_sampling(self, drift):
+        original = _draw()
+
+        def mutate(controls):
+            if drift == "identity":
+                controls["randomness"]["events"][0]["source"] = [
+                    "source-group",
+                    99,
+                ]
+            else:
+                controls["replay"]["plan"]["expected_effects"][0]["provider_abi"] = (
+                    "unknown-provider/v99"
+                )
+
+        changed = _mutate_provenance(original.provenance, mutate)
+        candidate = Normal(loc=0.0, scale=1.0, name="value")
+        with (
+            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            replay_run(changed),
+            pytest.raises(ReplayCompatibilityError, match=r"unexpected|provider ABI"),
+        ):
+            sample(candidate)
+
+    def test_duplicate_recorded_event_is_rejected_at_entry(self):
+        original = _draw()
+
+        def mutate(controls):
+            controls["randomness"]["events"].append(
+                copy.deepcopy(controls["randomness"]["events"][0])
+            )
+            controls["replay"]["plan"]["expected_effects"].append(
+                copy.deepcopy(controls["replay"]["plan"]["expected_effects"][0])
+            )
+            controls["randomness"]["expected_event_count"] = 2
+
+        changed = _mutate_provenance(original.provenance, mutate)
+        with (
+            pytest.raises(ReplayCompatibilityError, match="duplicate event"),
+            replay_run(changed),
+        ):
+            pass
+
+    def test_same_token_retry_is_idempotent_but_other_claims_fail(self):
+        state = _workflow_replay._validate_provenance(_draw().provenance)
+        effect = state.expected_events[0].managed_effect()
+        token = ManagedWorkItemToken.create()
+        first = ManagedAttemptState.create(token)
+        retry = ManagedAttemptState.create(token)
+
+        state.claim_effect(effect, attempt=first)
+        state.claim_effect(effect, attempt=retry)
+        state.assert_all_events_claimed()
+
+        with pytest.raises(ReplayCompatibilityError, match="duplicated"):
+            state.claim_effect(effect, attempt=retry)
+        with pytest.raises(ReplayCompatibilityError, match="different managed"):
+            state.claim_effect(
+                effect,
+                attempt=ManagedAttemptState.create(ManagedWorkItemToken.create()),
+            )
+
+        direct_state = _workflow_replay._validate_provenance(_draw().provenance)
+        direct_state.claim_effect(effect, attempt=None)
+        with pytest.raises(ReplayCompatibilityError, match="duplicated"):
+            direct_state.claim_effect(effect, attempt=None)
+
+    def test_nested_automatic_drift_in_thread_is_unexpected_before_sampling(
+        self,
+        monkeypatch,
+    ):
+        workflow = Function(
+            func=replayable_optional_nested,
+            n_broadcast_samples=5,
+            dispatch="thread",
+            max_workers=2,
+        )
+        with workflow_run(seed=71):
+            original = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+        monkeypatch.setattr(
+            _workflow_replay_fixtures,
+            "ENABLE_EXTRA_AUTOMATIC",
+            True,
+        )
+
+        with (
+            replay_run(original.provenance),
+            pytest.raises(ReplayCompatibilityError, match="unexpected replay event"),
+        ):
+            workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+
+class TestReplayCoSamplingPlans:
+    @pytest.mark.parametrize("kind", ["alias", "record_view", "transform", "mixed"])
+    def test_supported_joint_plans_roundtrip(self, kind):
+        workflow = Function(
+            func=replayable_difference,
+            n_broadcast_samples=8,
+            dispatch="sequential",
+        )
+
+        def values():
+            if kind == "alias":
+                root = Normal(loc=0.0, scale=1.0, name="root")
+                return {"left": root, "right": root}
+            if kind == "record_view":
+                root = ProductDistribution(
+                    x=Normal(loc=0.0, scale=1.0, name="x"),
+                    y=Normal(loc=2.0, scale=1.0, name="y"),
+                )
+                return {"left": root["x"], "right": root["y"]}
+            if kind == "transform":
+                root = Normal(loc=0.0, scale=1.0, name="root")
+                return {
+                    "left": root,
+                    "right": TransformedDistribution(root, tfb.Exp()),
+                }
+            return {
+                "left": EmpiricalDistribution(
+                    jnp.asarray([1.0, 3.0]),
+                    weights=jnp.asarray([0.25, 0.75]),
+                    name="left",
+                ),
+                "right": Normal(loc=0.0, scale=1.0, name="right"),
+            }
+
+        with workflow_run(seed=53):
+            original = workflow(**values())
+        with replay_run(original.provenance):
+            replayed = workflow(**values())
+
+        np.testing.assert_array_equal(_marginal_values(replayed), _marginal_values(original))
 
 
 def test_replay_provenance_inputs_are_not_mutated():
