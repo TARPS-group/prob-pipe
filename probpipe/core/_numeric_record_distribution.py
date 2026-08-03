@@ -50,10 +50,10 @@ import jax
 import jax.numpy as jnp
 
 from .._dtype import _as_float_array
-from .._utils import _auto_key
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
+from . import _workflow_broker
 from ._distribution_base import Distribution
 from ._record_distribution import RecordDistribution, _field_event_shape
 from .constraints import (
@@ -140,8 +140,19 @@ def _mc_expectation(
         If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
     """
     n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError(f"num_evaluations must be an integer; got {n!r}")
+    if n <= 0:
+        raise ValueError(f"num_evaluations must be positive; got {n!r}")
     if key is None:
-        key = _auto_key()
+        key = _workflow_broker._resolve_automatic_key(
+            None,
+            _workflow_broker._singleton_effect_plan(
+                operation_kind="expectation",
+                execution_mode="monte_carlo",
+                sample_shape=(n,),
+            ),
+        )
     samples = dist._sample(key, sample_shape=(n,))
     evals = jax.vmap(f)(samples)
 
@@ -1123,7 +1134,20 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             # in flat form (no aux-shape invariants) and run vmap over a
             # closure that unflattens to a Record inside the loop body.
             n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
-            sample_key = key if key is not None else _auto_key()
+            if isinstance(n, bool) or not isinstance(n, int):
+                raise TypeError(f"num_evaluations must be an integer; got {n!r}")
+            if n <= 0:
+                raise ValueError(f"num_evaluations must be positive; got {n!r}")
+            sample_key = key
+            if sample_key is None:
+                sample_key = _workflow_broker._resolve_automatic_key(
+                    None,
+                    _workflow_broker._singleton_effect_plan(
+                        operation_kind="expectation",
+                        execution_mode="monte_carlo",
+                        sample_shape=(n,),
+                    ),
+                )
             base_samples = self._base._sample(sample_key, sample_shape=(n,))
             flat_samples = self._base.flatten_value(
                 base_samples,

@@ -7,13 +7,31 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from threading import Lock
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from ..custom_types import PRNGKey
 from . import _workflow_context
-from ._workflow_plan import PlannedRandomEvent
 
 _OccurrenceKind = Literal["invocation", "operation"]
+_StructuralRngId = tuple[str | int, ...]
+
+_DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
+_PROBPIPE_DISTRIBUTION_PROVIDER_ABI = "probpipe.distribution/v1"
+
+
+class _RandomEventPlan(Protocol):
+    """Structural event fields accepted by the broker."""
+
+    stochastic_source_id: _StructuralRngId
+    logical_unit_id: _StructuralRngId
+
+
+@dataclass(frozen=True)
+class _DirectRandomEventPlan:
+    """Singleton source/unit event used outside lifting."""
+
+    stochastic_source_id: _StructuralRngId
+    logical_unit_id: _StructuralRngId
 
 
 @dataclass(frozen=True)
@@ -22,10 +40,33 @@ class StochasticEffectPlan:
 
     operation_kind: str
     execution_mode: str
-    event: PlannedRandomEvent
+    event: _RandomEventPlan
     sample_shape: tuple[int, ...] | None
     sampling_abi: str
     provider_abi: str
+
+
+def _singleton_effect_plan(
+    *,
+    operation_kind: str,
+    execution_mode: str,
+    sample_shape: tuple[int, ...] | None,
+    source_index: int = 0,
+    sampling_abi: str = _DISTRIBUTION_SAMPLING_ABI,
+    provider_abi: str = _PROBPIPE_DISTRIBUTION_PROVIDER_ABI,
+) -> StochasticEffectPlan:
+    """Build the standard singleton event plan for a direct operation."""
+    return StochasticEffectPlan(
+        operation_kind=operation_kind,
+        execution_mode=execution_mode,
+        event=_DirectRandomEventPlan(
+            ("source-group", source_index),
+            ("singleton",),
+        ),
+        sample_shape=sample_shape,
+        sampling_abi=sampling_abi,
+        provider_abi=provider_abi,
+    )
 
 
 @dataclass

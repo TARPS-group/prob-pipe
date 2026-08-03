@@ -46,10 +46,11 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._dtype import _as_float_array
-from .._utils import _auto_key, _is_numeric_array
+from .._utils import _is_numeric_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
+from . import _workflow_broker
 from ._distribution_base import Distribution
 from ._numeric_record import NumericRecord
 from ._numeric_record_distribution import (
@@ -376,9 +377,21 @@ class EmpiricalDistribution[T](
         return_dist: bool | None = None,
     ) -> Any:
         """Compute ``E[f(X)]`` over the empirical support."""
+        if num_evaluations is not None:
+            if isinstance(num_evaluations, bool) or not isinstance(num_evaluations, int):
+                raise TypeError(f"num_evaluations must be an integer; got {num_evaluations!r}")
+            if num_evaluations <= 0:
+                raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
         if num_evaluations is not None and num_evaluations < self.n:
             if key is None:
-                key = _auto_key()
+                key = _workflow_broker._resolve_automatic_key(
+                    None,
+                    _workflow_broker._singleton_effect_plan(
+                        operation_kind="expectation",
+                        execution_mode="subsample",
+                        sample_shape=(num_evaluations,),
+                    ),
+                )
             idx = jax.random.choice(key, self.n, shape=(num_evaluations,), replace=False)
             f_vals = self._eval_f(f, self._samples[idx])
             sub_w = self._w.subsample(idx)
@@ -719,9 +732,21 @@ class RecordEmpiricalDistribution(
             assert only_field is not None
             return r[only_field]
 
+        if num_evaluations is not None:
+            if isinstance(num_evaluations, bool) or not isinstance(num_evaluations, int):
+                raise TypeError(f"num_evaluations must be an integer; got {num_evaluations!r}")
+            if num_evaluations <= 0:
+                raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
         if num_evaluations is not None and num_evaluations < self._num_atoms:
             if key is None:
-                key = _auto_key()
+                key = _workflow_broker._resolve_automatic_key(
+                    None,
+                    _workflow_broker._singleton_effect_plan(
+                        operation_kind="expectation",
+                        execution_mode="subsample",
+                        sample_shape=(num_evaluations,),
+                    ),
+                )
             idx = jax.random.choice(
                 key,
                 self._num_atoms,
@@ -986,10 +1011,21 @@ class BootstrapReplicateDistribution[T](
         can override :meth:`_unwrap_dataset` to convert the dataset to
         a bare array (e.g. the single-field Record auto-wrap case).
         """
-        if key is None:
-            key = _auto_key()
         if num_evaluations is None:
             num_evaluations = _base.DEFAULT_NUM_EVALUATIONS
+        if isinstance(num_evaluations, bool) or not isinstance(num_evaluations, int):
+            raise TypeError(f"num_evaluations must be an integer; got {num_evaluations!r}")
+        if num_evaluations <= 0:
+            raise ValueError(f"num_evaluations must be positive; got {num_evaluations!r}")
+        if key is None:
+            key = _workflow_broker._resolve_automatic_key(
+                None,
+                _workflow_broker._singleton_effect_plan(
+                    operation_kind="expectation",
+                    execution_mode="bootstrap",
+                    sample_shape=(num_evaluations,),
+                ),
+            )
         keys = jax.random.split(key, num_evaluations)
 
         def _ds(k):

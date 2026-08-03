@@ -25,6 +25,7 @@ import jax.numpy as jnp
 
 from .._utils import _auto_key
 from ..custom_types import Array, PRNGKey
+from . import _workflow_broker
 from .distribution import Distribution, RandomFunction
 from .node import function
 from .protocols import (
@@ -88,10 +89,25 @@ def sample(
         raise TypeError(
             f"{type(dist).__name__} does not support sampling (does not implement SupportsSampling)"
         )
+    if isinstance(sample_shape, bool):
+        raise TypeError("sample_shape must be an integer or tuple of integers, not bool")
     if isinstance(sample_shape, int):
         sample_shape = (sample_shape,)
+    elif not isinstance(sample_shape, tuple) or any(
+        isinstance(axis, bool) or not isinstance(axis, int) for axis in sample_shape
+    ):
+        raise TypeError("sample_shape must be an integer or tuple of integers")
+    if any(axis < 0 for axis in sample_shape):
+        raise ValueError(f"sample_shape dimensions must be non-negative; got {sample_shape!r}")
     if key is None:
-        key = _auto_key()
+        key = _workflow_broker._resolve_automatic_key(
+            None,
+            _workflow_broker._singleton_effect_plan(
+                operation_kind="sample",
+                execution_mode="sampled",
+                sample_shape=sample_shape,
+            ),
+        )
     return dist._sample(key, sample_shape)
 
 
