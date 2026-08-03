@@ -80,6 +80,64 @@ class ManagedAttemptState:
         return cls(work_item_token=work_item_token, attempt_token=uuid.uuid4().bytes)
 
 
+@dataclass(frozen=True)
+class ManagedParentEnvelope:
+    """Serializable root and occurrence authority for one remote managed unit."""
+
+    root_words: tuple[int, int]
+    parent_occurrence_path: tuple[Any, ...]
+    frame: ManagedUnitFrame
+
+    def __post_init__(self) -> None:
+        if (
+            not isinstance(self.root_words, tuple)
+            or len(self.root_words) != 2
+            or any(
+                isinstance(word, bool) or not isinstance(word, int) or not 0 <= word <= 0xFFFFFFFF
+                for word in self.root_words
+            )
+        ):
+            raise TypeError("managed parent root words must be two uint32 integers")
+        if not isinstance(self.parent_occurrence_path, tuple):
+            raise TypeError("managed parent occurrence paths must be tuples")
+
+
+@dataclass(frozen=True)
+class ManagedClaimReport:
+    """Serializable claim summary returned by one remote attempt."""
+
+    frame: ManagedUnitFrame
+    attempt: ManagedAttemptState
+    child_count: int
+
+    def __post_init__(self) -> None:
+        if (
+            isinstance(self.child_count, bool)
+            or not isinstance(self.child_count, int)
+            or self.child_count < 0
+        ):
+            raise TypeError("managed child counts must be non-negative integers")
+
+
+@dataclass(frozen=True)
+class ManagedPrefectPayload:
+    """Serializable Prefect task input for an initial or coordinated attempt."""
+
+    item: ManagedWorkItem
+    parent: ManagedParentEnvelope | None = None
+
+
+@dataclass(frozen=True)
+class ManagedExecutionOutcome:
+    """Serializable Prefect result with operational claim information."""
+
+    index: int
+    value: Any = None
+    error: Exception | None = None
+    coordination_required: bool = False
+    report: ManagedClaimReport | None = None
+
+
 def point_unit_segment() -> tuple[Any, ...]:
     """Return the canonical segment for one plain point evaluation."""
     return ("managed-unit", _MANAGED_WORK_ITEM_ABI, "point", 0)

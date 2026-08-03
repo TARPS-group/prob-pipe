@@ -3,6 +3,7 @@ from __future__ import annotations
 import pickle
 from dataclasses import FrozenInstanceError, fields
 from typing import ClassVar
+from unittest.mock import patch
 
 import jax
 import pytest
@@ -65,6 +66,8 @@ class FakeFuture:
 
 class FakeMappedTask:
     created_names: ClassVar[list[str | None]] = []
+    reverse_results: ClassVar[bool] = False
+    map_calls: ClassVar[int] = 0
 
     def __init__(self, fn, name):
         self.fn = fn
@@ -72,12 +75,13 @@ class FakeMappedTask:
         self.__class__.created_names.append(name)
 
     def map(self, **kwargs_by_param):
+        self.__class__.map_calls += 1
         count = len(next(iter(kwargs_by_param.values())))
         futures = []
         for index in range(count):
             kwargs = {name: values[index] for name, values in kwargs_by_param.items()}
             futures.append(FakeFuture(self.fn(**kwargs)))
-        return futures
+        return list(reversed(futures)) if self.__class__.reverse_results else futures
 
 
 class RecordingFlow:
@@ -138,12 +142,16 @@ def _reset_fakes():
     prefect_config.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
+    FakeMappedTask.reverse_results = False
+    FakeMappedTask.map_calls = 0
     RecordingFlow.calls.clear()
     yield
     prefect_config.workflow_kind = WorkflowKind.OFF
     prefect_config.task_runner = None
     RecordingExecutor.instances.clear()
     FakeMappedTask.created_names.clear()
+    FakeMappedTask.reverse_results = False
+    FakeMappedTask.map_calls = 0
     RecordingFlow.calls.clear()
 
 
@@ -407,6 +415,87 @@ class TestPrefectMapping:
             {"name": "plus_one", "kwargs": {"task_runner": runner}},
         ]
         assert FakeMappedTask.created_names == ["plus_one_run"]
+
+    def test_prefect_outcomes_restore_canonical_order(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        FakeMappedTask.reverse_results = True
+        request = make_request(
+            mode="prefect_task",
+            calls=[{"x": 1}, {"x": 2}, {"x": 3}],
+        )
+
+        assert execution_mod.map_task(request) == [2, 3, 4]
+
+    def test_deterministic_prefect_items_do_not_materialize_anonymous_root(
+        self,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        request = make_request(mode="prefect_task")
+
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            workflow_run(),
+            broker_mod._function_stochastic_scope(),
+        ):
+            assert execution_mod.execute_many(request) == [2, 3]
+
+        urandom.assert_not_called()
+        assert FakeMappedTask.map_calls == 1
+
+    def test_prefect_randomness_uses_lazy_parent_coordination(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        request = make_request(
+            mode="prefect_task",
+            calls=[{}],
+            func=_claim_automatic_words,
+        )
+
+        with (
+            patch(
+                "probpipe.core._workflow_context._os_urandom",
+                return_value=bytes.fromhex("0123456789abcdef"),
+            ) as urandom,
+            workflow_run(),
+            broker_mod._function_stochastic_scope() as parent,
+        ):
+            result = execution_mod.execute_many(request)[0]
+            envelope = parent.prepare_remote_managed_unit(request.work_items[0].frame)
+
+        assert result
+        assert envelope.parent_occurrence_path == (("invocation", 0),)
+        urandom.assert_called_once_with(8)
+        assert FakeMappedTask.map_calls == 2
+
+    def test_managed_keys_match_across_sequential_thread_and_prefect(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+
+        def run(mode):
+            request = make_request(
+                mode=mode,
+                calls=[{}],
+                func=_claim_automatic_words,
+            )
+            with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+                return execution_mod.execute_many(request)[0]
+
+        assert run("sequential") == run("thread") == run("prefect_task")
+
+    def test_prefect_transport_payload_is_pickleable(self):
+        request = make_request(calls=[{}], func=_claim_automatic_words)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            envelope = parent.prepare_remote_managed_unit(request.work_items[0].frame)
+            payload = managed_mod.ManagedPrefectPayload(
+                item=request.work_items[0],
+                parent=envelope,
+            )
+            parent.cancel_unstarted_managed_items(request.work_items)
+
+        assert pickle.loads(pickle.dumps(payload)) == payload
 
 
 class TestFunctionExecutionConfig:

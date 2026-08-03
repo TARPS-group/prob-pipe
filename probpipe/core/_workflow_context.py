@@ -343,6 +343,30 @@ def _managed_work_item_scope(
         _ACTIVE_WORKFLOW_FRAME.reset(token)
 
 
+@contextmanager
+def _transported_workflow_frame(
+    root_words: tuple[int, int] | None,
+) -> Iterator[None]:
+    """Install a standalone worker frame from serializable parent authority."""
+    frame = _WorkflowFrame(
+        kind="managed",
+        seed_words=root_words,
+        parent=None,
+        owner=_current_workflow_owner(),
+        state=_WorkflowFrameState(
+            path_prefix=(),
+            root_words=root_words,
+        ),
+    )
+    token = _ACTIVE_WORKFLOW_FRAME.set(frame)
+    try:
+        yield
+    finally:
+        if _ACTIVE_WORKFLOW_FRAME.get() is not frame:
+            raise RuntimeError("transported workflow frames must exit in nesting order")
+        _ACTIVE_WORKFLOW_FRAME.reset(token)
+
+
 def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
     root_words = frame.state.root_words
     if root_words is not None:

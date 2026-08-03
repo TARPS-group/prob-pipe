@@ -13,6 +13,8 @@ from ..custom_types import PRNGKey
 from . import _workflow_context
 from ._workflow_managed import (
     ManagedAttemptState,
+    ManagedClaimReport,
+    ManagedParentEnvelope,
     ManagedUnitFrame,
     ManagedWorkItem,
     ManagedWorkItemToken,
@@ -59,6 +61,7 @@ class _ManagedUnitClaimState:
     frame: ManagedUnitFrame
     child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
     active_attempt: bytes | None = None
+    seen_attempts: set[bytes] = field(default_factory=set)
     has_started: bool = False
     joined: bool = False
 
@@ -76,7 +79,7 @@ class _ManagedClaimRegistry:
 class _ManagedAttemptContext:
     """Attempt-local child cursor bound inside one managed work item."""
 
-    parent_broker: _AutomaticKeyBroker
+    parent_broker: Any
     frame: ManagedUnitFrame
     attempt: ManagedAttemptState
     next_child_ordinal: int = 0
@@ -130,6 +133,8 @@ class _AutomaticKeyBroker:
         """Return the workflow-owned key for one planned effect."""
         if not isinstance(plan, StochasticEffectPlan):
             raise TypeError("automatic key requests require a StochasticEffectPlan")
+        if _REMOTE_COORDINATION_PROBE.get():
+            raise _ManagedCoordinationRequired
         with self._lock:
             if self._invocation is None:
                 if self._managed_attempt is None:
@@ -175,6 +180,9 @@ class _AutomaticKeyBroker:
                     "a managed work-item token already has an active attempt; "
                     "duplicate or concurrent attempts are not allowed"
                 )
+            if attempt.attempt_token in state.seen_attempts:
+                raise RuntimeError("a managed attempt token cannot be reused")
+            state.seen_attempts.add(attempt.attempt_token)
             state.active_attempt = attempt.attempt_token
             state.has_started = True
             state.joined = False
@@ -216,6 +224,52 @@ class _AutomaticKeyBroker:
             ):
                 raise RuntimeError(
                     "a Function workflow scope cannot exit before all managed work items join"
+                )
+
+    def prepare_remote_managed_unit(
+        self,
+        frame: ManagedUnitFrame,
+    ) -> ManagedParentEnvelope:
+        """Materialize parent authority after a remote task requests randomness."""
+        with self._managed_claims.lock:
+            state = self._managed_claims.by_token.get(frame.token)
+            if state is None or state.frame.unit_segment != frame.unit_segment:
+                raise RuntimeError("remote managed unit is not registered by this parent")
+        parent_invocation = self._ensure_parent_invocation()
+        return ManagedParentEnvelope(
+            root_words=_workflow_context._resolve_root_words(parent_invocation.frame),
+            parent_occurrence_path=parent_invocation.occurrence_path,
+            frame=frame,
+        )
+
+    def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
+        """Join and reconcile the canonical child namespace from a remote attempt."""
+        with self._managed_claims.lock:
+            state = self._managed_claims.by_token.get(report.frame.token)
+            if state is None or state.frame.unit_segment != report.frame.unit_segment:
+                raise RuntimeError("remote claim report does not own a registered unit")
+            if state.active_attempt is not None:
+                raise RuntimeError("remote claim report conflicts with an active local attempt")
+            if report.attempt.attempt_token in state.seen_attempts:
+                raise RuntimeError("a managed attempt token cannot be reused")
+            state.seen_attempts.add(report.attempt.attempt_token)
+            state.has_started = True
+            state.joined = True
+
+            if report.child_count == 0:
+                return
+            parent_invocation = self._ensure_parent_invocation()
+            while len(state.child_invocations) < report.child_count:
+                child_ordinal = len(state.child_invocations)
+                state.child_invocations.append(
+                    _workflow_context._WorkflowInvocation(
+                        frame=parent_invocation.frame,
+                        occurrence_path=(
+                            *parent_invocation.occurrence_path,
+                            report.frame.unit_segment,
+                            ("child", child_ordinal),
+                        ),
+                    )
                 )
 
     def _claim_managed_child(
@@ -273,6 +327,55 @@ _ACTIVE_MANAGED_ATTEMPT: ContextVar[_ManagedAttemptContext | None] = ContextVar(
     "probpipe_active_managed_attempt",
     default=None,
 )
+
+_REMOTE_COORDINATION_PROBE: ContextVar[bool] = ContextVar(
+    "probpipe_remote_coordination_probe",
+    default=False,
+)
+
+
+class _ManagedCoordinationRequired(RuntimeError):
+    """Signal that a remote work item needs parent RNG authority."""
+
+
+@dataclass
+class _RemoteManagedParent:
+    """Worker-local adapter for a parent-authorized child namespace."""
+
+    envelope: ManagedParentEnvelope
+    attempt: ManagedAttemptState
+    workflow_frame: _workflow_context._WorkflowFrame
+    child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
+
+    def _claim_managed_child(
+        self,
+        *,
+        frame: ManagedUnitFrame,
+        attempt: ManagedAttemptState,
+        child_ordinal: int,
+    ) -> _workflow_context._WorkflowInvocation:
+        if frame != self.envelope.frame or attempt != self.attempt:
+            raise RuntimeError("remote managed child does not own its envelope")
+        if child_ordinal != len(self.child_invocations):
+            raise RuntimeError("remote managed child claims must be made in order")
+        invocation = _workflow_context._WorkflowInvocation(
+            frame=self.workflow_frame,
+            occurrence_path=(
+                *self.envelope.parent_occurrence_path,
+                frame.unit_segment,
+                ("child", child_ordinal),
+            ),
+        )
+        self.child_invocations.append(invocation)
+        return invocation
+
+    def report(self) -> ManagedClaimReport:
+        """Return the serializable claim count for parent reconciliation."""
+        return ManagedClaimReport(
+            frame=self.envelope.frame,
+            attempt=self.attempt,
+            child_count=len(self.child_invocations),
+        )
 
 
 @contextmanager
@@ -332,6 +435,48 @@ def _capture_active_broker() -> _AutomaticKeyBroker | None:
     """Capture the admitted parent broker for managed execution transport."""
     _workflow_context._assert_workflow_admission()
     return _ACTIVE_AUTOMATIC_KEY_BROKER.get()
+
+
+@contextmanager
+def _remote_coordination_probe_scope() -> Iterator[None]:
+    """Run a remote item without permitting automatic stochastic commit."""
+    probe_token = _REMOTE_COORDINATION_PROBE.set(True)
+    attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(None)
+    broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
+    try:
+        yield
+    finally:
+        _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
+        _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)
+        _REMOTE_COORDINATION_PROBE.reset(probe_token)
+
+
+@contextmanager
+def _remote_managed_work_item_stochastic_scope(
+    envelope: ManagedParentEnvelope,
+    attempt: ManagedAttemptState,
+) -> Iterator[_RemoteManagedParent]:
+    """Install parent-authorized RNG derivation inside a remote worker."""
+    frame = _workflow_context._capture_active_workflow_frame()
+    if frame is None:
+        raise RuntimeError("remote managed randomness requires a transported frame")
+    parent = _RemoteManagedParent(
+        envelope=envelope,
+        attempt=attempt,
+        workflow_frame=frame,
+    )
+    state = _ManagedAttemptContext(
+        parent_broker=parent,
+        frame=envelope.frame,
+        attempt=attempt,
+    )
+    attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(state)
+    broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
+    try:
+        yield parent
+    finally:
+        _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
+        _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)
 
 
 @contextmanager

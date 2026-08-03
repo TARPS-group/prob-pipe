@@ -19,6 +19,10 @@ except ImportError:
 
 from . import _workflow_broker, _workflow_context
 from ._workflow_managed import (
+    ManagedAttemptState,
+    ManagedClaimReport,
+    ManagedExecutionOutcome,
+    ManagedPrefectPayload,
     ManagedWorkItem,
     lifted_evaluation_unit_segment,
     make_managed_work_items,
@@ -88,9 +92,15 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
                     parent_broker=parent_broker,
                 )
             case "prefect_task":
-                return execute_many_prefect_task(request)
+                return execute_many_prefect_task(
+                    request,
+                    parent_broker=parent_broker,
+                )
             case "prefect_flow":
-                return execute_many_prefect_flow(request)
+                return execute_many_prefect_flow(
+                    request,
+                    parent_broker=parent_broker,
+                )
             case unknown:
                 raise ValueError(f"Unknown workflow execution mode: {unknown!r}")
     finally:
@@ -134,6 +144,7 @@ def map_task(
     request: WorkflowExecutionRequest,
     *,
     task_name: str | None = None,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
 ) -> list[Any]:
     """Create a Prefect task, map keyword arguments over calls, and resolve futures."""
     if not request.work_items:
@@ -144,14 +155,39 @@ def map_task(
     func = request.func
 
     @task(name=task_name or request.execution.name)
-    def run_func(work_item):
-        return _execute_work_item(func, work_item)
+    def run_func(payload):
+        return _execute_prefect_payload(func, payload)
 
-    futures = run_func.map(work_item=list(request.work_items))
-    return [future.result() for future in futures]
+    initial_payloads = [ManagedPrefectPayload(item=item) for item in request.work_items]
+    outcomes = [future.result() for future in run_func.map(payload=initial_payloads)]
+
+    coordination = [outcome for outcome in outcomes if outcome.coordination_required]
+    if coordination:
+        if parent_broker is None:
+            raise RuntimeError(
+                "remote workflow randomness requires an active parent Function broker"
+            )
+        retry_payloads = [
+            ManagedPrefectPayload(
+                item=request.work_items[outcome.index],
+                parent=parent_broker.prepare_remote_managed_unit(
+                    request.work_items[outcome.index].frame
+                ),
+            )
+            for outcome in coordination
+        ]
+        retried = [future.result() for future in run_func.map(payload=retry_payloads)]
+        retried_by_index = {outcome.index: outcome for outcome in retried}
+        outcomes = [retried_by_index.get(outcome.index, outcome) for outcome in outcomes]
+
+    return _resolve_prefect_outcomes(outcomes, parent_broker=parent_broker)
 
 
-def execute_many_prefect_task(request: WorkflowExecutionRequest) -> list[Any]:
+def execute_many_prefect_task(
+    request: WorkflowExecutionRequest,
+    *,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
+) -> list[Any]:
     """Use Prefect ``task.map()`` inside a lightweight flow."""
     if not request.work_items:
         return []
@@ -164,12 +200,16 @@ def execute_many_prefect_task(request: WorkflowExecutionRequest) -> list[Any]:
         **({"task_runner": runner} if runner is not None else {}),
     )
     def _task_map_flow():
-        return map_task(request)
+        return map_task(request, parent_broker=parent_broker)
 
     return _task_map_flow()
 
 
-def execute_many_prefect_flow(request: WorkflowExecutionRequest) -> list[Any]:
+def execute_many_prefect_flow(
+    request: WorkflowExecutionRequest,
+    *,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None = None,
+) -> list[Any]:
     """Wrap a mapped task inside a named Prefect flow."""
     if not request.work_items:
         return []
@@ -182,7 +222,11 @@ def execute_many_prefect_flow(request: WorkflowExecutionRequest) -> list[Any]:
         **({"task_runner": runner} if runner is not None else {}),
     )
     def mapped_flow():
-        return map_task(request, task_name=f"{request.execution.name}_run")
+        return map_task(
+            request,
+            task_name=f"{request.execution.name}_run",
+            parent_broker=parent_broker,
+        )
 
     return mapped_flow()
 
@@ -218,6 +262,79 @@ def _execute_work_item(
             item.frame,
         ):
             return func(**item.call_values())
+
+
+def _execute_prefect_payload(
+    func: Callable[..., Any],
+    payload: ManagedPrefectPayload,
+) -> ManagedExecutionOutcome:
+    """Execute one serializable Prefect payload and return its claim report."""
+    item = payload.item
+    attempt = ManagedAttemptState.create(item.frame.token)
+    if payload.parent is None:
+        with (
+            _workflow_context._transported_workflow_frame(None),
+            _workflow_broker._remote_coordination_probe_scope(),
+        ):
+            try:
+                value = func(**item.call_values())
+            except _workflow_broker._ManagedCoordinationRequired:
+                return ManagedExecutionOutcome(
+                    index=item.index,
+                    coordination_required=True,
+                )
+            except Exception as error:
+                return ManagedExecutionOutcome(
+                    index=item.index,
+                    error=error,
+                    report=ManagedClaimReport(item.frame, attempt, 0),
+                )
+        return ManagedExecutionOutcome(
+            index=item.index,
+            value=value,
+            report=ManagedClaimReport(item.frame, attempt, 0),
+        )
+
+    with (
+        _workflow_context._transported_workflow_frame(payload.parent.root_words),
+        _workflow_broker._remote_managed_work_item_stochastic_scope(
+            payload.parent,
+            attempt,
+        ) as remote_parent,
+    ):
+        try:
+            value = func(**item.call_values())
+        except Exception as error:
+            return ManagedExecutionOutcome(
+                index=item.index,
+                error=error,
+                report=remote_parent.report(),
+            )
+    return ManagedExecutionOutcome(
+        index=item.index,
+        value=value,
+        report=remote_parent.report(),
+    )
+
+
+def _resolve_prefect_outcomes(
+    outcomes: list[ManagedExecutionOutcome],
+    *,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+) -> list[Any]:
+    """Join remote claims, restore canonical order, then raise the first error."""
+    ordered = sorted(outcomes, key=lambda outcome: outcome.index)
+    for outcome in ordered:
+        if outcome.coordination_required:
+            raise RuntimeError("coordinated Prefect attempt requested RNG authority twice")
+        if parent_broker is not None:
+            if outcome.report is None:
+                raise RuntimeError("Prefect work item returned no managed claim report")
+            parent_broker.accept_remote_claim_report(outcome.report)
+    for outcome in ordered:
+        if outcome.error is not None:
+            raise outcome.error
+    return [outcome.value for outcome in ordered]
 
 
 def _ensure_prefect_available() -> None:
