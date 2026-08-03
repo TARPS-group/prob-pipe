@@ -366,22 +366,29 @@ class TestCoSamplingThroughACall:
     def _difference(**controls):
         return Function(
             func=lambda a, b: a - b,
-            dispatch="sequential",
+            dispatch=controls.pop("dispatch", "sequential"),
             n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
             seed=0,
             **controls,
         )
 
-    def test_a_law_passed_twice_approximates_f_of_one_variable(self):
-        """``f(d, d)`` is ``X - X``, not ``X1 - X2``."""
+    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+    def test_a_law_passed_twice_approximates_f_of_one_variable(self, dispatch):
+        """``f(d, d)`` is ``X - X``, not ``X1 - X2``.
+
+        Both dispatches, because the grouping lives in the sampler all three
+        execution paths share: a divergence here would mean one backend silently
+        answering a different question from another.
+        """
         dist = Normal(loc=0.0, scale=1.0, name="x")
-        result = self._difference()(dist, dist)
+        result = self._difference(dispatch=dispatch)(dist, dist)
 
         np.testing.assert_array_equal(np.asarray(result.samples), np.zeros(8))
 
-    def test_include_inputs_reports_one_realization_under_both_names(self):
+    @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
+    def test_include_inputs_reports_one_realization_under_both_names(self, dispatch):
         dist = Normal(loc=0.0, scale=1.0, name="x")
-        result = self._difference(include_inputs=True)(dist, dist)
+        result = self._difference(dispatch=dispatch, include_inputs=True)(dist, dist)
 
         np.testing.assert_array_equal(
             np.asarray(result.input_samples["a"]), np.asarray(result.input_samples["b"])

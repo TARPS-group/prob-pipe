@@ -315,8 +315,12 @@ def _sample_broadcast_args(
     return sampled
 
 
-def _project_from_root(view: Any, drawn: Any) -> Array:
-    """A view's own draw, taken out of its root's joint draw."""
+def _project_from_root(view: Any, drawn: Any) -> Any:
+    """A view's own draw, taken out of its root's joint draw.
+
+    Not necessarily an array: a view of a field group projects the sub-record its
+    path names, so this returns whatever the root's draw holds there.
+    """
     if hasattr(view, "_extract"):
         return view._extract(drawn)
     projected = drawn
