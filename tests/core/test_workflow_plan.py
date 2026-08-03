@@ -27,6 +27,7 @@ from probpipe.core._workflow_plan import (
     ArrayBroadcastGroup,
     LogicalUnit,
     PlannedRandomEvent,
+    StochasticConsumerPlan,
     StochasticPlan,
     StochasticSourceGroup,
     build_broadcast_plan,
@@ -236,8 +237,18 @@ class TestStochasticPlanStructure:
         assert plan.evaluation_mode == "sampled"
         assert plan.arg_refs == (_ref("a"), _ref("b"))
         assert plan.source_groups == (
-            StochasticSourceGroup(0, (_ref("a"),), "direct", "sampled", None),
-            StochasticSourceGroup(1, (_ref("b"),), "direct", "sampled", None),
+            StochasticSourceGroup(
+                0,
+                (StochasticConsumerPlan(_ref("a"), (), None),),
+                "sampled",
+                None,
+            ),
+            StochasticSourceGroup(
+                1,
+                (StochasticConsumerPlan(_ref("b"), (), None),),
+                "sampled",
+                None,
+            ),
         )
         assert plan.logical_units == (LogicalUnit("singleton", 0, ()),)
         assert plan.n_broadcast_samples == 12
@@ -252,11 +263,16 @@ class TestStochasticPlanStructure:
         )
         assert isinstance(plan.arg_refs, tuple)
         assert isinstance(plan.source_groups, tuple)
+        assert isinstance(plan.runtime_bindings, tuple)
         assert isinstance(plan.logical_units, tuple)
         assert isinstance(plan.exact_group_order, tuple)
         assert isinstance(plan.exact_combination_order, tuple)
         assert all(isinstance(combo, tuple) for combo in plan.exact_combination_order)
         assert all(isinstance(group.arg_refs, tuple) for group in plan.source_groups)
+        assert all(isinstance(group.consumers, tuple) for group in plan.source_groups)
+        assert all(
+            isinstance(binding.consumer_evaluators, tuple) for binding in plan.runtime_bindings
+        )
         assert all(isinstance(unit.coordinates, tuple) for unit in plan.logical_units)
         assert isinstance(plan.random_events, tuple)
 
@@ -311,33 +327,79 @@ class TestStochasticSourceGrouping:
         assert plan.source_groups == (
             StochasticSourceGroup(
                 0,
-                (_ref("x"), _ref("y")),
-                "record_view",
+                (
+                    StochasticConsumerPlan(_ref("x"), ("x",), None),
+                    StochasticConsumerPlan(_ref("y"), ("y",), None),
+                ),
                 "sampled",
                 None,
             ),
             StochasticSourceGroup(
                 1,
-                (_ref("independent"),),
-                "direct",
+                (StochasticConsumerPlan(_ref("independent"), (), None),),
                 "sampled",
                 None,
             ),
         )
 
-    def test_direct_aliases_remain_separate_in_this_wave(self):
+    def test_direct_aliases_share_one_root_group(self):
         shared = Normal(loc=0.0, scale=1.0, name="shared")
 
         plan = _stochastic_plan({"first": shared, "second": shared})
 
         assert tuple(group.arg_refs for group in plan.source_groups) == (
-            (_ref("first"),),
-            (_ref("second"),),
+            (_ref("first"), _ref("second")),
         )
         assert tuple(group.stochastic_source_id for group in plan.source_groups) == (
             ("source-group", 0),
-            ("source-group", 1),
         )
+
+    def test_equal_but_distinct_direct_objects_remain_independent(self):
+        first = Normal(loc=0.0, scale=1.0, name="same")
+        second = Normal(loc=0.0, scale=1.0, name="same")
+
+        plan = _stochastic_plan({"first": first, "second": second})
+
+        assert tuple(group.arg_refs for group in plan.source_groups) == (
+            (_ref("first"),),
+            (_ref("second"),),
+        )
+        assert plan.runtime_bindings[0].root is first
+        assert plan.runtime_bindings[1].root is second
+
+    def test_root_sibling_and_transitive_views_share_canonical_paths(self):
+        joint = ProductDistribution(
+            nested={
+                "left": Normal(loc=0.0, scale=1.0, name="left"),
+                "right": Normal(loc=1.0, scale=1.0, name="right"),
+            },
+            top=Normal(loc=2.0, scale=1.0, name="top"),
+        )
+
+        plan = _stochastic_plan(
+            {
+                "left": joint["nested"]["left"],
+                "root": joint,
+                "right": joint["nested"]["right"],
+                "top": joint["top"],
+            }
+        )
+
+        assert len(plan.source_groups) == 1
+        assert plan.source_groups[0].consumers == (
+            StochasticConsumerPlan(_ref("left"), ("nested", "left"), None),
+            StochasticConsumerPlan(_ref("root"), (), None),
+            StochasticConsumerPlan(_ref("right"), ("nested", "right"), None),
+            StochasticConsumerPlan(_ref("top"), ("top",), None),
+        )
+        assert plan.runtime_bindings[0].root is joint
+
+    def test_runtime_bindings_do_not_participate_in_canonical_plan_equality(self):
+        first = _stochastic_plan({"x": Normal(loc=0.0, scale=1.0, name="first")})
+        second = _stochastic_plan({"x": Normal(loc=9.0, scale=3.0, name="second")})
+
+        assert first == second
+        assert first.runtime_bindings[0].root is not second.runtime_bindings[0].root
 
 
 class TestStochasticEvaluationPlanning:

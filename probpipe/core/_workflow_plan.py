@@ -7,8 +7,8 @@ execute. Planning is intentionally side-effect-free.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from itertools import product as cartesian_product
 from math import prod
 from typing import Any, Literal
@@ -20,7 +20,6 @@ from ._record_distribution import _RecordDistributionView
 from .distribution import Distribution, EmpiricalDistribution
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
-StochasticSourceKind = Literal["direct", "record_view"]
 StochasticExecutionMode = Literal["exact", "sampled"]
 StochasticEvaluationMode = Literal["exact", "sampled", "mixed_exact_sampled"]
 LogicalUnitLayout = Literal["singleton", "canonical_sweep"]
@@ -49,19 +48,49 @@ class BroadcastPlan:
 
 
 @dataclass(frozen=True)
+class StochasticConsumerPlan:
+    """Canonical projection of one argument from a co-sampled root."""
+
+    arg_ref: _workflow_call.WorkflowInputRef
+    record_path: tuple[str, ...]
+    descendant_descriptor: tuple[Any, ...] | None
+
+
+@dataclass(frozen=True)
 class StochasticSourceGroup:
-    """One canonically ordered stochastic source consumed by lifting."""
+    """One recursive stochastic root and its ordered consumers."""
 
     index: int
-    arg_refs: tuple[_workflow_call.WorkflowInputRef, ...]
-    source_kind: StochasticSourceKind
+    consumers: tuple[StochasticConsumerPlan, ...]
     execution_mode: StochasticExecutionMode
     exact_size: int | None
+
+    @property
+    def arg_refs(self) -> tuple[_workflow_call.WorkflowInputRef, ...]:
+        """Return consumer references in canonical argument order."""
+        return tuple(consumer.arg_ref for consumer in self.consumers)
 
     @property
     def stochastic_source_id(self) -> StructuralRngId:
         """Return the structural identity used by the workflow RNG broker."""
         return ("source-group", self.index)
+
+
+@dataclass(frozen=True)
+class StochasticRuntimeBinding:
+    """Live root and preflight-captured evaluators for one source group."""
+
+    root: Distribution = field(compare=False, hash=False, repr=False)
+    sample_root: Callable[[Any, tuple[int, ...]], Any] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+    consumer_evaluators: tuple[Callable[[Any], Any], ...] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -102,6 +131,11 @@ class StochasticPlan:
     exact_combination_order: tuple[tuple[int, ...], ...]
     repetitions_per_combination: int
     n_evaluations: int
+    runtime_bindings: tuple[StochasticRuntimeBinding, ...] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
 
     @property
     def random_events(self) -> tuple[PlannedRandomEvent, ...]:
@@ -175,17 +209,15 @@ def build_stochastic_plan(
 
     _validate_stochastic_sample_count(n_broadcast_samples)
     arg_refs = tuple(broadcast_plan.dist_args)
-    grouped_refs, source_values, source_kinds = _group_stochastic_sources(
+    grouped_consumers, source_values, runtime_evaluators = _group_stochastic_sources(
         values=values,
         refs=arg_refs,
     )
 
     candidates = [
         (index, source)
-        for index, (source, source_kind) in enumerate(zip(source_values, source_kinds))
-        if source_kind == "direct"
-        and isinstance(source, EmpiricalDistribution)
-        and source.num_atoms <= n_broadcast_samples
+        for index, source in enumerate(source_values)
+        if isinstance(source, EmpiricalDistribution) and source.num_atoms <= n_broadcast_samples
     ]
     candidates.sort(key=lambda pair: pair[1].num_atoms)
 
@@ -202,12 +234,19 @@ def build_stochastic_plan(
     source_groups = tuple(
         StochasticSourceGroup(
             index=index,
-            arg_refs=tuple(refs),
-            source_kind=source_kinds[index],
+            consumers=tuple(consumers),
             execution_mode="exact" if index in exact_sizes else "sampled",
             exact_size=exact_sizes.get(index),
         )
-        for index, refs in enumerate(grouped_refs)
+        for index, consumers in enumerate(grouped_consumers)
+    )
+    runtime_bindings = tuple(
+        StochasticRuntimeBinding(
+            root=source,
+            sample_root=source._sample,
+            consumer_evaluators=tuple(runtime_evaluators[index]),
+        )
+        for index, source in enumerate(source_values)
     )
     logical_units = _build_logical_units(broadcast_plan)
     exact_group_order = tuple(exact_group_indices)
@@ -243,6 +282,7 @@ def build_stochastic_plan(
         exact_combination_order=exact_combination_order,
         repetitions_per_combination=repetitions_per_combination,
         n_evaluations=n_evaluations,
+        runtime_bindings=runtime_bindings,
     )
 
 
@@ -251,35 +291,49 @@ def _group_stochastic_sources(
     values: Mapping[str, Any],
     refs: Sequence[_workflow_call.WorkflowInputRef],
 ) -> tuple[
-    list[list[_workflow_call.WorkflowInputRef]],
+    list[list[StochasticConsumerPlan]],
     list[Distribution],
-    list[StochasticSourceKind],
+    list[list[Callable[[Any], Any]]],
 ]:
-    """Discover current-wave sources while keeping object IDs out of plans."""
-    grouped_refs: list[list[_workflow_call.WorkflowInputRef]] = []
+    """Discover live roots while keeping object IDs out of canonical plans."""
+    grouped_consumers: list[list[StochasticConsumerPlan]] = []
     source_values: list[Distribution] = []
-    source_kinds: list[StochasticSourceKind] = []
-    view_group_by_parent: dict[int, int] = {}
+    runtime_evaluators: list[list[Callable[[Any], Any]]] = []
+    group_by_root: dict[int, int] = {}
 
     for ref in refs:
         value = _workflow_call.input_ref_value(values, ref)
         if isinstance(value, _RecordDistributionView):
-            parent_identity = id(value.parent)
-            existing_index = view_group_by_parent.get(parent_identity)
-            if existing_index is not None:
-                grouped_refs[existing_index].append(ref)
-                continue
-            view_group_by_parent[parent_identity] = len(grouped_refs)
-            grouped_refs.append([ref])
-            source_values.append(value.parent)
-            source_kinds.append("record_view")
-            continue
+            root = value.parent
+            record_path = tuple(value._key_path)
+            evaluator = value._extract
+        else:
+            root = value
+            record_path = ()
+            evaluator = _identity
 
-        grouped_refs.append([ref])
-        source_values.append(value)
-        source_kinds.append("direct")
+        root_identity = id(root)
+        group_index = group_by_root.get(root_identity)
+        if group_index is None:
+            group_index = len(grouped_consumers)
+            group_by_root[root_identity] = group_index
+            grouped_consumers.append([])
+            source_values.append(root)
+            runtime_evaluators.append([])
+        grouped_consumers[group_index].append(
+            StochasticConsumerPlan(
+                arg_ref=ref,
+                record_path=record_path,
+                descendant_descriptor=None,
+            )
+        )
+        runtime_evaluators[group_index].append(evaluator)
 
-    return grouped_refs, source_values, source_kinds
+    return grouped_consumers, source_values, runtime_evaluators
+
+
+def _identity(value: Any) -> Any:
+    return value
 
 
 def _build_logical_units(broadcast_plan: BroadcastPlan) -> tuple[LogicalUnit, ...]:

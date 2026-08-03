@@ -10,7 +10,13 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import BroadcastDistribution, EmpiricalDistribution, Normal, ProductDistribution
+from probpipe import (
+    BroadcastDistribution,
+    EmpiricalDistribution,
+    Normal,
+    ProductDistribution,
+    Record,
+)
 from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.core.config import WorkflowKind
@@ -77,6 +83,149 @@ class _RecordingNormal(Normal):
 
 
 class TestExecuteDistributionBroadcast:
+    def test_direct_aliases_sample_one_root_and_stay_diagonal(self):
+        sample_calls = []
+        events = []
+        shared = _RecordingNormal(sample_calls, name="shared")
+        values = {"first": shared, "second": shared}
+
+        plan = _stochastic_plan(values, 12)
+        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+            func=lambda first, second: first - second,
+            values=values,
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
+            include_inputs=True,
+            get_key=_key_source(17, events),
+            make_execution_config=lambda: _execution_config(name="difference"),
+            requested_dispatch="sequential",
+            resolve_dispatch=_resolve_to("sequential"),
+            require_jax_traceable=_require_not_called,
+            workflow_name="difference",
+            workflow_kind=WorkflowKind.OFF,
+        )
+
+        assert len(sample_calls) == 1
+        assert len(events) == 1
+        np.testing.assert_array_equal(result.input_samples["first"], result.input_samples["second"])
+        np.testing.assert_allclose(result.samples, 0.0)
+
+    def test_equal_but_distinct_sources_sample_independently(self):
+        first_calls = []
+        second_calls = []
+        events = []
+        values = {
+            "first": _RecordingNormal(first_calls, name="same"),
+            "second": _RecordingNormal(second_calls, name="same"),
+        }
+
+        plan = _stochastic_plan(values, 12)
+        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+            func=lambda first, second: first - second,
+            values=values,
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
+            include_inputs=True,
+            get_key=_key_source(19, events),
+            make_execution_config=lambda: _execution_config(name="difference"),
+            requested_dispatch="sequential",
+            resolve_dispatch=_resolve_to("sequential"),
+            require_jax_traceable=_require_not_called,
+            workflow_name="difference",
+            workflow_kind=WorkflowKind.OFF,
+        )
+
+        assert len(first_calls) == len(second_calls) == 1
+        assert len(events) == 2
+        assert not np.array_equal(result.input_samples["first"], result.input_samples["second"])
+
+    def test_root_and_nested_view_use_the_same_sampled_realization(self):
+        joint = ProductDistribution(
+            nested={"leaf": Normal(loc=0.0, scale=1.0, name="leaf")},
+            other=Normal(loc=3.0, scale=1.0, name="other"),
+        )
+        values = {"root": joint, "leaf": joint["nested"]["leaf"]}
+
+        plan = _stochastic_plan(values, 8)
+        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+            func=lambda root, leaf: root["nested/leaf"] - leaf,
+            values=values,
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
+            include_inputs=True,
+            get_key=_key_source(23),
+            make_execution_config=lambda: _execution_config(name="difference"),
+            requested_dispatch="sequential",
+            resolve_dispatch=_resolve_to("sequential"),
+            require_jax_traceable=_require_not_called,
+            workflow_name="difference",
+            workflow_kind=WorkflowKind.OFF,
+        )
+
+        np.testing.assert_allclose(result.samples, 0.0)
+
+    def test_weighted_empirical_aliases_enumerate_once(self):
+        shared = EmpiricalDistribution(
+            jnp.asarray([1.0, 4.0]),
+            weights=jnp.asarray([0.2, 0.8]),
+            name="shared",
+        )
+        values = {"first": shared, "second": shared}
+
+        plan = _stochastic_plan(values, 8)
+        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+            func=lambda first, second: first - second,
+            values=values,
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
+            include_inputs=True,
+            get_key=_require_not_called,
+            make_execution_config=lambda: _execution_config(name="difference"),
+            requested_dispatch="sequential",
+            resolve_dispatch=_resolve_to("sequential"),
+            require_jax_traceable=_require_not_called,
+            workflow_name="difference",
+            workflow_kind=WorkflowKind.OFF,
+        )
+
+        assert result.num_atoms == 2
+        np.testing.assert_array_equal(result.input_samples["first"], jnp.asarray([1.0, 4.0]))
+        np.testing.assert_array_equal(result.input_samples["first"], result.input_samples["second"])
+        np.testing.assert_allclose(result.samples, 0.0)
+        np.testing.assert_allclose(result.weights, jnp.asarray([0.2, 0.8]))
+
+    def test_weighted_record_root_and_view_enumerate_once(self):
+        shared = EmpiricalDistribution(
+            Record(
+                "draws",
+                x=jnp.asarray([1.0, 4.0]),
+                y=jnp.asarray([10.0, 40.0]),
+            ),
+            weights=jnp.asarray([0.3, 0.7]),
+            name="shared",
+        )
+        values = {"root": shared, "x": shared["x"]}
+
+        plan = _stochastic_plan(values, 8)
+        result = _workflow_distribution_broadcast.execute_distribution_broadcast(
+            func=lambda root, x: root["x"] - x,
+            values=values,
+            stochastic_plan=plan,
+            logical_unit=plan.logical_units[0],
+            include_inputs=True,
+            get_key=_require_not_called,
+            make_execution_config=lambda: _execution_config(name="difference"),
+            requested_dispatch="sequential",
+            resolve_dispatch=_resolve_to("sequential"),
+            require_jax_traceable=_require_not_called,
+            workflow_name="difference",
+            workflow_kind=WorkflowKind.OFF,
+        )
+
+        assert result.num_atoms == 2
+        np.testing.assert_allclose(result.samples, 0.0)
+        np.testing.assert_allclose(result.weights, jnp.asarray([0.3, 0.7]))
+
     def test_sample_path_uses_execution_request(self, monkeypatch):
         values = {
             "x": Normal(loc=0.0, scale=1.0, name="x"),
@@ -248,7 +397,7 @@ class TestExecuteDistributionBroadcast:
 
         plan = _stochastic_plan(values, 8)
         sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
-            values,
+            plan,
             plan.source_groups,
             (8,),
             plan.logical_units[0],
@@ -269,7 +418,7 @@ class TestExecuteDistributionBroadcast:
         events = []
 
         sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
-            values,
+            plan,
             plan.source_groups,
             plan.sample_shape,
             plan.logical_units[0],

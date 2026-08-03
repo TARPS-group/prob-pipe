@@ -226,7 +226,7 @@ def _make_broadcast_provenance(
 
 
 def _sample_planned_source_groups(
-    values: dict[str, Any],
+    stochastic_plan: _workflow_plan.StochasticPlan,
     source_groups: Sequence[_workflow_plan.StochasticSourceGroup],
     sample_shape: tuple[int, ...],
     logical_unit: _workflow_plan.LogicalUnit,
@@ -234,9 +234,8 @@ def _sample_planned_source_groups(
 ) -> dict[_workflow_call.WorkflowInputRef, Array]:
     """Claim and sample each planned source once in one logical unit.
 
-    Sibling views from the same parent distribution share one parent draw,
-    preserving cross-field correlation. Plain non-view distributions are
-    sampled through their separate current-wave source groups.
+    Every group uses the root and consumer evaluators captured during
+    preflight, so aliases and record projections share one root draw.
     """
     sampled: dict[_workflow_call.WorkflowInputRef, Array] = {}
     for group in source_groups:
@@ -247,22 +246,10 @@ def _sample_planned_source_groups(
             logical_unit_id=logical_unit.logical_unit_id,
         )
         key = get_key(event)
-        first = _workflow_call.input_ref_value(values, group.arg_refs[0])
-        if group.source_kind == "direct":
-            source_sample = first._sample(key, sample_shape)
-            for ref in group.arg_refs:
-                sampled[ref] = source_sample
-            continue
-        structured = first.parent._sample(key, sample_shape)
-        for ref in group.arg_refs:
-            view = _workflow_call.input_ref_value(values, ref)
-            if hasattr(view, "_extract"):
-                sampled[ref] = view._extract(structured)
-            else:
-                val = structured
-                for k in getattr(view, "_key_path", (view.field,)):
-                    val = val[k]
-                sampled[ref] = val
+        binding = stochastic_plan.runtime_bindings[group.index]
+        root_sample = binding.sample_root(key, sample_shape)
+        for consumer, evaluate in zip(group.consumers, binding.consumer_evaluators):
+            sampled[consumer.arg_ref] = evaluate(root_sample)
     return sampled
 
 
@@ -289,7 +276,7 @@ def _broadcast_jax(
         raise RuntimeError("sampled stochastic plan is missing sample_shape")
     broadcast_args = list(stochastic_plan.arg_refs)
     sampled = _sample_planned_source_groups(
-        values,
+        stochastic_plan,
         stochastic_plan.source_groups,
         sample_shape,
         logical_unit,
@@ -339,14 +326,26 @@ def _broadcast_enumerate(
     output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
     """Execute the plan's exact combinations and sampled repetitions."""
-    exact_entries: list[tuple[_workflow_call.WorkflowInputRef, EmpiricalDistribution]] = []
+    exact_entries: list[
+        tuple[
+            _workflow_plan.StochasticSourceGroup,
+            EmpiricalDistribution,
+            tuple[Any, ...],
+        ]
+    ] = []
     for group_index in stochastic_plan.exact_group_order:
         group = stochastic_plan.source_groups[group_index]
-        ref = group.arg_refs[0]
-        dist = _workflow_call.input_ref_value(values, ref)
+        binding = stochastic_plan.runtime_bindings[group_index]
+        dist = binding.root
         if not isinstance(dist, EmpiricalDistribution):  # pragma: no cover - plan contract guard
             raise RuntimeError("exact stochastic source is not an EmpiricalDistribution")
-        exact_entries.append((ref, dist))
+        exact_entries.append(
+            (
+                group,
+                dist,
+                tuple(evaluate(dist.samples) for evaluate in binding.consumer_evaluators),
+            )
+        )
 
     sampled_groups = tuple(
         group for group in stochastic_plan.source_groups if group.execution_mode == "sampled"
@@ -357,7 +356,7 @@ def _broadcast_enumerate(
         if sample_shape is None:  # pragma: no cover - planner contract guard
             raise RuntimeError("mixed stochastic plan is missing sample_shape")
         sampled = _sample_planned_source_groups(
-            values,
+            stochastic_plan,
             sampled_groups,
             sample_shape,
             logical_unit,
@@ -369,19 +368,19 @@ def _broadcast_enumerate(
     call_value_list = []
     weights = []
     sample_idx = 0
-    exact_arg_refs = [ref for ref, _dist in exact_entries]
-    all_broadcast_args = exact_arg_refs + sample_arg_refs
+    all_broadcast_args = list(stochastic_plan.arg_refs)
 
     for combo in stochastic_plan.exact_combination_order:
         emp_weight = 1.0
-        for (_ref, dist), i in zip(exact_entries, combo):
+        for (_group, dist, _consumer_batches), i in zip(exact_entries, combo):
             emp_weight *= float(dist.weights[i])
 
         for _ in range(stochastic_plan.repetitions_per_combination):
             replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
 
-            for (ref, dist), i in zip(exact_entries, combo):
-                replacements[ref] = _index_sample(dist.samples, i)
+            for (group, _dist, consumer_batches), i in zip(exact_entries, combo):
+                for consumer, consumer_batch in zip(group.consumers, consumer_batches):
+                    replacements[consumer.arg_ref] = _index_sample(consumer_batch, i)
 
             for ref in sample_arg_refs:
                 replacements[ref] = _index_sample(sampled[ref], sample_idx)
@@ -398,7 +397,7 @@ def _broadcast_enumerate(
     results = _workflow_execution.execute_many(request)
 
     all_input_samples = {
-        ref.label: jnp.stack(
+        ref.label: _stack_input_rows(
             [_workflow_call.input_ref_value(call_values, ref) for call_values in call_value_list]
         )
         for ref in all_broadcast_args
@@ -432,7 +431,7 @@ def _broadcast_sample(
         raise RuntimeError("sampled stochastic plan is missing sample_shape")
     broadcast_args = list(stochastic_plan.arg_refs)
     samples_per_arg = _sample_planned_source_groups(
-        values,
+        stochastic_plan,
         stochastic_plan.source_groups,
         sample_shape,
         logical_unit,
@@ -472,3 +471,16 @@ def _index_sample(s: Any, i: int) -> Any:
             return s[leaf_paths[0]][i]
         return Record(s.name, {p: s[p][i] for p in leaf_paths}, name_is_auto=True)
     return s[i]
+
+
+def _stack_input_rows(rows: list[Any]) -> Any:
+    """Stack exact input rows while preserving Record-valued roots."""
+    from ._record_array import RecordArray
+    from .record import Record
+
+    if rows and all(isinstance(row, Record) for row in rows):
+        try:
+            return RecordArray.stack(rows)
+        except TypeError:
+            return jax.tree.map(lambda *leaves: jnp.stack(leaves), *rows)
+    return jnp.stack(rows)

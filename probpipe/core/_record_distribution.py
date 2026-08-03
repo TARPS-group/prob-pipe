@@ -103,7 +103,7 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
         def _mean(self) -> Array:
             m = self._parent._mean()
             if isinstance(m, Record):
-                return m[self._key]
+                return self._extract(m)
             # Parent returned a flat array — fall back to empirical mean
             # over draws for just this field. Requires the parent to
             # expose ``draws()`` (all ApproximateDistribution subclasses do).
@@ -117,7 +117,7 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
         def _variance(self) -> Array:
             v = self._parent._variance()
             if isinstance(v, Record):
-                return v[self._key]
+                return self._extract(v)
             return self._field_draws().var(axis=0)
 
         extra_methods["_variance"] = _variance
@@ -127,9 +127,13 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
 
         def _log_prob(self, value):
             components = getattr(self._parent, "_components", None)
-            if components is not None and self._key in components:
-                return components[self._key]._log_prob(value)
-            raise NotImplementedError(f"_log_prob not available for view {self._key!r}")
+            for key in self._key_path:
+                if not isinstance(components, dict) or key not in components:
+                    break
+                components = components[key]
+            else:
+                return components._log_prob(value)
+            raise NotImplementedError(f"_log_prob not available for view {self._key_path!r}")
 
         extra_methods["_log_prob"] = _log_prob
 
@@ -139,8 +143,8 @@ def _view_class_for_parent(parent: Distribution) -> type[_RecordDistributionView
         def _cov(self):
             c = self._parent._cov()
             if isinstance(c, Record):
-                return c[self._key]
-            raise NotImplementedError(f"_cov not available for view {self._key!r}")
+                return self._extract(c)
+            raise NotImplementedError(f"_cov not available for view {self._key_path!r}")
 
         extra_methods["_cov"] = _cov
 
@@ -186,25 +190,35 @@ class _RecordDistributionView(Distribution):
     _sampling_cost = "low"
     _preferred_orchestration = None
 
-    def __new__(cls, parent: RecordDistribution, key: str) -> _RecordDistributionView:
+    def __new__(
+        cls,
+        parent: RecordDistribution,
+        key: str | tuple[str, ...],
+    ) -> _RecordDistributionView:
         actual_cls = _view_class_for_parent(parent)
         return object.__new__(actual_cls)
 
-    def __init__(self, parent: RecordDistribution, key: str) -> None:
+    def __init__(self, parent: RecordDistribution, key: str | tuple[str, ...]) -> None:
         # ``parent.event_template`` is contractually non-``None``
         # (metaclass-enforced on every ``RecordDistribution`` instance).
         template = parent.event_template
-        if key not in template.children:
+        key_path = (key,) if isinstance(key, str) else tuple(key)
+        if not key_path:
+            raise KeyError("Record distribution view path must not be empty")
+        try:
+            template_field = template.at_path(key_path)
+        except KeyError as exc:
             raise KeyError(
-                f"No field {key!r} in event_template (available: {tuple(template.children)})"
-            )
+                f"No field path {key_path!r} in event_template "
+                f"(available: {tuple(template.keys())})"
+            ) from exc
         # Bypass Distribution.__init__ validation; the view's name is
         # derived from the field key, not user-supplied, so it is auto.
-        self._init_tracked(key, name_is_auto=True)
+        self._init_tracked("/".join(key_path), name_is_auto=True)
         self._parent = parent
-        self._key = key
-        self._key_path = (key,)
-        self._template_field = template.children[key]
+        self._key = key_path[-1]
+        self._key_path = key_path
+        self._template_field = template_field
 
     # -- Parent identity (mirrors ``_RecordArrayView``) --------------------
 
@@ -221,8 +235,21 @@ class _RecordDistributionView(Distribution):
 
     @property
     def field(self) -> str:
-        """Name of the viewed field (the top-level key into the parent)."""
+        """Name of the viewed field (the final segment of its parent path)."""
         return self._key
+
+    def __getitem__(self, key: str) -> _RecordDistributionView:
+        """Return a view of one child below a structured record field."""
+        if not isinstance(key, str):
+            raise TypeError(f"key must be str, got {type(key).__name__}")
+        if not isinstance(self._template_field, EventTemplate):
+            raise KeyError(f"{self._key_path!r} is a field, not a nested record")
+        if key not in self._template_field.children:
+            raise KeyError(
+                f"No field {key!r} below {self._key_path!r} "
+                f"(available: {tuple(self._template_field.children)})"
+            )
+        return _RecordDistributionView(self._parent, (*self._key_path, key))
 
     # -- Shape info ---------------------------------------------------------
 
@@ -247,7 +274,7 @@ class _RecordDistributionView(Distribution):
         """Dtype of a single draw, if the parent exposes ``dtypes``."""
         dtypes = getattr(self._parent, "dtypes", None)
         if isinstance(dtypes, dict):
-            return dtypes.get(self._key)
+            return dtypes.get("/".join(self._key_path), dtypes.get(self._key))
         return None
 
     @property
@@ -257,12 +284,12 @@ class _RecordDistributionView(Distribution):
 
     # -- Internals ----------------------------------------------------------
 
-    def _extract(self, structured: Any) -> Array:
+    def _extract(self, structured: Any) -> Any:
         """Extract this field from a parent sample (Record, NumericRecordArray, or flat array)."""
         from ._record_array import RecordArray
 
         if isinstance(structured, (Record, RecordArray)):
-            return structured[self._key]
+            return structured.at_path(self._key_path)
         # Flat array — unflatten via the parent's static unflatten_value.
         # Only numeric parents define unflatten_value; non-numeric Record
         # parents never reach this branch (their samples are Records).
@@ -278,7 +305,7 @@ class _RecordDistributionView(Distribution):
             template=self._parent.event_template,
         )
         if isinstance(result, (Record, RecordArray)):
-            return result[self._key]
+            return result.at_path(self._key_path)
         return result
 
     def _field_draws(self) -> Array:
@@ -296,16 +323,19 @@ class _RecordDistributionView(Distribution):
 
         draws = self._parent.draws()
         if isinstance(draws, (Record, RecordArray)):
-            return jnp.asarray(draws[self._key])
+            return jnp.asarray(self._extract(draws))
         from ._numeric_record import _reconstruct_from_vector
 
         result = _reconstruct_from_vector(
             self._parent.name, self._parent.event_template, jnp.asarray(draws), name_is_auto=True
         )
-        return jnp.asarray(result[self._key])
+        return jnp.asarray(self._extract(result))
 
     def __repr__(self) -> str:
-        return f"_RecordDistributionView(parent={type(self._parent).__name__}, field={self._key!r})"
+        return (
+            f"_RecordDistributionView(parent={type(self._parent).__name__}, "
+            f"path={self._key_path!r})"
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -957,7 +957,13 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         # Determine n from first broadcast arg
         first_key = next(iter(broadcast_args))
         first_arr = input_samples[first_key]
-        n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
+        if isinstance(first_arr, RecordArray):
+            n = prod(first_arr.batch_shape)
+        elif isinstance(first_arr, Record):
+            first_leaf = jax.tree.leaves(first_arr)[0]
+            n = first_leaf.shape[0] if hasattr(first_leaf, "shape") else len(first_leaf)
+        else:
+            n = first_arr.shape[0] if hasattr(first_arr, "shape") else len(first_arr)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._broadcast_args = list(broadcast_args)
         name, name_is_auto = auto_name(name, "broadcast")
