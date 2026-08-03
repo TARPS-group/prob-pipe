@@ -17,6 +17,7 @@ try:
 except ImportError:
     task = flow = None
 
+from . import _workflow_context
 from ._workflow_managed import (
     ManagedWorkItem,
     lifted_evaluation_unit_segment,
@@ -63,12 +64,15 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     """Execute all call dictionaries using the configured dispatch mode."""
     if not request.work_items:
         return []
+    parent_frame = _workflow_context._capture_active_workflow_frame()
 
     match request.execution.mode:
         case "sequential":
-            return [_execute_work_item(request.func, item) for item in request.work_items]
+            return [
+                _execute_work_item(request.func, item, parent_frame) for item in request.work_items
+            ]
         case "thread":
-            return execute_many_threaded(request)
+            return execute_many_threaded(request, parent_frame=parent_frame)
         case "prefect_task":
             return execute_many_prefect_task(request)
         case "prefect_flow":
@@ -77,15 +81,24 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
             raise ValueError(f"Unknown workflow execution mode: {unknown!r}")
 
 
-def execute_many_threaded(request: WorkflowExecutionRequest) -> list[Any]:
+def execute_many_threaded(
+    request: WorkflowExecutionRequest,
+    *,
+    parent_frame: _workflow_context._WorkflowFrame | None = None,
+) -> list[Any]:
     """Execute call dictionaries through ``ThreadPoolExecutor``."""
     if not request.work_items:
         return []
 
     max_workers = _validate_max_workers(request.execution.max_workers)
+    if parent_frame is None:
+        parent_frame = _workflow_context._capture_active_workflow_frame()
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         return list(
-            pool.map(lambda item: _execute_work_item(request.func, item), request.work_items)
+            pool.map(
+                lambda item: _execute_work_item(request.func, item, parent_frame),
+                request.work_items,
+            )
         )
 
 
@@ -157,9 +170,19 @@ def _validate_max_workers(max_workers: int | None) -> int | None:
     return max_workers
 
 
-def _execute_work_item(func: Callable[..., Any], item: ManagedWorkItem) -> Any:
+def _execute_work_item(
+    func: Callable[..., Any],
+    item: ManagedWorkItem,
+    parent_frame: _workflow_context._WorkflowFrame | None = None,
+) -> Any:
     """Execute one frozen work item without changing its canonical identity."""
-    return func(**item.call_values())
+    if parent_frame is None:
+        return func(**item.call_values())
+    with _workflow_context._managed_work_item_scope(
+        parent_frame,
+        item.frame.unit_segment,
+    ):
+        return func(**item.call_values())
 
 
 def _ensure_prefect_available() -> None:

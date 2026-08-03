@@ -42,6 +42,7 @@ from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._record_array import NumericRecordArray, RecordArray
 from probpipe.core._workflow_context import workflow_run
+from probpipe.core._workflow_errors import UnmanagedConcurrentWorkflowEntryError
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
@@ -318,6 +319,7 @@ __all__ = [
     "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
+    "UnmanagedConcurrentWorkflowEntryError",
     "ValueSpec",
     "VonMisesFisher",
     # Weights

@@ -41,7 +41,7 @@ from typing import Any
 import numpy as np
 import xarray as xr
 
-from ..core import _workflow_broker
+from ..core import _workflow_broker, _workflow_context
 from ..core.distribution import Distribution
 from ..custom_types import PRNGKey
 from ..validation._predictive_check import (
@@ -248,6 +248,7 @@ def _ppc_op(
         Diagnostic payload dict containing scalar results, xarray datasets, and
         plotting metadata.
     """
+    _workflow_context._assert_workflow_admission()
     if callable(test_fns):
         planned_test_fns = (test_fns,)
     else:

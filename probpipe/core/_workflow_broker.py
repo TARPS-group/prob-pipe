@@ -102,6 +102,7 @@ _ACTIVE_AUTOMATIC_KEY_BROKER: ContextVar[_AutomaticKeyBroker | None] = ContextVa
 @contextmanager
 def _function_stochastic_scope() -> Iterator[_AutomaticKeyBroker]:
     """Install a lazy broker for one public Function invocation."""
+    _workflow_context._assert_workflow_admission()
     broker = _AutomaticKeyBroker("invocation")
     token: Token[_AutomaticKeyBroker | None] = _ACTIVE_AUTOMATIC_KEY_BROKER.set(broker)
     try:
@@ -113,6 +114,7 @@ def _function_stochastic_scope() -> Iterator[_AutomaticKeyBroker]:
 @contextmanager
 def _managed_stochastic_scope() -> Iterator[_AutomaticKeyBroker]:
     """Reuse an active broker or install one managed-operation broker."""
+    _workflow_context._assert_workflow_admission()
     active = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
     if active is not None:
         yield active

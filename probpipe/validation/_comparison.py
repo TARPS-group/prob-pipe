@@ -40,6 +40,7 @@ from typing import Literal, Protocol, runtime_checkable
 import jax
 import jax.numpy as jnp
 
+from ..core import _workflow_context
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._workflow_rng import (
     _SLICED_WASSERSTEIN_PROVIDER_ABI,
@@ -384,6 +385,7 @@ def score_posterior(
     than erroring, so one call serves analytic, long-NUTS, and sandwich
     references. Reused by the test suite and the ``probpipe-benchmark`` harness.
     """
+    _workflow_context._assert_workflow_admission()
     metric_names = tuple(metrics)
     supported_metrics = {
         "standardized_mean_error",

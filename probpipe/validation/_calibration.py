@@ -29,6 +29,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core import _workflow_context
 from ..core.ops import condition_on
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._predictive_check import _supports_key_arg
@@ -210,6 +211,7 @@ def simulation_based_calibration(
     -------
     SBCResult
     """
+    _workflow_context._assert_workflow_admission()
     num_simulations = _validate_positive_int("num_simulations", num_simulations)
     num_posterior_draws = _validate_positive_int(
         "num_posterior_draws",

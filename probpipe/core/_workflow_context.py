@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from os import urandom as _os_urandom
-from threading import Lock
+from threading import Lock, get_ident
 from types import TracebackType
 from typing import Any, Literal
 
 from ..custom_types import PRNGKey
+from ._workflow_errors import UnmanagedConcurrentWorkflowEntryError
 from ._workflow_rng import (
     RandomEventIdentity,
     derive_event_key_words,
@@ -20,7 +22,21 @@ from ._workflow_rng import (
     seed_to_root_words,
 )
 
-_WorkflowContextKind = Literal["seeded", "anonymous", "ephemeral", "nested"]
+_WorkflowContextKind = Literal[
+    "seeded",
+    "anonymous",
+    "ephemeral",
+    "nested",
+    "managed",
+]
+
+
+@dataclass(frozen=True)
+class _WorkflowOwner:
+    """Operational owner of one workflow frame."""
+
+    thread_id: int
+    task_id: int | None
 
 
 @dataclass(frozen=True)
@@ -30,6 +46,7 @@ class _WorkflowFrame:
     kind: _WorkflowContextKind
     seed_words: tuple[int, int] | None
     parent: _WorkflowFrame | None
+    owner: _WorkflowOwner
     ledger: _StochasticLedger = field(default_factory=lambda: _StochasticLedger())
     state: _WorkflowFrameState = field(default_factory=lambda: _WorkflowFrameState())
 
@@ -54,6 +71,7 @@ class _WorkflowFrameState:
     """Lazy materialization state kept behind an immutable frame binding."""
 
     path_prefix: tuple[Any, ...] | None = None
+    managed_unit_segment: tuple[Any, ...] | None = None
     root_words: tuple[int, int] | None = None
     lock: Any = field(default_factory=Lock, repr=False)
 
@@ -135,8 +153,9 @@ class _WorkflowRunScope:
     def __enter__(self) -> None:
         if self._token is not None:
             raise RuntimeError("workflow_run context is already active")
-        seed_words = None if self._seed is None else seed_to_root_words(self._seed)
         parent = _ACTIVE_WORKFLOW_FRAME.get()
+        _assert_workflow_admission(parent)
+        seed_words = None if self._seed is None else seed_to_root_words(self._seed)
         if parent is None:
             kind: _WorkflowContextKind = "seeded" if seed_words is not None else self._root_kind
         else:
@@ -145,6 +164,7 @@ class _WorkflowRunScope:
             kind=kind,
             seed_words=seed_words,
             parent=parent,
+            owner=_current_workflow_owner(),
             state=_WorkflowFrameState(path_prefix=() if parent is None else None),
         )
         self._frame = frame
@@ -160,6 +180,7 @@ class _WorkflowRunScope:
         del exc_type, exc_value, traceback
         if self._token is None or self._frame is None:
             raise RuntimeError("workflow_run context is not active")
+        _assert_workflow_admission(self._frame)
         if _ACTIVE_WORKFLOW_FRAME.get() is not self._frame:
             raise RuntimeError("workflow_run contexts must exit in nesting order")
         _ACTIVE_WORKFLOW_FRAME.reset(self._token)
@@ -191,7 +212,9 @@ def workflow_run(seed: int | None = None) -> _WorkflowRunScope:
 @contextmanager
 def _ephemeral_workflow_run() -> Iterator[None]:
     """Install one lazy ephemeral root unless a workflow frame is active."""
-    if _ACTIVE_WORKFLOW_FRAME.get() is not None:
+    frame = _ACTIVE_WORKFLOW_FRAME.get()
+    if frame is not None:
+        _assert_workflow_admission(frame)
         yield
         return
     with _WorkflowRunScope(None, root_kind="ephemeral"):
@@ -229,6 +252,7 @@ def _commit_stochastic_invocation(
     frame = _ACTIVE_WORKFLOW_FRAME.get()
     if frame is None:
         raise RuntimeError("a stochastic invocation requires an active workflow context")
+    _assert_workflow_admission(frame)
     path_prefix = _materialize_path(frame)
     ordinal = frame.ledger.commit()
     return _WorkflowInvocation(
@@ -247,9 +271,68 @@ def _materialize_path(frame: _WorkflowFrame) -> tuple[Any, ...]:
     with frame.state.lock:
         if frame.state.path_prefix is None:
             parent_path = _materialize_path(frame.parent)
-            scope_ordinal = frame.parent.ledger.commit()
-            frame.state.path_prefix = (*parent_path, ("scope", scope_ordinal))
+            if frame.state.managed_unit_segment is not None:
+                frame.state.path_prefix = (
+                    *parent_path,
+                    frame.state.managed_unit_segment,
+                )
+            else:
+                scope_ordinal = frame.parent.ledger.commit()
+                frame.state.path_prefix = (*parent_path, ("scope", scope_ordinal))
         return frame.state.path_prefix
+
+
+def _current_workflow_owner() -> _WorkflowOwner:
+    """Return the current thread/task identity for admission checks."""
+    try:
+        task = asyncio.current_task()
+    except RuntimeError:
+        task = None
+    return _WorkflowOwner(
+        thread_id=get_ident(),
+        task_id=None if task is None else id(task),
+    )
+
+
+def _assert_workflow_admission(frame: _WorkflowFrame | None = None) -> None:
+    """Reject passive context copies entering from another thread or task."""
+    active = _ACTIVE_WORKFLOW_FRAME.get() if frame is None else frame
+    if active is None or active.owner == _current_workflow_owner():
+        return
+    raise UnmanagedConcurrentWorkflowEntryError(
+        "The active workflow context belongs to another thread or asyncio task. "
+        "Use a ProbPipe-managed execution route, or start a new workflow_run in "
+        "the concurrent worker instead of copying the parent context."
+    )
+
+
+def _capture_active_workflow_frame() -> _WorkflowFrame | None:
+    """Capture an admitted parent frame for managed work-item transport."""
+    frame = _ACTIVE_WORKFLOW_FRAME.get()
+    _assert_workflow_admission(frame)
+    return frame
+
+
+@contextmanager
+def _managed_work_item_scope(
+    parent: _WorkflowFrame,
+    unit_segment: tuple[Any, ...],
+) -> Iterator[None]:
+    """Install a thread/task-owned child frame for one managed work item."""
+    frame = _WorkflowFrame(
+        kind="managed",
+        seed_words=None,
+        parent=parent,
+        owner=_current_workflow_owner(),
+        state=_WorkflowFrameState(managed_unit_segment=unit_segment),
+    )
+    token = _ACTIVE_WORKFLOW_FRAME.set(frame)
+    try:
+        yield
+    finally:
+        if _ACTIVE_WORKFLOW_FRAME.get() is not frame:
+            raise RuntimeError("managed workflow frames must exit in nesting order")
+        _ACTIVE_WORKFLOW_FRAME.reset(token)
 
 
 def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:

@@ -2,13 +2,22 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from unittest.mock import patch
 
 import jax
 import pytest
 
 import probpipe
-from probpipe import workflow_run
+from probpipe import (
+    Function,
+    Normal,
+    UnmanagedConcurrentWorkflowEntryError,
+    sample,
+    workflow_run,
+)
 from probpipe.core._workflow_context import (
     _commit_stochastic_invocation,
     _ephemeral_workflow_run,
@@ -24,6 +33,14 @@ def _claim_key_words() -> tuple[int, int]:
         logical_unit_id=("singleton",),
     )
     return tuple(int(word) for word in jax.random.key_data(key))
+
+
+def _identity(value):
+    return value
+
+
+def _nested_draw(value):
+    return sample(Normal(loc=value, scale=1.0, name="draw"))
 
 
 class TestWorkflowRunBoundary:
@@ -70,6 +87,77 @@ class TestWorkflowRunBoundary:
 
         assert first != second
         assert urandom.call_count == 2
+
+
+class TestWorkflowAdmission:
+    def test_unmanaged_copied_thread_context_fails_before_execution_or_entropy(self):
+        called = False
+
+        def track_call(value):
+            nonlocal called
+            called = True
+            return value
+
+        workflow = Function(func=track_call)
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            workflow_run(),
+        ):
+            copied = copy_context()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(copied.run, workflow, 1)
+                with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
+                    future.result()
+
+        assert called is False
+        urandom.assert_not_called()
+
+    def test_unmanaged_copied_async_task_context_is_rejected(self):
+        async def run_child():
+            workflow = Function(func=_identity)
+            with workflow_run(seed=7):
+
+                async def call_workflow():
+                    return workflow(1)
+
+                with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
+                    await asyncio.create_task(call_workflow())
+
+        asyncio.run(run_child())
+
+    def test_unpropagated_thread_receives_an_independent_ephemeral_run(self):
+        entropy = bytes.fromhex("0123456789abcdef")
+        with (
+            patch(
+                "probpipe.core._workflow_context._os_urandom",
+                return_value=entropy,
+            ) as urandom,
+            workflow_run(seed=7),
+            ThreadPoolExecutor(max_workers=1) as pool,
+        ):
+
+            def claim_in_fresh_context():
+                with _ephemeral_workflow_run():
+                    return _claim_key_words()
+
+            words = pool.submit(claim_in_fresh_context).result()
+
+        assert words
+        urandom.assert_called_once_with(8)
+
+    def test_managed_thread_work_item_can_enter_the_parent_run(self):
+        def run_once():
+            workflow = Function(func=_nested_draw, dispatch="thread")
+            with workflow_run(seed=7):
+                return float(workflow(1.0)["sample"])
+
+        assert run_once() == run_once()
+
+    def test_concurrent_entry_error_is_public(self):
+        assert probpipe.UnmanagedConcurrentWorkflowEntryError is (
+            UnmanagedConcurrentWorkflowEntryError
+        )
+        assert "UnmanagedConcurrentWorkflowEntryError" in probpipe.__all__
 
 
 class TestWorkflowOccurrences:
