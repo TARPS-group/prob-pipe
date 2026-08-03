@@ -58,10 +58,85 @@ with workflow_run(seed=42):
 ```
 
 `Function(..., seed=...)` and `with_options(seed=...)` are not supported. A
-wrapped function's own `seed` parameter remains an ordinary input. The current
-staged implementation routes sequential Function lifting through this context;
-the remaining automatic-key operations will migrate to the same broker before
-the RNG restoration work is release-ready.
+wrapped function's own `seed` parameter remains an ordinary input.
+
+## Workflow RNG scopes
+
+`workflow_run` owns ProbPipe randomness for one structural execution:
+
+```python
+from probpipe import Normal, sample, workflow_run
+
+dist = Normal(loc=0.0, scale=1.0, name="value")
+
+with workflow_run(seed=42):
+    first = sample(dist)
+    second = sample(dist)
+```
+
+`first` and `second` use distinct occurrence paths. Repeating the complete
+block with seed 42 reproduces both positions. Changing the seed changes every
+workflow-owned event reached by the same structure.
+
+With `seed=None`, a root scope reads eight bytes of OS entropy only when its
+first automatic-random operation commits. A bare omitted-key call follows the
+same rule in a private ephemeral scope, so two bare calls normally use distinct
+roots. Empty scopes, deterministic work, caller-keyed work, wholly exact
+enumeration, and preflight failures do not materialize a root or consume a
+stochastic position.
+
+Nested scopes are structural isolation boundaries. An unseeded nested scope
+retains its parent's root; an integer seed replaces the root for that scope.
+Both forms add a scope segment only if stochastic work commits, so edits inside
+one nested scope do not renumber later outer events. Same-seed sibling scopes
+remain distinct because their paths contain different scope segments.
+
+### Automatic and caller-owned keys
+
+Omitting a key delegates ownership to the active workflow run. Distribution
+lifting, direct `sample`, Monte Carlo expectations, sampled conversions,
+validation, and diagnostics use the same private broker. Each planned source
+and logical unit receives one batched random event; the number of Monte Carlo
+draws does not create per-draw events. Exact and otherwise non-consuming
+branches request no key.
+
+Passing an explicit key keeps ownership with the caller. ProbPipe passes the
+key object to the existing provider unchanged, creates no workflow RNG recipe,
+and does not shift the next automatic event. Explicit inference
+`random_seed` values likewise remain algorithm inputs rather than workflow
+roots. Arbitrary randomness inside user code or third-party services is
+outside this contract.
+
+### Co-sampling and execution routes
+
+Within one lifted call, repeated references to the same distribution root,
+record projections, and supported deterministic transformed descendants share
+one planned root realization. Equal-parameter but distinct distribution
+objects remain independent. Unsupported descendant graphs fail during
+preflight instead of silently sampling independently.
+
+Sequential, threaded, supported JAX, and Prefect execution consume the same
+canonical source and logical-unit identities. Worker start order, completion
+order, and retry attempt number do not enter key derivation; results are
+restored to canonical plan order. This is a random-event and pairing contract,
+not a promise of bit-identical floating-point output across execution routes.
+
+A run is owned by the thread and asyncio task that entered it. ProbPipe-managed
+work-item frames may participate in that run. A passively copied context that
+enters from another thread or task raises
+`UnmanagedConcurrentWorkflowEntryError` before preflight or randomness. A new
+thread that receives no copied context instead performs an independent bare
+call.
+
+`dispatch="auto"` and `dispatch="jax"` require an observationally pure Python
+body because route probing may trace it. A nested omitted-key ProbPipe effect
+aborts the probe without consuming RNG or provenance state: automatic dispatch
+falls back to row-wise execution, while explicit JAX dispatch raises `TypeError`.
+A trace-compatible caller-keyed operation remains eligible. Use sequential or
+thread dispatch when tracing the body would itself be inappropriate.
+
+For artifact-driven reproduction and its compatibility limits, see
+[Identity & provenance](provenance.md).
 
 ## Raw application and authoritative templates
 
@@ -170,6 +245,12 @@ arbitrary result cell.
 ::: probpipe.workflow_method
 
 ::: probpipe.abstract_workflow_method
+
+## Workflow RNG API
+
+::: probpipe.workflow_run
+
+::: probpipe.UnmanagedConcurrentWorkflowEntryError
 
 ## Orchestration configuration
 

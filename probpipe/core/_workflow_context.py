@@ -206,17 +206,32 @@ def workflow_run(seed: int | None = None) -> _WorkflowRunScope:
     Parameters
     ----------
     seed : int or None
-        Unsigned 64-bit root seed. ``None`` requests a lazy anonymous root.
+        Non-boolean unsigned 64-bit root seed. Re-entering the same seeded
+        scope with the same stochastic structure reproduces its workflow-owned
+        random events. ``None`` requests a lazy anonymous root.
 
     Returns
     -------
     context manager
         A synchronous workflow execution scope.
 
+    Raises
+    ------
+    TypeError
+        If ``seed`` is not an integer or is a boolean.
+    ValueError
+        If ``seed`` is outside ``[0, 2**64 - 1]``.
+    UnmanagedConcurrentWorkflowEntryError
+        If an active workflow context was copied into a foreign thread or
+        asyncio task without a ProbPipe-managed work-item frame.
+
     Notes
     -----
-    Sequential Function lifting uses this scope now. Other omitted-key paths
-    will migrate to the same workflow broker before this feature is complete.
+    ProbPipe operations that omit a key share this scope's structural random
+    event stream. Explicit caller-owned keys do not consume that stream.
+    Anonymous and nested scopes remain unmaterialized until their first
+    workflow-owned random event. A bare omitted-key operation uses its own
+    equivalent ephemeral scope.
     """
     return _WorkflowRunScope(seed)
 

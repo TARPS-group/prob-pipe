@@ -2,12 +2,16 @@
 
 
 class UnmanagedConcurrentWorkflowEntryError(RuntimeError):
-    """A copied workflow context entered from an unmanaged thread or task."""
+    """An unmanaged thread or task attempted to enter a copied workflow context.
+
+    Use a ProbPipe-managed execution route to participate in the parent run,
+    or start an independent ``workflow_run`` in the concurrent worker.
+    """
 
 
 class ReplayCompatibilityError(RuntimeError):
-    """Recorded workflow controls are incompatible with the replay attempt."""
+    """Recorded workflow controls are incompatible with a replay attempt."""
 
 
 class ReplayUnsupportedCallableError(TypeError):
-    """A callable does not have the strong anchor required for replay."""
+    """A callable lacks the strong definition anchor required for replay."""
