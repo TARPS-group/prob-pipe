@@ -24,6 +24,7 @@ except ImportError:
     Digraph = None
 
 from . import (
+    _workflow_broker,
     _workflow_call,
     _workflow_context,
     _workflow_distribution_broadcast,
@@ -501,6 +502,18 @@ class Function(Node, TrackedTerm, Annotated):
         ValueError
             If an authoritative input or output template is violated.
         """
+        with (
+            _workflow_context._ephemeral_workflow_run(),
+            _workflow_broker._function_stochastic_scope(),
+        ):
+            return self._apply_in_context(args, call_inputs)
+
+    def _apply_in_context(
+        self,
+        args: tuple[Any, ...],
+        call_inputs: dict[str, Any],
+    ) -> Any:
+        """Execute one raw point inside its workflow and broker scopes."""
         call = _workflow_call.resolve_workflow_call(
             self._signature_info,
             args,
@@ -662,7 +675,10 @@ class Function(Node, TrackedTerm, Annotated):
         call_inputs: dict[str, Any],
         options: _workflow_call.WorkflowCallOptions,
     ) -> Any:
-        with _workflow_context._ephemeral_workflow_run():
+        with (
+            _workflow_context._ephemeral_workflow_run(),
+            _workflow_broker._function_stochastic_scope(),
+        ):
             return self._call_with_options_in_context(
                 args,
                 call_inputs,
@@ -687,15 +703,18 @@ class Function(Node, TrackedTerm, Annotated):
             default_include_inputs=self._include_inputs,
             options=options,
         )
-        stochastic_invocation: _workflow_context._WorkflowInvocation | None = None
 
         def get_key(event: _workflow_plan.PlannedRandomEvent):
-            nonlocal stochastic_invocation
-            if stochastic_invocation is None:
-                stochastic_invocation = _workflow_context._commit_stochastic_invocation()
-            return stochastic_invocation.key_for(
-                stochastic_source_id=event.stochastic_source_id,
-                logical_unit_id=event.logical_unit_id,
+            return _workflow_broker._resolve_automatic_key(
+                None,
+                _workflow_broker.StochasticEffectPlan(
+                    operation_kind="function_lifting",
+                    execution_mode="sampled",
+                    event=event,
+                    sample_shape=stochastic_plan.sample_shape if stochastic_plan else None,
+                    sampling_abi="probpipe.distribution_sampling/v1",
+                    provider_abi="probpipe.distribution/v1",
+                ),
             )
 
         values = _workflow_distribution_normalization.normalize_distribution_values(

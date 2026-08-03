@@ -216,7 +216,9 @@ def _workflow_probe() -> Iterator[None]:
         _STOCHASTIC_PROBE_STATE.reset(token)
 
 
-def _commit_stochastic_invocation() -> _WorkflowInvocation:
+def _commit_stochastic_invocation(
+    occurrence_kind: Literal["invocation", "operation"] = "invocation",
+) -> _WorkflowInvocation:
     """Commit one stochastic invocation in the active workflow frame."""
     probe_state = _STOCHASTIC_PROBE_STATE.get()
     if probe_state is not None:
@@ -231,7 +233,7 @@ def _commit_stochastic_invocation() -> _WorkflowInvocation:
     ordinal = frame.ledger.commit()
     return _WorkflowInvocation(
         frame=frame,
-        occurrence_path=(*path_prefix, ("invocation", ordinal)),
+        occurrence_path=(*path_prefix, (occurrence_kind, ordinal)),
     )
 
 
