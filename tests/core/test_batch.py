@@ -803,9 +803,14 @@ class TestSpecValidation:
         with pytest.raises(ValueError, match="must be an identifier"):
             _spec([("not an identifier",)], ["draw"])
 
-    def test_something_neither_integer_nor_name_is_not_an_axis_size(self):
-        with pytest.raises(TypeError, match="integers or symbolic dimension names"):
-            _spec([(1.5,)], ["draw"])
+    def test_a_numeric_string_is_not_a_size(self):
+        """The likeliest slip: "3" is a name, and not one with_dims could bind."""
+        with pytest.raises(ValueError, match="must be an identifier"):
+            _spec([("3",)], ["draw"])
+
+    def test_an_empty_name_is_refused(self):
+        with pytest.raises(ValueError, match="must be an identifier"):
+            _spec([("",)], ["draw"])
 
     def test_replacing_a_field_revalidates_the_levels(self):
         from dataclasses import replace
@@ -1534,25 +1539,46 @@ class TestSymbolicMultiplicity:
         assert spec.free_dims == frozenset({"S"})
         assert spec.batch_shape == ("S",)
 
-    def test_the_element_schema_and_the_multiplicity_share_one_scope(self):
-        """A batch of `("n",)` over arrays of `("n",)` is square by declaration."""
+    def test_free_dims_unions_the_element_schema_and_the_multiplicity(self):
+        """Distinct names, so neither operand can pass for the union."""
+        spec = BatchSpec(ArraySpec(shape=("d",)), [("S",)], ["draw"])
+
+        assert spec.free_dims == frozenset({"S", "d"})
+        assert spec.free_axis_dims == frozenset({"S"})
+
+    def test_a_shared_name_declares_a_square_batch(self):
+        """One scope: `("n",)` of arrays of shape `("n",)` is square by declaration."""
         spec = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
 
         assert spec.free_dims == frozenset({"n"})
 
+    def test_only_the_multiplicity_must_be_concrete_for_a_live_batch(self):
+        """How many elements there are is a different question from what one is."""
+        spec = BatchSpec(ArraySpec(shape=("d",)), [(4,)], ["draw"])
+
+        assert spec.free_axis_dims == frozenset()
+        assert spec.batch_size == 4
+        assert _ListBatch(range(4), spec).batch_shape == (4,)
+
     def test_a_concrete_multiplicity_is_free_of_dimensions(self):
         assert _spec([(2,), (3,)], ["chain", "draw"]).free_dims == frozenset()
 
-    def test_batch_size_is_undefined_while_a_dimension_is_unbound(self):
+    def test_batch_size_is_undefined_while_an_axis_is_symbolic(self):
         spec = _spec([("S",)], ["draw"])
 
-        with pytest.raises(ValueError, match="batch_size is undefined for a polymorphic"):
+        with pytest.raises(ValueError, match="undefined while an axis size is symbolic"):
             _ = spec.batch_size
 
-    def test_a_live_batch_refuses_a_polymorphic_spec(self):
+    def test_a_live_batch_refuses_a_symbolic_axis(self):
         """A batch holds elements at positions, so its multiplicity is concrete."""
-        with pytest.raises(ValueError, match="its multiplicity is concrete"):
+        with pytest.raises(ValueError, match="leaves the axis size S unbound"):
             _ListBatch([], _spec([("S",)], ["draw"]))
+
+    def test_a_symbolic_axis_is_substitutable(self):
+        spec = _spec([("S",)], ["draw"])
+
+        assert spec.with_bound_dims({"S": 3}).axis_groups == ((3,),)
+        assert spec.with_bound_dims({"S": 3}).free_dims == frozenset()
 
     def test_a_concrete_batch_still_builds(self, flat):
         assert flat.batch_shape == (4,)

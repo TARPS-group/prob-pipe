@@ -63,6 +63,7 @@ its docstring for details.
 
 from __future__ import annotations
 
+import operator
 from abc import ABC, abstractmethod
 from collections.abc import Hashable, Iterable, Mapping
 from dataclasses import dataclass
@@ -126,11 +127,26 @@ class ValueSpec(ABC):
         carrying another schema reports that schema's, so a name is visible
         wherever it is declared and not only at the outermost level.
 
-        The names are what makes a template *polymorphic* (II.3). They live in
-        one scope per template: the same name in two places is one dimension, and
+        The names are what makes a template *polymorphic*. They live in one scope
+        per template: the same name in two places is one dimension, whether the
+        two places are sibling fields or one inside a term spec's own schema, and
         binding resolves every occurrence together.
         """
         return frozenset()
+
+    def with_bound_dims(self, bindings: Mapping[str, int]) -> ValueSpec:
+        """This spec with the dimensions named in *bindings* replaced by sizes.
+
+        The counterpart of :attr:`free_dims`: whatever a spec reports there, it
+        substitutes here. A spec declaring no dimensions returns itself, which is
+        the default.
+
+        A name absent from *bindings* is **left symbolic** rather than refused.
+        Binding is a refinement, and one caller — the unification pass — resolves
+        names across every field before it knows which are bound, so a spec must
+        be substitutable while the answer is still partial.
+        """
+        return self
 
     @abstractmethod
     def is_valid(self, value: Any) -> bool:
@@ -226,6 +242,17 @@ class ArraySpec(ValueSpec):
     def free_dims(self) -> frozenset[str]:
         """The symbolic entries of :attr:`shape`."""
         return frozenset(entry for entry in self.shape if isinstance(entry, str))
+
+    def with_bound_dims(self, bindings: Mapping[str, int]) -> ArraySpec:
+        """This spec with each bound entry of :attr:`shape` replaced by its size."""
+        return ArraySpec(
+            tuple(
+                bindings.get(entry, entry) if isinstance(entry, str) else entry
+                for entry in self.shape
+            ),
+            dtype=self.dtype,
+            support=self.support,
+        )
 
     def __eq__(self, other: object) -> bool:
         # Mirror the dataclass-generated ``__eq__``: on a class mismatch,
@@ -364,6 +391,10 @@ class RecordSpec(TermSpec):
         """The unbound dimensions of the record schema this declares."""
         return self.event_template.free_dims
 
+    def with_bound_dims(self, bindings: Mapping[str, int]) -> RecordSpec:
+        """This spec around a substituted record schema."""
+        return RecordSpec(_replace_template_dimensions(self.event_template, bindings))
+
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a ``Record`` whose template matches ``event_template``.
 
@@ -469,6 +500,10 @@ class DistributionSpec(TermSpec):
     def free_dims(self) -> frozenset[str]:
         """The unbound dimensions of the draw this declares."""
         return self.event_spec.free_dims
+
+    def with_bound_dims(self, bindings: Mapping[str, int]) -> DistributionSpec:
+        """This spec around a substituted event declaration."""
+        return DistributionSpec(self.event_spec.with_bound_dims(bindings))
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a ``Distribution`` matching this event declaration.
@@ -579,6 +614,15 @@ class FunctionSpec(TermSpec):
         if self.output_spec is not None:
             dimensions |= self.output_spec.free_dims
         return dimensions
+
+    def with_bound_dims(self, bindings: Mapping[str, int]) -> FunctionSpec:
+        """This spec around both substituted sides."""
+        return FunctionSpec(
+            None
+            if self.input_template is None
+            else _replace_template_dimensions(self.input_template, bindings),
+            None if self.output_spec is None else self.output_spec.with_bound_dims(bindings),
+        )
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.
@@ -943,7 +987,15 @@ class EventTemplate(NamedTree[ValueSpec]):
         >>> template.with_dims(obs=5).is_concrete
         True
         """
-        return _concretize_event_template(self, sizes, context=f"{type(self).__name__}")
+        for name, size in sizes.items():
+            try:
+                sizes[name] = operator.index(size)
+            except TypeError:
+                raise TypeError(
+                    f"with_dims binds a dimension to a size, so {name}= must be an integer; "
+                    f"got {type(size).__name__}: {size!r}"
+                ) from None
+        return _concretize_event_template(self, sizes, context=type(self).__name__)
 
     def numeric_subset(self) -> NumericEventTemplate:
         """Project to the :class:`ArraySpec`-leaf sub-template.
@@ -1246,7 +1298,11 @@ def _unify_event_template_with_value(
     """
     resolved = dict(bindings or {})
     concrete = _unify_template_node(template, value, resolved, context)
-    return concrete, resolved
+    # Substituted once, after the pass. A term spec's dimensions may be bound by a
+    # field the walk reaches later, so no leaf can know at its own turn whether a
+    # name is bound; only the finished scope can. Idempotent for the leaves that
+    # bound their own sizes on the way through.
+    return _replace_template_dimensions(concrete, resolved), resolved
 
 
 def _unify_event_templates(
@@ -1261,7 +1317,7 @@ def _unify_event_templates(
         raise TypeError(f"{context} template must be an EventTemplate")
     resolved = dict(bindings or {})
     concrete = _unify_template_node(expected, actual, resolved, context)
-    return concrete, resolved
+    return _replace_template_dimensions(concrete, resolved), resolved
 
 
 def _concretize_event_template(
@@ -1350,6 +1406,14 @@ def _unify_specs(
                     f"{path} dtype {actual.dtype} does not conform to {expected.dtype}"
                 )
         return ArraySpec(concrete_shape, dtype=expected.dtype, support=expected.support)
+    if expected.free_dims and type(expected) is type(actual):
+        # A polymorphic declaration meets an authoritative spec, so the same rule
+        # applies one level in: unify the schemas rather than compare them, and
+        # leave substitution to the end of the pass.
+        declared, other = _declared_schema_of(expected), _declared_schema_of(actual)
+        if declared is not None and other is not None:
+            _unify_template_node(declared, other, bindings, path)
+            return expected
     if expected != actual:
         raise ValueError(f"{path} spec {actual!r} does not conform to {expected!r}")
     return expected
@@ -1397,6 +1461,11 @@ def _unify_term_spec_with_value(
     declared beside it, and a disagreement raises where any other disagreement
     would.
 
+    The **kind** is still checked. Only the sizes are deferred to the pass, so a
+    value of the wrong kind is refused here as it would be for a concrete
+    declaration: the spec is asked its own ``is_valid`` with the schema the value
+    actually carries, which leaves the kind as the only thing under test.
+
     Notes
     -----
     Only the schema is unified. A ``FunctionSpec``'s two sides bind
@@ -1406,29 +1475,56 @@ def _unify_term_spec_with_value(
 
     The actual term must be concrete, as it must be for an array — a value whose
     own schema is still polymorphic binds nothing.
+
+    The spec is returned **unsubstituted**. Its dimensions may be bound by a
+    field this pass has not reached, so no leaf can know at its own turn whether a
+    name is bound; the caller substitutes once the pass is done.
     """
-    actual = _actual_schema_of(value, path=path)
     if isinstance(spec, FunctionSpec):
         return _unify_function_spec_with_term(spec, value, bindings, path)
+
+    declared = _declared_schema_of(spec)
+    if declared is None:
+        raise ValueError(
+            f"{path} declares {type(spec).__name__}, whose dimensions this pass cannot "
+            f"bind from a value; bind them with with_dims before validating against one"
+        )
+    actual = _actual_schema_of(value)
     if actual is None:
         raise ValueError(
             f"{path} declares the polymorphic schema {spec!r}, but "
             f"{type(value).__name__} exposes no schema to bind it against"
         )
-    _unify_template_node(_declared_schema_of(spec), actual, bindings, path)
-    return _replace_spec_dimensions(spec, bindings)
+    if not _spec_around(spec, actual).is_valid(value):
+        raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
+    _unify_template_node(declared, actual, bindings, path)
+    return spec
 
 
-def _declared_schema_of(spec: ValueSpec) -> EventTemplate:
-    """The record schema a term spec declares, one level in."""
+def _declared_schema_of(spec: ValueSpec) -> EventTemplate | None:
+    """The record schema a term spec declares, or ``None`` if it declares none."""
     if isinstance(spec, RecordSpec):
         return spec.event_template
     if isinstance(spec, DistributionSpec):
         return spec.event_spec.event_template
-    raise TypeError(f"{type(spec).__name__} declares no record schema")
+    return None
 
 
-def _actual_schema_of(value: Any, *, path: str) -> EventTemplate | None:
+def _spec_around(spec: ValueSpec, schema: EventTemplate) -> ValueSpec:
+    """*spec* rebuilt around *schema*, for asking it what its kind admits.
+
+    Substituting the schema the value carries leaves the kind as the only thing
+    the spec's own ``is_valid`` still tests, so the check reuses that rather than
+    restating which value class each spec types.
+    """
+    if isinstance(spec, RecordSpec):
+        return RecordSpec(schema)
+    if isinstance(spec, DistributionSpec):
+        return DistributionSpec(schema)
+    return spec
+
+
+def _actual_schema_of(value: Any) -> EventTemplate | None:
     """The schema *value* carries, if it carries one."""
     template = getattr(value, "event_template", None)
     return template if isinstance(template, EventTemplate) else None
@@ -1449,16 +1545,16 @@ def _unify_function_spec_with_term(
     """
     if not spec.is_valid(value):
         raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
-    actual = getattr(value, "spec", None)
-    if isinstance(actual, FunctionSpec):
-        if spec.input_template is not None and actual.input_template is not None:
-            _unify_template_node(spec.input_template, actual.input_template, bindings, path)
-        declared_output, actual_output = spec.output_spec, actual.output_spec
-        if isinstance(declared_output, RecordSpec) and isinstance(actual_output, RecordSpec):
-            _unify_template_node(
-                declared_output.event_template, actual_output.event_template, bindings, path
-            )
-    return _replace_spec_dimensions(spec, bindings)
+    if spec.input_template is not None:
+        actual_input = getattr(value, "input_template", None)
+        if isinstance(actual_input, EventTemplate):
+            _unify_template_node(spec.input_template, actual_input, bindings, path)
+    declared_output = spec.output_spec
+    if isinstance(declared_output, RecordSpec):
+        actual_output = getattr(value, "output_template", None)
+        if isinstance(actual_output, EventTemplate):
+            _unify_template_node(declared_output.event_template, actual_output, bindings, path)
+    return spec
 
 
 def _unify_array_shape(
@@ -1502,43 +1598,8 @@ def _replace_template_dimensions(
         if isinstance(spec, EventTemplate):
             children[name] = _replace_template_dimensions(spec, bindings)
         else:
-            children[name] = _replace_spec_dimensions(spec, bindings)
+            children[name] = spec.with_bound_dims(bindings)
     return EventTemplate(children)
-
-
-def _replace_spec_dimensions(spec: ValueSpec, bindings: Mapping[str, int]) -> ValueSpec:
-    """One leaf spec with its symbolic dimensions replaced from *bindings*.
-
-    A term spec is rebuilt around its substituted schema, so a dimension declared
-    inside one is as bindable as a dimension declared beside it — which is what
-    makes every name :attr:`ValueSpec.free_dims` reports reachable. A spec
-    declaring no dimensions is returned as it is.
-    """
-    if isinstance(spec, ArraySpec):
-        shape = tuple(
-            bindings[dimension] if isinstance(dimension, str) else dimension
-            for dimension in spec.shape
-        )
-        return ArraySpec(shape, dtype=spec.dtype, support=spec.support)
-    if isinstance(spec, RecordSpec):
-        return RecordSpec(_replace_template_dimensions(spec.event_template, bindings))
-    if isinstance(spec, DistributionSpec):
-        return DistributionSpec(_replace_spec_dimensions(spec.event_spec, bindings))
-    if isinstance(spec, FunctionSpec):
-        return FunctionSpec(
-            None
-            if spec.input_template is None
-            else _replace_template_dimensions(spec.input_template, bindings),
-            None
-            if spec.output_spec is None
-            else _replace_spec_dimensions(spec.output_spec, bindings),
-        )
-    return spec
-
-
-# ---------------------------------------------------------------------------
-# Pickle helper
-# ---------------------------------------------------------------------------
 
 
 def _unpickle_event_template(specs: dict) -> EventTemplate:
