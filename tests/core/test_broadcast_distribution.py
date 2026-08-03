@@ -22,6 +22,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.core.distribution import (
     _ListMarginal,
@@ -786,7 +787,8 @@ class TestRecordArrayMarginal:
         assert isinstance(result, _RecordMarginal)
 
     def test_mean_per_field(self, record_workflow, prior):
-        result = record_workflow(**prior.select("x", "y"))
+        with workflow_run(seed=0):
+            result = record_workflow(**prior.select("x", "y"))
         m = mean(result)
         assert isinstance(m, Record)
         # sum = x + y ~ N(3, sqrt(0.02)); diff = x - y ~ N(-1, sqrt(0.02))
@@ -795,7 +797,8 @@ class TestRecordArrayMarginal:
         np.testing.assert_allclose(float(m["diff"]), -1.0, atol=mc_se)
 
     def test_variance_per_field(self, record_workflow, prior):
-        result = record_workflow(**prior.select("x", "y"))
+        with workflow_run(seed=0):
+            result = record_workflow(**prior.select("x", "y"))
         v = variance(result)
         assert isinstance(v, Record)
         # Var(x+y) = Var(x) + Var(y) = 0.02 when jointly sampled independently.
