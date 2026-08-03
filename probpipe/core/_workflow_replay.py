@@ -78,7 +78,11 @@ class _ReplayState:
     occurrence_path: tuple[Any, ...]
     callable_anchor: dict[str, Any]
     canonical_plan: dict[str, Any]
-    execution_capabilities: tuple[dict[str, Any], ...]
+    execution_contract_abi: str
+    sampling_abis: tuple[str, ...]
+    provider_abis: tuple[str, ...]
+    descendant_adapter_abis: tuple[str, ...]
+    key_adapter_abi: str
     expected_events: tuple[_ExpectedReplayEvent, ...]
     recorded_source: dict[str, Any]
     recorded_execution: tuple[dict[str, Any], ...]
@@ -86,6 +90,8 @@ class _ReplayState:
     root_completed: bool = False
     root_failed: bool = False
     source_artifact_drift: bool = False
+    requested_dispatch: str | None = None
+    requested_workflow_kind: str | None = None
     actual_execution: list[dict[str, Any]] = field(default_factory=list)
     claims: dict[bytes, _ReplayEventClaim] = field(init=False)
     claims_lock: Any = field(default_factory=Lock, repr=False)
@@ -133,27 +139,49 @@ class _ReplayState:
             )
 
     def validate_execution_contract(self, contract: Any) -> None:
-        """Require the current route to satisfy a recorded route-neutral capability."""
-        capability = _workflow_execution_contract.execution_capability_fields(contract)
-        if capability not in self.execution_capabilities:
+        """Require the current route to satisfy the one route-neutral contract."""
+        if (
+            contract.abi != self.execution_contract_abi
+            or contract.rng_abi != _RNG_ABI
+            or contract.jax_key_abi != self.key_adapter_abi
+            or tuple(contract.descendant_adapter_abis) != self.descendant_adapter_abis
+        ):
             raise ReplayCompatibilityError(
                 "the current evaluator or transport cannot satisfy the recorded "
                 "workflow RNG execution contract"
             )
+        if self.requested_dispatch is None or self.requested_workflow_kind is None:
+            raise ReplayCompatibilityError(
+                "the current Function did not declare its requested execution route"
+            )
         route = {
-            "evaluator": contract.evaluator,
-            "transport": contract.transport,
+            "requested_dispatch": self.requested_dispatch,
+            "requested_workflow_kind": self.requested_workflow_kind,
+            "resolved_evaluator": contract.evaluator,
+            "resolved_transport": contract.transport,
             "contract_abi": contract.abi,
         }
         if route not in self.actual_execution:
             self.actual_execution.append(route)
 
+    def record_requested_execution(self, dispatch: str, workflow_kind: str) -> None:
+        """Capture current request diagnostics before route resolution."""
+        requested = (dispatch, workflow_kind)
+        existing = (self.requested_dispatch, self.requested_workflow_kind)
+        if existing != (None, None) and existing != requested:
+            raise ReplayCompatibilityError(
+                "one replayed Function declared conflicting execution requests"
+            )
+        self.requested_dispatch, self.requested_workflow_kind = requested
+
     def diagnostics(self) -> dict[str, Any]:
         """Return non-authoritative source and route drift observations."""
         recorded_routes = [
             {
-                "evaluator": item.get("evaluator"),
-                "transport": item.get("transport"),
+                "requested_dispatch": item.get("requested_dispatch"),
+                "requested_workflow_kind": item.get("requested_workflow_kind"),
+                "resolved_evaluator": item.get("resolved_evaluator"),
+                "resolved_transport": item.get("resolved_transport"),
                 "contract_abi": item.get("contract_abi"),
             }
             for item in self.recorded_execution
@@ -467,6 +495,12 @@ def _validate_active_execution_contract(contract: Any) -> None:
         state.validate_execution_contract(contract)
 
 
+def _record_active_requested_execution(dispatch: str, workflow_kind: str) -> None:
+    state = _ACTIVE_REPLAY_STATE.get()
+    if state is not None and _REPLAY_FUNCTION_DEPTH.get() == 1:
+        state.record_requested_execution(dispatch, workflow_kind)
+
+
 def _active_replay_diagnostics() -> dict[str, Any] | None:
     state = _ACTIVE_REPLAY_STATE.get()
     if state is None or _REPLAY_FUNCTION_DEPTH.get() != 1:
@@ -577,19 +611,6 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     if canonical_plan.get("key_ownership") != "automatic":
         raise ReplayCompatibilityError("recorded replay plan is not workflow-key-owned")
 
-    compatibility = _mapping(replay.get("compatibility"), "replay.compatibility")
-    if (
-        compatibility.get("execution_contract")
-        != _workflow_execution_contract.execution_contract_abi()
-    ):
-        raise ReplayCompatibilityError("recorded workflow RNG execution contract is incompatible")
-    capabilities_raw = _list(compatibility.get("capabilities"), "compatibility.capabilities")
-    capabilities = tuple(
-        copy.deepcopy(dict(_mapping(item, "compatibility capability"))) for item in capabilities_raw
-    )
-    if not capabilities:
-        raise ReplayCompatibilityError("recorded replay has no execution capability")
-
     events_raw = _list(randomness.get("events"), "randomness.events")
     effects_raw = _list(plan_anchor.get("expected_effects"), "replay.plan.expected_effects")
     expected_count = randomness.get("expected_event_count")
@@ -607,6 +628,55 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
         outer_occurrence_path=occurrence_path,
     )
 
+    compatibility = _mapping(replay.get("compatibility"), "replay.compatibility")
+    expected_compatibility_fields = {
+        "execution_contract",
+        "sampling_abi",
+        "provider_abi",
+        "descendant_adapter_abi",
+        "key_adapter_abi",
+    }
+    if set(compatibility) != expected_compatibility_fields:
+        raise ReplayCompatibilityError(
+            "recorded replay compatibility fields do not match the version-1 schema"
+        )
+    execution_contract_abi = compatibility.get("execution_contract")
+    if execution_contract_abi != _workflow_execution_contract.execution_contract_abi():
+        raise ReplayCompatibilityError("recorded workflow RNG execution contract is incompatible")
+    sampling_abis = _abi_sequence(compatibility.get("sampling_abi"), "sampling ABI")
+    provider_abis = _abi_sequence(compatibility.get("provider_abi"), "provider ABI")
+    descendant_adapter_abis = _abi_sequence(
+        compatibility.get("descendant_adapter_abi"),
+        "descendant-adapter ABI",
+    )
+    key_adapter_abi = compatibility.get("key_adapter_abi")
+    if key_adapter_abi != _workflow_execution_contract.key_adapter_abi():
+        raise ReplayCompatibilityError("recorded workflow key-adapter ABI is incompatible")
+
+    expected_sampling_abis = _ordered_unique(
+        [event.effect["sampling_abi"] for event in expected_events]
+        + list(_iter_named_abi(canonical_plan, "sampling_abi"))
+    )
+    expected_provider_abis = _ordered_unique(
+        [event.effect["provider_abi"] for event in expected_events]
+        + list(_iter_named_abi(canonical_plan, "provider_abi"))
+    )
+    expected_descendant_adapter_abis = _ordered_unique(
+        list(_iter_named_abi(canonical_plan, "descendant_adapter_abi"))
+    )
+    if sampling_abis != expected_sampling_abis:
+        raise ReplayCompatibilityError(
+            "recorded sampling ABI fields disagree with the expected effects and plan"
+        )
+    if provider_abis != expected_provider_abis:
+        raise ReplayCompatibilityError(
+            "recorded provider ABI fields disagree with the expected effects and plan"
+        )
+    if descendant_adapter_abis != expected_descendant_adapter_abis:
+        raise ReplayCompatibilityError(
+            "recorded descendant-adapter ABI fields disagree with the canonical plan"
+        )
+
     diagnostics = provenance.diagnostics
     recorded_source = copy.deepcopy(
         dict(_mapping_or_empty(diagnostics.get("callable_source"), "callable_source"))
@@ -621,7 +691,11 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
         occurrence_path=occurrence_path,
         callable_anchor=callable_anchor,
         canonical_plan=canonical_plan,
-        execution_capabilities=capabilities,
+        execution_contract_abi=execution_contract_abi,
+        sampling_abis=sampling_abis,
+        provider_abis=provider_abis,
+        descendant_adapter_abis=descendant_adapter_abis,
+        key_adapter_abi=key_adapter_abi,
         expected_events=expected_events,
         recorded_source=recorded_source,
         recorded_execution=recorded_execution,
@@ -791,3 +865,31 @@ def _list_or_empty(value: Any, field_name: str) -> list[Any]:
     if value is None:
         return []
     return _list(value, field_name)
+
+
+def _abi_sequence(value: Any, field_name: str) -> tuple[str, ...]:
+    items = _list(value, field_name)
+    if any(not isinstance(item, str) or not item for item in items):
+        raise ReplayCompatibilityError(f"recorded {field_name} must contain ABI strings")
+    result = tuple(items)
+    if len(set(result)) != len(result):
+        raise ReplayCompatibilityError(f"recorded {field_name} contains duplicate entries")
+    return result
+
+
+def _ordered_unique(values: list[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(values))
+
+
+def _iter_named_abi(value: Any, field_name: str):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == field_name and isinstance(item, str):
+                yield item
+            yield from _iter_named_abi(item, field_name)
+        return
+    if isinstance(value, list):
+        if len(value) == 2 and value[0] == field_name and isinstance(value[1], str):
+            yield value[1]
+        for item in value:
+            yield from _iter_named_abi(item, field_name)

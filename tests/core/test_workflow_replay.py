@@ -305,22 +305,33 @@ class TestReplayPreflight:
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
         assert replayed.provenance.diagnostics["replay"]["source_artifact_drift"] is True
 
-    def test_execution_capability_drift_fails_before_sampling(self):
+    def test_recorded_sampling_abi_drift_fails_before_sampling(self):
         original = _draw()
 
         def mutate(controls):
-            controls["replay"]["compatibility"]["capabilities"][0]["sampling_abi"] = (
-                "unknown-sampling/v99"
-            )
+            controls["replay"]["compatibility"]["sampling_abi"] = ["unknown-sampling/v99"]
 
         changed = _mutate_provenance(original.provenance, mutate)
         candidate = Normal(loc=0.0, scale=1.0, name="value")
         with (
             patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
-            pytest.raises(ReplayCompatibilityError, match="execution contract"),
+            pytest.raises(ReplayCompatibilityError, match="sampling ABI"),
             replay_run(changed),
         ):
             sample(candidate)
+
+    def test_unknown_key_adapter_abi_fails_at_replay_entry(self):
+        original = _draw()
+
+        def mutate(controls):
+            controls["replay"]["compatibility"]["key_adapter_abi"] = "unknown-key-adapter/v99"
+
+        changed = _mutate_provenance(original.provenance, mutate)
+        with (
+            pytest.raises(ReplayCompatibilityError, match="key-adapter ABI"),
+            replay_run(changed),
+        ):
+            pass
 
     def test_jax_to_rowwise_route_drift_preserves_values(self):
         original_workflow = Function(

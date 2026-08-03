@@ -35,13 +35,24 @@ def provenance_recipe_fields(
         for effect in observed_effects
         if not _is_nested_automatic_effect(effect, snapshot.occurrence_path)
     )
-    compatibility_contracts = _unique_json_values(
-        [_contract_controls(contract) for contract in snapshot.execution_contracts]
+    canonical_plan = serialize_stochastic_plan(stochastic_plan)
+    sampling_abis = _ordered_unique(
+        [effect.sampling_abi for effect in effects]
+        + list(_iter_named_abi(canonical_plan, "sampling_abi"))
+    )
+    provider_abis = _ordered_unique(
+        [effect.provider_abi for effect in effects]
+        + list(_iter_named_abi(canonical_plan, "provider_abi"))
+    )
+    descendant_adapter_abis = _ordered_unique(
+        list(_iter_named_abi(canonical_plan, "descendant_adapter_abi"))
     )
     execution_diagnostics = [
         {
-            "evaluator": contract.evaluator,
-            "transport": contract.transport,
+            "requested_dispatch": snapshot.requested_dispatch,
+            "requested_workflow_kind": snapshot.requested_workflow_kind,
+            "resolved_evaluator": contract.evaluator,
+            "resolved_transport": contract.transport,
             "contract_abi": contract.abi,
         }
         for contract in snapshot.execution_contracts
@@ -77,14 +88,15 @@ def provenance_recipe_fields(
         "callable": callable_controls,
         "plan": {
             "schema": _STOCHASTIC_PLAN_ABI,
-            "canonical_fields": serialize_stochastic_plan(stochastic_plan),
+            "canonical_fields": canonical_plan,
             "expected_effects": [_serialize_effect_anchor(effect) for effect in effects],
         },
         "compatibility": {
-            "execution_contract": "probpipe.workflow_rng_execution/v1",
-            "capabilities": compatibility_contracts,
-            "sampling_abi": _ordered_unique([effect.sampling_abi for effect in effects]),
-            "provider_abi": _ordered_unique([effect.provider_abi for effect in effects]),
+            "execution_contract": _workflow_execution_contract.execution_contract_abi(),
+            "sampling_abi": sampling_abis,
+            "provider_abi": provider_abis,
+            "descendant_adapter_abi": descendant_adapter_abis,
+            "key_adapter_abi": _workflow_execution_contract.key_adapter_abi(),
         },
     }
     diagnostics = {
@@ -236,19 +248,23 @@ def _is_nested_automatic_effect(
     ) > 1
 
 
-def _contract_controls(contract: Any) -> dict[str, Any]:
-    return _workflow_execution_contract.execution_capability_fields(contract)
-
-
-def _unique_json_values(values: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    unique: dict[bytes, dict[str, Any]] = {}
-    for value in values:
-        unique.setdefault(_canonical_json(value), value)
-    return list(unique.values())
-
-
 def _ordered_unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
+
+
+def _iter_named_abi(value: Any, field_name: str):
+    """Yield canonical descriptor ABI values without interpreting the graph."""
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key == field_name and isinstance(item, str):
+                yield item
+            yield from _iter_named_abi(item, field_name)
+        return
+    if isinstance(value, list):
+        if len(value) == 2 and value[0] == field_name and isinstance(value[1], str):
+            yield value[1]
+        for item in value:
+            yield from _iter_named_abi(item, field_name)
 
 
 def _canonical_json(value: Any) -> bytes:

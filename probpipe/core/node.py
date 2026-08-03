@@ -745,6 +745,11 @@ class Function(Node, TrackedTerm, Annotated):
             broadcast_plan,
             call.overrides.n_broadcast_samples,
         )
+        workflow_kind = self.effective_workflow_kind
+        _workflow_broker._record_active_requested_execution(
+            self._dispatch,
+            workflow_kind.value,
+        )
         _workflow_replay._validate_active_plan(
             _workflow_recipe.serialize_stochastic_plan(stochastic_plan)
         )
@@ -855,7 +860,7 @@ class Function(Node, TrackedTerm, Annotated):
                 resolve_dispatch=resolve_dispatch,
                 require_jax_traceable=require_jax_traceable,
                 workflow_name=self._name,
-                workflow_kind=self.effective_workflow_kind,
+                workflow_kind=workflow_kind,
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,
                 provenance_inputs=provenance_inputs,
@@ -901,7 +906,7 @@ class Function(Node, TrackedTerm, Annotated):
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,
                 provenance_inputs=provenance_inputs,
-                workflow_kind=self.effective_workflow_kind,
+                workflow_kind=workflow_kind,
             )
 
         # Non-broadcast call — one function invocation, then wrap. TrackedTerm

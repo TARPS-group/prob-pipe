@@ -725,6 +725,7 @@ class TestPrefectMapping:
         payload["controls"]["replay"]["plan"]["expected_effects"][0]["provider_abi"] = (
             "unknown-provider/v99"
         )
+        payload["controls"]["replay"]["compatibility"]["provider_abi"] = ["unknown-provider/v99"]
         changed = Provenance.from_dict(payload)
 
         with (

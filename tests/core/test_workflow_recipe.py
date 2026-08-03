@@ -93,6 +93,22 @@ class TestWorkflowRecipeRecording:
         assert replay["plan"]["schema"] == "probpipe.stochastic_plan/v1"
         assert replay["plan"]["canonical_fields"]["n_evaluations"] == 11
         assert replay["plan"]["expected_effects"][0]["sample_shape"] == [11]
+        assert replay["compatibility"] == {
+            "execution_contract": "probpipe.workflow_rng_execution/v1",
+            "sampling_abi": ["probpipe.distribution_sampling/v1"],
+            "provider_abi": ["probpipe.distribution/v1"],
+            "descendant_adapter_abi": [],
+            "key_adapter_abi": "jax.random.wrap_key_data/threefry2x32/v1",
+        }
+        assert result.provenance.diagnostics["execution"] == [
+            {
+                "requested_dispatch": "sequential",
+                "requested_workflow_kind": "off",
+                "resolved_evaluator": "rowwise",
+                "resolved_transport": "local_inline",
+                "contract_abi": "probpipe.workflow_rng_execution/v1",
+            }
+        ]
 
     def test_anonymous_and_ephemeral_roots_are_recorded_only_after_success(self):
         workflow = Function(func=_identity, n_broadcast_samples=5)
@@ -165,6 +181,12 @@ class TestWorkflowRecipeRecording:
         descriptor = plan["source_groups"][0]["consumers"][1]["descendant_descriptor"]
         assert descriptor[0] == "stochastic-descendant"
         assert "transformed-descendant" in json.dumps(descriptor)
+        compatibility = _replay(result)["compatibility"]
+        assert compatibility["descendant_adapter_abi"] == ["probpipe.transformed_descendant/v1"]
+        assert compatibility["provider_abi"] == [
+            "probpipe.distribution/v1",
+            "tensorflow_probability.substrates.jax.bijector.forward/v1",
+        ]
 
     def test_nested_sweep_recipe_contains_every_canonical_unit(self):
         workflow = Function(func=_add, n_broadcast_samples=5, dispatch="sequential")

@@ -171,6 +171,8 @@ class _BrokerRecipeSnapshot:
     rng_origin: dict[str, str | int | None]
     effects: tuple[ManagedEffectClaim, ...]
     execution_contracts: tuple[WorkflowRngExecutionContract, ...]
+    requested_dispatch: str | None
+    requested_workflow_kind: str | None
     callable_anchor: CallableAnchor | None
 
 
@@ -210,6 +212,8 @@ class _AutomaticKeyBroker:
     _effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(default_factory=dict)
     _effects_lock: Any = field(default_factory=Lock, repr=False)
     _lock: Any = field(default_factory=Lock, repr=False)
+    _requested_dispatch: str | None = None
+    _requested_workflow_kind: str | None = None
     _callable_anchor: CallableAnchor | None = None
     _replay_state: Any = None
 
@@ -284,6 +288,14 @@ class _AutomaticKeyBroker:
         """Record one distinct capability-checked route for later diagnostics."""
         if contract not in self._execution_contracts:
             self._execution_contracts.append(contract)
+
+    def set_requested_execution(self, dispatch: str, workflow_kind: str) -> None:
+        """Record the public execution request independently from its resolution."""
+        requested = (dispatch, workflow_kind)
+        existing = (self._requested_dispatch, self._requested_workflow_kind)
+        if existing != (None, None) and existing != requested:
+            raise RuntimeError("a Function broker already has a different execution request")
+        self._requested_dispatch, self._requested_workflow_kind = requested
 
     def set_callable_anchor(self, anchor: CallableAnchor) -> None:
         """Attach the immutable definition anchor for this public Function."""
@@ -761,6 +773,16 @@ def _record_active_execution_contract(
         broker.record_execution_contract(contract)
 
 
+def _record_active_requested_execution(dispatch: str, workflow_kind: str) -> None:
+    """Attach requested route diagnostics to the current public invocation."""
+    from . import _workflow_replay
+
+    _workflow_replay._record_active_requested_execution(dispatch, workflow_kind)
+    broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
+    if broker is not None:
+        broker.set_requested_execution(dispatch, workflow_kind)
+
+
 def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
     """Snapshot a successful active invocation without operational ownership data."""
     broker = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
@@ -777,6 +799,8 @@ def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
         rng_origin=_workflow_context._describe_rng_origin(invocation.frame),
         effects=effects,
         execution_contracts=tuple(broker._execution_contracts),
+        requested_dispatch=broker._requested_dispatch,
+        requested_workflow_kind=broker._requested_workflow_kind,
         callable_anchor=broker._callable_anchor,
     )
 

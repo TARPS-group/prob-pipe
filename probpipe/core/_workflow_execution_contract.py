@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from . import _workflow_plan
@@ -125,17 +125,9 @@ def execution_contract_abi() -> str:
     return _EXECUTION_CONTRACT_ABI
 
 
-def execution_capability_fields(
-    contract: WorkflowRngExecutionContract,
-) -> dict[str, Any]:
-    """Serialize route-neutral capability fields for provenance and replay."""
-    fields = asdict(contract)
-    fields.pop("evaluator")
-    fields.pop("transport")
-    for key, value in tuple(fields.items()):
-        if isinstance(value, tuple):
-            fields[key] = list(value)
-    return fields
+def key_adapter_abi() -> str:
+    """Return the immutable JAX key adapter ABI used by admitted routes."""
+    return _JAX_KEY_ABI
 
 
 def transport_for_execution_mode(mode: str) -> WorkflowTransport:
