@@ -530,6 +530,7 @@ class TestPrefectMapping:
     def test_failed_prefect_effect_remains_transient(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        monkeypatch.setattr(execution_mod, "_prefect_retry_policy", lambda: (0, 0.0))
 
         def fail_after_claim():
             _claim_automatic_words()
@@ -548,6 +549,61 @@ class TestPrefectMapping:
 
         assert snapshot is None
         assert len(claim_state.effect_claims_by_identity) == 1
+
+    def test_prefect_retry_reuses_work_item_token_and_key(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        monkeypatch.setattr(execution_mod, "_prefect_retry_policy", lambda: (1, 0.0))
+        seen = []
+
+        def fail_once_after_claim():
+            words = _claim_automatic_words()
+            seen.append(words)
+            if len(seen) == 1:
+                raise RuntimeError("retry me")
+            return words
+
+        request = make_request(
+            mode="prefect_task",
+            calls=[{}],
+            func=fail_once_after_claim,
+        )
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            retried = execution_mod.execute_many(request)[0]
+            snapshot = broker_mod._snapshot_active_recipe_state()
+            claim_state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+
+        assert seen == [retried, retried]
+        assert snapshot is not None
+        assert len(snapshot.effects) == 1
+        assert len(claim_state.seen_attempts) == 2
+        assert FakeMappedTask.map_calls == 3
+
+    def test_deterministic_prefect_retry_does_not_materialize_root(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        monkeypatch.setattr(execution_mod, "_prefect_retry_policy", lambda: (1, 0.0))
+        calls = 0
+
+        def fail_once():
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise RuntimeError("retry me")
+            return 1
+
+        request = make_request(mode="prefect_task", calls=[{}], func=fail_once)
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            workflow_run(),
+            broker_mod._function_stochastic_scope(),
+        ):
+            assert execution_mod.execute_many(request) == [1]
+            snapshot = broker_mod._snapshot_active_recipe_state()
+
+        assert snapshot is None
+        urandom.assert_not_called()
+        assert FakeMappedTask.map_calls == 2
 
     def test_managed_keys_match_across_sequential_thread_and_prefect(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "task", fake_task)

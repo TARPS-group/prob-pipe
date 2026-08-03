@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from time import sleep
 from typing import Any, Literal
 
 try:
@@ -169,29 +170,147 @@ def map_task(
     def run_func(payload):
         return _execute_prefect_payload(func, payload)
 
-    initial_payloads = [ManagedPrefectPayload(item=item) for item in request.work_items]
-    outcomes = [future.result() for future in run_func.map(payload=initial_payloads)]
-
-    coordination = [outcome for outcome in outcomes if outcome.coordination_required]
-    if coordination:
-        if parent_broker is None:
-            raise RuntimeError(
-                "remote workflow randomness requires an active parent Function broker"
-            )
-        retry_payloads = [
-            ManagedPrefectPayload(
-                item=request.work_items[outcome.index],
-                parent=parent_broker.prepare_remote_managed_unit(
-                    request.work_items[outcome.index].frame
-                ),
-            )
-            for outcome in coordination
-        ]
-        retried = [future.result() for future in run_func.map(payload=retry_payloads)]
-        retried_by_index = {outcome.index: outcome for outcome in retried}
-        outcomes = [retried_by_index.get(outcome.index, outcome) for outcome in outcomes]
+    payloads_by_index = {
+        item.index: ManagedPrefectPayload(item=item) for item in request.work_items
+    }
+    outcomes = _run_prefect_payloads(run_func, list(payloads_by_index.values()))
+    outcomes = _coordinate_prefect_randomness(
+        run_func,
+        outcomes,
+        payloads_by_index=payloads_by_index,
+        parent_broker=parent_broker,
+    )
+    outcomes = _retry_prefect_failures(
+        run_func,
+        outcomes,
+        payloads_by_index=payloads_by_index,
+        parent_broker=parent_broker,
+    )
 
     return _resolve_prefect_outcomes(outcomes, parent_broker=parent_broker)
+
+
+def _run_prefect_payloads(
+    run_func: Any,
+    payloads: list[ManagedPrefectPayload],
+) -> list[ManagedExecutionOutcome]:
+    """Submit one attempt for each payload and collect its managed outcome."""
+    return [future.result() for future in run_func.map(payload=payloads)]
+
+
+def _coordinate_prefect_randomness(
+    run_func: Any,
+    outcomes: list[ManagedExecutionOutcome],
+    *,
+    payloads_by_index: dict[int, ManagedPrefectPayload],
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+) -> list[ManagedExecutionOutcome]:
+    """Re-submit remote units that lazily request parent RNG authority."""
+    coordination = [outcome for outcome in outcomes if outcome.coordination_required]
+    if not coordination:
+        return outcomes
+    if parent_broker is None:
+        raise RuntimeError("remote workflow randomness requires an active parent Function broker")
+
+    coordinated_payloads = []
+    for outcome in coordination:
+        payload = payloads_by_index[outcome.index]
+        if payload.parent is not None:
+            raise RuntimeError("coordinated Prefect attempt requested RNG authority twice")
+        payload = ManagedPrefectPayload(
+            item=payload.item,
+            parent=parent_broker.prepare_remote_managed_unit(payload.item.frame),
+        )
+        payloads_by_index[outcome.index] = payload
+        coordinated_payloads.append(payload)
+
+    coordinated_outcomes = _run_prefect_payloads(run_func, coordinated_payloads)
+    if any(outcome.coordination_required for outcome in coordinated_outcomes):
+        raise RuntimeError("coordinated Prefect attempt requested RNG authority twice")
+    return _replace_prefect_outcomes(outcomes, coordinated_outcomes)
+
+
+def _retry_prefect_failures(
+    run_func: Any,
+    outcomes: list[ManagedExecutionOutcome],
+    *,
+    payloads_by_index: dict[int, ManagedPrefectPayload],
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+) -> list[ManagedExecutionOutcome]:
+    """Coordinate configured retries while preserving work-item ownership."""
+    max_retries, retry_delay = _prefect_retry_policy()
+    retries_by_index = dict.fromkeys(payloads_by_index, 0)
+
+    while True:
+        retryable = [
+            outcome
+            for outcome in sorted(outcomes, key=lambda candidate: candidate.index)
+            if outcome.error is not None and retries_by_index[outcome.index] < max_retries
+        ]
+        if not retryable:
+            return outcomes
+
+        retry_payloads = []
+        for outcome in retryable:
+            _accept_prefect_claim_report(outcome, parent_broker=parent_broker)
+            retries_by_index[outcome.index] += 1
+            payload = payloads_by_index[outcome.index]
+            if payload.parent is not None:
+                if parent_broker is None:
+                    raise RuntimeError("coordinated Prefect retry lost its parent Function broker")
+                payload = ManagedPrefectPayload(
+                    item=payload.item,
+                    parent=parent_broker.prepare_remote_managed_unit(payload.item.frame),
+                )
+                payloads_by_index[outcome.index] = payload
+            retry_payloads.append(payload)
+
+        if retry_delay > 0:
+            sleep(retry_delay)
+        retried = _run_prefect_payloads(run_func, retry_payloads)
+        retried = _coordinate_prefect_randomness(
+            run_func,
+            retried,
+            payloads_by_index=payloads_by_index,
+            parent_broker=parent_broker,
+        )
+        outcomes = _replace_prefect_outcomes(outcomes, retried)
+
+
+def _replace_prefect_outcomes(
+    outcomes: list[ManagedExecutionOutcome],
+    replacements: list[ManagedExecutionOutcome],
+) -> list[ManagedExecutionOutcome]:
+    """Replace selected outcomes without relying on remote completion order."""
+    replacements_by_index = {outcome.index: outcome for outcome in replacements}
+    return [replacements_by_index.get(outcome.index, outcome) for outcome in outcomes]
+
+
+def _accept_prefect_claim_report(
+    outcome: ManagedExecutionOutcome,
+    *,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+) -> None:
+    """Join one completed remote attempt before it is retried."""
+    if parent_broker is None:
+        return
+    if outcome.report is None:
+        raise RuntimeError("Prefect work item returned no managed claim report")
+    parent_broker.accept_remote_claim_report(outcome.report)
+
+
+def _prefect_retry_policy() -> tuple[int, float]:
+    """Return Prefect's configured default task retry policy."""
+    try:
+        from prefect.settings import get_current_settings
+    except ImportError:
+        return 0, 0.0
+
+    task_settings = get_current_settings().tasks
+    return (
+        task_settings.default_retries,
+        task_settings.default_retry_delay_seconds,
+    )
 
 
 def execute_many_prefect_task(
