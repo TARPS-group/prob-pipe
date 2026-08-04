@@ -298,7 +298,7 @@ class RecordBatch(Batch[Record]):
         # ``object.__new__`` for the reason ``TrackedTerm._shallow_copy`` gives: a
         # host's own ``__new__`` may select a class from constructor arguments and
         # must not run again where there are none.
-        view = object.__new__(type(self))
+        view = object.__new__(self._view_type)
         object.__setattr__(
             view, "_columns", {path: column[index] for path, column in self._columns.items()}
         )
@@ -400,7 +400,7 @@ class RecordBatch(Batch[Record]):
             for key, column in self._columns.items()
             if key.startswith(prefix)
         }
-        view = object.__new__(type(self))
+        view = object.__new__(self._view_type)
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
             BatchSpec(_to_record_declaration(template), self.axis_groups, self.level_names),
@@ -417,7 +417,7 @@ class RecordBatch(Batch[Record]):
         an operation aligning operands by level name lines it up with its
         siblings and with the batch it came from.
         """
-        view = object.__new__(type(self))
+        view = object.__new__(self._view_type)
         object.__setattr__(view, "_columns", {key: self._columns[key]})
         view._init_batch(
             BatchSpec(

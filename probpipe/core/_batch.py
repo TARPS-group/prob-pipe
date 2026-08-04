@@ -393,6 +393,19 @@ class Batch[E](TrackedTerm, ABC):
         """The specification every element satisfies — a view on :attr:`spec`."""
         return self._spec.element_spec
 
+    @property
+    def _view_type(self) -> type:
+        """The class a view over this batch's own storage takes.
+
+        This class, ordinarily: a view is the same kind of batch over the same
+        elements, which is what lets a batch be its own view type. A subclass
+        holding state beyond the batch's — a :class:`~probpipe.record.Design` and
+        its marginals — overrides this with the class that state belongs to,
+        since a view carries none of it and would otherwise claim to answer for
+        it.
+        """
+        return type(self)
+
     # -- shape and levels ---------------------------------------------------
 
     @property
