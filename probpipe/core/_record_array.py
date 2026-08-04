@@ -187,22 +187,20 @@ class RecordArray(Record):
     def spec(self) -> RecordSpec:
         """Not carried by a batch — read the element schema from :attr:`event_template`.
 
-        A term's ``spec`` is its *own* type, and a batch's own type specifies the
-        collection: the element specification together with the multiplicity. A
-        ``RecordSpec`` describes one record, so returning this batch's element
-        schema here would state the wrong type.
+        A term's ``spec`` is its *own* type, and a batch's type specifies the
+        collection, not one element, so a ``RecordSpec`` would be the wrong type
+        to report.
 
         Raises
         ------
         AttributeError
-            Always, so ``hasattr`` reports ``False`` and ``getattr`` with a
-            default falls back to it.
+            Always, so ``hasattr`` reports ``False``.
 
         Notes
         -----
-        Interim: a batch subclasses :class:`Record`, which stores a
-        ``RecordSpec``, without being one record. Both the subclassing and this
-        override end when the batch types become collections in their own right.
+        Interim: a batch subclasses :class:`Record` without being one record.
+        Both the subclassing and this override end when the batch types become
+        collections in their own right.
         """
         raise AttributeError(
             f"{type(self).__name__} carries no RecordSpec: a batch's own type specifies "

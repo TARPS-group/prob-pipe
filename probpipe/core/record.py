@@ -426,12 +426,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         _validate_leaves: bool = True,
         **fields: _FieldValue,
     ):
-        # Work in templates and store a spec: the two forms denote the same
-        # space, and every check below reads structure. ``declaration`` keeps the
-        # form the caller gave, so the spec stored at the end is that object when
-        # they supplied one and the template still describes the record. One
-        # convention throughout: a *declaration* is the caller's form, spec or
-        # template, and a *template* is the structure it denotes.
+        # Every check below reads structure, so work in templates and keep the
+        # caller's form to store at the end.
         declaration = event_template
         event_template = _record_declaration_template(declaration)
         if _fields is not None:
@@ -600,18 +596,15 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         """This record's own :class:`RecordSpec` — the single stored source of its type.
 
         Fixed at construction and always present. A declaration given as a bare
-        :class:`EventTemplate` is stored wrapped, the two forms denoting the same
-        space, so after construction only the spec remains and the record's
-        declared kind is the stored spec's class. :attr:`event_template` is a view
-        on it and cannot disagree with it.
+        :class:`EventTemplate` is stored wrapped, so after construction only the
+        spec remains and the declared kind is its class. :attr:`event_template`
+        is a view on it.
 
         Notes
         -----
-        Interim: a batched record subclasses ``Record`` without being one record,
-        and overrides this to raise, since a batch's own type specifies the
-        collection rather than one element. The override goes away with the
-        subclassing — a batch is a collection, not a record — so this accessor is
-        contractually total on records.
+        Interim: a batched record subclasses ``Record`` without being one, and
+        overrides this to raise. That ends with the subclassing, so the accessor
+        is contractually total on records.
         """
         return self._spec
 
@@ -1257,10 +1250,8 @@ def _pack_fields(
 
 
 def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance, spec=None) -> Record:
-    # ``spec`` defaults to None so an in-flight pickle from before the
-    # declaration was serialized still loads (falling back to inference), and
-    # construction accepts either form, so one written as a bare template loads
-    # unchanged.
+    # ``spec`` is optional, and construction accepts either form, so a pickle
+    # written before the declaration was serialized still loads.
     r = Record(name, store, event_template=spec)
     return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 

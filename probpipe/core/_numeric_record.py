@@ -193,11 +193,8 @@ class NumericRecord(Record):
         _validate_leaves: bool = True,
         **fields: ArrayLike | NumericRecord,
     ):
-        # The declaration read as a template, for the child lookups below.
-        # ``event_template`` itself is forwarded in the form the caller gave, so
-        # ``Record.__init__`` can store a supplied spec verbatim. Same split as
-        # there, same names: the caller's form is the declaration, and
-        # ``declared_template`` is the structure it denotes.
+        # Read as a template for the child lookups below, but forwarded to
+        # ``Record.__init__`` unwrapped, so a supplied spec is stored verbatim.
         declared_template = _record_declaration_template(event_template)
         # Build the validated field dict *before* Record's __init__ runs, so
         # ``_fields`` is populated exactly once and the "constructed once,
@@ -591,9 +588,8 @@ def _unpickle_numeric_record(
 ) -> NumericRecord:
     # ``store`` holds the native leaves verbatim (they pickle themselves), so
     # reconstruction is ordinary validation-without-conversion. The threaded
-    # declaration preserves an explicit (non-inferred) schema across the
-    # round-trip; ``None`` falls back to inference, and an older pickle
-    # carrying a bare template is accepted unchanged.
+    # declaration preserves an explicit schema across the round-trip; a pickle
+    # written before it was serialized still loads.
     nr = NumericRecord(name, store, event_template=spec)
     return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
 

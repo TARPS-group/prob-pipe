@@ -405,11 +405,9 @@ def _to_record_declaration(decl: _EventDecl) -> RecordSpec:
 def _record_declaration_template(decl: _EventDecl | None) -> EventTemplate | None:
     """The template a record declaration denotes, or ``None`` when undeclared.
 
-    The reading counterpart of :func:`_to_record_declaration`. A stored
-    ``RecordSpec`` and the bare template it wraps denote the same space, so
-    machinery that needs the *structure* — reading children, unifying free
-    dimensions, checking a value against it — takes the template from either
-    form and stays indifferent to which one the caller wrote.
+    The reading counterpart of :func:`_to_record_declaration`: a spec and the
+    template it wraps denote the same space, so machinery that needs the
+    structure takes it from either form.
     """
     return decl.event_template if isinstance(decl, RecordSpec) else decl
 
@@ -419,9 +417,8 @@ def _record_declaration_for(template: EventTemplate, given: _EventDecl | None) -
 
     A caller who supplied a ``RecordSpec`` gets that object back, so a term's
     stored declaration is the one written rather than an equal copy. Anything
-    else is wrapped: a bare template, an omitted declaration whose template was
-    inferred, or a supplied one whose template the term replaced — binding a
-    free dimension, say — where the spec that came in no longer describes what
+    else is wrapped — including a supplied spec whose template the term has
+    since replaced, by binding a free dimension, which no longer describes what
     is stored.
     """
     if isinstance(given, RecordSpec) and given.event_template is template:
