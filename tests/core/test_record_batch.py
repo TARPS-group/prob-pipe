@@ -171,7 +171,7 @@ class TestConstruction:
             )
 
     def test_numeric_batch_refuses_a_non_numeric_column(self):
-        with pytest.raises(TypeError, match="non-numeric dtype"):
+        with pytest.raises(TypeError, match="its column is a numeric array"):
             NumericRecordBatch(
                 {"x": np.array(["a", "b", "c"])}, "draw", element_spec=EventTemplate(x=())
             )
@@ -361,6 +361,45 @@ class TestColumnEntryValidation:
     def test_an_array_column_carries_no_entries_to_walk(self):
         # Its shape is the whole of what it declares, and that is already checked.
         assert nested_batch().batch_shape == (3,)
+
+
+class TestColumnSpecConformance:
+    """A column must satisfy the field it belongs to, not merely have the right
+    shape: the batch asserts its ``element_spec`` of every element."""
+
+    def test_a_cross_kind_dtype_is_refused(self):
+        with pytest.raises(TypeError, match=r"has dtype float32, which its declared int32"):
+            NumericRecordBatch(
+                {"x": jnp.zeros(3, dtype=jnp.float32)},
+                "draw",
+                element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32)),
+            )
+
+    def test_a_same_kind_cast_is_admitted(self):
+        # The rule ``ArraySpec.is_valid`` applies to one value: a widening or a
+        # within-kind narrowing passes.
+        for column_dtype, declared in [
+            (jnp.float32, jnp.float64),
+            (jnp.float64, jnp.float32),
+            (jnp.int32, jnp.int64),
+        ]:
+            NumericRecordBatch(
+                {"x": jnp.zeros(3, dtype=column_dtype)},
+                "draw",
+                element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=declared)),
+            )
+
+    @pytest.mark.parametrize("spec", [FunctionSpec(), None], ids=["function", "opaque"])
+    def test_a_field_with_no_stacked_form_refuses_a_dense_column(self, spec):
+        """A dense array under such a field would make its *entries* array
+        elements rather than the values themselves, and the column could not be
+        presented as the batch form its spec calls for."""
+        with pytest.raises(TypeError, match="no stacked form"):
+            RecordBatch({"f": jnp.zeros(3)}, "draw", element_spec=EventTemplate({"f": spec}))
+
+    def test_an_element_of_a_validated_batch_conforms_to_its_own_spec(self):
+        batch = nested_batch()
+        assert batch.element_spec.is_valid(batch[0])
 
 
 class TestConstructionRefusals:
@@ -700,6 +739,29 @@ class TestFlatLayout:
         )
         assert rebuilt == batch
 
+    def test_a_mixed_dtype_round_trip_restores_each_declared_dtype(self):
+        """Concatenating promotes the fields to one dtype, so reconstruction must
+        cast back — otherwise the result contradicts the template it was rebuilt
+        from. Equality would not catch it: values compare, dtypes do not."""
+        template = EventTemplate(
+            {
+                "i": ArraySpec(shape=(), dtype=jnp.int32),
+                "f": ArraySpec(shape=(), dtype=jnp.float32),
+            }
+        )
+        batch = NumericRecordBatch(
+            {"i": jnp.arange(3, dtype=jnp.int32), "f": jnp.ones(3, dtype=jnp.float32)},
+            "draw",
+            element_spec=template,
+        )
+        assert batch.to_vector().dtype == jnp.float32  # the promotion
+        rebuilt = NumericRecordBatch.from_vector(
+            "b", batch.event_template, batch.to_vector(), level_names="draw"
+        )
+        assert rebuilt["i"].dtype == jnp.int32
+        assert rebuilt["f"].dtype == jnp.float32
+        np.testing.assert_array_equal(np.asarray(rebuilt["i"]), np.asarray([0, 1, 2]))
+
     def test_from_vector_needs_a_name_for_every_batch_axis(self):
         template = EventTemplate(x=(2,))
         with pytest.raises(ValueError, match="need 2 level names"):
@@ -955,6 +1017,43 @@ class TestPyTree:
         result = jax.vmap(row_sum)(batch)
         np.testing.assert_array_equal(np.asarray(result), np.asarray([0.0, 3.0, 6.0]))
         assert seen == [(2,)]
+
+    def test_vmap_hands_the_body_one_element_not_a_stale_batch(self):
+        """``vmap`` strips the mapped axis, so what the body receives is an
+        element. Rebuilding against the stored spec would leave an object whose
+        ``batch_shape`` its own columns contradict, and every method reading that
+        shape would be wrong — which reading a column alone does not reveal.
+        """
+        batch = nested_batch()
+        seen: list[str] = []
+
+        def body(row):
+            seen.append(type(row).__name__)
+            return row.to_vector()
+
+        stacked = jax.vmap(body)(batch)
+        assert seen == ["NumericRecord"]
+        assert stacked.shape == (3, 4)
+        np.testing.assert_array_equal(np.asarray(stacked), np.asarray(batch.to_vector()))
+
+    def test_vmap_over_a_two_level_batch_leaves_the_inner_level(self):
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros((2, 3, 4))}, ("chain", "draw"), element_spec=EventTemplate(x=(4,))
+        )
+        seen: list[tuple] = []
+
+        def body(inner):
+            seen.append((type(inner).__name__, inner.batch_shape, inner.level_names))
+            return inner.to_vector()
+
+        stacked = jax.vmap(body)(batch)
+        assert seen == [("NumericRecordBatch", (3,), ("draw",))]
+        assert stacked.shape == (2, 3, 4)
+
+    def test_an_untransformed_round_trip_is_still_a_batch(self):
+        batch = nested_batch()
+        leaves, treedef = jax.tree_util.tree_flatten(batch)
+        assert jax.tree_util.tree_unflatten(treedef, leaves) == batch
 
     def test_jit_round_trips_the_batch(self):
         batch = nested_batch()

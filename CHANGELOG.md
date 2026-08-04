@@ -126,13 +126,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   structural, and a row costs no declaration to build. `NumericRecordBatch` adds
   the batched flat layout: `to_vector` gives `(*batch_shape, vector_size)` with the
   flat dimension last and the levels kept as the leading axes, and `from_vector`
-  inverts it, naming the levels it reconstructs so a multi-level batch round-trips.
+  inverts it, naming the levels it reconstructs so a multi-level batch round-trips
+  and casting each field back to its declared dtype, which concatenating promoted.
   It is a bare array pytree, so it passes through `jit` / `vmap` / `grad` unchanged.
 
+  Under `vmap` the body receives an **element**, not the batch: the transform
+  strips the mapped axis, so the multiplicity is re-derived from what arrives and
+  a `Record` is handed over once no batch axis remains (a two-level batch leaves
+  the inner level instead). Rebuilding against the stored spec would give the
+  body an object whose `batch_shape` its own columns contradict, and every method
+  reading that shape — `to_vector` among them — would be wrong.
+
   A batch holds what it validated. Every column is checked against the field it
-  belongs to — shape against the declared event shape, and, for a field that is
-  not an array, each entry against its spec, naming the field and the position
-  that failed. An object column is copied and frozen, so a caller keeping a handle
+  belongs to: an array field's column for a numeric dtype its declaration admits,
+  by the same same-kind rule `ArraySpec.is_valid` applies to one value, and every
+  other field's column entry by entry against its spec, naming the field and the
+  position that failed. A field with no stacked form is given an object array
+  rather than a dense one, so its entries are the values themselves. An object column is copied and frozen, so a caller keeping a handle
   on what they passed cannot write a value in afterwards that the spec refuses.
   The field's *spec* decides a column's form rather than its values, which is what
   keeps an opaque field opaque when its values happen to be numeric.

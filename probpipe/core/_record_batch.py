@@ -26,6 +26,7 @@ See design III.3.
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from dataclasses import replace
 from typing import Any, Self
 
 import jax
@@ -205,30 +206,43 @@ class RecordBatch(Batch[Record]):
 
     @classmethod
     def _check_columns(cls, store: dict[str, Any], template: EventTemplate, *, kind: str) -> None:
-        """Fail on the first column entry its field's spec does not admit.
+        """Fail on the first column its field's spec does not admit.
 
         Checked at construction rather than left to ``is_valid`` because a batch
-        asserts its ``element_spec`` of *every* element: an entry the field's spec
+        asserts its ``element_spec`` of *every* element: a column the field's spec
         refuses makes the batch's own spec a false statement, and where it sits is
         what a caller needs to hear. The shapes are already settled by then, by
-        the batch-axis derivation.
+        the batch-axis derivation, so what is left is the dtype and the entries.
 
-        An **array** column carries no entries to walk — its spec's shape and the
-        column's are the whole of what it declares, and the derivation has checked
-        that. A **non-array** column is walked entry by entry, the counterpart of
-        what ``_ObjectBatch`` does for a batch that stores its elements.
-        ``NumericRecordBatch`` adds the dtype check its columns are narrowed by.
+        An **array** field's column is checked for a numeric dtype the declared
+        one admits, by the same same-kind rule
+        :meth:`~probpipe.ArraySpec.is_valid` applies to a single value: a widening
+        or a within-kind narrowing passes, a cross-kind conversion does not.
+        Every **other** field's column holds one entry per element and is walked
+        entry by entry against its spec, the counterpart of what ``_ObjectBatch``
+        does for a batch that stores its elements.
 
         Raises
         ------
         TypeError
-            If an entry of a non-array column does not satisfy its field's spec,
-            naming the field and the position.
+            If an array field's column is not a numeric array, or carries a dtype
+            its declaration does not admit; if a field that is not an array is
+            given a column that is not an object array, since its entries would
+            then be array elements rather than the values themselves; or if such
+            an entry does not satisfy its field's spec, naming the position.
         """
         for path, column in store.items():
             spec = template[path]
-            if isinstance(spec, ArraySpec) or not _is_object_array(column):
+            if isinstance(spec, ArraySpec):
+                _check_array_column(column, spec, path=path, kind=kind)
                 continue
+            if not _is_object_array(column):
+                raise TypeError(
+                    f"{kind}: the field {path!r} is declared {type(spec).__name__}, which has no "
+                    f"stacked form, so its column holds one entry per element as an object "
+                    f"array; got a {type(column).__name__}"
+                    + (f" of {column.dtype}" if hasattr(column, "dtype") else "")
+                )
             for index, entry in np.ndenumerate(column):
                 if not spec.is_valid(entry):
                     position = index[0] if len(index) == 1 else index
@@ -605,20 +619,9 @@ class NumericRecordBatch(RecordBatch):
         assert isinstance(template, NumericEventTemplate)  # narrowed at construction
         return template
 
-    @classmethod
-    def _check_columns(cls, store: dict[str, Any], template: EventTemplate, *, kind: str) -> None:
-        """Require a numeric dtype on every column, then check entries as the base does."""
-        for path, column in store.items():
-            if not hasattr(column, "dtype"):
-                raise TypeError(
-                    f"{kind}: the column at {path!r} must be a numeric array, "
-                    f"got {type(column).__name__}"
-                )
-            if not _is_numeric_dtype(column.dtype):
-                raise TypeError(
-                    f"{kind}: the column at {path!r} has the non-numeric dtype {column.dtype!r}"
-                )
-        super()._check_columns(store, template, kind=kind)
+    # ``_check_columns`` is not overridden: every field of a numeric template is
+    # an ``ArraySpec``, so the base already checks each column for a numeric
+    # dtype the declaration admits.
 
     # -- flat layout --------------------------------------------------------
 
@@ -731,8 +734,14 @@ class NumericRecordBatch(RecordBatch):
         offset = 0
         for key, event_shape in template.leaf_shapes.items():
             size = int(np.prod(event_shape, dtype=int))
-            block = vec[..., offset : offset + size]
-            columns[key] = jnp.reshape(block, (*batch_shape, *event_shape))
+            block = jnp.reshape(vec[..., offset : offset + size], (*batch_shape, *event_shape))
+            # Concatenating promoted the fields to one dtype, so a field that
+            # declares its own is cast back to it — otherwise the reconstruction
+            # contradicts the very template it was rebuilt from.
+            declared = template[key]
+            if isinstance(declared, ArraySpec) and declared.dtype is not None:
+                block = block.astype(declared.dtype)
+            columns[key] = block
             offset += size
         return cls(
             columns,
@@ -968,6 +977,28 @@ def _columns_equal(left: Any, right: Any) -> bool:
     return bool(jnp.array_equal(left, right))
 
 
+def _check_array_column(column: Any, spec: ArraySpec, *, path: str, kind: str) -> None:
+    """Fail unless *column* is a numeric array whose dtype *spec* admits.
+
+    The dtype rule is :meth:`~probpipe.ArraySpec.is_valid`'s, applied to the
+    column rather than to one value: same-kind castable, so a widening or a
+    within-kind narrowing passes and a cross-kind conversion does not. The shape
+    is already settled by the batch-axis derivation.
+    """
+    dtype = getattr(column, "dtype", None)
+    if dtype is None or not _is_numeric_dtype(dtype):
+        raise TypeError(
+            f"{kind}: the field {path!r} is declared an array, so its column is a numeric "
+            f"array; got a {type(column).__name__}" + (f" of {dtype}" if dtype is not None else "")
+        )
+    if spec.dtype is not None and not np.can_cast(dtype, spec.dtype, casting="same_kind"):
+        raise TypeError(
+            f"{kind}: the column at {path!r} has dtype {dtype}, which its declared "
+            f"{np.dtype(spec.dtype)} does not admit; a widening or a within-kind narrowing "
+            f"passes, a cross-kind conversion does not"
+        )
+
+
 def _is_object_array(column: Any) -> bool:
     """Whether *column* is a numpy array of objects, the non-array column form."""
     return isinstance(column, np.ndarray) and column.dtype == object
@@ -1004,27 +1035,106 @@ def _record_batch_flatten(batch: RecordBatch) -> tuple[list, tuple[BatchSpec, st
 
 
 def _unflatten_with(cls: type[RecordBatch]):
-    """Build the unflatten hook for *cls*, which rebuilds without validating.
+    """Build the unflatten hook for *cls*, rebuilding at the multiplicity that arrived.
 
-    Inside a transform a column's shape is relative to it — ``vmap`` strips the
-    mapped axis — so the stored ``axis_groups`` need not describe what arrives.
-    The batch was validated when first built, so validation is skipped rather
-    than made to pass.
+    A transform may hand back children with fewer axes than the batch was
+    flattened with: ``vmap`` strips the mapped axis, so what its body receives is
+    one *element*, not the batch. The stored spec describes the batch, so
+    rebuilding against it verbatim would produce an object whose ``batch_shape``
+    its own columns contradict — and every method that reads the shape,
+    ``to_vector`` among them, would then be wrong.
+
+    So the multiplicity is re-derived from the children. Axes are consumed from
+    the outermost level in, since that is the end a transform strips; when none
+    remain the value *is* one element, and a ``Record`` is returned rather than a
+    batch of nothing. Validation is skipped either way: a traced column's dtype
+    and shape are the transform's business, and the batch was validated when
+    first built.
     """
 
-    def _unflatten(aux: tuple[BatchSpec, str, bool], children: list) -> RecordBatch:
+    def _unflatten(aux: tuple[BatchSpec, str, bool], children: list) -> RecordBatch | Record:
         spec, name, name_is_auto = aux
-        assert isinstance(spec.element_spec, RecordSpec)
-        keys = spec.element_spec.event_template.keys()
-        batch = object.__new__(cls)
+        element_spec = spec.element_spec
+        assert isinstance(element_spec, RecordSpec)
+        template = element_spec.event_template
         # ``strict``: a child count that disagrees with the spec's fields would
-        # otherwise truncate the columns silently, leaving a batch whose own spec
+        # otherwise truncate the columns silently, leaving a value whose own spec
         # is a false statement about it.
-        object.__setattr__(batch, "_columns", dict(zip(keys, children, strict=True)))
-        batch._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        columns = dict(zip(template.keys(), children, strict=True))
+
+        rank = _surviving_batch_rank(columns, template, spec)
+        if rank is None:
+            # The children's shapes are unreadable, so take the spec as given —
+            # the round trip out of an untransformed batch, where it is right.
+            batch = object.__new__(cls)
+            object.__setattr__(batch, "_columns", columns)
+            batch._init_batch(spec, name=name, name_is_auto=name_is_auto)
+            return batch
+        if rank == 0:
+            return Record(
+                name,
+                columns,
+                event_template=element_spec,
+                name_is_auto=name_is_auto,
+                _validate_leaves=False,
+            )
+        # Reuse the stored spec where the multiplicity is unchanged, which is the
+        # ordinary round trip: rebuilding an equal one would allocate at every
+        # transform boundary and cost the identity a caller can rely on.
+        rebuilt = (
+            spec if rank == len(spec.batch_shape) else replace(spec, **_levels_for_rank(spec, rank))
+        )
+        batch = object.__new__(cls)
+        object.__setattr__(batch, "_columns", columns)
+        batch._init_batch(rebuilt, name=name, name_is_auto=name_is_auto)
         return batch
 
     return _unflatten
+
+
+def _surviving_batch_rank(
+    columns: dict[str, Any], template: EventTemplate, spec: BatchSpec
+) -> int | None:
+    """How many batch axes the *columns* still carry, or ``None`` when unreadable.
+
+    Each column is ``(*batch_axes, *event_shape)``, so what its rank has beyond
+    its field's event rank is the batch part. A column reporting no shape, or a
+    field whose event shape has no fixed size, leaves the question unanswerable.
+    """
+    ranks = set()
+    for path, column in columns.items():
+        shape = _column_shape(column)
+        if shape is None:
+            return None
+        field = template[path]
+        event_rank = len(field.shape) if isinstance(field, ArraySpec) else 0
+        ranks.add(len(shape) - event_rank)
+    if len(ranks) != 1:
+        return None
+    rank = ranks.pop()
+    return rank if 0 <= rank <= len(spec.batch_shape) else None
+
+
+def _levels_for_rank(spec: BatchSpec, rank: int) -> dict[str, tuple]:
+    """The level tiling for the innermost *rank* of *spec*'s batch axes.
+
+    A transform strips from the outermost level in, so the levels that survive
+    are the trailing ones, and a level only partly consumed keeps the axes it
+    has left.
+    """
+    groups: list[tuple[int, ...]] = []
+    names: list[str] = []
+    remaining = rank
+    for level_name, group in zip(
+        reversed(spec.level_names), reversed(spec.axis_groups), strict=True
+    ):
+        if remaining <= 0:
+            break
+        kept = group[-remaining:] if remaining < len(group) else group
+        groups.insert(0, tuple(kept))
+        names.insert(0, level_name)
+        remaining -= len(kept)
+    return {"axis_groups": tuple(groups), "level_names": tuple(names)}
 
 
 jax.tree_util.register_pytree_node(RecordBatch, _record_batch_flatten, _unflatten_with(RecordBatch))
