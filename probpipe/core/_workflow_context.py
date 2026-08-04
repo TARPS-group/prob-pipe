@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import threading
+import weakref
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from os import urandom as _os_urandom
-from threading import Lock, get_ident
+from threading import Lock
 from types import TracebackType
 from typing import Any, Literal
 
@@ -16,6 +19,8 @@ from ..custom_types import PRNGKey
 from ._workflow_errors import UnmanagedConcurrentWorkflowEntryError
 from ._workflow_rng import (
     RandomEventIdentity,
+    _RandomEventPath,
+    _RandomEventValue,
     derive_event_key_words,
     encode_random_event,
     jax_key_from_words,
@@ -36,8 +41,9 @@ _WorkflowContextKind = Literal[
 class _WorkflowOwner:
     """Operational owner of one workflow frame."""
 
-    thread_id: int
-    task_id: int | None
+    process_id: int
+    thread_ref: weakref.ReferenceType[threading.Thread]
+    task_ref: weakref.ReferenceType[asyncio.Task[Any]] | None
 
 
 @dataclass(frozen=True)
@@ -71,9 +77,10 @@ class _StochasticLedger:
 class _WorkflowFrameState:
     """Lazy materialization state kept behind an immutable frame binding."""
 
-    path_prefix: tuple[Any, ...] | None = None
-    managed_unit_segment: tuple[Any, ...] | None = None
+    path_prefix: _RandomEventPath | None = None
+    managed_unit_segment: _RandomEventPath | None = None
     root_words: tuple[int, int] | None = None
+    closed: bool = False
     lock: Any = field(default_factory=Lock, repr=False)
 
 
@@ -90,14 +97,14 @@ class _WorkflowInvocation:
     """One committed stochastic occurrence in an active workflow frame."""
 
     frame: _WorkflowFrame
-    occurrence_path: tuple[Any, ...]
+    occurrence_path: _RandomEventPath
     claims: _EventClaims = field(default_factory=_EventClaims)
 
     def key_for(
         self,
         *,
-        stochastic_source_id: Any,
-        logical_unit_id: Any,
+        stochastic_source_id: _RandomEventValue,
+        logical_unit_id: _RandomEventValue,
     ) -> PRNGKey:
         """Claim the context-derived key for one source and logical unit."""
         identity = RandomEventIdentity(
@@ -196,6 +203,7 @@ class _WorkflowRunScope:
         if _ACTIVE_WORKFLOW_FRAME.get() is not self._frame:
             raise RuntimeError("workflow_run contexts must exit in nesting order")
         _ACTIVE_WORKFLOW_FRAME.reset(self._token)
+        _close_workflow_frame(self._frame)
         self._frame = None
         self._token = None
 
@@ -281,6 +289,19 @@ def _workflow_side_effects_forbidden() -> bool:
     return _STOCHASTIC_PROBE_STATE.get() is not None or _JAX_RUNTIME_GUARD.get()
 
 
+def _guard_managed_submission() -> None:
+    """Reject managed transport from a probe or an actual JAX body."""
+    probe_state = _STOCHASTIC_PROBE_STATE.get()
+    if probe_state is not None:
+        probe_state.effect_observed = True
+        raise _StochasticProbeSignal("JAX route probing reached managed submission")
+    if _JAX_RUNTIME_GUARD.get():
+        raise TypeError(
+            "JAX workflow execution cannot perform managed submission. Use "
+            "dispatch='auto', 'sequential', or a caller-owned key outside the JAX body."
+        )
+
+
 def _guard_automatic_key_request() -> None:
     """Reject omitted-key randomness during actual JAX execution."""
     if _JAX_RUNTIME_GUARD.get():
@@ -321,7 +342,8 @@ def _commit_stochastic_invocation_in_frame(
     )
 
 
-def _materialize_path(frame: _WorkflowFrame) -> tuple[Any, ...]:
+def _materialize_path(frame: _WorkflowFrame) -> _RandomEventPath:
+    _assert_workflow_frame_open(frame)
     path_prefix = frame.state.path_prefix
     if path_prefix is not None:
         return path_prefix
@@ -345,7 +367,7 @@ def _materialize_path(frame: _WorkflowFrame) -> tuple[Any, ...]:
 def _materialize_descendant_path(
     frame: _WorkflowFrame,
     ancestor: _WorkflowFrame,
-) -> tuple[Any, ...]:
+) -> _RandomEventPath:
     """Return a lazily materialized path relative to one managed ancestor."""
     cursor = frame
     while cursor is not ancestor:
@@ -367,21 +389,54 @@ def _current_workflow_owner() -> _WorkflowOwner:
     except RuntimeError:
         task = None
     return _WorkflowOwner(
-        thread_id=get_ident(),
-        task_id=None if task is None else id(task),
+        process_id=os.getpid(),
+        thread_ref=weakref.ref(threading.current_thread()),
+        task_ref=None if task is None else weakref.ref(task),
     )
 
 
 def _assert_workflow_admission(frame: _WorkflowFrame | None = None) -> None:
     """Reject passive context copies entering from another thread or task."""
     active = _ACTIVE_WORKFLOW_FRAME.get() if frame is None else frame
-    if active is None or active.owner == _current_workflow_owner():
+    if active is None:
         return
-    raise UnmanagedConcurrentWorkflowEntryError(
-        "The active workflow context belongs to another thread or asyncio task. "
-        "Use a ProbPipe-managed execution route, or start a new workflow_run in "
-        "the concurrent worker instead of copying the parent context."
+    owner = active.owner
+    current = _current_workflow_owner()
+    same_owner = (
+        owner.process_id == current.process_id
+        and owner.thread_ref() is current.thread_ref()
+        and (
+            (owner.task_ref is None and current.task_ref is None)
+            or (
+                owner.task_ref is not None
+                and current.task_ref is not None
+                and owner.task_ref() is current.task_ref()
+            )
+        )
     )
+    if not same_owner:
+        raise UnmanagedConcurrentWorkflowEntryError(
+            "The active workflow context belongs to another process, thread, or asyncio task. "
+            "Use a ProbPipe-managed execution route, or start a new workflow_run in "
+            "the concurrent worker instead of copying the parent context."
+        )
+    _assert_workflow_frame_open(active)
+
+
+def _assert_workflow_frame_open(frame: _WorkflowFrame) -> None:
+    """Reject use of a workflow frame after its installing scope has exited."""
+    with frame.state.lock:
+        if frame.state.closed:
+            raise UnmanagedConcurrentWorkflowEntryError(
+                "The active workflow context has already closed. Do not re-enter a "
+                "saved Context from an exited workflow_run."
+            )
+
+
+def _close_workflow_frame(frame: _WorkflowFrame) -> None:
+    """Mark a workflow frame unavailable to passive saved-context copies."""
+    with frame.state.lock:
+        frame.state.closed = True
 
 
 def _capture_active_workflow_frame() -> _WorkflowFrame | None:
@@ -394,9 +449,10 @@ def _capture_active_workflow_frame() -> _WorkflowFrame | None:
 @contextmanager
 def _managed_work_item_scope(
     parent: _WorkflowFrame,
-    unit_segment: tuple[Any, ...],
+    unit_segment: _RandomEventPath,
 ) -> Generator[None, None, None]:
     """Install a thread/task-owned child frame for one managed work item."""
+    _assert_workflow_frame_open(parent)
     frame = _WorkflowFrame(
         kind="managed",
         seed_words=None,
@@ -411,6 +467,7 @@ def _managed_work_item_scope(
         if _ACTIVE_WORKFLOW_FRAME.get() is not frame:
             raise RuntimeError("managed workflow frames must exit in nesting order")
         _ACTIVE_WORKFLOW_FRAME.reset(token)
+        _close_workflow_frame(frame)
 
 
 @contextmanager
@@ -420,7 +477,7 @@ def _transported_workflow_frame(
     """Install a standalone worker frame from serializable parent authority."""
     frame = _WorkflowFrame(
         kind="managed",
-        seed_words=root_words,
+        seed_words=None,
         parent=None,
         owner=_current_workflow_owner(),
         state=_WorkflowFrameState(
@@ -435,6 +492,7 @@ def _transported_workflow_frame(
         if _ACTIVE_WORKFLOW_FRAME.get() is not frame:
             raise RuntimeError("transported workflow frames must exit in nesting order")
         _ACTIVE_WORKFLOW_FRAME.reset(token)
+        _close_workflow_frame(frame)
 
 
 @contextmanager
@@ -454,9 +512,11 @@ def _replay_workflow_frame(root_words: tuple[int, int]) -> Generator[None, None,
         if _ACTIVE_WORKFLOW_FRAME.get() is not frame:
             raise RuntimeError("replay workflow frames must exit in nesting order")
         _ACTIVE_WORKFLOW_FRAME.reset(token)
+        _close_workflow_frame(frame)
 
 
 def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
+    _assert_workflow_frame_open(frame)
     root_words = frame.state.root_words
     if root_words is not None:
         return root_words

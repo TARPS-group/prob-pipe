@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
+import sys
+import textwrap
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
 from unittest.mock import patch
@@ -96,6 +101,77 @@ class TestWorkflowRunBoundary:
 
 
 class TestWorkflowAdmission:
+    def test_owner_records_process_and_object_identities(self):
+        owner = _workflow_context._current_workflow_owner()
+
+        assert owner.process_id == os.getpid()
+        assert owner.thread_ref() is threading.current_thread()
+        assert owner.task_ref is None
+
+        async def assert_task_identity():
+            task_owner = _workflow_context._current_workflow_owner()
+            assert task_owner.task_ref is not None
+            assert task_owner.task_ref() is asyncio.current_task()
+
+        asyncio.run(assert_task_identity())
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="requires os.fork")
+    def test_forked_child_cannot_enter_an_inherited_workflow_frame(self):
+        script = textwrap.dedent(
+            """
+            import os
+            import signal
+            import threading
+
+            from probpipe import UnmanagedConcurrentWorkflowEntryError, workflow_run
+            from probpipe.core import _workflow_context
+
+            with workflow_run(seed=7):
+                frame = _workflow_context._capture_active_workflow_frame()
+                lock_held = threading.Event()
+                release_lock = threading.Event()
+
+                def hold_frame_lock():
+                    with frame.state.lock:
+                        lock_held.set()
+                        release_lock.wait(timeout=10)
+
+                holder = threading.Thread(target=hold_frame_lock)
+                holder.start()
+                if not lock_held.wait(timeout=10):
+                    raise RuntimeError("failed to hold the workflow frame lock")
+
+                child_pid = os.fork()
+                if child_pid == 0:
+                    signal.alarm(5)
+                    try:
+                        _workflow_context._assert_workflow_admission()
+                    except UnmanagedConcurrentWorkflowEntryError:
+                        os._exit(0)
+                    except BaseException:
+                        os._exit(2)
+                    else:
+                        os._exit(1)
+
+                _, status = os.waitpid(child_pid, 0)
+                release_lock.set()
+                holder.join(timeout=10)
+                child_status = os.waitstatus_to_exitcode(status)
+                if child_status != 0:
+                    raise SystemExit(child_status)
+            """
+        )
+
+        completed = subprocess.run(
+            [sys.executable, "-c", script],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+
     def test_unmanaged_copied_thread_context_fails_before_execution_or_entropy(self):
         called = False
 
@@ -131,6 +207,24 @@ class TestWorkflowAdmission:
 
         asyncio.run(run_child())
 
+    def test_copied_context_cannot_reenter_a_closed_workflow_frame(self):
+        with (
+            patch(
+                "probpipe.core._workflow_context._os_urandom",
+                return_value=bytes(8),
+            ) as urandom,
+            workflow_run(),
+        ):
+            copied = copy_context()
+
+        with pytest.raises(
+            UnmanagedConcurrentWorkflowEntryError,
+            match="already closed",
+        ):
+            copied.run(_claim_key_words)
+
+        urandom.assert_not_called()
+
     def test_unpropagated_thread_receives_an_independent_ephemeral_run(self):
         entropy = bytes.fromhex("0123456789abcdef")
         with (
@@ -164,6 +258,18 @@ class TestWorkflowAdmission:
             UnmanagedConcurrentWorkflowEntryError
         )
         assert "UnmanagedConcurrentWorkflowEntryError" in probpipe.__all__
+
+    def test_transported_root_is_not_reported_as_a_user_seed(self):
+        with _workflow_context._transported_workflow_frame((1, 2)):
+            frame = _workflow_context._capture_active_workflow_frame()
+            assert frame is not None
+            origin = _workflow_context._describe_rng_origin(frame)
+
+        assert origin == {
+            "context_kind": "transported_run",
+            "root_source": "transported_authority",
+            "supplied_seed": None,
+        }
 
 
 class TestWorkflowOccurrences:

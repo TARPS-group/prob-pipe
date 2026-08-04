@@ -27,7 +27,8 @@ _OCCURRENCE_FIELD_TAG = b"\x10"
 _SOURCE_FIELD_TAG = b"\x11"
 _UNIT_FIELD_TAG = b"\x12"
 
-type _CanonicalValue = str | bytes | int | tuple[_CanonicalValue, ...]
+type _RandomEventValue = str | bytes | int | tuple[_RandomEventValue, ...]
+type _RandomEventPath = tuple[_RandomEventValue, ...]
 
 
 class _JAXKeyAdapterState(threading.local):
@@ -44,9 +45,9 @@ _JAX_KEY_ADAPTER_STATE = _JAXKeyAdapterState()
 class RandomEventIdentity:
     """Canonical structural identity for one workflow random event."""
 
-    occurrence_path: _CanonicalValue
-    stochastic_source_id: _CanonicalValue
-    logical_unit_id: _CanonicalValue
+    occurrence_path: _RandomEventPath
+    stochastic_source_id: _RandomEventValue
+    logical_unit_id: _RandomEventValue
 
 
 def seed_to_root_words(seed: int) -> tuple[int, int]:
@@ -121,7 +122,12 @@ def _certify_jax_key_adapter(
         raise RuntimeError("installed JAX key adapter changed the raw key word values")
 
 
-def _encode_value(value: _CanonicalValue) -> bytes:
+def _validate_random_event_value(value: object) -> None:
+    """Validate one value against the recursive workflow RNG identity ABI."""
+    _encode_value(value)
+
+
+def _encode_value(value: object) -> bytes:
     if isinstance(value, bool):
         raise TypeError("boolean values are not valid workflow RNG identity fields")
     if isinstance(value, int):
