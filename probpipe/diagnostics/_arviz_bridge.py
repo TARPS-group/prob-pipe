@@ -18,7 +18,7 @@ import numpy as np
 
 # Absolute (not relative) so this file stays loadable standalone — the
 # missing-xarray fallback test execs it outside the package.
-from probpipe.diagnostics._utils import _leaf_keys
+from probpipe.diagnostics._utils import _is_structured, _leaf_keys
 
 try:
     import xarray as xr
@@ -74,7 +74,7 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     # Case 1: ApproximateDistribution with .draws()
     if hasattr(posterior, "draws"):
         raw = posterior.draws()
-        if hasattr(raw, "fields"):
+        if _is_structured(raw):
             # One variable per leaf field, keyed by its full /-path (see
             # ``_leaf_keys`` for the nested-vs-duck-typed rule).
             return {k: np.asarray(raw[k]) for k in _leaf_keys(raw)}
@@ -84,7 +84,7 @@ def extract_draws(posterior: Any) -> dict[str, np.ndarray]:
     # Case 2: EmpiricalDistribution with .samples
     if hasattr(posterior, "samples"):
         samples = posterior.samples
-        if hasattr(samples, "fields"):
+        if _is_structured(samples):
             return {k: np.asarray(samples[k]) for k in _leaf_keys(samples)}
         return {"x": np.asarray(samples)}
 
@@ -127,7 +127,7 @@ def to_arviz_dataset(
         raise ImportError("xarray is required. Install with: pip install xarray")
 
     # ── ApproximateDistribution: delegate to the canonical builder ────────────
-    if hasattr(posterior, "chains") and hasattr(posterior, "fields"):
+    if hasattr(posterior, "chains") and _is_structured(posterior):
         from ._datatree_store import to_named_posterior_dataset
 
         ds = to_named_posterior_dataset(posterior)

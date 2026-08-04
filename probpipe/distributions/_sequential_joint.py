@@ -348,7 +348,11 @@ class SequentialJointDistribution(
             (with conditioned values plugged in as parents), giving the
             normalized conditional when the Markov structure permits it.
         """
-        if isinstance(value, Record):
+        from ..core._record_batch import RecordBatch
+
+        if isinstance(value, RecordBatch):
+            value = {path: value[path] for path in value.event_template}
+        elif isinstance(value, Record):
             value = value.to_dict()
         structured = {k: jnp.asarray(v) for k, v in value.items()}
 

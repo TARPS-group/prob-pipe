@@ -27,6 +27,7 @@ from ._empirical import (
     RecordEmpiricalDistribution,
 )
 from ._record_array import NumericRecordArray, RecordArray
+from ._record_batch import RecordBatch
 from .event_template import EventTemplate, NumericEventTemplate, _full_array_shape_or_none
 from .protocols import (
     SupportsLogProb,
@@ -58,19 +59,19 @@ class _RecordMarginal(RecordEmpiricalDistribution):
 
     def __init__(
         self,
-        samples: Record | RecordArray | Array,
+        samples: Record | RecordArray | RecordBatch | Array,
         weights: Array | Weights | None = None,
         *,
         log_weights: Array | Weights | None = None,
         name: str | None = None,
         event_template: EventTemplate | None = None,
     ):
-        # RecordArray is structurally a Record with batched leaves;
-        # peel off the rows axis so the merged constructor sees one
-        # row per batch index. Leaf-keyed (template.keys()) so a nested
-        # batch peels correctly; path-keyed construction rebuilds nesting.
-        if isinstance(samples, RecordArray):
-            template = samples.template
+        # A batch of records holds its rows axis in the batch, and the merged
+        # constructor wants one row per batch index, so peel it: the leaves keep
+        # the rows axis and the record above them loses it. Leaf-keyed, so a
+        # nested batch peels correctly; path-keyed construction rebuilds nesting.
+        if isinstance(samples, (RecordArray, RecordBatch)):
+            template = samples.event_template
             samples = Record(samples.name, {k: samples[k] for k in template}, name_is_auto=True)
         else:
             template = None
@@ -82,7 +83,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         if event_template is not None:
             self._event_template = event_template
         elif template is not None:
-            # Preserve the exact template the RecordArray carried.
+            # Preserve the exact template the batch carried.
             self._event_template = template
 
     def __repr__(self):
@@ -439,7 +440,7 @@ def _make_marginal(
             name_is_auto=True,
         )
 
-    if isinstance(output_samples, RecordArray):
+    if isinstance(output_samples, (RecordArray, RecordBatch)):
         return _RecordMarginal(
             output_samples,
             weights,
@@ -932,6 +933,18 @@ def _take_rows(component: Any, indices: Array) -> Any:
     """
     if isinstance(component, list):
         return [component[int(i)] for i in indices]
+    if isinstance(component, RecordBatch):
+        # Only the leading axis's size changes, so the levels carry over with
+        # that one size rewritten; which level holds the axis is unchanged.
+        leading, *rest = component.axis_groups
+        return type(component)(
+            {path: component[path][indices] for path in component.event_template},
+            component.level_names,
+            element_spec=component.element_spec,
+            axis_groups=((indices.shape[0], *leading[1:]), *rest),
+            name=component.name,
+            name_is_auto=True,
+        )
     if isinstance(component, RecordArray):
         # Keyed by the template, which is leaf-keyed, rather than by ``fields``,
         # which names the top-level children and is retained only for the
@@ -955,7 +968,7 @@ def _one_row(component: Any) -> Any:
     and the object itself rather than a one-element list. Field names survive —
     one draw of a record-valued component is a record, whatever its field count.
     """
-    if isinstance(component, RecordArray):
+    if isinstance(component, (RecordArray, RecordBatch)):
         return component[0]
     if isinstance(component, Record):
         return _record_rows(component, 0)

@@ -122,13 +122,14 @@ class _BayesFlowLikelihoodBase(ConditionallyIndependentLikelihood, GenerativeLik
         ``event_size`` (static under jit: shapes are concrete at trace time).
         """
         from ..core._numeric_record import NumericRecord
+        from ..core._numeric_record_batch import NumericRecordBatch
         from ..core._record_array import NumericRecordArray
         from ..core.record import Record
 
         # ``Record`` now carries the JAX-pytree ``flatten`` (returns
         # ``(leaves, aux)``), so dispatch on type rather than ``hasattr`` to get
         # the canonical 1-D ``vec`` via ``to_vector``.
-        if isinstance(params, (NumericRecord, NumericRecordArray)):
+        if isinstance(params, (NumericRecord, NumericRecordArray, NumericRecordBatch)):
             t = params.to_vector()
         elif isinstance(params, Record):
             t = params.to_numeric().to_vector()

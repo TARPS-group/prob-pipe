@@ -190,13 +190,14 @@ class JointGaussian(
 
     def _log_prob(self, value) -> Array:
         from ..core._record_array import RecordArray
+        from ..core._record_batch import RecordBatch
 
-        if not isinstance(value, (Record, RecordArray)):
+        if not isinstance(value, (Record, RecordArray, RecordBatch)):
             value = Record(self.name, value, name_is_auto=True)
         from .multivariate import MultivariateNormal as MVN
 
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
-        # ``Record``/``RecordArray`` carry their own structure, so the
+        # A record, and a batch of them, carry their own structure, so the
         # static ``flatten_value`` ignores ``event_shape`` for these
         # inputs — don't ask ``self.event_shape`` (it raises on a
         # multi-field joint).

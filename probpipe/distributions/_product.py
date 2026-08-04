@@ -321,6 +321,8 @@ class ProductDistribution(
         available there.
         """
         from ..core._record_array import RecordArray
+        from ..core._record_batch import RecordBatch
+        from ..core.named_tree import _unflatten_paths
 
         if isinstance(value, jnp.ndarray):
             if not isinstance(self, NumericRecordDistribution):
@@ -345,7 +347,11 @@ class ProductDistribution(
             if isinstance(value, jnp.ndarray):
                 (field_name,) = self.event_template.fields
                 value = {field_name: value}
-        if isinstance(value, RecordArray):
+        if isinstance(value, RecordBatch):
+            # Leaf-keyed columns, re-nested, so the tree map below pairs each
+            # column with the component that declared it.
+            value = _unflatten_paths({path: value[path] for path in value.event_template})
+        elif isinstance(value, RecordArray):
             value = {k: v for k, v in value.items()}
         if isinstance(value, Record):
             value = value.to_dict()

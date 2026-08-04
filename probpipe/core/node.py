@@ -43,6 +43,7 @@ from ._function_contract import (
     _wrap_declared_function_output,
 )
 from ._record_array import RecordArray
+from ._record_batch import RecordBatch
 from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm, auto_name
@@ -886,10 +887,10 @@ class Function(Node, TrackedTerm, Annotated):
             for ref in _workflow_call.iter_input_refs(self._signature_info, values):
                 v = _workflow_call.input_ref_value(values, ref)
                 if ref in broadcast_refs:
-                    # RecordArray input: construct a single Record from
-                    # row 0 so the dummy call sees what an inner sweep
-                    # iteration will actually receive.
-                    if isinstance(v, RecordArray):
+                    # Batched-record input: take row 0 so the dummy call
+                    # sees what an inner sweep iteration will actually
+                    # receive.
+                    if isinstance(v, (RecordArray, RecordBatch)):
                         replacement = v[0]
                     else:
                         dist = v

@@ -15,6 +15,7 @@ from typing import Any, Literal
 from . import _workflow_call, _workflow_distribution_normalization
 from ._distribution_array import DistributionArray
 from ._record_array import RecordArray
+from ._record_batch import RecordBatch
 from .distribution import Distribution
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
@@ -54,13 +55,13 @@ def build_broadcast_plan(
         value = _workflow_call.input_ref_value(values, ref)
         expected = _workflow_call.input_ref_hint(signature_info, ref)
 
-        is_record_array = isinstance(value, RecordArray)
+        is_batched_record = isinstance(value, (RecordArray, RecordBatch))
         is_dist_array = isinstance(value, DistributionArray)
-        if (is_record_array or is_dist_array) and len(value.batch_shape) > 0:
+        if (is_batched_record or is_dist_array) and len(value.batch_shape) > 0:
             if (
                 _is_same_array_hint(
                     expected,
-                    is_record_array=is_record_array,
+                    is_batched_record=is_batched_record,
                     is_dist_array=is_dist_array,
                 )
                 or expected is Any
@@ -151,12 +152,12 @@ def _broadcast_regime(
 def _is_same_array_hint(
     expected: Any,
     *,
-    is_record_array: bool,
+    is_batched_record: bool,
     is_dist_array: bool,
 ) -> bool:
     try:
         return isinstance(expected, type) and (
-            (is_record_array and issubclass(expected, RecordArray))
+            (is_batched_record and issubclass(expected, (RecordArray, RecordBatch)))
             or (is_dist_array and issubclass(expected, DistributionArray))
         )
     except TypeError:
