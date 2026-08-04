@@ -300,7 +300,7 @@ class TestNutpieIntegration:
         # so draws() returns a NumericRecordArray keyed by RV name. The
         # only parameter is `mu`, with event_shape ().
         draws = result.draws()
-        assert draws.fields == ("mu",)
+        assert draws.event_template.fields == ("mu",)
         mu_draws = jnp.asarray(draws["mu"])
         assert mu_draws.shape == (1000,)  # 2 chains × 500 draws, flattened
         # With 1000 draws total, MC SE for mean ~ post_sd / sqrt(1000) ~ 0.014
@@ -351,7 +351,7 @@ class TestNutpieIntegration:
             random_seed=0,
         )
         draws = result.draws()
-        assert draws.fields == ("zeta", "alpha", "mu")
+        assert draws.event_template.fields == ("zeta", "alpha", "mu")
         for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
             got = float(jnp.mean(jnp.asarray(draws[field])))
             np.testing.assert_allclose(got, prior_mean, atol=10.0)
@@ -384,6 +384,6 @@ class TestNutpieIntegration:
             random_seed=0,
         )
         draws = result.draws()
-        assert set(draws.fields) == {"mu", "X"}
+        assert set(draws.event_template.fields) == {"mu", "X"}
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["mu"]))), 100.0, atol=10.0)
         np.testing.assert_allclose(float(jnp.mean(jnp.asarray(draws["X"]))), -100.0, atol=10.0)

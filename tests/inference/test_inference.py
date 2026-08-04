@@ -737,7 +737,7 @@ class TestRWMH:
 
         raw_draws = result.draws()
         if hasattr(raw_draws, "fields"):
-            raw_draws = jnp.concatenate([raw_draws[f] for f in raw_draws.fields], axis=-1)
+            raw_draws = jnp.concatenate([raw_draws[f] for f in raw_draws.event_template], axis=-1)
         draws = np.asarray(raw_draws).reshape(-1, 2)
         # MC standard error: posterior_sd / sqrt(effective_n).
         # ``adapt=True`` (the default) fits the proposal covariance from

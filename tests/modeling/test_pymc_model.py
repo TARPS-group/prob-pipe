@@ -374,7 +374,7 @@ class TestEventTemplate:
             random_seed=0,
         )
         draws = result.draws()
-        assert draws.fields == ("intercept", "alpha")
+        assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (20,)
         assert jnp.asarray(draws["alpha"]).shape == (20, N)
 
@@ -410,7 +410,7 @@ class TestEventTemplate:
         )
         assert result.algorithm == "pymc_advi"
         draws = result.draws()
-        assert draws.fields == ("intercept", "alpha")
+        assert draws.event_template.fields == ("intercept", "alpha")
         assert jnp.asarray(draws["intercept"]).shape == (25,)
         assert jnp.asarray(draws["alpha"]).shape == (25, 3)
 
@@ -512,7 +512,7 @@ class TestEventTemplate:
             num_chains=1,
             random_seed=0,
         )
-        assert set(result.draws().fields) == {"mu", "X"}
+        assert set(result.draws().event_template.fields) == {"mu", "X"}
 
     def test_partial_conditioning_draws_not_mislabeled(self):
         """The inferred observed variable's draws are labeled correctly —
@@ -544,7 +544,7 @@ class TestEventTemplate:
             random_seed=0,
         )
         draws = result.draws()
-        assert set(draws.fields) == {"mu", "X"}
+        assert set(draws.event_template.fields) == {"mu", "X"}
         assert float(jnp.mean(jnp.asarray(draws["mu"]))) > 50.0  # ~ +100
         assert float(jnp.mean(jnp.asarray(draws["X"]))) < -50.0  # ~ -100
 
@@ -582,7 +582,7 @@ class TestEventTemplate:
         )
         draws = result.draws()
         # Declared order, not nutpie/pymc's alphabetical data_vars order.
-        assert draws.fields == ("zeta", "alpha", "mu")
+        assert draws.event_template.fields == ("zeta", "alpha", "mu")
         for field, prior_mean in [("zeta", 100.0), ("alpha", 0.0), ("mu", -100.0)]:
             got = float(jnp.mean(jnp.asarray(draws[field])))
             np.testing.assert_allclose(got, prior_mean, atol=10.0)
