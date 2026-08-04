@@ -5,6 +5,7 @@ from __future__ import annotations
 import functools
 import inspect
 import json
+import sys
 from unittest.mock import patch
 
 import jax
@@ -34,6 +35,13 @@ from tests.core._workflow_replay_fixtures import (
     replayable_object_array_default,
     replayable_structured_array_default,
 )
+
+
+_CALLABLE_ANCHOR_GOLDENS = {
+    "cpython-3.12": "b35e9fc0142a8f4555f83589225d74134723e1dcfb3595e337f8cea061212bba",
+    "cpython-3.13": "ac0c86ce0699e66fc9dfc3ef44df304e82723db635ce8aa372353f54f281a9e0",
+    "cpython-3.14": "e89162e2d1fa0e89a6bfc571d0eabf26882a00f9204306842eae4c4a4ad58f03",
+}
 
 
 def _identity(value):
@@ -305,12 +313,18 @@ class TestWorkflowCallableAnchor:
             )
 
         callable_anchor = _replay(result)["callable"]
+        python_replay_abi = (
+            f"{sys.implementation.name}-{sys.version_info.major}.{sys.version_info.minor}"
+        )
+        assert python_replay_abi in _CALLABLE_ANCHOR_GOLDENS, (
+            f"add a reviewed callable-anchor golden for {python_replay_abi}"
+        )
         assert callable_anchor == {
             "supported": True,
             "module": "tests.core._workflow_replay_fixtures",
             "qualname": "replayable_affine",
             "definition_abi": "probpipe.callable_definition/v1",
-            "sha256": "b35e9fc0142a8f4555f83589225d74134723e1dcfb3595e337f8cea061212bba",
+            "sha256": _CALLABLE_ANCHOR_GOLDENS[python_replay_abi],
             "signature_and_templates": {
                 "parameters": [
                     {
@@ -330,7 +344,7 @@ class TestWorkflowCallableAnchor:
                 "input_template": {"tag": "none"},
                 "output_template": {"tag": "none"},
             },
-            "python_replay_abi": "cpython-3.12",
+            "python_replay_abi": python_replay_abi,
             "probpipe_replay_abi": "probpipe.replay/v1",
         }
         source = result.provenance.diagnostics["callable_source"]
