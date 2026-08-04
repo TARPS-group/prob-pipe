@@ -38,7 +38,7 @@ def _is_structured(value: Any) -> bool:
 def _leaf_keys(value: Any) -> list[str]:
     """Leaf keys of a draws/samples container, one export variable per leaf.
 
-    A real ``Record`` / ``RecordArray`` (or a posterior wrapping one) exposes
+    A real ``Record`` / ``RecordBatch`` (or a posterior wrapping one) exposes
     the ``/``-path of every leaf via its ``event_template`` — the nested-aware
     enumeration, and the single duck-typing rule the diagnostics exporters
     share. Objects without a template (e.g. test doubles) fall back to the

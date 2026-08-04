@@ -212,8 +212,11 @@ class NumericRecordBatch(RecordBatch):
             :meth:`RecordBatch.stack` states, and plural because *vec* may carry
             several batch axes: naming them is how a multi-level batch round-trips.
         axis_groups : iterable of iterable of int, optional
-            The axis sizes each level holds, as for the constructor. Defaults to
-            one axis per level.
+            The axis sizes each level holds, as for the constructor. Omitted, a
+            single name takes **all** of *vec*'s batch axes as one level and
+            several names take one axis each. The first is why a draw of several
+            axes reconstructs without naming each: a ``sample_shape`` is one
+            multiplicity however many axes it spans.
 
         Returns
         -------
@@ -269,9 +272,12 @@ class NumericRecordBatch(RecordBatch):
                 block = block.astype(declared.dtype)
             columns[key] = block
             offset += size
+        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
+        if axis_groups is None and len(names) == 1:
+            axis_groups = (batch_shape,)
         return cls(
             columns,
-            level_names,
+            names,
             element_spec=template,
             axis_groups=axis_groups,
             name=name,
