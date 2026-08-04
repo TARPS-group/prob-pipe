@@ -62,6 +62,19 @@ def _mutate_provenance(provenance, mutate):
     return Provenance.from_dict(payload)
 
 
+_DELETE = object()
+
+
+def _edit_controls_path(controls, path, value):
+    target = controls
+    for segment in path[:-1]:
+        target = target[segment]
+    if value is _DELETE:
+        del target[path[-1]]
+    else:
+        target[path[-1]] = copy.deepcopy(value)
+
+
 class TestReplayScope:
     def test_seeded_serialized_and_replay_of_replay_roundtrip(self):
         original = _draw(seed=17)
@@ -157,6 +170,27 @@ class TestReplayScope:
                 pass
             sample(Normal(loc=0.0, scale=1.0, name="value"))
 
+    def test_replay_scope_rejects_reentry_nesting_and_active_workflow(self):
+        original = _draw()
+        scope = replay_run(original.provenance)
+
+        with scope:
+            with pytest.raises(RuntimeError, match="already active"):
+                scope.__enter__()
+            with (
+                pytest.raises(ReplayCompatibilityError, match="cannot be nested"),
+                replay_run(original.provenance),
+            ):
+                pass
+            sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+        with (
+            workflow_run(seed=9),
+            pytest.raises(ReplayCompatibilityError, match="outside an active workflow_run"),
+            replay_run(original.provenance),
+        ):
+            pass
+
     def test_caught_failed_root_is_rejected_when_scope_exits(self):
         original = _draw()
         changed = Function(func=replayable_affine, n_broadcast_samples=5)
@@ -221,6 +255,209 @@ class TestReplayAdmission:
         ):
             pass
 
+    @pytest.mark.parametrize(
+        ("path", "value", "match"),
+        [
+            pytest.param(
+                ("randomness", "schema"),
+                "unknown-recipe/v99",
+                "RNG recipe schema",
+                id="rng-recipe-schema",
+            ),
+            pytest.param(
+                ("replay", "schema"),
+                "unknown-replay/v99",
+                "replay anchor schema",
+                id="replay-schema",
+            ),
+            pytest.param(
+                ("replay", "standalone", "eligibility"),
+                "unknown",
+                "eligibility",
+                id="standalone-eligibility",
+            ),
+            pytest.param(
+                ("replay", "callable", "definition_abi"),
+                "unknown-callable/v99",
+                "callable definition ABI",
+                id="callable-definition-abi",
+            ),
+            pytest.param(
+                ("replay", "callable", "probpipe_replay_abi"),
+                "unknown-probpipe/v99",
+                "ProbPipe replay ABI",
+                id="probpipe-replay-abi",
+            ),
+            pytest.param(
+                ("replay", "callable", "module"),
+                None,
+                "invalid module",
+                id="callable-module",
+            ),
+            pytest.param(
+                ("replay", "callable", "signature_and_templates"),
+                [],
+                "signature_and_templates",
+                id="callable-signature",
+            ),
+            pytest.param(
+                ("replay", "plan", "schema"),
+                "unknown-plan/v99",
+                "stochastic plan ABI",
+                id="plan-schema",
+            ),
+            pytest.param(
+                ("replay", "plan", "canonical_fields", "managed_child_policy"),
+                "unknown-managed-child/v99",
+                "managed-child",
+                id="managed-child-policy",
+            ),
+            pytest.param(
+                ("replay", "plan", "canonical_fields", "key_ownership"),
+                "caller",
+                "not workflow-key-owned",
+                id="plan-key-ownership",
+            ),
+            pytest.param(
+                ("randomness", "expected_event_count"),
+                True,
+                "event count",
+                id="event-count-bool",
+            ),
+            pytest.param(
+                ("replay", "compatibility", "provider_abi"),
+                _DELETE,
+                "compatibility fields",
+                id="compatibility-fields",
+            ),
+            pytest.param(
+                ("replay", "compatibility", "execution_contract"),
+                "unknown-execution/v99",
+                "execution contract",
+                id="execution-contract",
+            ),
+            pytest.param(
+                ("replay", "compatibility", "descendant_adapter_abi"),
+                ["unknown-descendant/v99"],
+                "descendant-adapter ABI",
+                id="descendant-adapter-abi",
+            ),
+            pytest.param(
+                ("replay", "compatibility", "sampling_abi"),
+                [""],
+                "sampling ABI",
+                id="empty-sampling-abi",
+            ),
+            pytest.param(
+                ("replay", "compatibility", "provider_abi"),
+                ["probpipe.distribution/v1", "probpipe.distribution/v1"],
+                "duplicate entries",
+                id="duplicate-provider-abi",
+            ),
+            pytest.param(
+                ("randomness", "events", 0, "occurrence_path", 0, 1),
+                1,
+                "outside its anchored occurrence_path",
+                id="event-outside-anchor",
+            ),
+            pytest.param(
+                ("randomness", "events", 0, "occurrence_kind"),
+                "child",
+                "occurrence kind",
+                id="event-occurrence-kind",
+            ),
+            pytest.param(
+                ("randomness", "events", 0, "key_ownership"),
+                "caller",
+                "not workflow-key-owned",
+                id="event-key-ownership",
+            ),
+            pytest.param(
+                ("randomness", "events", 0, "source"),
+                {},
+                "must be a JSON sequence",
+                id="event-source-sequence",
+            ),
+            pytest.param(
+                ("randomness", "events", 0, "source"),
+                ["source-group", True],
+                "invalid structural value",
+                id="event-source-value",
+            ),
+            pytest.param(
+                ("replay", "plan", "expected_effects", 0, "provider_abi"),
+                _DELETE,
+                "incompatible fields",
+                id="effect-fields",
+            ),
+            pytest.param(
+                ("replay", "plan", "expected_effects", 0, "operation_kind"),
+                "",
+                "invalid operation_kind",
+                id="effect-operation-kind",
+            ),
+            pytest.param(
+                ("replay", "plan", "expected_effects", 0, "sample_shape"),
+                [-1],
+                "invalid sample_shape",
+                id="effect-sample-shape",
+            ),
+            pytest.param(
+                ("replay", "plan", "expected_effects", 0, "record_path"),
+                [1],
+                "invalid record_path",
+                id="effect-record-path",
+            ),
+            pytest.param(
+                ("replay", "plan", "expected_effects", 0, "descendant_descriptor"),
+                {},
+                "invalid descendant_descriptor",
+                id="effect-descriptor-sequence",
+            ),
+            pytest.param(
+                ("replay", "plan", "expected_effects", 0, "descendant_descriptor"),
+                [{}],
+                "invalid descendant_descriptor",
+                id="effect-descriptor-value",
+            ),
+        ],
+    )
+    def test_incompatible_recipe_fields_fail_at_entry_before_key_derivation(
+        self,
+        path,
+        value,
+        match,
+    ):
+        payload = _draw().provenance.to_dict()
+        _edit_controls_path(payload["controls"], path, value)
+        changed = Provenance.from_dict(payload)
+
+        with (
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words",
+                side_effect=AssertionError("derived key"),
+            ) as derive_key,
+            pytest.raises(ReplayCompatibilityError, match=match),
+            replay_run(changed),
+        ):
+            pass
+
+        derive_key.assert_not_called()
+
+    def test_missing_optional_diagnostics_remain_replayable(self):
+        original = _draw()
+        payload = original.provenance.to_dict()
+        payload["diagnostics"].pop("callable_source")
+        payload["diagnostics"].pop("execution")
+        restored = Provenance.from_dict(payload)
+
+        with replay_run(restored):
+            replayed = sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
+        assert replayed.provenance.diagnostics["replay"]["source_artifact_drift"] is True
+        assert replayed.provenance.diagnostics["replay"]["execution_drift"] is True
+
         payload = _draw().provenance.to_dict()
         payload["controls"]["randomness"]["root_words"] = [True, 1]
         with (
@@ -233,11 +470,44 @@ class TestReplayAdmission:
         "occurrence_path",
         [
             [],
+            [[]],
             [["unknown-segment", 0]],
+            [["invocation", True]],
             [["operation", 0]],
             [["child", 0]],
             [["scope", 0], ["child", 0]],
             [["invocation", 0], ["invocation", 1]],
+            [
+                ["invocation", 0],
+                ["managed-unit", "unknown-managed/v99", "point", 0],
+                ["child", 0],
+            ],
+            [
+                ["invocation", 0],
+                ["managed-unit", "probpipe.managed_work_item/v1", "point", 1],
+                ["child", 0],
+            ],
+            [
+                ["invocation", 0],
+                ["managed-unit", "probpipe.managed_work_item/v1", "sweep-cell"],
+                ["child", 0],
+            ],
+            [
+                ["invocation", 0],
+                [
+                    "managed-unit",
+                    "probpipe.managed_work_item/v1",
+                    "lifted-evaluation",
+                    ["unknown-unit"],
+                    0,
+                ],
+                ["child", 0],
+            ],
+            [
+                ["invocation", 0],
+                ["managed-unit", "probpipe.managed_work_item/v1", "unknown-layout", 0],
+                ["child", 0],
+            ],
         ],
     )
     def test_malformed_function_occurrence_paths_fail_at_entry(self, occurrence_path):
@@ -296,6 +566,45 @@ class TestReplayPreflight:
             replay_run(original.provenance),
         ):
             changed(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+    def test_unsupported_current_callable_fails_before_sampling(self):
+        workflow = Function(func=replayable_identity, n_broadcast_samples=5)
+        with workflow_run(seed=4):
+            original = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+        changed = Function(func=lambda value: value, n_broadcast_samples=5)
+        candidate = Normal(loc=0.0, scale=1.0, name="value")
+
+        with (
+            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(ReplayUnsupportedCallableError, match="lambda"),
+            replay_run(original.provenance),
+        ):
+            changed(value=candidate)
+
+    def test_same_import_anchor_definition_drift_fails_before_sampling(self, monkeypatch):
+        workflow = Function(func=replayable_identity, n_broadcast_samples=5)
+        with workflow_run(seed=4):
+            original = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        def changed_identity(value):
+            return value + 1
+
+        changed_identity.__module__ = _workflow_replay_fixtures.__name__
+        changed_identity.__qualname__ = "replayable_identity"
+        monkeypatch.setattr(
+            _workflow_replay_fixtures,
+            "replayable_identity",
+            changed_identity,
+        )
+        changed = Function(func=changed_identity, n_broadcast_samples=5)
+        candidate = Normal(loc=0.0, scale=1.0, name="value")
+
+        with (
+            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(ReplayCompatibilityError, match="definition changed"),
+            replay_run(original.provenance),
+        ):
+            changed(value=candidate)
 
     def test_plan_drift_fails_before_distribution_sampling(self):
         workflow = Function(func=replayable_identity, n_broadcast_samples=5)
