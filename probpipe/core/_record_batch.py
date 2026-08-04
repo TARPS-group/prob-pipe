@@ -151,8 +151,8 @@ class RecordBatch(Batch[Record]):
 
     __slots__ = ("_columns",)
 
-    #: What every entry of a non-array column must be, phrased for the refusal a
-    #: bad one earns. A subclass narrowing the admissible columns supplies its own.
+    #: Completes "every entry of the column at ... must ..." in the refusal a bad
+    #: entry earns. A subclass that narrows what a column may hold supplies its own.
     _entry_rule = "satisfy its field's specification"
 
     def __init__(
@@ -214,13 +214,12 @@ class RecordBatch(Batch[Record]):
         what a caller needs to hear. The shapes are already settled by then, by
         the batch-axis derivation, so what is left is the dtype and the entries.
 
-        An **array** field's column is checked for a numeric dtype the declared
-        one admits, by the same same-kind rule
-        :meth:`~probpipe.ArraySpec.is_valid` applies to a single value: a widening
-        or a within-kind narrowing passes, a cross-kind conversion does not.
-        Every **other** field's column holds one entry per element and is walked
-        entry by entry against its spec, the counterpart of what ``_ObjectBatch``
-        does for a batch that stores its elements.
+        An **array** field declares a dtype, so its column is checked against
+        it by the rule :meth:`~probpipe.ArraySpec.is_valid` applies to a single
+        value: same-kind castable, so a widening or a within-kind narrowing passes
+        and a cross-kind conversion does not. Any **other** field holds one entry
+        per element, so its column is walked entry by entry, as ``_ObjectBatch``
+        walks the elements of a batch that stores them.
 
         Raises
         ------
