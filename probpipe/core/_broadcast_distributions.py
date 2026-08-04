@@ -26,8 +26,8 @@ from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
+from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _is_object_array
-from ._record_array import NumericRecordArray, RecordArray
 from ._record_batch import RecordBatch, _batch_class_for
 from .event_template import (
     ArraySpec,
@@ -65,7 +65,7 @@ class _RecordMarginal(RecordEmpiricalDistribution):
 
     def __init__(
         self,
-        samples: Record | RecordArray | RecordBatch | Array,
+        samples: Record | RecordBatch | Array,
         weights: Array | Weights | None = None,
         *,
         log_weights: Array | Weights | None = None,
@@ -81,9 +81,6 @@ class _RecordMarginal(RecordEmpiricalDistribution):
             # Raw columns: a non-array field presents as its own object batch,
             # which is not what belongs in a record of batched leaves.
             samples = Record(samples.name, samples._raw_columns(), name_is_auto=True)
-        elif isinstance(samples, RecordArray):
-            template = samples.event_template
-            samples = Record(samples.name, {k: samples[k] for k in template}, name_is_auto=True)
         else:
             template = None
         # Default field name for bare-array outputs (the WF marginal
@@ -161,7 +158,7 @@ class _MixtureSampling:
 
     Returns a raw ``Array`` when component samples are arrays (the
     common case — broadcasting a numeric function over a distribution
-    of inputs), and a ``RecordArray`` when component samples are
+    of inputs), and a batch of records when component samples are
     ``Record``-valued (e.g., broadcasting a ``Record``-returning
     ``Function``). Opaque / non-stackable component outputs
     raise a ``TypeError`` with the component types listed.
@@ -171,7 +168,6 @@ class _MixtureSampling:
     _preferred_orchestration: str | None = None
 
     def _sample(self, key, sample_shape=()):
-        from ._record_array import RecordArray
         from .record import Record
 
         n_draws = prod(sample_shape) if sample_shape else 1
@@ -181,25 +177,28 @@ class _MixtureSampling:
 
         results = [self._components[int(indices[i])]._sample(keys[i], ()) for i in range(n_draws)]
 
-        # Dispatch on result type so a mixture of Record-returning
-        # distributions produces a RecordArray rather than crashing in
-        # jnp.stack. Scalars / arrays stay on the numeric path. Exclude
-        # RecordArray leaves here — ``RecordArray.stack`` expects
-        # scalar Records; a mixture over already-batched Record
-        # samples isn't supported on this path.
-        if all(isinstance(r, Record) and not isinstance(r, RecordArray) for r in results):
-            stacked_ra = RecordArray.stack(results)
+        # Dispatch on result type so a mixture of Record-returning components
+        # stacks into a batch of draws rather than crashing in jnp.stack. Scalars
+        # and arrays stay on the numeric path. A component that draws a batch of
+        # its own is not a Record, so it takes neither path — stacking batches is
+        # not supported here.
+        if all(isinstance(r, Record) for r in results):
+            template = results[0].event_template
+            cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
+            stacked = cls.stack(results, level_name=DRAW_LEVEL)
             if sample_shape == ():
-                return stacked_ra[0]
-            # Reshape the leading batch axis to sample_shape.
-            fields = {
-                name: stacked_ra[name].reshape(sample_shape + stacked_ra[name].shape[1:])
-                for name in stacked_ra.fields
+                return stacked[0]
+            # Reshape the leading axis to sample_shape: one draw level over
+            # however many axes the shape spans.
+            columns = {
+                path: stacked[path].reshape(sample_shape + stacked[path].shape[1:])
+                for path in stacked.event_template
             }
-            return type(stacked_ra)(
-                fields,
-                batch_shape=sample_shape,
-                template=stacked_ra.template,
+            return cls(
+                columns,
+                DRAW_LEVEL,
+                element_spec=stacked.element_spec,
+                axis_groups=(sample_shape,),
             )
 
         try:
@@ -346,37 +345,31 @@ Concrete subtype depends on output kind:
 """
 
 
-def _stack_declared_records(
+def _stack_declared_columns(
     records: list[Record] | Record,
     *,
     batch_shape: tuple[int, ...],
+    axis_groups: tuple[tuple[int, ...], ...],
+    level_names: tuple[str, ...],
     template: EventTemplate,
     name: str,
-) -> RecordArray:
-    """Build a nested batch for validated authoritative Function outputs."""
+) -> RecordBatch:
+    """Build one batch for validated authoritative Function outputs.
+
+    Columns are keyed by leaf path, so a nested declared output costs the stacking
+    nothing: every leaf is one column whatever depth it sits at, and there is no
+    per-subtree container to build.
+    """
     n_total = prod(batch_shape)
     if isinstance(records, list) and len(records) != n_total:
         raise ValueError(
             f"Expected {n_total} declared outputs for batch_shape={batch_shape}, got {len(records)}"
         )
 
-    fields: dict[str, Any] = {}
-    for field_name, spec in template.children.items():
-        if isinstance(spec, EventTemplate):
-            if isinstance(records, list):
-                children = [record.at_path(field_name) for record in records]
-            else:
-                children = records.at_path(field_name)
-            fields[field_name] = _stack_declared_records(
-                children,
-                batch_shape=batch_shape,
-                template=spec,
-                name=field_name,
-            )
-            continue
-
+    columns: dict[str, Any] = {}
+    for path in template:
         if isinstance(records, list):
-            values = [record[field_name] for record in records]
+            values = [record[path] for record in records]
             try:
                 batched = jnp.stack(
                     [
@@ -390,21 +383,22 @@ def _stack_declared_records(
             except (TypeError, ValueError):
                 batched = np.asarray(values, dtype=object)
         else:
-            batched = records[field_name]
+            batched = records[path]
 
         shape = getattr(batched, "shape", ())
         if tuple(shape[:1]) != (n_total,):
             raise ValueError(
-                f"Declared output field {field_name!r} has batched shape {tuple(shape)}, "
+                f"Declared output field {path!r} has batched shape {tuple(shape)}, "
                 f"expected a leading axis of length {n_total}"
             )
-        fields[field_name] = batched.reshape(batch_shape + tuple(shape[1:]))
+        columns[path] = batched.reshape(batch_shape + tuple(shape[1:]))
 
-    cls = NumericRecordArray if isinstance(template, NumericEventTemplate) else RecordArray
+    cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
     return cls(
-        fields,
-        batch_shape=batch_shape,
-        template=template,
+        columns,
+        level_names,
+        element_spec=template,
+        axis_groups=axis_groups,
         name=name,
     )
 
@@ -501,11 +495,7 @@ def _make_marginal(
 
     # Record with batched leaves (e.g., from jax.vmap over a Record-returning fn).
     # All fields must be arrays with a consistent leading batch dimension.
-    if (
-        isinstance(output_samples, Record)
-        and not isinstance(output_samples, RecordArray)
-        and len(output_samples)
-    ):
+    if isinstance(output_samples, Record) and len(output_samples):
         # Leaf values (values() descends into nested Records), so a nested
         # sample inspects its arrays rather than tripping on an interior node.
         resolved = list(output_samples.values())
@@ -528,19 +518,17 @@ def _make_marginal(
         )
 
     if isinstance(output_samples, list):
-        if output_samples and all(
-            isinstance(r, Record) and not isinstance(r, RecordArray) for r in output_samples
-        ):
+        if output_samples and all(isinstance(r, Record) for r in output_samples):
             try:
                 if event_template is not None:
-                    ra = _stack_declared_records(
+                    ra = _stack_declared_columns(
                         output_samples,
                         batch_shape=(len(output_samples),),
                         template=event_template,
                         name=name or "marginal",
                     )
                 else:
-                    ra = RecordArray.stack(output_samples)
+                    ra = RecordBatch.stack(output_samples, level_name=DRAW_LEVEL)
                 return _RecordMarginal(
                     ra,
                     weights,
@@ -579,17 +567,17 @@ def _make_marginal(
 
 
 # ---------------------------------------------------------------------------
-# _make_stack — stacked sibling of _make_marginal for RecordArray broadcasts
+# _make_stack — stacked sibling of _make_marginal for batched broadcasts
 # ---------------------------------------------------------------------------
 #
-# When a Function broadcasts over a RecordArray (parameter
+# When a Function broadcasts over a batch of records (parameter
 # sweep), the n inner outputs are independent scenarios indexed by
 # input row — *not* MC draws. The wrapper must preserve row identity:
 #
-#   numeric → NumericRecordArray(result=..., batch_shape=(n,))
-#   Record → RecordArray.stack (NumericRecordArray when all leaves numeric)
+#   numeric → NumericRecordBatch(result=..., one sweep level of (n,))
+#   Record → RecordBatch.stack (NumericRecordBatch when all leaves numeric)
 #   Distribution → DistributionArray
-#   RecordArray (per row batch_shape=(m,)) → RecordArray(batch_shape=(n, m))
+#   a batch per row (each (m,)) → one batch, levels (sweep, …) over (n, m)
 #
 # Opaque Python values (e.g. strings) that can't be stacked fall
 # through to a plain-list wrapping with a clear error if even that
@@ -651,7 +639,7 @@ def _make_stack(
 
     Returns
     -------
-    NumericRecordArray | RecordArray | DistributionArray
+    NumericRecordBatch | RecordBatch | DistributionArray
         Output type depends on the inner-return type; see module
         docstring for the dispatch table.
 
@@ -719,7 +707,7 @@ def _make_stack(
 
         # A batch per row stacks into one batch with the sweep in front of the
         # rows' own levels. Checked before the Record branch below, which would
-        # otherwise claim a RecordArray (a Record subclass) and collapse its
+        # otherwise claim a batch of records and collapse its
         # inner batch axis.
         if outs and any(isinstance(o, RecordBatch) for o in outs):
             # A batch row is all-or-nothing. Falling through on a mixture, or on
@@ -777,76 +765,37 @@ def _make_stack(
                 name_is_auto=True,
             )
 
-        if outs and all(isinstance(o, RecordArray) for o in outs):
-            first = outs[0]
-            if any(isinstance(c, EventTemplate) for c in first.template.children.values()):
-                # Rebuilding per-subtree batch children is not yet supported;
-                # mirror the nested-record guards in ``_make_stack`` below.
-                raise NotImplementedError(
-                    "Stacking nested batched records from a broadcast is not yet "
-                    "supported; return flat (top-level) record fields."
-                )
-            if all(ra.batch_shape == first.batch_shape for ra in outs):
-                fields = {
-                    fname: jnp.stack([ra[fname] for ra in outs], axis=0) for fname in first.fields
-                }
-                # Reshape the leading (n_total,) axis to batch_shape.
-                reshaped = {
-                    fname: arr.reshape(batch_shape + arr.shape[1:]) for fname, arr in fields.items()
-                }
-                # The class follows the element template, not the row that
-                # happened to arrive first: a subclass with its own constructor —
-                # a ``Design``, built from marginals — is not something an
-                # aggregate over its rows can be rebuilt as.
-                # Imported locally because later branches of this function do,
-                # which makes the name local to it throughout.
-                from ._record_array import NumericRecordArray
-
-                aggregate = (
-                    NumericRecordArray
-                    if isinstance(first.template, NumericEventTemplate)
-                    else RecordArray
-                )
-                return aggregate(
-                    reshaped,
-                    batch_shape=batch_shape + first.batch_shape,
-                    template=first.template,
-                )
-            # Mismatched inner shapes fall through to the generic
-            # Record / list handlers.
-
-        # All (scalar) Records → stack as a RecordArray. NumericRecordArray
-        # if every leaf is numeric; otherwise fall back to the permissive
-        # RecordArray class, building the fields manually so non-numeric
-        # leaves (strings, xarray objects, ...) survive.
-        if outs and all(isinstance(o, Record) and not isinstance(o, RecordArray) for o in outs):
+        # All (scalar) Records → stack into one batch. NumericRecordBatch if
+        # every leaf is numeric; otherwise the permissive RecordBatch, building the
+        # columns manually so non-numeric leaves (strings, xarray objects, ...)
+        # survive.
+        if outs and all(isinstance(o, Record) for o in outs):
             if event_template is not None:
-                return _stack_declared_records(
+                return _stack_declared_columns(
                     outs,
                     batch_shape=batch_shape,
+                    axis_groups=sweep_groups,
+                    level_names=level_names,
                     template=event_template,
                     name=name or field_name,
                 )
-            # Stack flat, then reshape to batch_shape.
+            # Stack flat, then reshape the leading axis to batch_shape.
             try:
-                from ._record_array import NumericRecordArray
-
-                flat = NumericRecordArray.stack(list(outs))
+                flat = NumericRecordBatch.stack(list(outs), level_name=level_names[0])
             except (TypeError, ValueError):
                 flat = None
             if flat is not None:
                 if batch_shape == (n_total,):
                     return flat
-                # Reshape each field's leading axis.
                 n_cur = len(flat.batch_shape)
-                new_fields = {
-                    fname: flat[fname].reshape(batch_shape + flat[fname].shape[n_cur:])
-                    for fname in flat.children
-                }
-                return type(flat)(
-                    new_fields,
-                    batch_shape=batch_shape,
-                    template=flat.template,
+                return NumericRecordBatch(
+                    {
+                        path: flat[path].reshape(batch_shape + flat[path].shape[n_cur:])
+                        for path in flat.event_template
+                    },
+                    level_names,
+                    element_spec=flat.element_spec,
+                    axis_groups=sweep_groups,
                 )
             # Manual per-field assembly: numpy-array-like leaves stack
             # numerically, object-dtype leaves use np.asarray(..., dtype=object).
@@ -885,10 +834,11 @@ def _make_stack(
                     tpl_spec[fname] = tuple(v.shape[len(batch_shape) :])
                 else:
                     tpl_spec[fname] = None
-            return RecordArray(
+            return RecordBatch(
                 fields,
-                batch_shape=batch_shape,
-                template=EventTemplate(tpl_spec),
+                level_names,
+                element_spec=EventTemplate(tpl_spec),
+                axis_groups=sweep_groups,
             )
 
         # All Distributions → stacked DistributionArray, shaped to
@@ -902,7 +852,7 @@ def _make_stack(
                 event_template=event_template,
             )
 
-        # Numeric scalars / arrays → wrap in NumericRecordArray with
+        # Numeric scalars / arrays → wrap in a NumericRecordBatch with
         # the single "result" field carrying the stacked values,
         # reshape leading axis to batch_shape.
         try:
@@ -914,33 +864,31 @@ def _make_stack(
             stacked = None
 
         if stacked is not None:
-            from ._record_array import NumericRecordArray
-
             event_shape = tuple(stacked.shape[1:])
             reshaped = stacked.reshape(batch_shape + event_shape)
-            tpl = EventTemplate(**{field_name: event_shape})
-            return NumericRecordArray(
+            return NumericRecordBatch(
                 {field_name: reshaped},
-                batch_shape=batch_shape,
-                template=tpl,
+                level_names,
+                element_spec=EventTemplate(**{field_name: event_shape}),
+                axis_groups=sweep_groups,
             )
 
-        # Last-ditch: wrap as a RecordArray whose single field holds a
+        # Last-ditch: wrap as a RecordBatch whose single field holds a
         # numpy object-dtype array of the opaque outputs.
         try:
             object_array = np.asarray(outs, dtype=object).reshape(batch_shape)
-            tpl = EventTemplate(**{field_name: None})
-            return RecordArray(
+            return RecordBatch(
                 {field_name: object_array},
-                batch_shape=batch_shape,
-                template=tpl,
+                level_names,
+                element_spec=EventTemplate(**{field_name: None}),
+                axis_groups=sweep_groups,
             )
         except (TypeError, ValueError) as exc:
             types_seen = sorted({type(o).__name__ for o in outs})
             raise TypeError(
                 f"_make_stack cannot aggregate outputs of types "
                 f"{types_seen}; supported: numeric arrays, Record, "
-                f"RecordArray, Distribution."
+                f"a batch of records, Distribution."
             ) from exc
 
     # --- Single-pytree path (jax.vmap execution) ------------------------
@@ -954,8 +902,6 @@ def _make_stack(
                 f"expected leading axis of length {n_total} "
                 f"(batch_shape={batch_shape})."
             )
-        from ._record_array import NumericRecordArray
-
         event_shape = tuple(inner_outputs.shape[1:])
         if event_template is not None:
             if len(event_template) != 1:
@@ -969,65 +915,54 @@ def _make_stack(
                 {output_field: inner_outputs},
                 name_is_auto=True,
             )
-            return _stack_declared_records(
+            return _stack_declared_columns(
                 batched_record,
                 batch_shape=batch_shape,
+                axis_groups=sweep_groups,
+                level_names=level_names,
                 template=event_template,
                 name=name or field_name,
             )
-        reshaped = inner_outputs.reshape(batch_shape + event_shape)
-        tpl = EventTemplate(**{field_name: event_shape})
-        return NumericRecordArray(
-            {field_name: reshaped},
-            batch_shape=batch_shape,
-            template=tpl,
+        return NumericRecordBatch(
+            {field_name: inner_outputs.reshape(batch_shape + event_shape)},
+            level_names,
+            element_spec=EventTemplate(**{field_name: event_shape}),
+            axis_groups=(batch_shape,),
         )
 
-    # vmap of a Record-returning function produces a Record with
-    # batched leaves (each leaf has leading axis n_total). Promote to a
-    # RecordArray — NumericRecordArray when all leaves numeric — with
-    # the leading axis reshaped to batch_shape.
-    if (
-        isinstance(inner_outputs, Record)
-        and not isinstance(inner_outputs, RecordArray)
-        and inner_outputs.children
-    ):
+    # vmap of a Record-returning function produces a Record with batched leaves
+    # (each leaf has leading axis n_total). Promote it to a batch — numeric when
+    # every leaf is — with the leading axis reshaped to batch_shape.
+    if isinstance(inner_outputs, Record) and inner_outputs.children:
         if event_template is not None:
-            return _stack_declared_records(
+            return _stack_declared_columns(
                 inner_outputs,
                 batch_shape=batch_shape,
+                axis_groups=sweep_groups,
+                level_names=level_names,
                 template=event_template,
                 name=name or field_name,
             )
-        if any(
-            isinstance(c, EventTemplate) for c in inner_outputs.event_template.children.values()
-        ):
-            raise NotImplementedError(
-                "Broadcasting a workflow output that is a nested Record into a batch "
-                "is not yet supported; flatten the output to top-level fields."
-            )
-        resolved = [inner_outputs[f] for f in inner_outputs.children]
+        # Leaf-keyed, so a nested output is one column per leaf and needs no
+        # flattening by the caller.
+        paths = list(inner_outputs.event_template)
+        resolved = [inner_outputs[path] for path in paths]
         if all(hasattr(v, "shape") and v.shape[:1] == (n_total,) for v in resolved):
-            event_shapes = tuple(v.shape[1:] for v in resolved)
-            tpl = event_template or EventTemplate(**dict(zip(inner_outputs.children, event_shapes)))
-            reshaped_fields = {
-                fname: v.reshape(batch_shape + v.shape[1:])
-                for fname, v in zip(inner_outputs.children, resolved)
+            tpl = event_template or EventTemplate(
+                dict(zip(paths, (v.shape[1:] for v in resolved), strict=True))
+            )
+            columns = {
+                path: v.reshape(batch_shape + v.shape[1:])
+                for path, v in zip(paths, resolved, strict=True)
+            }
+            shared = {
+                "element_spec": tpl,
+                "axis_groups": sweep_groups,
             }
             try:
-                from ._record_array import NumericRecordArray
-
-                return NumericRecordArray(
-                    reshaped_fields,
-                    batch_shape=batch_shape,
-                    template=tpl,
-                )
+                return NumericRecordBatch(columns, level_names, **shared)
             except (TypeError, ValueError):
-                return RecordArray(
-                    reshaped_fields,
-                    batch_shape=batch_shape,
-                    template=tpl,
-                )
+                return RecordBatch(columns, level_names, **shared)
 
     # Fallback — shouldn't reach here with well-formed vmap output; if
     # we do, raise with the type info.
@@ -1096,8 +1031,8 @@ def _take_rows(component: Any, indices: Array) -> Any:
     that axis depends on what the component holds. An array is indexed directly. A
     list holds one object per row and is gathered positionally. A record has fields
     rather than a shape, so its leaves are gathered and the record rebuilt around
-    them — a ``RecordArray`` stating the row count it now holds, since that count
-    is stored rather than read off the leaves.
+    them — a batch stating the row count it now holds, since that count is stored
+    rather than read off the leaves.
     """
     if isinstance(component, list):
         return [component[int(i)] for i in indices]
@@ -1116,16 +1051,6 @@ def _take_rows(component: Any, indices: Array) -> Any:
             name=component.name,
             name_is_auto=True,
         )
-    if isinstance(component, RecordArray):
-        # Keyed by the template, which is leaf-keyed, rather than by ``fields``,
-        # which names the top-level children and is retained only for the
-        # migration. The two agree while a record batch is flat and will not once
-        # one can nest; ``_RecordMarginal`` peels a batch the same way.
-        return type(component)(
-            {path: component[path][indices] for path in component.template},
-            batch_shape=(indices.shape[0], *component.batch_shape[1:]),
-            template=component.template,
-        )
     if isinstance(component, Record):
         return _record_rows(component, indices)
     return component[indices]
@@ -1139,7 +1064,7 @@ def _one_row(component: Any) -> Any:
     and the object itself rather than a one-element list. Field names survive —
     one draw of a record-valued component is a record, whatever its field count.
     """
-    if isinstance(component, (RecordArray, RecordBatch)):
+    if isinstance(component, RecordBatch):
         return component[0]
     if isinstance(component, Record):
         return _record_rows(component, 0)
@@ -1176,7 +1101,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
 
     Parameters
     ----------
-    input_samples : dict[str, Array or RecordArray or list]
+    input_samples : dict[str, Array or RecordBatch or list]
         ``{arg_name: rows}`` for each broadcast argument, every value batched
         over the same leading axis of length ``n``: an array of shape
         ``(n, *event_shape)``, a record batch of ``batch_shape == (n,)`` for a
