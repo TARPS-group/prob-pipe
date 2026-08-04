@@ -10,6 +10,7 @@ import jax
 import pytest
 
 import probpipe.core._workflow_broker as broker_mod
+import probpipe.core._workflow_context as context_mod
 import probpipe.core._workflow_execution as execution_mod
 import probpipe.core._workflow_managed as managed_mod
 import probpipe.core.node as node_mod
@@ -275,6 +276,15 @@ class TestManagedPayloadValidation:
                 TypeError,
                 "unit segments must be tuples",
                 id="unit-segment",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedUnitFrame(
+                    unit_segment=("scope", 0),
+                    token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+                ),
+                ValueError,
+                "canonical managed unit segment",
+                id="colliding-unit-segment",
             ),
             pytest.param(
                 lambda: managed_mod.ManagedUnitFrame(
@@ -712,6 +722,55 @@ class TestThreadExecution:
 
         with pytest.raises(TypeError, match="max_workers"):
             execution_mod.execute_many(request)
+
+
+class TestManagedSubmissionGuards:
+    @pytest.mark.parametrize(
+        "entry_name",
+        ["thread", "map_task", "prefect_task", "prefect_flow"],
+    )
+    @pytest.mark.parametrize(
+        ("guard_factory", "exception", "message"),
+        [
+            pytest.param(
+                context_mod._workflow_probe,
+                context_mod._StochasticProbeSignal,
+                "managed submission",
+                id="probe",
+            ),
+            pytest.param(
+                context_mod._workflow_jax_runtime_guard,
+                TypeError,
+                "managed submission",
+                id="jax-runtime",
+            ),
+        ],
+    )
+    def test_direct_transport_entry_rejects_side_effect_forbidden_callers(
+        self,
+        entry_name,
+        guard_factory,
+        exception,
+        message,
+        monkeypatch,
+    ):
+        monkeypatch.setattr(execution_mod, "ThreadPoolExecutor", RecordingExecutor)
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        request = make_request(mode=entry_name if entry_name != "map_task" else "prefect_task")
+        entry = {
+            "thread": execution_mod.execute_many_threaded,
+            "map_task": execution_mod.map_task,
+            "prefect_task": execution_mod.execute_many_prefect_task,
+            "prefect_flow": execution_mod.execute_many_prefect_flow,
+        }[entry_name]
+
+        with pytest.raises(exception, match=message), guard_factory():
+            entry(request)
+
+        assert RecordingExecutor.instances == []
+        assert FakeMappedTask.map_calls == 0
+        assert RecordingFlow.calls == []
 
 
 class TestPrefectMapping:

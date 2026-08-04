@@ -57,6 +57,67 @@ class TestStochasticEffectPlan:
                 record_path=["field"],
             )
 
+    def test_invalid_event_identity_does_not_consume_an_occurrence(self):
+        class MutableEvent:
+            stochastic_source_id = ("source-group", 0)
+            logical_unit_id = ("singleton",)
+
+        event = MutableEvent()
+        invalid_plan = StochasticEffectPlan(
+            operation_kind="test",
+            execution_mode="sampled",
+            event=event,
+            sample_shape=(8,),
+            sampling_abi="test-sampling/v1",
+            provider_abi="test-provider/v1",
+        )
+        event.stochastic_source_id = ("source-group", True)
+        object.__setattr__(invalid_plan, "event", event)
+
+        with workflow_run(seed=7):
+            with (
+                _function_stochastic_scope() as invalid_broker,
+                pytest.raises(TypeError, match="boolean values"),
+            ):
+                _resolve_automatic_key(None, invalid_plan)
+            with _function_stochastic_scope():
+                after_invalid = _key_words(_resolve_automatic_key(None, _plan()))
+
+        with workflow_run(seed=7), _function_stochastic_scope():
+            baseline = _key_words(_resolve_automatic_key(None, _plan()))
+
+        assert invalid_broker._invocation is None
+        assert after_invalid == baseline
+
+    def test_event_identity_is_snapshotted_before_occurrence_commit(self):
+        class ChangingEvent:
+            source_reads = 0
+            logical_unit_id = ("singleton",)
+
+            @property
+            def stochastic_source_id(self):
+                self.source_reads += 1
+                if self.source_reads <= 2:
+                    return ("source-group", 0)
+                return ("source-group", True)
+
+        event = ChangingEvent()
+        plan = StochasticEffectPlan(
+            operation_kind="test",
+            execution_mode="sampled",
+            event=event,
+            sample_shape=(8,),
+            sampling_abi="test-sampling/v1",
+            provider_abi="test-provider/v1",
+        )
+
+        with workflow_run(seed=7), _function_stochastic_scope() as broker:
+            key = _resolve_automatic_key(None, plan)
+
+        assert _key_words(key)
+        assert broker._invocation is not None
+        assert event.source_reads == 1
+
 
 class TestAutomaticKeyOwnership:
     def test_explicit_key_is_returned_unchanged_without_context_or_validation(self):

@@ -131,6 +131,7 @@ def execute_many_threaded(
     if not request.work_items:
         return []
 
+    _workflow_context._guard_managed_submission()
     max_workers = _validate_max_workers(request.execution.max_workers)
     if parent_frame is None:
         parent_frame = _workflow_context._capture_active_workflow_frame()
@@ -162,6 +163,7 @@ def map_task(
     if not request.work_items:
         return []
 
+    _workflow_context._guard_managed_submission()
     _ensure_prefect_available()
 
     func = request.func
@@ -195,6 +197,7 @@ def _run_prefect_payloads(
     payloads: list[ManagedPrefectPayload],
 ) -> list[ManagedExecutionOutcome]:
     """Submit one attempt for each payload and collect its managed outcome."""
+    _workflow_context._guard_managed_submission()
     return [future.result() for future in run_func.map(payload=payloads)]
 
 
@@ -322,6 +325,7 @@ def execute_many_prefect_task(
     if not request.work_items:
         return []
 
+    _workflow_context._guard_managed_submission()
     _ensure_prefect_available()
     runner = request.execution.prefect_task_runner
 
@@ -344,6 +348,7 @@ def execute_many_prefect_flow(
     if not request.work_items:
         return []
 
+    _workflow_context._guard_managed_submission()
     _ensure_prefect_available()
     runner = request.execution.prefect_task_runner
 

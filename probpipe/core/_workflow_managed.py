@@ -7,6 +7,11 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from ._workflow_rng import (
+    _RandomEventPath,
+    _validate_random_event_value,
+)
+
 _MANAGED_WORK_ITEM_ABI = "probpipe.managed_work_item/v1"
 
 
@@ -30,13 +35,15 @@ class ManagedWorkItemToken:
 class ManagedUnitFrame:
     """Canonical logical-unit binding transported with one work item."""
 
-    unit_segment: tuple[Any, ...]
+    unit_segment: _RandomEventPath
     token: ManagedWorkItemToken
     derivation_abi: str = _MANAGED_WORK_ITEM_ABI
 
     def __post_init__(self) -> None:
         if not isinstance(self.unit_segment, tuple):
             raise TypeError("managed unit segments must be tuples")
+        if not _is_managed_unit_segment(self.unit_segment):
+            raise ValueError("managed unit segments must use a canonical managed unit segment")
         if self.derivation_abi != _MANAGED_WORK_ITEM_ABI:
             raise ValueError(f"unsupported managed work-item ABI: {self.derivation_abi!r}")
 
@@ -85,7 +92,7 @@ class ManagedParentEnvelope:
     """Serializable root and occurrence authority for one remote managed unit."""
 
     root_words: tuple[int, int]
-    parent_occurrence_path: tuple[Any, ...]
+    parent_occurrence_path: _RandomEventPath
     frame: ManagedUnitFrame
     replay_expected_effects: tuple[ManagedEffectClaim, ...] | None = None
     retry_effects: tuple[ManagedEffectClaim, ...] = ()
@@ -102,6 +109,7 @@ class ManagedParentEnvelope:
             raise TypeError("managed parent root words must be two uint32 integers")
         if not isinstance(self.parent_occurrence_path, tuple):
             raise TypeError("managed parent occurrence paths must be tuples")
+        _validate_random_event_value(self.parent_occurrence_path)
         if self.replay_expected_effects is not None and (
             not isinstance(self.replay_expected_effects, tuple)
             or any(
@@ -120,10 +128,10 @@ class ManagedParentEnvelope:
 class ManagedEffectClaim:
     """Serializable descriptor of one automatic stochastic effect claim."""
 
-    occurrence_path: tuple[Any, ...]
+    occurrence_path: _RandomEventPath
     occurrence_kind: str
-    stochastic_source_id: tuple[str | int, ...]
-    logical_unit_id: tuple[str | int, ...]
+    stochastic_source_id: _RandomEventPath
+    logical_unit_id: _RandomEventPath
     operation_kind: str
     execution_mode: str
     sample_shape: tuple[int, ...] | None
@@ -140,6 +148,9 @@ class ManagedEffectClaim:
             tuple,
         ):
             raise TypeError("managed effect source and unit identities must be tuples")
+        _validate_random_event_value(self.occurrence_path)
+        _validate_random_event_value(self.stochastic_source_id)
+        _validate_random_event_value(self.logical_unit_id)
         if self.sample_shape is not None and not isinstance(self.sample_shape, tuple):
             raise TypeError("managed effect sample shapes must be tuples or None")
         if not isinstance(self.record_path, tuple):
@@ -199,12 +210,12 @@ class ManagedExecutionOutcome:
     report: ManagedClaimReport | None = None
 
 
-def point_unit_segment() -> tuple[Any, ...]:
+def point_unit_segment() -> _RandomEventPath:
     """Return the canonical segment for one plain point evaluation."""
     return ("managed-unit", _MANAGED_WORK_ITEM_ABI, "point", 0)
 
 
-def sweep_unit_segment(coordinates: tuple[int, ...]) -> tuple[Any, ...]:
+def sweep_unit_segment(coordinates: tuple[int, ...]) -> _RandomEventPath:
     """Return the canonical segment for one row-major sweep cell."""
     return ("managed-unit", _MANAGED_WORK_ITEM_ABI, "sweep-cell", *coordinates)
 
@@ -212,7 +223,7 @@ def sweep_unit_segment(coordinates: tuple[int, ...]) -> tuple[Any, ...]:
 def lifted_evaluation_unit_segment(
     logical_unit_id: tuple[str | int, ...],
     flat_index: int,
-) -> tuple[Any, ...]:
+) -> _RandomEventPath:
     """Return the canonical segment for one evaluation within a lifted unit."""
     return (
         "managed-unit",
@@ -223,10 +234,44 @@ def lifted_evaluation_unit_segment(
     )
 
 
+def _is_managed_unit_segment(segment: tuple[object, ...]) -> bool:
+    """Return whether a segment follows the closed managed-unit grammar."""
+    if len(segment) < 3 or segment[:2] != ("managed-unit", _MANAGED_WORK_ITEM_ABI):
+        return False
+    layout = segment[2]
+    if layout == "point":
+        return len(segment) == 4 and _is_nonnegative_int(segment[3]) and segment[3] == 0
+    if layout == "sweep-cell":
+        return len(segment) >= 4 and all(_is_nonnegative_int(item) for item in segment[3:])
+    if layout == "lifted-evaluation":
+        return (
+            len(segment) == 5
+            and _is_logical_unit_id(segment[3])
+            and _is_nonnegative_int(segment[4])
+        )
+    return False
+
+
+def _is_logical_unit_id(value: object) -> bool:
+    if not isinstance(value, tuple) or not value:
+        return False
+    if value[0] == "singleton":
+        return len(value) == 1
+    return (
+        value[0] == "cell"
+        and len(value) >= 2
+        and all(_is_nonnegative_int(item) for item in value[1:])
+    )
+
+
+def _is_nonnegative_int(value: object) -> bool:
+    return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
 def make_managed_work_items(
     call_values: Sequence[Mapping[str, Any]],
     *,
-    unit_segments: Sequence[tuple[Any, ...]],
+    unit_segments: Sequence[_RandomEventPath],
 ) -> tuple[ManagedWorkItem, ...]:
     """Freeze ordered call mappings and their preassigned unit segments."""
     if len(call_values) != len(unit_segments):

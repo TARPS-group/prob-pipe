@@ -11,6 +11,10 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..custom_types import PRNGKey
 from . import _workflow_context
+from ._workflow_rng import (
+    _RandomEventPath,
+    _validate_random_event_value,
+)
 
 if TYPE_CHECKING:
     from ._workflow_callable import CallableAnchor
@@ -26,7 +30,7 @@ from ._workflow_managed import (
 )
 
 _OccurrenceKind = Literal["invocation", "operation"]
-_StructuralRngId = tuple[str | int, ...]
+_StructuralRngId = _RandomEventPath
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _PROBPIPE_DISTRIBUTION_PROVIDER_ABI = "probpipe.distribution/v1"
@@ -47,6 +51,24 @@ class _DirectRandomEventPlan:
     logical_unit_id: _StructuralRngId
 
 
+def _validate_stochastic_event(
+    event: _RandomEventPlan,
+) -> tuple[_StructuralRngId, _StructuralRngId]:
+    """Validate a broker event before it can commit an occurrence ordinal."""
+    try:
+        source_id = event.stochastic_source_id
+        unit_id = event.logical_unit_id
+    except AttributeError as error:
+        raise TypeError(
+            "stochastic effect events must define source and logical-unit identities"
+        ) from error
+    if not isinstance(source_id, tuple) or not isinstance(unit_id, tuple):
+        raise TypeError("stochastic effect source and unit identities must be tuples")
+    _validate_random_event_value(source_id)
+    _validate_random_event_value(unit_id)
+    return source_id, unit_id
+
+
 @dataclass(frozen=True)
 class StochasticEffectPlan:
     """Immutable plan anchor for one automatic-key request."""
@@ -61,6 +83,8 @@ class StochasticEffectPlan:
     descendant_descriptor: tuple[Any, ...] | None = None
 
     def __post_init__(self) -> None:
+        source_id, unit_id = _validate_stochastic_event(self.event)
+        object.__setattr__(self, "event", _DirectRandomEventPlan(source_id, unit_id))
         if not isinstance(self.record_path, tuple):
             raise TypeError("stochastic effect record paths must be tuples")
         if self.descendant_descriptor is not None and not isinstance(
@@ -237,6 +261,7 @@ class _AutomaticKeyBroker:
         """Return the workflow-owned key for one planned effect."""
         if not isinstance(plan, StochasticEffectPlan):
             raise TypeError("automatic key requests require a StochasticEffectPlan")
+        source_id, unit_id = _validate_stochastic_event(plan.event)
         _workflow_context._guard_automatic_key_request()
         if _REMOTE_COORDINATION_PROBE.get():
             raise _ManagedCoordinationRequired
@@ -248,8 +273,8 @@ class _AutomaticKeyBroker:
         effect = ManagedEffectClaim(
             occurrence_path=invocation.occurrence_path,
             occurrence_kind=self.occurrence_kind,
-            stochastic_source_id=plan.event.stochastic_source_id,
-            logical_unit_id=plan.event.logical_unit_id,
+            stochastic_source_id=source_id,
+            logical_unit_id=unit_id,
             operation_kind=plan.operation_kind,
             execution_mode=plan.execution_mode,
             sample_shape=plan.sample_shape,
@@ -279,8 +304,8 @@ class _AutomaticKeyBroker:
             self._managed_attempt.claim_effect(effect)
             self._record_effect(effect)
         return invocation.key_for(
-            stochastic_source_id=plan.event.stochastic_source_id,
-            logical_unit_id=plan.event.logical_unit_id,
+            stochastic_source_id=source_id,
+            logical_unit_id=unit_id,
         )
 
     def register_managed_work_items(self, items: tuple[ManagedWorkItem, ...]) -> None:
