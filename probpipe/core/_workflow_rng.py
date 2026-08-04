@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
+import threading
 from dataclasses import dataclass
 
 import jax
@@ -27,6 +28,16 @@ _SOURCE_FIELD_TAG = b"\x11"
 _UNIT_FIELD_TAG = b"\x12"
 
 type _CanonicalValue = str | bytes | int | tuple[_CanonicalValue, ...]
+
+
+class _JAXKeyAdapterState(threading.local):
+    """Track whether the current thread has certified the JAX key adapter."""
+
+    def __init__(self) -> None:
+        self.certified = False
+
+
+_JAX_KEY_ADAPTER_STATE = _JAXKeyAdapterState()
 
 
 @dataclass(frozen=True)
@@ -80,21 +91,34 @@ def derive_event_key_words(
 
 
 def jax_key_from_words(words: tuple[int, int]) -> PRNGKey:
-    """Wrap canonical raw words in JAX's checked Threefry typed-key format."""
+    """Wrap canonical words in a per-thread-certified JAX Threefry key."""
     validated = _validate_word_pair(words, name="words")
-    with jax.ensure_compile_time_eval():
-        key = jax.random.wrap_key_data(
-            jnp.asarray(validated, dtype=jnp.uint32),
-            impl="threefry2x32",
-        )
-        round_trip = jax.random.key_data(key)
-        if str(key.dtype) != "key<fry>" or round_trip.shape != (2,):
-            raise RuntimeError("installed JAX key adapter does not support Threefry2x32 words")
-        if round_trip.dtype != jnp.dtype(jnp.uint32):
-            raise RuntimeError("installed JAX key adapter changed the raw key word dtype")
-        if tuple(int(word) for word in round_trip) != validated:
-            raise RuntimeError("installed JAX key adapter changed the raw key word values")
+    key = jax.random.wrap_key_data(
+        jnp.asarray(validated, dtype=jnp.uint32),
+        impl="threefry2x32",
+    )
+    if not _JAX_KEY_ADAPTER_STATE.certified:
+        _certify_jax_key_adapter(key, validated)
+        _JAX_KEY_ADAPTER_STATE.certified = True
     return key
+
+
+def _certify_jax_key_adapter(
+    key: PRNGKey,
+    expected_words: tuple[int, int],
+) -> None:
+    """Certify JAX's typed-key contract and raw-word round trip."""
+    if not jax.dtypes.issubdtype(key.dtype, jax.dtypes.prng_key) or (
+        key.dtype != jax.random.key_dtype("threefry2x32")
+    ):
+        raise RuntimeError("installed JAX key adapter does not support Threefry2x32 words")
+    round_trip = jax.random.key_data(key)
+    if round_trip.shape != (2,):
+        raise RuntimeError("installed JAX key adapter does not support Threefry2x32 words")
+    if round_trip.dtype != jnp.dtype(jnp.uint32):
+        raise RuntimeError("installed JAX key adapter changed the raw key word dtype")
+    if tuple(int(word) for word in round_trip) != expected_words:
+        raise RuntimeError("installed JAX key adapter changed the raw key word values")
 
 
 def _encode_value(value: _CanonicalValue) -> bytes:
