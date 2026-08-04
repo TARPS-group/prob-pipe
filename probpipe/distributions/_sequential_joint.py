@@ -321,15 +321,18 @@ class SequentialJointDistribution(
         key: PRNGKey,
         sample_shape: tuple[int, ...] = (),
     ):
-        from ..core._record_array import NumericRecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
 
         full = self._sample_sequential(key, sample_shape)
         fields = {k: v for k, v in full.items() if k not in self._conditioned_names}
         if sample_shape:
-            return NumericRecordArray(
+            return NumericRecordBatch(
                 fields,
-                batch_shape=sample_shape,
-                template=self.event_template,
+                "draw",
+                element_spec=self.event_template,
+                axis_groups=(sample_shape,),
+                name=self.name,
+                name_is_auto=True,
             )
         return Record(self.name, fields, name_is_auto=True)
 

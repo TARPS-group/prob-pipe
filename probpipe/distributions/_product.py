@@ -275,7 +275,8 @@ class ProductDistribution(
             a :class:`NumericRecordDistribution` (the dynamic mixin
             case), otherwise a plain :class:`RecordArray`.
         """
-        from ..core._record_array import NumericRecordArray, RecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
+        from ..core._record_batch import RecordBatch
 
         names = list(self._components.keys())
         keys = jax.random.split(key, len(names))
@@ -296,15 +297,21 @@ class ProductDistribution(
             # NRD mixin → numeric batched container; otherwise the
             # plain RecordArray which doesn't require numeric leaves.
             if isinstance(self, NumericRecordDistribution):
-                return NumericRecordArray(
+                return NumericRecordBatch(
                     fields,
-                    batch_shape=sample_shape,
-                    template=self.event_template,
+                    "draw",
+                    element_spec=self.event_template,
+                    axis_groups=(sample_shape,),
+                    name=self.name,
+                    name_is_auto=True,
                 )
-            return RecordArray(
+            return RecordBatch(
                 fields,
-                batch_shape=sample_shape,
-                template=self.event_template,
+                "draw",
+                element_spec=self.event_template,
+                axis_groups=(sample_shape,),
+                name=self.name,
+                name_is_auto=True,
             )
         return Record(self.name, fields, name_is_auto=True)
 
@@ -560,10 +567,18 @@ def _sample_nested(name: str, components: dict, key, sample_shape, template=None
         else:
             fields[field_name] = comp._sample(subkey, sample_shape)
     if sample_shape and template is not None:
-        from ..core._record_array import NumericRecordArray, RecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
+        from ..core._record_batch import RecordBatch
 
-        cls = NumericRecordArray if numeric else RecordArray
-        return cls(fields, batch_shape=sample_shape, template=template)
+        cls = NumericRecordBatch if numeric else RecordBatch
+        return cls(
+            fields,
+            "draw",
+            element_spec=template,
+            axis_groups=(sample_shape,),
+            name=name,
+            name_is_auto=True,
+        )
     return Record(name, fields, name_is_auto=True)
 
 

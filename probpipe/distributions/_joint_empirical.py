@@ -366,14 +366,17 @@ class NumericJointEmpirical(
     # -- Sampling: return NumericRecordArray for batched draws --------------
 
     def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
-        from ..core._record_array import NumericRecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
 
         result = self._resample_rows(key, sample_shape)
         if sample_shape:
-            return NumericRecordArray(
+            return NumericRecordBatch(
                 result,
-                batch_shape=sample_shape,
-                template=self.event_template,
+                "draw",
+                element_spec=self.event_template,
+                axis_groups=(sample_shape,),
+                name=self.name,
+                name_is_auto=True,
             )
         return Record(self.name, result, name_is_auto=True)
 

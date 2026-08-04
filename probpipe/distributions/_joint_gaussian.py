@@ -174,17 +174,20 @@ class JointGaussian(
 
     def _unflatten_flat_vec(self, flat: Array, sample_shape: tuple[int, ...] = ()):
         """Split a flat Gaussian sample vector into per-component arrays."""
-        from ..core._record_array import NumericRecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
 
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = flat[..., sl]
         if sample_shape:
-            return NumericRecordArray(
+            return NumericRecordBatch(
                 result,
-                batch_shape=sample_shape,
-                template=self.event_template,
+                "draw",
+                element_spec=self.event_template,
+                axis_groups=(sample_shape,),
+                name=self.name,
+                name_is_auto=True,
             )
         return Record(self.name, result, name_is_auto=True)
 
