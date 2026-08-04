@@ -409,3 +409,31 @@ class TestBroadcasting:
         # Mean of x is 2.0, so mean of a+b should be ~22
         mean_val = float(jnp.mean(result.samples))
         assert abs(mean_val - 22.0) < 5.0
+
+
+class TestObjectValuedDrawsAreBatches:
+    """An object-valued law draws on the same terms as a numeric one: the class
+    follows the leaves, but a batched draw is a batch either way."""
+
+    def test_object_valued_batched_draw_is_a_plain_batch(self):
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            y=np.asarray([1.0, 2.0, 3.0]),
+        )
+
+        drawn = je._sample(jax.random.PRNGKey(0), (4,))
+
+        assert type(drawn) is RecordBatch
+        assert drawn.level_names == ("draw",)
+        assert drawn.batch_shape == (4,)
+        assert set(drawn.event_template) == {"labels", "y"}
+
+    def test_object_valued_single_draw_is_a_record(self):
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            y=np.asarray([1.0, 2.0, 3.0]),
+        )
+
+        drawn = je._sample(jax.random.PRNGKey(0), ())
+
+        assert isinstance(drawn, Record) and not isinstance(drawn, RecordBatch)

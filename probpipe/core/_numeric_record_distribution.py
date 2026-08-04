@@ -215,9 +215,9 @@ class NumericRecordDistribution(RecordDistribution):
     - **Single-leaf** template → ``_sample(key, sample_shape)`` returns
       a raw ``jax.Array`` of shape ``sample_shape + event_shape``.
     - **Multi-leaf** template → ``_sample(key, sample_shape)`` returns a
-      :class:`~probpipe.NumericRecord` (or
-      :class:`~probpipe.NumericRecordArray` for a non-empty
-      ``sample_shape``) keyed by ``event_template.fields``.
+      :class:`~probpipe.NumericRecord` (or a
+      :class:`~probpipe.NumericRecordBatch` over one ``draw`` level for a
+      non-empty ``sample_shape``) keyed by ``event_template.fields``.
 
     The :attr:`treedef` property locks this invariant by deriving from
     ``event_template``.
@@ -534,10 +534,10 @@ class NumericRecordDistribution(RecordDistribution):
 
     @staticmethod
     def unflatten_value(flat, *, template):
-        """Unflatten a flat trailing axis back to event dims, Record, or NumericRecordArray.
+        """Unflatten a flat trailing axis back to event dims, a record, or a batch.
 
         Multi-field templates → ``NumericRecord`` (single sample, i.e.
-        ``flat.ndim == 1``) or ``NumericRecordArray`` (batched). Single-
+        ``flat.ndim == 1``) or ``NumericRecordBatch`` (batched). Single-
         field templates → raw array reshaped to ``(*batch, *event_shape)``
         for ``_log_prob`` compatibility (preserves the original "single-
         leaf returns raw array" contract).

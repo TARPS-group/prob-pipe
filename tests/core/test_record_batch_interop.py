@@ -12,6 +12,7 @@ gates are pinned before any producer starts returning batches.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -22,6 +23,7 @@ from probpipe import (
     Function,
     Normal,
     NumericRecord,
+    OpaqueBatch,
     ProductDistribution,
     Record,
     function,
@@ -313,3 +315,63 @@ class TestSiblingViewsZipThroughACall:
 
         assert out.batch_shape == (3,)
         np.testing.assert_allclose(np.asarray(out["add"]), [0.0, 11.0, 22.0])
+
+
+class TestOpaqueColumnsAreRearrangedRaw:
+    """A non-array field presents as its own object batch, so an operation that
+    rearranges the *storage* must read the column itself. Reading the presented
+    form instead breaks every field that is not an array."""
+
+    @staticmethod
+    def _mixed():
+        return RecordBatch(
+            {
+                "tag": np.array(["a", "b", "c"], dtype=object),
+                "x": jnp.arange(3.0),
+            },
+            "draw",
+            element_spec=EventTemplate(tag=None, x=()),
+        )
+
+    def test_presented_and_raw_columns_differ_for_an_opaque_field(self):
+        batch = self._mixed()
+
+        assert isinstance(batch["tag"], OpaqueBatch)
+        assert isinstance(batch._raw_column("tag"), np.ndarray)
+        # An array field is its column either way.
+        assert batch._raw_column("x") is batch["x"]
+
+    def test_gathering_rows_keeps_an_opaque_column(self):
+        from probpipe.core._broadcast_distributions import _take_rows
+
+        gathered = _take_rows(self._mixed(), jnp.array([2, 0]))
+
+        assert list(gathered._raw_column("tag")) == ["c", "a"]
+        np.testing.assert_array_equal(np.asarray(gathered._raw_column("x")), [2.0, 0.0])
+
+    def test_indexing_a_minibatch_keeps_an_opaque_column(self):
+        from probpipe.inference._minibatch import _index_along_leading
+
+        indexed = _index_along_leading(self._mixed(), jnp.array([1, 2]))
+
+        assert list(indexed["tag"]) == ["b", "c"]
+        np.testing.assert_array_equal(np.asarray(indexed["x"]), [1.0, 2.0])
+
+
+class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
+    def test_a_reordered_declaration_does_not_swap_columns(self):
+        """A batch flattens in its spec's leaf order, so retyping the spec alone
+        would pair every value with the wrong key on the next unflatten."""
+        from probpipe.core._workflow_result import _copy_result_term
+
+        batch = NumericRecordBatch(
+            {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
+            "draw",
+            element_spec=EventTemplate(a=(), b=()),
+        )
+
+        retyped = _copy_result_term(batch, output_template=EventTemplate(b=(), a=()))
+        roundtripped = jax.jit(lambda x: x)(retyped)
+
+        np.testing.assert_array_equal(np.asarray(roundtripped["a"]), [0.0, 1.0, 2.0])
+        np.testing.assert_array_equal(np.asarray(roundtripped["b"]), [0.0, 10.0, 20.0])

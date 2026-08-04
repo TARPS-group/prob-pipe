@@ -510,6 +510,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged. And a batch has no `mean` / `var` over its batch axis; reduce the
   column, as `jnp.mean(draw["x"], axis=0)`.
 
+  An object-valued law draws a batch on the same terms as a numeric one: the class
+  follows the leaves — `NumericRecordBatch` when the template is numeric, the
+  permissive `RecordBatch` otherwise — but a batched draw is a batch either way.
+
   `RecordArray` / `NumericRecordArray` still exist and are unchanged for direct
   use — no producer returns one. `NumericRecordArray.from_vector` keeps returning
   a `NumericRecordArray`, renesting the batch's flat columns itself, so the class

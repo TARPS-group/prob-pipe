@@ -335,6 +335,23 @@ class RecordBatch(Batch[Record]):
 
     # -- field access -------------------------------------------------------
 
+    def _raw_column(self, path: str) -> Any:
+        """One field's column exactly as stored, before any presentation.
+
+        ``batch[path]`` *presents* a column: an array field is the array, but a
+        callable or opaque field comes back as the batch of its element kind, a
+        :class:`FunctionBatch` or an :class:`OpaqueBatch`, which is what reading
+        one field wants. An operation rearranging the storage itself — gathering
+        rows, peeling the batch axis off — needs the column, object array and
+        all, and presenting it first would make those operations wrong for every
+        field that is not an array.
+        """
+        return self._columns[path]
+
+    def _raw_columns(self) -> dict[str, Any]:
+        """Every column as stored, keyed by leaf path."""
+        return dict(self._columns)
+
     def _column_as_batch(self, key: str) -> Any:
         """One field's column, in the batch form its spec calls for.
 

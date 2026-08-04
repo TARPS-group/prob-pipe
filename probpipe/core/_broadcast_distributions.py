@@ -26,6 +26,7 @@ from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
+from ._object_batch import _is_object_array
 from ._record_array import NumericRecordArray, RecordArray
 from ._record_batch import RecordBatch
 from .event_template import EventTemplate, NumericEventTemplate, _full_array_shape_or_none
@@ -70,7 +71,12 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         # constructor wants one row per batch index, so peel it: the leaves keep
         # the rows axis and the record above them loses it. Leaf-keyed, so a
         # nested batch peels correctly; path-keyed construction rebuilds nesting.
-        if isinstance(samples, (RecordArray, RecordBatch)):
+        if isinstance(samples, RecordBatch):
+            template = samples.event_template
+            # Raw columns: a non-array field presents as its own object batch,
+            # which is not what belongs in a record of batched leaves.
+            samples = Record(samples.name, samples._raw_columns(), name_is_auto=True)
+        elif isinstance(samples, RecordArray):
             template = samples.event_template
             samples = Record(samples.name, {k: samples[k] for k in template}, name_is_auto=True)
         else:
@@ -642,7 +648,17 @@ def _make_stack(
         # inner batch axis.
         if outs and all(isinstance(o, RecordBatch) for o in outs):
             first = outs[0]
-            if all(o.batch_shape == first.batch_shape for o in outs):
+            # Every row must agree on what it holds and on which axes hold it.
+            # Matching the shape alone would take the first row's schema and level
+            # names for all of them, dropping a field the others have and
+            # misnaming their axes — a batch whose spec is a false statement about
+            # its own columns.
+            if all(
+                o.element_spec == first.element_spec
+                and o.level_names == first.level_names
+                and o.axis_groups == first.axis_groups
+                for o in outs
+            ):
                 # Columns are leaf-keyed, so a nested element needs no special
                 # case: each column stacks and reshapes like any other.
                 columns = {}
@@ -946,6 +962,18 @@ def _row_count(component: Any) -> int:
     return component.shape[0] if hasattr(component, "shape") else len(component)
 
 
+def _gather_column(column: Any, indices: Array) -> Any:
+    """One column's rows at *indices*, keeping the column's own kind.
+
+    A numeric column gathers as an array. An object column holds one Python value
+    per row and gathers through numpy, which takes the positions without trying to
+    make an array of the values themselves.
+    """
+    if _is_object_array(column):
+        return column[np.asarray(indices)]
+    return column[indices]
+
+
 def _take_rows(component: Any, indices: Array) -> Any:
     """Gather the rows *indices* of one batched component, keeping its container.
 
@@ -963,7 +991,10 @@ def _take_rows(component: Any, indices: Array) -> Any:
         # that one size rewritten; which level holds the axis is unchanged.
         leading, *rest = component.axis_groups
         return type(component)(
-            {path: component[path][indices] for path in component.event_template},
+            {
+                path: _gather_column(component._raw_column(path), indices)
+                for path in component.event_template
+            },
             component.level_names,
             element_spec=component.element_spec,
             axis_groups=((indices.shape[0], *leading[1:]), *rest),

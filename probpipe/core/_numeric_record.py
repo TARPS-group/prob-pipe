@@ -524,10 +524,10 @@ def _reconstruct_from_vector(
 
     Splits *vec* along its trailing axis into *template*'s leaves (canonical
     leaf order), reshapes each to its event shape, and rebuilds the structured
-    value: a single :class:`NumericRecord` when *vec* is 1-D, a batched
-    :class:`~probpipe.NumericRecordArray` (``batch_shape == vec.shape[:-1]``)
-    otherwise. This is the value-level machinery behind
-    :meth:`NumericRecord.from_vector` / :meth:`NumericRecordArray.from_vector`;
+    value: a single :class:`NumericRecord` when *vec* is 1-D, a
+    :class:`~probpipe.NumericRecordBatch` over one level of
+    ``vec.shape[:-1]`` otherwise. This is the value-level machinery behind
+    :meth:`NumericRecord.from_vector` / :meth:`NumericRecordBatch.from_vector`;
     the template supplies only the leaf layout (shapes, order), never
     constructing the value itself.
 

@@ -38,8 +38,10 @@ from typing import TYPE_CHECKING, Any
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ..core._distribution_base import Distribution
+from ..core._object_batch import _is_object_array
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
 from ..core._record_array import RecordArray
@@ -98,6 +100,13 @@ def _data_size(data: Any) -> int:
     return len(data)
 
 
+def _index_column(column: Any, indices: Array) -> Any:
+    """One column's rows at *indices*, keeping an object column out of ``jnp``."""
+    if _is_object_array(column):
+        return column[np.asarray(indices)]
+    return jnp.asarray(column)[indices]
+
+
 def _index_along_leading(data: Any, indices: Array) -> Any:
     """Index along the leading axis. Works for records, batches of them, and arrays.
 
@@ -108,9 +117,11 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     both are read a field at a time.
     """
     if isinstance(data, RecordBatch):
+        # Raw columns, not ``data[path]``: a non-array field presents as its own
+        # object batch, which ``jnp.asarray`` cannot take.
         return Record(
             data.name,
-            {path: jnp.asarray(data[path])[indices] for path in data.event_template},
+            {path: _index_column(data._raw_column(path), indices) for path in data.event_template},
             name_is_auto=True,
         )
     if isinstance(data, Record):

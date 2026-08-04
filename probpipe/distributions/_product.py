@@ -563,7 +563,16 @@ def _sample_columns(components: dict, key, sample_shape) -> dict:
             )
             continue
         drawn = comp._sample(subkey, sample_shape)
-        if isinstance(drawn, (Record, RecordBatch)):
+        if isinstance(drawn, RecordBatch):
+            # Raw columns: a field that is not an array presents as its own object
+            # batch, and what belongs in this batch's storage is the column.
+            columns.update(
+                {
+                    f"{field_name}{_PATH_SEP}{path}": column
+                    for path, column in drawn._raw_columns().items()
+                }
+            )
+        elif isinstance(drawn, Record):
             columns.update(
                 {f"{field_name}{_PATH_SEP}{path}": drawn[path] for path in drawn.event_template}
             )
