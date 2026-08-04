@@ -28,7 +28,8 @@ from probpipe import (
     Record,
     RecordSpec,
 )
-from probpipe.core._record_batch import NumericRecordBatch, RecordBatch
+from probpipe.core._numeric_record_batch import NumericRecordBatch
+from probpipe.core._record_batch import RecordBatch
 
 # A nested, all-numeric element: the shape a nested field makes.
 NESTED = EventTemplate(outer=EventTemplate(a=(), b=()), m=(2,))
@@ -62,14 +63,14 @@ def nested_batch(n: int = 3, **kwargs) -> NumericRecordBatch:
 
 
 class TestConstruction:
-    def test_columns_and_batch_shape(self):
+    def test_fields_and_batch_shape(self):
         batch = nested_batch()
         assert batch.batch_shape == (3,)
         assert batch.batch_size == 3
         assert batch.level_names == ("draw",)
         assert batch.axis_groups == ((3,),)
 
-    def test_a_nested_column_mapping_is_flattened(self):
+    def test_a_nested_field_mapping_is_flattened(self):
         by_path = nested_batch()
         nested = NumericRecordBatch(
             {"outer": {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 2}, "m": jnp.zeros((3, 2))},
@@ -105,7 +106,7 @@ class TestConstruction:
 
     # -- refusals -----------------------------------------------------------
 
-    def test_missing_and_unexpected_columns_are_named(self):
+    def test_missing_and_unexpected_fields_are_named(self):
         with pytest.raises(ValueError, match=r"missing \['m'\]"):
             NumericRecordBatch(
                 {"outer/a": jnp.zeros(3), "outer/b": jnp.zeros(3)}, "draw", element_spec=NESTED
@@ -125,7 +126,7 @@ class TestConstruction:
                 element_spec=NESTED,
             )
 
-    def test_columns_disagreeing_on_the_batch_axis_raise(self):
+    def test_fields_disagreeing_on_the_batch_axis_raise(self):
         with pytest.raises(ValueError, match=r"disagree on the batch axes — 'x' carries \(3,\)"):
             NumericRecordBatch(
                 {"x": jnp.zeros(3), "y": jnp.zeros(4)},
@@ -137,12 +138,12 @@ class TestConstruction:
         with pytest.raises(ValueError, match="at least one batch axis"):
             NumericRecordBatch({"x": jnp.zeros(2)}, "draw", element_spec=EventTemplate(x=(2,)))
 
-    def test_empty_columns_raise(self):
-        with pytest.raises(ValueError, match="at least one column"):
+    def test_no_fields_raises(self):
+        with pytest.raises(ValueError, match="at least one field"):
             NumericRecordBatch({}, "draw", element_spec=EventTemplate(x=()))
 
-    def test_a_non_mapping_columns_argument_raises(self):
-        with pytest.raises(TypeError, match="columns must be a mapping"):
+    def test_a_non_mapping_fields_argument_raises(self):
+        with pytest.raises(TypeError, match="fields must be a mapping"):
             NumericRecordBatch([jnp.zeros(3)], "draw", element_spec=EventTemplate(x=()))
 
     def test_axis_groups_must_tile_the_batch_shape(self):

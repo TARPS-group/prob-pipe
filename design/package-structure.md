@@ -39,7 +39,8 @@ probpipe/
 │   ├── _function_batch.py     #   FunctionBatch (III.1)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.1)
 │   ├── _record.py             #   Record, NumericRecord (III.2), RecordSpec (II.2)
-│   └── _record_batch.py       #   RecordBatch, NumericRecordBatch (III.3)
+│   ├── _record_batch.py       #   RecordBatch (III.3)
+│   └── _numeric_record_batch.py  #   NumericRecordBatch (III.3)
 ├── linalg/                    # LinOp, the linear Function subtype (III.4)
 │   ├── _linop.py              #   LinOp: the action, the queries, flags
 │   ├── _structured.py         #   Dense / Diagonal / Triangular / Cholesky / Root …
