@@ -56,6 +56,10 @@ class TestCanonicalEventEncoding:
             "020000000973696e676c65746f6e"
         )
 
+    def test_encoding_rejects_a_non_identity_value(self):
+        with pytest.raises(TypeError, match="identity must be a RandomEventIdentity"):
+            encode_random_event(("invocation", 0))
+
     @pytest.mark.parametrize("invalid", [True, -1, 2**64, 1.5, ["scope", 0]])
     def test_encoding_rejects_values_outside_the_canonical_algebra(self, invalid):
         identity = RandomEventIdentity(
@@ -102,6 +106,27 @@ class TestEventKeyDerivation:
     )
     def test_matches_keyed_blake2s_v1_golden_vectors(self, root, identity, expected):
         assert derive_event_key_words(root, identity) == expected
+
+    @pytest.mark.parametrize(
+        ("root_words", "error_type"),
+        [
+            pytest.param([0, 0], TypeError, id="list"),
+            pytest.param((0,), TypeError, id="length"),
+            pytest.param((True, 0), TypeError, id="boolean"),
+            pytest.param((0, 1.5), TypeError, id="non-integer"),
+            pytest.param((-1, 0), ValueError, id="negative"),
+            pytest.param((0, 2**32), ValueError, id="overflow"),
+        ],
+    )
+    def test_derivation_rejects_malformed_root_words(self, root_words, error_type):
+        identity = RandomEventIdentity(
+            occurrence_path=("invocation", 0),
+            stochastic_source_id=("source", 0),
+            logical_unit_id=("singleton",),
+        )
+
+        with pytest.raises(error_type, match="root_words"):
+            derive_event_key_words(root_words, identity)
 
     def test_jax_adapter_key_is_consumed_in_eager_jit_and_vmap(self):
         words = (0xE6CD50EA, 0x8FF642DF)
@@ -207,3 +232,31 @@ class TestEventKeyDerivation:
 
         with pytest.raises(RuntimeError, match="does not support Threefry2x32"):
             jax_key_from_words((1, 2))
+
+    @pytest.mark.parametrize(
+        ("round_trip", "message"),
+        [
+            pytest.param(
+                jnp.asarray((1, 2, 3), dtype=jnp.uint32),
+                "does not support Threefry2x32",
+                id="shape",
+            ),
+            pytest.param(
+                jnp.asarray((1, 2), dtype=jnp.int32),
+                "changed the raw key word dtype",
+                id="dtype",
+            ),
+        ],
+    )
+    def test_jax_adapter_rejects_malformed_round_trip_data(
+        self,
+        monkeypatch,
+        round_trip,
+        message,
+    ):
+        monkeypatch.setattr(jax.random, "key_data", lambda key: round_trip)
+
+        with pytest.raises(RuntimeError, match=message):
+            jax_key_from_words((1, 2))
+
+        assert not workflow_rng._JAX_KEY_ADAPTER_STATE.certified
