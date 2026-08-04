@@ -559,6 +559,49 @@ class TestStructuralTransforms:
         scaled = nested_batch().map_with_keys(lambda key, column: column * (2 if key == "m" else 1))
         np.testing.assert_array_equal(np.asarray(scaled["outer/a"]), np.asarray([0.0, 1.0, 2.0]))
 
+    def test_a_transform_re_derives_the_class_from_its_result(self):
+        """The class follows the edited fields, not the object's history — which is
+        also what makes a mixed ``merge`` give the same answer either way round."""
+        numeric = NumericRecordBatch({"x": jnp.zeros(3)}, "draw", element_spec=EventTemplate(x=()))
+        plain = RecordBatch(
+            {"s": _object_column(list("abc"))}, "draw", element_spec=EventTemplate(s=None)
+        )
+        assert type(numeric.replace({"x": _object_column(list("abc"))})) is RecordBatch
+        assert type(plain.replace({"s": jnp.ones(3)})) is NumericRecordBatch
+        assert type(numeric.merge(plain)) is type(plain.merge(numeric)) is RecordBatch
+
+    def test_an_edited_field_is_typed_the_way_inference_would(self):
+        plain = RecordBatch(
+            {"f": _object_column([lambda x: x] * 2)},
+            "draw",
+            element_spec=EventTemplate({"f": FunctionSpec()}),
+        )
+        # A column of callables stays a function field rather than going opaque.
+        edited = plain.replace({"f": _object_column([lambda x: 2 * x] * 2)})
+        assert isinstance(edited.event_template["f"], FunctionSpec)
+
+    def test_a_non_object_array_for_a_field_with_no_stacked_form_is_refused(self):
+        """A unicode array's entries are numpy scalars, not the values the field
+        holds, and it is not numeric either — so it is named rather than guessed at."""
+        plain = RecordBatch(
+            {"s": _object_column(list("ab"))}, "draw", element_spec=EventTemplate(s=None)
+        )
+        with pytest.raises(TypeError, match="no stacked form"):
+            plain.replace({"s": np.array(["x", "y"])})
+
+    def test_replace_accepts_what_field_access_hands_back(self):
+        plain = RecordBatch(
+            {"f": _object_column([lambda x: x] * 2), "x": jnp.zeros(2)},
+            "draw",
+            element_spec=EventTemplate({"f": FunctionSpec(), "x": ()}),
+        )
+        # ``batch["f"]`` is a FunctionBatch; putting one back must work.
+        assert isinstance(plain.replace({"f": plain["f"]}), RecordBatch)
+
+    def test_replace_refuses_both_update_forms_at_once(self):
+        with pytest.raises(ValueError, match="not both"):
+            nested_batch().replace({"m": jnp.ones((3, 2))}, m=jnp.zeros((3, 2)))
+
     def test_a_transform_keeps_a_user_given_name_and_re_derives_an_auto_one(self):
         assert nested_batch(name="post").without("m").name == "post"
         assert nested_batch().without("m").name_is_auto
@@ -1169,6 +1212,44 @@ class TestPyTree:
         assert seen == ["NumericRecord"]
         assert stacked.shape == (3, 4)
         np.testing.assert_array_equal(np.asarray(stacked), np.asarray(batch.to_vector()))
+
+    def test_vmap_over_a_named_axis_leaves_the_axes_that_survive(self):
+        """Which axes are left names the levels, and that cannot be read off the
+        count: ``in_axes`` maps any axis, not only the leading one."""
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros((2, 3, 4))}, ("chain", "draw"), element_spec=EventTemplate(x=(4,))
+        )
+
+        def levels_seen_under(axis):
+            seen: list[tuple] = []
+
+            def body(inner):
+                seen.append((inner.batch_shape, inner.level_names))
+                return inner.to_vector()
+
+            stacked = jax.vmap(body, in_axes=axis)(batch)
+            return seen[0], stacked.ndim
+
+        assert levels_seen_under(0) == (((3,), ("draw",)), 3)
+        assert levels_seen_under(1) == (((2,), ("chain",)), 3)
+
+    def test_vmap_through_a_level_spanning_several_axes(self):
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros((2, 3, 5))},
+            ("grid", "draw"),
+            element_spec=EventTemplate(x=()),
+            axis_groups=((2, 3), (5,)),
+        )
+        seen: list[tuple] = []
+        jax.vmap(
+            lambda inner: (
+                seen.append((inner.axis_groups, inner.level_names)),
+                inner["x"].sum(),
+            )[1],
+            in_axes=1,
+        )(batch)
+        # ``grid`` keeps the axis it has left; ``draw`` is untouched.
+        assert seen[0] == (((2,), (5,)), ("grid", "draw"))
 
     def test_vmap_over_a_two_level_batch_leaves_the_inner_level(self):
         batch = NumericRecordBatch(

@@ -131,21 +131,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It is a bare array pytree, so it passes through `jit` / `vmap` / `grad` unchanged.
 
   Under `vmap` the body receives an **element**, not the batch: the transform
-  strips the mapped axis, so the multiplicity is re-derived from what arrives and
-  a `Record` is handed over once no batch axis remains (a two-level batch leaves
-  the inner level instead). Rebuilding against the stored spec would give the
+  removes the mapped axis, so the multiplicity is re-derived from what arrives and
+  a `Record` is handed over once no batch axis remains. *Which* axes are left names
+  the surviving levels, matched against the ones the batch started with, so mapping
+  a named axis with `in_axes` is as well described as the leading one, and a level
+  spanning several axes keeps what is left of it. Rebuilding against the stored spec would give the
   body an object whose `batch_shape` its own columns contradict, and every method
   reading that shape — `to_vector` among them — would be wrong.
 
-  A batch holds what it validated. Every column is checked against the field it
-  belongs to: an array field's column for a numeric dtype its declaration admits,
-  by the same same-kind rule `ArraySpec.is_valid` applies to one value, and every
-  other field's column entry by entry against its spec, naming the field and the
-  position that failed. A field with no stacked form is given an object array
-  rather than a dense one, so its entries are the values themselves. An object column is copied and frozen, so a caller keeping a handle
-  on what they passed cannot write a value in afterwards that the spec refuses.
-  The field's *spec* decides a column's form rather than its values, which is what
-  keeps an opaque field opaque when its values happen to be numeric.
+  The structural transforms re-derive the class from their result, as the record
+  transforms do: an edit that removes the last non-numeric field promotes, one that
+  introduces a non-numeric field demotes, and a mixed `merge` therefore gives the
+  same answer whichever way round it is written. An edited field is typed the way
+  template inference would type it, so a field of callables stays a function field,
+  and `replace` accepts what field access hands back.
+
+  A batch holds what it validated. Every field is checked against what it declares:
+  an array field for a numeric dtype its declaration admits, by the same same-kind
+  rule `ArraySpec.is_valid` applies to one value, and every other field value by
+  value against its spec, naming the field and the position that failed. A field
+  with no stacked form is stored as a frozen object array, so its entries are the
+  values themselves and a caller keeping a handle cannot write in a value the spec
+  refuses afterwards. The field's *spec* decides its stored form rather than its
+  values, which is what keeps an opaque field opaque when its values happen to be
+  numeric.
 
   This is additive: the existing `RecordArray` / `NumericRecordArray` are untouched
   and still what the library uses, and the new classes are not yet exported.

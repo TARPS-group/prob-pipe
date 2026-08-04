@@ -33,6 +33,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
+from itertools import combinations
 from typing import Any, Self
 
 import jax
@@ -48,6 +49,7 @@ from .event_template import (
     ArraySpec,
     EventTemplate,
     FunctionSpec,
+    NumericEventTemplate,
     OpaqueSpec,
     RecordSpec,
     ValueSpec,
@@ -530,8 +532,12 @@ class RecordBatch(Batch[Record]):
             If no updates are given, or a replacement does not carry the batch
             axes.
         """
-        edits = dict(_updates or {})
-        edits.update(updates)
+        if _updates is not None and updates:
+            raise ValueError(
+                "replace() takes a path-keyed mapping or keyword updates, not both: a path "
+                "given in each would have no unambiguous value"
+            )
+        edits = {path: _unwrapped_field(value) for path, value in (_updates or updates).items()}
         if not edits:
             raise ValueError(f"{type(self).__name__}.replace() needs at least one update")
         unknown = [path for path in edits if path not in self._columns]
@@ -596,14 +602,23 @@ class RecordBatch(Batch[Record]):
         columns = {path: f(path, column, *args, **kwargs) for path, column in self._columns.items()}
         return self._rebuilt(columns, _element_template_for(columns, self, edited=set(columns)))
 
-    def _rebuilt(self, columns: Mapping[str, Any], template: EventTemplate) -> Self:
+    def _rebuilt(self, columns: Mapping[str, Any], template: EventTemplate) -> RecordBatch:
         """This batch over *columns* and *template*, at the same levels.
 
-        The transform identity rule the record types apply: a user-given name is
-        preserved, and an auto-derived one is left to the constructor to re-derive,
-        since the old one described the pre-edit fields.
+        Two rules the record transforms apply, both here. The **class** follows the
+        edited fields rather than the object's history: a batch whose fields are all
+        numeric is a ``NumericRecordBatch``, so an edit that removes the last
+        non-numeric field promotes and one that introduces a non-numeric field
+        demotes — which also makes a mixed ``merge`` give the same answer whichever
+        way round it is written. The **name** is preserved when the caller gave it
+        and left to the constructor to re-derive when it was auto, since the old one
+        described the pre-edit fields.
         """
-        return type(self)(
+        # Lazy: the numeric module builds on this one, so the edge points that way.
+        from ._numeric_record_batch import NumericRecordBatch
+
+        cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
+        return cls(
             dict(columns),
             self.level_names,
             element_spec=template,
@@ -808,8 +823,39 @@ def _element_template_for(
                 f"not carry this batch's axes {batch.batch_shape}; a field's values span the "
                 f"batch, so a replacement does too"
             )
-        specs[path] = None if _is_object_array(column) else tuple(shape[rank:])
+        specs[path] = _inferred_field_spec(column, tuple(shape[rank:]))
     return EventTemplate(specs)
+
+
+def _unwrapped_field(value: Any) -> Any:
+    """*value* as a field's stored values, unwrapping a batch of them.
+
+    Reading a field that is not an array gives the matching object batch, so that
+    is what a caller has to hand when they want to put one back. Unwrapping it
+    here keeps the two directions symmetric: what ``[]`` yields is accepted
+    wherever a field's values are taken.
+    """
+    if isinstance(value, FunctionBatch | OpaqueBatch):
+        return value._store
+    return value
+
+
+def _inferred_field_spec(column: Any, event_shape: tuple[int, ...]) -> Any:
+    """The spec an edited field's values imply, in the template's own terms.
+
+    A numeric column is an array field of *event_shape*. Anything else holds one
+    value per element, so the values decide: all callable makes it a function
+    field, and otherwise it is opaque. This is what template inference concludes
+    for a single value, applied across the column — a unicode array is not
+    numeric, and a column of callables does not become opaque.
+    """
+    dtype = getattr(column, "dtype", None)
+    if dtype is not None and _is_numeric_dtype(dtype):
+        return event_shape
+    entries = list(np.asarray(column, dtype=object).flat) if _is_object_array(column) else []
+    if entries and all(callable(entry) for entry in entries):
+        return FunctionSpec()
+    return None
 
 
 def _event_shape(spec: ValueSpec, *, path: str, kind: str) -> tuple[int, ...]:
@@ -1050,12 +1096,21 @@ def _unflatten_with(cls: type[RecordBatch]):
                 name_is_auto=name_is_auto,
                 _validate_leaves=False,
             )
-        # Reuse the stored spec where the multiplicity is unchanged, which is the
-        # ordinary round trip: rebuilding an equal one would allocate at every
-        # transform boundary and cost the identity a caller can rely on.
-        rebuilt = (
-            spec if rank == len(spec.batch_shape) else replace(spec, **_levels_for_rank(spec, rank))
-        )
+        if rank == len(spec.batch_shape):
+            # Reuse the stored spec where the multiplicity is unchanged, which is
+            # the ordinary round trip: rebuilding an equal one would allocate at
+            # every transform boundary and cost the identity a caller relies on.
+            rebuilt = spec
+        else:
+            surviving = _surviving_batch_shape(columns, rank)
+            levels = _levels_for_shape(spec, surviving)
+            if levels is None:
+                raise ValueError(
+                    f"a transform left this {cls.__name__}'s fields with batch axes "
+                    f"{surviving}, which no selection of {spec.batch_shape} explains, so its "
+                    f"levels cannot be named"
+                )
+            rebuilt = replace(spec, **levels)
         batch = object.__new__(cls)
         object.__setattr__(batch, "_columns", columns)
         batch._init_batch(rebuilt, name=name, name_is_auto=name_is_auto)
@@ -1087,26 +1142,47 @@ def _surviving_batch_rank(
     return rank if 0 <= rank <= len(spec.batch_shape) else None
 
 
-def _levels_for_rank(spec: BatchSpec, rank: int) -> dict[str, tuple]:
-    """The level tiling for the innermost *rank* of *spec*'s batch axes.
+def _surviving_batch_shape(columns: dict[str, Any], rank: int) -> tuple[int, ...]:
+    """The batch axes the *columns* now carry, read off the first that has a shape."""
+    for column in columns.values():
+        shape = _column_shape(column)
+        if shape is not None:
+            return tuple(shape[:rank])
+    return ()
 
-    A transform strips from the outermost level in, so the levels that survive
-    are the trailing ones, and a level only partly consumed keeps the axes it
-    has left.
+
+def _levels_for_shape(spec: BatchSpec, surviving: tuple[int, ...]) -> dict[str, tuple] | None:
+    """The level tiling for *surviving*, given the axes *spec* started with.
+
+    A transform removes whole axes, so *which* of the original axes are left is
+    what names the levels — and that cannot be read off the count alone. ``vmap``
+    maps the leading axis by default but takes ``in_axes`` for any other, so the
+    removed axes are found by matching *surviving* against the candidates, taking
+    the leftmost set that explains it. A level whose axes are all gone goes with
+    them, and one partly consumed keeps what is left.
+
+    Returns ``None`` when no selection of the original axes yields *surviving*:
+    the transform did not simply drop axes, and the levels cannot be named
+    honestly.
     """
-    groups: list[tuple[int, ...]] = []
-    names: list[str] = []
-    remaining = rank
-    for level_name, group in zip(
-        reversed(spec.level_names), reversed(spec.axis_groups), strict=True
-    ):
-        if remaining <= 0:
-            break
-        kept = group[-remaining:] if remaining < len(group) else group
-        groups.insert(0, tuple(kept))
-        names.insert(0, level_name)
-        remaining -= len(kept)
-    return {"axis_groups": tuple(groups), "level_names": tuple(names)}
+    original = spec.batch_shape
+    dropped_count = len(original) - len(surviving)
+    if dropped_count < 0:
+        return None
+    for dropped in combinations(range(len(original)), dropped_count):
+        if tuple(size for i, size in enumerate(original) if i not in dropped) != surviving:
+            continue
+        groups: list[tuple[int, ...]] = []
+        names: list[str] = []
+        axis = 0
+        for level_name, group in zip(spec.level_names, spec.axis_groups, strict=True):
+            kept = tuple(size for offset, size in enumerate(group) if axis + offset not in dropped)
+            axis += len(group)
+            if kept:
+                groups.append(kept)
+                names.append(level_name)
+        return {"axis_groups": tuple(groups), "level_names": tuple(names)}
+    return None
 
 
 jax.tree_util.register_pytree_node(RecordBatch, _record_batch_flatten, _unflatten_with(RecordBatch))
