@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -237,7 +237,7 @@ def workflow_run(seed: int | None = None) -> _WorkflowRunScope:
 
 
 @contextmanager
-def _ephemeral_workflow_run() -> Iterator[None]:
+def _ephemeral_workflow_run() -> Generator[None, None, None]:
     """Install one lazy ephemeral root unless a workflow frame is active."""
     frame = _ACTIVE_WORKFLOW_FRAME.get()
     if frame is not None:
@@ -249,7 +249,7 @@ def _ephemeral_workflow_run() -> Iterator[None]:
 
 
 @contextmanager
-def _workflow_probe() -> Iterator[None]:
+def _workflow_probe() -> Generator[None, None, None]:
     """Prevent a route probe from committing workflow stochastic state."""
     state = _StochasticProbeState()
     token = _STOCHASTIC_PROBE_STATE.set(state)
@@ -267,7 +267,7 @@ def _workflow_probe() -> Iterator[None]:
 
 
 @contextmanager
-def _workflow_jax_runtime_guard() -> Iterator[None]:
+def _workflow_jax_runtime_guard() -> Generator[None, None, None]:
     """Forbid omitted-key effects and managed submission inside actual JAX execution."""
     token = _JAX_RUNTIME_GUARD.set(True)
     try:
@@ -395,7 +395,7 @@ def _capture_active_workflow_frame() -> _WorkflowFrame | None:
 def _managed_work_item_scope(
     parent: _WorkflowFrame,
     unit_segment: tuple[Any, ...],
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Install a thread/task-owned child frame for one managed work item."""
     frame = _WorkflowFrame(
         kind="managed",
@@ -416,7 +416,7 @@ def _managed_work_item_scope(
 @contextmanager
 def _transported_workflow_frame(
     root_words: tuple[int, int] | None,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Install a standalone worker frame from serializable parent authority."""
     frame = _WorkflowFrame(
         kind="managed",
@@ -438,7 +438,7 @@ def _transported_workflow_frame(
 
 
 @contextmanager
-def _replay_workflow_frame(root_words: tuple[int, int]) -> Iterator[None]:
+def _replay_workflow_frame(root_words: tuple[int, int]) -> Generator[None, None, None]:
     """Install one standalone root restored from replay provenance."""
     frame = _WorkflowFrame(
         kind="replay",

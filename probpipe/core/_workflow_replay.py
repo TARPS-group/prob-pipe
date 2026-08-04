@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import sys
-from collections.abc import Iterator, Mapping
+from collections.abc import Generator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -478,7 +478,7 @@ def _capture_active_replay_state() -> _ReplayState | None:
 
 
 @contextmanager
-def _function_replay_scope() -> Iterator[_ReplayFunctionCall | None]:
+def _function_replay_scope() -> Generator[_ReplayFunctionCall | None, None, None]:
     """Bind at most one top-level Function call to an active replay scope."""
     state = _ACTIVE_REPLAY_STATE.get()
     if state is None:
@@ -584,7 +584,7 @@ def _expected_effects_for_managed_unit(
 def _remote_replay_claim_scope(
     expected: tuple[ManagedEffectClaim, ...] | None,
     attempt: ManagedAttemptState,
-) -> Iterator[None]:
+) -> Generator[None, None, None]:
     """Install a worker-local expected namespace when replay authority exists."""
     if expected is None:
         yield

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
@@ -724,7 +724,7 @@ class _RemoteManagedParent:
 def _function_stochastic_scope(
     *,
     occurrence_path: tuple[Any, ...] | None = None,
-) -> Iterator[_AutomaticKeyBroker]:
+) -> Generator[_AutomaticKeyBroker, None, None]:
     """Install a lazy broker for one public Function invocation."""
     _workflow_context._assert_workflow_admission()
     frame = _workflow_context._capture_active_workflow_frame()
@@ -758,7 +758,7 @@ def _function_stochastic_scope(
 
 
 @contextmanager
-def _managed_stochastic_scope() -> Iterator[_AutomaticKeyBroker]:
+def _managed_stochastic_scope() -> Generator[_AutomaticKeyBroker, None, None]:
     """Reuse an active broker or install one managed-operation broker."""
     _workflow_context._assert_workflow_admission()
     active = _ACTIVE_AUTOMATIC_KEY_BROKER.get()
@@ -847,7 +847,7 @@ def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
 
 
 @contextmanager
-def _remote_coordination_probe_scope() -> Iterator[None]:
+def _remote_coordination_probe_scope() -> Generator[None, None, None]:
     """Run a remote item without permitting automatic stochastic commit."""
     probe_token = _REMOTE_COORDINATION_PROBE.set(True)
     attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(None)
@@ -864,7 +864,7 @@ def _remote_coordination_probe_scope() -> Iterator[None]:
 def _remote_managed_work_item_stochastic_scope(
     envelope: ManagedParentEnvelope,
     attempt: ManagedAttemptState,
-) -> Iterator[_RemoteManagedParent]:
+) -> Generator[_RemoteManagedParent, None, None]:
     """Install parent-authorized RNG derivation inside a remote worker."""
     frame = _workflow_context._capture_active_workflow_frame()
     if frame is None:
@@ -905,7 +905,7 @@ def _managed_work_item_stochastic_scope(
     frame: ManagedUnitFrame,
     *,
     attempt: ManagedAttemptState | None = None,
-) -> Iterator[ManagedAttemptState]:
+) -> Generator[ManagedAttemptState, None, None]:
     """Install one retry attempt and an empty child-broker slot."""
     if attempt is None:
         attempt = ManagedAttemptState.create(frame.token)

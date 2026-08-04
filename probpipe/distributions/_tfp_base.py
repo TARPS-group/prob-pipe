@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import contextvars
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Generator
 from typing import Any
 
 import jax
@@ -62,7 +62,7 @@ state."""
 
 
 @contextlib.contextmanager
-def _allow_batched_tfp_init() -> Iterator[None]:
+def _allow_batched_tfp_init() -> Generator[None, None, None]:
     """Context manager: allow TFP-backed constructors to accept
     parameters whose implied ``batch_shape`` is non-empty.
 
