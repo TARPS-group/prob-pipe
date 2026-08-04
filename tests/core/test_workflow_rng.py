@@ -12,7 +12,6 @@ from probpipe.core._workflow_rng import (
     encode_random_event,
     jax_key_from_words,
     seed_to_root_words,
-    threefry2x32,
 )
 
 
@@ -65,27 +64,6 @@ class TestCanonicalEventEncoding:
             encode_random_event(identity)
 
 
-class TestThreefry2x32:
-    @pytest.mark.parametrize(
-        ("key", "counter", "expected"),
-        [
-            ((0, 0), (0, 0), (0x6B200159, 0x99BA4EFE)),
-            (
-                (0xFFFFFFFF, 0xFFFFFFFF),
-                (0xFFFFFFFF, 0xFFFFFFFF),
-                (0x1CB996FC, 0xBB002BE7),
-            ),
-            (
-                (0x13198A2E, 0x03707344),
-                (0x243F6A88, 0x85A308D3),
-                (0xC4923A9C, 0x483DF7A0),
-            ),
-        ],
-    )
-    def test_matches_random123_reference_vectors(self, key, counter, expected):
-        assert threefry2x32(key, counter) == expected
-
-
 class TestEventKeyDerivation:
     @pytest.mark.parametrize(
         ("root", "identity", "expected"),
@@ -97,7 +75,7 @@ class TestEventKeyDerivation:
                     stochastic_source_id=("source", 0),
                     logical_unit_id=("singleton",),
                 ),
-                (0x2881A7CB, 0x99F37678),
+                (0xE6CD50EA, 0x8FF642DF),
             ),
             (
                 (0xFFFFFFFF, 0xFFFFFFFF),
@@ -106,15 +84,15 @@ class TestEventKeyDerivation:
                     stochastic_source_id=b"\x00\xff",
                     logical_unit_id=("cell", 3, 4),
                 ),
-                (0x07D68F2C, 0x6B27FBD0),
+                (0x59D939EE, 0x2A74904E),
             ),
         ],
     )
-    def test_mixes_every_sha256_word_in_order(self, root, identity, expected):
+    def test_matches_keyed_blake2s_v1_golden_vectors(self, root, identity, expected):
         assert derive_event_key_words(root, identity) == expected
 
     def test_jax_adapter_preserves_raw_words_in_eager_jit_and_vmap(self):
-        words = (0x2881A7CB, 0x99F37678)
+        words = (0xE6CD50EA, 0x8FF642DF)
 
         def adapted_words():
             return jax.random.key_data(jax_key_from_words(words))

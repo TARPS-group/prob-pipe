@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import struct
 from dataclasses import dataclass
 
 import jax
@@ -12,9 +13,9 @@ from ..custom_types import PRNGKey
 
 _MAX_U64 = (1 << 64) - 1
 _WORD_MASK = (1 << 32) - 1
-_THREEFRY_PARITY = 0x1BD11BDA
-_THREEFRY_ROTATIONS = (13, 15, 26, 6, 17, 29, 16, 24)
 _DOMAIN = b"ProbPipe-RNG-v1\0"
+_BLAKE2S_PERSON = b"PP-RNGv1"
+_BLAKE2S_KEY_WORDS = struct.Struct(">2I")
 
 _INT_TAG = b"\x01"
 _STRING_TAG = b"\x02"
@@ -63,45 +64,19 @@ def encode_random_event(identity: RandomEventIdentity) -> bytes:
     )
 
 
-def threefry2x32(
-    key: tuple[int, int],
-    counter: tuple[int, int],
-) -> tuple[int, int]:
-    """Apply the fixed 20-round Threefry2x32 permutation."""
-    key_0, key_1 = _validate_word_pair(key, name="key")
-    counter_0, counter_1 = _validate_word_pair(counter, name="counter")
-    key_schedule = (
-        key_0,
-        key_1,
-        _THREEFRY_PARITY ^ key_0 ^ key_1,
-    )
-    state_0 = (counter_0 + key_schedule[0]) & _WORD_MASK
-    state_1 = (counter_1 + key_schedule[1]) & _WORD_MASK
-
-    for round_index in range(20):
-        state_0 = (state_0 + state_1) & _WORD_MASK
-        rotation = _THREEFRY_ROTATIONS[round_index % len(_THREEFRY_ROTATIONS)]
-        state_1 = _rotate_left(state_1, rotation) ^ state_0
-
-        if (round_index + 1) % 4 == 0:
-            injection = (round_index + 1) // 4
-            state_0 = (state_0 + key_schedule[injection % 3]) & _WORD_MASK
-            state_1 = (state_1 + key_schedule[(injection + 1) % 3] + injection) & _WORD_MASK
-
-    return state_0, state_1
-
-
 def derive_event_key_words(
     root_words: tuple[int, int],
     identity: RandomEventIdentity,
 ) -> tuple[int, int]:
-    """Derive raw key words from one root and canonical event identity."""
-    state = _validate_word_pair(root_words, name="root_words")
-    digest = hashlib.sha256(encode_random_event(identity)).digest()
-    for offset in range(0, len(digest), 4):
-        digest_word = int.from_bytes(digest[offset : offset + 4], "big")
-        state = threefry2x32(state, (0, digest_word))
-    return state
+    """Derive raw key words through the fixed keyed-BLAKE2s version-1 ABI."""
+    root = _validate_word_pair(root_words, name="root_words")
+    digest = hashlib.blake2s(
+        encode_random_event(identity),
+        key=_BLAKE2S_KEY_WORDS.pack(*root),
+        digest_size=_BLAKE2S_KEY_WORDS.size,
+        person=_BLAKE2S_PERSON,
+    ).digest()
+    return _BLAKE2S_KEY_WORDS.unpack(digest)
 
 
 def jax_key_from_words(words: tuple[int, int]) -> PRNGKey:
@@ -163,7 +138,3 @@ def _validate_word_pair(
     if any(not 0 <= word <= _WORD_MASK for word in words):
         raise ValueError(f"{name} words must be in the range [0, 2**32 - 1]")
     return words
-
-
-def _rotate_left(word: int, distance: int) -> int:
-    return ((word << distance) | (word >> (32 - distance))) & _WORD_MASK
