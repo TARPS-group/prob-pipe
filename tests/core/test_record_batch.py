@@ -467,6 +467,103 @@ class TestPlainRecordBatch:
         assert jax.tree_util.tree_unflatten(treedef, leaves) == batch
 
 
+class TestStructuralTransforms:
+    """The record transforms apply elementwise. A batch presents each field's
+    values across the batch, so that is what they act on — the batch axes and the
+    levels come through untouched.
+    """
+
+    def test_with_path_names_renames_within_every_element(self):
+        batch = nested_batch(name="post")
+        renamed = batch.with_path_names({"outer/a": "alpha"})
+        assert tuple(renamed.event_template.keys()) == ("outer/alpha", "outer/b", "m")
+        np.testing.assert_array_equal(
+            np.asarray(renamed["outer/alpha"]), np.asarray(batch["outer/a"])
+        )
+        assert renamed.level_names == batch.level_names
+        assert renamed.batch_shape == batch.batch_shape
+
+    def test_with_path_names_takes_a_bare_name(self):
+        assert "mass" in nested_batch().with_path_names(m="mass").event_template
+
+    def test_the_two_name_spaces_are_independent(self):
+        # Renaming a field never touches a level, or the reverse.
+        batch = nested_batch()
+        assert batch.with_path_names(m="mass").level_names == ("draw",)
+        assert tuple(batch.with_level_names(draw="s").event_template.keys()) == tuple(
+            batch.event_template.keys()
+        )
+
+    def test_without_drops_a_field_or_a_subtree(self):
+        batch = nested_batch()
+        assert tuple(batch.without("outer/b").event_template.keys()) == ("outer/a", "m")
+        assert tuple(batch.without("outer").event_template.keys()) == ("m",)
+
+    def test_without_everything_raises(self):
+        with pytest.raises(ValueError):
+            nested_batch().without("outer", "m")
+
+    def test_replace_takes_a_fields_values_across_the_batch(self):
+        batch = nested_batch()
+        replaced = batch.replace({"m": jnp.ones((3, 2))})
+        assert replaced.batch_shape == (3,)
+        np.testing.assert_array_equal(np.asarray(replaced["m"]), np.asarray(jnp.ones((3, 2))))
+        # An untouched field keeps its own values.
+        np.testing.assert_array_equal(np.asarray(replaced["outer/a"]), np.asarray(batch["outer/a"]))
+
+    def test_replace_re_infers_only_the_edited_field(self):
+        batch = nested_batch()
+        replaced = batch.replace({"m": jnp.ones((3, 5))})
+        assert replaced.event_template["m"].shape == (5,)
+        assert replaced.event_template["outer/a"] is batch.event_template["outer/a"]
+
+    def test_replace_needs_the_batch_axes(self):
+        with pytest.raises(ValueError, match="does not carry this batch's axes"):
+            nested_batch().replace({"m": jnp.ones((9, 2))})
+
+    def test_replace_edits_rather_than_adds(self):
+        with pytest.raises(KeyError, match="replace edits, it does not add"):
+            nested_batch().replace({"nope": jnp.zeros(3)})
+
+    def test_merge_unions_the_fields(self):
+        batch = nested_batch()
+        other = NumericRecordBatch({"z": jnp.ones(3)}, "draw", element_spec=EventTemplate(z=()))
+        merged = batch.merge(other)
+        assert tuple(merged.event_template.keys()) == ("outer/a", "outer/b", "m", "z")
+        np.testing.assert_array_equal(np.asarray(merged["z"]), np.asarray(jnp.ones(3)))
+
+    def test_merge_pairs_elements_so_the_axes_must_agree(self):
+        with pytest.raises(ValueError, match="span the same axes under the same names"):
+            nested_batch(3).merge(
+                NumericRecordBatch({"z": jnp.ones(4)}, "draw", element_spec=EventTemplate(z=()))
+            )
+
+    def test_merge_refuses_overlapping_fields(self):
+        with pytest.raises(ValueError, match="overlapping field keys"):
+            nested_batch().merge(nested_batch())
+
+    def test_map_applies_to_each_fields_values_at_once(self):
+        """One call per field, not per element: what a batch presents at a field
+        is that field's values across the batch."""
+        seen: list[tuple[int, ...]] = []
+
+        def double(column):
+            seen.append(tuple(column.shape))
+            return column * 2
+
+        doubled = nested_batch().map(double)
+        assert seen == [(3,), (3,), (3, 2)]  # three calls, each the whole field
+        np.testing.assert_array_equal(np.asarray(doubled["outer/a"]), np.asarray([0.0, 2.0, 4.0]))
+
+    def test_map_with_keys_passes_the_leaf_path(self):
+        scaled = nested_batch().map_with_keys(lambda key, column: column * (2 if key == "m" else 1))
+        np.testing.assert_array_equal(np.asarray(scaled["outer/a"]), np.asarray([0.0, 1.0, 2.0]))
+
+    def test_a_transform_keeps_a_user_given_name_and_re_derives_an_auto_one(self):
+        assert nested_batch(name="post").without("m").name == "post"
+        assert nested_batch().without("m").name_is_auto
+
+
 # ---------------------------------------------------------------------------
 # A batch is a collection, not a named tree
 # ---------------------------------------------------------------------------
@@ -475,9 +572,11 @@ class TestPlainRecordBatch:
 class TestCollectionNotTree:
     @pytest.mark.parametrize(
         "attribute",
-        ["keys", "values", "items", "children", "at_path", "is_field", "fields", "map", "replace"],
+        ["keys", "values", "items", "children", "at_path", "is_field", "fields"],
     )
     def test_the_field_keyed_mapping_protocol_is_absent(self, attribute):
+        """Navigation goes; the structure-preserving transforms stay, since those
+        act on the elements rather than treating the batch as a tree."""
         assert not hasattr(nested_batch(), attribute)
 
     def test_len_and_iter_range_over_the_batch(self):

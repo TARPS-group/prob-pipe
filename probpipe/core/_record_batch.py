@@ -20,12 +20,18 @@ is read from :attr:`RecordBatch.event_template`, which is where it belongs. What
 ``[]`` does depends on the key: a position addresses the batch axes, a name
 addresses a field within every element.
 
+What does carry over is the **structure-preserving transforms** —
+``with_path_names``, ``without``, ``replace``, ``merge``, ``map`` — since those
+act on the elements rather than navigating the batch as a tree. Each is its
+record counterpart applied to every element at once, which for field-wise
+storage means applying it to the fields.
+
 See design III.3.
 """
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import replace
 from typing import Any, Self
 
@@ -450,6 +456,161 @@ class RecordBatch(Batch[Record]):
             f"{type(self).__name__}; its fields are {list(template.keys())}"
         )
 
+    # -- structural transforms ----------------------------------------------
+    #
+    # A batch is a collection, so it carries no tree *navigation* — but the
+    # structure-preserving transforms do apply, elementwise. Each is the record
+    # transform of the same name applied to every element at once, which for
+    # field-wise storage means applying it to the fields: the batch axes are
+    # untouched throughout, and the levels come through unchanged.
+
+    def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self:
+        """Rename fields ``old -> new`` within every element.
+
+        The element counterpart of :meth:`~probpipe.core._batch.Batch.with_level_names`,
+        which renames the *levels*: the two namespaces are independent, and
+        renaming one never touches the other. Paths resolve as they do on a
+        record — a full path, or a bare name where it is unambiguous — and no
+        stored value moves.
+
+        Returns
+        -------
+        Self
+            A batch over the same values and levels, its elements' fields renamed.
+
+        Raises
+        ------
+        KeyError
+            If a name to rename is not a field of the elements.
+        ValueError
+            If a bare name is ambiguous, a new name is empty or contains ``/``,
+            two renames target the same field, or a rename collides with a
+            sibling.
+        """
+        renamed = self.event_template.with_path_names(mapping, **kwargs)
+        # ``with_path_names`` leaves field order untouched, so the old and new
+        # key sequences correspond position by position.
+        moved = dict(zip(self.event_template.keys(), renamed.keys(), strict=True))
+        return self._rebuilt(
+            {moved[path]: column for path, column in self._columns.items()}, renamed
+        )
+
+    def without(self, *paths: str) -> Self:
+        """Drop the fields or subtrees at *paths* from every element.
+
+        Each path is a key, dropping one field, or a partial path, dropping the
+        subtree beneath it. The surviving fields keep their order and their specs,
+        and the batch axes are unchanged.
+
+        Raises
+        ------
+        KeyError
+            If a path is not a field or an interior node of the elements.
+        ValueError
+            If every field would be dropped — a batch of records with no fields
+            is not a value.
+        """
+        kept = self.event_template.without(*paths)
+        return self._rebuilt({path: self._columns[path] for path in kept}, kept)
+
+    def replace(self, _updates: Mapping[str, Any] | None = None, /, **updates: Any) -> Self:
+        """Replace the values at the given paths, across the whole batch.
+
+        Each replacement is that field's values for *every* element, shaped
+        ``(*batch_shape, *event_shape)`` — the same form the field is read back
+        in, not one element's value. Every path must already exist: this edits,
+        it does not add. An untouched field keeps its spec; a replaced one takes
+        the spec its new values imply.
+
+        Raises
+        ------
+        KeyError
+            If a path is not a field of the elements.
+        ValueError
+            If no updates are given, or a replacement does not carry the batch
+            axes.
+        """
+        edits = dict(_updates or {})
+        edits.update(updates)
+        if not edits:
+            raise ValueError(f"{type(self).__name__}.replace() needs at least one update")
+        unknown = [path for path in edits if path not in self._columns]
+        if unknown:
+            raise KeyError(
+                f"not fields of this {type(self).__name__}: {sorted(unknown)}; "
+                f"replace edits, it does not add"
+            )
+        columns = {**self._columns, **edits}
+        return self._rebuilt(columns, _element_template_for(columns, self, edited=set(edits)))
+
+    def merge(self, other: Self) -> Self:
+        """Union this batch's elements with *other*'s, field by field.
+
+        Both batches must span the same axes under the same level names, since
+        the result's elements pair up one for one, and their field sets must not
+        overlap. Each side keeps its own fields' specs.
+
+        Raises
+        ------
+        TypeError
+            If *other* is not a batch of records.
+        ValueError
+            If the two disagree on their levels or axes, or their fields overlap.
+        """
+        if not isinstance(other, RecordBatch):
+            raise TypeError(
+                f"{type(self).__name__}.merge() takes another batch of records, "
+                f"got {type(other).__name__}"
+            )
+        if (self.axis_groups, self.level_names) != (other.axis_groups, other.level_names):
+            raise ValueError(
+                f"merge() pairs elements one for one, so both batches span the same axes under "
+                f"the same names: {self.level_names}={self.axis_groups} vs "
+                f"{other.level_names}={other.axis_groups}"
+            )
+        overlap = sorted(set(self._columns) & set(other._columns))
+        if overlap:
+            raise ValueError(f"merge() overlapping field keys: {overlap}")
+        merged = self.event_template.merge(other.event_template)
+        return self._rebuilt({**self._columns, **other._columns}, merged)
+
+    def map(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Self:
+        """Apply *f* to every field's values, keeping the structure.
+
+        What a batch presents at each field is that field's values across the
+        batch, so that is what *f* receives — one call per field, vectorized,
+        rather than one per element. A function that preserves the batch axes
+        therefore yields a batch of the same shape; each field takes the spec its
+        result implies.
+
+        Raises
+        ------
+        ValueError
+            If a result does not carry the batch axes.
+        """
+        columns = {path: f(column, *args, **kwargs) for path, column in self._columns.items()}
+        return self._rebuilt(columns, _element_template_for(columns, self, edited=set(columns)))
+
+    def map_with_keys(self, f: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Self:
+        """:meth:`map`, with each field's leaf path passed as the first argument."""
+        columns = {path: f(path, column, *args, **kwargs) for path, column in self._columns.items()}
+        return self._rebuilt(columns, _element_template_for(columns, self, edited=set(columns)))
+
+    def _rebuilt(self, columns: Mapping[str, Any], template: EventTemplate) -> Self:
+        """This batch over *columns* and *template*, at the same levels.
+
+        The transform identity rule the record types apply: a user-given name is
+        preserved, and an auto-derived one is left to the constructor to re-derive,
+        since the old one described the pre-edit fields.
+        """
+        return type(self)(
+            dict(columns),
+            self.level_names,
+            element_spec=template,
+            axis_groups=self.axis_groups,
+            name=None if self.name_is_auto else self.name,
+        )
+
     # -- construction from elements -----------------------------------------
 
     @classmethod
@@ -617,6 +778,38 @@ def _leaf_keyed_columns(
             f"{list(names)} — {'; '.join(parts)}"
         )
     return {key: flat[key] for key in names}
+
+
+def _element_template_for(
+    columns: Mapping[str, Any], batch: RecordBatch, *, edited: set[str]
+) -> EventTemplate:
+    """The element structure *columns* describe, given *batch*'s axes.
+
+    An untouched field keeps the spec it already carried; an *edited* one takes
+    the spec its new values imply, read by removing the batch axes from the
+    front of their shape. This is the record transforms' own policy — an
+    untouched child is identity-preserved, a replaced one is re-inferred — with
+    the batch axes discounted first.
+    """
+    rank = len(batch.batch_shape)
+    kind = f"{type(batch).__name__} transform"
+    specs: dict[str, Any] = {}
+    for path, column in columns.items():
+        if path not in edited:
+            specs[path] = batch.event_template[path]
+            continue
+        shape = _column_shape(column)
+        if shape is None:
+            specs[path] = None  # an opaque value: no shape to describe
+            continue
+        if len(shape) < rank or tuple(shape[:rank]) != batch.batch_shape:
+            raise ValueError(
+                f"{kind}: the values given for {path!r} have shape {tuple(shape)}, which does "
+                f"not carry this batch's axes {batch.batch_shape}; a field's values span the "
+                f"batch, so a replacement does too"
+            )
+        specs[path] = None if _is_object_array(column) else tuple(shape[rank:])
+    return EventTemplate(specs)
 
 
 def _event_shape(spec: ValueSpec, *, path: str, kind: str) -> tuple[int, ...]:
