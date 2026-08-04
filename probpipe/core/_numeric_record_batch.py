@@ -98,6 +98,48 @@ class NumericRecordBatch(RecordBatch):
     # an ``ArraySpec``, so the base already checks each column for a numeric
     # dtype the declaration admits.
 
+    # -- single-field coercion ----------------------------------------------
+    #
+    # With exactly one field, a batch is a thin wrapper around that field's
+    # values, so the array-conversion and introspection entry points forward to
+    # them. Deliberately narrower than the single-record shim: ``float`` / ``int``
+    # / ``bool`` are absent, because a batch of values is not one scalar however
+    # few fields it has.
+
+    def _sole_field(self) -> Any:
+        """The one field's values, or a refusal naming what to do instead."""
+        if len(self._columns) != 1:
+            raise TypeError(
+                f"a {type(self).__name__} of {len(self._columns)} fields is not array-like; "
+                f"read one field first, as batch['field']"
+            )
+        return next(iter(self._columns.values()))
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        """The sole field's values as a numpy array."""
+        leaf = self._sole_field()
+        array = np.asarray(leaf, dtype=dtype) if dtype is not None else np.asarray(leaf)
+        return array.copy() if copy else array
+
+    def __jax_array__(self) -> Array:
+        """The sole field's values as a ``jax.Array``."""
+        return jnp.asarray(self._sole_field())
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """The sole field's full shape, ``(*batch_shape, *event_shape)``."""
+        return tuple(self._sole_field().shape)
+
+    @property
+    def dtype(self) -> Any:
+        """The sole field's dtype."""
+        return self._sole_field().dtype
+
+    @property
+    def ndim(self) -> int:
+        """The rank of the sole field's values, batch axes included."""
+        return int(self._sole_field().ndim)
+
     # -- flat layout --------------------------------------------------------
 
     def to_vector(self) -> Array:

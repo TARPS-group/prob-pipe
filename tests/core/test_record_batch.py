@@ -782,6 +782,40 @@ class TestSelect:
             nested_batch().select("nope")
 
 
+class TestSingleFieldCoercion:
+    """With one field, a batch forwards the array-conversion entry points to that
+    field's values — narrower than the single-record shim, since a batch of values
+    is not one scalar however few fields it has."""
+
+    @staticmethod
+    def one_field():
+        return NumericRecordBatch(
+            {"x": jnp.arange(6.0).reshape(3, 2)}, "draw", element_spec=EventTemplate(x=(2,))
+        )
+
+    def test_array_conversions_forward_to_the_sole_field(self):
+        batch = self.one_field()
+        np.testing.assert_array_equal(np.asarray(batch), np.asarray(batch["x"]))
+        np.testing.assert_array_equal(np.asarray(jnp.asarray(batch)), np.asarray(batch["x"]))
+
+    def test_introspection_forwards_to_the_sole_field(self):
+        batch = self.one_field()
+        assert batch.shape == (3, 2)
+        assert batch.dtype == jnp.float32
+        assert batch.ndim == 2
+
+    @pytest.mark.parametrize("read", [lambda b: b.shape, lambda b: b.dtype, np.asarray])
+    def test_more_than_one_field_is_refused(self, read):
+        with pytest.raises(TypeError, match="is not array-like"):
+            read(nested_batch())
+
+    def test_a_batch_is_never_scalar_like(self):
+        # The single-record shim offers these; a batch of values does not.
+        batch = self.one_field()
+        for entry in ("__float__", "__int__", "__bool__"):
+            assert not hasattr(batch, entry)
+
+
 # ---------------------------------------------------------------------------
 # The flat layout
 # ---------------------------------------------------------------------------
