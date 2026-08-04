@@ -30,7 +30,7 @@ from probpipe import (
 )
 from probpipe.core._record_batch import NumericRecordBatch, RecordBatch
 
-# A nested, all-numeric element: the shape issue 340 is about.
+# A nested, all-numeric element: the shape a nested field makes.
 NESTED = EventTemplate(outer=EventTemplate(a=(), b=()), m=(2,))
 
 
@@ -209,10 +209,11 @@ class TestConstruction:
 
 
 class TestLeafKeyedFieldColumns:
-    """A nested field must be reachable, which is what issue 340 was about.
+    """A nested field must be reachable, by leaf path and by the node above it.
 
-    Under the previous batch storage a nested top-level name was a subtree that
-    ``[]`` refused, so a nested record could not be batched and read back.
+    A batch keyed by top-level name cannot answer for a nested field at all: the
+    name reaches a subtree, which is not a column. Keying by leaf path is what
+    lets a nested record be batched and read back.
     """
 
     def test_the_event_template_is_leaf_keyed(self):

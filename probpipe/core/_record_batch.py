@@ -174,7 +174,6 @@ class RecordBatch(Batch[Record]):
         batch_shape = _batch_shape_of(store, template, kind=kind)
         groups = _axis_groups_for(batch_shape, names, axis_groups, kind=kind)
         type(self)._check_columns(store, template, kind=kind)
-        # An object column is frozen against later writes; see the helper.
         store = {
             path: _frozen_object_column(column) if _is_object_array(column) else column
             for path, column in store.items()
@@ -596,9 +595,8 @@ class NumericRecordBatch(RecordBatch):
             provenance=provenance,
         )
 
-    # ``element_spec`` is not overridden: it already reports the ``RecordSpec``
-    # this class stores, and there is nothing narrower to say. Only
-    # ``event_template`` narrows, to the numeric template construction required.
+    # ``element_spec`` is not overridden: it already reports the stored
+    # ``RecordSpec``, and only ``event_template`` has anything narrower to say.
 
     @property
     def event_template(self) -> NumericEventTemplate:
@@ -668,8 +666,7 @@ class NumericRecordBatch(RecordBatch):
         level_names: str | Iterable[str],
         axis_groups: Iterable[Iterable[int]] | None = None,
     ) -> Self:
-        """Rebuild a batch from its elements' flat vectors — the inverse of
-        :meth:`to_vector`.
+        """Rebuild a batch from its elements' flat vectors, inverting :meth:`to_vector`.
 
         Parameters
         ----------
@@ -923,8 +920,6 @@ def _stack_column(values: list[Any], spec: ValueSpec, *, kind: str) -> Any:
     """
     if isinstance(spec, ArraySpec):
         return jnp.stack([jnp.asarray(value) for value in values])
-    # The same object-array construction the object batches use, frozen for the
-    # reason ``_frozen_object_column`` gives.
     store = _from_iterable(values, kind=kind)
     store.setflags(write=False)
     return store
