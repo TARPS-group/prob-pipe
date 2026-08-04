@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, NumericRecord, NumericRecordArray, Record
+from probpipe import EventTemplate, NumericRecord, NumericRecordBatch, Record
 from probpipe.core.event_template import ArraySpec, NumericEventTemplate, OpaqueSpec
 
 # ---------------------------------------------------------------------------
@@ -405,14 +405,16 @@ class TestBoundaryRules:
 
 
 # ---------------------------------------------------------------------------
-# Batch field-navigation surface (RecordArray): string [] is leaf-only
+# Batch field-navigation surface (RecordBatch): string [] is leaf-only
 # ---------------------------------------------------------------------------
 
 
 class TestBatchFieldNav:
     def _nested_array(self):
         tpl = EventTemplate(outer=EventTemplate(a=(), b=()), m=())
-        return NumericRecordArray.from_vector("nra", tpl, jnp.arange(15.0).reshape(5, 3))
+        return NumericRecordBatch.from_vector(
+            "nrb", tpl, jnp.arange(15.0).reshape(5, 3), level_names="draw"
+        )
 
     def test_string_index_is_leaf_only(self):
         nra = self._nested_array()
@@ -456,7 +458,9 @@ class TestBatchFieldNav:
 
         nra = self._nested_array()
         tpl = nra.template
-        assert NumericRecordArray.from_vector("nra", tpl, nra.to_vector()) == nra
+        assert (
+            NumericRecordBatch.from_vector("nrb", tpl, nra.to_vector(), level_names="draw") == nra
+        )
         assert pickle.loads(pickle.dumps(nra)) == nra
 
     def test_edits_unsupported_on_batch(self):
@@ -475,7 +479,6 @@ class TestBatchFieldNav:
     def test_stack_nested_records_raises_clearly(self):
         # Stacking nested records into a batch needs nested-batch construction
         # (deferred); it fails with a clear TypeError, not a cryptic KeyError.
-        from probpipe.core._record_array import NumericRecordArray
 
         recs = [
             NumericRecord(
@@ -484,4 +487,4 @@ class TestBatchFieldNav:
             for _ in range(3)
         ]
         with pytest.raises(TypeError, match="nested"):
-            NumericRecordArray.stack(recs)
+            NumericRecordBatch.stack(recs)

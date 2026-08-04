@@ -11,7 +11,7 @@ import scipy.stats
 from probpipe import (
     Normal,
     Record,
-    RecordArray,
+    RecordBatch,
     RecordDistribution,
     SequentialJointDistribution,
     condition_on,
@@ -19,7 +19,6 @@ from probpipe import (
     sample,
     unnormalized_log_prob,
 )
-from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import Function
 
@@ -104,7 +103,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = sample(joint, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, (Record, RecordBatch))
         assert set(s.fields) == {"z", "x"}
         assert s["z"].shape == ()
         assert s["x"].shape == ()

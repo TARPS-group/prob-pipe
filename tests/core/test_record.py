@@ -957,7 +957,7 @@ class TestReprAndEquality:
 class TestProvenance:
     """Record carries the same ``.provenance`` / ``.with_provenance`` slot as
     Distribution, so workflow outputs can attach a Provenance node
-    regardless of which of the three output types (Record, RecordArray,
+    regardless of which of the three output types (Record, RecordBatch,
     Distribution) the broadcasting layer produced.
     """
 
@@ -1302,9 +1302,9 @@ class TestEventTemplateStorage:
         assert rebuilt.event_template == r.event_template
 
     def test_record_array_event_template_is_template(self):
-        from probpipe import NumericRecord, RecordArray
+        from probpipe import NumericRecord, RecordBatch
 
-        ra = RecordArray.stack([NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)])
+        ra = RecordBatch.stack([NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)])
         assert ra.event_template is ra.template
 
     def test_explicit_nested_template_validates_recursively(self):

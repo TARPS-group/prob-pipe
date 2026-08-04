@@ -8,7 +8,7 @@ Vectorized ops are delivered by the :class:`~probpipe.Function`
 sweep layer — when a ``DistributionArray`` is passed to an op like
 ``sample`` / ``mean`` / ``log_prob`` whose signature expects a scalar
 ``Distribution``, the WF dispatches cell-by-cell and stacks the results
-into a ``NumericRecordArray`` / ``RecordArray`` (or nested
+into a ``NumericRecordBatch`` / ``RecordBatch`` (or nested
 ``DistributionArray`` when the op returns a distribution per cell).
 The class itself only carries the container surface.
 
@@ -31,7 +31,7 @@ differs:
   along a batch axis — e.g.
   ``DistributionArray([Normal(loc=i, scale=1.0, name=f"n{i}") for i in
   range(5)])``. ``sample(da)`` vectorizes over cells and returns a
-  ``NumericRecordArray`` at ``batch_shape=da.batch_shape``.
+  ``NumericRecordBatch`` at ``batch_shape=da.batch_shape``.
 
 Rule of thumb: if you'd write ``d["sigma"]`` to pull out a specific
 **named** quantity → ``ProductDistribution``. If you'd write ``d[i]``
@@ -100,8 +100,8 @@ class DistributionArray[T](Distribution[T]):
        expects a scalar ``SupportsSampling``.
     2. WF dispatches cell-by-cell: each ``da[i]`` is sampled, results
        are stacked along ``batch_shape`` and returned as a
-       :class:`~probpipe.NumericRecordArray` (or
-       :class:`~probpipe.RecordArray` for non-numeric components).
+       :class:`~probpipe.NumericRecordBatch` (or
+       :class:`~probpipe.RecordBatch` for non-numeric components).
        For ops whose inner return is itself a ``Distribution`` (e.g.
        posterior-predictive sweeps), the result is a nested
        ``DistributionArray``.

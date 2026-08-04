@@ -16,7 +16,6 @@ from typing import Any, Literal, Union, get_args, get_origin
 from . import _workflow_call, _workflow_distribution_normalization
 from ._batch import Batch
 from ._distribution_array import DistributionArray
-from ._record_array import RecordArray
 from ._record_batch import RecordBatch
 from .distribution import Distribution
 
@@ -66,7 +65,7 @@ def build_broadcast_plan(
         value = _workflow_call.input_ref_value(values, ref)
         expected = _workflow_call.input_ref_hint(signature_info, ref)
 
-        is_batched_record = isinstance(value, (RecordArray, RecordBatch))
+        is_batched_record = isinstance(value, RecordBatch)
         is_dist_array = isinstance(value, DistributionArray)
         if (is_batched_record or is_dist_array) and len(value.batch_shape) > 0:
             if _value_matches_hint(value, expected) or expected is Any:
@@ -255,7 +254,7 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     try:
         return (
             isinstance(base, type)
-            and issubclass(base, (Batch, RecordArray, DistributionArray))
+            and issubclass(base, (Batch, DistributionArray))
             and isinstance(value, base)
         )
     except TypeError:

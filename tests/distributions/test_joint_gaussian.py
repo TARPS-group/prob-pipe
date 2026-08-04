@@ -11,7 +11,7 @@ from probpipe import (
     JointGaussian,
     MultivariateNormal,
     Record,
-    RecordArray,
+    RecordBatch,
     RecordDistribution,
     condition_on,
     log_prob,
@@ -19,7 +19,6 @@ from probpipe import (
     sample,
     variance,
 )
-from probpipe.core._record_batch import RecordBatch
 from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
@@ -119,7 +118,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(0)
         s = sample(jg, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, (Record, RecordBatch))
         assert set(s.fields) == {"x", "y"}
         assert s["x"].shape == (1,)
         assert s["y"].shape == (1,)

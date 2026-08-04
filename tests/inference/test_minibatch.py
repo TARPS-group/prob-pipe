@@ -221,23 +221,24 @@ class TestInnerDraw:
         likelihood,
         regression_data,
     ):
-        """``Record`` and ``NumericRecordArray`` data inputs produce
+        """``Record`` and ``NumericRecordBatch`` data inputs produce
         identical log-densities given the same minibatch indices.
 
-        Locks the ``_index_along_leading`` RecordArray-via-Record-subclass
+        Locks the ``_index_along_leading`` RecordBatch-via-Record-subclass
         path: indexing each leaf along the batch axis must give the same
         per-minibatch surrogate regardless of which container type the
         user passes.
         """
-        from probpipe import NumericEventTemplate, NumericRecordArray
+        from probpipe import NumericEventTemplate, NumericRecordBatch
 
         X, y = regression_data
         n = X.shape[0]
         record_data = Record("r", X=X, y=y)
-        recordarray_data = NumericRecordArray(
+        recordarray_data = NumericRecordBatch(
             {"X": jnp.asarray(X), "y": jnp.asarray(y)},
-            batch_shape=(n,),
-            template=NumericEventTemplate(X=(X.shape[1],), y=()),
+            level_names="draw",
+            axis_groups=((n,),),
+            element_spec=NumericEventTemplate(X=(X.shape[1],), y=()),
         )
 
         m_rec = MinibatchedDistribution(prior, likelihood, record_data, batch_size=20)
@@ -316,7 +317,7 @@ class TestBareArrayData:
     """Bare ``jnp.ndarray`` data works when the CIL likelihood's
     ``per_datum_log_likelihood`` accepts a scalar datum.
 
-    The canonical container is ``Record`` / ``RecordArray`` (so covariates
+    The canonical container is ``Record`` / ``RecordBatch`` (so covariates
     have named-field provenance), but ``_data_size`` and
     ``_index_along_leading`` also work on a leading-axis-arrayed
     response-only dataset.

@@ -44,7 +44,6 @@ from ..core._distribution_base import Distribution
 from ..core._object_batch import _is_object_array
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
-from ..core._record_array import RecordArray
 from ..core._record_batch import RecordBatch
 from ..core.protocols import (
     SupportsLogProb,
@@ -75,7 +74,7 @@ def _data_size(data: Any) -> int:
     ``.shape``, or any object with ``__len__``. Nested Records are
     rejected — minibatching expects a flat-field layout.
     """
-    if isinstance(data, (RecordArray, RecordBatch)):
+    if isinstance(data, RecordBatch):
         return data.batch_shape[0]
     if isinstance(data, Record):
         children = dict(data.children)
@@ -85,7 +84,7 @@ def _data_size(data: Any) -> int:
                     f"MinibatchedDistribution requires a flat Record "
                     f"(no nested fields). Got nested Record at field "
                     f"{f!r}; flatten the structure or use a "
-                    f"RecordArray instead."
+                    f"RecordBatch instead."
                 )
         leading = {jnp.asarray(leaf).shape[0] for leaf in children.values()}
         if len(leading) != 1:
@@ -113,7 +112,7 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     Returns a plain ``Record`` (never a batch) when the source is
     record-shaped — the minibatch needs a flat dict of indexed leaves;
     per-datum vmap dispatches over the leading axis of each. Neither a
-    ``RecordArray`` nor a ``RecordBatch`` indexes by an array of positions, so
+    ``RecordBatch`` nor a ``RecordBatch`` indexes by an array of positions, so
     both are read a field at a time.
     """
     if isinstance(data, RecordBatch):
@@ -125,7 +124,7 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
             name_is_auto=True,
         )
     if isinstance(data, Record):
-        # Covers Record and RecordArray (the latter via subclass).
+        # Covers Record and RecordBatch (the latter via subclass).
         return Record(
             data.name,
             {f: jnp.asarray(child)[indices] for f, child in data.children.items()},
@@ -185,7 +184,7 @@ class MinibatchedDistribution(
         Likelihood that factorises as
         :math:`\\log p(\\mathcal{D} \\mid \\theta) = \\sum_i \\log p(d_i \\mid \\theta)`;
         supplies the per-datum log-density used in the rescaled sum.
-    data : array-like, Record, or RecordArray
+    data : array-like, Record, or RecordBatch
         Observed data. Indexed along its leading axis to draw
         minibatches; must have leading-axis length ``>= batch_size``.
     batch_size : int
@@ -213,7 +212,7 @@ class MinibatchedDistribution(
         self,
         prior: SupportsLogProb,
         likelihood: ConditionallyIndependentLikelihood,
-        data: ArrayLike | Record | RecordArray,
+        data: ArrayLike | Record | RecordBatch,
         batch_size: int,
         *,
         with_replacement: bool = False,

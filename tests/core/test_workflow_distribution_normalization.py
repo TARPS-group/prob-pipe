@@ -16,7 +16,7 @@ from probpipe import (
     EmpiricalDistribution,
     KDEDistribution,
     Normal,
-    NumericRecordArray,
+    NumericRecordBatch,
     NumericRecordDistribution,
     log_prob,
     mean,
@@ -207,7 +207,7 @@ class TestDistributionArrayHandling:
 
         result = wf(dist=da)
 
-        assert isinstance(result, NumericRecordArray)
+        assert isinstance(result, NumericRecordBatch)
         assert result.batch_shape == (1,)
         np.testing.assert_allclose(result[result.fields[0]], jnp.asarray([3.0]))
 

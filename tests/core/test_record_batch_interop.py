@@ -1,7 +1,7 @@
 """Tests that the package's consumers of a batched record accept a `RecordBatch`.
 
 A `RecordBatch` is deliberately not a `Record`, so every consumer that recognised
-a batch by `isinstance(x, Record)` — or by a `RecordArray` subclass check, or by
+a batch by `isinstance(x, Record)` — or by a `RecordBatch` subclass check, or by
 duck-typing on `.fields` — stops recognising one when the batch arrives. Those
 gates do not raise; they take the other branch, which is why widening them needs
 its own tests rather than the producers' own.

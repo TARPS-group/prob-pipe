@@ -57,7 +57,7 @@ When every field is an ``ArraySpec`` the template is all-numeric, and
 specialization describing a value that is a PyTree of arrays. That subclass
 adds the flat-vector layout — ``vector_size`` and :meth:`from_vector`
 reconstruction; the ``to_vector`` serialization is a value method on
-:class:`~probpipe.NumericRecord` / :class:`~probpipe.NumericRecordArray`. See
+:class:`~probpipe.NumericRecord` / :class:`~probpipe.NumericRecordBatch`. See
 its docstring for details.
 """
 
@@ -1170,7 +1170,7 @@ class NumericEventTemplate(EventTemplate):
 
     # 1-D numeric (de)serialization is a value operation and lives on the
     # value types: ``to_vector`` on :class:`~probpipe.NumericRecord` /
-    # :class:`~probpipe.NumericRecordArray`, and their ``from_vector``
+    # :class:`~probpipe.NumericRecordBatch`, and their ``from_vector``
     # classmethods (which take a template). A template describes structure
     # and does not depend on the value type, so it carries neither.
 

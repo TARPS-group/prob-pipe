@@ -1,7 +1,7 @@
 """Tests for the ``RecordDistribution`` / ``_RecordDistributionView`` surface.
 
 - Public ``.parent`` / ``.field`` properties on ``_RecordDistributionView``
-  (parallel to ``_RecordArrayView``).
+  (parallel to ``_RecordBatchView``).
 - Single-field ``.shape`` / ``.ndim`` shims on ``RecordDistribution``
   and ``_RecordDistributionView`` — and their multi-field ``TypeError``.
 - ``event_shapes`` returns ``dict[str, tuple[int, ...]]`` uniformly,
@@ -49,7 +49,7 @@ def multi_field_dist():
 
 class TestViewParentField:
     """``dist[field]`` returns a view whose ``.parent`` / ``.field`` are
-    public and match ``_RecordArrayView``'s surface."""
+    public and match ``_RecordBatchView``'s surface."""
 
     def test_view_parent_is_dist(self, multi_field_dist):
         view = multi_field_dist["x"]

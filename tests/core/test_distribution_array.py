@@ -21,7 +21,7 @@ import pytest
 from probpipe import (
     EventTemplate,
     Normal,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     Provenance,
     log_prob,
@@ -33,7 +33,6 @@ from probpipe.core._distribution_array import (
     DistributionArray,
     _make_distribution_array,
 )
-from probpipe.core._numeric_record_batch import NumericRecordBatch
 
 # ---------------------------------------------------------------------------
 # Construction & invariants
@@ -425,7 +424,7 @@ class TestSampleViaSweep:
 
     Each cell is a scalar Distribution; ``sample(component, sample_shape)``
     returns a leaf-shaped array; ``_make_stack`` assembles them into a
-    ``NumericRecordArray`` with ``batch_shape = da.batch_shape`` and
+    ``NumericRecordBatch`` with ``batch_shape = da.batch_shape`` and
     per-field leaf shape equal to ``sample_shape + event_shape``.
     """
 
@@ -433,7 +432,7 @@ class TestSampleViaSweep:
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         s = sample(da)
-        assert isinstance(s, NumericRecordArray)
+        assert isinstance(s, NumericRecordBatch)
         assert s.batch_shape == (4,)
         assert s["sample"].shape == (4,)
 
@@ -441,7 +440,7 @@ class TestSampleViaSweep:
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         s = sample(da, sample_shape=(7,))
-        assert isinstance(s, NumericRecordArray)
+        assert isinstance(s, NumericRecordBatch)
         # batch_shape is the DistArray's own shape; sample_shape is leaf.
         assert s.batch_shape == (4,)
         assert s["sample"].shape == (4, 7)
@@ -473,9 +472,9 @@ class TestSampleViaSweep:
         ]
         da = _make_distribution_array(comps)
         s = sample(da)
-        from probpipe import RecordArray
+        from probpipe import RecordBatch
 
-        assert isinstance(s, RecordArray)
+        assert isinstance(s, RecordBatch)
         assert s.batch_shape == (3,)
         np.testing.assert_allclose(s["x"], [0.0, 1.0, 2.0], atol=1e-2)
 
@@ -484,7 +483,7 @@ class TestSampleViaSweep:
         the outer sweep prepends ``da.batch_shape`` to it. Scalar
         components land in the trailing ``sample_shape`` as leaf; Record
         components land in the batch (because their per-cell return is
-        already a batched ``NumericRecordArray``, not a raw array). Under
+        already a batched ``NumericRecordBatch``, not a raw array). Under
         direct vectorization both are the concatenation of outer sweep
         axes with the inner return's shape.
         """
@@ -513,7 +512,7 @@ class TestMeanVianSweep:
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         m = mean(da)
-        assert isinstance(m, NumericRecordArray)
+        assert isinstance(m, NumericRecordBatch)
         assert m.batch_shape == (4,)
         assert m["mean"].shape == (4,)
         np.testing.assert_allclose(m["mean"], [0.0, 1.0, 2.0, 3.0])
@@ -535,9 +534,9 @@ class TestMeanVianSweep:
         ]
         da = _make_distribution_array(comps)
         m = mean(da)
-        from probpipe import RecordArray
+        from probpipe import RecordBatch
 
-        assert isinstance(m, RecordArray)
+        assert isinstance(m, RecordBatch)
         assert m.batch_shape == (3,)
         np.testing.assert_allclose(m["x"], [0.0, 1.0, 2.0])
         np.testing.assert_allclose(m["y"], [0.0, -1.0, -2.0])
@@ -548,7 +547,7 @@ class TestVarianceViaSweep:
         comps = [Normal(loc=0.0, scale=float(i + 1), name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
         v = variance(da)
-        assert isinstance(v, NumericRecordArray)
+        assert isinstance(v, NumericRecordBatch)
         assert v.batch_shape == (3,)
         assert v["variance"].shape == (3,)
         np.testing.assert_allclose(v["variance"], [1.0, 4.0, 9.0])
@@ -569,7 +568,7 @@ class TestLogProbViaSweep:
         # Single scalar value broadcasts to every cell.
         value = jnp.asarray(0.0)
         lp = log_prob(da, value=value)
-        assert isinstance(lp, NumericRecordArray)
+        assert isinstance(lp, NumericRecordBatch)
         assert lp.batch_shape == (3,)
         # Cell i evaluates Normal(i, 1) at 0 → gaussian log-density at
         # distance ``i`` from the mean.

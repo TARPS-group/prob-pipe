@@ -518,10 +518,9 @@ class NumericRecordDistribution(RecordDistribution):
         """
         from ._numeric_record import NumericRecord
         from ._numeric_record_batch import NumericRecordBatch
-        from ._record_array import NumericRecordArray
         from .record import Record
 
-        if isinstance(value, (NumericRecordArray, NumericRecordBatch, NumericRecord)):
+        if isinstance(value, (NumericRecordBatch, NumericRecord)):
             return value.to_vector()
         if isinstance(value, Record):
             return value.to_numeric().to_vector()
@@ -547,7 +546,7 @@ class NumericRecordDistribution(RecordDistribution):
             from ._numeric_record import _reconstruct_from_vector
 
             # ``_reconstruct_from_vector`` selects single (NumericRecord) vs
-            # batched (NumericRecordArray) from the rank of ``flat``.
+            # batched (NumericRecordBatch) from the rank of ``flat``.
             return _reconstruct_from_vector("value", template, flat, name_is_auto=True)
         # Single-field path
         if template is None or not template.fields:
@@ -798,7 +797,7 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
 
         Inverse of :meth:`~NumericRecordDistribution.as_flat_distribution`.
         Samples come back as :class:`NumericRecord` /
-        :class:`NumericRecordArray` keyed by ``template.fields``.
+        :class:`NumericRecordBatch` keyed by ``template.fields``.
 
         Parameters
         ----------
@@ -1014,7 +1013,6 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     # circular-import risk at module load time).
     from ._numeric_record import NumericRecord
     from ._numeric_record_batch import NumericRecordBatch
-    from ._record_array import NumericRecordArray
 
     protocols: set[str] = set()
     if isinstance(base, SupportsSampling):
@@ -1045,7 +1043,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             from ._numeric_record import _reconstruct_from_vector
 
             # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
-            # is 1-D) vs batched (NumericRecordArray, batch_shape ==
+            # is 1-D) vs batched (NumericRecordBatch, batch_shape ==
             # sample_shape) from the rank of ``flat``.
             return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
 
@@ -1055,7 +1053,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         extra_bases.append(SupportsLogProb)
 
         def _log_prob(self, x) -> Array:
-            if isinstance(x, (NumericRecord, NumericRecordArray, NumericRecordBatch)):
+            if isinstance(x, (NumericRecord, NumericRecordBatch)):
                 flat = x.to_vector()
             else:
                 flat = jnp.asarray(x)
@@ -1118,7 +1116,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             return_dist: bool | None = None,
         ) -> Any:
             # ``f`` operates on a Record-shaped sample. We can't pass the
-            # batched ``NumericRecordArray`` returned by ``self._sample``
+            # batched ``NumericRecordBatch`` returned by ``self._sample``
             # through ``jax.vmap(f)`` directly — vmap strips the leading
             # axis from each leaf while preserving ``batch_shape`` aux,
             # producing an invariant violation. Instead, sample the base

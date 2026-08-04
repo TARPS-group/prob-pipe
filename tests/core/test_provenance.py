@@ -13,7 +13,7 @@ from probpipe import (
     JointGaussian,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     Provenance,
     ProvenanceMode,
@@ -388,7 +388,7 @@ class TestBroadcastingProvenance:
         assert result.provenance.operation == "broadcast"
 
     def test_sweep_records_static_plain_inputs(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=float(value)) for value in range(3)]
         )
 
@@ -402,7 +402,7 @@ class TestBroadcastingProvenance:
         assert result.provenance.inputs["offset"].fingerprint is not None
 
     def test_nested_broadcast_records_static_plain_inputs(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=float(value)) for value in range(2)]
         )
         noise = Normal(loc=0.0, scale=1.0, name="noise")

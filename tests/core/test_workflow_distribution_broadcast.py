@@ -464,7 +464,7 @@ class TestCoSamplingThroughACall:
         """Enumerated rows stack per argument, and a record row is not an array.
 
         Atoms of a record-valued empirical are ``Record``s, which ``jnp.stack``
-        cannot take; they stack through ``RecordArray.stack`` instead.
+        cannot take; they stack through ``RecordBatch.stack`` instead.
         """
         empirical = RecordEmpiricalDistribution(
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),

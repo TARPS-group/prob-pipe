@@ -19,12 +19,12 @@ from probpipe import (
     EmpiricalDistribution,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     Provenance,
     ProvenanceMode,
     Record,
-    RecordArray,
+    RecordBatch,
 )
 from probpipe.core.event_template import EventTemplate
 from probpipe.core.tracked import Annotated, TrackedTerm, auto_name
@@ -51,10 +51,11 @@ class TestMixinMembership:
         assert isinstance(nr, Annotated)
 
     def test_record_array_is_tracked(self):
-        ra = RecordArray(
+        ra = RecordBatch(
             {"a": jnp.zeros((3,))},
-            batch_shape=(3,),
-            template=EventTemplate(a=()),
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
         )
         assert isinstance(ra, TrackedTerm)
 
@@ -122,16 +123,18 @@ class TestNameIsAuto:
         assert r.name_is_auto is True
 
     def test_unnamed_record_array_is_auto(self):
-        ra = RecordArray(
+        ra = RecordBatch(
             {"a": jnp.zeros((3,))},
-            batch_shape=(3,),
-            template=EventTemplate(a=()),
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
         )
         assert ra.name_is_auto is True
-        named = RecordArray(
+        named = RecordBatch(
             {"a": jnp.zeros((3,))},
-            batch_shape=(3,),
-            template=EventTemplate(a=()),
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
             name="mine",
         )
         assert named.name_is_auto is False
@@ -290,10 +293,11 @@ class TestWithNameOnBatchTypes:
     sharing field data, with the original unchanged."""
 
     def test_record_array(self):
-        ra = RecordArray(
+        ra = RecordBatch(
             {"a": jnp.zeros((3,))},
-            batch_shape=(3,),
-            template=EventTemplate(a=()),
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
         )
         ra2 = ra.with_name("mine")
         assert ra2 is not ra
@@ -305,10 +309,11 @@ class TestWithNameOnBatchTypes:
         assert ra.name_is_auto is True  # original unchanged
 
     def test_numeric_record_array(self):
-        nra = NumericRecordArray(
+        nra = NumericRecordBatch(
             {"a": jnp.zeros((3,))},
-            batch_shape=(3,),
-            template=EventTemplate(a=()),
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
             name="orig",
         )
         nra2 = nra.with_name("new")
@@ -519,10 +524,11 @@ class TestProductPickleRoundTrip:
 
 class TestBatchPickleRoundTrip:
     def test_numeric_record_array_pickle_preserves_identity(self):
-        nra = NumericRecordArray(
+        nra = NumericRecordBatch(
             {"a": jnp.zeros((3,))},
-            batch_shape=(3,),
-            template=EventTemplate(a=()),
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
             name="mine",
         )
         nra.with_provenance(Provenance("op"))

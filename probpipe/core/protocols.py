@@ -126,7 +126,7 @@ class SupportsSampling(Protocol):
     Distribution kind      ``sample_shape == ()``   ``sample_shape == (S1, S2, ...)``
     =====================  =======================  =========================================
     Numeric (raw array)    ``Array[*event_shape]``  ``Array[*sample_shape, *event_shape]``
-    ``RecordDistribution`` ``Record`` / ``NumericRecord``  ``NumericRecordArray(batch_shape=sample_shape)``
+    ``RecordDistribution`` ``Record`` / ``NumericRecord``  ``NumericRecordBatch(batch_shape=sample_shape)``
     =====================  =======================  =========================================
 
     To draw a single sample, call ``_sample(key, ())``. Implementations
@@ -188,8 +188,8 @@ class SupportsLogProb[T](SupportsUnnormalizedLogProb[T], Protocol):
 
     ``_log_prob`` accepts a single draw of the distribution's sample type
     ``T`` or the batched form (``Array`` → ``Array`` with leading batch
-    axes; ``Record`` → ``RecordArray``; ``NumericRecord`` →
-    ``NumericRecordArray``). The ``T | ArrayLike`` annotation is
+    axes; ``Record`` → ``RecordBatch``; ``NumericRecord`` →
+    ``NumericRecordBatch``). The ``T | ArrayLike`` annotation is
     deliberately loose: ``ArrayLike`` covers the scalar batched case,
     while Record-based batched forms follow the convention above. The
     kwarg form ``log_prob(dist, field=value, ...)`` builds a single ``T``

@@ -3,8 +3,8 @@ Record family iterates field names (#142).
 
 The rule (codified in STYLE_GUIDE.md §1.11):
 
-* :class:`Record`, :class:`NumericRecord`, :class:`RecordArray`,
-  :class:`NumericRecordArray` iterate field names dict-style.
+* :class:`Record`, :class:`NumericRecord`, :class:`RecordBatch`,
+  :class:`NumericRecordBatch` iterate field names dict-style.
 * :class:`DistributionArray` is positional (access via ``da[i]``);
   ``len(da)`` is the leading-axis size, ``prod(da.batch_shape)`` is
   the total cell count. Not generally treated as an iterable.
@@ -32,10 +32,10 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     Record,
-    RecordArray,
+    RecordBatch,
     TransformedDistribution,
 )
 
@@ -181,11 +181,12 @@ def test_numeric_record_iterates_field_names():
 def test_record_array_iterates_field_names():
     from probpipe.core.event_template import EventTemplate
 
-    ra = RecordArray(
+    ra = RecordBatch(
         a=jnp.zeros((5,)),
         b=jnp.zeros((5,)),
-        batch_shape=(5,),
-        template=EventTemplate(a=(), b=()),
+        level_names="draw",
+        axis_groups=((5,),),
+        element_spec=EventTemplate(a=(), b=()),
     )
     assert list(iter(ra)) == ["a", "b"]
 
@@ -193,10 +194,11 @@ def test_record_array_iterates_field_names():
 def test_numeric_record_array_iterates_field_names():
     from probpipe.core.event_template import NumericEventTemplate
 
-    nra = NumericRecordArray(
+    nra = NumericRecordBatch(
         a=jnp.zeros((4,)),
         b=jnp.zeros((4,)),
-        batch_shape=(4,),
-        template=NumericEventTemplate(a=(), b=()),
+        level_names="draw",
+        axis_groups=((4,),),
+        element_spec=NumericEventTemplate(a=(), b=()),
     )
     assert list(iter(nra)) == ["a", "b"]

@@ -353,7 +353,7 @@ class TestCanonicalConvenience:
 
             def _sample(self, key, sample_shape=()):
                 # Multi-leaf templates return a ``NumericRecord``
-                # (or ``NumericRecordArray`` for a non-empty sample shape).
+                # (or ``NumericRecordBatch`` for a non-empty sample shape).
                 # This stub returns zero placeholders sized from the
                 # template's per-field event shapes.
                 return NumericRecord(

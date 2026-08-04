@@ -26,7 +26,7 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     Record,
     SequentialJointDistribution,
@@ -60,13 +60,13 @@ class TestKwargFormScalar:
 
     def test_record_array_view_in_variadic_any_kwarg_is_swept(self):
         d = Normal(0.0, 1.0, name="x")
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", x=float(value)) for value in range(3)]
         )
 
         result = log_prob(d, x=rows.view("x"))
 
-        assert isinstance(result, NumericRecordArray)
+        assert isinstance(result, NumericRecordBatch)
         assert result.batch_shape == (3,)
         expected = jnp.stack([log_prob.apply(d, float(value)) for value in range(3)])
         np.testing.assert_allclose(result["log_prob"], expected)

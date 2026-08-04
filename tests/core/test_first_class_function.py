@@ -27,11 +27,11 @@ from probpipe import (
     Gamma,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     Provenance,
     ProvenanceMode,
     Record,
-    RecordArray,
+    RecordBatch,
     TrackedTerm,
     function,
     mean,
@@ -188,10 +188,11 @@ class TestApplyContract:
     def test_declared_output_accepts_record_array_as_a_batched_event(self):
         intrinsic = EventTemplate(y=())
         declared = EventTemplate(y=ArraySpec((), dtype="float32"))
-        returned = NumericRecordArray(
+        returned = NumericRecordBatch(
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
-            batch_shape=(2,),
-            template=intrinsic,
+            level_names="draw",
+            axis_groups=((2,),),
+            element_spec=intrinsic,
         )
         wrapped = Function(func=lambda: returned, output_template=declared)
 
@@ -200,7 +201,7 @@ class TestApplyContract:
         result = wrapped()
 
         assert result is not returned
-        assert isinstance(result, NumericRecordArray)
+        assert isinstance(result, NumericRecordBatch)
         assert result.batch_shape == (2,)
         assert result.event_template == declared
         assert returned.event_template is intrinsic
@@ -212,10 +213,11 @@ class TestApplyContract:
         batch_shape,
     ):
         template = EventTemplate(y=(2,))
-        returned = NumericRecordArray(
+        returned = NumericRecordBatch(
             {"y": jnp.ones((*batch_shape, 2))},
-            batch_shape=batch_shape,
-            template=template,
+            level_names="draw",
+            axis_groups=(batch_shape,),
+            element_spec=template,
         )
         wrapped = Function(func=lambda: returned, output_template=template)
 
@@ -228,10 +230,11 @@ class TestApplyContract:
 
     def test_declared_output_rejects_record_array_with_wrong_event_shape(self):
         template = EventTemplate(y=())
-        returned = RecordArray(
+        returned = RecordBatch(
             {"y": jnp.ones((2, 3))},
-            batch_shape=(2,),
-            template=template,
+            level_names="draw",
+            axis_groups=((2,),),
+            element_spec=template,
         )
         wrapped = Function(func=lambda: returned, output_template=template)
 
@@ -243,20 +246,22 @@ class TestApplyContract:
 
     def test_declared_output_checks_record_array_dtype_and_support(self):
         dtype_template = EventTemplate(y=ArraySpec((), dtype="int32"))
-        float_array = RecordArray(
+        float_array = RecordBatch(
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
-            batch_shape=(2,),
-            template=EventTemplate(y=()),
+            level_names="draw",
+            axis_groups=((2,),),
+            element_spec=EventTemplate(y=()),
         )
 
         with pytest.raises(ValueError, match=r"output/y dtype float32 does not conform"):
             Function(func=lambda: float_array, output_template=dtype_template).apply()
 
         support_template = EventTemplate(y=ArraySpec((), support=positive))
-        invalid_array = NumericRecordArray(
+        invalid_array = NumericRecordBatch(
             {"y": jnp.asarray([1.0, -2.0])},
-            batch_shape=(2,),
-            template=EventTemplate(y=()),
+            level_names="draw",
+            axis_groups=((2,),),
+            element_spec=EventTemplate(y=()),
         )
 
         with pytest.raises(ValueError, match=r"output at 'y'.*support positive"):
@@ -697,7 +702,7 @@ class TestSymbolicCalls:
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_sweep_preserves_concrete_declared_output_template(self, dispatch):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.ones((2,)) * i) for i in range(3)]
         )
         wrapped = Function(
@@ -738,7 +743,7 @@ class TestSymbolicCalls:
         )
 
     def test_every_sweep_cell_is_validated_against_output_template(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", size=2), NumericRecord("row", size=3)]
         )
         wrapped = Function(
@@ -752,7 +757,7 @@ class TestSymbolicCalls:
             wrapped(rows)
 
     def test_every_sweep_cell_is_validated_against_output_support(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [
                 NumericRecord("row", value=jnp.asarray(1.0)),
                 NumericRecord("row", value=jnp.asarray(-1.0)),
@@ -801,7 +806,7 @@ class TestSymbolicCalls:
             wrapped(Normal(0, 1, name="x"))
 
     def test_support_pinned_sweep_auto_falls_back_to_sequential(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
         )
         template = EventTemplate(y=ArraySpec((), support=positive))
@@ -818,7 +823,7 @@ class TestSymbolicCalls:
         np.testing.assert_allclose(result["y"], np.arange(3.0) + 1)
 
     def test_support_pinned_sweep_explicit_jax_reports_traceability_error(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
         )
         wrapped = Function(
@@ -836,7 +841,7 @@ class TestSymbolicCalls:
 
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_nested_mapping_sweep_preserves_declared_structure(self, dispatch):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
         )
         wrapped = Function(
@@ -935,7 +940,7 @@ class TestSymbolicCalls:
             wrapped(Normal(0, 1, name="x"))
 
     def test_distribution_outputs_keep_declared_template_through_sweep(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
         )
         wrapped = Function(
@@ -960,7 +965,7 @@ class TestSymbolicCalls:
         )
 
     def test_nested_broadcast_distribution_array_keeps_declared_template(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", offset=jnp.asarray(float(i))) for i in range(2)]
         )
         wrapped = Function(
@@ -1188,7 +1193,7 @@ class TestReentrancyAndProvenance:
         "stored",
         [
             NumericRecord("stored", value=1.0),
-            NumericRecordArray.stack([NumericRecord("stored", value=1.0)]),
+            NumericRecordBatch.stack([NumericRecord("stored", value=1.0)]),
             Normal(0, 1, name="stored"),
         ],
     )
@@ -1266,7 +1271,7 @@ class TestVariadicPlanning:
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
 
     def test_record_array_in_varargs_is_swept(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
         )
         wrapped = Function(func=lambda *items: items[0]["value"] + items[1])
@@ -1277,7 +1282,7 @@ class TestVariadicPlanning:
         np.testing.assert_allclose(result["<lambda>"], np.arange(3.0) + 2)
 
     def test_record_array_in_any_varargs_is_swept(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
         )
 
@@ -1290,7 +1295,7 @@ class TestVariadicPlanning:
         np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
 
     def test_record_array_in_any_varkwargs_is_swept(self):
-        rows = NumericRecordArray.stack(
+        rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
         )
 

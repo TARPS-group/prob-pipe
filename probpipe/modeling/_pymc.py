@@ -288,7 +288,7 @@ class PyMCModel(ProbabilisticModel):
 
         * ``None`` — build the unconditioned model (used at
           construction time to discover free RVs).
-        * ``dict`` or ``Record`` (incl. ``RecordArray``) — unpack the
+        * ``dict`` or ``Record`` (incl. ``RecordBatch``) — unpack the
           fields named by ``_observed_names`` and pass them as keyword
           arguments to the model function. This is the canonical
           multi-observed-variable path: provenance tracks every named

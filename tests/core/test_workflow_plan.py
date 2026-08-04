@@ -9,7 +9,7 @@ import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordArray
+from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordBatch
 from probpipe.core import _workflow_call
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._workflow_distribution_normalization import (
@@ -20,8 +20,8 @@ from probpipe.core.distribution import Distribution
 from probpipe.core.protocols import SupportsSampling
 
 
-def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
-    return NumericRecordArray.stack(
+def _numeric_record_array(field: str, values: range) -> NumericRecordBatch:
+    return NumericRecordBatch.stack(
         [NumericRecord("nr", **{field: float(value)}) for value in values]
     )
 
@@ -114,7 +114,7 @@ class TestHintClassification:
             name="d",
         )
 
-        record_plan = _plan({"p": ra}, {"p": NumericRecordArray})
+        record_plan = _plan({"p": ra}, {"p": NumericRecordBatch})
         dist_plan = _plan({"d": da}, {"d": DistributionArray})
         any_plan = _plan({"p": ra}, {"p": Any})
 
@@ -125,7 +125,7 @@ class TestHintClassification:
 
 class TestArrayGrouping:
     def test_sibling_views_zip_into_one_group(self):
-        ra = NumericRecordArray.stack(
+        ra = NumericRecordBatch.stack(
             [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)]
         )
 

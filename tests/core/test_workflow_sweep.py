@@ -13,15 +13,15 @@ from probpipe import (
     DistributionArray,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     mean,
 )
 from probpipe.core import _workflow_call, _workflow_execution, _workflow_sweep
 from probpipe.core._workflow_plan import build_broadcast_plan
 
 
-def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
-    return NumericRecordArray.stack(
+def _numeric_record_array(field: str, values: range) -> NumericRecordBatch:
+    return NumericRecordBatch.stack(
         [NumericRecord("nr", **{field: float(value)}) for value in values]
     )
 
@@ -48,7 +48,7 @@ def _require_not_called(*args, **kwargs):
 
 class TestSliceSweepValues:
     def test_views_from_same_parent_zip(self):
-        parent = NumericRecordArray.stack(
+        parent = NumericRecordBatch.stack(
             [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)]
         )
         values = {"x": parent.view("x"), "y": parent.view("y")}

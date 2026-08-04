@@ -192,10 +192,9 @@ class JointGaussian(
         return Record(self.name, result, name_is_auto=True)
 
     def _log_prob(self, value) -> Array:
-        from ..core._record_array import RecordArray
         from ..core._record_batch import RecordBatch
 
-        if not isinstance(value, (Record, RecordArray, RecordBatch)):
+        if not isinstance(value, (Record, RecordBatch)):
             value = Record(self.name, value, name_is_auto=True)
         from .multivariate import MultivariateNormal as MVN
 

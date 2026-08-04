@@ -18,7 +18,6 @@ from . import _workflow_call, _workflow_execution, _workflow_plan, _workflow_res
 from ._batch import Batch
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
-from ._record_array import _RecordArrayView
 from .distribution import BroadcastDistribution, Distribution
 from .event_template import EventTemplate
 from .provenance import Provenance
@@ -58,7 +57,7 @@ def execute_sweep(
 
     if include_inputs:
         raise NotImplementedError(
-            "include_inputs=True is not supported with RecordArray "
+            "include_inputs=True is not supported with batched-record "
             "broadcasting. The inputs are already available via "
             "provenance on the stacked output."
         )
@@ -207,16 +206,10 @@ def execute_sweep_rows(
         isinstance(_workflow_call.input_ref_value(values, ref), DistributionArray)
         for ref in array_args
     )
-    has_view = any(
-        isinstance(_workflow_call.input_ref_value(values, ref), _RecordArrayView)
-        for ref in array_args
-    )
-    jax_supported = not (
-        has_dist_array or has_view or len(plan.array_groups) > 1 or len(array_args) > 1
-    )
+    jax_supported = not (has_dist_array or len(plan.array_groups) > 1 or len(array_args) > 1)
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
-            "dispatch='jax' supports only a single plain RecordArray sweep; "
+            "dispatch='jax' supports only a single plain batched-record sweep; "
             "use dispatch='auto', 'sequential', or 'thread' for this path."
         )
 
@@ -259,7 +252,7 @@ def execute_sweep_rows_jax(
     array_args: list[_workflow_call.WorkflowInputRef],
     n_total: int,
 ) -> Any:
-    """Execute the limited single-RecordArray sweep through ``jax.vmap``."""
+    """Execute the limited single-batch sweep through ``jax.vmap``."""
 
     def single_call(array_slice_leaves):
         replacements = {

@@ -20,7 +20,6 @@ from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
-from ..core._record_array import NumericRecordArray
 from ..core.constraints import Constraint, real
 from ..core.event_template import NumericEventTemplate
 from ..core.record import Record
@@ -62,7 +61,7 @@ class KDEDistribution(TFPDistribution):
         default) a single-field template keyed by ``name`` is auto-built,
         matching the historical behavior. When supplied with multiple
         fields, the template defines how the flat ``(n, d)`` sample matrix
-        maps back to a structured ``NumericRecord`` / ``NumericRecordArray``
+        maps back to a structured ``NumericRecord`` / ``NumericRecordBatch``
         — preserving named fields end-to-end across e.g. an MCMC posterior
         being routed through KDE as the new prior in
         :class:`~probpipe.modeling.IncrementalConditioner`. The template's
@@ -166,7 +165,7 @@ class KDEDistribution(TFPDistribution):
     # -- sampling & density (template-aware overrides) ------------------------
     #
     # When ``_event_template`` is multi-field, sample output is unflattened
-    # back into ``NumericRecord`` / ``NumericRecordArray`` keyed by the
+    # back into ``NumericRecord`` / ``NumericRecordBatch`` keyed by the
     # template, and log_prob accepts both structured and flat inputs. Single-
     # field auto-templates fall through to the TFP base class behaviour, so
     # existing call sites are unchanged.
@@ -181,7 +180,7 @@ class KDEDistribution(TFPDistribution):
     def _log_prob(self, value: Any) -> Array:
         tpl = getattr(self, "_event_template", None)
         if tpl is not None and len(tpl.fields) > 1:
-            if isinstance(value, (Record, NumericRecord, NumericRecordArray, NumericRecordBatch)):
+            if isinstance(value, (Record, NumericRecord, NumericRecordBatch)):
                 value = NumericRecordDistribution.flatten_value(value)
         return self._tfp_dist.log_prob(jnp.asarray(value))
 

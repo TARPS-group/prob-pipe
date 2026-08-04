@@ -319,7 +319,6 @@ class ProductDistribution(
         general (non-numeric) case because ``unflatten_value`` isn't
         available there.
         """
-        from ..core._record_array import RecordArray
         from ..core._record_batch import RecordBatch
         from ..core.named_tree import _unflatten_paths
 
@@ -350,8 +349,6 @@ class ProductDistribution(
             # Leaf-keyed columns, re-nested, so the tree map below pairs each
             # column with the component that declared it.
             value = _unflatten_paths({path: value[path] for path in value.event_template})
-        elif isinstance(value, RecordArray):
-            value = {k: v for k, v in value.items()}
         if isinstance(value, Record):
             value = value.to_dict()
 

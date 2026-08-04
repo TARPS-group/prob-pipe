@@ -643,8 +643,8 @@ class RecordEmpiricalDistribution(
         for field_path in self._record_data:
             arr = jnp.asarray(self._record_data[field_path])
             fields[field_path] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
-        # Return a ``NumericRecord`` rather than a ``NumericRecordArray``
-        # for the batched case. ``NumericRecordArray`` would carry a
+        # Return a ``NumericRecord`` rather than a ``NumericRecordBatch``
+        # for the batched case. ``NumericRecordBatch`` would carry a
         # ``batch_shape`` that ``jax.vmap``'s pytree validation rejects
         # when the empirical's ``_sample`` is wrapped inside a vmap'd
         # callable (the array variant treats its leading axes as

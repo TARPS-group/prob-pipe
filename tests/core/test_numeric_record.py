@@ -149,7 +149,7 @@ class TestConstruction:
         """Every numeric gate must agree on what counts as numeric by consuming
         a shared predicate rather than duplicating the logic. Two levels are
         shared: the dtype-level ``_is_numeric_dtype`` (used directly where only
-        a dtype is in hand — ``NumericRecordArray``, the broadcast-template
+        a dtype is in hand — ``NumericRecordBatch``, the broadcast-template
         builder, the ``Design`` marginals probe) and the leaf-level
         ``_is_numeric_leaf`` (the registry-first resolver that wraps it,
         consumed by ``NumericRecord`` and template inference)."""
