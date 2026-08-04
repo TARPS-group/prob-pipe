@@ -29,13 +29,13 @@ from probpipe import (
 from probpipe.core import _workflow_callable
 from tests.core._workflow_replay_fixtures import (
     replayable_affine,
+    replayable_canonical_defaults,
     replayable_cyclic_default,
     replayable_identity,
     replayable_numeric_array_default,
     replayable_object_array_default,
     replayable_structured_array_default,
 )
-
 
 _CALLABLE_ANCHOR_GOLDENS = {
     "cpython-3.12": "b35e9fc0142a8f4555f83589225d74134723e1dcfb3595e337f8cea061212bba",
@@ -398,6 +398,125 @@ class TestWorkflowCallableAnchor:
 
         assert anchor.controls()["supported"] is True
         assert len(anchor.controls()["sha256"]) == 64
+
+    def test_supported_structured_defaults_have_canonical_inspectable_controls(self):
+        anchor = _workflow_callable.capture_function_anchor(
+            Function(func=replayable_canonical_defaults)
+        )
+
+        controls = anchor.controls()
+        assert controls["supported"] is True
+        defaults = {
+            parameter["name"]: parameter["default"]
+            for parameter in controls["signature_and_templates"]["parameters"]
+        }
+        assert defaults["ellipsis_value"] == {"tag": "ellipsis"}
+        assert defaults["complex_value"] == {
+            "tag": "complex",
+            "real": "0x1.0000000000000p+0",
+            "imag": "0x1.0000000000000p+1",
+        }
+        assert defaults["set_value"] == {
+            "tag": "set",
+            "items": [
+                {"tag": "int", "value": "1"},
+                {"tag": "int", "value": "3"},
+            ],
+        }
+        assert defaults["frozenset_value"] == {
+            "tag": "frozenset",
+            "items": [
+                {"tag": "int", "value": "2"},
+                {"tag": "int", "value": "4"},
+            ],
+        }
+        assert defaults["mapping_value"] == {
+            "tag": "mapping",
+            "entries": [
+                [
+                    {"tag": "str", "value": "a"},
+                    {"tag": "int", "value": "1"},
+                ],
+                [
+                    {"tag": "str", "value": "b"},
+                    {"tag": "int", "value": "2"},
+                ],
+            ],
+        }
+        assert defaults["dtype_value"] == {
+            "tag": "numpy_dtype",
+            "value": ">i4",
+            "descr": {"tag": "none"},
+        }
+        assert defaults["scalar_value"] == {
+            "tag": "numpy_scalar",
+            "dtype": "<i2",
+            "shape": [1],
+            "base64": "BwA=",
+        }
+        assert defaults["array_value"] == {
+            "tag": "numpy_array",
+            "dtype": "<i2",
+            "shape": [2],
+            "base64": "AQACAA==",
+        }
+        assert defaults["dataclass_value"] == {
+            "tag": "dataclass",
+            "type": {
+                "module": "tests.core._workflow_replay_fixtures",
+                "qualname": "ReplayableDefaultState",
+            },
+            "fields": [
+                ["count", {"tag": "int", "value": "2"}],
+                [
+                    "labels",
+                    {
+                        "tag": "tuple",
+                        "items": [
+                            {"tag": "str", "value": "left"},
+                            {"tag": "str", "value": "right"},
+                        ],
+                    },
+                ],
+            ],
+        }
+        assert defaults["constraint_value"] == {
+            "tag": "constraint",
+            "type": {
+                "module": "probpipe.core.constraints",
+                "qualname": "_Positive",
+            },
+            "state": {"tag": "mapping", "entries": []},
+        }
+        assert defaults["enum_value"] == {
+            "tag": "enum",
+            "type": {
+                "module": "tests.core._workflow_replay_fixtures",
+                "qualname": "ReplayableDefaultMode",
+            },
+            "name": "FAST",
+        }
+        expected_list_int = {
+            "origin": {
+                "tag": "type",
+                "value": {"module": "builtins", "qualname": "list"},
+            },
+            "args": {
+                "tag": "tuple",
+                "items": [
+                    {
+                        "tag": "type",
+                        "value": {"module": "builtins", "qualname": "int"},
+                    }
+                ],
+            },
+        }
+        assert defaults["generic_value"] == {"tag": "generic", **expected_list_int}
+        assert defaults["typing_value"] == {"tag": "typing", **expected_list_int}
+        assert defaults["type_value"] == {
+            "tag": "type",
+            "value": {"module": "builtins", "qualname": "int"},
+        }
 
     @pytest.mark.parametrize(
         "callable_fixture",

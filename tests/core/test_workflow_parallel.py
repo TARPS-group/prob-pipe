@@ -160,6 +160,36 @@ def make_request(
     )
 
 
+def make_managed_frame():
+    return managed_mod.ManagedUnitFrame(
+        unit_segment=managed_mod.point_unit_segment(),
+        token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+    )
+
+
+def make_managed_attempt():
+    return managed_mod.ManagedAttemptState(
+        work_item_token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+        attempt_token=b"a" * 16,
+    )
+
+
+def make_managed_effect(**overrides):
+    values = {
+        "occurrence_path": (("invocation", 0),),
+        "occurrence_kind": "invocation",
+        "stochastic_source_id": ("source-group", 0),
+        "logical_unit_id": ("singleton",),
+        "operation_kind": "sample",
+        "execution_mode": "sampled",
+        "sample_shape": (),
+        "sampling_abi": "probpipe.distribution_sampling/v1",
+        "provider_abi": "probpipe.distribution/v1",
+    }
+    values.update(overrides)
+    return managed_mod.ManagedEffectClaim(**values)
+
+
 @pytest.fixture(autouse=True)
 def _reset_fakes():
     prefect_config.workflow_kind = WorkflowKind.OFF
@@ -225,6 +255,195 @@ class TestExecutionRequestShape:
         assert seen["request"].func is not add_one
         assert not isinstance(seen["request"].func, Function)
         assert seen["request"].execution.mode == "sequential"
+
+
+class TestManagedPayloadValidation:
+    @pytest.mark.parametrize(
+        ("factory", "exception", "match"),
+        [
+            pytest.param(
+                lambda: managed_mod.ManagedWorkItemToken(b"short"),
+                TypeError,
+                "exactly 16 bytes",
+                id="work-item-token",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedUnitFrame(
+                    unit_segment=[],
+                    token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+                ),
+                TypeError,
+                "unit segments must be tuples",
+                id="unit-segment",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedUnitFrame(
+                    unit_segment=managed_mod.point_unit_segment(),
+                    token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+                    derivation_abi="unknown-managed/v99",
+                ),
+                ValueError,
+                "unsupported managed work-item ABI",
+                id="managed-abi",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedWorkItem(
+                    index=True,
+                    values=(("x", 1),),
+                    frame=make_managed_frame(),
+                ),
+                TypeError,
+                "indexes must be non-negative integers",
+                id="work-item-index",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedWorkItem(
+                    index=0,
+                    values=[("x", 1)],
+                    frame=make_managed_frame(),
+                ),
+                TypeError,
+                "values must be name/value tuples",
+                id="work-item-values",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedAttemptState(
+                    work_item_token=managed_mod.ManagedWorkItemToken(b"w" * 16),
+                    attempt_token=b"short",
+                ),
+                TypeError,
+                "attempt tokens must contain exactly 16 bytes",
+                id="attempt-token",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedParentEnvelope(
+                    root_words=(True, 1),
+                    parent_occurrence_path=(("invocation", 0),),
+                    frame=make_managed_frame(),
+                ),
+                TypeError,
+                "root words must be two uint32 integers",
+                id="parent-root-words",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedParentEnvelope(
+                    root_words=(0, 1),
+                    parent_occurrence_path=[],
+                    frame=make_managed_frame(),
+                ),
+                TypeError,
+                "parent occurrence paths must be tuples",
+                id="parent-occurrence-path",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedParentEnvelope(
+                    root_words=(0, 1),
+                    parent_occurrence_path=(("invocation", 0),),
+                    frame=make_managed_frame(),
+                    replay_expected_effects=[],
+                ),
+                TypeError,
+                "replay expectations must be effect tuples or None",
+                id="parent-replay-effects",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedParentEnvelope(
+                    root_words=(0, 1),
+                    parent_occurrence_path=(("invocation", 0),),
+                    frame=make_managed_frame(),
+                    retry_effects=[],
+                ),
+                TypeError,
+                "retry effects must be an effect tuple",
+                id="parent-retry-effects",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(occurrence_path=[]),
+                TypeError,
+                "effect occurrence paths must be tuples",
+                id="effect-occurrence-path",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(stochastic_source_id=[]),
+                TypeError,
+                "source and unit identities must be tuples",
+                id="effect-source",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(sample_shape=[]),
+                TypeError,
+                "sample shapes must be tuples or None",
+                id="effect-sample-shape",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(record_path=[]),
+                TypeError,
+                "record paths must be tuples",
+                id="effect-record-path",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(descendant_descriptor=[]),
+                TypeError,
+                "descendant descriptors must be tuples or None",
+                id="effect-descendant",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedClaimReport(
+                    frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
+                    child_count=True,
+                ),
+                TypeError,
+                "child counts must be non-negative integers",
+                id="report-child-count",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedClaimReport(
+                    frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
+                    child_count=0,
+                    effects=[],
+                ),
+                TypeError,
+                "reports must contain a tuple of effects",
+                id="report-effects",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedClaimReport(
+                    frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
+                    child_count=0,
+                    successful_effects=[],
+                ),
+                TypeError,
+                "successful effects must contain a tuple",
+                id="report-successful-effects",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedClaimReport(
+                    frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
+                    child_count=0,
+                    successful_effects=(make_managed_effect(),),
+                ),
+                ValueError,
+                "must be claimed by the same attempt",
+                id="report-successful-subset",
+            ),
+            pytest.param(
+                lambda: managed_mod.make_managed_work_items(
+                    [{"x": 1}],
+                    unit_segments=(),
+                ),
+                ValueError,
+                "must have equal lengths",
+                id="work-item-count",
+            ),
+        ],
+    )
+    def test_invalid_transport_payloads_fail_at_construction(self, factory, exception, match):
+        with pytest.raises(exception, match=match):
+            factory()
 
 
 class TestManagedRetryClaims:
