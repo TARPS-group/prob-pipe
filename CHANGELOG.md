@@ -481,6 +481,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A joint law draws a `RecordBatch`.** `_sample` on the four joint laws —
+  product, sequential, Gaussian, and empirical — returns a `NumericRecordBatch`
+  (a `RecordBatch` when a leaf is non-numeric) for a batched draw, over a single
+  `draw` level spanning however many axes the `sample_shape` had. An unbatched
+  draw is a `Record`, unchanged. The flat-vector reconstruction behind
+  `unflatten_value` returns a batch for the same reason, and both classes are now
+  exported: a value handed to a caller must be nameable by that caller.
+
+  **A nested draw is one flat batch, not a batch per subtree.** A batch stores one
+  column per *field*, so a nested product draws into one mapping over leaf paths
+  and the result is a single batch whose `batch["outer"]` is a *view* over the
+  columns beneath `outer`. Where the previous nested draw built a record-array per
+  subtree, there is now one store, which is also what makes a nested field
+  reachable by path.
+
+  **A broadcast that stacks a batch per row names its own level.** Stacking rows
+  that are each a batch puts the sweep in front of the levels a row already
+  carried — level names `("sweep", …)` — rather than refusing nested batched
+  records as it used to. Since the columns are leaf-keyed, a nested element needs
+  no special case.
+
+  Three consequences for calling code. A batched draw is not a `Record`, so
+  `isinstance(draw, Record)` is `False` where it used to be `True`; ask for
+  `RecordBatch`, or for either. A batch is a collection, not a named tree, so a
+  draw's fields are read from `draw.event_template` rather than `draw.fields` /
+  `.items()` / `.at_path()`, while `draw["x"]` and `draw["outer/a"]` are
+  unchanged. And a batch has no `mean` / `var` over its batch axis; reduce the
+  column, as `jnp.mean(draw["x"], axis=0)`.
+
+  `RecordArray` / `NumericRecordArray` still exist and are unchanged for direct
+  use — no producer returns one. `NumericRecordArray.from_vector` keeps returning
+  a `NumericRecordArray`, renesting the batch's flat columns itself, so the class
+  stays coherent while it lasts.
+
 - **A batch of records is recognized wherever a batched record was.** A
   `RecordBatch` is deliberately not a `Record`, so every place that recognized a
   batched value by `isinstance(x, Record)`, by a `RecordArray` subclass check, or

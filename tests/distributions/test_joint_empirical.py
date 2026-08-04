@@ -19,6 +19,7 @@ from probpipe import (
     sample,
     variance,
 )
+from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import Function
 
@@ -131,7 +132,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(je, key=key, sample_shape=(10,))
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, RecordBatch)
         assert s["x"].shape == (10,)
         assert s["y"].shape == (10,)
 
@@ -309,7 +310,7 @@ class TestConditionOn:
         )
         cond = condition_on(je, x=jnp.array(1.0))
         s = sample(cond, key=jax.random.PRNGKey(0), sample_shape=(5,))
-        assert set(s.fields) == {"y"}
+        assert set(s.event_template) == {"y"}
         assert s["y"].shape == (5,)
 
     def test_condition_on_preserves_correlation(self):

@@ -395,7 +395,7 @@ class TestSampleReturnTypeConvention:
 
     - Numeric distributions return ``Array`` (sample_shape + event_shape).
     - Record-based joints return ``Record`` / ``NumericRecord`` for an
-      unbatched draw (``sample_shape == ()``) and ``NumericRecordArray``
+      unbatched draw (``sample_shape == ()``) and ``NumericRecordBatch``
       for a batched draw.
     """
 
@@ -410,7 +410,7 @@ class TestSampleReturnTypeConvention:
 
     def test_product_distribution_return_types(self):
         from probpipe import Record
-        from probpipe.core._record_array import NumericRecordArray
+        from probpipe.core._numeric_record_batch import NumericRecordBatch
 
         dist = ProductDistribution(
             x=Normal(loc=0.0, scale=1.0, name="x"),
@@ -422,7 +422,7 @@ class TestSampleReturnTypeConvention:
         assert isinstance(s0, Record)
         # batched
         s1 = dist._sample(k, (5,))
-        assert isinstance(s1, NumericRecordArray)
+        assert isinstance(s1, NumericRecordBatch)
         assert s1.batch_shape == (5,)
 
     def test_no_distribution_exposes_sample_one(self):
@@ -446,7 +446,7 @@ class TestSampleReturnTypeConvention:
         import numpy as np
 
         from probpipe import Record
-        from probpipe.core._record_array import NumericRecordArray
+        from probpipe.core._numeric_record_batch import NumericRecordBatch
 
         # Build a small JointEmpirical from stored per-component samples
         je = JointEmpirical(
@@ -455,12 +455,12 @@ class TestSampleReturnTypeConvention:
         )
         k = jax.random.PRNGKey(0)
         assert isinstance(je._sample(k, ()), Record)
-        assert isinstance(je._sample(k, (4,)), NumericRecordArray)
+        assert isinstance(je._sample(k, (4,)), NumericRecordBatch)
         assert je._sample(k, (4,)).batch_shape == (4,)
 
     def test_joint_gaussian_return_types(self):
         from probpipe import Record
-        from probpipe.core._record_array import NumericRecordArray
+        from probpipe.core._numeric_record_batch import NumericRecordBatch
 
         jg = JointGaussian(
             x=1,
@@ -470,7 +470,7 @@ class TestSampleReturnTypeConvention:
         )
         k = jax.random.PRNGKey(0)
         assert isinstance(jg._sample(k, ()), Record)
-        assert isinstance(jg._sample(k, (5,)), NumericRecordArray)
+        assert isinstance(jg._sample(k, (5,)), NumericRecordBatch)
         assert jg._sample(k, (5,)).batch_shape == (5,)
 
 

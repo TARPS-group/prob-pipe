@@ -548,6 +548,12 @@ def _make_marginal(
 # ---------------------------------------------------------------------------
 
 
+# The level a broadcast mints for its own axes: one multiplicity over the sweep
+# grid, however many axes it spans, sitting in front of whatever levels a row
+# already carried.
+SWEEP_LEVEL = "sweep"
+
+
 def _make_stack(
     inner_outputs: Any,
     *,
@@ -630,10 +636,29 @@ def _make_stack(
                 for output in outs
             ]
 
-        # Check the more-specific subclass first: all RecordArrays
-        # (since ``RecordArray`` is itself a ``Record`` subclass, the
-        # generic Record branch below would otherwise claim them and
-        # collapse the inner batch axis).
+        # A batch per row stacks into one batch with the sweep in front of the
+        # rows' own levels. Checked before the Record branch below, which would
+        # otherwise claim a RecordArray (a Record subclass) and collapse its
+        # inner batch axis.
+        if outs and all(isinstance(o, RecordBatch) for o in outs):
+            first = outs[0]
+            if all(o.batch_shape == first.batch_shape for o in outs):
+                # Columns are leaf-keyed, so a nested element needs no special
+                # case: each column stacks and reshapes like any other.
+                columns = {}
+                for path in first.event_template:
+                    stacked = jnp.stack([o[path] for o in outs], axis=0)
+                    columns[path] = stacked.reshape(batch_shape + stacked.shape[1:])
+                return type(first)(
+                    columns,
+                    (SWEEP_LEVEL, *first.level_names),
+                    element_spec=first.element_spec,
+                    axis_groups=(batch_shape, *first.axis_groups),
+                    name=name or field_name,
+                    name_is_auto=True,
+                )
+            # Mismatched inner shapes fall through to the generic handlers.
+
         if outs and all(isinstance(o, RecordArray) for o in outs):
             first = outs[0]
             if any(isinstance(c, EventTemplate) for c in first.template.children.values()):
