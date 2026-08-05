@@ -1416,6 +1416,42 @@ class TestPrefectMapping:
         urandom.assert_called_once_with(8)
         assert FakeMappedTask.map_calls == 2
 
+    @pytest.mark.parametrize(
+        "handler",
+        [
+            "runtime-return",
+            "exception-return",
+            "runtime-reraise",
+            "exception-reraise",
+        ],
+    )
+    def test_prefect_probe_observation_cannot_be_swallowed(self, handler, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        catch_type = RuntimeError if handler.startswith("runtime") else Exception
+
+        def handle_probe():
+            try:
+                return _claim_automatic_words()
+            except catch_type:
+                if handler.endswith("return"):
+                    return "non-authoritative fallback"
+                raise ValueError("replacement probe error") from None
+
+        request = make_request(
+            mode="prefect_task",
+            calls=[{}],
+            func=handle_probe,
+        )
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            result = execution_mod.execute_many(request)[0]
+            state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+
+        assert isinstance(result, tuple)
+        assert len(parent._effects_by_identity) == 1
+        assert len(state.seen_attempts) == 2
+        assert FakeMappedTask.map_calls == 2
+
     def test_failed_prefect_effect_remains_transient(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "task", fake_task)
         monkeypatch.setattr(execution_mod, "flow", fake_flow)

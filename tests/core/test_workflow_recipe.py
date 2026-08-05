@@ -26,7 +26,8 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.core import _workflow_callable
+from probpipe.core import _workflow_broker, _workflow_callable, _workflow_recipe
+from probpipe.core._workflow_managed import ManagedEffectClaim, sweep_unit_segment
 from tests.core._workflow_replay_fixtures import (
     replayable_affine,
     replayable_canonical_defaults,
@@ -230,6 +231,53 @@ class TestWorkflowRecipeRecording:
         assert [event["unit"] for event in recipe["events"]] == [
             ["cell", 0],
             ["cell", 1],
+        ]
+
+    def test_recipe_sorts_reverse_inserted_managed_effects_canonically(self):
+        occurrence_path = (("invocation", 0),)
+
+        def effect(index):
+            return ManagedEffectClaim(
+                occurrence_path=(
+                    *occurrence_path,
+                    sweep_unit_segment((index,)),
+                    ("child", 0),
+                ),
+                occurrence_kind="operation",
+                stochastic_source_id=("source-group", 0),
+                logical_unit_id=("singleton",),
+                operation_kind="sample",
+                execution_mode="sampled",
+                sample_shape=(),
+                sampling_abi="probpipe.distribution_sampling/v1",
+                provider_abi="probpipe.distribution/v1",
+            )
+
+        snapshot = _workflow_broker._BrokerRecipeSnapshot(
+            root_words=(0, 17),
+            occurrence_path=occurrence_path,
+            rng_origin={
+                "context_kind": "seeded_run",
+                "root_source": "explicit_seed",
+                "supplied_seed": 17,
+            },
+            effects=(effect(1), effect(0)),
+            execution_contracts=(),
+            requested_dispatch="thread",
+            requested_workflow_kind="off",
+            callable_anchor=None,
+        )
+
+        with patch.object(
+            _workflow_broker,
+            "_snapshot_active_recipe_state",
+            return_value=snapshot,
+        ):
+            controls, _ = _workflow_recipe.provenance_recipe_fields(None)
+
+        assert [event["occurrence_path"][1][3] for event in controls["randomness"]["events"]] == [
+            0,
+            1,
         ]
 
     def test_nested_automatic_function_is_marked_non_standalone(self):

@@ -286,12 +286,14 @@ class _AutomaticKeyBroker:
         """Return the workflow-owned key for one planned effect."""
         _workflow_context._assert_workflow_admission(self._frame)
         self._assert_managed_registry_open()
+        coordination_probe = _REMOTE_COORDINATION_PROBE.get()
+        if coordination_probe is not None:
+            coordination_probe.effect_observed = True
+            raise _ManagedCoordinationRequired
         if not isinstance(plan, StochasticEffectPlan):
             raise TypeError("automatic key requests require a StochasticEffectPlan")
         source_id, unit_id = _validate_stochastic_event(plan.event)
         _workflow_context._guard_automatic_key_request()
-        if _REMOTE_COORDINATION_PROBE.get():
-            raise _ManagedCoordinationRequired
         self.validate_replay_effect_plan(plan)
         with self._lock:
             if self._invocation is None:
@@ -853,9 +855,18 @@ _ACTIVE_MANAGED_ATTEMPT: ContextVar[_ManagedAttemptContext | None] = ContextVar(
     default=None,
 )
 
-_REMOTE_COORDINATION_PROBE: ContextVar[bool] = ContextVar(
+
+@dataclass(slots=True)
+class _RemoteCoordinationObservation:
+    """Attempt-local observation that survives caught probe exceptions."""
+
+    attempt: ManagedAttemptState
+    effect_observed: bool = False
+
+
+_REMOTE_COORDINATION_PROBE: ContextVar[_RemoteCoordinationObservation | None] = ContextVar(
     "probpipe_remote_coordination_probe",
-    default=False,
+    default=None,
 )
 
 
@@ -1077,13 +1088,16 @@ def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
 
 
 @contextmanager
-def _remote_coordination_probe_scope() -> Generator[None, None, None]:
+def _remote_coordination_probe_scope(
+    attempt: ManagedAttemptState,
+) -> Generator[_RemoteCoordinationObservation, None, None]:
     """Run a remote item without permitting automatic stochastic commit."""
-    probe_token = _REMOTE_COORDINATION_PROBE.set(True)
+    observation = _RemoteCoordinationObservation(attempt)
+    probe_token = _REMOTE_COORDINATION_PROBE.set(observation)
     attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(None)
     broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
     try:
-        yield
+        yield observation
     finally:
         _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
         _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)

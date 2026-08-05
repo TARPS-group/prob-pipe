@@ -467,22 +467,26 @@ def _execute_prefect_payload(
     if payload.parent is None:
         with (
             _workflow_context._transported_workflow_frame(None),
-            _workflow_broker._remote_coordination_probe_scope(),
+            _workflow_broker._remote_coordination_probe_scope(attempt) as observation,
         ):
+            value = None
+            execution_error = None
             try:
                 value = func(**item.call_values())
-            except _workflow_broker._ManagedCoordinationRequired:
-                return ManagedExecutionOutcome(
-                    index=item.index,
-                    coordination_required=True,
-                    report=ManagedClaimReport(item.frame, attempt, 0),
-                )
             except Exception as error:
-                return ManagedExecutionOutcome(
-                    index=item.index,
-                    error=error,
-                    report=ManagedClaimReport(item.frame, attempt, 0),
-                )
+                execution_error = error
+        if observation.effect_observed:
+            return ManagedExecutionOutcome(
+                index=item.index,
+                coordination_required=True,
+                report=ManagedClaimReport(item.frame, attempt, 0),
+            )
+        if execution_error is not None:
+            return ManagedExecutionOutcome(
+                index=item.index,
+                error=execution_error,
+                report=ManagedClaimReport(item.frame, attempt, 0),
+            )
         return ManagedExecutionOutcome(
             index=item.index,
             value=value,
