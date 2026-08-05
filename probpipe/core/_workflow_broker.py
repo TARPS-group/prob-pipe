@@ -27,6 +27,8 @@ from ._workflow_managed import (
     ManagedUnitFrame,
     ManagedWorkItem,
     ManagedWorkItemToken,
+    _CanonicalDescriptor,
+    _validate_stochastic_effect_fields,
 )
 
 _OccurrenceKind = Literal["invocation", "operation"]
@@ -81,18 +83,20 @@ class StochasticEffectPlan:
     sampling_abi: str
     provider_abi: str
     record_path: tuple[str, ...] = ()
-    descendant_descriptor: tuple[Any, ...] | None = None
+    descendant_descriptor: _CanonicalDescriptor | None = None
 
     def __post_init__(self) -> None:
         source_id, unit_id = _validate_stochastic_event(self.event)
         object.__setattr__(self, "event", _DirectRandomEventPlan(source_id, unit_id))
-        if not isinstance(self.record_path, tuple):
-            raise TypeError("stochastic effect record paths must be tuples")
-        if self.descendant_descriptor is not None and not isinstance(
-            self.descendant_descriptor,
-            tuple,
-        ):
-            raise TypeError("stochastic effect descendant descriptors must be tuples or None")
+        _validate_stochastic_effect_fields(
+            operation_kind=self.operation_kind,
+            execution_mode=self.execution_mode,
+            sample_shape=self.sample_shape,
+            sampling_abi=self.sampling_abi,
+            provider_abi=self.provider_abi,
+            record_path=self.record_path,
+            descendant_descriptor=self.descendant_descriptor,
+        )
 
 
 @dataclass(slots=True)
@@ -286,13 +290,22 @@ class _AutomaticKeyBroker:
         """Return the workflow-owned key for one planned effect."""
         _workflow_context._assert_workflow_admission(self._frame)
         self._assert_managed_registry_open()
+        if not isinstance(plan, StochasticEffectPlan):
+            raise TypeError("automatic key requests require a StochasticEffectPlan")
+        source_id, unit_id = _validate_stochastic_event(plan.event)
+        _validate_stochastic_effect_fields(
+            operation_kind=plan.operation_kind,
+            execution_mode=plan.execution_mode,
+            sample_shape=plan.sample_shape,
+            sampling_abi=plan.sampling_abi,
+            provider_abi=plan.provider_abi,
+            record_path=plan.record_path,
+            descendant_descriptor=plan.descendant_descriptor,
+        )
         coordination_probe = _REMOTE_COORDINATION_PROBE.get()
         if coordination_probe is not None:
             coordination_probe.effect_observed = True
             raise _ManagedCoordinationRequired
-        if not isinstance(plan, StochasticEffectPlan):
-            raise TypeError("automatic key requests require a StochasticEffectPlan")
-        source_id, unit_id = _validate_stochastic_event(plan.event)
         _workflow_context._guard_automatic_key_request()
         self.validate_replay_effect_plan(plan)
         with self._lock:

@@ -437,10 +437,82 @@ class TestManagedPayloadValidation:
                 id="effect-source",
             ),
             pytest.param(
+                lambda: make_managed_effect(occurrence_kind=1),
+                TypeError,
+                "occurrence_kind must be a string",
+                id="effect-occurrence-kind-type",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(occurrence_kind="nested"),
+                ValueError,
+                "occurrence_kind must be 'invocation' or 'operation'",
+                id="effect-occurrence-kind-value",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(operation_kind=1),
+                TypeError,
+                "operation_kind must be a string",
+                id="effect-operation-kind-type",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(operation_kind=""),
+                ValueError,
+                "operation_kind must be non-empty",
+                id="effect-operation-kind-empty",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(execution_mode=None),
+                TypeError,
+                "execution_mode must be a string",
+                id="effect-execution-mode-type",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(execution_mode=""),
+                ValueError,
+                "execution_mode must be non-empty",
+                id="effect-execution-mode-empty",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(sampling_abi=1),
+                TypeError,
+                "sampling_abi must be a string",
+                id="effect-sampling-abi-type",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(sampling_abi=""),
+                ValueError,
+                "sampling_abi must be non-empty",
+                id="effect-sampling-abi-empty",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(provider_abi=None),
+                TypeError,
+                "provider_abi must be a string",
+                id="effect-provider-abi-type",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(provider_abi=""),
+                ValueError,
+                "provider_abi must be non-empty",
+                id="effect-provider-abi-empty",
+            ),
+            pytest.param(
                 lambda: make_managed_effect(sample_shape=[]),
                 TypeError,
                 "sample shapes must be tuples or None",
                 id="effect-sample-shape",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(sample_shape=(True,)),
+                TypeError,
+                "sample shape dimensions must be non-boolean integers",
+                id="effect-sample-shape-bool",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(sample_shape=(-1,)),
+                ValueError,
+                "sample shape dimensions must be non-negative",
+                id="effect-sample-shape-negative",
             ),
             pytest.param(
                 lambda: make_managed_effect(record_path=[]),
@@ -449,10 +521,28 @@ class TestManagedPayloadValidation:
                 id="effect-record-path",
             ),
             pytest.param(
+                lambda: make_managed_effect(record_path=("field", 1)),
+                TypeError,
+                "record path fields must be strings",
+                id="effect-record-path-item",
+            ),
+            pytest.param(
                 lambda: make_managed_effect(descendant_descriptor=[]),
                 TypeError,
                 "descendant descriptors must be tuples or None",
                 id="effect-descendant",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(descendant_descriptor=("descriptor", ["mutable"])),
+                TypeError,
+                "canonical tuple values",
+                id="effect-descendant-nested-list",
+            ),
+            pytest.param(
+                lambda: make_managed_effect(descendant_descriptor=("descriptor", 1.5)),
+                TypeError,
+                "canonical tuple values",
+                id="effect-descendant-float",
             ),
             pytest.param(
                 lambda: managed_mod.ManagedClaimReport(

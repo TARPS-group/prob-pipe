@@ -14,6 +14,65 @@ from ._workflow_rng import (
 
 _MANAGED_WORK_ITEM_ABI = "probpipe.managed_work_item/v1"
 
+type _CanonicalDescriptorValue = (
+    None | bool | int | str | bytes | tuple[_CanonicalDescriptorValue, ...]
+)
+type _CanonicalDescriptor = tuple[_CanonicalDescriptorValue, ...]
+
+
+def _validate_stochastic_effect_fields(
+    *,
+    operation_kind: object,
+    execution_mode: object,
+    sample_shape: object,
+    sampling_abi: object,
+    provider_abi: object,
+    record_path: object,
+    descendant_descriptor: object,
+) -> None:
+    """Validate canonical fields shared by local plans and transport claims."""
+    string_fields = {
+        "operation_kind": operation_kind,
+        "execution_mode": execution_mode,
+        "sampling_abi": sampling_abi,
+        "provider_abi": provider_abi,
+    }
+    for field_name, value in string_fields.items():
+        if not isinstance(value, str):
+            raise TypeError(f"stochastic effect {field_name} must be a string")
+        if not value:
+            raise ValueError(f"stochastic effect {field_name} must be non-empty")
+
+    if sample_shape is not None:
+        if not isinstance(sample_shape, tuple):
+            raise TypeError("stochastic effect sample shapes must be tuples or None")
+        if any(isinstance(size, bool) or not isinstance(size, int) for size in sample_shape):
+            raise TypeError(
+                "stochastic effect sample shape dimensions must be non-boolean integers"
+            )
+        if any(size < 0 for size in sample_shape):
+            raise ValueError("stochastic effect sample shape dimensions must be non-negative")
+
+    if not isinstance(record_path, tuple):
+        raise TypeError("stochastic effect record paths must be tuples")
+    if any(not isinstance(field, str) for field in record_path):
+        raise TypeError("stochastic effect record path fields must be strings")
+
+    if descendant_descriptor is not None:
+        if not isinstance(descendant_descriptor, tuple):
+            raise TypeError("stochastic effect descendant descriptors must be tuples or None")
+        if not _is_canonical_descriptor_value(descendant_descriptor):
+            raise TypeError(
+                "stochastic effect descendant descriptors must contain only canonical tuple values"
+            )
+
+
+def _is_canonical_descriptor_value(value: object) -> bool:
+    """Return whether a descriptor value follows the immutable encoder grammar."""
+    if isinstance(value, tuple):
+        return all(_is_canonical_descriptor_value(item) for item in value)
+    return value is None or isinstance(value, (bool, int, str, bytes))
+
 
 @dataclass(frozen=True, slots=True)
 class ManagedWorkItemToken:
@@ -146,7 +205,7 @@ class ManagedEffectClaim:
     sampling_abi: str
     provider_abi: str
     record_path: tuple[str, ...] = ()
-    descendant_descriptor: tuple[Any, ...] | None = None
+    descendant_descriptor: _CanonicalDescriptor | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.occurrence_path, tuple):
@@ -159,15 +218,19 @@ class ManagedEffectClaim:
         _validate_random_event_value(self.occurrence_path)
         _validate_random_event_value(self.stochastic_source_id)
         _validate_random_event_value(self.logical_unit_id)
-        if self.sample_shape is not None and not isinstance(self.sample_shape, tuple):
-            raise TypeError("managed effect sample shapes must be tuples or None")
-        if not isinstance(self.record_path, tuple):
-            raise TypeError("managed effect record paths must be tuples")
-        if self.descendant_descriptor is not None and not isinstance(
-            self.descendant_descriptor,
-            tuple,
-        ):
-            raise TypeError("managed effect descendant descriptors must be tuples or None")
+        if not isinstance(self.occurrence_kind, str):
+            raise TypeError("managed effect occurrence_kind must be a string")
+        if self.occurrence_kind not in {"invocation", "operation"}:
+            raise ValueError("managed effect occurrence_kind must be 'invocation' or 'operation'")
+        _validate_stochastic_effect_fields(
+            operation_kind=self.operation_kind,
+            execution_mode=self.execution_mode,
+            sample_shape=self.sample_shape,
+            sampling_abi=self.sampling_abi,
+            provider_abi=self.provider_abi,
+            record_path=self.record_path,
+            descendant_descriptor=self.descendant_descriptor,
+        )
 
 
 @dataclass(frozen=True, slots=True)

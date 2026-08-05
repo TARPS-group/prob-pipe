@@ -28,15 +28,17 @@ from probpipe.core._workflow_broker import (
 from probpipe.core._workflow_plan import PlannedRandomEvent
 
 
-def _plan(source: int = 0) -> StochasticEffectPlan:
-    return StochasticEffectPlan(
-        operation_kind="test",
-        execution_mode="sampled",
-        event=PlannedRandomEvent(("source-group", source), ("singleton",)),
-        sample_shape=(8,),
-        sampling_abi="test-sampling/v1",
-        provider_abi="test-provider/v1",
-    )
+def _plan(source: int = 0, **overrides) -> StochasticEffectPlan:
+    values = {
+        "operation_kind": "test",
+        "execution_mode": "sampled",
+        "event": PlannedRandomEvent(("source-group", source), ("singleton",)),
+        "sample_shape": (8,),
+        "sampling_abi": "test-sampling/v1",
+        "provider_abi": "test-provider/v1",
+    }
+    values.update(overrides)
+    return StochasticEffectPlan(**values)
 
 
 def _key_words(key) -> tuple[int, int]:
@@ -45,27 +47,173 @@ def _key_words(key) -> tuple[int, int]:
 
 class TestStochasticEffectPlan:
     def test_plan_is_frozen_and_tuple_only(self):
-        plan = _plan()
+        descriptor = ("descriptor", ("value", 1), None, True, b"bytes")
+        plan = _plan(
+            record_path=("nested", "leaf"),
+            descendant_descriptor=descriptor,
+        )
 
         assert plan.sample_shape == (8,)
         assert isinstance(plan.sample_shape, tuple)
         assert isinstance(plan.event.stochastic_source_id, tuple)
         assert isinstance(plan.event.logical_unit_id, tuple)
-        assert plan.record_path == ()
-        assert plan.descendant_descriptor is None
+        assert plan.record_path == ("nested", "leaf")
+        assert plan.descendant_descriptor == descriptor
         with pytest.raises(FrozenInstanceError):
             plan.operation_kind = "changed"
 
-        with pytest.raises(TypeError, match="record paths"):
-            StochasticEffectPlan(
-                operation_kind="test",
-                execution_mode="sampled",
-                event=plan.event,
-                sample_shape=(1,),
-                sampling_abi="test-sampling/v1",
-                provider_abi="test-provider/v1",
-                record_path=["field"],
-            )
+    @pytest.mark.parametrize(
+        ("field", "value", "exception", "match"),
+        [
+            pytest.param(
+                "operation_kind",
+                1,
+                TypeError,
+                "operation_kind must be a string",
+                id="operation-kind-type",
+            ),
+            pytest.param(
+                "operation_kind",
+                "",
+                ValueError,
+                "operation_kind must be non-empty",
+                id="operation-kind-empty",
+            ),
+            pytest.param(
+                "execution_mode",
+                None,
+                TypeError,
+                "execution_mode must be a string",
+                id="execution-mode-type",
+            ),
+            pytest.param(
+                "execution_mode",
+                "",
+                ValueError,
+                "execution_mode must be non-empty",
+                id="execution-mode-empty",
+            ),
+            pytest.param(
+                "sampling_abi",
+                b"sampling/v1",
+                TypeError,
+                "sampling_abi must be a string",
+                id="sampling-abi-type",
+            ),
+            pytest.param(
+                "sampling_abi",
+                "",
+                ValueError,
+                "sampling_abi must be non-empty",
+                id="sampling-abi-empty",
+            ),
+            pytest.param(
+                "provider_abi",
+                1,
+                TypeError,
+                "provider_abi must be a string",
+                id="provider-abi-type",
+            ),
+            pytest.param(
+                "provider_abi",
+                "",
+                ValueError,
+                "provider_abi must be non-empty",
+                id="provider-abi-empty",
+            ),
+            pytest.param(
+                "sample_shape",
+                [1],
+                TypeError,
+                "sample shapes must be tuples or None",
+                id="sample-shape-container",
+            ),
+            pytest.param(
+                "sample_shape",
+                (True,),
+                TypeError,
+                "sample shape dimensions must be non-boolean integers",
+                id="sample-shape-bool",
+            ),
+            pytest.param(
+                "sample_shape",
+                (1.5,),
+                TypeError,
+                "sample shape dimensions must be non-boolean integers",
+                id="sample-shape-item",
+            ),
+            pytest.param(
+                "sample_shape",
+                (-1,),
+                ValueError,
+                "sample shape dimensions must be non-negative",
+                id="sample-shape-negative",
+            ),
+            pytest.param(
+                "record_path",
+                ["field"],
+                TypeError,
+                "record paths must be tuples",
+                id="record-path-container",
+            ),
+            pytest.param(
+                "record_path",
+                ("field", 1),
+                TypeError,
+                "record path fields must be strings",
+                id="record-path-item",
+            ),
+            pytest.param(
+                "descendant_descriptor",
+                ["descriptor"],
+                TypeError,
+                "descendant descriptors must be tuples or None",
+                id="descriptor-container",
+            ),
+            pytest.param(
+                "descendant_descriptor",
+                ("descriptor", ["mutable"]),
+                TypeError,
+                "canonical tuple values",
+                id="descriptor-nested-list",
+            ),
+            pytest.param(
+                "descendant_descriptor",
+                ("descriptor", 1.5),
+                TypeError,
+                "canonical tuple values",
+                id="descriptor-float",
+            ),
+        ],
+    )
+    def test_invalid_effect_fields_fail_at_plan_construction(
+        self,
+        field,
+        value,
+        exception,
+        match,
+    ):
+        with pytest.raises(exception, match=match):
+            _plan(**{field: value})
+
+    def test_corrupted_effect_fields_fail_before_stochastic_commit(self):
+        invalid_plan = _plan()
+        object.__setattr__(invalid_plan, "sample_shape", (True,))
+
+        with (
+            patch("probpipe.core._workflow_context._os_urandom") as urandom,
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            patch("probpipe.core._workflow_context.derive_event_key_words_from_encoded") as derive,
+            workflow_run(),
+            _function_stochastic_scope() as broker,
+            pytest.raises(TypeError, match="sample shape dimensions"),
+        ):
+            _resolve_automatic_key(None, invalid_plan)
+
+        assert broker._invocation is None
+        urandom.assert_not_called()
+        commit.assert_not_called()
+        derive.assert_not_called()
 
     def test_invalid_event_identity_does_not_consume_an_occurrence(self):
         class MutableEvent:
