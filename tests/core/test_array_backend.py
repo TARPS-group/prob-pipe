@@ -394,7 +394,7 @@ class TestEagerBatchBoundary:
         from probpipe import RecordBatch
 
         records = [NumericRecord("r", temps=da, x=float(i)) for i in range(3)]
-        ra = RecordBatch.stack(records)
+        ra = RecordBatch.stack(records, level_name="draw")
         assert isinstance(ra["temps"], jnp.ndarray)
         assert ra["temps"].shape == (3, 3)
         assert ra.batch_shape == (3,)
@@ -478,7 +478,7 @@ class TestBackendRegistrationEndToEnd:
 
         register_array_backend(_FakeTensor, _fake_backend())
         records = [Record("r", t=_FakeTensor([float(i), 2.0])) for i in range(3)]
-        ra = RecordBatch.stack(records)
+        ra = RecordBatch.stack(records, level_name="draw")
         assert isinstance(ra["t"], jnp.ndarray)
         assert ra["t"].shape == (3, 2)
         assert all(r["t"].to_jax_calls == 1 for r in records)

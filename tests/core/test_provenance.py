@@ -389,7 +389,7 @@ class TestBroadcastingProvenance:
 
     def test_sweep_records_static_plain_inputs(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=float(value)) for value in range(3)]
+            [NumericRecord("row", value=float(value)) for value in range(3)], level_name="draw"
         )
 
         def shift(row, offset: float = 2.0) -> float:
@@ -403,7 +403,7 @@ class TestBroadcastingProvenance:
 
     def test_nested_broadcast_records_static_plain_inputs(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=float(value)) for value in range(2)]
+            [NumericRecord("row", value=float(value)) for value in range(2)], level_name="draw"
         )
         noise = Normal(loc=0.0, scale=1.0, name="noise")
 

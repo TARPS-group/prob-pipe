@@ -703,7 +703,7 @@ class TestSymbolicCalls:
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_sweep_preserves_concrete_declared_output_template(self, dispatch):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.ones((2,)) * i) for i in range(3)]
+            [NumericRecord("row", value=jnp.ones((2,)) * i) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: row["value"] + 1,
@@ -744,7 +744,7 @@ class TestSymbolicCalls:
 
     def test_every_sweep_cell_is_validated_against_output_template(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", size=2), NumericRecord("row", size=3)]
+            [NumericRecord("row", size=2), NumericRecord("row", size=3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: jnp.ones((int(row["size"]),)),
@@ -761,7 +761,8 @@ class TestSymbolicCalls:
             [
                 NumericRecord("row", value=jnp.asarray(1.0)),
                 NumericRecord("row", value=jnp.asarray(-1.0)),
-            ]
+            ],
+            level_name="draw",
         )
         wrapped = Function(
             func=lambda row: row["value"],
@@ -807,7 +808,7 @@ class TestSymbolicCalls:
 
     def test_support_pinned_sweep_auto_falls_back_to_sequential(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         template = EventTemplate(y=ArraySpec((), support=positive))
         wrapped = Function(
@@ -824,7 +825,7 @@ class TestSymbolicCalls:
 
     def test_support_pinned_sweep_explicit_jax_reports_traceability_error(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: row["value"] + 1,
@@ -842,7 +843,7 @@ class TestSymbolicCalls:
     @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
     def test_nested_mapping_sweep_preserves_declared_structure(self, dispatch):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: {
@@ -941,7 +942,7 @@ class TestSymbolicCalls:
 
     def test_distribution_outputs_keep_declared_template_through_sweep(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(
             func=lambda row: Normal(row["value"], 1, name="y"),
@@ -966,7 +967,8 @@ class TestSymbolicCalls:
 
     def test_nested_broadcast_distribution_array_keeps_declared_template(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", offset=jnp.asarray(float(i))) for i in range(2)]
+            [NumericRecord("row", offset=jnp.asarray(float(i))) for i in range(2)],
+            level_name="draw",
         )
         wrapped = Function(
             func=lambda row, noise: {"prediction": row["offset"] + noise},
@@ -1193,7 +1195,7 @@ class TestReentrancyAndProvenance:
         "stored",
         [
             NumericRecord("stored", value=1.0),
-            NumericRecordBatch.stack([NumericRecord("stored", value=1.0)]),
+            NumericRecordBatch.stack([NumericRecord("stored", value=1.0)], level_name="draw"),
             Normal(0, 1, name="stored"),
         ],
     )
@@ -1272,7 +1274,7 @@ class TestVariadicPlanning:
 
     def test_record_array_in_varargs_is_swept(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
         wrapped = Function(func=lambda *items: items[0]["value"] + items[1])
 
@@ -1283,7 +1285,7 @@ class TestVariadicPlanning:
 
     def test_record_array_in_any_varargs_is_swept(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
 
         def double(*items: Any):
@@ -1296,7 +1298,7 @@ class TestVariadicPlanning:
 
     def test_record_array_in_any_varkwargs_is_swept(self):
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)]
+            [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
 
         def double(**extras: Any):

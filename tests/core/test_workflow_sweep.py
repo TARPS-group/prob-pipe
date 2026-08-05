@@ -22,7 +22,7 @@ from probpipe.core._workflow_plan import build_broadcast_plan
 
 def _numeric_record_array(field: str, values: range) -> NumericRecordBatch:
     return NumericRecordBatch.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values]
+        [NumericRecord("nr", **{field: float(value)}) for value in values], level_name="draw"
     )
 
 
@@ -49,7 +49,7 @@ def _require_not_called(*args, **kwargs):
 class TestSliceSweepValues:
     def test_views_from_same_parent_zip(self):
         parent = NumericRecordBatch.stack(
-            [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)]
+            [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)], level_name="draw"
         )
         values = {"x": parent.view("x"), "y": parent.view("y")}
         plan = _plan(values)

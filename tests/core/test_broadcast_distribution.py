@@ -167,7 +167,7 @@ class TestResamplingARecordValuedComponent:
         """A batch of three rows whose record input determines the output."""
         rows = [Record("r", x=jnp.array(float(i)), y=jnp.array(10.0 * i)) for i in range(1, 4)]
         return BroadcastDistribution(
-            input_samples={"a": RecordBatch.stack(rows)},
+            input_samples={"a": RecordBatch.stack(rows, level_name="draw")},
             output_samples=jnp.array([10.0, 20.0, 30.0]),
             weights=None,
             broadcast_args=["a"],
@@ -904,7 +904,9 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         inner = [
-            NumericRecordBatch.stack([NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)])
+            NumericRecordBatch.stack(
+                [NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)], level_name="draw"
+            )
             for i in range(3)
         ]
         out = _make_stack(inner, n=3, field_name="demo", level_names=("sweep",))
@@ -1043,7 +1045,9 @@ class TestCoerceOutput:
         from probpipe import NumericRecord, NumericRecordBatch
         from probpipe.core._workflow_result import _coerce_output
 
-        ra = NumericRecordBatch.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
+        ra = NumericRecordBatch.stack(
+            [NumericRecord("nr", x=float(i)) for i in range(3)], level_name="draw"
+        )
         assert ra.provenance is None
         prov = Provenance("sweep", parents=())
         out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")

@@ -61,7 +61,7 @@ class TestKwargFormScalar:
     def test_record_array_view_in_variadic_any_kwarg_is_swept(self):
         d = Normal(0.0, 1.0, name="x")
         rows = NumericRecordBatch.stack(
-            [NumericRecord("row", x=float(value)) for value in range(3)]
+            [NumericRecord("row", x=float(value)) for value in range(3)], level_name="draw"
         )
 
         result = log_prob(d, x=rows.view("x"))

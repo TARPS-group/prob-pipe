@@ -22,7 +22,7 @@ from probpipe.core.protocols import SupportsSampling
 
 def _numeric_record_array(field: str, values: range) -> NumericRecordBatch:
     return NumericRecordBatch.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values]
+        [NumericRecord("nr", **{field: float(value)}) for value in values], level_name="draw"
     )
 
 
@@ -126,7 +126,7 @@ class TestHintClassification:
 class TestArrayGrouping:
     def test_sibling_views_zip_into_one_group(self):
         ra = NumericRecordBatch.stack(
-            [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)]
+            [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)], level_name="draw"
         )
 
         plan = _plan({"x": ra.view("x"), "y": ra.view("y")})

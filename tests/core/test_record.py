@@ -1304,7 +1304,9 @@ class TestEventTemplateStorage:
     def test_record_array_event_template_is_template(self):
         from probpipe import NumericRecord, RecordBatch
 
-        ra = RecordBatch.stack([NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)])
+        ra = RecordBatch.stack(
+            [NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)], level_name="draw"
+        )
         assert ra.event_template is ra.template
 
     def test_explicit_nested_template_validates_recursively(self):

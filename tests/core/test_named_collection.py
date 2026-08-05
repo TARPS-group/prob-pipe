@@ -487,4 +487,4 @@ class TestBatchFieldNav:
             for _ in range(3)
         ]
         with pytest.raises(TypeError, match="nested"):
-            NumericRecordBatch.stack(recs)
+            NumericRecordBatch.stack(recs, level_name="draw")
