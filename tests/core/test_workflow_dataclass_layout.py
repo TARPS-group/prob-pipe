@@ -61,3 +61,14 @@ def test_immutable_workflow_dataclasses_use_slots() -> None:
         for candidate in classes
         if "__slots__" not in candidate.__dict__ or "__dict__" in candidate.__dict__
     ] == []
+
+
+def test_mutable_workflow_dataclasses_use_slots() -> None:
+    classes = _workflow_dataclasses(frozen=False)
+
+    assert classes
+    assert [
+        f"{candidate.__module__}.{candidate.__qualname__}"
+        for candidate in classes
+        if "__slots__" not in candidate.__dict__ or "__dict__" in candidate.__dict__
+    ] == []

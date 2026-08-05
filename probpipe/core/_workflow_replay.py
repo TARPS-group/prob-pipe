@@ -64,7 +64,7 @@ class _ExpectedReplayEvent:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class _ReplayEventClaim:
     """Transient ownership for one expected logical event."""
 
@@ -75,7 +75,7 @@ class _ReplayEventClaim:
     successful: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class _ReplayState:
     """One validated standalone replay scope."""
 
@@ -296,7 +296,7 @@ class _ReplayState:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class _RemoteReplayClaims:
     """Worker-local pre-derivation validator for one assigned namespace."""
 

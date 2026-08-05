@@ -94,7 +94,7 @@ class StochasticEffectPlan:
             raise TypeError("stochastic effect descendant descriptors must be tuples or None")
 
 
-@dataclass
+@dataclass(slots=True)
 class _ManagedUnitClaimState:
     """Operational retry state for one canonical managed unit."""
 
@@ -110,7 +110,7 @@ class _ManagedUnitClaimState:
     joined: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class _ManagedClaimRegistry:
     """Parent-broker registry for managed units and their retry claims."""
 
@@ -119,7 +119,7 @@ class _ManagedClaimRegistry:
     lock: Any = field(default_factory=Lock, repr=False)
 
 
-@dataclass
+@dataclass(slots=True)
 class _ManagedAttemptContext:
     """Attempt-local child cursor bound inside one managed work item."""
 
@@ -239,7 +239,7 @@ def _singleton_effect_plan(
     )
 
 
-@dataclass
+@dataclass(slots=True)
 class _AutomaticKeyBroker:
     """Lazily commit and serve keys for one stochastic occurrence."""
 
@@ -658,7 +658,7 @@ class _ManagedCoordinationRequired(RuntimeError):
     """Signal that a remote work item needs parent RNG authority."""
 
 
-@dataclass
+@dataclass(slots=True)
 class _RemoteManagedParent:
     """Worker-local adapter for a parent-authorized child namespace."""
 

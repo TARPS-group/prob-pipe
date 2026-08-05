@@ -58,7 +58,7 @@ class _WorkflowFrame:
     state: _WorkflowFrameState = field(default_factory=lambda: _WorkflowFrameState())
 
 
-@dataclass
+@dataclass(slots=True)
 class _StochasticLedger:
     """Thread-safe allocator for one frame's stochastic child positions."""
 
@@ -73,7 +73,7 @@ class _StochasticLedger:
             return ordinal
 
 
-@dataclass
+@dataclass(slots=True)
 class _WorkflowFrameState:
     """Lazy materialization state kept behind an immutable frame binding."""
 
@@ -84,7 +84,7 @@ class _WorkflowFrameState:
     lock: Any = field(default_factory=Lock, repr=False)
 
 
-@dataclass
+@dataclass(slots=True)
 class _EventClaims:
     """Idempotent raw-key claims within one stochastic invocation."""
 
@@ -130,7 +130,7 @@ _ACTIVE_WORKFLOW_FRAME: ContextVar[_WorkflowFrame | None] = ContextVar(
 )
 
 
-@dataclass
+@dataclass(slots=True)
 class _StochasticProbeState:
     """Observable stochastic effects reached during one route probe."""
 
