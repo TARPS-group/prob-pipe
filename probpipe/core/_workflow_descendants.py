@@ -93,38 +93,40 @@ def canonical_descriptor_bytes(descriptor: tuple[Any, ...]) -> bytes:
 
 def encode_semantic_value(value: Any) -> tuple[Any, ...]:
     """Strongly encode one bijector semantic value into tuple-only data."""
-    if value is None:
-        return ("none",)
-    if isinstance(value, (bool, np.bool_)):
-        return ("bool", bool(value))
-    if isinstance(value, int) and not isinstance(value, bool):
-        return ("python-int", value)
-    if isinstance(value, float):
-        return ("python-float64-le", base64.b64encode(struct.pack("<d", value)).decode("ascii"))
-    if isinstance(value, np.generic):
-        array = np.asarray(value)
-        return (
-            "numpy-scalar",
-            _little_endian_dtype(array.dtype).str,
-            base64.b64encode(_little_endian_array_bytes(array)).decode("ascii"),
-        )
-    if hasattr(value, "dtype") and hasattr(value, "shape"):
-        array = np.asarray(value)
-        dtype = _little_endian_dtype(array.dtype)
-        return (
-            "array",
-            ("dtype", dtype.str),
-            ("shape", tuple(int(axis) for axis in array.shape)),
-            (
-                "data_base64",
+    match value:
+        case None:
+            return ("none",)
+        case bool() | np.bool_():
+            return ("bool", bool(value))
+        case int():
+            return ("python-int", value)
+        case float():
+            return ("python-float64-le", base64.b64encode(struct.pack("<d", value)).decode("ascii"))
+        case np.generic():
+            array = np.asarray(value)
+            return (
+                "numpy-scalar",
+                _little_endian_dtype(array.dtype).str,
                 base64.b64encode(_little_endian_array_bytes(array)).decode("ascii"),
-            ),
-        )
-    raise TypeError(
-        "Unsupported transformed-descendant semantic state of type "
-        f"{type(value).__module__}.{type(value).__qualname__}; pass an explicit key "
-        "or use a supported immutable numeric parameter."
-    )
+            )
+        case _ if hasattr(value, "dtype") and hasattr(value, "shape"):
+            array = np.asarray(value)
+            dtype = _little_endian_dtype(array.dtype)
+            return (
+                "array",
+                ("dtype", dtype.str),
+                ("shape", tuple(int(axis) for axis in array.shape)),
+                (
+                    "data_base64",
+                    base64.b64encode(_little_endian_array_bytes(array)).decode("ascii"),
+                ),
+            )
+        case _:
+            raise TypeError(
+                "Unsupported transformed-descendant semantic state of type "
+                f"{type(value).__module__}.{type(value).__qualname__}; pass an explicit key "
+                "or use a supported immutable numeric parameter."
+            )
 
 
 def _capture_stochastic_consumer(
@@ -155,22 +157,32 @@ def _capture_stochastic_consumer(
         )
 
     if isinstance(value, _RecordDistributionView):
-        captured_parent = _capture_stochastic_consumer(
-            value.parent,
-            active_descendants=active_descendants,
-        )
-        evaluator = _compose(captured_parent.evaluator, value._extract)
+        identity = id(value)
+        if identity in active_descendants:
+            raise TypeError("Cyclic record distribution view graph is unsupported")
+        parent = value.parent
+        record_path = tuple(value._key_path)
+        active_descendants.add(identity)
+        try:
+            captured_parent = _capture_stochastic_consumer(
+                parent,
+                active_descendants=active_descendants,
+            )
+            projection = _RecordDistributionView(parent, record_path)
+        finally:
+            active_descendants.remove(identity)
+        evaluator = _compose(captured_parent.evaluator, projection._extract)
         descriptor = captured_parent.descendant_descriptor
         if descriptor is not None:
             descriptor = (
                 "record-projection-after-descendant",
                 ("base", descriptor),
-                ("path", tuple(value._key_path)),
+                ("path", record_path),
             )
         return CapturedStochasticConsumer(
             root=captured_parent.root,
             sample_root=captured_parent.sample_root,
-            record_path=tuple(value._key_path),
+            record_path=record_path,
             descendant_descriptor=descriptor,
             evaluator=evaluator,
         )
@@ -230,6 +242,63 @@ def _capture_bijector(
     *,
     active_bijectors: set[int],
 ) -> tuple[tuple[Any, ...], Callable[[Any], Any]]:
+    descriptor, _ = _capture_bijector_graph(
+        bijector,
+        active_bijectors=active_bijectors,
+    )
+    try:
+        snapshot = _copy_bijector_graph(bijector, active_bijectors=set())
+    except Exception as error:
+        raise TypeError(
+            "Automatic transformed-descendant lifting could not snapshot "
+            f"{type(bijector).__module__}.{type(bijector).__qualname__}."
+        ) from error
+    if type(snapshot) is not type(bijector):
+        raise TypeError(
+            "Automatic transformed-descendant lifting requires a bijector snapshot "
+            "with the same exact type as its source."
+        )
+    snapshot_descriptor, forward = _capture_bijector_graph(
+        snapshot,
+        active_bijectors=set(),
+    )
+    if snapshot_descriptor != descriptor:
+        raise TypeError(
+            "The approved bijector snapshot changed its semantic descriptor; "
+            "pass an explicit key or use immutable bijector parameters."
+        )
+    return snapshot_descriptor, forward
+
+
+def _copy_bijector_graph(
+    bijector: tfb.Bijector,
+    *,
+    active_bijectors: set[int],
+) -> tfb.Bijector:
+    """Copy an approved bijector graph without retaining live child references."""
+    identity = id(bijector)
+    if identity in active_bijectors:
+        raise TypeError("Cyclic TFP Chain descendant graph is unsupported")
+    if type(bijector) is not tfb.Chain:
+        return bijector.copy()
+
+    active_bijectors.add(identity)
+    try:
+        children = tuple(
+            _copy_bijector_graph(child, active_bijectors=active_bijectors)
+            for child in tuple(bijector.bijectors)
+        )
+        return bijector.copy(bijectors=children)
+    finally:
+        active_bijectors.remove(identity)
+
+
+def _capture_bijector_graph(
+    bijector: tfb.Bijector,
+    *,
+    active_bijectors: set[int],
+) -> tuple[tuple[Any, ...], Callable[[Any], Any]]:
+    """Validate one bijector graph and capture its descriptor and forward method."""
     bijector_type = type(bijector)
     if bijector_type not in _APPROVED_BIJECTOR_TYPES:
         if isinstance(bijector, _APPROVED_BIJECTOR_TYPES):
@@ -266,7 +335,7 @@ def _capture_bijector(
     try:
         if bijector_type is tfb.Chain:
             child_descriptors = tuple(
-                _capture_bijector(child, active_bijectors=active_bijectors)[0]
+                _capture_bijector_graph(child, active_bijectors=active_bijectors)[0]
                 for child in tuple(bijector.bijectors)
             )
             settings = (
@@ -339,24 +408,26 @@ def _little_endian_array_bytes(array: np.ndarray) -> bytes:
 
 
 def _encode_descriptor_value(value: Any) -> bytes:
-    if value is None:
-        return b"N"
-    if isinstance(value, bool):
-        return b"B\x01" if value else b"B\x00"
-    if isinstance(value, int):
-        sign = b"-" if value < 0 else b"+"
-        magnitude = abs(value)
-        raw = magnitude.to_bytes(max(1, (magnitude.bit_length() + 7) // 8), "big")
-        return b"I" + sign + len(raw).to_bytes(4, "big") + raw
-    if isinstance(value, str):
-        raw = value.encode("utf-8")
-        return b"S" + len(raw).to_bytes(4, "big") + raw
-    if isinstance(value, bytes):
-        return b"Y" + len(value).to_bytes(4, "big") + value
-    if isinstance(value, tuple):
-        encoded = tuple(_encode_descriptor_value(item) for item in value)
-        return b"T" + len(encoded).to_bytes(4, "big") + b"".join(encoded)
-    raise TypeError(f"Unsupported canonical descriptor value: {type(value).__name__}")
+    match value:
+        case None:
+            return b"N"
+        case bool() as flag:
+            return b"B\x01" if flag else b"B\x00"
+        case int() as number:
+            sign = b"-" if number < 0 else b"+"
+            magnitude = abs(number)
+            raw = magnitude.to_bytes(max(1, (magnitude.bit_length() + 7) // 8), "big")
+            return b"I" + sign + len(raw).to_bytes(4, "big") + raw
+        case str() as text:
+            raw = text.encode("utf-8")
+            return b"S" + len(raw).to_bytes(4, "big") + raw
+        case bytes() as raw_bytes:
+            return b"Y" + len(raw_bytes).to_bytes(4, "big") + raw_bytes
+        case tuple() as items:
+            encoded = tuple(_encode_descriptor_value(item) for item in items)
+            return b"T" + len(encoded).to_bytes(4, "big") + b"".join(encoded)
+        case _:
+            raise TypeError(f"Unsupported canonical descriptor value: {type(value).__name__}")
 
 
 def _compose(

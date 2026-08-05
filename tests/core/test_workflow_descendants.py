@@ -89,6 +89,67 @@ def test_approved_bijectors_capture_root_and_live_forward(bijector):
     )
 
 
+@pytest.mark.parametrize(
+    ("bijector", "mutate", "expected"),
+    [
+        pytest.param(
+            tfb.Shift(1.0),
+            lambda bijector: object.__setattr__(bijector, "_shift", 9.0),
+            1.0,
+            id="shift",
+        ),
+        pytest.param(
+            tfb.Chain([tfb.Exp(), tfb.Shift(1.0)]),
+            lambda bijector: object.__setattr__(
+                bijector.bijectors[1],
+                "_shift",
+                9.0,
+            ),
+            np.e,
+            id="chain-child",
+        ),
+    ],
+)
+def test_captured_bijector_snapshot_does_not_drift_after_original_mutation(
+    bijector,
+    mutate,
+    expected,
+):
+    descendant = TransformedDistribution(
+        Normal(0.0, 1.0, name="base"),
+        bijector,
+    )
+    captured = _workflow_descendants.capture_stochastic_consumer(descendant)
+    descriptor = captured.descendant_descriptor
+
+    mutate(bijector)
+
+    np.testing.assert_allclose(
+        captured.evaluator(jnp.asarray(0.0)),
+        expected,
+        rtol=1e-6,
+        atol=1e-6,
+    )
+    assert captured.descendant_descriptor == descriptor
+
+
+def test_bijector_snapshot_failure_and_semantic_drift_fail_closed():
+    base = Normal(0.0, 1.0, name="base")
+    descendant = TransformedDistribution(base, tfb.Shift(1.0))
+
+    with (
+        patch.object(tfb.Shift, "copy", side_effect=RuntimeError("copy failed")),
+        pytest.raises(TypeError, match="snapshot"),
+    ):
+        _workflow_descendants.capture_stochastic_consumer(descendant)
+
+    with (
+        patch.object(tfb.Shift, "copy", return_value=tfb.Shift(2.0)),
+        pytest.raises(TypeError, match="changed its semantic descriptor"),
+    ):
+        _workflow_descendants.capture_stochastic_consumer(descendant)
+
+
 def test_golden_shift_descriptor_and_digest_are_hard_coded():
     base = MultivariateNormal(
         loc=jnp.zeros(2),
@@ -250,6 +311,22 @@ def test_root_projection_and_multiple_descendants_form_one_plan_group():
     assert len(plan.random_events) == 1
 
 
+def test_captured_record_projection_does_not_reread_the_live_view_path():
+    root = ProductDistribution(
+        x=Normal(0.0, 1.0, name="x"),
+        y=Normal(1.0, 1.0, name="y"),
+    )
+    view = root["x"]
+    captured = _workflow_descendants.capture_stochastic_consumer(view)
+    root_sample = root._sample(jax.random.key(13), ())
+
+    object.__setattr__(view, "_key", "y")
+    object.__setattr__(view, "_key_path", ("y",))
+
+    np.testing.assert_array_equal(captured.evaluator(root_sample), root_sample["x"])
+    assert captured.record_path == ("x",)
+
+
 def test_descriptor_records_its_plan_local_base_source_slot():
     root = Normal(0.0, 1.0, name="root")
     descendant = TransformedDistribution(root, tfb.Exp())
@@ -353,6 +430,24 @@ def test_cyclic_descendant_and_chain_graphs_fail_closed():
     object.__setattr__(chain, "_bijectors", (chain,))
     with pytest.raises(TypeError, match="Cyclic TFP Chain"):
         _workflow_descendants.capture_stochastic_consumer(cyclic_chain_descendant)
+
+
+@pytest.mark.parametrize("cycle_kind", ["self", "pair"])
+def test_cyclic_record_view_graphs_fail_closed(cycle_kind):
+    root = ProductDistribution(
+        x=Normal(0.0, 1.0, name="x"),
+        y=Normal(1.0, 1.0, name="y"),
+    )
+    first = root["x"]
+    if cycle_kind == "self":
+        object.__setattr__(first, "_parent", first)
+    else:
+        second = root["y"]
+        object.__setattr__(first, "_parent", second)
+        object.__setattr__(second, "_parent", first)
+
+    with pytest.raises(TypeError, match="Cyclic record distribution view"):
+        _workflow_descendants.capture_stochastic_consumer(first)
 
 
 def test_known_unapproved_record_wrappers_fail_closed():
