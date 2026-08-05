@@ -868,9 +868,45 @@ class TestManagedRetryClaims:
             )
             parent.register_managed_work_items(request.work_items)
             parent.cancel_unstarted_managed_items(request.work_items)
+            state = parent._managed_claims.by_token[item.frame.token]
+            assert state.status is broker_mod._ManagedUnitStatus.CANCELLED
 
             with pytest.raises(RuntimeError, match="cancelled"):
                 parent.begin_managed_attempt(attempt, item.frame)
+
+    def test_managed_unit_uses_explicit_lifecycle_status(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        with workflow_run(seed=17):
+            parent = broker_mod._AutomaticKeyBroker(
+                "invocation",
+                _frame=context_mod._capture_active_workflow_frame(),
+            )
+            parent.register_managed_work_items(request.work_items)
+            state = parent._managed_claims.by_token[item.frame.token]
+            assert state.status is broker_mod._ManagedUnitStatus.ISSUED
+
+            first_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            parent.begin_managed_attempt(first_attempt, item.frame)
+            assert state.status is broker_mod._ManagedUnitStatus.ACTIVE
+            assert state.active_attempt == first_attempt.attempt_token
+
+            parent.finish_managed_attempt(first_attempt)
+            assert state.status is broker_mod._ManagedUnitStatus.JOINED
+            assert state.active_attempt is None
+            assert state.seen_attempts == {first_attempt.attempt_token}
+
+            retry_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            parent.begin_managed_attempt(retry_attempt, item.frame)
+            assert state.status is broker_mod._ManagedUnitStatus.ACTIVE
+            assert state.active_attempt == retry_attempt.attempt_token
+            assert state.seen_attempts == {
+                first_attempt.attempt_token,
+                retry_attempt.attempt_token,
+            }
+            parent.finish_managed_attempt(retry_attempt)
+            assert state.status is broker_mod._ManagedUnitStatus.JOINED
 
     def test_cancel_and_begin_race_has_one_terminal_outcome(self):
         request = make_request(calls=[{}], func=lambda: None)
@@ -895,9 +931,9 @@ class TestManagedRetryClaims:
                     parent.begin_managed_attempt(attempt, item.frame)
                 except RuntimeError as error:
                     assert "cancelled" in str(error)
-                    return "cancelled"
+                    return broker_mod._ManagedUnitStatus.CANCELLED
                 parent.finish_managed_attempt(attempt)
-                return "joined"
+                return broker_mod._ManagedUnitStatus.JOINED
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 cancel_future = pool.submit(cancel)
@@ -907,7 +943,7 @@ class TestManagedRetryClaims:
 
             state = parent._managed_claims.by_token[item.frame.token]
 
-        assert state.status == outcome
+        assert state.status is outcome
 
     def test_function_scope_closes_its_managed_registry(self):
         request = make_request(calls=[{}], func=lambda: None)
@@ -1197,7 +1233,7 @@ class TestRemoteReportTransactions:
             parent.accept_remote_claim_report(report)
 
             state = parent._managed_claims.by_token[item.frame.token]
-            assert state.status == "joined"
+            assert state.status is broker_mod._ManagedUnitStatus.JOINED
             assert state.active_attempt is None
             assert len(state.effect_claims_by_identity) == 2
             assert len(state.child_invocations) == 1
@@ -1483,7 +1519,7 @@ class TestPrefectMapping:
                 execution_mod.execute_many(request)
             state = parent._managed_claims.by_token[request.work_items[0].frame.token]
 
-        assert state.status == "joined"
+        assert state.status is broker_mod._ManagedUnitStatus.JOINED
         assert state.active_attempt is None
         assert len(state.seen_attempts) == 1
 

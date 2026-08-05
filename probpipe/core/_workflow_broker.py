@@ -6,6 +6,7 @@ from collections.abc import Generator
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
+from enum import Enum
 from threading import Lock
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
@@ -33,7 +34,16 @@ from ._workflow_managed import (
 
 _OccurrenceKind = Literal["invocation", "operation"]
 _StructuralRngId = _RandomEventPath
-_ManagedUnitStatus = Literal["registered", "active", "joined", "cancelled"]
+
+
+class _ManagedUnitStatus(Enum):
+    """Lifecycle state of one parent-issued managed unit."""
+
+    ISSUED = "issued"
+    ACTIVE = "active"
+    JOINED = "joined"
+    CANCELLED = "cancelled"
+
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _PROBPIPE_DISTRIBUTION_PROVIDER_ABI = "probpipe.distribution/v1"
@@ -113,7 +123,7 @@ class _ManagedUnitClaimState:
     effect_claims_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
         default_factory=dict
     )
-    status: _ManagedUnitStatus = "registered"
+    status: _ManagedUnitStatus = _ManagedUnitStatus.ISSUED
 
 
 @dataclass(slots=True)
@@ -524,7 +534,7 @@ class _AutomaticKeyBroker:
             state.active_transport = "local"
             state.active_parent_occurrence_path = None
             state.active_effect_identities.clear()
-            state.status = "active"
+            state.status = _ManagedUnitStatus.ACTIVE
             return state.frame
 
     def finish_managed_attempt(self, attempt: ManagedAttemptState) -> None:
@@ -533,7 +543,7 @@ class _AutomaticKeyBroker:
             state = self._managed_claims.by_token.get(attempt.work_item_token)
             if (
                 state is None
-                or state.status != "active"
+                or state.status is not _ManagedUnitStatus.ACTIVE
                 or state.active_attempt != attempt.attempt_token
                 or state.active_transport != "local"
             ):
@@ -542,7 +552,7 @@ class _AutomaticKeyBroker:
             state.active_transport = None
             state.active_parent_occurrence_path = None
             state.active_effect_identities.clear()
-            state.status = "joined"
+            state.status = _ManagedUnitStatus.JOINED
 
     def cancel_unstarted_managed_items(self, items: tuple[ManagedWorkItem, ...]) -> None:
         """Cancel issued items that were never submitted after an earlier failure."""
@@ -550,8 +560,8 @@ class _AutomaticKeyBroker:
             self._assert_managed_registry_open_unlocked()
             for item in items:
                 state = self._managed_claims.by_token[item.frame.token]
-                if state.status == "registered":
-                    state.status = "cancelled"
+                if state.status is _ManagedUnitStatus.ISSUED:
+                    state.status = _ManagedUnitStatus.CANCELLED
 
     def assert_managed_items_joined(self, items: tuple[ManagedWorkItem, ...]) -> None:
         """Require all issued request tokens to be inactive and joined."""
@@ -559,8 +569,8 @@ class _AutomaticKeyBroker:
             for item in items:
                 state = self._managed_claims.by_token[item.frame.token]
                 if state.active_attempt is not None or state.status not in {
-                    "joined",
-                    "cancelled",
+                    _ManagedUnitStatus.JOINED,
+                    _ManagedUnitStatus.CANCELLED,
                 }:
                     raise RuntimeError(
                         "managed workflow request exited before all work items joined"
@@ -570,7 +580,8 @@ class _AutomaticKeyBroker:
         """Prevent the parent Function broker from releasing active ownership."""
         with self._managed_claims.lock:
             if any(
-                state.active_attempt is not None or state.status not in {"joined", "cancelled"}
+                state.active_attempt is not None
+                or state.status not in {_ManagedUnitStatus.JOINED, _ManagedUnitStatus.CANCELLED}
                 for state in self._managed_claims.by_unit.values()
             ):
                 raise RuntimeError(
@@ -583,7 +594,8 @@ class _AutomaticKeyBroker:
             if self._managed_claims.closed:
                 return
             if any(
-                state.active_attempt is not None or state.status not in {"joined", "cancelled"}
+                state.active_attempt is not None
+                or state.status not in {_ManagedUnitStatus.JOINED, _ManagedUnitStatus.CANCELLED}
                 for state in self._managed_claims.by_unit.values()
             ):
                 raise RuntimeError(
@@ -612,9 +624,9 @@ class _AutomaticKeyBroker:
             raise RuntimeError("managed work-item token was not registered by its parent")
         if state.frame != frame:
             raise RuntimeError("managed work-item frame does not match its registered token")
-        if state.status == "cancelled":
+        if state.status is _ManagedUnitStatus.CANCELLED:
             raise RuntimeError("a cancelled managed work item cannot start an attempt")
-        if state.status == "active" or state.active_attempt is not None:
+        if state.status is _ManagedUnitStatus.ACTIVE or state.active_attempt is not None:
             raise RuntimeError(
                 "a managed work-item token already has an active attempt; "
                 "duplicate or concurrent attempts are not allowed"
@@ -638,7 +650,7 @@ class _AutomaticKeyBroker:
             state.active_transport = "remote"
             state.active_parent_occurrence_path = None
             state.active_effect_identities.clear()
-            state.status = "active"
+            state.status = _ManagedUnitStatus.ACTIVE
             retry_effects = tuple(state.effect_claims_by_identity.values())
         if not parent_authority:
             return None
@@ -687,10 +699,10 @@ class _AutomaticKeyBroker:
             state = self._managed_claims.by_token.get(attempt.work_item_token)
             if state is None or attempt.attempt_token not in state.seen_attempts:
                 raise RuntimeError("remote managed attempt was not reserved by this parent")
-            if state.active_attempt is None and state.status == "joined":
+            if state.active_attempt is None and state.status is _ManagedUnitStatus.JOINED:
                 return
             if (
-                state.status != "active"
+                state.status is not _ManagedUnitStatus.ACTIVE
                 or state.active_attempt != attempt.attempt_token
                 or state.active_transport != "remote"
             ):
@@ -699,7 +711,7 @@ class _AutomaticKeyBroker:
             state.active_transport = None
             state.active_parent_occurrence_path = None
             state.active_effect_identities.clear()
-            state.status = "joined"
+            state.status = _ManagedUnitStatus.JOINED
 
     def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
         """Validate and atomically reconcile one reserved remote report."""
@@ -733,7 +745,7 @@ class _AutomaticKeyBroker:
                 state.active_transport = None
                 state.active_parent_occurrence_path = None
                 state.active_effect_identities.clear()
-                state.status = "joined"
+                state.status = _ManagedUnitStatus.JOINED
 
     def _validate_remote_report_unlocked(
         self,
@@ -796,7 +808,7 @@ class _AutomaticKeyBroker:
         if state is None or state.frame != frame:
             raise RuntimeError("remote managed unit is not registered by this parent")
         if (
-            state.status != "active"
+            state.status is not _ManagedUnitStatus.ACTIVE
             or state.active_attempt != attempt.attempt_token
             or state.active_transport != "remote"
         ):
