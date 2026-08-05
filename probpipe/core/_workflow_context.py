@@ -449,6 +449,27 @@ def _capture_active_workflow_frame() -> _WorkflowFrame | None:
     return frame
 
 
+def _assert_transported_root_authority(
+    frame: _WorkflowFrame,
+    root_words: tuple[int, int],
+) -> None:
+    """Require a worker frame to hold exactly its transported parent authority."""
+    _assert_workflow_admission(frame)
+    with frame.state.lock:
+        matches = (
+            frame.kind == "managed"
+            and frame.parent is None
+            and frame.seed_words is None
+            and frame.state.path_prefix == ()
+            and frame.state.root_words == root_words
+            and frame.state.managed_unit_segment is None
+        )
+    if not matches:
+        raise RuntimeError(
+            "remote managed workflow frame does not hold its envelope root authority"
+        )
+
+
 @contextmanager
 def _managed_work_item_scope(
     parent: _WorkflowFrame,

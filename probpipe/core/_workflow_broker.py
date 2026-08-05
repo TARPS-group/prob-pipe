@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from threading import Lock
@@ -103,6 +103,7 @@ class _ManagedUnitClaimState:
     child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
     active_attempt: bytes | None = None
     active_transport: Literal["local", "remote"] | None = None
+    active_parent_occurrence_path: _RandomEventPath | None = None
     seen_attempts: set[bytes] = field(default_factory=set)
     active_effect_identities: set[tuple[Any, ...]] = field(default_factory=set)
     effect_claims_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
@@ -198,6 +199,28 @@ def _effect_identity(effect: ManagedEffectClaim) -> tuple[Any, ...]:
         effect.stochastic_source_id,
         effect.logical_unit_id,
     )
+
+
+def _managed_effect_child_ordinal(
+    effect: ManagedEffectClaim,
+    *,
+    prefix: _RandomEventPath,
+) -> int:
+    """Validate one report occurrence namespace and return its child ordinal."""
+    occurrence_path = effect.occurrence_path
+    if occurrence_path[: len(prefix)] != prefix or len(occurrence_path) <= len(prefix):
+        raise RuntimeError("a remote effect occurrence path is outside its managed unit namespace")
+    child_segment = occurrence_path[len(prefix)]
+    if (
+        not isinstance(child_segment, tuple)
+        or len(child_segment) != 2
+        or child_segment[0] != "child"
+        or isinstance(child_segment[1], bool)
+        or not isinstance(child_segment[1], int)
+        or child_segment[1] < 0
+    ):
+        raise RuntimeError("a remote effect occurrence path has an invalid child ordinal")
+    return child_segment[1]
 
 
 @dataclass(frozen=True, slots=True)
@@ -480,6 +503,7 @@ class _AutomaticKeyBroker:
             state.seen_attempts.add(attempt.attempt_token)
             state.active_attempt = attempt.attempt_token
             state.active_transport = "local"
+            state.active_parent_occurrence_path = None
             state.active_effect_identities.clear()
             state.status = "active"
             return state.frame
@@ -497,6 +521,7 @@ class _AutomaticKeyBroker:
                 raise RuntimeError("managed work-item attempt is not active")
             state.active_attempt = None
             state.active_transport = None
+            state.active_parent_occurrence_path = None
             state.active_effect_identities.clear()
             state.status = "joined"
 
@@ -592,6 +617,7 @@ class _AutomaticKeyBroker:
             state.seen_attempts.add(attempt.attempt_token)
             state.active_attempt = attempt.attempt_token
             state.active_transport = "remote"
+            state.active_parent_occurrence_path = None
             state.active_effect_identities.clear()
             state.status = "active"
             retry_effects = tuple(state.effect_claims_by_identity.values())
@@ -599,11 +625,15 @@ class _AutomaticKeyBroker:
             return None
 
         try:
-            return self._make_remote_parent_envelope(
+            envelope = self._make_remote_parent_envelope(
                 frame,
                 attempt,
                 retry_effects=retry_effects,
             )
+            with self._managed_claims.lock:
+                state = self._require_active_remote_attempt_unlocked(attempt, frame)
+                state.active_parent_occurrence_path = envelope.parent_occurrence_path
+            return envelope
         except BaseException:
             self.abort_remote_managed_attempt(attempt)
             raise
@@ -648,62 +678,111 @@ class _AutomaticKeyBroker:
                 raise RuntimeError("remote managed attempt does not own the active reservation")
             state.active_attempt = None
             state.active_transport = None
+            state.active_parent_occurrence_path = None
             state.active_effect_identities.clear()
             state.status = "joined"
 
     def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
-        """Join and reconcile the canonical child namespace from a remote attempt."""
-        with self._managed_claims.lock:
-            self._assert_managed_registry_open_unlocked()
-            state = self._managed_claims.by_token.get(report.frame.token)
-            if state is None or state.frame != report.frame:
-                raise RuntimeError("remote claim report does not own a registered unit")
-            if (
-                state.status != "active"
-                or state.active_attempt != report.attempt.attempt_token
-                or state.active_transport != "remote"
-            ):
-                raise RuntimeError("remote claim report does not own the active reservation")
-
-            for effect in report.effects:
-                identity = _effect_identity(effect)
-                existing = state.effect_claims_by_identity.get(identity)
-                if existing is not None and existing != effect:
-                    raise RuntimeError(
-                        "a remote stochastic event was retried with a different effect plan"
-                    )
-                state.effect_claims_by_identity[identity] = effect
-
-            if report.child_count > 0:
-                parent_invocation = self._ensure_parent_invocation()
-                while len(state.child_invocations) < report.child_count:
-                    child_ordinal = len(state.child_invocations)
-                    state.child_invocations.append(
-                        _workflow_context._WorkflowInvocation(
-                            frame=parent_invocation.frame,
-                            occurrence_path=(
-                                *parent_invocation.occurrence_path,
-                                report.frame.unit_segment,
-                                ("child", child_ordinal),
-                            ),
+        """Validate and atomically reconcile one reserved remote report."""
+        replay_transaction = (
+            nullcontext(None)
+            if self._replay_state is None
+            else self._replay_state.claim_effects_transaction(
+                report.effects,
+                attempt=report.attempt,
+            )
+        )
+        with replay_transaction as replay_batch, self._managed_claims.lock:
+            state, child_invocations = self._validate_remote_report_unlocked(report)
+            with self._effects_lock:
+                for effect in report.successful_effects:
+                    existing = self._effects_by_identity.get(_effect_identity(effect))
+                    if existing is not None and existing != effect:
+                        raise RuntimeError(
+                            "a stochastic event identity completed with a different effect plan"
                         )
-                    )
+
+                if replay_batch is not None:
+                    replay_batch.commit()
+                for effect in report.effects:
+                    state.effect_claims_by_identity[_effect_identity(effect)] = effect
+                state.child_invocations.extend(child_invocations)
+                self._effects_by_identity.update(
+                    (_effect_identity(effect), effect) for effect in report.successful_effects
+                )
+                state.active_attempt = None
+                state.active_transport = None
+                state.active_parent_occurrence_path = None
+                state.active_effect_identities.clear()
+                state.status = "joined"
+
+    def _validate_remote_report_unlocked(
+        self,
+        report: ManagedClaimReport,
+    ) -> tuple[
+        _ManagedUnitClaimState,
+        tuple[_workflow_context._WorkflowInvocation, ...],
+    ]:
+        """Validate a remote report without changing any parent ledger."""
+        state = self._require_active_remote_attempt_unlocked(report.attempt, report.frame)
+        parent_path = state.active_parent_occurrence_path
+        if parent_path is None:
+            if report.child_count or report.effects or report.successful_effects:
+                raise RuntimeError(
+                    "a rootless remote coordination probe cannot report stochastic claims"
+                )
+            return state, ()
+
+        prefix = (*parent_path, report.frame.unit_segment)
         for effect in report.effects:
-            self.claim_replay_effect(effect, attempt=report.attempt)
-        self.accept_successful_managed_effects(report.successful_effects)
-        with self._managed_claims.lock:
-            state = self._managed_claims.by_token.get(report.frame.token)
-            if (
-                state is None
-                or state.status != "active"
-                or state.active_attempt != report.attempt.attempt_token
-                or state.active_transport != "remote"
-            ):
-                raise RuntimeError("remote claim report lost its active reservation")
-            state.active_attempt = None
-            state.active_transport = None
-            state.active_effect_identities.clear()
-            state.status = "joined"
+            child_ordinal = _managed_effect_child_ordinal(effect, prefix=prefix)
+            if child_ordinal >= report.child_count:
+                raise RuntimeError(
+                    "a remote effect child ordinal exceeds the reported child namespace"
+                )
+            identity = _effect_identity(effect)
+            existing = state.effect_claims_by_identity.get(identity)
+            if existing is not None and existing != effect:
+                raise RuntimeError(
+                    "a remote stochastic event was retried with a different effect plan"
+                )
+
+        parent_invocation = self._invocation
+        if parent_invocation is None or parent_invocation.occurrence_path != parent_path:
+            raise RuntimeError("remote report lost its reserved parent occurrence authority")
+        child_invocations = tuple(
+            _workflow_context._WorkflowInvocation(
+                frame=parent_invocation.frame,
+                occurrence_path=(
+                    *parent_path,
+                    report.frame.unit_segment,
+                    ("child", child_ordinal),
+                ),
+            )
+            for child_ordinal in range(
+                len(state.child_invocations),
+                report.child_count,
+            )
+        )
+        return state, child_invocations
+
+    def _require_active_remote_attempt_unlocked(
+        self,
+        attempt: ManagedAttemptState,
+        frame: ManagedUnitFrame,
+    ) -> _ManagedUnitClaimState:
+        """Return the exact active remote reservation while the registry is locked."""
+        self._assert_managed_registry_open_unlocked()
+        state = self._managed_claims.by_token.get(attempt.work_item_token)
+        if state is None or state.frame != frame:
+            raise RuntimeError("remote managed unit is not registered by this parent")
+        if (
+            state.status != "active"
+            or state.active_attempt != attempt.attempt_token
+            or state.active_transport != "remote"
+        ):
+            raise RuntimeError("remote managed attempt does not own the active reservation")
+        return state
 
     def _claim_managed_child(
         self,
@@ -1022,6 +1101,7 @@ def _remote_managed_work_item_stochastic_scope(
     frame = _workflow_context._capture_active_workflow_frame()
     if frame is None:
         raise RuntimeError("remote managed randomness requires a transported frame")
+    _workflow_context._assert_transported_root_authority(frame, envelope.root_words)
     parent = _RemoteManagedParent(
         envelope=envelope,
         attempt=attempt,

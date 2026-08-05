@@ -99,6 +99,11 @@ class ManagedParentEnvelope:
     retry_effects: tuple[ManagedEffectClaim, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.frame, ManagedUnitFrame) or not isinstance(
+            self.attempt,
+            ManagedAttemptState,
+        ):
+            raise TypeError("managed parent authority requires a frame and attempt")
         if (
             not isinstance(self.root_words, tuple)
             or len(self.root_words) != 2
@@ -176,6 +181,13 @@ class ManagedClaimReport:
     successful_effects: tuple[ManagedEffectClaim, ...] = ()
 
     def __post_init__(self) -> None:
+        if not isinstance(self.frame, ManagedUnitFrame) or not isinstance(
+            self.attempt,
+            ManagedAttemptState,
+        ):
+            raise TypeError("managed claim reports require a frame and attempt")
+        if self.attempt.work_item_token != self.frame.token:
+            raise ValueError("managed report attempt must own its frame")
         if (
             isinstance(self.child_count, bool)
             or not isinstance(self.child_count, int)
@@ -190,7 +202,18 @@ class ManagedClaimReport:
             not isinstance(effect, ManagedEffectClaim) for effect in self.successful_effects
         ):
             raise TypeError("managed successful effects must contain a tuple of effects")
-        if any(effect not in self.effects for effect in self.successful_effects):
+        effects_by_identity = _unique_effects(
+            self.effects,
+            field_name="managed effect report",
+        )
+        successful_by_identity = _unique_effects(
+            self.successful_effects,
+            field_name="managed successful effect report",
+        )
+        if any(
+            effects_by_identity.get(identity) != effect
+            for identity, effect in successful_by_identity.items()
+        ):
             raise ValueError("managed successful effects must be claimed by the same attempt")
 
 
@@ -203,6 +226,13 @@ class ManagedPrefectPayload:
     parent: ManagedParentEnvelope | None = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.item, ManagedWorkItem) or not isinstance(
+            self.attempt,
+            ManagedAttemptState,
+        ):
+            raise TypeError("managed Prefect payloads require a work item and attempt")
+        if self.parent is not None and not isinstance(self.parent, ManagedParentEnvelope):
+            raise TypeError("managed Prefect parent authority must be an envelope or None")
         if self.attempt.work_item_token != self.item.frame.token:
             raise ValueError("managed payload attempt must own its work item")
         if self.parent is not None and (
@@ -278,6 +308,25 @@ def _is_logical_unit_id(value: object) -> bool:
 
 def _is_nonnegative_int(value: object) -> bool:
     return not isinstance(value, bool) and isinstance(value, int) and value >= 0
+
+
+def _unique_effects(
+    effects: tuple[ManagedEffectClaim, ...],
+    *,
+    field_name: str,
+) -> dict[tuple[object, ...], ManagedEffectClaim]:
+    """Index an effect tuple while rejecting duplicate structural identities."""
+    result = {}
+    for effect in effects:
+        identity = (
+            effect.occurrence_path,
+            effect.stochastic_source_id,
+            effect.logical_unit_id,
+        )
+        if identity in result:
+            raise ValueError(f"{field_name} contains a duplicate effect identity")
+        result[identity] = effect
+    return result
 
 
 def make_managed_work_items(

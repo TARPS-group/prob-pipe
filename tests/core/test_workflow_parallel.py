@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pickle
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import FrozenInstanceError, fields
+from dataclasses import FrozenInstanceError, fields, replace
 from threading import Barrier, Event
 from typing import ClassVar
 from unittest.mock import patch
@@ -14,12 +14,14 @@ import probpipe.core._workflow_broker as broker_mod
 import probpipe.core._workflow_context as context_mod
 import probpipe.core._workflow_execution as execution_mod
 import probpipe.core._workflow_managed as managed_mod
+import probpipe.core._workflow_replay as replay_mod
 import probpipe.core.node as node_mod
 from probpipe import (
     Normal,
     Provenance,
     ReplayCompatibilityError,
     replay_run,
+    sample,
     workflow_run,
 )
 from probpipe.core.config import WorkflowKind, prefect_config
@@ -192,6 +194,24 @@ def make_managed_effect(**overrides):
     }
     values.update(overrides)
     return managed_mod.ManagedEffectClaim(**values)
+
+
+def make_remote_effect(
+    envelope,
+    *,
+    source_index=0,
+    child_segment=("child", 0),
+    parent_path=None,
+    unit_segment=None,
+):
+    return make_managed_effect(
+        occurrence_path=(
+            *(envelope.parent_occurrence_path if parent_path is None else parent_path),
+            envelope.frame.unit_segment if unit_segment is None else unit_segment,
+            child_segment,
+        ),
+        stochastic_source_id=("source-group", source_index),
+    )
 
 
 @pytest.fixture(autouse=True)
@@ -476,6 +496,42 @@ class TestManagedPayloadValidation:
                 ValueError,
                 "must be claimed by the same attempt",
                 id="report-successful-subset",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedClaimReport(
+                    frame=make_managed_frame(),
+                    attempt=managed_mod.ManagedAttemptState(
+                        work_item_token=managed_mod.ManagedWorkItemToken(b"z" * 16),
+                        attempt_token=b"a" * 16,
+                    ),
+                    child_count=0,
+                ),
+                ValueError,
+                "attempt must own its frame",
+                id="report-attempt-frame",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedClaimReport(
+                    frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
+                    child_count=1,
+                    effects=(make_managed_effect(), make_managed_effect()),
+                ),
+                ValueError,
+                "duplicate effect identity",
+                id="report-duplicate-effect",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedClaimReport(
+                    frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
+                    child_count=1,
+                    effects=(make_managed_effect(),),
+                    successful_effects=(make_managed_effect(), make_managed_effect()),
+                ),
+                ValueError,
+                "duplicate effect identity",
+                id="report-duplicate-successful-effect",
             ),
             pytest.param(
                 lambda: managed_mod.make_managed_work_items(
@@ -867,6 +923,205 @@ class TestManagedRetryClaims:
             )
             parent.abort_remote_managed_attempt(second)
             parent.assert_managed_items_joined(request.work_items)
+
+
+class TestRemoteReportTransactions:
+    def test_worker_rejects_mismatched_transported_root_authority(self):
+        frame = make_managed_frame()
+        attempt = make_managed_attempt()
+        envelope = managed_mod.ManagedParentEnvelope(
+            root_words=(0, 17),
+            parent_occurrence_path=(("invocation", 0),),
+            frame=frame,
+            attempt=attempt,
+        )
+
+        with (
+            context_mod._transported_workflow_frame((0, 99)),
+            pytest.raises(RuntimeError, match="root authority"),
+            broker_mod._remote_managed_work_item_stochastic_scope(envelope, attempt),
+        ):
+            pass
+
+    @pytest.mark.parametrize(
+        "violation",
+        [
+            "attempt",
+            "frame",
+            "prefix",
+            "unit",
+            "child-segment",
+            "child-range",
+        ],
+    )
+    def test_invalid_remote_report_leaves_parent_ledgers_unchanged(self, violation):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            envelope = parent.reserve_remote_managed_attempt(
+                item.frame,
+                attempt,
+                parent_authority=True,
+            )
+            assert envelope is not None
+            report_attempt = attempt
+            report_frame = item.frame
+            child_segment = ("child", 0)
+            parent_path = None
+            unit_segment = None
+            if violation == "attempt":
+                report_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            elif violation == "frame":
+                report_frame = managed_mod.ManagedUnitFrame(
+                    unit_segment=managed_mod.sweep_unit_segment((9,)),
+                    token=item.frame.token,
+                )
+            elif violation == "prefix":
+                parent_path = (("invocation", 9),)
+            elif violation == "unit":
+                unit_segment = managed_mod.sweep_unit_segment((9,))
+            elif violation == "child-segment":
+                child_segment = ("scope", 0)
+            elif violation == "child-range":
+                child_segment = ("child", 1)
+
+            effect = make_remote_effect(
+                envelope,
+                child_segment=child_segment,
+                parent_path=parent_path,
+                unit_segment=unit_segment,
+            )
+            report = managed_mod.ManagedClaimReport(
+                frame=report_frame,
+                attempt=report_attempt,
+                child_count=1,
+                effects=(effect,),
+                successful_effects=(effect,),
+            )
+            state = parent._managed_claims.by_token[item.frame.token]
+            before_seen = set(state.seen_attempts)
+
+            with pytest.raises(RuntimeError, match=r"remote|occurrence|child"):
+                parent.accept_remote_claim_report(report)
+
+            assert state.effect_claims_by_identity == {}
+            assert state.child_invocations == []
+            assert parent._effects_by_identity == {}
+            assert state.seen_attempts == before_seen
+            assert state.active_attempt == attempt.attempt_token
+            parent.abort_remote_managed_attempt(attempt)
+
+    def test_rootless_probe_report_cannot_inject_claims(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            assert (
+                parent.reserve_remote_managed_attempt(
+                    item.frame,
+                    attempt,
+                    parent_authority=False,
+                )
+                is None
+            )
+            effect = make_managed_effect()
+            report = managed_mod.ManagedClaimReport(
+                frame=item.frame,
+                attempt=attempt,
+                child_count=1,
+                effects=(effect,),
+            )
+
+            with pytest.raises(RuntimeError, match=r"rootless.*cannot report"):
+                parent.accept_remote_claim_report(report)
+
+            state = parent._managed_claims.by_token[item.frame.token]
+            assert state.effect_claims_by_identity == {}
+            assert state.child_invocations == []
+            assert parent._effects_by_identity == {}
+            parent.abort_remote_managed_attempt(attempt)
+
+    def test_valid_remote_report_commits_all_ledgers_together(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            envelope = parent.reserve_remote_managed_attempt(
+                item.frame,
+                attempt,
+                parent_authority=True,
+            )
+            assert envelope is not None
+            effects = (
+                make_remote_effect(envelope, source_index=0),
+                make_remote_effect(envelope, source_index=1),
+            )
+            report = managed_mod.ManagedClaimReport(
+                frame=item.frame,
+                attempt=attempt,
+                child_count=1,
+                effects=effects,
+                successful_effects=effects,
+            )
+
+            parent.accept_remote_claim_report(report)
+
+            state = parent._managed_claims.by_token[item.frame.token]
+            assert state.status == "joined"
+            assert state.active_attempt is None
+            assert len(state.effect_claims_by_identity) == 2
+            assert len(state.child_invocations) == 1
+            assert tuple(parent._effects_by_identity.values()) == effects
+
+    def test_second_replay_effect_failure_rolls_back_every_ledger(self):
+        with workflow_run(seed=17):
+            recorded = sample(Normal(loc=0.0, scale=1.0, name="value"))
+        replay_state = replay_mod._validate_provenance(recorded.provenance)
+        expected = replay_state.expected_events[0].managed_effect()
+        unexpected = replace(
+            expected,
+            stochastic_source_id=("source-group", 99),
+        )
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent._replay_state = replay_state
+            parent.register_managed_work_items(request.work_items)
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            envelope = parent.reserve_remote_managed_attempt(
+                item.frame,
+                attempt,
+                parent_authority=True,
+            )
+            assert envelope is not None
+            report = managed_mod.ManagedClaimReport(
+                frame=item.frame,
+                attempt=attempt,
+                child_count=1,
+                effects=(expected, unexpected),
+                successful_effects=(expected, unexpected),
+            )
+
+            with pytest.raises(ReplayCompatibilityError, match="unexpected replay event"):
+                parent.accept_remote_claim_report(report)
+
+            state = parent._managed_claims.by_token[item.frame.token]
+            assert state.effect_claims_by_identity == {}
+            assert state.child_invocations == []
+            assert parent._effects_by_identity == {}
+            assert all(
+                claim.work_item_token is None and not claim.attempt_tokens
+                for claim in replay_state.claims.values()
+            )
+            parent.abort_remote_managed_attempt(attempt)
 
 
 class TestSequentialExecution:
