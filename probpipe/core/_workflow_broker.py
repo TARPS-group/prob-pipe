@@ -30,6 +30,7 @@ from ._workflow_managed import (
     ManagedWorkItemToken,
     _CanonicalDescriptor,
     _validate_stochastic_effect_fields,
+    _validated_managed_claim_report_snapshot,
 )
 
 _OccurrenceKind = Literal["invocation", "operation"]
@@ -811,6 +812,7 @@ class _AutomaticKeyBroker:
     def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
         """Validate and atomically reconcile one reserved remote report."""
         self._assert_broker_open()
+        report = _validated_managed_claim_report_snapshot(report)
         replay_transaction = (
             nullcontext(None)
             if self._replay_state is None
@@ -861,7 +863,7 @@ class _AutomaticKeyBroker:
             return state, ()
 
         prefix = (*parent_path, report.frame.unit_segment)
-        for effect in report.effects:
+        for effect in (*report.effects, *report.successful_effects):
             child_ordinal = _managed_effect_child_ordinal(effect, prefix=prefix)
             if child_ordinal >= report.child_count:
                 raise RuntimeError(

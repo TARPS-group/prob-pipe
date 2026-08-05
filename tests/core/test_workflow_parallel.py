@@ -1232,6 +1232,33 @@ class TestRemoteReportTransactions:
         ):
             pass
 
+    def test_sealed_parent_rejects_remote_report(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        report = managed_mod.ManagedClaimReport(
+            frame=item.frame,
+            attempt=attempt,
+            child_count=0,
+        )
+
+        with workflow_run(seed=17):
+            with broker_mod._function_stochastic_scope() as parent:
+                parent.register_managed_work_items(request.work_items)
+                parent.reserve_remote_managed_attempt(
+                    item.frame,
+                    attempt,
+                    parent_authority=False,
+                )
+                parent.abort_remote_managed_attempt(attempt)
+
+            with pytest.raises(RuntimeError, match="sealed"):
+                parent.accept_remote_claim_report(report)
+
+        state = parent._managed_claims.by_token[item.frame.token]
+        assert state.effect_claims_by_identity == {}
+        assert parent._effects_by_identity == {}
+
     @pytest.mark.parametrize(
         "violation",
         [
@@ -1334,6 +1361,211 @@ class TestRemoteReportTransactions:
             assert state.child_invocations == []
             assert parent._effects_by_identity == {}
             parent.abort_remote_managed_attempt(attempt)
+
+    @pytest.mark.parametrize(
+        ("violation", "exception", "match"),
+        [
+            pytest.param(
+                "successful-subset",
+                ValueError,
+                "claimed by the same attempt",
+                id="successful-subset",
+            ),
+            pytest.param(
+                "namespace",
+                RuntimeError,
+                "outside its managed unit namespace",
+                id="namespace",
+            ),
+            pytest.param(
+                "duplicate-identity",
+                ValueError,
+                "duplicate effect identity",
+                id="duplicate-identity",
+            ),
+            pytest.param(
+                "duplicate-successful-identity",
+                ValueError,
+                "duplicate effect identity",
+                id="duplicate-successful-identity",
+            ),
+            pytest.param(
+                "descriptor-drift",
+                ValueError,
+                "claimed by the same attempt",
+                id="descriptor-drift",
+            ),
+            pytest.param(
+                "frame",
+                RuntimeError,
+                "not registered",
+                id="frame",
+            ),
+            pytest.param(
+                "attempt",
+                RuntimeError,
+                "active reservation",
+                id="attempt",
+            ),
+            pytest.param(
+                "child-count",
+                TypeError,
+                "non-negative integers",
+                id="child-count",
+            ),
+            pytest.param(
+                "effect-field",
+                ValueError,
+                "sample shape dimensions must be non-negative",
+                id="effect-field",
+            ),
+            pytest.param(
+                "identity-field",
+                TypeError,
+                "source and unit identities must be tuples",
+                id="identity-field",
+            ),
+        ],
+    )
+    def test_parent_revalidates_tampered_report_before_mutation(
+        self,
+        violation,
+        exception,
+        match,
+    ):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            envelope = parent.reserve_remote_managed_attempt(
+                item.frame,
+                attempt,
+                parent_authority=True,
+            )
+            assert envelope is not None
+            first = make_remote_effect(envelope, source_index=0)
+            second = make_remote_effect(envelope, source_index=1)
+            report = managed_mod.ManagedClaimReport(
+                frame=item.frame,
+                attempt=attempt,
+                child_count=1,
+                effects=(first, second),
+                successful_effects=(first, second),
+            )
+
+            if violation == "successful-subset":
+                forged = make_remote_effect(envelope, source_index=2)
+                object.__setattr__(report, "successful_effects", (forged,))
+            elif violation == "namespace":
+                object.__setattr__(
+                    first,
+                    "occurrence_path",
+                    (("invocation", 99), item.frame.unit_segment, ("child", 0)),
+                )
+            elif violation == "duplicate-identity":
+                object.__setattr__(report, "effects", (first, first))
+            elif violation == "duplicate-successful-identity":
+                object.__setattr__(report, "successful_effects", (first, first))
+            elif violation == "descriptor-drift":
+                object.__setattr__(
+                    report,
+                    "successful_effects",
+                    (replace(first, provider_abi="drifted-provider/v1"),),
+                )
+            elif violation == "frame":
+                object.__setattr__(
+                    report,
+                    "frame",
+                    managed_mod.ManagedUnitFrame(
+                        unit_segment=managed_mod.sweep_unit_segment((9,)),
+                        token=item.frame.token,
+                    ),
+                )
+            elif violation == "attempt":
+                object.__setattr__(
+                    report,
+                    "attempt",
+                    managed_mod.ManagedAttemptState.create(item.frame.token),
+                )
+            elif violation == "child-count":
+                object.__setattr__(report, "child_count", -1)
+            elif violation == "effect-field":
+                object.__setattr__(second, "sample_shape", (-1,))
+            else:
+                object.__setattr__(second, "stochastic_source_id", ["invalid"])
+
+            state = parent._managed_claims.by_token[item.frame.token]
+            before_managed = (
+                dict(state.effect_claims_by_identity),
+                tuple(state.child_invocations),
+                set(state.active_effect_identities),
+                state.active_attempt,
+                state.active_transport,
+                state.active_parent_occurrence_path,
+                state.status,
+            )
+            before_recipe = dict(parent._effects_by_identity)
+
+            with pytest.raises(exception, match=match):
+                parent.accept_remote_claim_report(report)
+
+            assert (
+                dict(state.effect_claims_by_identity),
+                tuple(state.child_invocations),
+                set(state.active_effect_identities),
+                state.active_attempt,
+                state.active_transport,
+                state.active_parent_occurrence_path,
+                state.status,
+            ) == before_managed
+            assert parent._effects_by_identity == before_recipe
+            parent.abort_remote_managed_attempt(attempt)
+
+    def test_report_construction_revalidates_existing_effect_instances(self):
+        frame = make_managed_frame()
+        attempt = make_managed_attempt()
+        effect = make_managed_effect()
+        object.__setattr__(effect, "sample_shape", (-1,))
+
+        with pytest.raises(ValueError, match="sample shape dimensions must be non-negative"):
+            managed_mod.ManagedClaimReport(
+                frame=frame,
+                attempt=attempt,
+                child_count=0,
+                effects=(effect,),
+            )
+
+    def test_pickled_remote_report_is_revalidated_and_committed(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            envelope = parent.reserve_remote_managed_attempt(
+                item.frame,
+                attempt,
+                parent_authority=True,
+            )
+            assert envelope is not None
+            effect = make_remote_effect(envelope)
+            report = managed_mod.ManagedClaimReport(
+                frame=item.frame,
+                attempt=attempt,
+                child_count=1,
+                effects=(effect,),
+                successful_effects=(effect,),
+            )
+
+            transported = pickle.loads(pickle.dumps(report))
+            parent.accept_remote_claim_report(transported)
+
+            state = parent._managed_claims.by_token[item.frame.token]
+            assert state.status is broker_mod._ManagedUnitStatus.JOINED
+            assert tuple(state.effect_claims_by_identity.values()) == (effect,)
+            assert tuple(parent._effects_by_identity.values()) == (effect,)
 
     def test_valid_remote_report_commits_all_ledgers_together(self):
         request = make_request(calls=[{}], func=lambda: None)

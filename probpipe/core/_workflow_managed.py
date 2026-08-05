@@ -20,6 +20,12 @@ type _CanonicalDescriptorValue = (
 type _CanonicalDescriptor = tuple[_CanonicalDescriptorValue, ...]
 
 
+def _validate_managed_work_item_token_value(value: object) -> None:
+    """Validate the serialized bytes of one managed work-item token."""
+    if not isinstance(value, bytes) or len(value) != 16:
+        raise TypeError("managed work-item tokens must contain exactly 16 bytes")
+
+
 def _validate_stochastic_effect_fields(
     *,
     operation_kind: object,
@@ -74,6 +80,46 @@ def _is_canonical_descriptor_value(value: object) -> bool:
     return value is None or isinstance(value, (bool, int, str, bytes))
 
 
+def _validate_managed_effect_claim_fields(
+    *,
+    occurrence_path: object,
+    occurrence_kind: object,
+    stochastic_source_id: object,
+    logical_unit_id: object,
+    operation_kind: object,
+    execution_mode: object,
+    sample_shape: object,
+    sampling_abi: object,
+    provider_abi: object,
+    record_path: object,
+    descendant_descriptor: object,
+) -> None:
+    """Validate one complete effect claim at construction or admission."""
+    if not isinstance(occurrence_path, tuple):
+        raise TypeError("managed effect occurrence paths must be tuples")
+    if not isinstance(stochastic_source_id, tuple) or not isinstance(
+        logical_unit_id,
+        tuple,
+    ):
+        raise TypeError("managed effect source and unit identities must be tuples")
+    _validate_random_event_value(occurrence_path)
+    _validate_random_event_value(stochastic_source_id)
+    _validate_random_event_value(logical_unit_id)
+    if not isinstance(occurrence_kind, str):
+        raise TypeError("managed effect occurrence_kind must be a string")
+    if occurrence_kind not in {"invocation", "operation"}:
+        raise ValueError("managed effect occurrence_kind must be 'invocation' or 'operation'")
+    _validate_stochastic_effect_fields(
+        operation_kind=operation_kind,
+        execution_mode=execution_mode,
+        sample_shape=sample_shape,
+        sampling_abi=sampling_abi,
+        provider_abi=provider_abi,
+        record_path=record_path,
+        descendant_descriptor=descendant_descriptor,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ManagedWorkItemToken:
     """Opaque, serializable ownership token for one managed work item."""
@@ -81,13 +127,43 @@ class ManagedWorkItemToken:
     value: bytes
 
     def __post_init__(self) -> None:
-        if not isinstance(self.value, bytes) or len(self.value) != 16:
-            raise TypeError("managed work-item tokens must contain exactly 16 bytes")
+        _validate_managed_work_item_token_value(self.value)
 
     @classmethod
     def create(cls) -> ManagedWorkItemToken:
         """Create one process-independent operational token."""
         return cls(uuid.uuid4().bytes)
+
+
+def _validate_managed_unit_frame_fields(
+    *,
+    unit_segment: object,
+    token: object,
+    derivation_abi: object,
+) -> None:
+    """Validate the complete authority fields of one managed unit frame."""
+    if not isinstance(unit_segment, tuple):
+        raise TypeError("managed unit segments must be tuples")
+    if not _is_managed_unit_segment(unit_segment):
+        raise ValueError("managed unit segments must use a canonical managed unit segment")
+    if not isinstance(token, ManagedWorkItemToken):
+        raise TypeError("managed unit frames require a managed work-item token")
+    _validate_managed_work_item_token_value(token.value)
+    if derivation_abi != _MANAGED_WORK_ITEM_ABI:
+        raise ValueError(f"unsupported managed work-item ABI: {derivation_abi!r}")
+
+
+def _validate_managed_attempt_fields(
+    *,
+    work_item_token: object,
+    attempt_token: object,
+) -> None:
+    """Validate the complete authority fields of one managed attempt."""
+    if not isinstance(work_item_token, ManagedWorkItemToken):
+        raise TypeError("managed attempts require a managed work-item token")
+    _validate_managed_work_item_token_value(work_item_token.value)
+    if not isinstance(attempt_token, bytes) or len(attempt_token) != 16:
+        raise TypeError("managed attempt tokens must contain exactly 16 bytes")
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,12 +175,11 @@ class ManagedUnitFrame:
     derivation_abi: str = _MANAGED_WORK_ITEM_ABI
 
     def __post_init__(self) -> None:
-        if not isinstance(self.unit_segment, tuple):
-            raise TypeError("managed unit segments must be tuples")
-        if not _is_managed_unit_segment(self.unit_segment):
-            raise ValueError("managed unit segments must use a canonical managed unit segment")
-        if self.derivation_abi != _MANAGED_WORK_ITEM_ABI:
-            raise ValueError(f"unsupported managed work-item ABI: {self.derivation_abi!r}")
+        _validate_managed_unit_frame_fields(
+            unit_segment=self.unit_segment,
+            token=self.token,
+            derivation_abi=self.derivation_abi,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,8 +212,10 @@ class ManagedAttemptState:
     attempt_token: bytes
 
     def __post_init__(self) -> None:
-        if not isinstance(self.attempt_token, bytes) or len(self.attempt_token) != 16:
-            raise TypeError("managed attempt tokens must contain exactly 16 bytes")
+        _validate_managed_attempt_fields(
+            work_item_token=self.work_item_token,
+            attempt_token=self.attempt_token,
+        )
 
     @classmethod
     def create(cls, work_item_token: ManagedWorkItemToken) -> ManagedAttemptState:
@@ -208,21 +285,11 @@ class ManagedEffectClaim:
     descendant_descriptor: _CanonicalDescriptor | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.occurrence_path, tuple):
-            raise TypeError("managed effect occurrence paths must be tuples")
-        if not isinstance(self.stochastic_source_id, tuple) or not isinstance(
-            self.logical_unit_id,
-            tuple,
-        ):
-            raise TypeError("managed effect source and unit identities must be tuples")
-        _validate_random_event_value(self.occurrence_path)
-        _validate_random_event_value(self.stochastic_source_id)
-        _validate_random_event_value(self.logical_unit_id)
-        if not isinstance(self.occurrence_kind, str):
-            raise TypeError("managed effect occurrence_kind must be a string")
-        if self.occurrence_kind not in {"invocation", "operation"}:
-            raise ValueError("managed effect occurrence_kind must be 'invocation' or 'operation'")
-        _validate_stochastic_effect_fields(
+        _validate_managed_effect_claim_fields(
+            occurrence_path=self.occurrence_path,
+            occurrence_kind=self.occurrence_kind,
+            stochastic_source_id=self.stochastic_source_id,
+            logical_unit_id=self.logical_unit_id,
             operation_kind=self.operation_kind,
             execution_mode=self.execution_mode,
             sample_shape=self.sample_shape,
@@ -231,6 +298,80 @@ class ManagedEffectClaim:
             record_path=self.record_path,
             descendant_descriptor=self.descendant_descriptor,
         )
+
+
+def _validate_managed_effect_claim_instance(
+    effect: object,
+) -> ManagedEffectClaim:
+    """Rerun complete effect validation on an existing immutable instance."""
+    if not isinstance(effect, ManagedEffectClaim):
+        raise TypeError("managed reports must contain ManagedEffectClaim values")
+    _validate_managed_effect_claim_fields(
+        occurrence_path=effect.occurrence_path,
+        occurrence_kind=effect.occurrence_kind,
+        stochastic_source_id=effect.stochastic_source_id,
+        logical_unit_id=effect.logical_unit_id,
+        operation_kind=effect.operation_kind,
+        execution_mode=effect.execution_mode,
+        sample_shape=effect.sample_shape,
+        sampling_abi=effect.sampling_abi,
+        provider_abi=effect.provider_abi,
+        record_path=effect.record_path,
+        descendant_descriptor=effect.descendant_descriptor,
+    )
+    return effect
+
+
+def _validate_managed_claim_report_fields(
+    *,
+    frame: object,
+    attempt: object,
+    child_count: object,
+    effects: object,
+    successful_effects: object,
+) -> None:
+    """Validate a complete remote claim report without mutating state."""
+    if not isinstance(frame, ManagedUnitFrame) or not isinstance(
+        attempt,
+        ManagedAttemptState,
+    ):
+        raise TypeError("managed claim reports require a frame and attempt")
+    _validate_managed_unit_frame_fields(
+        unit_segment=frame.unit_segment,
+        token=frame.token,
+        derivation_abi=frame.derivation_abi,
+    )
+    _validate_managed_attempt_fields(
+        work_item_token=attempt.work_item_token,
+        attempt_token=attempt.attempt_token,
+    )
+    if attempt.work_item_token != frame.token:
+        raise ValueError("managed report attempt must own its frame")
+    if isinstance(child_count, bool) or not isinstance(child_count, int) or child_count < 0:
+        raise TypeError("managed child counts must be non-negative integers")
+    if not isinstance(effects, tuple) or any(
+        not isinstance(effect, ManagedEffectClaim) for effect in effects
+    ):
+        raise TypeError("managed effect reports must contain a tuple of effects")
+    if not isinstance(successful_effects, tuple) or any(
+        not isinstance(effect, ManagedEffectClaim) for effect in successful_effects
+    ):
+        raise TypeError("managed successful effects must contain a tuple of effects")
+    for effect in (*effects, *successful_effects):
+        _validate_managed_effect_claim_instance(effect)
+    effects_by_identity = _unique_effects(
+        effects,
+        field_name="managed effect report",
+    )
+    successful_by_identity = _unique_effects(
+        successful_effects,
+        field_name="managed successful effect report",
+    )
+    if any(
+        effects_by_identity.get(identity) != effect
+        for identity, effect in successful_by_identity.items()
+    ):
+        raise ValueError("managed successful effects must be claimed by the same attempt")
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,40 +385,70 @@ class ManagedClaimReport:
     successful_effects: tuple[ManagedEffectClaim, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.frame, ManagedUnitFrame) or not isinstance(
-            self.attempt,
-            ManagedAttemptState,
-        ):
-            raise TypeError("managed claim reports require a frame and attempt")
-        if self.attempt.work_item_token != self.frame.token:
-            raise ValueError("managed report attempt must own its frame")
-        if (
-            isinstance(self.child_count, bool)
-            or not isinstance(self.child_count, int)
-            or self.child_count < 0
-        ):
-            raise TypeError("managed child counts must be non-negative integers")
-        if not isinstance(self.effects, tuple) or any(
-            not isinstance(effect, ManagedEffectClaim) for effect in self.effects
-        ):
-            raise TypeError("managed effect reports must contain a tuple of effects")
-        if not isinstance(self.successful_effects, tuple) or any(
-            not isinstance(effect, ManagedEffectClaim) for effect in self.successful_effects
-        ):
-            raise TypeError("managed successful effects must contain a tuple of effects")
-        effects_by_identity = _unique_effects(
-            self.effects,
-            field_name="managed effect report",
+        _validate_managed_claim_report_fields(
+            frame=self.frame,
+            attempt=self.attempt,
+            child_count=self.child_count,
+            effects=self.effects,
+            successful_effects=self.successful_effects,
         )
-        successful_by_identity = _unique_effects(
-            self.successful_effects,
-            field_name="managed successful effect report",
-        )
-        if any(
-            effects_by_identity.get(identity) != effect
-            for identity, effect in successful_by_identity.items()
-        ):
-            raise ValueError("managed successful effects must be claimed by the same attempt")
+
+
+def _validated_managed_effect_claim_snapshot(
+    effect: object,
+) -> ManagedEffectClaim:
+    """Reconstruct one immutable effect while rerunning its full validation."""
+    effect = _validate_managed_effect_claim_instance(effect)
+    return ManagedEffectClaim(
+        occurrence_path=effect.occurrence_path,
+        occurrence_kind=effect.occurrence_kind,
+        stochastic_source_id=effect.stochastic_source_id,
+        logical_unit_id=effect.logical_unit_id,
+        operation_kind=effect.operation_kind,
+        execution_mode=effect.execution_mode,
+        sample_shape=effect.sample_shape,
+        sampling_abi=effect.sampling_abi,
+        provider_abi=effect.provider_abi,
+        record_path=effect.record_path,
+        descendant_descriptor=effect.descendant_descriptor,
+    )
+
+
+def _validated_managed_claim_report_snapshot(
+    report: object,
+) -> ManagedClaimReport:
+    """Deeply revalidate and freeze an untrusted transported report."""
+    if not isinstance(report, ManagedClaimReport):
+        raise TypeError("remote managed reports must be ManagedClaimReport values")
+    _validate_managed_claim_report_fields(
+        frame=report.frame,
+        attempt=report.attempt,
+        child_count=report.child_count,
+        effects=report.effects,
+        successful_effects=report.successful_effects,
+    )
+
+    frame_token = ManagedWorkItemToken(report.frame.token.value)
+    frame = ManagedUnitFrame(
+        unit_segment=report.frame.unit_segment,
+        token=frame_token,
+        derivation_abi=report.frame.derivation_abi,
+    )
+    attempt = ManagedAttemptState(
+        work_item_token=ManagedWorkItemToken(report.attempt.work_item_token.value),
+        attempt_token=report.attempt.attempt_token,
+    )
+    return ManagedClaimReport(
+        frame=frame,
+        attempt=attempt,
+        child_count=report.child_count,
+        effects=tuple(
+            _validated_managed_effect_claim_snapshot(effect) for effect in report.effects
+        ),
+        successful_effects=tuple(
+            _validated_managed_effect_claim_snapshot(effect) for effect in report.successful_effects
+        ),
+    )
 
 
 @dataclass(frozen=True, slots=True)
