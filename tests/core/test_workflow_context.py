@@ -16,6 +16,7 @@ import jax
 import pytest
 
 import probpipe
+import probpipe.core._workflow_rng as workflow_rng
 from probpipe import (
     Function,
     Normal,
@@ -98,6 +99,26 @@ class TestWorkflowRunBoundary:
 
         assert first != second
         assert urandom.call_count == 2
+
+    def test_cache_miss_encodes_an_event_identity_once(self):
+        original_encode = workflow_rng.encode_random_event
+        with (
+            patch.object(
+                _workflow_context,
+                "encode_random_event",
+                wraps=original_encode,
+            ) as callsite_encode,
+            patch.object(
+                workflow_rng,
+                "encode_random_event",
+                wraps=original_encode,
+            ) as derivation_encode,
+            workflow_run(seed=7),
+        ):
+            _claim_key_words()
+
+        callsite_encode.assert_called_once()
+        derivation_encode.assert_not_called()
 
 
 class TestWorkflowAdmission:

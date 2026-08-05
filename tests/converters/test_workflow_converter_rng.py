@@ -173,8 +173,8 @@ class TestBuiltInConversionPlanning:
 
         with (
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words",
-                wraps=_workflow_context.derive_event_key_words,
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                wraps=_workflow_context.derive_event_key_words_from_encoded,
             ) as derive,
             workflow_run(seed=7),
         ):
@@ -191,8 +191,8 @@ class TestBuiltInConversionPlanning:
     def test_from_distribution_uses_the_function_broker_once(self):
         with (
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words",
-                wraps=_workflow_context.derive_event_key_words,
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                wraps=_workflow_context.derive_event_key_words_from_encoded,
             ) as derive,
             workflow_run(seed=7),
         ):

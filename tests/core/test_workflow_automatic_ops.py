@@ -188,8 +188,8 @@ class TestAutomaticExpectation:
 
         with (
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words",
-                wraps=_workflow_context.derive_event_key_words,
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                wraps=_workflow_context.derive_event_key_words_from_encoded,
             ) as derive,
             workflow_run(seed=7),
         ):

@@ -1066,7 +1066,7 @@ class TestPrefectMapping:
 
         with (
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words",
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key before replay validation"),
             ),
             pytest.raises(ReplayCompatibilityError, match="assigned event namespace"),

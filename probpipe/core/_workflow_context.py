@@ -21,7 +21,7 @@ from ._workflow_rng import (
     RandomEventIdentity,
     _RandomEventPath,
     _RandomEventValue,
-    derive_event_key_words,
+    derive_event_key_words_from_encoded,
     encode_random_event,
     jax_key_from_words,
     seed_to_root_words,
@@ -116,7 +116,10 @@ class _WorkflowInvocation:
         with self.claims.lock:
             words = self.claims.words_by_identity.get(encoded)
             if words is None:
-                words = derive_event_key_words(_resolve_root_words(self.frame), identity)
+                words = derive_event_key_words_from_encoded(
+                    _resolve_root_words(self.frame),
+                    encoded,
+                )
                 self.claims.words_by_identity[encoded] = words
         return jax_key_from_words(words)
 

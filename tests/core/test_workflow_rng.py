@@ -13,6 +13,7 @@ import probpipe.core._workflow_rng as workflow_rng
 from probpipe.core._workflow_rng import (
     RandomEventIdentity,
     derive_event_key_words,
+    derive_event_key_words_from_encoded,
     encode_random_event,
     jax_key_from_words,
     seed_to_root_words,
@@ -106,6 +107,7 @@ class TestEventKeyDerivation:
     )
     def test_matches_keyed_blake2s_v1_golden_vectors(self, root, identity, expected):
         assert derive_event_key_words(root, identity) == expected
+        assert derive_event_key_words_from_encoded(root, encode_random_event(identity)) == expected
 
     @pytest.mark.parametrize(
         ("root_words", "error_type"),
@@ -127,6 +129,13 @@ class TestEventKeyDerivation:
 
         with pytest.raises(error_type, match="root_words"):
             derive_event_key_words(root_words, identity)
+        with pytest.raises(error_type, match="root_words"):
+            derive_event_key_words_from_encoded(root_words, b"encoded-identity")
+
+    @pytest.mark.parametrize("encoded", [bytearray(b"identity"), memoryview(b"identity"), "x"])
+    def test_encoded_derivation_requires_immutable_bytes(self, encoded):
+        with pytest.raises(TypeError, match="encoded_identity must be bytes"):
+            derive_event_key_words_from_encoded((0, 0), encoded)
 
     def test_jax_adapter_key_is_consumed_in_eager_jit_and_vmap(self):
         words = (0xE6CD50EA, 0x8FF642DF)

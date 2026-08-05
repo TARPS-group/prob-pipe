@@ -434,7 +434,7 @@ class TestReplayAdmission:
 
         with (
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words",
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
             pytest.raises(ReplayCompatibilityError, match=match),
@@ -642,7 +642,7 @@ class TestReplayPreflight:
         with (
             patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words",
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ),
             pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),
@@ -668,7 +668,7 @@ class TestReplayPreflight:
         with (
             patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
             patch(
-                "probpipe.core._workflow_context.derive_event_key_words",
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ),
             pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),

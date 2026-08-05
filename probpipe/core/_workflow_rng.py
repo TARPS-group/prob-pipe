@@ -82,9 +82,28 @@ def derive_event_key_words(
 ) -> tuple[int, int]:
     """Derive raw key words through the fixed keyed-BLAKE2s version-1 ABI."""
     root = _validate_word_pair(root_words, name="root_words")
+    return _derive_event_key_words(root, encode_random_event(identity))
+
+
+def derive_event_key_words_from_encoded(
+    root_words: tuple[int, int],
+    encoded_identity: bytes,
+) -> tuple[int, int]:
+    """Derive raw key words from an already encoded version-1 event identity."""
+    root = _validate_word_pair(root_words, name="root_words")
+    if not isinstance(encoded_identity, bytes):
+        raise TypeError("encoded_identity must be bytes")
+    return _derive_event_key_words(root, encoded_identity)
+
+
+def _derive_event_key_words(
+    root_words: tuple[int, int],
+    encoded_identity: bytes,
+) -> tuple[int, int]:
+    """Apply the version-1 KDF to validated root words and identity bytes."""
     digest = hashlib.blake2s(
-        encode_random_event(identity),
-        key=_BLAKE2S_KEY_WORDS.pack(*root),
+        encoded_identity,
+        key=_BLAKE2S_KEY_WORDS.pack(*root_words),
         digest_size=_BLAKE2S_KEY_WORDS.size,
         person=_BLAKE2S_PERSON,
     ).digest()
