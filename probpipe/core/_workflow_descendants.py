@@ -65,6 +65,18 @@ class _FrozenBijectorCapture:
     evaluator: Callable[[Any], Any] = field(compare=False, hash=False, repr=False)
 
 
+@dataclass(frozen=True, slots=True)
+class _DescriptorAbiSummary:
+    """Sorted unique execution ABIs found in one descendant descriptor."""
+
+    sampling_abis: tuple[str, ...]
+    provider_abis: tuple[str, ...]
+    descendant_adapter_abis: tuple[str, ...]
+
+
+_EMPTY_DESCRIPTOR_ABI_SUMMARY = _DescriptorAbiSummary((), (), ())
+
+
 @dataclass(slots=True)
 class _StochasticCaptureSession:
     """Call-local identity memo for one stochastic-plan construction."""
@@ -140,6 +152,47 @@ def sample_captured_consumer(
 def descriptor_digest(descriptor: tuple[Any, ...]) -> str:
     """Return the versioned SHA-256 digest of a canonical descriptor."""
     return hashlib.sha256(canonical_descriptor_bytes(descriptor)).hexdigest()
+
+
+def _summarize_descriptor_abis(
+    descriptor: tuple[Any, ...] | None,
+) -> _DescriptorAbiSummary:
+    """Collect execution ABIs once without encoding or digesting the descriptor."""
+    if descriptor is None:
+        return _EMPTY_DESCRIPTOR_ABI_SUMMARY
+    if not isinstance(descriptor, tuple):
+        raise TypeError("descendant descriptor must be a tuple or None")
+
+    sampling_abis: set[str] = set()
+    provider_abis: set[str] = set()
+    descendant_adapter_abis: set[str] = set()
+    destinations = {
+        "sampling_abi": sampling_abis,
+        "provider_abi": provider_abis,
+        "descendant_adapter_abi": descendant_adapter_abis,
+    }
+
+    def collect(value: Any) -> None:
+        if not isinstance(value, tuple):
+            return
+        if len(value) == 2 and isinstance(value[0], str):
+            destination = destinations.get(value[0])
+            if destination is not None:
+                abi = value[1]
+                if not isinstance(abi, str):
+                    raise TypeError(f"descriptor {value[0]} must be a string")
+                if not abi:
+                    raise ValueError(f"descriptor {value[0]} must not be empty")
+                destination.add(abi)
+        for item in value:
+            collect(item)
+
+    collect(descriptor)
+    return _DescriptorAbiSummary(
+        sampling_abis=tuple(sorted(sampling_abis)),
+        provider_abis=tuple(sorted(provider_abis)),
+        descendant_adapter_abis=tuple(sorted(descendant_adapter_abis)),
+    )
 
 
 def canonical_descriptor_bytes(descriptor: tuple[Any, ...]) -> bytes:

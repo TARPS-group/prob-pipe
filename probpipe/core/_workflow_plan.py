@@ -53,6 +53,20 @@ class StochasticConsumerPlan:
     arg_ref: _workflow_call.WorkflowInputRef
     record_path: tuple[str, ...]
     descendant_descriptor: tuple[Any, ...] | None
+    _descriptor_abi_summary: _workflow_descendants._DescriptorAbiSummary = field(
+        init=False,
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        """Derive non-authoritative execution metadata from the descriptor."""
+        object.__setattr__(
+            self,
+            "_descriptor_abi_summary",
+            _workflow_descendants._summarize_descriptor_abis(self.descendant_descriptor),
+        )
 
 
 @dataclass(frozen=True, slots=True)

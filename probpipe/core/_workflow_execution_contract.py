@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Literal
+from typing import Literal
 
 from . import _workflow_plan
 from .config import WorkflowKind
@@ -165,14 +165,6 @@ def transport_for_workflow_kind(kind: WorkflowKind) -> WorkflowTransport:
             return "local_inline"
 
 
-def _iter_descriptor_fields(value: Any):
-    if isinstance(value, tuple):
-        if len(value) == 2 and isinstance(value[0], str):
-            yield value[0], value[1]
-        for item in value:
-            yield from _iter_descriptor_fields(item)
-
-
 def _stochastic_plan_abis(
     stochastic_plan: _workflow_plan.StochasticPlan | None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
@@ -182,22 +174,10 @@ def _stochastic_plan_abis(
     if stochastic_plan is not None:
         for group in stochastic_plan.source_groups:
             for consumer in group.consumers:
-                descriptor = consumer.descendant_descriptor
-                if descriptor is None:
-                    continue
-                for label, value in _iter_descriptor_fields(descriptor):
-                    if label not in ("sampling_abi", "provider_abi", "descendant_adapter_abi"):
-                        continue
-                    if not isinstance(value, str):
-                        raise TypeError(f"descriptor {label} must be a string")
-                    if not value:
-                        raise ValueError(f"descriptor {label} must not be empty")
-                    if label == "sampling_abi":
-                        sampling_abis.add(value)
-                    elif label == "provider_abi":
-                        provider_abis.add(value)
-                    else:
-                        descendant_adapter_abis.add(value)
+                summary = consumer._descriptor_abi_summary
+                sampling_abis.update(summary.sampling_abis)
+                provider_abis.update(summary.provider_abis)
+                descendant_adapter_abis.update(summary.descendant_adapter_abis)
     if sampling_abis and sampling_abis != {_SAMPLING_ABI}:
         raise ValueError("stochastic plan requires an unsupported sampling ABI")
     return tuple(sorted(provider_abis)), tuple(sorted(descendant_adapter_abis))

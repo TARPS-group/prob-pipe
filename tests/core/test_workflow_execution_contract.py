@@ -26,6 +26,7 @@ from probpipe.core import (
     _workflow_broker,
     _workflow_call,
     _workflow_context,
+    _workflow_descendants,
     _workflow_execution,
     _workflow_execution_contract,
 )
@@ -186,11 +187,145 @@ class TestExecutionContract:
             stochastic_plan=wrapped_plan,
         )
 
+        assert hidden_provider in wrapped_consumer._descriptor_abi_summary.provider_abis
         assert hidden_provider in contract.provider_abis
         assert not _workflow_execution_contract.supports_execution_contract(
             contract,
             wrapped_plan,
         )
+
+    def test_nested_descriptor_abi_summary_is_sorted_and_deduplicated(self):
+        plan = _plan(
+            {
+                "x": TransformedDistribution(
+                    TransformedDistribution(
+                        Normal(loc=0.0, scale=1.0, name="base"),
+                        tfb.Exp(),
+                    ),
+                    tfb.Shift(1.0),
+                )
+            }
+        )
+
+        summary = plan.source_groups[0].consumers[0]._descriptor_abi_summary
+
+        assert summary.sampling_abis == ("probpipe.distribution_sampling/v1",)
+        assert summary.provider_abis == (
+            "tensorflow_probability.substrates.jax.bijector.forward/v1",
+        )
+        assert summary.descendant_adapter_abis == ("probpipe.transformed_descendant/v1",)
+        assert all(
+            isinstance(values, tuple)
+            for values in (
+                summary.sampling_abis,
+                summary.provider_abis,
+                summary.descendant_adapter_abis,
+            )
+        )
+        with pytest.raises(FrozenInstanceError):
+            summary.provider_abis = ()
+
+    def test_execution_contract_reuses_plan_cached_descriptor_summary(self):
+        plan = _plan(
+            {
+                "x": TransformedDistribution(
+                    Normal(loc=0.0, scale=1.0, name="base"),
+                    tfb.Exp(),
+                )
+            }
+        )
+
+        with patch.object(
+            _workflow_descendants,
+            "_summarize_descriptor_abis",
+            side_effect=AssertionError("descriptor was scanned again"),
+        ):
+            contract = _workflow_execution_contract.make_execution_contract(
+                evaluator="rowwise",
+                transport="local_inline",
+                stochastic_plan=plan,
+            )
+            assert _workflow_execution_contract.supports_execution_contract(contract, plan)
+            assert _workflow_execution_contract.supports_execution_contract(contract, plan)
+
+    def test_descriptor_summary_does_not_compute_an_unused_digest(self):
+        with patch.object(
+            _workflow_descendants,
+            "descriptor_digest",
+            side_effect=AssertionError("unexpected descriptor digest"),
+        ):
+            plan = _plan(
+                {
+                    "x": TransformedDistribution(
+                        Normal(loc=0.0, scale=1.0, name="base"),
+                        tfb.Exp(),
+                    )
+                }
+            )
+            contract = _workflow_execution_contract.make_execution_contract(
+                evaluator="rowwise",
+                transport="local_inline",
+                stochastic_plan=plan,
+            )
+
+        assert _workflow_execution_contract.supports_execution_contract(contract, plan)
+
+    def test_replaced_consumer_rebuilds_descriptor_summary(self):
+        plan = _plan(
+            {
+                "x": TransformedDistribution(
+                    Normal(loc=0.0, scale=1.0, name="base"),
+                    tfb.Exp(),
+                )
+            }
+        )
+        consumer = plan.source_groups[0].consumers[0]
+
+        replaced_consumer = replace(
+            consumer,
+            descendant_descriptor=(
+                "test-wrapper",
+                ("provider_abi", "example.replaced/provider-v1"),
+                ("nested", consumer.descendant_descriptor),
+            ),
+        )
+
+        assert replaced_consumer._descriptor_abi_summary is not (consumer._descriptor_abi_summary)
+        assert replaced_consumer._descriptor_abi_summary.provider_abis == (
+            "example.replaced/provider-v1",
+            "tensorflow_probability.substrates.jax.bijector.forward/v1",
+        )
+
+    def test_sampling_abi_drift_still_fails_before_contract_execution(self):
+        plan = _plan(
+            {
+                "x": TransformedDistribution(
+                    Normal(loc=0.0, scale=1.0, name="base"),
+                    tfb.Exp(),
+                )
+            }
+        )
+        group = plan.source_groups[0]
+        consumer = group.consumers[0]
+        drifted_consumer = replace(
+            consumer,
+            descendant_descriptor=(
+                "test-wrapper",
+                ("sampling_abi", "example.sampling/v2"),
+                ("nested", consumer.descendant_descriptor),
+            ),
+        )
+        drifted_plan = replace(
+            plan,
+            source_groups=(replace(group, consumers=(drifted_consumer,)),),
+        )
+
+        with pytest.raises(ValueError, match="unsupported sampling ABI"):
+            _workflow_execution_contract.make_execution_contract(
+                evaluator="rowwise",
+                transport="local_inline",
+                stochastic_plan=drifted_plan,
+            )
 
     def test_noncanonical_abi_sequences_and_cross_field_drift_are_rejected(self):
         plan = _plan(
