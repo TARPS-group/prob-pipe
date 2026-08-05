@@ -168,28 +168,39 @@ def map_task(
 
     func = request.func
 
-    @task(name=task_name or request.execution.name)
+    @task(name=task_name or request.execution.name, retries=0)
     def run_func(payload):
         return _execute_prefect_payload(func, payload)
 
-    payloads_by_index = {
-        item.index: ManagedPrefectPayload(item=item) for item in request.work_items
-    }
-    outcomes = _run_prefect_payloads(run_func, list(payloads_by_index.values()))
-    outcomes = _coordinate_prefect_randomness(
-        run_func,
-        outcomes,
-        payloads_by_index=payloads_by_index,
-        parent_broker=parent_broker,
-    )
-    outcomes = _retry_prefect_failures(
-        run_func,
-        outcomes,
-        payloads_by_index=payloads_by_index,
-        parent_broker=parent_broker,
-    )
+    payloads_by_index: dict[int, ManagedPrefectPayload] = {}
+    try:
+        for item in request.work_items:
+            payloads_by_index[item.index] = _make_prefect_payload(
+                item,
+                parent_broker=parent_broker,
+                parent_authority=False,
+            )
+        outcomes = _run_prefect_payloads(run_func, list(payloads_by_index.values()))
+        outcomes = _coordinate_prefect_randomness(
+            run_func,
+            outcomes,
+            payloads_by_index=payloads_by_index,
+            parent_broker=parent_broker,
+        )
+        outcomes = _retry_prefect_failures(
+            run_func,
+            outcomes,
+            payloads_by_index=payloads_by_index,
+            parent_broker=parent_broker,
+        )
 
-    return _resolve_prefect_outcomes(outcomes, parent_broker=parent_broker)
+        return _resolve_prefect_outcomes(outcomes, parent_broker=parent_broker)
+    except BaseException:
+        _abort_prefect_payloads(
+            tuple(payloads_by_index.values()),
+            parent_broker=parent_broker,
+        )
+        raise
 
 
 def _run_prefect_payloads(
@@ -198,7 +209,51 @@ def _run_prefect_payloads(
 ) -> list[ManagedExecutionOutcome]:
     """Submit one attempt for each payload and collect its managed outcome."""
     _workflow_context._guard_managed_submission()
-    return [future.result() for future in run_func.map(payload=payloads)]
+    futures = list(run_func.map(payload=payloads))
+    if len(futures) != len(payloads):
+        raise RuntimeError("Prefect returned a different number of futures than payloads")
+    outcomes = []
+    errors = []
+    for payload, future in zip(payloads, futures, strict=True):
+        try:
+            outcomes.append(future.result())
+        except BaseException as error:
+            errors.append((payload.item.index, error))
+    if errors:
+        raise min(errors, key=lambda item: item[0])[1]
+    return outcomes
+
+
+def _make_prefect_payload(
+    item: ManagedWorkItem,
+    *,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+    parent_authority: bool,
+) -> ManagedPrefectPayload:
+    """Create and parent-reserve one fresh remote execution attempt."""
+    attempt = ManagedAttemptState.create(item.frame.token)
+    parent = None
+    if parent_broker is not None:
+        parent = parent_broker.reserve_remote_managed_attempt(
+            item.frame,
+            attempt,
+            parent_authority=parent_authority,
+        )
+    elif parent_authority:
+        raise RuntimeError("remote workflow randomness requires an active parent Function broker")
+    return ManagedPrefectPayload(item=item, attempt=attempt, parent=parent)
+
+
+def _abort_prefect_payloads(
+    payloads: tuple[ManagedPrefectPayload, ...],
+    *,
+    parent_broker: _workflow_broker._AutomaticKeyBroker | None,
+) -> None:
+    """Release every current parent reservation after a transport failure."""
+    if parent_broker is None:
+        return
+    for payload in payloads:
+        parent_broker.abort_remote_managed_attempt(payload.attempt)
 
 
 def _coordinate_prefect_randomness(
@@ -220,9 +275,11 @@ def _coordinate_prefect_randomness(
         payload = payloads_by_index[outcome.index]
         if payload.parent is not None:
             raise RuntimeError("coordinated Prefect attempt requested RNG authority twice")
-        payload = ManagedPrefectPayload(
-            item=payload.item,
-            parent=parent_broker.prepare_remote_managed_unit(payload.item.frame),
+        _accept_prefect_claim_report(outcome, parent_broker=parent_broker)
+        payload = _make_prefect_payload(
+            payload.item,
+            parent_broker=parent_broker,
+            parent_authority=True,
         )
         payloads_by_index[outcome.index] = payload
         coordinated_payloads.append(payload)
@@ -261,11 +318,12 @@ def _retry_prefect_failures(
             if payload.parent is not None:
                 if parent_broker is None:
                     raise RuntimeError("coordinated Prefect retry lost its parent Function broker")
-                payload = ManagedPrefectPayload(
-                    item=payload.item,
-                    parent=parent_broker.prepare_remote_managed_unit(payload.item.frame),
-                )
-                payloads_by_index[outcome.index] = payload
+            payload = _make_prefect_payload(
+                payload.item,
+                parent_broker=parent_broker,
+                parent_authority=payload.parent is not None,
+            )
+            payloads_by_index[outcome.index] = payload
             retry_payloads.append(payload)
 
         if retry_delay > 0:
@@ -405,7 +463,7 @@ def _execute_prefect_payload(
 ) -> ManagedExecutionOutcome:
     """Execute one serializable Prefect payload and return its claim report."""
     item = payload.item
-    attempt = ManagedAttemptState.create(item.frame.token)
+    attempt = payload.attempt
     if payload.parent is None:
         with (
             _workflow_context._transported_workflow_frame(None),
@@ -417,6 +475,7 @@ def _execute_prefect_payload(
                 return ManagedExecutionOutcome(
                     index=item.index,
                     coordination_required=True,
+                    report=ManagedClaimReport(item.frame, attempt, 0),
                 )
             except Exception as error:
                 return ManagedExecutionOutcome(

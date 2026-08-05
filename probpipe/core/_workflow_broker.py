@@ -102,6 +102,7 @@ class _ManagedUnitClaimState:
     frame: ManagedUnitFrame
     child_invocations: list[_workflow_context._WorkflowInvocation] = field(default_factory=list)
     active_attempt: bytes | None = None
+    active_transport: Literal["local", "remote"] | None = None
     seen_attempts: set[bytes] = field(default_factory=set)
     active_effect_identities: set[tuple[Any, ...]] = field(default_factory=set)
     effect_claims_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
@@ -478,6 +479,7 @@ class _AutomaticKeyBroker:
             state = self._validate_managed_attempt_unlocked(attempt, frame)
             state.seen_attempts.add(attempt.attempt_token)
             state.active_attempt = attempt.attempt_token
+            state.active_transport = "local"
             state.active_effect_identities.clear()
             state.status = "active"
             return state.frame
@@ -490,9 +492,11 @@ class _AutomaticKeyBroker:
                 state is None
                 or state.status != "active"
                 or state.active_attempt != attempt.attempt_token
+                or state.active_transport != "local"
             ):
                 raise RuntimeError("managed work-item attempt is not active")
             state.active_attempt = None
+            state.active_transport = None
             state.active_effect_identities.clear()
             state.status = "joined"
 
@@ -575,19 +579,43 @@ class _AutomaticKeyBroker:
             raise RuntimeError("a managed attempt token cannot be reused")
         return state
 
-    def prepare_remote_managed_unit(
+    def reserve_remote_managed_attempt(
         self,
         frame: ManagedUnitFrame,
-    ) -> ManagedParentEnvelope:
-        """Materialize parent authority after a remote task requests randomness."""
+        attempt: ManagedAttemptState,
+        *,
+        parent_authority: bool,
+    ) -> ManagedParentEnvelope | None:
+        """Reserve a remote attempt before submission and optionally bind authority."""
         with self._managed_claims.lock:
-            self._assert_managed_registry_open_unlocked()
-            state = self._managed_claims.by_token.get(frame.token)
-            if state is None or state.frame.unit_segment != frame.unit_segment:
-                raise RuntimeError("remote managed unit is not registered by this parent")
-            if state.status == "cancelled":
-                raise RuntimeError("a cancelled managed work item has no parent authority")
+            state = self._validate_managed_attempt_unlocked(attempt, frame)
+            state.seen_attempts.add(attempt.attempt_token)
+            state.active_attempt = attempt.attempt_token
+            state.active_transport = "remote"
+            state.active_effect_identities.clear()
+            state.status = "active"
             retry_effects = tuple(state.effect_claims_by_identity.values())
+        if not parent_authority:
+            return None
+
+        try:
+            return self._make_remote_parent_envelope(
+                frame,
+                attempt,
+                retry_effects=retry_effects,
+            )
+        except BaseException:
+            self.abort_remote_managed_attempt(attempt)
+            raise
+
+    def _make_remote_parent_envelope(
+        self,
+        frame: ManagedUnitFrame,
+        attempt: ManagedAttemptState,
+        *,
+        retry_effects: tuple[ManagedEffectClaim, ...],
+    ) -> ManagedParentEnvelope:
+        """Materialize authority for an already-reserved remote attempt."""
         parent_invocation = self._ensure_parent_invocation()
         from . import _workflow_replay
 
@@ -595,6 +623,7 @@ class _AutomaticKeyBroker:
             root_words=_workflow_context._resolve_root_words(parent_invocation.frame),
             parent_occurrence_path=parent_invocation.occurrence_path,
             frame=frame,
+            attempt=attempt,
             replay_expected_effects=_workflow_replay._expected_effects_for_managed_unit(
                 parent_invocation.occurrence_path,
                 frame.unit_segment,
@@ -602,21 +631,39 @@ class _AutomaticKeyBroker:
             retry_effects=retry_effects,
         )
 
+    def abort_remote_managed_attempt(self, attempt: ManagedAttemptState) -> None:
+        """Release one exact remote reservation after failure or cancellation."""
+        with self._managed_claims.lock:
+            self._assert_managed_registry_open_unlocked()
+            state = self._managed_claims.by_token.get(attempt.work_item_token)
+            if state is None or attempt.attempt_token not in state.seen_attempts:
+                raise RuntimeError("remote managed attempt was not reserved by this parent")
+            if state.active_attempt is None and state.status == "joined":
+                return
+            if (
+                state.status != "active"
+                or state.active_attempt != attempt.attempt_token
+                or state.active_transport != "remote"
+            ):
+                raise RuntimeError("remote managed attempt does not own the active reservation")
+            state.active_attempt = None
+            state.active_transport = None
+            state.active_effect_identities.clear()
+            state.status = "joined"
+
     def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
         """Join and reconcile the canonical child namespace from a remote attempt."""
         with self._managed_claims.lock:
             self._assert_managed_registry_open_unlocked()
             state = self._managed_claims.by_token.get(report.frame.token)
-            if state is None or state.frame.unit_segment != report.frame.unit_segment:
+            if state is None or state.frame != report.frame:
                 raise RuntimeError("remote claim report does not own a registered unit")
-            if state.status == "cancelled":
-                raise RuntimeError("a cancelled managed work item cannot report claims")
-            if state.active_attempt is not None:
-                raise RuntimeError("remote claim report conflicts with an active local attempt")
-            if report.attempt.attempt_token in state.seen_attempts:
-                raise RuntimeError("a managed attempt token cannot be reused")
-            state.seen_attempts.add(report.attempt.attempt_token)
-            state.status = "joined"
+            if (
+                state.status != "active"
+                or state.active_attempt != report.attempt.attempt_token
+                or state.active_transport != "remote"
+            ):
+                raise RuntimeError("remote claim report does not own the active reservation")
 
             for effect in report.effects:
                 identity = _effect_identity(effect)
@@ -644,6 +691,19 @@ class _AutomaticKeyBroker:
         for effect in report.effects:
             self.claim_replay_effect(effect, attempt=report.attempt)
         self.accept_successful_managed_effects(report.successful_effects)
+        with self._managed_claims.lock:
+            state = self._managed_claims.by_token.get(report.frame.token)
+            if (
+                state is None
+                or state.status != "active"
+                or state.active_attempt != report.attempt.attempt_token
+                or state.active_transport != "remote"
+            ):
+                raise RuntimeError("remote claim report lost its active reservation")
+            state.active_attempt = None
+            state.active_transport = None
+            state.active_effect_identities.clear()
+            state.status = "joined"
 
     def _claim_managed_child(
         self,
@@ -957,6 +1017,8 @@ def _remote_managed_work_item_stochastic_scope(
     attempt: ManagedAttemptState,
 ) -> Generator[_RemoteManagedParent, None, None]:
     """Install parent-authorized RNG derivation inside a remote worker."""
+    if envelope.attempt != attempt or envelope.frame.token != attempt.work_item_token:
+        raise RuntimeError("remote managed attempt does not own its parent envelope")
     frame = _workflow_context._capture_active_workflow_frame()
     if frame is None:
         raise RuntimeError("remote managed randomness requires a transported frame")

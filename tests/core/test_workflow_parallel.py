@@ -114,7 +114,9 @@ class RecordingFlow:
     calls: ClassVar[list[dict[str, object]]] = []
 
 
-def fake_task(name=None):
+def fake_task(name=None, **task_kwargs):
+    del task_kwargs
+
     def decorator(fn):
         return FakeMappedTask(fn, name)
 
@@ -331,6 +333,7 @@ class TestManagedPayloadValidation:
                     root_words=(True, 1),
                     parent_occurrence_path=(("invocation", 0),),
                     frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
                 ),
                 TypeError,
                 "root words must be two uint32 integers",
@@ -341,6 +344,7 @@ class TestManagedPayloadValidation:
                     root_words=(0, 1),
                     parent_occurrence_path=[],
                     frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
                 ),
                 TypeError,
                 "parent occurrence paths must be tuples",
@@ -351,6 +355,7 @@ class TestManagedPayloadValidation:
                     root_words=(0, 1),
                     parent_occurrence_path=(("invocation", 0),),
                     frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
                     replay_expected_effects=[],
                 ),
                 TypeError,
@@ -362,11 +367,42 @@ class TestManagedPayloadValidation:
                     root_words=(0, 1),
                     parent_occurrence_path=(("invocation", 0),),
                     frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
                     retry_effects=[],
                 ),
                 TypeError,
                 "retry effects must be an effect tuple",
                 id="parent-retry-effects",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedParentEnvelope(
+                    root_words=(0, 1),
+                    parent_occurrence_path=(("invocation", 0),),
+                    frame=make_managed_frame(),
+                    attempt=managed_mod.ManagedAttemptState(
+                        work_item_token=managed_mod.ManagedWorkItemToken(b"z" * 16),
+                        attempt_token=b"a" * 16,
+                    ),
+                ),
+                ValueError,
+                "attempt must own its frame",
+                id="parent-attempt-frame",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedPrefectPayload(
+                    item=managed_mod.ManagedWorkItem(
+                        index=0,
+                        values=(),
+                        frame=make_managed_frame(),
+                    ),
+                    attempt=managed_mod.ManagedAttemptState(
+                        work_item_token=managed_mod.ManagedWorkItemToken(b"z" * 16),
+                        attempt_token=b"a" * 16,
+                    ),
+                ),
+                ValueError,
+                "attempt must own its work item",
+                id="payload-attempt-item",
             ),
             pytest.param(
                 lambda: make_managed_effect(occurrence_path=[]),
@@ -792,6 +828,46 @@ class TestManagedRetryClaims:
 
             parent.assert_managed_items_joined(request.work_items)
 
+    def test_remote_attempt_is_reserved_before_submission(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+        first = managed_mod.ManagedAttemptState.create(item.frame.token)
+        second = managed_mod.ManagedAttemptState.create(item.frame.token)
+
+        with workflow_run(seed=17):
+            parent = broker_mod._AutomaticKeyBroker(
+                "invocation",
+                _frame=context_mod._capture_active_workflow_frame(),
+            )
+            parent.register_managed_work_items(request.work_items)
+
+            assert (
+                parent.reserve_remote_managed_attempt(
+                    item.frame,
+                    first,
+                    parent_authority=False,
+                )
+                is None
+            )
+            with pytest.raises(RuntimeError, match="active attempt"):
+                parent.reserve_remote_managed_attempt(
+                    item.frame,
+                    second,
+                    parent_authority=False,
+                )
+
+            parent.abort_remote_managed_attempt(first)
+            assert (
+                parent.reserve_remote_managed_attempt(
+                    item.frame,
+                    second,
+                    parent_authority=False,
+                )
+                is None
+            )
+            parent.abort_remote_managed_attempt(second)
+            parent.assert_managed_items_joined(request.work_items)
+
 
 class TestSequentialExecution:
     def test_execute_many_sequential_mode_preserves_order(self):
@@ -1001,6 +1077,38 @@ class TestPrefectMapping:
 
         assert execution_mod.map_task(request) == [2, 3, 4]
 
+    def test_prefect_worker_failure_aborts_parent_reservation(self, monkeypatch):
+        class CrashingFuture:
+            def result(self):
+                raise RuntimeError("worker crashed")
+
+        class CrashingTask:
+            def map(self, **kwargs_by_param):
+                assert kwargs_by_param["payload"]
+                return [CrashingFuture()]
+
+        def crashing_task(name=None, **task_kwargs):
+            del name, task_kwargs
+
+            def decorator(func):
+                del func
+                return CrashingTask()
+
+            return decorator
+
+        monkeypatch.setattr(execution_mod, "task", crashing_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        request = make_request(mode="prefect_task", calls=[{}], func=lambda: None)
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            with pytest.raises(RuntimeError, match="worker crashed"):
+                execution_mod.execute_many(request)
+            state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+
+        assert state.status == "joined"
+        assert state.active_attempt is None
+        assert len(state.seen_attempts) == 1
+
     def test_deterministic_prefect_items_do_not_materialize_anonymous_root(
         self,
         monkeypatch,
@@ -1037,7 +1145,15 @@ class TestPrefectMapping:
             broker_mod._function_stochastic_scope() as parent,
         ):
             result = execution_mod.execute_many(request)[0]
-            envelope = parent.prepare_remote_managed_unit(request.work_items[0].frame)
+            item = request.work_items[0]
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            envelope = parent.reserve_remote_managed_attempt(
+                item.frame,
+                attempt,
+                parent_authority=True,
+            )
+            assert envelope is not None
+            parent.abort_remote_managed_attempt(attempt)
 
         assert result
         assert envelope.parent_occurrence_path == (("invocation", 0),)
@@ -1094,7 +1210,7 @@ class TestPrefectMapping:
         assert seen == [retried, retried]
         assert snapshot is not None
         assert len(snapshot.effects) == 1
-        assert len(claim_state.seen_attempts) == 2
+        assert len(claim_state.seen_attempts) == 3
         assert FakeMappedTask.map_calls == 3
 
     def test_deterministic_prefect_retry_does_not_materialize_root(self, monkeypatch):
@@ -1160,12 +1276,20 @@ class TestPrefectMapping:
         request = make_request(calls=[{}], func=_claim_automatic_words)
         with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
             parent.register_managed_work_items(request.work_items)
-            envelope = parent.prepare_remote_managed_unit(request.work_items[0].frame)
+            item = request.work_items[0]
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            envelope = parent.reserve_remote_managed_attempt(
+                item.frame,
+                attempt,
+                parent_authority=True,
+            )
+            assert envelope is not None
             payload = managed_mod.ManagedPrefectPayload(
-                item=request.work_items[0],
+                item=item,
+                attempt=attempt,
                 parent=envelope,
             )
-            parent.cancel_unstarted_managed_items(request.work_items)
+            parent.abort_remote_managed_attempt(attempt)
 
         assert pickle.loads(pickle.dumps(payload)) == payload
 

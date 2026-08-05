@@ -94,6 +94,7 @@ class ManagedParentEnvelope:
     root_words: tuple[int, int]
     parent_occurrence_path: _RandomEventPath
     frame: ManagedUnitFrame
+    attempt: ManagedAttemptState
     replay_expected_effects: tuple[ManagedEffectClaim, ...] | None = None
     retry_effects: tuple[ManagedEffectClaim, ...] = ()
 
@@ -110,6 +111,8 @@ class ManagedParentEnvelope:
         if not isinstance(self.parent_occurrence_path, tuple):
             raise TypeError("managed parent occurrence paths must be tuples")
         _validate_random_event_value(self.parent_occurrence_path)
+        if self.attempt.work_item_token != self.frame.token:
+            raise ValueError("managed parent attempt must own its frame")
         if self.replay_expected_effects is not None and (
             not isinstance(self.replay_expected_effects, tuple)
             or any(
@@ -196,7 +199,16 @@ class ManagedPrefectPayload:
     """Serializable Prefect task input for an initial or coordinated attempt."""
 
     item: ManagedWorkItem
+    attempt: ManagedAttemptState
     parent: ManagedParentEnvelope | None = None
+
+    def __post_init__(self) -> None:
+        if self.attempt.work_item_token != self.item.frame.token:
+            raise ValueError("managed payload attempt must own its work item")
+        if self.parent is not None and (
+            self.parent.frame != self.item.frame or self.parent.attempt != self.attempt
+        ):
+            raise ValueError("managed payload parent authority must match its item and attempt")
 
 
 @dataclass(frozen=True, slots=True)
