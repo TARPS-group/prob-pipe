@@ -150,6 +150,139 @@ def test_bijector_snapshot_failure_and_semantic_drift_fail_closed():
         _workflow_descendants.capture_stochastic_consumer(descendant)
 
 
+def test_plan_capture_memoizes_repeated_descendant_identity():
+    base = Normal(0.0, 1.0, name="base")
+    descendant = TransformedDistribution(base, tfb.Shift(1.0))
+
+    with patch.object(
+        _workflow_descendants,
+        "_capture_bijector",
+        wraps=_workflow_descendants._capture_bijector,
+    ) as capture_bijector:
+        plan = _stochastic_plan({"first": descendant, "second": descendant})
+
+    assert capture_bijector.call_count == 1
+    assert len(plan.source_groups) == 1
+    assert len(plan.source_groups[0].consumers) == 2
+
+
+def test_plan_capture_memoizes_shared_transformed_ancestor():
+    base = Normal(0.0, 1.0, name="base")
+    shared_bijector = tfb.Exp()
+    shared = TransformedDistribution(base, shared_bijector)
+    left = TransformedDistribution(shared, tfb.Shift(1.0))
+    right = TransformedDistribution(shared, tfb.Scale(2.0))
+
+    with patch.object(
+        _workflow_descendants,
+        "_capture_bijector",
+        wraps=_workflow_descendants._capture_bijector,
+    ) as capture_bijector:
+        _stochastic_plan({"left": left, "right": right})
+
+    captured_bijectors = [call.args[0] for call in capture_bijector.call_args_list]
+    assert sum(bijector is shared_bijector for bijector in captured_bijectors) == 1
+
+
+def test_plan_capture_memoizes_shared_bijector_identity():
+    shared_bijector = tfb.Shift(1.0)
+    left = TransformedDistribution(Normal(0.0, 1.0, name="left"), shared_bijector)
+    right = TransformedDistribution(Normal(0.0, 1.0, name="right"), shared_bijector)
+
+    with patch.object(
+        _workflow_descendants,
+        "_capture_bijector",
+        wraps=_workflow_descendants._capture_bijector,
+    ) as capture_bijector:
+        _stochastic_plan({"left": left, "right": right})
+
+    captured_bijectors = [call.args[0] for call in capture_bijector.call_args_list]
+    assert sum(bijector is shared_bijector for bijector in captured_bijectors) == 1
+
+
+def test_plan_capture_keeps_equal_distinct_bijectors_independent():
+    left_bijector = tfb.Shift(1.0)
+    right_bijector = tfb.Shift(1.0)
+    left = TransformedDistribution(Normal(0.0, 1.0, name="left"), left_bijector)
+    right = TransformedDistribution(Normal(0.0, 1.0, name="right"), right_bijector)
+
+    with patch.object(
+        _workflow_descendants,
+        "_capture_bijector",
+        wraps=_workflow_descendants._capture_bijector,
+    ) as capture_bijector:
+        _stochastic_plan({"left": left, "right": right})
+
+    captured_bijectors = [call.args[0] for call in capture_bijector.call_args_list]
+    assert sum(bijector is left_bijector for bijector in captured_bijectors) == 1
+    assert sum(bijector is right_bijector for bijector in captured_bijectors) == 1
+
+
+def test_capture_memo_is_scoped_to_one_plan_build():
+    descendant = TransformedDistribution(
+        Normal(0.0, 1.0, name="base"),
+        tfb.Shift(1.0),
+    )
+
+    with patch.object(
+        _workflow_descendants,
+        "_capture_bijector",
+        wraps=_workflow_descendants._capture_bijector,
+    ) as capture_bijector:
+        _stochastic_plan({"value": descendant})
+        _stochastic_plan({"value": descendant})
+
+    assert capture_bijector.call_count == 2
+
+
+def test_capture_session_does_not_cache_failed_bijector_capture():
+    descendant = TransformedDistribution(
+        Normal(0.0, 1.0, name="base"),
+        tfb.Shift(1.0),
+    )
+    session = _workflow_descendants._StochasticCaptureSession()
+    capture_bijector = _workflow_descendants._capture_bijector
+    call_count = 0
+
+    def flaky_capture(bijector, *, active_bijectors):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise TypeError("capture failed")
+        return capture_bijector(bijector, active_bijectors=active_bijectors)
+
+    with patch.object(
+        _workflow_descendants,
+        "_capture_bijector",
+        side_effect=flaky_capture,
+    ):
+        with pytest.raises(TypeError, match="capture failed"):
+            session.capture_consumer(descendant)
+        captured = session.capture_consumer(descendant)
+
+    assert captured.root is descendant.base
+    assert call_count == 2
+
+
+def test_capture_session_rejects_corrupted_identity_cache_entries():
+    session = _workflow_descendants._StochasticCaptureSession()
+    cached_source = Normal(0.0, 1.0, name="cached")
+    requested_source = Normal(0.0, 1.0, name="requested")
+    captured_source = session.capture_consumer(cached_source)
+    session.consumers[id(requested_source)] = (cached_source, captured_source)
+
+    with pytest.raises(RuntimeError, match="consumer identity cache collision"):
+        session.capture_consumer(requested_source)
+
+    cached_bijector = tfb.Shift(1.0)
+    requested_bijector = tfb.Shift(1.0)
+    captured_bijector = session.capture_bijector(cached_bijector)
+    session.bijectors[id(requested_bijector)] = (cached_bijector, captured_bijector)
+
+    with pytest.raises(RuntimeError, match="bijector capture identity cache collision"):
+        session.capture_bijector(requested_bijector)
+
+
 def test_golden_shift_descriptor_and_digest_are_hard_coded():
     base = MultivariateNormal(
         loc=jnp.zeros(2),

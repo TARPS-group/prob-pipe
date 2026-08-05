@@ -6,7 +6,7 @@ import base64
 import hashlib
 import operator
 import struct
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -57,6 +57,54 @@ class CapturedStochasticConsumer:
     evaluator: Callable[[Any], Any] = field(compare=False, hash=False, repr=False)
 
 
+@dataclass(frozen=True, slots=True)
+class _FrozenBijectorCapture:
+    """One validated descriptor and evaluator bound to its frozen snapshot."""
+
+    descriptor: tuple[Any, ...]
+    evaluator: Callable[[Any], Any] = field(compare=False, hash=False, repr=False)
+
+
+@dataclass(slots=True)
+class _StochasticCaptureSession:
+    """Call-local identity memo for one stochastic-plan construction."""
+
+    consumers: dict[int, tuple[Distribution, CapturedStochasticConsumer]] = field(
+        default_factory=dict
+    )
+    bijectors: dict[int, tuple[tfb.Bijector, _FrozenBijectorCapture]] = field(default_factory=dict)
+    active_descendants: set[int] = field(default_factory=set)
+
+    def capture_consumer(self, value: Distribution) -> CapturedStochasticConsumer:
+        """Capture one consumer, reusing a completed identical object."""
+        identity = id(value)
+        cached = self.consumers.get(identity)
+        if cached is not None:
+            source, captured = cached
+            if source is not value:
+                raise RuntimeError("stochastic consumer identity cache collision")
+            return captured
+
+        captured = _capture_stochastic_consumer(value, session=self)
+        self.consumers[identity] = (value, captured)
+        return captured
+
+    def capture_bijector(self, bijector: tfb.Bijector) -> _FrozenBijectorCapture:
+        """Capture one bijector snapshot, reusing a completed identical object."""
+        identity = id(bijector)
+        cached = self.bijectors.get(identity)
+        if cached is not None:
+            source, captured = cached
+            if source is not bijector:
+                raise RuntimeError("bijector capture identity cache collision")
+            return captured
+
+        descriptor, evaluator = _capture_bijector(bijector, active_bijectors=set())
+        captured = _FrozenBijectorCapture(descriptor, evaluator)
+        self.bijectors[identity] = (bijector, captured)
+        return captured
+
+
 def _register_transformed_distribution_type(distribution_type: type) -> None:
     """Register one ProbPipe-owned concrete transformed implementation."""
     _TRANSFORMED_DISTRIBUTION_TYPES.add(distribution_type)
@@ -69,7 +117,15 @@ def _register_unsupported_descendant_type(distribution_type: type, label: str) -
 
 def capture_stochastic_consumer(value: Distribution) -> CapturedStochasticConsumer:
     """Capture a supported root/projection/transform graph without executing it."""
-    return _capture_stochastic_consumer(value, active_descendants=set())
+    return _StochasticCaptureSession().capture_consumer(value)
+
+
+def capture_stochastic_consumers(
+    values: Sequence[Distribution],
+) -> tuple[CapturedStochasticConsumer, ...]:
+    """Capture ordered consumers through one call-local identity memo."""
+    session = _StochasticCaptureSession()
+    return tuple(session.capture_consumer(value) for value in values)
 
 
 def sample_captured_consumer(
@@ -132,7 +188,7 @@ def encode_semantic_value(value: Any) -> tuple[Any, ...]:
 def _capture_stochastic_consumer(
     value: Distribution,
     *,
-    active_descendants: set[int],
+    session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
     value_type = type(value)
     unsupported_label = _UNSUPPORTED_DESCENDANT_TYPES.get(value_type)
@@ -143,7 +199,7 @@ def _capture_stochastic_consumer(
         )
 
     if value_type in _TRANSFORMED_DISTRIBUTION_TYPES:
-        return _capture_transformed_distribution(value, active_descendants=active_descendants)
+        return _capture_transformed_distribution(value, session=session)
 
     if any(isinstance(value, known) for known in _TRANSFORMED_DISTRIBUTION_TYPES):
         raise TypeError(
@@ -158,19 +214,16 @@ def _capture_stochastic_consumer(
 
     if isinstance(value, _RecordDistributionView):
         identity = id(value)
-        if identity in active_descendants:
+        if identity in session.active_descendants:
             raise TypeError("Cyclic record distribution view graph is unsupported")
         parent = value.parent
         record_path = tuple(value._key_path)
-        active_descendants.add(identity)
+        session.active_descendants.add(identity)
         try:
-            captured_parent = _capture_stochastic_consumer(
-                parent,
-                active_descendants=active_descendants,
-            )
+            captured_parent = session.capture_consumer(parent)
             projection = _RecordDistributionView(parent, record_path)
         finally:
-            active_descendants.remove(identity)
+            session.active_descendants.remove(identity)
         evaluator = _compose(captured_parent.evaluator, projection._extract)
         descriptor = captured_parent.descendant_descriptor
         if descriptor is not None:
@@ -199,22 +252,19 @@ def _capture_stochastic_consumer(
 def _capture_transformed_distribution(
     value: Distribution,
     *,
-    active_descendants: set[int],
+    session: _StochasticCaptureSession,
 ) -> CapturedStochasticConsumer:
     identity = id(value)
-    if identity in active_descendants:
+    if identity in session.active_descendants:
         raise TypeError("Cyclic TransformedDistribution descendant graph is unsupported")
     _reject_instance_overrides(value, ("_sample", "base", "bijector"))
 
-    active_descendants.add(identity)
+    session.active_descendants.add(identity)
     try:
-        captured_base = _capture_stochastic_consumer(
-            value.base,
-            active_descendants=active_descendants,
-        )
-        bijector_descriptor, forward = _capture_bijector(value.bijector, active_bijectors=set())
+        captured_base = session.capture_consumer(value.base)
+        captured_bijector = session.capture_bijector(value.bijector)
     finally:
-        active_descendants.remove(identity)
+        session.active_descendants.remove(identity)
 
     descriptor = (
         "transformed-descendant",
@@ -226,14 +276,14 @@ def _capture_transformed_distribution(
         ("sampling_abi", _DISTRIBUTION_SAMPLING_ABI),
         ("provider_abi", _DESCENDANT_PROVIDER_ABI),
         ("base", captured_base.descendant_descriptor or ("root",)),
-        ("bijector", bijector_descriptor),
+        ("bijector", captured_bijector.descriptor),
     )
     return CapturedStochasticConsumer(
         root=captured_base.root,
         sample_root=captured_base.sample_root,
         record_path=captured_base.record_path,
         descendant_descriptor=descriptor,
-        evaluator=_compose(captured_base.evaluator, forward),
+        evaluator=_compose(captured_base.evaluator, captured_bijector.evaluator),
     )
 
 

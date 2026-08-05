@@ -304,9 +304,12 @@ def _group_stochastic_sources(
     runtime_evaluators: list[list[Callable[[Any], Any]]] = []
     group_by_root: dict[int, int] = {}
 
-    for ref in refs:
-        value = _workflow_call.input_ref_value(values, ref)
-        captured = _workflow_descendants.capture_stochastic_consumer(value)
+    source_entries = tuple((ref, _workflow_call.input_ref_value(values, ref)) for ref in refs)
+    captured_consumers = _workflow_descendants.capture_stochastic_consumers(
+        tuple(value for _ref, value in source_entries)
+    )
+
+    for (ref, _value), captured in zip(source_entries, captured_consumers, strict=True):
         root = captured.root
 
         root_identity = id(root)
