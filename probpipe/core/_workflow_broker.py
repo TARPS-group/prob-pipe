@@ -45,6 +45,14 @@ class _ManagedUnitStatus(Enum):
     CANCELLED = "cancelled"
 
 
+class _BrokerLifecycle(Enum):
+    """Lifecycle of one owned automatic-key broker."""
+
+    OPEN = "open"
+    FINALIZING = "finalizing"
+    SEALED = "sealed"
+
+
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _PROBPIPE_DISTRIBUTION_PROVIDER_ABI = "probpipe.distribution/v1"
 
@@ -132,7 +140,6 @@ class _ManagedClaimRegistry:
 
     by_unit: dict[tuple[Any, ...], _ManagedUnitClaimState] = field(default_factory=dict)
     by_token: dict[ManagedWorkItemToken, _ManagedUnitClaimState] = field(default_factory=dict)
-    closed: bool = False
     lock: Any = field(default_factory=Lock, repr=False)
 
 
@@ -145,6 +152,9 @@ class _ManagedAttemptContext:
     attempt: ManagedAttemptState
     workflow_frame: _workflow_context._WorkflowFrame
     next_child_ordinal: int = 0
+    claimed_effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
+        default_factory=dict
+    )
     successful_effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
         default_factory=dict
     )
@@ -187,11 +197,19 @@ class _ManagedAttemptContext:
             frame=self.frame,
             attempt=self.attempt,
         )
+        self.claimed_effects_by_identity[_effect_identity(effect)] = effect
 
     def accept_successful_effects(self, effects: tuple[ManagedEffectClaim, ...]) -> None:
         """Collect effects from child scopes that completed successfully."""
         for effect in effects:
             identity = _effect_identity(effect)
+            claimed = self.claimed_effects_by_identity.get(identity)
+            if claimed is None:
+                self.claim_effect(effect)
+            elif claimed != effect:
+                raise RuntimeError(
+                    "a stochastic event identity completed with a different effect plan"
+                )
             existing = self.successful_effects_by_identity.get(identity)
             if existing is not None and existing != effect:
                 raise RuntimeError(
@@ -202,7 +220,9 @@ class _ManagedAttemptContext:
     def publish_successful_effects(self) -> None:
         """Promote successful effects through the containing broker boundary."""
         self.parent_broker.accept_successful_managed_effects(
-            tuple(self.successful_effects_by_identity.values())
+            tuple(self.successful_effects_by_identity.values()),
+            frame=self.frame,
+            attempt=self.attempt,
         )
 
 
@@ -287,6 +307,10 @@ class _AutomaticKeyBroker:
     _invocation: _workflow_context._WorkflowInvocation | None = None
     _managed_attempt: _ManagedAttemptContext | None = None
     _managed_claims: _ManagedClaimRegistry = field(default_factory=_ManagedClaimRegistry)
+    _lifecycle: _BrokerLifecycle = field(
+        default=_BrokerLifecycle.OPEN,
+        init=False,
+    )
     _execution_contracts: list[WorkflowRngExecutionContract] = field(default_factory=list)
     _effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(default_factory=dict)
     _effects_lock: Any = field(default_factory=Lock, repr=False)
@@ -299,7 +323,7 @@ class _AutomaticKeyBroker:
     def key_for(self, plan: StochasticEffectPlan) -> PRNGKey:
         """Return the workflow-owned key for one planned effect."""
         _workflow_context._assert_workflow_admission(self._frame)
-        self._assert_managed_registry_open()
+        self._assert_broker_open()
         if not isinstance(plan, StochasticEffectPlan):
             raise TypeError("automatic key requests require a StochasticEffectPlan")
         source_id, unit_id = _validate_stochastic_event(plan.event)
@@ -363,7 +387,7 @@ class _AutomaticKeyBroker:
     def register_managed_work_items(self, items: tuple[ManagedWorkItem, ...]) -> None:
         """Register every issued unit token before request submission."""
         with self._managed_claims.lock:
-            self._assert_managed_registry_open_unlocked()
+            self._assert_broker_open_unlocked()
             for item in items:
                 unit = item.frame.unit_segment
                 existing = self._managed_claims.by_unit.get(unit)
@@ -383,11 +407,13 @@ class _AutomaticKeyBroker:
 
     def record_execution_contract(self, contract: WorkflowRngExecutionContract) -> None:
         """Record one distinct capability-checked route for later diagnostics."""
+        self._assert_broker_open()
         if contract not in self._execution_contracts:
             self._execution_contracts.append(contract)
 
     def set_requested_execution(self, dispatch: str, workflow_kind: str) -> None:
         """Record the public execution request independently from its resolution."""
+        self._assert_broker_open()
         requested = (dispatch, workflow_kind)
         existing = (self._requested_dispatch, self._requested_workflow_kind)
         if existing != (None, None) and existing != requested:
@@ -396,6 +422,7 @@ class _AutomaticKeyBroker:
 
     def set_callable_anchor(self, anchor: CallableAnchor) -> None:
         """Attach the immutable definition anchor for this public Function."""
+        self._assert_broker_open()
         if self._callable_anchor is not None:
             raise RuntimeError("a Function broker already has a callable anchor")
         self._callable_anchor = anchor
@@ -407,6 +434,7 @@ class _AutomaticKeyBroker:
         attempt: ManagedAttemptState | None,
     ) -> None:
         """Validate one local/transported effect against captured replay state."""
+        self._assert_broker_open()
         if self._replay_state is not None:
             self._replay_state.claim_effect(effect, attempt=attempt)
             return
@@ -422,6 +450,7 @@ class _AutomaticKeyBroker:
 
     def validate_replay_effect_plan(self, plan: StochasticEffectPlan) -> None:
         """Reject direct-operation plan drift before committing its occurrence."""
+        self._assert_broker_open()
         if self._replay_state is not None:
             self._replay_state.validate_effect_plan(plan)
             return
@@ -444,11 +473,14 @@ class _AutomaticKeyBroker:
     ) -> None:
         """Retain retry compatibility state before deriving a managed key."""
         with self._managed_claims.lock:
+            self._assert_broker_open_unlocked()
             state = self._managed_claims.by_token.get(attempt.work_item_token)
             if (
                 state is None
                 or state.frame != frame
+                or state.status is not _ManagedUnitStatus.ACTIVE
                 or state.active_attempt != attempt.attempt_token
+                or state.active_transport != "local"
             ):
                 raise RuntimeError("managed effect claim does not own the active attempt")
             identity = _effect_identity(effect)
@@ -465,52 +497,89 @@ class _AutomaticKeyBroker:
     def accept_successful_managed_effects(
         self,
         effects: tuple[ManagedEffectClaim, ...],
+        *,
+        frame: ManagedUnitFrame,
+        attempt: ManagedAttemptState,
     ) -> None:
         """Make effects from one successful managed boundary recipe-visible."""
-        with self._effects_lock:
+        with self._managed_claims.lock:
+            self._assert_broker_open_unlocked()
+            if not isinstance(effects, tuple) or any(
+                not isinstance(effect, ManagedEffectClaim) for effect in effects
+            ):
+                raise TypeError("successful managed effects must be an effect tuple")
+            state = self._managed_claims.by_token.get(attempt.work_item_token)
+            if (
+                state is None
+                or state.frame != frame
+                or state.status is not _ManagedUnitStatus.ACTIVE
+                or state.active_attempt != attempt.attempt_token
+                or state.active_transport != "local"
+            ):
+                raise RuntimeError("successful managed effects do not own the active attempt")
+            identities = set()
             for effect in effects:
-                existing = self._effects_by_identity.get(_effect_identity(effect))
-                if existing is not None and existing != effect:
+                identity = _effect_identity(effect)
+                if identity in identities:
+                    raise RuntimeError("successful managed effects contain a duplicate identity")
+                identities.add(identity)
+                if (
+                    identity not in state.active_effect_identities
+                    or state.effect_claims_by_identity.get(identity) != effect
+                ):
                     raise RuntimeError(
-                        "a stochastic event identity completed with a different effect plan"
+                        "a successful managed effect was not claimed by its active attempt"
                     )
-            self._effects_by_identity.update(
-                (_effect_identity(effect), effect) for effect in effects
-            )
+            with self._effects_lock:
+                for effect in effects:
+                    existing = self._effects_by_identity.get(_effect_identity(effect))
+                    if existing is not None and existing != effect:
+                        raise RuntimeError(
+                            "a stochastic event identity completed with a different effect plan"
+                        )
+                self._effects_by_identity.update(
+                    (_effect_identity(effect), effect) for effect in effects
+                )
 
-    def _publish_managed_effects(self) -> None:
+    def _publish_managed_effects(
+        self,
+        effects: tuple[ManagedEffectClaim, ...],
+    ) -> None:
         """Publish this successful broker's effects to its managed attempt."""
+        self._assert_broker_finalizing()
         if self._managed_attempt is None:
             return
-        with self._effects_lock:
-            effects = tuple(self._effects_by_identity.values())
         self._managed_attempt.accept_successful_effects(effects)
 
-    def _mark_replay_effects_successful(self) -> None:
+    def _mark_replay_effects_successful(
+        self,
+        effects: tuple[ManagedEffectClaim, ...],
+    ) -> None:
         """Confirm the recipe-visible effects of a successful replay root."""
+        self._assert_broker_finalizing()
         if (
             self._replay_state is None
             or self._invocation is None
             or self._invocation.occurrence_path != self._replay_state.occurrence_path
         ):
             return
-        with self._effects_lock:
-            effects = tuple(self._effects_by_identity.values())
         self._replay_state.mark_successful_effects(effects)
 
     def _record_effect(self, effect: ManagedEffectClaim) -> None:
         identity = _effect_identity(effect)
-        with self._effects_lock:
-            existing = self._effects_by_identity.get(identity)
-            if existing is not None:
-                if existing != effect:
+        with self._managed_claims.lock:
+            self._assert_broker_open_unlocked()
+            with self._effects_lock:
+                existing = self._effects_by_identity.get(identity)
+                if existing is not None:
+                    if existing != effect:
+                        raise RuntimeError(
+                            "a stochastic event identity was retried with a different effect plan"
+                        )
                     raise RuntimeError(
-                        "a stochastic event identity was retried with a different effect plan"
+                        "one stochastic broker scope duplicated a stochastic effect claim"
                     )
-                raise RuntimeError(
-                    "one stochastic broker scope duplicated a stochastic effect claim"
-                )
-            self._effects_by_identity[identity] = effect
+                self._effects_by_identity[identity] = effect
 
     def validate_managed_attempt_preflight(
         self,
@@ -540,6 +609,7 @@ class _AutomaticKeyBroker:
     def finish_managed_attempt(self, attempt: ManagedAttemptState) -> None:
         """Join one active attempt without discarding its retry claims."""
         with self._managed_claims.lock:
+            self._assert_broker_open_unlocked()
             state = self._managed_claims.by_token.get(attempt.work_item_token)
             if (
                 state is None
@@ -557,7 +627,7 @@ class _AutomaticKeyBroker:
     def cancel_unstarted_managed_items(self, items: tuple[ManagedWorkItem, ...]) -> None:
         """Cancel issued items that were never submitted after an earlier failure."""
         with self._managed_claims.lock:
-            self._assert_managed_registry_open_unlocked()
+            self._assert_broker_open_unlocked()
             for item in items:
                 state = self._managed_claims.by_token[item.frame.token]
                 if state.status is _ManagedUnitStatus.ISSUED:
@@ -588,11 +658,10 @@ class _AutomaticKeyBroker:
                     "a Function workflow scope cannot exit before all managed work items join"
                 )
 
-    def close_managed_claim_registry(self) -> None:
-        """Atomically join-check and close this broker's managed registry."""
+    def _begin_finalization(self) -> tuple[ManagedEffectClaim, ...]:
+        """Join-check, freeze successful effects, and enter finalization."""
         with self._managed_claims.lock:
-            if self._managed_claims.closed:
-                return
+            self._assert_broker_open_unlocked()
             if any(
                 state.active_attempt is not None
                 or state.status not in {_ManagedUnitStatus.JOINED, _ManagedUnitStatus.CANCELLED}
@@ -601,16 +670,42 @@ class _AutomaticKeyBroker:
                 raise RuntimeError(
                     "a stochastic broker scope cannot exit before all managed work items join"
                 )
-            self._managed_claims.closed = True
+            self._lifecycle = _BrokerLifecycle.FINALIZING
+            with self._effects_lock:
+                return tuple(self._effects_by_identity.values())
 
-    def _assert_managed_registry_open(self) -> None:
-        """Reject broker operations after the Function scope has closed."""
+    def _seal_finalization(self) -> None:
+        """Permanently seal a broker after its terminal publication attempt."""
         with self._managed_claims.lock:
-            self._assert_managed_registry_open_unlocked()
+            if self._lifecycle is not _BrokerLifecycle.FINALIZING:
+                raise RuntimeError("only a finalizing stochastic broker can be sealed")
+            self._lifecycle = _BrokerLifecycle.SEALED
 
-    def _assert_managed_registry_open_unlocked(self) -> None:
-        if self._managed_claims.closed:
-            raise RuntimeError("the managed workflow broker is closed")
+    def _finalize(self, *, successful: bool) -> None:
+        """Seal one owned scope and publish only its pre-seal success snapshot."""
+        effects = self._begin_finalization()
+        try:
+            if successful:
+                self._publish_managed_effects(effects)
+                self._mark_replay_effects_successful(effects)
+        finally:
+            self._seal_finalization()
+
+    def _assert_broker_open(self) -> None:
+        """Reject broker activity after scope finalization starts."""
+        with self._managed_claims.lock:
+            self._assert_broker_open_unlocked()
+
+    def _assert_broker_open_unlocked(self) -> None:
+        if self._lifecycle is _BrokerLifecycle.FINALIZING:
+            raise RuntimeError("the stochastic workflow broker is finalizing")
+        if self._lifecycle is _BrokerLifecycle.SEALED:
+            raise RuntimeError("the stochastic workflow broker is sealed")
+
+    def _assert_broker_finalizing(self) -> None:
+        with self._managed_claims.lock:
+            if self._lifecycle is not _BrokerLifecycle.FINALIZING:
+                raise RuntimeError("terminal broker effects can only be published while finalizing")
 
     def _validate_managed_attempt_unlocked(
         self,
@@ -618,7 +713,7 @@ class _AutomaticKeyBroker:
         frame: ManagedUnitFrame,
     ) -> _ManagedUnitClaimState:
         """Validate one attempt while the managed registry lock is held."""
-        self._assert_managed_registry_open_unlocked()
+        self._assert_broker_open_unlocked()
         state = self._managed_claims.by_token.get(attempt.work_item_token)
         if state is None:
             raise RuntimeError("managed work-item token was not registered by its parent")
@@ -695,7 +790,7 @@ class _AutomaticKeyBroker:
     def abort_remote_managed_attempt(self, attempt: ManagedAttemptState) -> None:
         """Release one exact remote reservation after failure or cancellation."""
         with self._managed_claims.lock:
-            self._assert_managed_registry_open_unlocked()
+            self._assert_broker_open_unlocked()
             state = self._managed_claims.by_token.get(attempt.work_item_token)
             if state is None or attempt.attempt_token not in state.seen_attempts:
                 raise RuntimeError("remote managed attempt was not reserved by this parent")
@@ -715,6 +810,7 @@ class _AutomaticKeyBroker:
 
     def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
         """Validate and atomically reconcile one reserved remote report."""
+        self._assert_broker_open()
         replay_transaction = (
             nullcontext(None)
             if self._replay_state is None
@@ -803,7 +899,7 @@ class _AutomaticKeyBroker:
         frame: ManagedUnitFrame,
     ) -> _ManagedUnitClaimState:
         """Return the exact active remote reservation while the registry is locked."""
-        self._assert_managed_registry_open_unlocked()
+        self._assert_broker_open_unlocked()
         state = self._managed_claims.by_token.get(attempt.work_item_token)
         if state is None or state.frame != frame:
             raise RuntimeError("remote managed unit is not registered by this parent")
@@ -824,11 +920,14 @@ class _AutomaticKeyBroker:
     ) -> _workflow_context._WorkflowInvocation:
         """Claim one retry-stable child occurrence for a managed attempt."""
         with self._managed_claims.lock:
+            self._assert_broker_open_unlocked()
             state = self._managed_claims.by_token.get(frame.token)
             if (
                 state is None
                 or state.frame.unit_segment != frame.unit_segment
+                or state.status is not _ManagedUnitStatus.ACTIVE
                 or state.active_attempt != attempt.attempt_token
+                or state.active_transport != "local"
             ):
                 raise RuntimeError("managed child claim does not own the active attempt")
             if child_ordinal < len(state.child_invocations):
@@ -922,7 +1021,7 @@ class _RemoteManagedParent:
         default_factory=dict,
         repr=False,
     )
-    
+
     def __post_init__(self) -> None:
         for effect in self.envelope.retry_effects:
             identity = _effect_identity(effect)
@@ -936,10 +1035,9 @@ class _RemoteManagedParent:
                     "for the same stochastic event identity"
                 )
             raise RuntimeError(
-                "remote retry envelope contains a duplicated stochastic "
-                "event identity"
+                "remote retry envelope contains a duplicated stochastic event identity"
             )
-            
+
     def _claim_managed_child(
         self,
         *,
@@ -986,10 +1084,23 @@ class _RemoteManagedParent:
     def accept_successful_managed_effects(
         self,
         effects: tuple[ManagedEffectClaim, ...],
+        *,
+        frame: ManagedUnitFrame,
+        attempt: ManagedAttemptState,
     ) -> None:
         """Mark the worker effects that crossed a successful scope boundary."""
+        if frame != self.envelope.frame or attempt != self.attempt:
+            raise RuntimeError("successful remote effects do not own their envelope")
+        if not isinstance(effects, tuple) or any(
+            not isinstance(effect, ManagedEffectClaim) for effect in effects
+        ):
+            raise TypeError("successful remote effects must be an effect tuple")
+        identities = set()
         for effect in effects:
             identity = _effect_identity(effect)
+            if identity in identities:
+                raise RuntimeError("successful remote effects contain a duplicate identity")
+            identities.add(identity)
             if self.effect_claims_by_identity.get(identity) != effect:
                 raise RuntimeError("a successful remote effect was not claimed by its attempt")
             self.successful_effects_by_identity[identity] = effect
@@ -1014,12 +1125,10 @@ def _installed_stochastic_broker_scope(
     try:
         yield broker
     except BaseException:
-        broker.close_managed_claim_registry()
+        broker._finalize(successful=False)
         raise
     else:
-        broker.close_managed_claim_registry()
-        broker._publish_managed_effects()
-        broker._mark_replay_effects_successful()
+        broker._finalize(successful=True)
     finally:
         _ACTIVE_AUTOMATIC_KEY_BROKER.reset(token)
 

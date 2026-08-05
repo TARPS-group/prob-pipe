@@ -640,6 +640,65 @@ class TestManagedPayloadValidation:
 
 
 class TestManagedRetryClaims:
+    def test_child_exports_preseal_snapshot_while_parent_is_open(self, monkeypatch):
+        operation_brokers = []
+        lifecycle_pairs = []
+        original_publish = broker_mod._AutomaticKeyBroker._publish_managed_effects
+
+        def observe_publish(broker, effects):
+            if broker._managed_attempt is not None:
+                lifecycle_pairs.append(
+                    (
+                        broker._lifecycle,
+                        broker._managed_attempt.parent_broker._lifecycle,
+                        effects,
+                    )
+                )
+            return original_publish(broker, effects)
+
+        monkeypatch.setattr(
+            broker_mod._AutomaticKeyBroker,
+            "_publish_managed_effects",
+            observe_publish,
+        )
+
+        def claim_inside_operation():
+            with broker_mod._managed_stochastic_scope() as operation_broker:
+                operation_brokers.append(operation_broker)
+                _claim_automatic_words()
+
+        request = make_request(calls=[{}], func=claim_inside_operation)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            execution_mod.execute_many(request)
+
+        assert len(operation_brokers) == 1
+        assert len(lifecycle_pairs) == 1
+        child_status, parent_status, effects = lifecycle_pairs[0]
+        assert child_status is broker_mod._BrokerLifecycle.FINALIZING
+        assert parent_status is broker_mod._BrokerLifecycle.OPEN
+        assert len(effects) == 1
+        assert operation_brokers[0]._lifecycle is broker_mod._BrokerLifecycle.SEALED
+        with pytest.raises(RuntimeError, match="finalizing"):
+            operation_brokers[0]._publish_managed_effects(effects)
+
+    def test_failed_operation_scope_seals_without_publishing_effects(self):
+        operation_brokers = []
+
+        def fail_after_claim():
+            with broker_mod._managed_stochastic_scope() as operation_broker:
+                operation_brokers.append(operation_broker)
+                _claim_automatic_words()
+                raise RuntimeError("operation failed")
+
+        request = make_request(calls=[{}], func=fail_after_claim)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            with pytest.raises(RuntimeError, match="operation failed"):
+                execution_mod.execute_many(request)
+            assert parent._effects_by_identity == {}
+
+        assert len(operation_brokers) == 1
+        assert operation_brokers[0]._lifecycle is broker_mod._BrokerLifecycle.SEALED
+
     def test_managed_operation_broker_closes_before_publishing_effects(self):
         operation_brokers = []
 
@@ -659,7 +718,7 @@ class TestManagedRetryClaims:
 
         assert len(operation_brokers) == 1
 
-    def test_successful_managed_operation_broker_is_closed(self):
+    def test_successful_managed_operation_broker_is_sealed(self):
         operation_brokers = []
 
         def capture_operation_broker():
@@ -671,7 +730,78 @@ class TestManagedRetryClaims:
             execution_mod.execute_many(request)
 
         assert len(operation_brokers) == 1
-        assert operation_brokers[0]._managed_claims.closed
+        assert operation_brokers[0]._lifecycle is broker_mod._BrokerLifecycle.SEALED
+
+    def test_successful_effects_require_the_active_claiming_attempt(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+        claimed = make_managed_effect()
+        unclaimed = replace(
+            claimed,
+            stochastic_source_id=("source-group", 1),
+        )
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            parent.begin_managed_attempt(attempt, item.frame)
+            parent.claim_managed_effect(
+                claimed,
+                frame=item.frame,
+                attempt=attempt,
+            )
+            stale_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+
+            with pytest.raises(RuntimeError, match="active attempt"):
+                parent.accept_successful_managed_effects(
+                    (claimed,),
+                    frame=item.frame,
+                    attempt=stale_attempt,
+                )
+            assert parent._effects_by_identity == {}
+
+            with pytest.raises(RuntimeError, match="was not claimed"):
+                parent.accept_successful_managed_effects(
+                    (unclaimed,),
+                    frame=item.frame,
+                    attempt=attempt,
+                )
+            assert parent._effects_by_identity == {}
+
+            parent.accept_successful_managed_effects(
+                (claimed,),
+                frame=item.frame,
+                attempt=attempt,
+            )
+            parent.finish_managed_attempt(attempt)
+
+        assert tuple(parent._effects_by_identity.values()) == (claimed,)
+
+    def test_sealed_parent_rejects_successful_effect_injection(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+        effect = make_managed_effect()
+        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+
+        with workflow_run(seed=17):
+            with broker_mod._function_stochastic_scope() as parent:
+                parent.register_managed_work_items(request.work_items)
+                parent.begin_managed_attempt(attempt, item.frame)
+                parent.claim_managed_effect(
+                    effect,
+                    frame=item.frame,
+                    attempt=attempt,
+                )
+                parent.finish_managed_attempt(attempt)
+
+            with pytest.raises(RuntimeError, match="sealed"):
+                parent.accept_successful_managed_effects(
+                    (effect,),
+                    frame=item.frame,
+                    attempt=attempt,
+                )
+
+        assert parent._effects_by_identity == {}
 
     def test_same_work_item_token_retries_the_same_child_claim(self):
         request = make_request(calls=[{}], func=_claim_automatic_words)
@@ -945,15 +1075,15 @@ class TestManagedRetryClaims:
 
         assert state.status is outcome
 
-    def test_function_scope_closes_its_managed_registry(self):
+    def test_function_scope_seals_its_broker(self):
         request = make_request(calls=[{}], func=lambda: None)
 
         with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
             execution_mod.execute_many(request)
 
-        with pytest.raises(RuntimeError, match="closed"):
+        with pytest.raises(RuntimeError, match="sealed"):
             parent.register_managed_work_items(request.work_items)
-        with pytest.raises(RuntimeError, match="closed"):
+        with pytest.raises(RuntimeError, match="sealed"):
             parent.begin_managed_attempt(
                 managed_mod.ManagedAttemptState.create(request.work_items[0].frame.token),
                 request.work_items[0].frame,

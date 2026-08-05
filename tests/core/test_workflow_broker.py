@@ -11,6 +11,7 @@ from unittest.mock import patch
 import jax
 import pytest
 
+import probpipe.core._workflow_broker as broker_mod
 import probpipe.core._workflow_context as context_mod
 import probpipe.core._workflow_managed as managed_mod
 from probpipe import (
@@ -358,13 +359,13 @@ class TestAutomaticKeyOwnership:
 
         commit.assert_called_once_with("operation")
 
-    def test_new_operation_scope_closes_its_managed_registry(self):
+    def test_new_operation_scope_seals_its_broker(self):
         with workflow_run(seed=7), _managed_stochastic_scope() as operation_broker:
-            assert not operation_broker._managed_claims.closed
+            assert operation_broker._lifecycle is broker_mod._BrokerLifecycle.OPEN
 
-        assert operation_broker._managed_claims.closed
+        assert operation_broker._lifecycle is broker_mod._BrokerLifecycle.SEALED
 
-    def test_new_operation_scope_closes_after_body_error(self):
+    def test_new_operation_scope_seals_after_body_error(self):
         with (
             workflow_run(seed=7),
             pytest.raises(ValueError, match="body failed"),
@@ -372,17 +373,30 @@ class TestAutomaticKeyOwnership:
         ):
             raise ValueError("body failed")
 
-        assert operation_broker._managed_claims.closed
+        assert operation_broker._lifecycle is broker_mod._BrokerLifecycle.SEALED
 
-    def test_reused_operation_scope_does_not_close_its_owner(self):
+    def test_reused_operation_scope_does_not_seal_its_owner(self):
         with workflow_run(seed=7), _function_stochastic_scope() as function_broker:
             with _managed_stochastic_scope() as reused_broker:
                 assert reused_broker is function_broker
 
-            assert not function_broker._managed_claims.closed
+            assert function_broker._lifecycle is broker_mod._BrokerLifecycle.OPEN
             _resolve_automatic_key(None, _plan())
 
-        assert function_broker._managed_claims.closed
+        assert function_broker._lifecycle is broker_mod._BrokerLifecycle.SEALED
+
+    def test_sealed_broker_rejects_new_effect_before_occurrence_commit(self):
+        with workflow_run(seed=7):
+            with _function_stochastic_scope() as broker:
+                pass
+
+            with (
+                patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+                pytest.raises(RuntimeError, match="sealed"),
+            ):
+                broker.key_for(_plan())
+
+        commit.assert_not_called()
 
     def test_operation_scope_rejects_unjoined_nested_items(self):
         items = managed_mod.make_managed_work_items(
