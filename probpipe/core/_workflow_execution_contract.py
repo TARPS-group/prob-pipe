@@ -24,6 +24,18 @@ WorkflowTransport = Literal[
     "prefect_flow",
 ]
 
+_SUPPORTED_ROUTES: frozenset[tuple[WorkflowEvaluator, WorkflowTransport]] = frozenset(
+    {
+        ("rowwise", "local_inline"),
+        ("rowwise", "local_thread"),
+        ("rowwise", "prefect_task"),
+        ("rowwise", "prefect_flow"),
+        ("jax_vmap", "local_inline"),
+        ("jax_vmap", "prefect_task"),
+        ("jax_vmap", "prefect_flow"),
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class WorkflowRngExecutionContract:
@@ -47,29 +59,15 @@ def make_execution_contract(
     stochastic_plan: _workflow_plan.StochasticPlan | None,
 ) -> WorkflowRngExecutionContract:
     """Build the exact execution contract for one planned route."""
-    provider_abis = {_PROVIDER_ABI}
-    descendant_adapter_abis: set[str] = set()
-    if stochastic_plan is not None:
-        for group in stochastic_plan.source_groups:
-            for consumer in group.consumers:
-                descriptor = consumer.descendant_descriptor
-                if descriptor is None:
-                    continue
-                labels = dict(_iter_descriptor_fields(descriptor))
-                provider = labels.get("provider_abi")
-                if isinstance(provider, str):
-                    provider_abis.add(provider)
-                adapter = labels.get("descendant_adapter_abi")
-                if isinstance(adapter, str):
-                    descendant_adapter_abis.add(adapter)
+    provider_abis, descendant_adapter_abis = _stochastic_plan_abis(stochastic_plan)
     return WorkflowRngExecutionContract(
         abi=_EXECUTION_CONTRACT_ABI,
         evaluator=evaluator,
         transport=transport,
         rng_abi=_RNG_ABI,
         sampling_abi=_SAMPLING_ABI,
-        provider_abis=tuple(sorted(provider_abis)),
-        descendant_adapter_abis=tuple(sorted(descendant_adapter_abis)),
+        provider_abis=provider_abis,
+        descendant_adapter_abis=descendant_adapter_abis,
         jax_key_abi=_JAX_KEY_ABI,
         plan_evaluation_mode=(None if stochastic_plan is None else stochastic_plan.evaluation_mode),
     )
@@ -89,12 +87,14 @@ def supports_execution_contract(
         or contract.rng_abi != _RNG_ABI
         or contract.sampling_abi != _SAMPLING_ABI
         or contract.jax_key_abi != _JAX_KEY_ABI
-        or contract.evaluator not in ("rowwise", "jax_vmap")
-        or contract.transport
-        not in ("local_inline", "local_thread", "prefect_task", "prefect_flow")
+        or not isinstance(contract.evaluator, str)
+        or not isinstance(contract.transport, str)
+        or (contract.evaluator, contract.transport) not in _SUPPORTED_ROUTES
     ):
         return False
-    if _PROVIDER_ABI not in contract.provider_abis:
+    if not _is_canonical_abi_sequence(contract.provider_abis):
+        return False
+    if not _is_canonical_abi_sequence(contract.descendant_adapter_abis):
         return False
     if any(
         provider not in (_PROVIDER_ABI, _DESCENDANT_PROVIDER_ABI)
@@ -103,15 +103,24 @@ def supports_execution_contract(
         return False
     if any(adapter != _DESCENDANT_ADAPTER_ABI for adapter in contract.descendant_adapter_abis):
         return False
+    has_descendant_provider = _DESCENDANT_PROVIDER_ABI in contract.provider_abis
+    has_descendant_adapter = _DESCENDANT_ADAPTER_ABI in contract.descendant_adapter_abis
+    if has_descendant_provider != has_descendant_adapter:
+        return False
+    try:
+        expected = make_execution_contract(
+            evaluator=contract.evaluator,
+            transport=contract.transport,
+            stochastic_plan=stochastic_plan,
+        )
+    except (TypeError, ValueError):
+        return False
+    if contract != expected:
+        return False
     if contract.evaluator == "jax_vmap":
         if not jax_structure_supported:
             return False
-        evaluation_mode = (
-            contract.plan_evaluation_mode
-            if stochastic_plan is None
-            else stochastic_plan.evaluation_mode
-        )
-        if evaluation_mode not in (None, "sampled"):
+        if contract.plan_evaluation_mode not in (None, "sampled"):
             return False
         if stochastic_plan is not None and any(
             group.execution_mode != "sampled" for group in stochastic_plan.source_groups
@@ -162,3 +171,41 @@ def _iter_descriptor_fields(value: Any):
             yield value[0], value[1]
         for item in value:
             yield from _iter_descriptor_fields(item)
+
+
+def _stochastic_plan_abis(
+    stochastic_plan: _workflow_plan.StochasticPlan | None,
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    provider_abis = {_PROVIDER_ABI}
+    descendant_adapter_abis: set[str] = set()
+    sampling_abis: set[str] = set()
+    if stochastic_plan is not None:
+        for group in stochastic_plan.source_groups:
+            for consumer in group.consumers:
+                descriptor = consumer.descendant_descriptor
+                if descriptor is None:
+                    continue
+                for label, value in _iter_descriptor_fields(descriptor):
+                    if label not in ("sampling_abi", "provider_abi", "descendant_adapter_abi"):
+                        continue
+                    if not isinstance(value, str):
+                        raise TypeError(f"descriptor {label} must be a string")
+                    if not value:
+                        raise ValueError(f"descriptor {label} must not be empty")
+                    if label == "sampling_abi":
+                        sampling_abis.add(value)
+                    elif label == "provider_abi":
+                        provider_abis.add(value)
+                    else:
+                        descendant_adapter_abis.add(value)
+    if sampling_abis and sampling_abis != {_SAMPLING_ABI}:
+        raise ValueError("stochastic plan requires an unsupported sampling ABI")
+    return tuple(sorted(provider_abis)), tuple(sorted(descendant_adapter_abis))
+
+
+def _is_canonical_abi_sequence(values: object) -> bool:
+    if not isinstance(values, tuple):
+        return False
+    if any(not isinstance(value, str) or not value for value in values):
+        return False
+    return values == tuple(sorted(set(values)))

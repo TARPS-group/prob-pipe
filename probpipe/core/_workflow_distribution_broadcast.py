@@ -437,6 +437,7 @@ def _broadcast_enumerate(
             transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
             stochastic_plan=stochastic_plan,
         ),
+        stochastic_plan=stochastic_plan,
     )
     results = _workflow_execution.execute_many(request)
 
@@ -507,6 +508,7 @@ def _broadcast_sample(
             transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
             stochastic_plan=stochastic_plan,
         ),
+        stochastic_plan=stochastic_plan,
     )
     results = _workflow_execution.execute_many(request)
 

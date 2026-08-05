@@ -18,7 +18,7 @@ try:
 except ImportError:
     task = flow = None
 
-from . import _workflow_broker, _workflow_context, _workflow_execution_contract
+from . import _workflow_broker, _workflow_context, _workflow_execution_contract, _workflow_plan
 from ._workflow_managed import (
     ManagedAttemptState,
     ManagedClaimReport,
@@ -64,21 +64,25 @@ class WorkflowExecutionRequest:
     work_items: tuple[ManagedWorkItem, ...]
     execution: WorkflowExecutionConfig
     contract: _workflow_execution_contract.WorkflowRngExecutionContract | None = None
+    stochastic_plan: _workflow_plan.StochasticPlan | None = None
 
 
 def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     """Execute all call dictionaries using the configured dispatch mode."""
     if not request.work_items:
         return []
-    if _workflow_context._workflow_side_effects_forbidden():
-        return [request.func(**item.call_values()) for item in request.work_items]
     contract = request.contract or _workflow_execution_contract.make_execution_contract(
         evaluator="rowwise",
         transport=_workflow_execution_contract.transport_for_execution_mode(request.execution.mode),
-        stochastic_plan=None,
+        stochastic_plan=request.stochastic_plan,
     )
-    if not _workflow_execution_contract.supports_execution_contract(contract, None):
+    if not _workflow_execution_contract.supports_execution_contract(
+        contract,
+        request.stochastic_plan,
+    ):
         raise RuntimeError("workflow execution route does not satisfy the RNG contract")
+    if _workflow_context._workflow_side_effects_forbidden():
+        return [request.func(**item.call_values()) for item in request.work_items]
     _workflow_broker._record_active_execution_contract(contract)
     parent_frame = _workflow_context._capture_active_workflow_frame()
     parent_broker = _workflow_broker._capture_active_broker()

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import FrozenInstanceError, replace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
+import tensorflow_probability.substrates.jax.bijectors as tfb
 
 from probpipe import (
     EmpiricalDistribution,
@@ -17,6 +18,7 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordArray,
+    TransformedDistribution,
     sample,
     workflow_run,
 )
@@ -24,6 +26,7 @@ from probpipe.core import (
     _workflow_broker,
     _workflow_call,
     _workflow_context,
+    _workflow_execution,
     _workflow_execution_contract,
 )
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
@@ -113,6 +116,179 @@ class TestExecutionContract:
             replace(contract, jax_key_abi="unknown"),
             plan,
         )
+
+    def test_contract_is_bound_to_the_exact_plan_requirements(self):
+        sampled_plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
+        exact_plan = _plan(
+            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="x")},
+            n_broadcast_samples=8,
+        )
+        transformed_plan = _plan(
+            {
+                "x": TransformedDistribution(
+                    Normal(loc=0.0, scale=1.0, name="base"),
+                    tfb.Exp(),
+                )
+            }
+        )
+        sampled_contract = _workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport="local_inline",
+            stochastic_plan=sampled_plan,
+        )
+        transformed_contract = _workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport="local_inline",
+            stochastic_plan=transformed_plan,
+        )
+
+        assert not _workflow_execution_contract.supports_execution_contract(
+            sampled_contract,
+            exact_plan,
+        )
+        assert not _workflow_execution_contract.supports_execution_contract(
+            sampled_contract,
+            transformed_plan,
+        )
+        assert not _workflow_execution_contract.supports_execution_contract(
+            transformed_contract,
+            sampled_plan,
+        )
+
+    def test_nested_descriptor_fields_are_collected_without_overwrite(self):
+        plan = _plan(
+            {
+                "x": TransformedDistribution(
+                    Normal(loc=0.0, scale=1.0, name="base"),
+                    tfb.Exp(),
+                )
+            }
+        )
+        group = plan.source_groups[0]
+        consumer = group.consumers[0]
+        hidden_provider = "example.hidden/provider-v1"
+        wrapped_consumer = replace(
+            consumer,
+            descendant_descriptor=(
+                "test-wrapper",
+                ("provider_abi", hidden_provider),
+                ("nested", consumer.descendant_descriptor),
+            ),
+        )
+        wrapped_plan = replace(
+            plan,
+            source_groups=(replace(group, consumers=(wrapped_consumer,)),),
+        )
+
+        contract = _workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport="local_inline",
+            stochastic_plan=wrapped_plan,
+        )
+
+        assert hidden_provider in contract.provider_abis
+        assert not _workflow_execution_contract.supports_execution_contract(
+            contract,
+            wrapped_plan,
+        )
+
+    def test_noncanonical_abi_sequences_and_cross_field_drift_are_rejected(self):
+        plan = _plan(
+            {
+                "x": TransformedDistribution(
+                    Normal(loc=0.0, scale=1.0, name="base"),
+                    tfb.Exp(),
+                )
+            }
+        )
+        contract = _workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport="local_inline",
+            stochastic_plan=plan,
+        )
+        direct_plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
+        direct_contract = _workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport="local_inline",
+            stochastic_plan=direct_plan,
+        )
+
+        invalid_transformed_contracts = (
+            replace(contract, provider_abis=contract.provider_abis * 2),
+            replace(contract, provider_abis=tuple(reversed(contract.provider_abis))),
+            replace(
+                contract,
+                descendant_adapter_abis=contract.descendant_adapter_abis * 2,
+            ),
+            replace(contract, plan_evaluation_mode="exact"),
+            replace(contract, descendant_adapter_abis=()),
+        )
+        assert all(
+            not _workflow_execution_contract.supports_execution_contract(item, plan)
+            for item in invalid_transformed_contracts
+        )
+        assert not _workflow_execution_contract.supports_execution_contract(
+            replace(
+                direct_contract,
+                descendant_adapter_abis=("probpipe.transformed_descendant/v1",),
+            ),
+            direct_plan,
+        )
+
+    @pytest.mark.parametrize(
+        ("evaluator", "transport", "expected"),
+        [
+            pytest.param("rowwise", "local_inline", True),
+            pytest.param("rowwise", "local_thread", True),
+            pytest.param("rowwise", "prefect_task", True),
+            pytest.param("rowwise", "prefect_flow", True),
+            pytest.param("jax_vmap", "local_inline", True),
+            pytest.param("jax_vmap", "local_thread", False),
+            pytest.param("jax_vmap", "prefect_task", True),
+            pytest.param("jax_vmap", "prefect_flow", True),
+        ],
+    )
+    def test_evaluator_transport_support_matrix(self, evaluator, transport, expected):
+        plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
+        contract = _workflow_execution_contract.make_execution_contract(
+            evaluator=evaluator,
+            transport=transport,
+            stochastic_plan=plan,
+        )
+
+        assert _workflow_execution_contract.supports_execution_contract(contract, plan) is expected
+
+    def test_execution_request_rejects_plan_drift_before_broker_or_user_code(self):
+        sampled_plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
+        exact_plan = _plan(
+            {"x": EmpiricalDistribution(jnp.asarray([1.0, 2.0]), name="x")},
+            n_broadcast_samples=8,
+        )
+        contract = _workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport="local_inline",
+            stochastic_plan=sampled_plan,
+        )
+        func = Mock(return_value=1)
+        request = _workflow_execution.WorkflowExecutionRequest(
+            func=func,
+            work_items=_workflow_execution.make_managed_work_items(
+                [{"x": 1}],
+                unit_segments=(_workflow_execution.point_unit_segment(),),
+            ),
+            execution=_workflow_execution.WorkflowExecutionConfig(mode="sequential"),
+            contract=contract,
+            stochastic_plan=exact_plan,
+        )
+
+        with (
+            patch.object(_workflow_broker, "_record_active_execution_contract") as record,
+            pytest.raises(RuntimeError, match="RNG contract"),
+        ):
+            _workflow_execution.execute_many(request)
+
+        func.assert_not_called()
+        record.assert_not_called()
 
 
 class TestJaxWorkflowGuards:
