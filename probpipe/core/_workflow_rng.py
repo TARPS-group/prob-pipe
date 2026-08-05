@@ -41,7 +41,7 @@ class _JAXKeyAdapterState(threading.local):
 _JAX_KEY_ADAPTER_STATE = _JAXKeyAdapterState()
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class RandomEventIdentity:
     """Canonical structural identity for one workflow random event."""
 

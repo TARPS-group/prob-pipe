@@ -37,7 +37,7 @@ _WorkflowContextKind = Literal[
 ]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _WorkflowOwner:
     """Operational owner of one workflow frame."""
 
@@ -46,7 +46,7 @@ class _WorkflowOwner:
     task_ref: weakref.ReferenceType[asyncio.Task[Any]] | None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _WorkflowFrame:
     """Immutable context binding for one explicit or provisional run."""
 
@@ -92,7 +92,7 @@ class _EventClaims:
     lock: Any = field(default_factory=Lock, repr=False)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _WorkflowInvocation:
     """One committed stochastic occurrence in an active workflow frame."""
 

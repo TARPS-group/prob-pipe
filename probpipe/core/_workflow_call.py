@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, get_type_hints
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowSignatureInfo:
     """Cached signature metadata for one wrapped Function."""
 
@@ -25,7 +25,7 @@ class WorkflowSignatureInfo:
     has_var_keyword: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowCallOptions:
     """Optional call-time workflow controls outside user kwargs."""
 
@@ -33,7 +33,7 @@ class WorkflowCallOptions:
     include_inputs: bool | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowCallOverrides:
     """Resolved call-time workflow settings consumed by ``Function``."""
 
@@ -41,7 +41,7 @@ class WorkflowCallOverrides:
     include_inputs: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResolvedWorkflowCall:
     """Fully resolved signature-shaped values plus workflow overrides."""
 
@@ -49,7 +49,7 @@ class ResolvedWorkflowCall:
     overrides: WorkflowCallOverrides
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowInputRef:
     """Reference to one planner-visible value in a resolved Python call."""
 

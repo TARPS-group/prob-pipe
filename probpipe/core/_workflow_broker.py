@@ -43,7 +43,7 @@ class _RandomEventPlan(Protocol):
     logical_unit_id: _StructuralRngId
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _DirectRandomEventPlan:
     """Singleton source/unit event used outside lifting."""
 
@@ -69,7 +69,7 @@ def _validate_stochastic_event(
     return source_id, unit_id
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StochasticEffectPlan:
     """Immutable plan anchor for one automatic-key request."""
 
@@ -198,7 +198,7 @@ def _effect_identity(effect: ManagedEffectClaim) -> tuple[Any, ...]:
     )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _BrokerRecipeSnapshot:
     """Successful-invocation data safe for canonical recipe serialization."""
 

@@ -15,7 +15,7 @@ from ._workflow_rng import (
 _MANAGED_WORK_ITEM_ABI = "probpipe.managed_work_item/v1"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedWorkItemToken:
     """Opaque, serializable ownership token for one managed work item."""
 
@@ -31,7 +31,7 @@ class ManagedWorkItemToken:
         return cls(uuid.uuid4().bytes)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedUnitFrame:
     """Canonical logical-unit binding transported with one work item."""
 
@@ -48,7 +48,7 @@ class ManagedUnitFrame:
             raise ValueError(f"unsupported managed work-item ABI: {self.derivation_abi!r}")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedWorkItem:
     """One immutable, canonically indexed workflow evaluation request."""
 
@@ -70,7 +70,7 @@ class ManagedWorkItem:
         return dict(self.values)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedAttemptState:
     """Operational identity for one execution attempt of a work item."""
 
@@ -87,7 +87,7 @@ class ManagedAttemptState:
         return cls(work_item_token=work_item_token, attempt_token=uuid.uuid4().bytes)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedParentEnvelope:
     """Serializable root and occurrence authority for one remote managed unit."""
 
@@ -124,7 +124,7 @@ class ManagedParentEnvelope:
             raise TypeError("managed retry effects must be an effect tuple")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedEffectClaim:
     """Serializable descriptor of one automatic stochastic effect claim."""
 
@@ -162,7 +162,7 @@ class ManagedEffectClaim:
             raise TypeError("managed effect descendant descriptors must be tuples or None")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedClaimReport:
     """Serializable claim summary returned by one remote attempt."""
 
@@ -191,7 +191,7 @@ class ManagedClaimReport:
             raise ValueError("managed successful effects must be claimed by the same attempt")
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedPrefectPayload:
     """Serializable Prefect task input for an initial or coordinated attempt."""
 
@@ -199,7 +199,7 @@ class ManagedPrefectPayload:
     parent: ManagedParentEnvelope | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ManagedExecutionOutcome:
     """Serializable Prefect result with operational claim information."""
 

@@ -35,7 +35,7 @@ _PROBPIPE_REPLAY_ABI = "probpipe.replay/v1"
 _MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _ExpectedReplayEvent:
     """Validated event identity and its parallel effect anchor."""
 
@@ -343,7 +343,7 @@ class _RemoteReplayClaims:
         self.claimed.add(encoded)
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class _ReplayFunctionCall:
     """Root-call controller supplied to Function.__call__."""
 

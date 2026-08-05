@@ -25,7 +25,7 @@ WorkflowTransport = Literal[
 ]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowRngExecutionContract:
     """Canonical evaluator/transport and stochastic ABI requirements."""
 

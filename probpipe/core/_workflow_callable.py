@@ -35,7 +35,7 @@ class _UnsupportedDefinition(TypeError):
     """Internal signal that a definition cannot be encoded strongly."""
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CallableAnchor:
     """Immutable supported-or-closed callable replay anchor."""
 

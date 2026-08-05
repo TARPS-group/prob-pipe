@@ -46,7 +46,7 @@ WorkflowExecutionMode = Literal[
 ]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowExecutionConfig:
     """Resolved execution settings for ordered workflow calls."""
 
@@ -56,7 +56,7 @@ class WorkflowExecutionConfig:
     prefect_task_runner: Any | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowExecutionRequest:
     """A backend-neutral request to execute ordered managed work items."""
 

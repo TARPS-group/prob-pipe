@@ -42,7 +42,7 @@ _FORWARD_OVERRIDE_NAMES = (
 )
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class CapturedStochasticConsumer:
     """One live root plus a canonical and executable descendant path."""
 
