@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import FrozenInstanceError
 from unittest.mock import patch
 
 import jax
 import pytest
 
-from probpipe import Function, Normal, workflow_run
+from probpipe import (
+    Function,
+    Normal,
+    UnmanagedConcurrentWorkflowEntryError,
+    workflow_run,
+)
 from probpipe.core._workflow_broker import (
     StochasticEffectPlan,
     _function_stochastic_scope,
@@ -179,6 +187,51 @@ class TestAutomaticKeyOwnership:
 
         assert _key_words(first) != _key_words(second)
         assert urandom.call_count == 2
+
+    def test_materialized_broker_rejects_a_copied_async_task(self):
+        async def run():
+            with workflow_run(seed=7), _function_stochastic_scope() as active_broker:
+                first = _key_words(_resolve_automatic_key(None, _plan(0)))
+
+                async def child():
+                    return _resolve_automatic_key(None, _plan(1))
+
+                with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
+                    await asyncio.create_task(child())
+
+                assert len(active_broker._effects_by_identity) == 1
+                second = _key_words(_resolve_automatic_key(None, _plan(1)))
+                return first, second
+
+        actual = asyncio.run(run())
+
+        with workflow_run(seed=7), _function_stochastic_scope():
+            expected = (
+                _key_words(_resolve_automatic_key(None, _plan(0))),
+                _key_words(_resolve_automatic_key(None, _plan(1))),
+            )
+
+        assert actual == expected
+
+    def test_materialized_broker_rejects_a_copied_thread(self):
+        with workflow_run(seed=7), _function_stochastic_scope() as active_broker:
+            first = _key_words(_resolve_automatic_key(None, _plan(0)))
+            copied = copy_context()
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(copied.run, _resolve_automatic_key, None, _plan(1))
+                with pytest.raises(UnmanagedConcurrentWorkflowEntryError):
+                    future.result()
+
+            assert len(active_broker._effects_by_identity) == 1
+            second = _key_words(_resolve_automatic_key(None, _plan(1)))
+
+        with workflow_run(seed=7), _function_stochastic_scope():
+            expected = (
+                _key_words(_resolve_automatic_key(None, _plan(0))),
+                _key_words(_resolve_automatic_key(None, _plan(1))),
+            )
+
+        assert (first, second) == expected
 
 
 class TestFunctionBrokerScope:

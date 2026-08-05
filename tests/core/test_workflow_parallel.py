@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import pickle
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields
-from threading import Event
+from threading import Barrier, Event
 from typing import ClassVar
 from unittest.mock import patch
 
@@ -490,7 +491,13 @@ class TestManagedRetryClaims:
 
         with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
             parent.register_managed_work_items(request.work_items)
+            root_frame = context_mod._capture_active_workflow_frame()
+            assert root_frame is not None
             with (
+                context_mod._managed_work_item_scope(
+                    root_frame,
+                    item.frame.unit_segment,
+                ),
                 broker_mod._managed_work_item_stochastic_scope(
                     parent,
                     item.frame,
@@ -632,6 +639,157 @@ class TestManagedRetryClaims:
         with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
             with pytest.raises(RuntimeError, match="stop"):
                 execution_mod.execute_many(request)
+            parent.assert_managed_items_joined(request.work_items)
+
+    def test_cancelled_item_cannot_start_later(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+
+        with workflow_run(seed=17):
+            parent = broker_mod._AutomaticKeyBroker(
+                "invocation",
+                _frame=context_mod._capture_active_workflow_frame(),
+            )
+            parent.register_managed_work_items(request.work_items)
+            parent.cancel_unstarted_managed_items(request.work_items)
+
+            with pytest.raises(RuntimeError, match="cancelled"):
+                parent.begin_managed_attempt(attempt, item.frame)
+
+    def test_cancel_and_begin_race_has_one_terminal_outcome(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        barrier = Barrier(2)
+
+        with workflow_run(seed=17):
+            parent = broker_mod._AutomaticKeyBroker(
+                "invocation",
+                _frame=context_mod._capture_active_workflow_frame(),
+            )
+            parent.register_managed_work_items(request.work_items)
+
+            def cancel():
+                barrier.wait()
+                parent.cancel_unstarted_managed_items(request.work_items)
+
+            def begin():
+                barrier.wait()
+                try:
+                    parent.begin_managed_attempt(attempt, item.frame)
+                except RuntimeError as error:
+                    assert "cancelled" in str(error)
+                    return "cancelled"
+                parent.finish_managed_attempt(attempt)
+                return "joined"
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                cancel_future = pool.submit(cancel)
+                begin_future = pool.submit(begin)
+                cancel_future.result()
+                outcome = begin_future.result()
+
+            state = parent._managed_claims.by_token[item.frame.token]
+
+        assert state.status == outcome
+
+    def test_function_scope_closes_its_managed_registry(self):
+        request = make_request(calls=[{}], func=lambda: None)
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            execution_mod.execute_many(request)
+
+        with pytest.raises(RuntimeError, match="closed"):
+            parent.register_managed_work_items(request.work_items)
+        with pytest.raises(RuntimeError, match="closed"):
+            parent.begin_managed_attempt(
+                managed_mod.ManagedAttemptState.create(request.work_items[0].frame.token),
+                request.work_items[0].frame,
+            )
+
+    def test_frame_mismatch_fails_before_attempt_reservation(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        wrong_frame = managed_mod.ManagedUnitFrame(
+            unit_segment=managed_mod.sweep_unit_segment((0,)),
+            token=item.frame.token,
+        )
+
+        with workflow_run(seed=17):
+            parent = broker_mod._AutomaticKeyBroker(
+                "invocation",
+                _frame=context_mod._capture_active_workflow_frame(),
+            )
+            parent.register_managed_work_items(request.work_items)
+
+            with (
+                pytest.raises(RuntimeError, match="frame does not match"),
+                broker_mod._managed_work_item_stochastic_scope(
+                    parent,
+                    wrong_frame,
+                    attempt=attempt,
+                ),
+            ):
+                pass
+
+            with (
+                context_mod._managed_work_item_scope(
+                    context_mod._capture_active_workflow_frame(),
+                    item.frame.unit_segment,
+                ),
+                broker_mod._managed_work_item_stochastic_scope(
+                    parent,
+                    item.frame,
+                    attempt=attempt,
+                ),
+            ):
+                pass
+
+    def test_missing_managed_frame_does_not_reserve_attempt(self):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        parent = broker_mod._AutomaticKeyBroker("invocation")
+        parent.register_managed_work_items(request.work_items)
+        with (
+            pytest.raises(RuntimeError, match="active workflow frame"),
+            broker_mod._managed_work_item_stochastic_scope(parent, item.frame),
+        ):
+            pass
+
+        parent.cancel_unstarted_managed_items(request.work_items)
+        parent.assert_managed_items_joined(request.work_items)
+
+    def test_context_installation_failure_releases_attempt(self, monkeypatch):
+        request = make_request(calls=[{}], func=lambda: None)
+        item = request.work_items[0]
+
+        class BrokenContextVar:
+            def set(self, value):
+                del value
+                raise RuntimeError("context installation failed")
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            root_frame = context_mod._capture_active_workflow_frame()
+            assert root_frame is not None
+            with context_mod._managed_work_item_scope(
+                root_frame,
+                item.frame.unit_segment,
+            ):
+                monkeypatch.setattr(
+                    broker_mod,
+                    "_ACTIVE_MANAGED_ATTEMPT",
+                    BrokenContextVar(),
+                )
+                with (
+                    pytest.raises(RuntimeError, match="context installation failed"),
+                    broker_mod._managed_work_item_stochastic_scope(parent, item.frame),
+                ):
+                    pass
+
             parent.assert_managed_items_joined(request.work_items)
 
 

@@ -31,6 +31,7 @@ from ._workflow_managed import (
 
 _OccurrenceKind = Literal["invocation", "operation"]
 _StructuralRngId = _RandomEventPath
+_ManagedUnitStatus = Literal["registered", "active", "joined", "cancelled"]
 
 _DISTRIBUTION_SAMPLING_ABI = "probpipe.distribution_sampling/v1"
 _PROBPIPE_DISTRIBUTION_PROVIDER_ABI = "probpipe.distribution/v1"
@@ -106,8 +107,7 @@ class _ManagedUnitClaimState:
     effect_claims_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
         default_factory=dict
     )
-    has_started: bool = False
-    joined: bool = False
+    status: _ManagedUnitStatus = "registered"
 
 
 @dataclass(slots=True)
@@ -116,6 +116,7 @@ class _ManagedClaimRegistry:
 
     by_unit: dict[tuple[Any, ...], _ManagedUnitClaimState] = field(default_factory=dict)
     by_token: dict[ManagedWorkItemToken, _ManagedUnitClaimState] = field(default_factory=dict)
+    closed: bool = False
     lock: Any = field(default_factory=Lock, repr=False)
 
 
@@ -259,6 +260,8 @@ class _AutomaticKeyBroker:
 
     def key_for(self, plan: StochasticEffectPlan) -> PRNGKey:
         """Return the workflow-owned key for one planned effect."""
+        _workflow_context._assert_workflow_admission(self._frame)
+        self._assert_managed_registry_open()
         if not isinstance(plan, StochasticEffectPlan):
             raise TypeError("automatic key requests require a StochasticEffectPlan")
         source_id, unit_id = _validate_stochastic_event(plan.event)
@@ -311,6 +314,7 @@ class _AutomaticKeyBroker:
     def register_managed_work_items(self, items: tuple[ManagedWorkItem, ...]) -> None:
         """Register every issued unit token before request submission."""
         with self._managed_claims.lock:
+            self._assert_managed_registry_open_unlocked()
             for item in items:
                 unit = item.frame.unit_segment
                 existing = self._managed_claims.by_unit.get(unit)
@@ -455,50 +459,61 @@ class _AutomaticKeyBroker:
                 )
             self._effects_by_identity[identity] = effect
 
-    def begin_managed_attempt(self, attempt: ManagedAttemptState) -> ManagedUnitFrame:
+    def validate_managed_attempt_preflight(
+        self,
+        attempt: ManagedAttemptState,
+        frame: ManagedUnitFrame,
+    ) -> None:
+        """Validate an attempt and frame without reserving registry state."""
+        with self._managed_claims.lock:
+            self._validate_managed_attempt_unlocked(attempt, frame)
+
+    def begin_managed_attempt(
+        self,
+        attempt: ManagedAttemptState,
+        frame: ManagedUnitFrame,
+    ) -> ManagedUnitFrame:
         """Admit one fresh attempt for a previously registered work-item token."""
         with self._managed_claims.lock:
-            state = self._managed_claims.by_token.get(attempt.work_item_token)
-            if state is None:
-                raise RuntimeError("managed work-item token was not registered by its parent")
-            if state.active_attempt is not None:
-                raise RuntimeError(
-                    "a managed work-item token already has an active attempt; "
-                    "duplicate or concurrent attempts are not allowed"
-                )
-            if attempt.attempt_token in state.seen_attempts:
-                raise RuntimeError("a managed attempt token cannot be reused")
+            state = self._validate_managed_attempt_unlocked(attempt, frame)
             state.seen_attempts.add(attempt.attempt_token)
             state.active_attempt = attempt.attempt_token
             state.active_effect_identities.clear()
-            state.has_started = True
-            state.joined = False
+            state.status = "active"
             return state.frame
 
     def finish_managed_attempt(self, attempt: ManagedAttemptState) -> None:
         """Join one active attempt without discarding its retry claims."""
         with self._managed_claims.lock:
             state = self._managed_claims.by_token.get(attempt.work_item_token)
-            if state is None or state.active_attempt != attempt.attempt_token:
+            if (
+                state is None
+                or state.status != "active"
+                or state.active_attempt != attempt.attempt_token
+            ):
                 raise RuntimeError("managed work-item attempt is not active")
             state.active_attempt = None
             state.active_effect_identities.clear()
-            state.joined = True
+            state.status = "joined"
 
     def cancel_unstarted_managed_items(self, items: tuple[ManagedWorkItem, ...]) -> None:
-        """Join issued items that were never submitted after an earlier failure."""
+        """Cancel issued items that were never submitted after an earlier failure."""
         with self._managed_claims.lock:
+            self._assert_managed_registry_open_unlocked()
             for item in items:
                 state = self._managed_claims.by_token[item.frame.token]
-                if not state.has_started:
-                    state.joined = True
+                if state.status == "registered":
+                    state.status = "cancelled"
 
     def assert_managed_items_joined(self, items: tuple[ManagedWorkItem, ...]) -> None:
         """Require all issued request tokens to be inactive and joined."""
         with self._managed_claims.lock:
             for item in items:
                 state = self._managed_claims.by_token[item.frame.token]
-                if state.active_attempt is not None or not state.joined:
+                if state.active_attempt is not None or state.status not in {
+                    "joined",
+                    "cancelled",
+                }:
                     raise RuntimeError(
                         "managed workflow request exited before all work items joined"
                     )
@@ -507,12 +522,58 @@ class _AutomaticKeyBroker:
         """Prevent the parent Function broker from releasing active ownership."""
         with self._managed_claims.lock:
             if any(
-                state.active_attempt is not None or not state.joined
+                state.active_attempt is not None or state.status not in {"joined", "cancelled"}
                 for state in self._managed_claims.by_unit.values()
             ):
                 raise RuntimeError(
                     "a Function workflow scope cannot exit before all managed work items join"
                 )
+
+    def close_managed_claim_registry(self) -> None:
+        """Atomically join-check and close this Function broker's registry."""
+        with self._managed_claims.lock:
+            if self._managed_claims.closed:
+                return
+            if any(
+                state.active_attempt is not None or state.status not in {"joined", "cancelled"}
+                for state in self._managed_claims.by_unit.values()
+            ):
+                raise RuntimeError(
+                    "a Function workflow scope cannot exit before all managed work items join"
+                )
+            self._managed_claims.closed = True
+
+    def _assert_managed_registry_open(self) -> None:
+        """Reject broker operations after the Function scope has closed."""
+        with self._managed_claims.lock:
+            self._assert_managed_registry_open_unlocked()
+
+    def _assert_managed_registry_open_unlocked(self) -> None:
+        if self._managed_claims.closed:
+            raise RuntimeError("the managed workflow broker is closed")
+
+    def _validate_managed_attempt_unlocked(
+        self,
+        attempt: ManagedAttemptState,
+        frame: ManagedUnitFrame,
+    ) -> _ManagedUnitClaimState:
+        """Validate one attempt while the managed registry lock is held."""
+        self._assert_managed_registry_open_unlocked()
+        state = self._managed_claims.by_token.get(attempt.work_item_token)
+        if state is None:
+            raise RuntimeError("managed work-item token was not registered by its parent")
+        if state.frame != frame:
+            raise RuntimeError("managed work-item frame does not match its registered token")
+        if state.status == "cancelled":
+            raise RuntimeError("a cancelled managed work item cannot start an attempt")
+        if state.status == "active" or state.active_attempt is not None:
+            raise RuntimeError(
+                "a managed work-item token already has an active attempt; "
+                "duplicate or concurrent attempts are not allowed"
+            )
+        if attempt.attempt_token in state.seen_attempts:
+            raise RuntimeError("a managed attempt token cannot be reused")
+        return state
 
     def prepare_remote_managed_unit(
         self,
@@ -520,9 +581,12 @@ class _AutomaticKeyBroker:
     ) -> ManagedParentEnvelope:
         """Materialize parent authority after a remote task requests randomness."""
         with self._managed_claims.lock:
+            self._assert_managed_registry_open_unlocked()
             state = self._managed_claims.by_token.get(frame.token)
             if state is None or state.frame.unit_segment != frame.unit_segment:
                 raise RuntimeError("remote managed unit is not registered by this parent")
+            if state.status == "cancelled":
+                raise RuntimeError("a cancelled managed work item has no parent authority")
             retry_effects = tuple(state.effect_claims_by_identity.values())
         parent_invocation = self._ensure_parent_invocation()
         from . import _workflow_replay
@@ -541,16 +605,18 @@ class _AutomaticKeyBroker:
     def accept_remote_claim_report(self, report: ManagedClaimReport) -> None:
         """Join and reconcile the canonical child namespace from a remote attempt."""
         with self._managed_claims.lock:
+            self._assert_managed_registry_open_unlocked()
             state = self._managed_claims.by_token.get(report.frame.token)
             if state is None or state.frame.unit_segment != report.frame.unit_segment:
                 raise RuntimeError("remote claim report does not own a registered unit")
+            if state.status == "cancelled":
+                raise RuntimeError("a cancelled managed work item cannot report claims")
             if state.active_attempt is not None:
                 raise RuntimeError("remote claim report conflicts with an active local attempt")
             if report.attempt.attempt_token in state.seen_attempts:
                 raise RuntimeError("a managed attempt token cannot be reused")
             state.seen_attempts.add(report.attempt.attempt_token)
-            state.has_started = True
-            state.joined = True
+            state.status = "joined"
 
             for effect in report.effects:
                 identity = _effect_identity(effect)
@@ -772,10 +838,10 @@ def _function_stochastic_scope(
     try:
         yield broker
     except BaseException:
-        broker.assert_all_managed_items_joined()
+        broker.close_managed_claim_registry()
         raise
     else:
-        broker.assert_all_managed_items_joined()
+        broker.close_managed_claim_registry()
         broker._publish_managed_effects()
         broker._mark_replay_effects_successful()
     finally:
@@ -934,30 +1000,39 @@ def _managed_work_item_stochastic_scope(
     """Install one retry attempt and an empty child-broker slot."""
     if attempt is None:
         attempt = ManagedAttemptState.create(frame.token)
-    registered_frame = parent_broker.begin_managed_attempt(attempt)
-    if registered_frame != frame:
-        raise RuntimeError("managed work-item frame does not match its registered token")
+    parent_broker.validate_managed_attempt_preflight(attempt, frame)
     workflow_frame = _workflow_context._capture_active_workflow_frame()
     if workflow_frame is None:
         raise RuntimeError("managed randomness requires an active workflow frame")
+    with workflow_frame.state.lock:
+        managed_unit_segment = workflow_frame.state.managed_unit_segment
+    if managed_unit_segment != frame.unit_segment:
+        raise RuntimeError("managed randomness requires the matching active managed workflow frame")
     state = _ManagedAttemptContext(
         parent_broker=parent_broker,
         frame=frame,
         attempt=attempt,
         workflow_frame=workflow_frame,
     )
-    attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(state)
-    broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
+    parent_broker.begin_managed_attempt(attempt, frame)
+    attempt_token: Token[_ManagedAttemptContext | None] | None = None
+    broker_token: Token[_AutomaticKeyBroker | None] | None = None
     try:
+        attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(state)
+        broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
         yield attempt
     except BaseException:
         raise
     else:
         state.publish_successful_effects()
     finally:
-        _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
-        _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)
-        parent_broker.finish_managed_attempt(attempt)
+        try:
+            if broker_token is not None:
+                _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
+            if attempt_token is not None:
+                _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)
+        finally:
+            parent_broker.finish_managed_attempt(attempt)
 
 
 def _resolve_automatic_key(
