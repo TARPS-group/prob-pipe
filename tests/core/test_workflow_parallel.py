@@ -5,7 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields, replace
 from threading import Barrier, Event
 from typing import ClassVar
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import jax
 import pytest
@@ -280,6 +280,24 @@ class TestExecutionRequestShape:
         assert not isinstance(seen["request"].func, Function)
         assert seen["request"].execution.mode == "sequential"
 
+    def test_execute_many_revalidates_work_items_before_broker_or_callable(self):
+        func = Mock(return_value=2)
+        request = make_request(calls=[{"x": 1}], func=func)
+        object.__setattr__(
+            request.work_items[0],
+            "values",
+            (("x", 1), ("x", 2)),
+        )
+
+        with (
+            patch.object(broker_mod, "_record_active_execution_contract") as record,
+            pytest.raises(ValueError, match="duplicate parameter names"),
+        ):
+            execution_mod.execute_many(request)
+
+        func.assert_not_called()
+        record.assert_not_called()
+
 
 class TestManagedPayloadValidation:
     @pytest.mark.parametrize(
@@ -340,6 +358,26 @@ class TestManagedPayloadValidation:
                 id="work-item-values",
             ),
             pytest.param(
+                lambda: managed_mod.ManagedWorkItem(
+                    index=0,
+                    values=(("x", 1), ("x", 2)),
+                    frame=make_managed_frame(),
+                ),
+                ValueError,
+                "duplicate parameter names",
+                id="work-item-duplicate-values",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedWorkItem(
+                    index=0,
+                    values=(("x", 1),),
+                    frame=object(),
+                ),
+                TypeError,
+                "valid managed unit frame",
+                id="work-item-frame",
+            ),
+            pytest.param(
                 lambda: managed_mod.ManagedAttemptState(
                     work_item_token=managed_mod.ManagedWorkItemToken(b"w" * 16),
                     attempt_token=b"short",
@@ -393,6 +431,30 @@ class TestManagedPayloadValidation:
                 TypeError,
                 "retry effects must be an effect tuple",
                 id="parent-retry-effects",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedParentEnvelope(
+                    root_words=(0, 1),
+                    parent_occurrence_path=(("invocation", 0),),
+                    frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
+                    replay_expected_effects=(make_managed_effect(), make_managed_effect()),
+                ),
+                ValueError,
+                "replay expectations contains a duplicate effect identity",
+                id="parent-duplicate-replay-effects",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedParentEnvelope(
+                    root_words=(0, 1),
+                    parent_occurrence_path=(("invocation", 0),),
+                    frame=make_managed_frame(),
+                    attempt=make_managed_attempt(),
+                    retry_effects=(make_managed_effect(), make_managed_effect()),
+                ),
+                ValueError,
+                "retry effects contains a duplicate effect identity",
+                id="parent-duplicate-retry-effects",
             ),
             pytest.param(
                 lambda: managed_mod.ManagedParentEnvelope(
@@ -631,6 +693,71 @@ class TestManagedPayloadValidation:
                 ValueError,
                 "must have equal lengths",
                 id="work-item-count",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedExecutionOutcome(index=True),
+                TypeError,
+                "outcome indexes must be non-negative integers",
+                id="outcome-index",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedExecutionOutcome(
+                    index=0,
+                    coordination_required=1,
+                ),
+                TypeError,
+                "coordination flag must be a bool",
+                id="outcome-coordination-flag",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedExecutionOutcome(index=0, error="failure"),
+                TypeError,
+                "outcome errors must be Exception values or None",
+                id="outcome-error",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedExecutionOutcome(index=0, report=object()),
+                TypeError,
+                "outcome reports must be claim reports or None",
+                id="outcome-report",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedExecutionOutcome(
+                    index=0,
+                    error=RuntimeError("failure"),
+                    coordination_required=True,
+                ),
+                ValueError,
+                "coordination outcomes cannot contain errors",
+                id="outcome-coordination-error",
+            ),
+            pytest.param(
+                lambda: managed_mod.ManagedExecutionOutcome(
+                    index=0,
+                    value="success",
+                    error=RuntimeError("failure"),
+                ),
+                ValueError,
+                "error outcomes cannot contain successful values",
+                id="outcome-error-value",
+            ),
+            pytest.param(
+                lambda: managed_mod.sweep_unit_segment(()),
+                ValueError,
+                "at least one coordinate",
+                id="empty-sweep-segment",
+            ),
+            pytest.param(
+                lambda: managed_mod.sweep_unit_segment((True,)),
+                TypeError,
+                "non-boolean integers",
+                id="bool-sweep-coordinate",
+            ),
+            pytest.param(
+                lambda: managed_mod.sweep_unit_segment((-1,)),
+                ValueError,
+                "non-negative",
+                id="negative-sweep-coordinate",
             ),
         ],
     )
@@ -1852,6 +1979,158 @@ class TestPrefectMapping:
         )
 
         assert execution_mod.map_task(request) == [2, 3, 4]
+
+    def test_prefect_worker_revalidates_pickled_payload_before_callable(self):
+        item = make_request(calls=[{"x": 1}]).work_items[0]
+        payload = managed_mod.ManagedPrefectPayload(
+            item=item,
+            attempt=managed_mod.ManagedAttemptState.create(item.frame.token),
+        )
+        object.__setattr__(item, "values", (("x", 1), ("x", 2)))
+        transported = pickle.loads(pickle.dumps(payload))
+        func = Mock(return_value=2)
+
+        with pytest.raises(ValueError, match="duplicate parameter names"):
+            execution_mod._execute_prefect_payload(func, transported)
+
+        func.assert_not_called()
+
+    def test_prefect_worker_revalidates_nested_parent_authority_before_callable(self):
+        item = make_request(calls=[{"x": 1}]).work_items[0]
+        attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+        effect = make_managed_effect()
+        payload = managed_mod.ManagedPrefectPayload(
+            item=item,
+            attempt=attempt,
+            parent=managed_mod.ManagedParentEnvelope(
+                root_words=(0, 17),
+                parent_occurrence_path=(("invocation", 0),),
+                frame=item.frame,
+                attempt=attempt,
+                retry_effects=(effect,),
+            ),
+        )
+        object.__setattr__(effect, "sample_shape", (-1,))
+        transported = pickle.loads(pickle.dumps(payload))
+        func = Mock(return_value=2)
+
+        with pytest.raises(ValueError, match="sample shape dimensions must be non-negative"):
+            execution_mod._execute_prefect_payload(func, transported)
+
+        func.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "violation",
+        [
+            "index",
+            "frame",
+            "attempt",
+            "effect",
+            "missing-report",
+            "rootless-coordination",
+            "authorized-coordination",
+        ],
+    )
+    def test_parent_revalidates_pickled_outcome_against_payload(self, violation):
+        request = make_request(calls=[{"x": 1}])
+        item = request.work_items[0]
+
+        class ReturningTask:
+            def __init__(self, outcome):
+                self.outcome = outcome
+
+            def map(self, **kwargs_by_param):
+                assert kwargs_by_param["payload"]
+                return [FakeFuture(self.outcome)]
+
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            parent.register_managed_work_items(request.work_items)
+            attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+            envelope = parent.reserve_remote_managed_attempt(
+                item.frame,
+                attempt,
+                parent_authority=violation == "authorized-coordination",
+            )
+            payload = managed_mod.ManagedPrefectPayload(
+                item=item,
+                attempt=attempt,
+                parent=envelope,
+            )
+            report = managed_mod.ManagedClaimReport(item.frame, attempt, 0)
+            outcome = managed_mod.ManagedExecutionOutcome(
+                index=item.index,
+                value=2,
+                report=report,
+            )
+            if violation == "index":
+                object.__setattr__(outcome, "index", 9)
+            elif violation == "frame":
+                other_frame = managed_mod.ManagedUnitFrame(
+                    unit_segment=managed_mod.sweep_unit_segment((9,)),
+                    token=item.frame.token,
+                )
+                object.__setattr__(
+                    outcome,
+                    "report",
+                    managed_mod.ManagedClaimReport(other_frame, attempt, 0),
+                )
+            elif violation == "attempt":
+                other_attempt = managed_mod.ManagedAttemptState.create(item.frame.token)
+                object.__setattr__(
+                    outcome,
+                    "report",
+                    managed_mod.ManagedClaimReport(item.frame, other_attempt, 0),
+                )
+            elif violation == "effect":
+                effect = make_managed_effect()
+                effect_report = managed_mod.ManagedClaimReport(
+                    item.frame,
+                    attempt,
+                    0,
+                    effects=(effect,),
+                )
+                object.__setattr__(effect, "sample_shape", (-1,))
+                object.__setattr__(outcome, "report", effect_report)
+            elif violation == "missing-report":
+                object.__setattr__(outcome, "report", None)
+            elif violation == "rootless-coordination":
+                object.__setattr__(outcome, "value", None)
+                object.__setattr__(outcome, "coordination_required", True)
+                object.__setattr__(
+                    outcome,
+                    "report",
+                    managed_mod.ManagedClaimReport(item.frame, attempt, 1),
+                )
+            else:
+                object.__setattr__(outcome, "value", None)
+                object.__setattr__(outcome, "coordination_required", True)
+
+            transported = pickle.loads(pickle.dumps(outcome))
+            state = parent._managed_claims.by_token[item.frame.token]
+            before = (
+                state.status,
+                state.active_attempt,
+                dict(state.effect_claims_by_identity),
+                tuple(state.child_invocations),
+                dict(parent._effects_by_identity),
+            )
+
+            try:
+                with pytest.raises(
+                    (RuntimeError, ValueError),
+                    match=r"outcome|report|coordination|sample shape",
+                ):
+                    execution_mod._run_prefect_payloads(ReturningTask(transported), [payload])
+
+                assert (
+                    state.status,
+                    state.active_attempt,
+                    dict(state.effect_claims_by_identity),
+                    tuple(state.child_invocations),
+                    dict(parent._effects_by_identity),
+                ) == before
+            finally:
+                parent.abort_remote_managed_attempt(attempt)
 
     def test_prefect_worker_failure_aborts_parent_reservation(self, monkeypatch):
         class CrashingFuture:

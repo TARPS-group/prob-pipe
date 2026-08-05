@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from time import sleep
 from typing import Any, Literal
 
@@ -25,6 +25,9 @@ from ._workflow_managed import (
     ManagedExecutionOutcome,
     ManagedPrefectPayload,
     ManagedWorkItem,
+    _validated_managed_execution_outcome_snapshot,
+    _validated_managed_prefect_payload_snapshot,
+    _validated_managed_work_item_snapshot,
     lifted_evaluation_unit_segment,
     make_managed_work_items,
     point_unit_segment,
@@ -71,6 +74,12 @@ def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     """Execute all call dictionaries using the configured dispatch mode."""
     if not request.work_items:
         return []
+    request = replace(
+        request,
+        work_items=tuple(
+            _validated_managed_work_item_snapshot(item) for item in request.work_items
+        ),
+    )
     contract = request.contract or _workflow_execution_contract.make_execution_contract(
         evaluator="rowwise",
         transport=_workflow_execution_contract.transport_for_execution_mode(request.execution.mode),
@@ -213,19 +222,65 @@ def _run_prefect_payloads(
 ) -> list[ManagedExecutionOutcome]:
     """Submit one attempt for each payload and collect its managed outcome."""
     _workflow_context._guard_managed_submission()
-    futures = list(run_func.map(payload=payloads))
-    if len(futures) != len(payloads):
+    validated_payloads = [
+        _validated_managed_prefect_payload_snapshot(payload) for payload in payloads
+    ]
+    payloads_by_index = {payload.item.index: payload for payload in validated_payloads}
+    if len(payloads_by_index) != len(validated_payloads):
+        raise RuntimeError("Prefect payloads contain duplicate managed outcome indexes")
+    futures = list(run_func.map(payload=validated_payloads))
+    if len(futures) != len(validated_payloads):
         raise RuntimeError("Prefect returned a different number of futures than payloads")
     outcomes = []
     errors = []
-    for payload, future in zip(payloads, futures, strict=True):
+    for submitted_payload, future in zip(validated_payloads, futures, strict=True):
         try:
-            outcomes.append(future.result())
+            outcome = _validated_managed_execution_outcome_snapshot(future.result())
+            payload = payloads_by_index.get(outcome.index)
+            if payload is None:
+                raise RuntimeError(
+                    "Prefect outcome index does not belong to the submitted payload batch"
+                )
+            _validate_prefect_outcome_for_payload(outcome, payload)
+            outcomes.append(outcome)
         except BaseException as error:
-            errors.append((payload.item.index, error))
+            errors.append((submitted_payload.item.index, error))
     if errors:
         raise min(errors, key=lambda item: item[0])[1]
+    if len({outcome.index for outcome in outcomes}) != len(outcomes):
+        raise RuntimeError("Prefect returned duplicate managed outcome indexes")
+    if {outcome.index for outcome in outcomes} != set(payloads_by_index):
+        raise RuntimeError("Prefect outcomes do not cover the submitted payload batch")
     return outcomes
+
+
+def _validate_prefect_outcome_for_payload(
+    outcome: ManagedExecutionOutcome,
+    payload: ManagedPrefectPayload,
+) -> None:
+    """Bind one deeply validated outcome to its original submitted authority."""
+    if outcome.index != payload.item.index:
+        raise RuntimeError("Prefect outcome index does not match its managed work item")
+    report = outcome.report
+    if report is None:
+        raise RuntimeError("Prefect outcome must contain a managed claim report")
+    if report.frame != payload.item.frame:
+        raise RuntimeError("Prefect outcome report frame does not match its payload")
+    if report.attempt != payload.attempt:
+        raise RuntimeError("Prefect outcome report attempt does not match its payload")
+    if not outcome.coordination_required:
+        return
+    if payload.parent is not None:
+        raise RuntimeError("an authorized Prefect outcome cannot request coordination again")
+    if (
+        report.child_count != 0
+        or report.effects
+        or report.successful_effects
+        or outcome.value is not None
+    ):
+        raise RuntimeError(
+            "a rootless coordination outcome must contain an empty claim report and no value"
+        )
 
 
 def _make_prefect_payload(
@@ -466,6 +521,7 @@ def _execute_prefect_payload(
     payload: ManagedPrefectPayload,
 ) -> ManagedExecutionOutcome:
     """Execute one serializable Prefect payload and return its claim report."""
+    payload = _validated_managed_prefect_payload_snapshot(payload)
     item = payload.item
     attempt = payload.attempt
     if payload.parent is None:

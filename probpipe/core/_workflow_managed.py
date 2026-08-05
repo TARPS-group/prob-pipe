@@ -191,17 +191,41 @@ class ManagedWorkItem:
     frame: ManagedUnitFrame
 
     def __post_init__(self) -> None:
-        if isinstance(self.index, bool) or not isinstance(self.index, int) or self.index < 0:
-            raise TypeError("managed work-item indexes must be non-negative integers")
-        if not isinstance(self.values, tuple) or any(
-            not isinstance(entry, tuple) or len(entry) != 2 or not isinstance(entry[0], str)
-            for entry in self.values
-        ):
-            raise TypeError("managed work-item values must be name/value tuples")
+        _validate_managed_work_item_fields(
+            index=self.index,
+            values=self.values,
+            frame=self.frame,
+        )
 
     def call_values(self) -> dict[str, Any]:
         """Materialize the keyword mapping used for execution."""
         return dict(self.values)
+
+
+def _validate_managed_work_item_fields(
+    *,
+    index: object,
+    values: object,
+    frame: object,
+) -> None:
+    """Validate one complete managed call boundary without materializing kwargs."""
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise TypeError("managed work-item indexes must be non-negative integers")
+    if not isinstance(values, tuple) or any(
+        not isinstance(entry, tuple) or len(entry) != 2 or not isinstance(entry[0], str)
+        for entry in values
+    ):
+        raise TypeError("managed work-item values must be name/value tuples")
+    names = tuple(entry[0] for entry in values)
+    if len(set(names)) != len(names):
+        raise ValueError("managed work-item values contain duplicate parameter names")
+    if not isinstance(frame, ManagedUnitFrame):
+        raise TypeError("managed work items require a valid managed unit frame")
+    _validate_managed_unit_frame_fields(
+        unit_segment=frame.unit_segment,
+        token=frame.token,
+        derivation_abi=frame.derivation_abi,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,37 +259,14 @@ class ManagedParentEnvelope:
     retry_effects: tuple[ManagedEffectClaim, ...] = ()
 
     def __post_init__(self) -> None:
-        if not isinstance(self.frame, ManagedUnitFrame) or not isinstance(
-            self.attempt,
-            ManagedAttemptState,
-        ):
-            raise TypeError("managed parent authority requires a frame and attempt")
-        if (
-            not isinstance(self.root_words, tuple)
-            or len(self.root_words) != 2
-            or any(
-                isinstance(word, bool) or not isinstance(word, int) or not 0 <= word <= 0xFFFFFFFF
-                for word in self.root_words
-            )
-        ):
-            raise TypeError("managed parent root words must be two uint32 integers")
-        if not isinstance(self.parent_occurrence_path, tuple):
-            raise TypeError("managed parent occurrence paths must be tuples")
-        _validate_random_event_value(self.parent_occurrence_path)
-        if self.attempt.work_item_token != self.frame.token:
-            raise ValueError("managed parent attempt must own its frame")
-        if self.replay_expected_effects is not None and (
-            not isinstance(self.replay_expected_effects, tuple)
-            or any(
-                not isinstance(effect, ManagedEffectClaim)
-                for effect in self.replay_expected_effects
-            )
-        ):
-            raise TypeError("managed replay expectations must be effect tuples or None")
-        if not isinstance(self.retry_effects, tuple) or any(
-            not isinstance(effect, ManagedEffectClaim) for effect in self.retry_effects
-        ):
-            raise TypeError("managed retry effects must be an effect tuple")
+        _validate_managed_parent_envelope_fields(
+            root_words=self.root_words,
+            parent_occurrence_path=self.parent_occurrence_path,
+            frame=self.frame,
+            attempt=self.attempt,
+            replay_expected_effects=self.replay_expected_effects,
+            retry_effects=self.retry_effects,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -320,6 +321,68 @@ def _validate_managed_effect_claim_instance(
         descendant_descriptor=effect.descendant_descriptor,
     )
     return effect
+
+
+def _validate_managed_parent_envelope_fields(
+    *,
+    root_words: object,
+    parent_occurrence_path: object,
+    frame: object,
+    attempt: object,
+    replay_expected_effects: object,
+    retry_effects: object,
+) -> None:
+    """Validate parent authority and all nested transported effect snapshots."""
+    if not isinstance(frame, ManagedUnitFrame) or not isinstance(
+        attempt,
+        ManagedAttemptState,
+    ):
+        raise TypeError("managed parent authority requires a frame and attempt")
+    _validate_managed_unit_frame_fields(
+        unit_segment=frame.unit_segment,
+        token=frame.token,
+        derivation_abi=frame.derivation_abi,
+    )
+    _validate_managed_attempt_fields(
+        work_item_token=attempt.work_item_token,
+        attempt_token=attempt.attempt_token,
+    )
+    if (
+        not isinstance(root_words, tuple)
+        or len(root_words) != 2
+        or any(
+            isinstance(word, bool) or not isinstance(word, int) or not 0 <= word <= 0xFFFFFFFF
+            for word in root_words
+        )
+    ):
+        raise TypeError("managed parent root words must be two uint32 integers")
+    if not isinstance(parent_occurrence_path, tuple):
+        raise TypeError("managed parent occurrence paths must be tuples")
+    _validate_random_event_value(parent_occurrence_path)
+    if attempt.work_item_token != frame.token:
+        raise ValueError("managed parent attempt must own its frame")
+    if replay_expected_effects is not None and (
+        not isinstance(replay_expected_effects, tuple)
+        or any(not isinstance(effect, ManagedEffectClaim) for effect in replay_expected_effects)
+    ):
+        raise TypeError("managed replay expectations must be effect tuples or None")
+    if not isinstance(retry_effects, tuple) or any(
+        not isinstance(effect, ManagedEffectClaim) for effect in retry_effects
+    ):
+        raise TypeError("managed retry effects must be an effect tuple")
+    if replay_expected_effects is not None:
+        for effect in replay_expected_effects:
+            _validate_managed_effect_claim_instance(effect)
+        _unique_effects(
+            replay_expected_effects,
+            field_name="managed replay expectations",
+        )
+    for effect in retry_effects:
+        _validate_managed_effect_claim_instance(effect)
+    _unique_effects(
+        retry_effects,
+        field_name="managed retry effects",
+    )
 
 
 def _validate_managed_claim_report_fields(
@@ -460,19 +523,11 @@ class ManagedPrefectPayload:
     parent: ManagedParentEnvelope | None = None
 
     def __post_init__(self) -> None:
-        if not isinstance(self.item, ManagedWorkItem) or not isinstance(
-            self.attempt,
-            ManagedAttemptState,
-        ):
-            raise TypeError("managed Prefect payloads require a work item and attempt")
-        if self.parent is not None and not isinstance(self.parent, ManagedParentEnvelope):
-            raise TypeError("managed Prefect parent authority must be an envelope or None")
-        if self.attempt.work_item_token != self.item.frame.token:
-            raise ValueError("managed payload attempt must own its work item")
-        if self.parent is not None and (
-            self.parent.frame != self.item.frame or self.parent.attempt != self.attempt
-        ):
-            raise ValueError("managed payload parent authority must match its item and attempt")
+        _validate_managed_prefect_payload_fields(
+            item=self.item,
+            attempt=self.attempt,
+            parent=self.parent,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -485,6 +540,212 @@ class ManagedExecutionOutcome:
     coordination_required: bool = False
     report: ManagedClaimReport | None = None
 
+    def __post_init__(self) -> None:
+        _validate_managed_execution_outcome_fields(
+            index=self.index,
+            value=self.value,
+            error=self.error,
+            coordination_required=self.coordination_required,
+            report=self.report,
+        )
+
+
+def _validate_managed_prefect_payload_fields(
+    *,
+    item: object,
+    attempt: object,
+    parent: object,
+) -> None:
+    """Validate a complete worker payload, including its nested authority."""
+    if not isinstance(item, ManagedWorkItem) or not isinstance(
+        attempt,
+        ManagedAttemptState,
+    ):
+        raise TypeError("managed Prefect payloads require a work item and attempt")
+    _validate_managed_work_item_fields(
+        index=item.index,
+        values=item.values,
+        frame=item.frame,
+    )
+    _validate_managed_attempt_fields(
+        work_item_token=attempt.work_item_token,
+        attempt_token=attempt.attempt_token,
+    )
+    if parent is not None and not isinstance(parent, ManagedParentEnvelope):
+        raise TypeError("managed Prefect parent authority must be an envelope or None")
+    if attempt.work_item_token != item.frame.token:
+        raise ValueError("managed payload attempt must own its work item")
+    if parent is not None:
+        _validate_managed_parent_envelope_fields(
+            root_words=parent.root_words,
+            parent_occurrence_path=parent.parent_occurrence_path,
+            frame=parent.frame,
+            attempt=parent.attempt,
+            replay_expected_effects=parent.replay_expected_effects,
+            retry_effects=parent.retry_effects,
+        )
+        if parent.frame != item.frame or parent.attempt != attempt:
+            raise ValueError("managed payload parent authority must match its item and attempt")
+
+
+def _validate_managed_execution_outcome_fields(
+    *,
+    index: object,
+    value: object,
+    error: object,
+    coordination_required: object,
+    report: object,
+) -> None:
+    """Validate one worker result without trusting its dataclass annotation."""
+    if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+        raise TypeError("managed outcome indexes must be non-negative integers")
+    if type(coordination_required) is not bool:
+        raise TypeError("managed outcome coordination flag must be a bool")
+    if error is not None and not isinstance(error, Exception):
+        raise TypeError("managed outcome errors must be Exception values or None")
+    if report is not None:
+        if not isinstance(report, ManagedClaimReport):
+            raise TypeError("managed outcome reports must be claim reports or None")
+        _validate_managed_claim_report_fields(
+            frame=report.frame,
+            attempt=report.attempt,
+            child_count=report.child_count,
+            effects=report.effects,
+            successful_effects=report.successful_effects,
+        )
+    if coordination_required and error is not None:
+        raise ValueError("managed coordination outcomes cannot contain errors")
+    if error is not None and value is not None:
+        raise ValueError("managed error outcomes cannot contain successful values")
+
+
+def _validated_managed_unit_frame_snapshot(frame: object) -> ManagedUnitFrame:
+    """Deeply reconstruct one transported managed frame."""
+    if not isinstance(frame, ManagedUnitFrame):
+        raise TypeError("transported managed frames must be ManagedUnitFrame values")
+    _validate_managed_unit_frame_fields(
+        unit_segment=frame.unit_segment,
+        token=frame.token,
+        derivation_abi=frame.derivation_abi,
+    )
+    return ManagedUnitFrame(
+        unit_segment=frame.unit_segment,
+        token=ManagedWorkItemToken(frame.token.value),
+        derivation_abi=frame.derivation_abi,
+    )
+
+
+def _validated_managed_attempt_snapshot(attempt: object) -> ManagedAttemptState:
+    """Deeply reconstruct one transported managed attempt."""
+    if not isinstance(attempt, ManagedAttemptState):
+        raise TypeError("transported managed attempts must be ManagedAttemptState values")
+    _validate_managed_attempt_fields(
+        work_item_token=attempt.work_item_token,
+        attempt_token=attempt.attempt_token,
+    )
+    return ManagedAttemptState(
+        work_item_token=ManagedWorkItemToken(attempt.work_item_token.value),
+        attempt_token=attempt.attempt_token,
+    )
+
+
+def _validated_managed_work_item_snapshot(item: object) -> ManagedWorkItem:
+    """Deeply reconstruct one transported work item while preserving values."""
+    if not isinstance(item, ManagedWorkItem):
+        raise TypeError("transported work items must be ManagedWorkItem values")
+    _validate_managed_work_item_fields(
+        index=item.index,
+        values=item.values,
+        frame=item.frame,
+    )
+    return ManagedWorkItem(
+        index=item.index,
+        values=item.values,
+        frame=_validated_managed_unit_frame_snapshot(item.frame),
+    )
+
+
+def _validated_managed_parent_envelope_snapshot(
+    parent: object,
+) -> ManagedParentEnvelope:
+    """Deeply reconstruct one transported parent authority envelope."""
+    if not isinstance(parent, ManagedParentEnvelope):
+        raise TypeError("transported parent authority must be a ManagedParentEnvelope")
+    _validate_managed_parent_envelope_fields(
+        root_words=parent.root_words,
+        parent_occurrence_path=parent.parent_occurrence_path,
+        frame=parent.frame,
+        attempt=parent.attempt,
+        replay_expected_effects=parent.replay_expected_effects,
+        retry_effects=parent.retry_effects,
+    )
+    replay_expected_effects = (
+        None
+        if parent.replay_expected_effects is None
+        else tuple(
+            _validated_managed_effect_claim_snapshot(effect)
+            for effect in parent.replay_expected_effects
+        )
+    )
+    return ManagedParentEnvelope(
+        root_words=parent.root_words,
+        parent_occurrence_path=parent.parent_occurrence_path,
+        frame=_validated_managed_unit_frame_snapshot(parent.frame),
+        attempt=_validated_managed_attempt_snapshot(parent.attempt),
+        replay_expected_effects=replay_expected_effects,
+        retry_effects=tuple(
+            _validated_managed_effect_claim_snapshot(effect) for effect in parent.retry_effects
+        ),
+    )
+
+
+def _validated_managed_prefect_payload_snapshot(
+    payload: object,
+) -> ManagedPrefectPayload:
+    """Deeply reconstruct a payload before worker submission or execution."""
+    if not isinstance(payload, ManagedPrefectPayload):
+        raise TypeError("transported worker payloads must be ManagedPrefectPayload values")
+    _validate_managed_prefect_payload_fields(
+        item=payload.item,
+        attempt=payload.attempt,
+        parent=payload.parent,
+    )
+    return ManagedPrefectPayload(
+        item=_validated_managed_work_item_snapshot(payload.item),
+        attempt=_validated_managed_attempt_snapshot(payload.attempt),
+        parent=(
+            None
+            if payload.parent is None
+            else _validated_managed_parent_envelope_snapshot(payload.parent)
+        ),
+    )
+
+
+def _validated_managed_execution_outcome_snapshot(
+    outcome: object,
+) -> ManagedExecutionOutcome:
+    """Deeply reconstruct a worker outcome before parent-side admission."""
+    if not isinstance(outcome, ManagedExecutionOutcome):
+        raise TypeError("transported worker outcomes must be ManagedExecutionOutcome values")
+    _validate_managed_execution_outcome_fields(
+        index=outcome.index,
+        value=outcome.value,
+        error=outcome.error,
+        coordination_required=outcome.coordination_required,
+        report=outcome.report,
+    )
+    return ManagedExecutionOutcome(
+        index=outcome.index,
+        value=outcome.value,
+        error=outcome.error,
+        coordination_required=outcome.coordination_required,
+        report=(
+            None
+            if outcome.report is None
+            else _validated_managed_claim_report_snapshot(outcome.report)
+        ),
+    )
+
 
 def point_unit_segment() -> _RandomEventPath:
     """Return the canonical segment for one plain point evaluation."""
@@ -493,6 +754,14 @@ def point_unit_segment() -> _RandomEventPath:
 
 def sweep_unit_segment(coordinates: tuple[int, ...]) -> _RandomEventPath:
     """Return the canonical segment for one row-major sweep cell."""
+    if not isinstance(coordinates, tuple):
+        raise TypeError("managed sweep coordinates must be a tuple")
+    if not coordinates:
+        raise ValueError("managed sweep segments require at least one coordinate")
+    if any(isinstance(item, bool) or not isinstance(item, int) for item in coordinates):
+        raise TypeError("managed sweep coordinates must be non-boolean integers")
+    if any(item < 0 for item in coordinates):
+        raise ValueError("managed sweep coordinates must be non-negative")
     return ("managed-unit", _MANAGED_WORK_ITEM_ABI, "sweep-cell", *coordinates)
 
 
@@ -501,6 +770,14 @@ def lifted_evaluation_unit_segment(
     flat_index: int,
 ) -> _RandomEventPath:
     """Return the canonical segment for one evaluation within a lifted unit."""
+    if not isinstance(logical_unit_id, tuple):
+        raise TypeError("managed lifted logical-unit identities must be tuples")
+    if not _is_logical_unit_id(logical_unit_id):
+        raise ValueError("managed lifted logical-unit identities must be canonical")
+    if isinstance(flat_index, bool) or not isinstance(flat_index, int):
+        raise TypeError("managed lifted evaluation indexes must be non-boolean integers")
+    if flat_index < 0:
+        raise ValueError("managed lifted evaluation indexes must be non-negative")
     return (
         "managed-unit",
         _MANAGED_WORK_ITEM_ABI,
