@@ -561,7 +561,7 @@ class _AutomaticKeyBroker:
                 )
 
     def close_managed_claim_registry(self) -> None:
-        """Atomically join-check and close this Function broker's registry."""
+        """Atomically join-check and close this broker's managed registry."""
         with self._managed_claims.lock:
             if self._managed_claims.closed:
                 return
@@ -570,7 +570,7 @@ class _AutomaticKeyBroker:
                 for state in self._managed_claims.by_unit.values()
             ):
                 raise RuntimeError(
-                    "a Function workflow scope cannot exit before all managed work items join"
+                    "a stochastic broker scope cannot exit before all managed work items join"
                 )
             self._managed_claims.closed = True
 
@@ -962,6 +962,25 @@ class _RemoteManagedParent:
 
 
 @contextmanager
+def _installed_stochastic_broker_scope(
+    broker: _AutomaticKeyBroker,
+) -> Generator[_AutomaticKeyBroker, None, None]:
+    """Install and finalize one newly owned stochastic broker."""
+    token: Token[_AutomaticKeyBroker | None] = _ACTIVE_AUTOMATIC_KEY_BROKER.set(broker)
+    try:
+        yield broker
+    except BaseException:
+        broker.close_managed_claim_registry()
+        raise
+    else:
+        broker.close_managed_claim_registry()
+        broker._publish_managed_effects()
+        broker._mark_replay_effects_successful()
+    finally:
+        _ACTIVE_AUTOMATIC_KEY_BROKER.reset(token)
+
+
+@contextmanager
 def _function_stochastic_scope(
     *,
     occurrence_path: tuple[Any, ...] | None = None,
@@ -984,18 +1003,8 @@ def _function_stochastic_scope(
             frame=frame,
             occurrence_path=occurrence_path,
         )
-    token: Token[_AutomaticKeyBroker | None] = _ACTIVE_AUTOMATIC_KEY_BROKER.set(broker)
-    try:
+    with _installed_stochastic_broker_scope(broker):
         yield broker
-    except BaseException:
-        broker.close_managed_claim_registry()
-        raise
-    else:
-        broker.close_managed_claim_registry()
-        broker._publish_managed_effects()
-        broker._mark_replay_effects_successful()
-    finally:
-        _ACTIVE_AUTOMATIC_KEY_BROKER.reset(token)
 
 
 @contextmanager
@@ -1014,15 +1023,8 @@ def _managed_stochastic_scope() -> Generator[_AutomaticKeyBroker, None, None]:
             _frame=_workflow_context._capture_active_workflow_frame(),
             _managed_attempt=managed_attempt,
         )
-        token: Token[_AutomaticKeyBroker | None] = _ACTIVE_AUTOMATIC_KEY_BROKER.set(broker)
-        try:
+        with _installed_stochastic_broker_scope(broker):
             yield broker
-        except BaseException:
-            raise
-        else:
-            broker._publish_managed_effects()
-        finally:
-            _ACTIVE_AUTOMATIC_KEY_BROKER.reset(token)
         return
 
     with _workflow_context._ephemeral_workflow_run():
@@ -1030,11 +1032,8 @@ def _managed_stochastic_scope() -> Generator[_AutomaticKeyBroker, None, None]:
             "operation",
             _frame=_workflow_context._capture_active_workflow_frame(),
         )
-        token: Token[_AutomaticKeyBroker | None] = _ACTIVE_AUTOMATIC_KEY_BROKER.set(broker)
-        try:
+        with _installed_stochastic_broker_scope(broker):
             yield broker
-        finally:
-            _ACTIVE_AUTOMATIC_KEY_BROKER.reset(token)
 
 
 def _capture_active_broker() -> _AutomaticKeyBroker | None:

@@ -11,6 +11,7 @@ from unittest.mock import patch
 import jax
 import pytest
 
+import probpipe.core._workflow_managed as managed_mod
 from probpipe import (
     Function,
     Normal,
@@ -174,6 +175,47 @@ class TestAutomaticKeyOwnership:
             _resolve_automatic_key(None, _plan())
 
         commit.assert_called_once_with("operation")
+
+    def test_new_operation_scope_closes_its_managed_registry(self):
+        with workflow_run(seed=7), _managed_stochastic_scope() as operation_broker:
+            assert not operation_broker._managed_claims.closed
+
+        assert operation_broker._managed_claims.closed
+
+    def test_new_operation_scope_closes_after_body_error(self):
+        with (
+            workflow_run(seed=7),
+            pytest.raises(ValueError, match="body failed"),
+            _managed_stochastic_scope() as operation_broker,
+        ):
+            raise ValueError("body failed")
+
+        assert operation_broker._managed_claims.closed
+
+    def test_reused_operation_scope_does_not_close_its_owner(self):
+        with workflow_run(seed=7), _function_stochastic_scope() as function_broker:
+            with _managed_stochastic_scope() as reused_broker:
+                assert reused_broker is function_broker
+
+            assert not function_broker._managed_claims.closed
+            _resolve_automatic_key(None, _plan())
+
+        assert function_broker._managed_claims.closed
+
+    def test_operation_scope_rejects_unjoined_nested_items(self):
+        items = managed_mod.make_managed_work_items(
+            [{}],
+            unit_segments=(managed_mod.point_unit_segment(),),
+        )
+
+        with (
+            workflow_run(seed=7),
+            pytest.raises(RuntimeError, match="before all managed work items join"),
+            _managed_stochastic_scope() as operation_broker,
+        ):
+            operation_broker.register_managed_work_items(items)
+
+        assert operation_broker._effects_by_identity == {}
 
     def test_bare_managed_scopes_receive_independent_ephemeral_roots(self):
         with patch(

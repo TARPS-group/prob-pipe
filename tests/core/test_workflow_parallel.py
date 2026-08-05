@@ -550,6 +550,39 @@ class TestManagedPayloadValidation:
 
 
 class TestManagedRetryClaims:
+    def test_managed_operation_broker_closes_before_publishing_effects(self):
+        operation_brokers = []
+
+        def leave_nested_item_unjoined():
+            with broker_mod._managed_stochastic_scope() as operation_broker:
+                operation_brokers.append(operation_broker)
+                _claim_automatic_words()
+                nested_request = make_request(calls=[{}], func=lambda: None)
+                operation_broker.register_managed_work_items(nested_request.work_items)
+
+        request = make_request(calls=[{}], func=leave_nested_item_unjoined)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope() as parent:
+            with pytest.raises(RuntimeError, match="before all managed work items join"):
+                execution_mod.execute_many(request)
+
+            assert parent._effects_by_identity == {}
+
+        assert len(operation_brokers) == 1
+
+    def test_successful_managed_operation_broker_is_closed(self):
+        operation_brokers = []
+
+        def capture_operation_broker():
+            with broker_mod._managed_stochastic_scope() as operation_broker:
+                operation_brokers.append(operation_broker)
+
+        request = make_request(calls=[{}], func=capture_operation_broker)
+        with workflow_run(seed=17), broker_mod._function_stochastic_scope():
+            execution_mod.execute_many(request)
+
+        assert len(operation_brokers) == 1
+        assert operation_brokers[0]._managed_claims.closed
+
     def test_same_work_item_token_retries_the_same_child_claim(self):
         request = make_request(calls=[{}], func=_claim_automatic_words)
 
