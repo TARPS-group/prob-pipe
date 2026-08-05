@@ -11,6 +11,7 @@ from unittest.mock import patch
 import jax
 import pytest
 
+import probpipe.core._workflow_context as context_mod
 import probpipe.core._workflow_managed as managed_mod
 from probpipe import (
     Function,
@@ -159,6 +160,39 @@ class TestAutomaticKeyOwnership:
 
         assert _key_words(first) != _key_words(second)
         commit.assert_called_once_with("invocation")
+
+    @pytest.mark.parametrize(
+        "scope",
+        [_function_stochastic_scope, _managed_stochastic_scope],
+        ids=["function", "operation"],
+    )
+    def test_one_scope_rejects_duplicate_effect_before_second_derivation(self, scope):
+        derivations = 0
+        original_key_for = context_mod._WorkflowInvocation.key_for
+
+        def count_derivation(invocation, *, stochastic_source_id, logical_unit_id):
+            nonlocal derivations
+            derivations += 1
+            return original_key_for(
+                invocation,
+                stochastic_source_id=stochastic_source_id,
+                logical_unit_id=logical_unit_id,
+            )
+
+        with (
+            patch.object(
+                context_mod._WorkflowInvocation,
+                "key_for",
+                new=count_derivation,
+            ),
+            workflow_run(seed=7),
+            scope(),
+        ):
+            _resolve_automatic_key(None, _plan())
+            with pytest.raises(RuntimeError, match="duplicated a stochastic effect claim"):
+                _resolve_automatic_key(None, _plan())
+
+        assert derivations == 1
 
     def test_managed_scope_uses_a_tagged_operation_occurrence(self):
         with (

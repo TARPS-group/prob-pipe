@@ -479,9 +479,13 @@ class _AutomaticKeyBroker:
         identity = _effect_identity(effect)
         with self._effects_lock:
             existing = self._effects_by_identity.get(identity)
-            if existing is not None and existing != effect:
+            if existing is not None:
+                if existing != effect:
+                    raise RuntimeError(
+                        "a stochastic event identity was retried with a different effect plan"
+                    )
                 raise RuntimeError(
-                    "a stochastic event identity was retried with a different effect plan"
+                    "one stochastic broker scope duplicated a stochastic effect claim"
                 )
             self._effects_by_identity[identity] = effect
 
