@@ -20,9 +20,12 @@ from probpipe.core.distribution import Distribution
 from probpipe.core.protocols import SupportsSampling
 
 
-def _numeric_record_array(field: str, values: range) -> NumericRecordBatch:
+def _numeric_record_array(
+    field: str, values: range, *, level_name: str = "draw"
+) -> NumericRecordBatch:
     return NumericRecordBatch.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values], level_name="draw"
+        [NumericRecord("nr", **{field: float(value)}) for value in values],
+        level_name=level_name,
     )
 
 
@@ -74,7 +77,7 @@ class TestBroadcastRegime:
                 arg_refs=(_ref("p"),),
                 batch_shape=(4,),
                 size=4,
-                level_names=("p",),
+                level_names=("draw",),
                 axis_groups=((4,),),
             ),
         )
@@ -129,7 +132,8 @@ class TestArrayGrouping:
             [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)], level_name="draw"
         )
 
-        plan = _plan({"x": ra.view("x"), "y": ra.view("y")})
+        views = ra.select_all()
+        plan = _plan({"x": views["x"], "y": views["y"]})
 
         assert plan.regime == "sweep"
         assert plan.array_args == (_ref("x"), _ref("y"))
@@ -138,18 +142,20 @@ class TestArrayGrouping:
                 arg_refs=(_ref("x"), _ref("y")),
                 batch_shape=(4,),
                 size=4,
-                level_names=("x",),
+                level_names=("draw",),
                 axis_groups=((4,),),
             ),
         )
         assert plan.sweep_batch_shape == (4,)
         assert plan.n_sweep == 4
 
-    def test_views_from_different_parents_use_product_shape(self):
-        ra_a = _numeric_record_array("a", range(3))
-        ra_b = _numeric_record_array("b", range(2))
+    def test_batches_with_no_level_in_common_form_a_product(self):
+        """Levels align by name, so batches sharing none are independent: each is
+        its own group and the sweep ranges over the grid."""
+        ra_a = _numeric_record_array("a", range(3), level_name="outer")
+        ra_b = _numeric_record_array("b", range(2), level_name="inner")
 
-        plan = _plan({"a": ra_a.view("a"), "b": ra_b.view("b")})
+        plan = _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
         assert plan.regime == "sweep"
         assert plan.array_groups == (
@@ -157,19 +163,28 @@ class TestArrayGrouping:
                 arg_refs=(_ref("a"),),
                 batch_shape=(3,),
                 size=3,
-                level_names=("a",),
+                level_names=("outer",),
                 axis_groups=((3,),),
             ),
             ArrayBroadcastGroup(
                 arg_refs=(_ref("b"),),
                 batch_shape=(2,),
                 size=2,
-                level_names=("b",),
+                level_names=("inner",),
                 axis_groups=((2,),),
             ),
         )
         assert plan.sweep_batch_shape == (3, 2)
         assert plan.n_sweep == 6
+
+    def test_one_level_name_at_two_sizes_is_refused(self):
+        """Two batches naming the same level claim to range over the same thing,
+        so disagreeing about its size is a mistake rather than a product."""
+        ra_a = _numeric_record_array("a", range(3))
+        ra_b = _numeric_record_array("b", range(2))
+
+        with pytest.raises(ValueError, match="batched differently"):
+            _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
     def test_distribution_array_uses_sweep_group(self):
         da = DistributionArray.from_batched_params(
