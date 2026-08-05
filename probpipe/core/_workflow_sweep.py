@@ -75,6 +75,9 @@ def execute_sweep(
         aggregate = _make_stack(
             per_row,
             batch_shape=plan.sweep_batch_shape,
+            # The aggregate mints the levels the sweep ranged over, so it aligns
+            # by name with the batch it swept.
+            level_names=plan.sweep_level_names,
             name=workflow_name,
             field_name=workflow_name,
             event_template=output_template,

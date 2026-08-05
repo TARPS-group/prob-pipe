@@ -79,7 +79,11 @@ def _wrap_as_record(
         return Record(field_name, value, name_is_auto=True)
     if isinstance(value, (list, tuple)) and value:
         try:
-            return _make_stack(list(value), n=len(value), field_name=field_name)
+            # A returned sequence ranges over nothing the call named, so the
+            # level takes the function's own name.
+            return _make_stack(
+                list(value), n=len(value), level_names=(field_name,), field_name=field_name
+            )
         except (TypeError, ValueError):
             pass
     # Numeric scalar / array → NumericRecord with the function's

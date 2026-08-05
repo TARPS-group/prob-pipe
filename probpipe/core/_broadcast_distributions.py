@@ -554,10 +554,10 @@ def _make_marginal(
 # ---------------------------------------------------------------------------
 
 
-# The level a broadcast mints for its own axes: one multiplicity over the sweep
-# grid, however many axes it spans, sitting in front of whatever levels a row
-# already carried.
-SWEEP_LEVEL = "sweep"
+# The level a draw mints, which the design names (05-operations, ``sample``). A
+# broadcast has no name of its own to give: the level it mints is the one it
+# swept, so the caller supplies that name rather than this module inventing one.
+DRAW_LEVEL = "draw"
 
 
 def _make_stack(
@@ -565,6 +565,7 @@ def _make_stack(
     *,
     batch_shape: tuple[int, ...] | None = None,
     n: int | None = None,
+    level_names: tuple[str, ...],
     name: str | None = None,
     field_name: str,
     event_template: EventTemplate | None = None,
@@ -592,6 +593,13 @@ def _make_stack(
         ``batch_shape`` or ``n`` (the 1-D shortcut); exactly one.
     n : int, optional
         Shortcut for ``batch_shape=(n,)``.
+    level_names : tuple of str
+        Names the levels this aggregation mints, one per group of
+        ``batch_shape``'s axes, and required for the reason
+        :meth:`Batch.with_level_names` gives: an operation that mints a level
+        takes the name to give it, since operands align by level name and only
+        the caller knows what the axes range over. A sweep passes the names of
+        the levels it swept, so the aggregate aligns with the input it came from.
     name : str, optional
         Name for the resulting aggregate.
 
@@ -667,7 +675,7 @@ def _make_stack(
                     columns[path] = stacked.reshape(batch_shape + stacked.shape[1:])
                 return type(first)(
                     columns,
-                    (SWEEP_LEVEL, *first.level_names),
+                    (*level_names, *first.level_names),
                     element_spec=first.element_spec,
                     axis_groups=(batch_shape, *first.axis_groups),
                     name=name or field_name,

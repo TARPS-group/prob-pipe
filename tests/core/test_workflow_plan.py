@@ -70,7 +70,9 @@ class TestBroadcastRegime:
         assert plan.dist_args == ()
         assert plan.array_args == (_ref("p"),)
         assert plan.array_groups == (
-            ArrayBroadcastGroup(arg_refs=(_ref("p"),), batch_shape=(4,), size=4),
+            ArrayBroadcastGroup(
+                arg_refs=(_ref("p"),), batch_shape=(4,), size=4, level_names=("p",)
+            ),
         )
         assert plan.sweep_batch_shape == (4,)
         assert plan.n_sweep == 4
@@ -128,7 +130,9 @@ class TestArrayGrouping:
         assert plan.regime == "sweep"
         assert plan.array_args == (_ref("x"), _ref("y"))
         assert plan.array_groups == (
-            ArrayBroadcastGroup(arg_refs=(_ref("x"), _ref("y")), batch_shape=(4,), size=4),
+            ArrayBroadcastGroup(
+                arg_refs=(_ref("x"), _ref("y")), batch_shape=(4,), size=4, level_names=("x",)
+            ),
         )
         assert plan.sweep_batch_shape == (4,)
         assert plan.n_sweep == 4
@@ -141,8 +145,12 @@ class TestArrayGrouping:
 
         assert plan.regime == "sweep"
         assert plan.array_groups == (
-            ArrayBroadcastGroup(arg_refs=(_ref("a"),), batch_shape=(3,), size=3),
-            ArrayBroadcastGroup(arg_refs=(_ref("b"),), batch_shape=(2,), size=2),
+            ArrayBroadcastGroup(
+                arg_refs=(_ref("a"),), batch_shape=(3,), size=3, level_names=("a",)
+            ),
+            ArrayBroadcastGroup(
+                arg_refs=(_ref("b"),), batch_shape=(2,), size=2, level_names=("b",)
+            ),
         )
         assert plan.sweep_batch_shape == (3, 2)
         assert plan.n_sweep == 6
@@ -161,7 +169,9 @@ class TestArrayGrouping:
         assert plan.regime == "sweep"
         assert plan.array_args == (_ref("d"),)
         assert plan.array_groups == (
-            ArrayBroadcastGroup(arg_refs=(_ref("d"),), batch_shape=(2, 3), size=6),
+            ArrayBroadcastGroup(
+                arg_refs=(_ref("d"),), batch_shape=(2, 3), size=6, level_names=("d",)
+            ),
         )
         assert plan.sweep_batch_shape == (2, 3)
         assert plan.n_sweep == 6
