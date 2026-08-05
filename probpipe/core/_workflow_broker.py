@@ -917,7 +917,29 @@ class _RemoteManagedParent:
     successful_effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
         default_factory=dict
     )
-
+    _retry_effects_by_identity: dict[tuple[Any, ...], ManagedEffectClaim] = field(
+        init=False,
+        default_factory=dict,
+        repr=False,
+    )
+    
+    def __post_init__(self) -> None:
+        for effect in self.envelope.retry_effects:
+            identity = _effect_identity(effect)
+            existing = self._retry_effects_by_identity.get(identity)
+            if existing is None:
+                self._retry_effects_by_identity[identity] = effect
+                continue
+            if existing != effect:
+                raise RuntimeError(
+                    "remote retry envelope contains conflicting effect plans "
+                    "for the same stochastic event identity"
+                )
+            raise RuntimeError(
+                "remote retry envelope contains a duplicated stochastic "
+                "event identity"
+            )
+            
     def _claim_managed_child(
         self,
         *,
@@ -951,14 +973,7 @@ class _RemoteManagedParent:
         if frame != self.envelope.frame or attempt != self.attempt:
             raise RuntimeError("remote managed effect does not own its envelope")
         identity = _effect_identity(effect)
-        retry_effect = next(
-            (
-                candidate
-                for candidate in self.envelope.retry_effects
-                if _effect_identity(candidate) == identity
-            ),
-            None,
-        )
+        retry_effect = self._retry_effects_by_identity.get(identity)
         if retry_effect is not None and retry_effect != effect:
             raise RuntimeError("remote event identity changed effect plan during retry")
         existing = self.effect_claims_by_identity.get(identity)
