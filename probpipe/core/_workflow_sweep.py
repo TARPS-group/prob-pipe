@@ -196,6 +196,13 @@ def execute_sweep_rows(
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
+    # Zero rows run nothing, so there is no body for a dispatch to trace and no
+    # per-row output for the paths to disagree over: every dispatch takes the
+    # same empty aggregation, which is what keeps the output schema independent
+    # of how the rows would have been executed.
+    if plan.n_sweep == 0:
+        return []
+
     has_dist_array = any(
         isinstance(_workflow_call.input_ref_value(values, ref), DistributionArray)
         for ref in array_args

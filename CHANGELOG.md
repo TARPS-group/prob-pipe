@@ -554,6 +554,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the executor does, so a zero-width event column passes under explicit
   `dispatch="jax"`.
 
+  **Shape cannot recover axis provenance, so ambiguity refuses.** A removal
+  whose size matches more than one level (``vmap(..., in_axes=1)`` over equal
+  sizes) and a permutation of the batch axes (a transpose, which shape alone
+  cannot tell from a per-axis resize) both raise rather than guess; a
+  distinctly-sized removal now names the level that *survived*, not the
+  leftmost that fits. A pinned dtype is held like the event axes, under the
+  constructor's same-kind rule. And zero-row sweeps take one aggregation path
+  under every dispatch, so the output schema does not depend on how rows would
+  have been executed.
+
   **A same-rank transform cannot lie about sizes.** Slicing a batch's columns
   keeps every axis, so the levels carry over onto the sizes the columns actually
   have; columns left disagreeing about their batch axes are refused rather than

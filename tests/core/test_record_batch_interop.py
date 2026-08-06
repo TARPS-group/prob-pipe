@@ -558,9 +558,11 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
         assert out.level_names == ("draw", "inner")
         assert out.batch_shape == (3, 2)
         # The fallback and an explicit sequential dispatch agree on values —
-        # the dispatch-equivalence contract, checked rather than assumed.
+        # the dispatch-equivalence contract — and both match the independently
+        # computed result, so agreement is not two wrongs agreeing.
         explicit = Function(func=body, dispatch="sequential")(v=source)
         np.testing.assert_allclose(np.asarray(out["s"]), np.asarray(explicit["s"]))
+        np.testing.assert_allclose(np.asarray(out["s"]), [[0.0, 0.0], [1.0, 1.0], [2.0, 2.0]])
 
     def test_a_numeric_body_is_unaffected(self):
         source = NumericRecordBatch(
@@ -731,10 +733,125 @@ class TestZeroWidthEventsUnderExplicitJax:
         be inferred over zero width, so the probe states the size exactly as the
         executor does."""
         source = NumericRecordBatch(
-            {"x": jnp.zeros((3, 0))}, "draw", element_spec=EventTemplate(x=(0,))
+            {"x": jnp.zeros((3, 0)), "row": jnp.arange(3.0)},
+            "draw",
+            element_spec=EventTemplate(x=(0,), row=()),
         )
 
-        out = Function(func=lambda v: jnp.sum(jnp.asarray(v["x"])), dispatch="jax")(v=source)
+        out = Function(
+            func=lambda v: jnp.sum(jnp.asarray(v["x"])) + jnp.asarray(v["row"]),
+            dispatch="jax",
+        )(v=source)
 
         assert out.batch_shape == (3,)
-        np.testing.assert_allclose(np.asarray(out["<lambda>"]), [0.0, 0.0, 0.0])
+        # Row identities survive, so the zero-width column really was carried
+        # per row rather than the output being indistinguishable zeros.
+        np.testing.assert_allclose(np.asarray(out["<lambda>"]), [0.0, 1.0, 2.0])
+
+
+class TestShapeCannotRecoverAxisProvenance:
+    """Which axis a transform took is not readable off sizes alone; where two
+    stories explain one shape, the batch refuses rather than guesses."""
+
+    @staticmethod
+    def _grid(chain: int, draw: int):
+        return NumericRecordBatch(
+            {"x": jnp.arange(float(chain * draw)).reshape(chain, draw)},
+            ("chain", "draw"),
+            element_spec=EventTemplate(x=()),
+            axis_groups=((chain,), (draw,)),
+        )
+
+    def test_removing_one_of_two_equal_axes_is_ambiguous(self):
+        with pytest.raises(ValueError, match="more than one of the levels"):
+            jax.vmap(lambda v: 0.0, in_axes=1)(self._grid(2, 2))
+
+    def test_a_distinctly_sized_removal_names_the_survivor(self):
+        """``in_axes=1`` strips ``draw``, so the body's batch is ``chain`` — the
+        level that survived, not the leftmost that fits."""
+        seen: list[Any] = []
+        jax.vmap(lambda v: seen.append(v) or 0.0, in_axes=1)(self._grid(2, 3))
+
+        assert seen[0].level_names == ("chain",)
+        assert seen[0].batch_shape == (2,)
+
+    def test_a_permutation_of_the_batch_axes_is_refused(self):
+        """A transpose reads like a per-axis resize by shape alone; retiling
+        would keep each level's name on an axis now holding another's rows."""
+        with pytest.raises(ValueError, match="permutation of the same sizes"):
+            jax.tree.map(lambda leaf: leaf.T, self._grid(2, 3))
+
+
+class TestATransformCannotRetypeTheElement:
+    def test_a_changed_kind_is_refused(self):
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros(3, dtype=jnp.float32)},
+            "draw",
+            element_spec=EventTemplate(x=ArraySpec((), dtype=jnp.float32)),
+        )
+
+        with pytest.raises(ValueError, match=r"never\s+retype the element"):
+            jax.tree.map(lambda leaf: leaf.astype(jnp.complex64), batch)
+
+    def test_a_same_kind_widening_is_admitted(self):
+        """The constructor admits same-kind casts, so the transform guard does
+        too — the two must agree on what conforms."""
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros(3, dtype=jnp.float16)},
+            "draw",
+            element_spec=EventTemplate(x=ArraySpec((), dtype=jnp.float32)),
+        )
+
+        widened = jax.tree.map(lambda leaf: leaf.astype(jnp.float32), batch)
+
+        assert widened._raw_column("x").dtype == jnp.float32
+
+
+class TestZeroRowsAgreeAcrossDispatch:
+    def test_every_dispatch_takes_the_same_empty_aggregation(self):
+        """Zero rows run nothing, so there is no body to trace and no per-row
+        output for the paths to disagree over; the output schema must not
+        depend on how the rows would have been executed."""
+        source = NumericRecordBatch(
+            {"x": jnp.zeros((2, 0))},
+            ("a", "b"),
+            element_spec=EventTemplate(x=()),
+            axis_groups=((2,), (0,)),
+        )
+
+        def body(v):
+            return jnp.sum(jnp.asarray(v["x"]))
+
+        results = {
+            name: Function(func=body, dispatch=name)(v=source)
+            for name in ("auto", "sequential", "jax")
+        }
+
+        types = {type(r).__name__ for r in results.values()}
+        templates = {repr(r.event_template) for r in results.values()}
+        assert len(types) == 1
+        assert len(templates) == 1
+
+
+class TestFunctionValuedColumnsStack:
+    def test_rows_holding_callable_fields_stack_by_raw_column(self):
+        """A callable field presents as a FunctionBatch; the raw columns are
+        what stack, and the presentation survives the aggregation."""
+        from probpipe.core._broadcast_distributions import _make_stack
+        from probpipe.core._function_batch import FunctionBatch
+        from probpipe.core.event_template import FunctionSpec
+
+        rows = [
+            RecordBatch(
+                {"f": np.array([(lambda i=i, j=j: i * 10 + j) for j in range(2)], dtype=object)},
+                "inner",
+                element_spec=EventTemplate(f=FunctionSpec()),
+            )
+            for i in range(3)
+        ]
+
+        out = _make_stack(rows, n=3, field_name="demo", level_names=("sweep",))
+
+        assert out.level_names == ("sweep", "inner")
+        assert isinstance(out["f"], FunctionBatch)
+        assert out._raw_column("f")[2, 1]() == 21
