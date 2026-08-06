@@ -536,6 +536,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   produces the same result by the dispatch-equivalence contract, instead of
   failing mid-call.
 
+  **Levels align by name, and only whole.** Operands carrying the same level
+  names zip; operands with no level in common form a product; a level shared by
+  operands whose other levels differ is refused — aligning it would broadcast
+  the rest, which is not built, and a product would read the shared name as two
+  unrelated axes. Operands naming the same levels must also hold them on the
+  same axes: the flat shape can agree while the partition does not. A parameter
+  annotated `Batch` (or a generic alias such as `Batch[Record]`) takes the value
+  whole, since it names a batched container.
+
+  **A transform never resizes the element's own axes.** A per-column slice can
+  pass the rank check while shrinking the event, and a transpose reads an event
+  axis as a batch axis; both now raise, as does a reduction below the event
+  rank. An empty sweep builds its declared fields only when zero rows were
+  *expected* — an empty list where rows were expected is a missing-output error,
+  not a fabrication. The dispatch probe states the flat batch size exactly as
+  the executor does, so a zero-width event column passes under explicit
+  `dispatch="jax"`.
+
   **A same-rank transform cannot lie about sizes.** Slicing a batch's columns
   keeps every axis, so the levels carry over onto the sizes the columns actually
   have; columns left disagreeing about their batch axes are refused rather than

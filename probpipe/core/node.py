@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import math
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
@@ -954,11 +955,15 @@ class Function(Node, TrackedTerm, Annotated):
                 probe_leaves = []
                 for source in batched_sources.values():
                     n_batch = len(source.batch_shape)
+                    # The flat size is stated, exactly as the executor states it:
+                    # a ``-1`` cannot be inferred over a zero-width event, which
+                    # is a shape the real reshape handles.
+                    n_rows = int(math.prod(source.batch_shape))
                     probe_leaves.append(
                         {
                             leaf: jnp.reshape(
                                 jnp.asarray(source[leaf]),
-                                (-1, *jnp.shape(source[leaf])[n_batch:]),
+                                (n_rows, *jnp.shape(source[leaf])[n_batch:]),
                             )[:1]
                             for leaf in source.event_template
                         }

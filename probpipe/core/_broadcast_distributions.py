@@ -688,8 +688,11 @@ def _make_stack(
     if isinstance(inner_outputs, list):
         # With no rows there is no output to read a type off, so the declared
         # template is the only honest source; without one, the generic handlers
-        # below would name a single opaque field after the function.
-        if not inner_outputs and event_template is not None:
+        # below would name a single opaque field after the function. Only a
+        # sweep that *expects* zero rows takes this path — an empty list where
+        # rows were expected is a missing-output error, and fabricating the
+        # declared fields would hide it.
+        if not inner_outputs and n_total == 0 and event_template is not None:
             return _empty_declared_stack(
                 batch_shape,
                 template=event_template,

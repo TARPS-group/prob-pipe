@@ -531,6 +531,8 @@ class TestMultiLevelSweeps:
 
         assert out.level_names == ("outer", "inner", "rows")
         assert out.axis_groups == ((2,), (3,), (2,))
+        expected = (jnp.arange(2.0)[:, None] + jnp.arange(3.0)[None, :])[..., None] + jnp.zeros(2)
+        np.testing.assert_allclose(np.asarray(out["s"]), np.asarray(expected))
 
 
 class TestAutoDispatchFallsBackForABatchReturningBody:
@@ -543,8 +545,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
             {"x": jnp.arange(3.0)}, "draw", element_spec=EventTemplate(x=())
         )
 
-        @function
-        def widen(v):
+        def body(v):
             return NumericRecordBatch(
                 {"s": jnp.asarray(v["x"]) + jnp.zeros(2)},
                 "inner",
@@ -552,10 +553,14 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
                 axis_groups=((2,),),
             )
 
-        out = widen(v=source)
+        out = Function(func=body)(v=source)
 
         assert out.level_names == ("draw", "inner")
         assert out.batch_shape == (3, 2)
+        # The fallback and an explicit sequential dispatch agree on values —
+        # the dispatch-equivalence contract, checked rather than assumed.
+        explicit = Function(func=body, dispatch="sequential")(v=source)
+        np.testing.assert_allclose(np.asarray(out["s"]), np.asarray(explicit["s"]))
 
     def test_a_numeric_body_is_unaffected(self):
         source = NumericRecordBatch(
@@ -665,3 +670,71 @@ class TestAnEmptySweepAnswersToItsTemplate:
         assert list(out.event_template) == ["y"]
         assert out.batch_shape == (0,)
         assert np.asarray(out["y"]).shape == (0,)
+
+
+class TestATransformCannotResizeTheElement:
+    """The batch axes are a transform's to drop or resize; the element's own
+    axes are the element type's."""
+
+    @staticmethod
+    def _vector_batch():
+        return NumericRecordBatch(
+            {"x": jnp.zeros((3, 2))}, "draw", element_spec=EventTemplate(x=(2,))
+        )
+
+    def test_slicing_an_event_axis_is_refused(self):
+        with pytest.raises(ValueError, match="never the element's own"):
+            jax.tree.map(lambda leaf: leaf[:, :1], self._vector_batch())
+
+    def test_transposing_batch_and_event_axes_is_refused(self):
+        with pytest.raises(ValueError, match="never the element's own"):
+            jax.tree.map(lambda leaf: leaf.T, self._vector_batch())
+
+    def test_reducing_below_the_event_rank_is_refused(self):
+        with pytest.raises(ValueError, match="fewer axes"):
+            jax.tree.map(jnp.sum, self._vector_batch())
+
+
+class TestAnEmptySweepIsNotAMissingOutput:
+    def test_zero_expected_rows_build_the_declared_fields(self):
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        out = _make_stack(
+            [],
+            batch_shape=(0,),
+            field_name="fit",
+            level_names=("design",),
+            event_template=EventTemplate(y=()),
+        )
+
+        assert list(out.event_template) == ["y"]
+        assert np.asarray(out["y"]).shape == (0,)
+
+    def test_missing_outputs_are_an_error_not_a_fabrication(self):
+        """An empty list where rows were expected reports the count mismatch;
+        fabricating the declared fields would hide a swallowed failure."""
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        with pytest.raises(ValueError, match="got 0 outputs but expected"):
+            _make_stack(
+                [],
+                n=3,
+                field_name="fit",
+                level_names=("s",),
+                event_template=EventTemplate(y=()),
+            )
+
+
+class TestZeroWidthEventsUnderExplicitJax:
+    def test_the_probe_accepts_what_the_executor_runs(self):
+        """A (0,)-event column reshapes at the stated flat size; a ``-1`` cannot
+        be inferred over zero width, so the probe states the size exactly as the
+        executor does."""
+        source = NumericRecordBatch(
+            {"x": jnp.zeros((3, 0))}, "draw", element_spec=EventTemplate(x=(0,))
+        )
+
+        out = Function(func=lambda v: jnp.sum(jnp.asarray(v["x"])), dispatch="jax")(v=source)
+
+        assert out.batch_shape == (3,)
+        np.testing.assert_allclose(np.asarray(out["<lambda>"]), [0.0, 0.0, 0.0])
