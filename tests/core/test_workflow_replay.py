@@ -555,6 +555,72 @@ class TestReplayAdmission:
 
 
 class TestReplayPreflight:
+    @pytest.mark.parametrize(
+        ("path", "replacement"),
+        [
+            (("n_broadcast_samples",), 5.0),
+            (("logical_units", 0, "flat_index"), False),
+        ],
+        ids=["float", "bool"],
+    )
+    def test_plan_scalar_types_are_exact_before_sampling(self, path, replacement):
+        workflow = Function(func=replayable_identity, n_broadcast_samples=5)
+        with workflow_run(seed=4):
+            original = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+        payload = original.provenance.to_dict()
+        canonical_plan = payload["controls"]["replay"]["plan"]["canonical_fields"]
+        _edit_controls_path(canonical_plan, path, replacement)
+        changed = Provenance.from_dict(payload)
+        candidate = Normal(loc=0.0, scale=1.0, name="value")
+
+        with (
+            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ) as derive_key,
+            pytest.raises(ReplayCompatibilityError, match="stochastic plan"),
+            replay_run(changed),
+        ):
+            workflow(value=candidate)
+
+        derive_key.assert_not_called()
+
+    def test_effect_descriptor_scalar_types_are_exact_before_derivation(self):
+        original_root = Normal(loc=0.0, scale=1.0, name="root")
+        with workflow_run(seed=4):
+            original = sample(TransformedDistribution(original_root, tfb.Shift(1.0)))
+        payload = original.provenance.to_dict()
+        descriptor = payload["controls"]["replay"]["plan"]["expected_effects"][0][
+            "descendant_descriptor"
+        ]
+
+        def replace_bool_marker(value):
+            if value == ["bool", False]:
+                value[1] = 0
+                return True
+            if isinstance(value, list):
+                return any(replace_bool_marker(item) for item in value)
+            return False
+
+        assert replace_bool_marker(descriptor)
+        changed = Provenance.from_dict(payload)
+        candidate_root = Normal(loc=0.0, scale=1.0, name="root")
+        candidate = TransformedDistribution(candidate_root, tfb.Shift(1.0))
+
+        with (
+            patch.object(candidate_root, "_sample", side_effect=AssertionError("sampled")),
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ) as derive_key,
+            pytest.raises(ReplayCompatibilityError, match="stochastic effect plan"),
+            replay_run(changed),
+        ):
+            sample(candidate)
+
+        derive_key.assert_not_called()
+
     def test_callable_drift_fails_before_sampling(self):
         workflow = Function(func=replayable_identity, n_broadcast_samples=5)
         with workflow_run(seed=4):

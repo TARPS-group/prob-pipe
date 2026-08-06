@@ -22,11 +22,17 @@ from probpipe import (
     NumericRecordArray,
     Provenance,
     ProvenanceMode,
+    ReplayCompatibilityError,
     TransformedDistribution,
     sample,
     workflow_run,
 )
-from probpipe.core import _workflow_broker, _workflow_callable, _workflow_recipe
+from probpipe.core import (
+    _workflow_broker,
+    _workflow_callable,
+    _workflow_recipe,
+    _workflow_replay,
+)
 from probpipe.core._workflow_managed import ManagedEffectClaim, sweep_unit_segment
 from tests.core import _workflow_replay_fixtures
 from tests.core._workflow_replay_fixtures import (
@@ -85,6 +91,50 @@ def _record_array():
 
 
 class TestWorkflowRecipeRecording:
+    def test_structural_identity_json_roundtrips_the_rng_abi(self):
+        identity = ("source", b"\x00\xff", 2**64 - 1, ("nested", 0))
+
+        encoded = _workflow_recipe._structural_json_value(identity)
+
+        assert encoded == [
+            "source",
+            {"type": "bytes", "base64": "AP8="},
+            2**64 - 1,
+            ["nested", 0],
+        ]
+        assert _workflow_replay._structural_tuple(encoded, field_name="test.identity") == identity
+
+    @pytest.mark.parametrize(
+        ("value", "error"),
+        [
+            (True, TypeError),
+            (-1, ValueError),
+            (2**64, ValueError),
+            (1.0, TypeError),
+            (None, TypeError),
+            ({"value": 1}, TypeError),
+        ],
+    )
+    def test_structural_identity_json_rejects_non_rng_values(self, value, error):
+        with pytest.raises(error, match="identity"):
+            _workflow_recipe._structural_json_value(("source", value))
+
+    @pytest.mark.parametrize(
+        "marker",
+        [
+            {"type": "bytes", "base64": "%%%"},
+            {"type": "bytes", "base64": 1},
+            {"type": "bytes", "base64": "AA==", "extra": True},
+            {"type": "unknown", "base64": "AA=="},
+        ],
+    )
+    def test_structural_identity_json_rejects_malformed_byte_markers(self, marker):
+        with pytest.raises(ReplayCompatibilityError, match="structural value"):
+            _workflow_replay._structural_tuple(
+                ["source", marker],
+                field_name="test.identity",
+            )
+
     def test_seeded_lifting_records_root_plan_and_one_batched_event(self):
         workflow = Function(
             func=_identity,

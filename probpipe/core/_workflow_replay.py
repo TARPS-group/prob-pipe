@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import base64
+import binascii
 import copy
+import json
 import sys
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
@@ -44,6 +47,7 @@ class _ExpectedReplayEvent:
     source: tuple[Any, ...]
     unit: tuple[Any, ...]
     effect: dict[str, Any]
+    effect_json: bytes
     encoded_identity: bytes
 
     def managed_effect(self) -> ManagedEffectClaim:
@@ -133,9 +137,11 @@ class _ReplayState:
     requested_workflow_kind: str | None = None
     actual_execution: list[dict[str, Any]] = field(default_factory=list)
     claims: dict[bytes, _ReplayEventClaim] = field(init=False)
+    canonical_plan_json: bytes = field(init=False, repr=False)
     claims_lock: Any = field(default_factory=Lock, repr=False)
 
     def __post_init__(self) -> None:
+        self.canonical_plan_json = _canonical_json(self.canonical_plan)
         self.claims = {
             expected.encoded_identity: _ReplayEventClaim(expected)
             for expected in self.expected_events
@@ -178,7 +184,7 @@ class _ReplayState:
 
     def validate_plan(self, current: dict[str, Any]) -> None:
         """Require exact canonical lifting/direct-operation plan equality."""
-        if current != self.canonical_plan:
+        if _canonical_json(current) != self.canonical_plan_json:
             raise ReplayCompatibilityError(
                 "the current stochastic plan differs from the recorded replay plan"
             )
@@ -214,11 +220,11 @@ class _ReplayState:
 
     def validate_effect_plan(self, plan: Any) -> None:
         """Match one planned effect before its stochastic occurrence is committed."""
-        current_effect = _effect_plan_anchor(plan)
+        current_effect = _canonical_json(_effect_plan_anchor(plan))
         if not any(
             expected.source == plan.event.stochastic_source_id
             and expected.unit == plan.event.logical_unit_id
-            and expected.effect == current_effect
+            and expected.effect_json == current_effect
             for expected in self.expected_events
         ):
             raise ReplayCompatibilityError(
@@ -386,11 +392,11 @@ class _RemoteReplayClaims:
 
     def validate_plan(self, plan: Any) -> None:
         """Validate a transported plan before its child occurrence is committed."""
-        current_effect = _effect_plan_anchor(plan)
+        current_effect = _canonical_json(_effect_plan_anchor(plan))
         if not any(
             effect.stochastic_source_id == plan.event.stochastic_source_id
             and effect.logical_unit_id == plan.event.logical_unit_id
-            and _managed_effect_anchor(effect) == current_effect
+            and _canonical_json(_managed_effect_anchor(effect)) == current_effect
             for effect in self.expected_by_identity.values()
         ):
             raise ReplayCompatibilityError(
@@ -412,10 +418,7 @@ class _RemoteReplayClaims:
             raise ReplayCompatibilityError(
                 "remote workflow execution requested an unexpected replay event"
             )
-        if expected != effect:
-            raise ReplayCompatibilityError(
-                "remote workflow replay effect differs from its assigned event namespace"
-            )
+        _require_matching_managed_effect(expected, effect)
         if encoded in self.claimed:
             raise ReplayCompatibilityError(
                 "one remote managed attempt duplicated a replay event claim"
@@ -882,6 +885,7 @@ def _expected_events(
                 source=source,
                 unit=unit,
                 effect=effect,
+                effect_json=_canonical_json(effect),
                 encoded_identity=encoded,
             )
         )
@@ -945,9 +949,25 @@ def _require_matching_effect(
             "workflow replay event occurrence kind differs from the recorded recipe"
         )
     current_effect = _managed_effect_anchor(actual)
-    if current_effect != expected.effect:
+    if _canonical_json(current_effect) != expected.effect_json:
         raise ReplayCompatibilityError(
             "workflow replay effect or provider ABI differs from the recorded plan"
+        )
+
+
+def _require_matching_managed_effect(
+    expected: ManagedEffectClaim,
+    actual: ManagedEffectClaim,
+) -> None:
+    """Require one transported effect to match with type-exact semantics."""
+    if (
+        _encoded_effect_identity(expected) != _encoded_effect_identity(actual)
+        or expected.occurrence_kind != actual.occurrence_kind
+        or _canonical_json(_managed_effect_anchor(expected))
+        != _canonical_json(_managed_effect_anchor(actual))
+    ):
+        raise ReplayCompatibilityError(
+            "remote workflow replay effect differs from its assigned event namespace"
         )
 
 
@@ -1038,6 +1058,27 @@ def _structural_tuple(value: Any, *, field_name: str) -> tuple[Any, ...]:
     def convert(item: Any) -> Any:
         if isinstance(item, list):
             return tuple(convert(child) for child in item)
+        if isinstance(item, Mapping):
+            if set(item) != {"type", "base64"} or item.get("type") != "bytes":
+                raise ReplayCompatibilityError(
+                    f"recorded {field_name} contains an invalid structural value"
+                )
+            encoded = item.get("base64")
+            if not isinstance(encoded, str):
+                raise ReplayCompatibilityError(
+                    f"recorded {field_name} contains an invalid structural value"
+                )
+            try:
+                decoded = base64.b64decode(encoded, validate=True)
+            except (binascii.Error, ValueError) as error:
+                raise ReplayCompatibilityError(
+                    f"recorded {field_name} contains an invalid structural value"
+                ) from error
+            if base64.b64encode(decoded).decode("ascii") != encoded:
+                raise ReplayCompatibilityError(
+                    f"recorded {field_name} contains an invalid structural value"
+                )
+            return decoded
         if isinstance(item, str):
             return item
         if isinstance(item, bool) or not isinstance(item, int) or not 0 <= item <= 2**64 - 1:
@@ -1188,6 +1229,17 @@ def _abi_sequence(value: Any, field_name: str) -> tuple[str, ...]:
 
 def _ordered_unique(values: list[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(values))
+
+
+def _canonical_json(value: Any) -> bytes:
+    """Encode finite JSON-native replay authority with type-exact scalars."""
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 def _iter_named_abi(value: Any, field_name: str):

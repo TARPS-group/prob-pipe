@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 from typing import Any
 
@@ -75,7 +76,7 @@ def provenance_recipe_fields(
         "schema": _RNG_RECIPE_ABI,
         "rng_abi": "ProbPipe-RNG-v1",
         "root_words": list(snapshot.root_words),
-        "occurrence_path": _json_value(snapshot.occurrence_path),
+        "occurrence_path": _structural_json_value(snapshot.occurrence_path),
         "events": [_serialize_random_event(effect) for effect in effects],
         "expected_event_count": len(effects),
     }
@@ -144,7 +145,7 @@ def serialize_stochastic_plan(
         "source_groups": [
             {
                 "index": group.index,
-                "source_id": _json_value(group.stochastic_source_id),
+                "source_id": _structural_json_value(group.stochastic_source_id),
                 "execution_mode": group.execution_mode,
                 "exact_size": group.exact_size,
                 "consumers": [
@@ -163,7 +164,7 @@ def serialize_stochastic_plan(
                 "layout": unit.layout,
                 "flat_index": unit.flat_index,
                 "coordinates": list(unit.coordinates),
-                "logical_unit_id": _json_value(unit.logical_unit_id),
+                "logical_unit_id": _structural_json_value(unit.logical_unit_id),
             }
             for unit in plan.logical_units
         ],
@@ -188,10 +189,10 @@ def _serialize_ref(ref: Any) -> dict[str, Any]:
 
 def _serialize_random_event(effect: ManagedEffectClaim) -> dict[str, Any]:
     return {
-        "occurrence_path": _json_value(effect.occurrence_path),
+        "occurrence_path": _structural_json_value(effect.occurrence_path),
         "occurrence_kind": effect.occurrence_kind,
-        "source": _json_value(effect.stochastic_source_id),
-        "unit": _json_value(effect.logical_unit_id),
+        "source": _structural_json_value(effect.stochastic_source_id),
+        "unit": _structural_json_value(effect.logical_unit_id),
         "key_ownership": "automatic",
     }
 
@@ -228,7 +229,7 @@ def _sort_effects(
             logical_unit_id=effect.logical_unit_id,
         )
         return (
-            _canonical_json(_json_value(effect.occurrence_path)),
+            _canonical_json(_structural_json_value(effect.occurrence_path)),
             plan_order.get(
                 (effect.stochastic_source_id, effect.logical_unit_id),
                 len(plan_order),
@@ -300,3 +301,25 @@ def _json_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int, float)):
         return value
     raise TypeError(f"workflow recipe contains unsupported canonical value {type(value).__name__}")
+
+
+def _structural_json_value(value: Any) -> Any:
+    """Encode one RNG identity value as an exact JSON-native value."""
+    if isinstance(value, bool):
+        raise TypeError("workflow recipe identity values cannot contain booleans")
+    if isinstance(value, int):
+        if not 0 <= value <= 2**64 - 1:
+            raise ValueError("workflow recipe identity integers must fit unsigned 64 bits")
+        return value
+    if isinstance(value, str):
+        return value
+    if isinstance(value, bytes):
+        return {
+            "type": "bytes",
+            "base64": base64.b64encode(value).decode("ascii"),
+        }
+    if isinstance(value, tuple):
+        return [_structural_json_value(item) for item in value]
+    raise TypeError(
+        "workflow recipe identity values must contain only str, bytes, int, or tuple values"
+    )
