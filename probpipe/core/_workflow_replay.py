@@ -126,6 +126,14 @@ class _ReplayState:
     actual_execution: list[dict[str, Any]] = field(default_factory=list)
     claims: dict[bytes, _ReplayEventClaim] = field(init=False)
     canonical_plan_json: bytes = field(init=False, repr=False)
+    effect_anchors_by_source_unit: dict[
+        tuple[tuple[Any, ...], tuple[Any, ...]],
+        frozenset[bytes],
+    ] = field(init=False, repr=False)
+    managed_effects_by_namespace: dict[
+        tuple[tuple[Any, ...], tuple[Any, ...]],
+        tuple[ManagedEffectClaim, ...],
+    ] = field(init=False, repr=False)
     claims_lock: Any = field(default_factory=Lock, repr=False)
 
     def __post_init__(self) -> None:
@@ -133,6 +141,29 @@ class _ReplayState:
         self.claims = {
             expected.encoded_identity: _ReplayEventClaim(expected)
             for expected in self.expected_events
+        }
+        effect_anchors: dict[
+            tuple[tuple[Any, ...], tuple[Any, ...]],
+            set[bytes],
+        ] = {}
+        managed_effects: dict[
+            tuple[tuple[Any, ...], tuple[Any, ...]],
+            list[ManagedEffectClaim],
+        ] = {}
+        for expected in self.expected_events:
+            source_unit = (expected.source, expected.unit)
+            effect_anchors.setdefault(source_unit, set()).add(expected.effect_json)
+            managed_effect = expected.managed_effect()
+            for index, segment in enumerate(expected.occurrence_path):
+                if segment[0] != "managed-unit":
+                    continue
+                namespace = (expected.occurrence_path[:index], segment)
+                managed_effects.setdefault(namespace, []).append(managed_effect)
+        self.effect_anchors_by_source_unit = {
+            source_unit: frozenset(anchors) for source_unit, anchors in effect_anchors.items()
+        }
+        self.managed_effects_by_namespace = {
+            namespace: tuple(effects) for namespace, effects in managed_effects.items()
         }
 
     def validate_callable(self, current: CallableAnchor) -> None:
@@ -209,11 +240,13 @@ class _ReplayState:
     def validate_effect_plan(self, plan: Any) -> None:
         """Match one planned effect before its stochastic occurrence is committed."""
         current_effect = _canonical_json(_effect_plan_anchor(plan))
-        if not any(
-            expected.source == plan.event.stochastic_source_id
-            and expected.unit == plan.event.logical_unit_id
-            and expected.effect_json == current_effect
-            for expected in self.expected_events
+        source_unit = (
+            plan.event.stochastic_source_id,
+            plan.event.logical_unit_id,
+        )
+        if current_effect not in self.effect_anchors_by_source_unit.get(
+            source_unit,
+            (),
         ):
             raise ReplayCompatibilityError(
                 "unexpected replay event: the current stochastic effect plan differs "
@@ -512,11 +545,9 @@ class _ReplayState:
         unit_segment: tuple[Any, ...],
     ) -> tuple[ManagedEffectClaim, ...]:
         """Return the exact replay namespace assigned to one remote work item."""
-        prefix = (*parent_occurrence_path, unit_segment)
-        return tuple(
-            expected.managed_effect()
-            for expected in self.expected_events
-            if expected.occurrence_path[: len(prefix)] == prefix
+        return self.managed_effects_by_namespace.get(
+            (parent_occurrence_path, unit_segment),
+            (),
         )
 
 
@@ -527,15 +558,38 @@ class _RemoteReplayClaims:
     expected_by_identity: dict[bytes, ManagedEffectClaim]
     attempt: ManagedAttemptState
     claimed: set[bytes] = field(default_factory=set)
+    effect_anchors_by_source_unit: dict[
+        tuple[tuple[Any, ...], tuple[Any, ...]],
+        frozenset[bytes],
+    ] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        effect_anchors: dict[
+            tuple[tuple[Any, ...], tuple[Any, ...]],
+            set[bytes],
+        ] = {}
+        for effect in self.expected_by_identity.values():
+            source_unit = (
+                effect.stochastic_source_id,
+                effect.logical_unit_id,
+            )
+            effect_anchors.setdefault(source_unit, set()).add(
+                _canonical_json(_managed_effect_anchor(effect))
+            )
+        self.effect_anchors_by_source_unit = {
+            source_unit: frozenset(anchors) for source_unit, anchors in effect_anchors.items()
+        }
 
     def validate_plan(self, plan: Any) -> None:
         """Validate a transported plan before its child occurrence is committed."""
         current_effect = _canonical_json(_effect_plan_anchor(plan))
-        if not any(
-            effect.stochastic_source_id == plan.event.stochastic_source_id
-            and effect.logical_unit_id == plan.event.logical_unit_id
-            and _canonical_json(_managed_effect_anchor(effect)) == current_effect
-            for effect in self.expected_by_identity.values()
+        source_unit = (
+            plan.event.stochastic_source_id,
+            plan.event.logical_unit_id,
+        )
+        if current_effect not in self.effect_anchors_by_source_unit.get(
+            source_unit,
+            (),
         ):
             raise ReplayCompatibilityError(
                 "the remote stochastic effect plan differs from its assigned event namespace"

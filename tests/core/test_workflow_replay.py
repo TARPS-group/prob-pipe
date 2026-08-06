@@ -7,6 +7,8 @@ import copy
 import json
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import copy_context
+from dataclasses import replace
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import jax
@@ -73,6 +75,22 @@ def _edit_controls_path(controls, path, value):
         del target[path[-1]]
     else:
         target[path[-1]] = copy.deepcopy(value)
+
+
+def _plan_for_effect(effect):
+    return SimpleNamespace(
+        operation_kind=effect.operation_kind,
+        execution_mode=effect.execution_mode,
+        event=SimpleNamespace(
+            stochastic_source_id=effect.stochastic_source_id,
+            logical_unit_id=effect.logical_unit_id,
+        ),
+        sample_shape=effect.sample_shape,
+        sampling_abi=effect.sampling_abi,
+        provider_abi=effect.provider_abi,
+        record_path=effect.record_path,
+        descendant_descriptor=effect.descendant_descriptor,
+    )
 
 
 class TestReplayScope:
@@ -1017,6 +1035,70 @@ class TestReplayEventRegistry:
             _workflow_replay._remote_replay_claim_scope((effect,), attempt),
         ):
             raise ValueError("worker failed")
+
+    def test_plan_validation_uses_the_admission_index(self):
+        state = _workflow_replay._validate_provenance(_draw().provenance)
+        effect = state.expected_events[0].managed_effect()
+
+        class IterationTrap(tuple):
+            def __iter__(self):
+                raise AssertionError("validate_plan rescanned expected events")
+
+        state.expected_events = IterationTrap(state.expected_events)
+        for _ in range(5):
+            state.validate_effect_plan(_plan_for_effect(effect))
+
+    def test_managed_namespace_index_handles_nested_prefixes(self):
+        state = _workflow_replay._validate_provenance(_draw().provenance)
+        original = state.expected_events[0]
+        outer_path = original.occurrence_path
+        outer_unit = (
+            "managed-unit",
+            "probpipe.managed_work_item/v1",
+            "point",
+            0,
+        )
+        nested_parent = (*outer_path, outer_unit, ("child", 0))
+        nested_unit = (
+            "managed-unit",
+            "probpipe.managed_work_item/v1",
+            "sweep-cell",
+            2,
+        )
+        occurrence_path = (*nested_parent, nested_unit, ("child", 0))
+        effect = replace(original.managed_effect(), occurrence_path=occurrence_path)
+        expected = replace(
+            original,
+            occurrence_path=occurrence_path,
+            encoded_identity=_workflow_replay._encoded_effect_identity(effect),
+        )
+        indexed = replace(state, expected_events=(expected,))
+
+        class IterationTrap(tuple):
+            def __iter__(self):
+                raise AssertionError("managed lookup rescanned expected events")
+
+        indexed.expected_events = IterationTrap(indexed.expected_events)
+        assert indexed.expected_effects_for_unit(outer_path, outer_unit) == (effect,)
+        assert indexed.expected_effects_for_unit(nested_parent, nested_unit) == (effect,)
+
+    def test_remote_plan_validation_uses_its_namespace_index(self):
+        state = _workflow_replay._validate_provenance(_draw().provenance)
+        effect = state.expected_events[0].managed_effect()
+        attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
+        encoded = _workflow_replay._encoded_effect_identity(effect)
+        registry = _workflow_replay._RemoteReplayClaims(
+            expected_by_identity={encoded: effect},
+            attempt=attempt,
+        )
+
+        class ValuesTrap(dict):
+            def values(self):
+                raise AssertionError("remote validation rescanned its namespace")
+
+        registry.expected_by_identity = ValuesTrap(registry.expected_by_identity)
+        for _ in range(5):
+            registry.validate_plan(_plan_for_effect(effect))
 
     def test_nested_automatic_drift_in_thread_is_unexpected_before_sampling(
         self,
