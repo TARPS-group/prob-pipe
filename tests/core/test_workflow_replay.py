@@ -711,7 +711,53 @@ class TestReplayPreflight:
             replayed = sample(Normal(loc=0.0, scale=1.0, name="value"))
 
         np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
-        assert replayed.provenance.diagnostics["replay"]["source_artifact_drift"] is True
+        diagnostics = replayed.provenance.diagnostics["replay"]
+        assert diagnostics["source_artifact_drift"] is True
+        assert diagnostics["source_location_drift"] is False
+
+    def test_source_location_drift_is_separate_from_artifact_drift(self):
+        original = _draw()
+        payload = original.provenance.to_dict()
+        payload["diagnostics"]["callable_source"]["source_location"] = (
+            "/relocated/probpipe/source.py"
+        )
+        changed = Provenance.from_dict(payload)
+
+        with replay_run(changed):
+            replayed = sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
+        diagnostics = replayed.provenance.diagnostics["replay"]
+        assert diagnostics["source_artifact_drift"] is False
+        assert diagnostics["source_location_drift"] is True
+
+    @pytest.mark.parametrize(
+        "invalid_signature",
+        ["not-a-signature", 1],
+        ids=["value-error", "type-error"],
+    )
+    def test_invalid_custom_signature_fails_before_sampling(
+        self,
+        monkeypatch,
+        invalid_signature,
+    ):
+        workflow = Function(func=replayable_identity, n_broadcast_samples=5)
+        with workflow_run(seed=8):
+            original = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        monkeypatch.setattr(
+            replayable_identity,
+            "__signature__",
+            invalid_signature,
+            raising=False,
+        )
+        candidate = Normal(loc=0.0, scale=1.0, name="value")
+        with (
+            patch.object(candidate, "_sample", side_effect=AssertionError("sampled")),
+            pytest.raises(ReplayUnsupportedCallableError, match="module-level"),
+            replay_run(original.provenance),
+        ):
+            workflow(value=candidate)
 
     def test_recorded_sampling_abi_drift_fails_before_sampling(self):
         original = _draw()

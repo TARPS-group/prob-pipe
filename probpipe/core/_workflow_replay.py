@@ -128,6 +128,7 @@ class _ReplayState:
     root_completed: bool = False
     root_failed: bool = False
     source_artifact_drift: bool = False
+    source_location_drift: bool = False
     requested_dispatch: str | None = None
     requested_workflow_kind: str | None = None
     actual_execution: list[dict[str, Any]] = field(default_factory=list)
@@ -167,7 +168,13 @@ class _ReplayState:
             raise ReplayCompatibilityError(
                 "the supplied Function callable definition changed since recording"
             )
-        self.source_artifact_drift = current.diagnostics() != self.recorded_source
+        current_source = current.diagnostics()
+        self.source_artifact_drift = current_source.get(
+            "source_artifact_digest"
+        ) != self.recorded_source.get("source_artifact_digest")
+        self.source_location_drift = current_source.get(
+            "source_location"
+        ) != self.recorded_source.get("source_location")
 
     def validate_plan(self, current: dict[str, Any]) -> None:
         """Require exact canonical lifting/direct-operation plan equality."""
@@ -243,6 +250,7 @@ class _ReplayState:
         ]
         return {
             "source_artifact_drift": self.source_artifact_drift,
+            "source_location_drift": self.source_location_drift,
             "execution_drift": recorded_routes != self.actual_execution,
             "recorded_execution": recorded_routes,
             "current_execution": copy.deepcopy(self.actual_execution),

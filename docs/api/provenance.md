@@ -174,6 +174,13 @@ bound methods, partials, callable objects, classes, and builtins may execute
 normally, but replay raises `ReplayUnsupportedCallableError` rather than using
 a weak identity.
 
+The definition anchor covers the callable's local executable definition and
+the names it references, but not the current values of module globals,
+referenced helper functions, imported implementations, files, services, or
+other environmental state. Those dependencies may change results without
+making the callable anchor incompatible: replay validates ProbPipe's random
+stream structure, not full computational semantics.
+
 The recorded execution route is diagnostic, not authoritative. Replay may move
 between compatible rowwise, thread, JAX, or Prefect routes; any drift is written
 to the new result's diagnostics. This validates structural RNG identity and

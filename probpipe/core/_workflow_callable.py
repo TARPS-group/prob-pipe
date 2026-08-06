@@ -201,7 +201,10 @@ def _resolves_to_callable(
 
 
 def _signature_and_templates(function: Any, candidate: Any) -> dict[str, Any]:
-    signature = inspect.signature(candidate, follow_wrapped=False)
+    try:
+        signature = inspect.signature(candidate, follow_wrapped=False)
+    except (TypeError, ValueError) as error:
+        raise _UnsupportedDefinition("callable signature cannot be captured") from error
     parameters = [
         {
             "name": parameter.name,

@@ -28,6 +28,7 @@ from probpipe import (
 )
 from probpipe.core import _workflow_broker, _workflow_callable, _workflow_recipe
 from probpipe.core._workflow_managed import ManagedEffectClaim, sweep_unit_segment
+from tests.core import _workflow_replay_fixtures
 from tests.core._workflow_replay_fixtures import (
     replayable_affine,
     replayable_canonical_defaults,
@@ -35,6 +36,7 @@ from tests.core._workflow_replay_fixtures import (
     replayable_identity,
     replayable_numeric_array_default,
     replayable_object_array_default,
+    replayable_optional_nested,
     replayable_structured_array_default,
 )
 
@@ -416,6 +418,45 @@ class TestWorkflowCallableAnchor:
             _replay(plain_result)["callable"]["sha256"]
             != _replay(declared_result)["callable"]["sha256"]
         )
+
+    @pytest.mark.parametrize(
+        "invalid_signature",
+        ["not-a-signature", 1],
+        ids=["value-error", "type-error"],
+    )
+    def test_invalid_custom_signature_records_closed_anchor(
+        self,
+        monkeypatch,
+        invalid_signature,
+    ):
+        workflow = Function(func=replayable_identity, n_broadcast_samples=5)
+        monkeypatch.setattr(
+            replayable_identity,
+            "__signature__",
+            invalid_signature,
+            raising=False,
+        )
+
+        with workflow_run(seed=6):
+            result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        callable_anchor = _replay(result)["callable"]
+        assert callable_anchor["supported"] is False
+        assert callable_anchor["form"] == "unsupported_definition_state"
+        assert "sha256" not in callable_anchor
+
+    def test_runtime_global_values_are_outside_the_definition_anchor(self, monkeypatch):
+        workflow = Function(func=replayable_optional_nested)
+        original = _workflow_callable.capture_function_anchor(workflow)
+
+        monkeypatch.setattr(
+            _workflow_replay_fixtures,
+            "ENABLE_EXTRA_AUTOMATIC",
+            not _workflow_replay_fixtures.ENABLE_EXTRA_AUTOMATIC,
+        )
+        changed = _workflow_callable.capture_function_anchor(workflow)
+
+        assert changed.controls() == original.controls()
 
     def test_unsupported_lambda_executes_but_records_no_weak_digest(self):
         workflow = Function(func=lambda value: value, n_broadcast_samples=5)
