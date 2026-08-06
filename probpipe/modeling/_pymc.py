@@ -308,8 +308,19 @@ class PyMCModel(ProbabilisticModel):
         if isinstance(data, dict):
             return self._model_fn(**{k: _to_numpy(v) for k, v in data.items()})
         # Local import to avoid a modeling→core cycle at module load.
+        from ..core._record_batch import RecordBatch
         from ..core.record import Record
 
+        if isinstance(data, RecordBatch):
+            # A batch's fields come from its schema, and its columns are read
+            # raw — an observed variable is the rows of one field.
+            return self._model_fn(
+                **{
+                    name: _to_numpy(data._raw_column(name))
+                    for name in self._observed_names
+                    if name in data.event_template
+                }
+            )
         if isinstance(data, Record):
             return self._model_fn(
                 **{

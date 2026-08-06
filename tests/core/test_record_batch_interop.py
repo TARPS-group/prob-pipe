@@ -857,3 +857,27 @@ class TestFunctionValuedColumnsStack:
         assert out.level_names == ("sweep", "inner")
         assert isinstance(out["f"], FunctionBatch)
         assert out._raw_column("f")[2, 1]() == 21
+
+
+class TestAnEmpiricalTakesABatch:
+    def test_a_batch_routes_to_the_record_empirical(self):
+        """An empirical over a batch of records is an empirical over its rows:
+        the batch peels to the leaf-rows form the class stores, raw columns and
+        all, and resampling keeps rows paired."""
+        from probpipe import EmpiricalDistribution, sample
+        from probpipe.core._empirical import RecordEmpiricalDistribution
+
+        data = NumericRecordBatch(
+            {"X": jnp.arange(4.0), "y": jnp.arange(4.0) * 10},
+            "obs",
+            element_spec=EventTemplate(X=(), y=()),
+        )
+
+        empirical = EmpiricalDistribution(data)
+
+        assert isinstance(empirical, RecordEmpiricalDistribution)
+        assert empirical.num_atoms == 4
+        drawn = sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(16,))
+        stored = {(float(i), float(i * 10)) for i in range(4)}
+        seen = set(zip(np.asarray(drawn["X"]).tolist(), np.asarray(drawn["y"]).tolist()))
+        assert seen <= stored

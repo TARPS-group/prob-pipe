@@ -21,7 +21,7 @@ case studies for applied, problem-first notebooks.
     ---
 
     Structured values and random records: `Record`, `NumericRecord`,
-    `RecordDistribution`, `RecordArray`, and `DistributionArray`.
+    `RecordDistribution`, `RecordBatch`, and `DistributionArray`.
 
 </div>
 

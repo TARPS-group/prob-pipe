@@ -56,6 +56,7 @@ from ._numeric_record_distribution import (
     BootstrapDistribution,
     NumericRecordDistribution,
 )
+from ._record_batch import RecordBatch
 from .constraints import Constraint, real
 from .event_template import EventTemplate
 from .protocols import (
@@ -280,7 +281,7 @@ class EmpiricalDistribution[T](
 
     def __new__(cls, samples=None, *args, **kwargs):
         if cls is EmpiricalDistribution and samples is not None:
-            if isinstance(samples, Record):
+            if isinstance(samples, (Record, RecordBatch)):
                 return object.__new__(RecordEmpiricalDistribution)
             if _is_numeric_array(samples):
                 return object.__new__(RecordEmpiricalDistribution)
@@ -469,11 +470,16 @@ class RecordEmpiricalDistribution(
         sample_shape: tuple[int, ...] | None = None,
         name: str | None = None,
     ):
+        if isinstance(samples, RecordBatch):
+            # A batch holds its rows axis in the batch; the empirical stores a
+            # record whose leaves carry it, so peel to that form — raw columns,
+            # since a non-array field presents as its own object batch.
+            samples = Record(samples.name, samples._raw_columns(), name_is_auto=True)
         if not isinstance(samples, Record):
             if not _is_numeric_array(samples):
                 raise TypeError(
                     f"RecordEmpiricalDistribution: samples must be a "
-                    f"Record or a numeric array, got "
+                    f"Record, a batch of records, or a numeric array, got "
                     f"{type(samples).__name__}"
                 )
             samples, name = _wrap_numeric_array_as_record(

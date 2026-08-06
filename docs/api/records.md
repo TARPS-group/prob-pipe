@@ -1,7 +1,7 @@
 # Records and data
 
 Named, immutable containers for structured non-random data, plus the
-batched (`RecordArray`) and parameter-sweep (`Design`) variants built on
+batched (`RecordBatch`) and parameter-sweep (`Design`) variants built on
 top.
 
 Field access is bracket-only: `record["x"]`, `array["x"]`. Slash-delimited
@@ -69,9 +69,9 @@ an empty sequence, whose shape could not be inferred anyway.
 
 ## Record arrays
 
-::: probpipe.RecordArray
+::: probpipe.RecordBatch
 
-::: probpipe.NumericRecordArray
+::: probpipe.NumericRecordBatch
 
 ## Weights
 
@@ -80,7 +80,7 @@ an empty sequence, whose shape could not be inferred anyway.
 ## Parameter-sweep designs
 
 `FullFactorialDesign(**marginals)` materialises the Cartesian product of
-per-field marginals as a sweep-ready `RecordArray`.
+per-field marginals as a sweep-ready `RecordBatch`.
 
 ::: probpipe.Design
 
