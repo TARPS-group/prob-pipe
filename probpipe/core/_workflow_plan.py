@@ -13,6 +13,7 @@ from math import prod
 from typing import Any, Literal
 
 from . import _workflow_call, _workflow_distribution_normalization
+from ._batch import Batch
 from ._distribution_array import DistributionArray
 from ._record_array import RecordArray
 from ._record_batch import RecordBatch
@@ -58,14 +59,7 @@ def build_broadcast_plan(
         is_batched_record = isinstance(value, (RecordArray, RecordBatch))
         is_dist_array = isinstance(value, DistributionArray)
         if (is_batched_record or is_dist_array) and len(value.batch_shape) > 0:
-            if (
-                _is_same_array_hint(
-                    expected,
-                    is_batched_record=is_batched_record,
-                    is_dist_array=is_dist_array,
-                )
-                or expected is Any
-            ):
+            if _value_matches_hint(value, expected) or expected is Any:
                 continue
             array_args.append(ref)
             continue
@@ -103,15 +97,32 @@ def group_by_root(
     their members keep argument order, so the grouping is a deterministic
     function of the call.
 
-    A root is found by a single ``parent`` lookup, which is exact for the view
-    types that exist: a view's parent is always a distribution, never another
-    view. A nested view type would need this walked transitively.
+    A view with a ``parent`` is grouped by a single lookup, which is exact for
+    the view types that carry one: such a view's parent is always a distribution
+    or a record array, never another view. A nested view type would need this
+    walked transitively.
+
+    A batch has no parent to look up — a view over one is another batch over the
+    same axes — so it is grouped by its **level names** instead. That is the level
+    algebra's own rule: operands align by level name, so two batches carrying the
+    same level are two readings of one multiplicity and zip, while batches with no
+    level in common are independent and form a product. Sibling views from one
+    batch's ``select_all`` therefore zip, as do a batch and a view of it.
     """
-    groups: dict[int, tuple[Any, list[_workflow_call.WorkflowInputRef]]] = {}
+    groups: dict[Any, tuple[Any, list[_workflow_call.WorkflowInputRef]]] = {}
     for ref in refs:
         value = _workflow_call.input_ref_value(values, ref)
-        root = getattr(value, "parent", value)
-        groups.setdefault(id(root), (root, []))[1].append(ref)
+        parent = getattr(value, "parent", None)
+        if parent is not None:
+            key: Any = id(parent)
+            root = parent
+        elif isinstance(value, Batch):
+            key = value.level_names
+            root = value
+        else:
+            key = id(value)
+            root = value
+        groups.setdefault(key, (root, []))[1].append(ref)
     return [(root, tuple(group_refs)) for root, group_refs in groups.values()]
 
 
@@ -120,11 +131,25 @@ def group_array_args_by_parent(
     values: Mapping[str, Any],
     refs: Sequence[_workflow_call.WorkflowInputRef],
 ) -> tuple[ArrayBroadcastGroup, ...]:
-    """Build parent-identity groups for array-valued sweep arguments."""
+    """Build the zip groups for array-valued sweep arguments.
+
+    Every argument in a group is read along the same axes, so they must agree on
+    what those axes are; a disagreement is a mistake about which multiplicity is
+    which rather than a product to be formed silently.
+    """
     groups: list[ArrayBroadcastGroup] = []
     for _root, arg_refs in group_by_root(values=values, refs=refs):
         first = _workflow_call.input_ref_value(values, arg_refs[0])
         batch_shape = tuple(first.batch_shape)
+        for ref in arg_refs[1:]:
+            other = _workflow_call.input_ref_value(values, ref)
+            if tuple(other.batch_shape) != batch_shape:
+                raise ValueError(
+                    f"{arg_refs[0].label!r} and {ref.label!r} are zipped together but are "
+                    f"batched differently: {batch_shape} against {tuple(other.batch_shape)}. "
+                    f"Arguments sharing a level name are read along the same axes, so give "
+                    f"one of them a level of its own to sweep them independently"
+                )
         groups.append(
             ArrayBroadcastGroup(
                 arg_refs=tuple(arg_refs),
@@ -149,16 +174,22 @@ def _broadcast_regime(
     return "none"
 
 
-def _is_same_array_hint(
-    expected: Any,
-    *,
-    is_batched_record: bool,
-    is_dist_array: bool,
-) -> bool:
+def _value_matches_hint(value: Any, expected: Any) -> bool:
+    """Whether the annotation names a batched container the value satisfies.
+
+    Both halves are load-bearing. The annotation must be a batched-container
+    class, because an *element* annotation — ``p: Record``, which a record array
+    also satisfies by subclassing — is how a body says it wants one row, and the
+    sweep is what delivers rows. And the value must actually satisfy it: a
+    parameter annotated with one batched-record class does not accept the other,
+    so family membership alone would deliver a batch whole to a body that
+    declared it takes something else, silently skipping the sweep.
+    """
     try:
-        return isinstance(expected, type) and (
-            (is_batched_record and issubclass(expected, (RecordArray, RecordBatch)))
-            or (is_dist_array and issubclass(expected, DistributionArray))
+        return (
+            isinstance(expected, type)
+            and issubclass(expected, (RecordArray, RecordBatch, DistributionArray))
+            and isinstance(value, expected)
         )
     except TypeError:
         return False

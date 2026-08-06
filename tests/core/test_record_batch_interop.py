@@ -24,6 +24,7 @@ from probpipe import (
     NumericRecord,
     ProductDistribution,
     Record,
+    function,
 )
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
@@ -290,3 +291,25 @@ class TestDiagnosticsBridge:
         assert sorted(extracted) == ["a", "b"]
         assert extracted["a"].shape == (4,)
         assert extracted["b"].shape == (4, 2)
+
+
+class TestSiblingViewsZipThroughACall:
+    def test_select_all_views_sweep_zipped_not_producted(self):
+        """Two views of one batch are two readings of one multiplicity — they
+        share its level — so a call over both zips rows rather than forming the
+        (n, n) product a per-object grouping would."""
+        batch = NumericRecordBatch(
+            {"x": jnp.arange(3.0), "y": jnp.arange(3.0) * 10},
+            "draw",
+            element_spec=EventTemplate(x=(), y=()),
+        )
+        views = batch.select_all()
+
+        @function
+        def add(x, y):
+            return jnp.asarray(x["x"]) + jnp.asarray(y["y"])
+
+        out = add(x=views["x"], y=views["y"])
+
+        assert out.batch_shape == (3,)
+        np.testing.assert_allclose(np.asarray(out["add"]), [0.0, 11.0, 22.0])

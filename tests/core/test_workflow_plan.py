@@ -190,3 +190,81 @@ class TestPlanPurity:
         assert values["x"] is external
         assert raw_plan.regime == "none"
         assert normalized_plan.regime == "distribution"
+
+
+def _batch(level: str = "draw", n: int = 3, **fields) -> Any:
+    from probpipe.core._numeric_record_batch import NumericRecordBatch
+    from probpipe.core.event_template import EventTemplate
+
+    fields = fields or {"x": jnp.arange(float(n))}
+    return NumericRecordBatch(
+        dict(fields),
+        (level,),
+        element_spec=EventTemplate({name: value.shape[1:] for name, value in fields.items()}),
+    )
+
+
+class TestBatchGrouping:
+    """A batch has no parent pointer, so grouping follows its level names."""
+
+    def test_sibling_select_all_views_zip_into_one_group(self):
+        batch = _batch(x=jnp.arange(3.0), y=jnp.arange(3.0) * 10)
+        views = batch.select_all()
+
+        plan = _plan({"x": views["x"], "y": views["y"]})
+
+        assert plan.regime == "sweep"
+        assert len(plan.array_groups) == 1
+        assert plan.array_groups[0].arg_refs == (_ref("x"), _ref("y"))
+        assert plan.sweep_batch_shape == (3,)
+        assert plan.n_sweep == 3
+
+    def test_a_batch_zips_with_its_own_view(self):
+        batch = _batch(x=jnp.arange(3.0), y=jnp.arange(3.0) * 10)
+
+        plan = _plan({"whole": batch, "x": batch.select("x")["x"]})
+
+        assert len(plan.array_groups) == 1
+        assert plan.n_sweep == 3
+
+    def test_batches_with_no_level_in_common_form_a_product(self):
+        plan = _plan({"a": _batch("outer", 3), "b": _batch("inner", 2)})
+
+        assert len(plan.array_groups) == 2
+        assert plan.sweep_batch_shape == (3, 2)
+        assert plan.n_sweep == 6
+
+    def test_one_level_name_at_two_sizes_is_refused(self):
+        """Two batches naming the same level claim to range over the same thing,
+        so disagreeing about its size is a mistake rather than a product."""
+        import pytest
+
+        with pytest.raises(ValueError, match="batched differently"):
+            _plan({"a": _batch("draw", 3), "b": _batch("draw", 2)})
+
+
+class TestAnnotationDispatch:
+    """The hint says what the body accepts whole, so the value answers it."""
+
+    def test_the_exact_annotation_skips_the_sweep(self):
+        from probpipe.core._numeric_record_batch import NumericRecordBatch
+
+        batch = _batch()
+        plan = _plan({"p": batch}, hints={"p": NumericRecordBatch})
+
+        assert plan.regime == "none"
+
+    def test_the_other_family_member_does_not_skip_it(self):
+        batch = _batch()
+        plan = _plan({"p": batch}, hints={"p": NumericRecordArray})
+
+        assert plan.regime == "sweep"
+        assert plan.array_args == (_ref("p"),)
+
+    def test_a_record_array_annotated_as_a_batch_is_swept(self):
+        from probpipe.core._record_batch import RecordBatch
+
+        ra = _numeric_record_array("x", range(3))
+        plan = _plan({"p": ra}, hints={"p": RecordBatch})
+
+        assert plan.regime == "sweep"
