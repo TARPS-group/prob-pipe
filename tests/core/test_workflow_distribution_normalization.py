@@ -209,7 +209,7 @@ class TestDistributionArrayHandling:
 
         assert isinstance(result, NumericRecordBatch)
         assert result.batch_shape == (1,)
-        np.testing.assert_allclose(result[result.fields[0]], jnp.asarray([3.0]))
+        np.testing.assert_allclose(result[result.event_template.fields[0]], jnp.asarray([3.0]))
 
 
 class TestUnhintedExternalDistribution:

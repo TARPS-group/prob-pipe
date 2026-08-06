@@ -595,9 +595,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def spec(self) -> RecordSpec:
         """This record's own :class:`RecordSpec` — the single stored source of its type.
 
-        Set at construction. A declaration given as a bare :class:`EventTemplate`
-        is stored wrapped, so after construction only the spec remains and the
-        declared kind is its class. :attr:`event_template` is a view on it.
+        Fixed at construction and always present. A declaration given as a bare
+        :class:`EventTemplate` is stored wrapped, so after construction only the
+        spec remains and the declared kind is its class. :attr:`event_template`
+        is a view on it.
+
         """
         return self._spec
 

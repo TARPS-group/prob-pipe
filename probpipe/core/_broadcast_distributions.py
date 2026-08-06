@@ -523,6 +523,8 @@ def _make_marginal(
                     ra = _stack_declared_columns(
                         output_samples,
                         batch_shape=(len(output_samples),),
+                        axis_groups=((len(output_samples),),),
+                        level_names=(DRAW_LEVEL,),
                         template=event_template,
                         name=name or "marginal",
                     )

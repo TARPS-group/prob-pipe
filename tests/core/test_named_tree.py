@@ -187,8 +187,8 @@ class TestWithPathNames:
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
         )
-        with pytest.raises(NotImplementedError):
-            ra.with_path_names(a="b")
+        renamed = ra.with_path_names(a="b")
+        assert list(renamed.event_template) == ["b"]
 
 
 # ===========================================================================

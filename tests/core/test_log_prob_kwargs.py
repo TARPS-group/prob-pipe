@@ -64,7 +64,7 @@ class TestKwargFormScalar:
             [NumericRecord("row", x=float(value)) for value in range(3)], level_name="draw"
         )
 
-        result = log_prob(d, x=rows.view("x"))
+        result = log_prob(d, x=rows.select("x")["x"])
 
         assert isinstance(result, NumericRecordBatch)
         assert result.batch_shape == (3,)

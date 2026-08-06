@@ -507,12 +507,12 @@ uv build packaging/probpipe   # probpipe (metapackage)
    auto-derived).
 7. **Uniform output wrap at the Function boundary** — every
    `@function` return is coerced into the
-   `Record | RecordBatch | RecordArray | Distribution` contract before it
+   `Record | RecordBatch | Distribution` contract before it
    reaches the caller.  Scalars and `jnp.ndarray`s become a single-field auto-named
    `NumericRecord` with field `fn_name` (no sweep) or
-   `NumericRecordArray({fn_name: arr}, batch_shape=sweep_shape)`
+   `NumericRecordBatch({fn_name: arr}, <swept levels>)`
    (swept); `dict` / `list` / `tuple` promote via `_make_stack`;
-   existing `Record` / `RecordBatch` / `RecordArray` / `Distribution` values
+   existing `Record` / `RecordBatch` / `Distribution` values
    preserve their structure and backing data but `Function.__call__` returns a shallow copy
    as an independent result term. The copy gets a fresh annotations container,
    discards the returned object's prior provenance, and records the called
@@ -533,15 +533,15 @@ uv build packaging/probpipe   # probpipe (metapackage)
    term-result planning reserved for #369.
    Authoritative nested output templates use a private recursive aggregate
    packer across sequential and JAX dispatch; the public
-   `RecordArray.stack` contract remains unchanged. The field name for inferred
+   `RecordBatch.stack` contract remains unchanged. The field name for inferred
    single-field output is always the function's own name. Single-field
-   `NumericRecord` / `NumericRecordArray` / `Record`
+   `NumericRecord` / `NumericRecordBatch` / `Record`
    expose shims (`__jax_array__`, `__float__`, `__call__`, `.shape`,
    `.dtype`, `.ndim`) so `jnp.array(log_prob(d, v))`,
    `float(mean(d))`, and `sample(grf)(X)` stay terse.
 8. **Array inputs vectorize with the product rule** — when a
    `@function` is called with array-valued inputs
-   (`RecordBatch`, `RecordArray`, or `DistributionArray` with nonempty
+   (`RecordBatch` or `DistributionArray` with nonempty
    `batch_shape`) passed to slots whose hints don't match the
    batched type, the Function layer dispatches cell-by-cell
    and stacks the returns.  Multiple array inputs combine by their
@@ -574,16 +574,14 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
 | `RecordBatch` | Batch of `Record` elements over named levels (`level_names` / `axis_groups`), stored one column per leaf path; positional index → element or sub-batch view, field index → the column in its batch form. A batched draw from a joint law is one of these. Deliberately **not** a `Record`: fields are read from `event_template`, not `fields` / `items()`. |
 | `NumericRecordBatch` (subclass of `RecordBatch`) | All-numeric batch; adds `to_vector` / `from_vector(name, template, vec, *, level_names)` and the single-field array shims. Reduce a column directly (`jnp.mean(batch["x"], axis=0)`) — the batch has no `mean` / `var` of its own. |
-| `RecordArray` | Legacy batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array. No producer returns one; being replaced by `RecordBatch`. |
-| `NumericRecordArray` (subclass of `RecordArray`) | Legacy numeric batch; adds `to_vector` / `mean` / `var` |
-| `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, template, vec)` / `NumericRecordArray.from_vector(...)` rebuild a numeric value from its 1-D vector given a template, without an example instance |
+| `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, template, vec)` / `NumericRecordBatch.from_vector(...)` rebuild a numeric value from its 1-D vector given a template, without an example instance |
 | `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
 | `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericEventTemplate`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
 | `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
-| `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordArray` keyed by `template.fields`. |
-| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `event_template`, `components`). `event_template` is the explicitly supplied authoritative template for Function aggregates, the common component template for compatible literal arrays, or `None`. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
+| `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordBatch` keyed by `template.fields`. |
+| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `event_template`, `components`). `event_template` is the explicitly supplied authoritative template for Function aggregates, the common component template for compatible literal arrays, or `None`. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordBatch` / `RecordBatch` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
@@ -597,7 +595,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
-| `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordArray` subclass carrying per-field marginals; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready `RecordArray`. Pipe into a `Function` as a single `Record`-typed arg to trigger the Function sweep path. |
+| `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordBatch` subclass carrying per-field marginals over a single `design` level; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready batch. Pipe into a `Function` as a single `Record`-typed arg to trigger the Function sweep path. |
 
 ### Inference method registry
 
@@ -809,9 +807,8 @@ Three rules govern how the framework's universal types relate.
    receiver typing — not a runtime shape probe — enforces the
    contract.
 
-3. **Iteration is a Record-family convention.** `Record`,
-   `NumericRecord`, `RecordArray`, `NumericRecordArray` iterate field
-   names dict-style. A `RecordBatch` is a collection, not a named tree:
+3. **Iteration is a Record-family convention.** `Record` and
+   `NumericRecord` iterate field names dict-style. A `RecordBatch` is a collection, not a named tree:
    it iterates leading-axis views, and its fields are read from
    `event_template`. `DistributionArray` is positional (``len(da)``
    is the leading-axis size, ``prod(da.batch_shape)`` is the total

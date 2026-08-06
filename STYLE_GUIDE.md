@@ -111,8 +111,8 @@ are authoritative schemas but never derive or replace that signature. Use
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
 wrapping, and Function-first provenance.
 
-If an implementation returns an existing `Record`, `RecordBatch`,
-`RecordArray`, or `Distribution`, `apply` preserves its identity. `__call__` instead creates a
+If an implementation returns an existing `Record`, `RecordBatch`, or
+`Distribution`, `apply` preserves its identity. `__call__` instead creates a
 shallow result copy that shares value data and templates, owns a separate
 annotations container, and receives only the current call's provenance. Do not
 restore identity-through behavior at the workflow boundary. Variadic Functions
@@ -236,12 +236,10 @@ sub-Record, whereas `record["params"]` raises when `params` is not a
 leaf. `keys()` lists every leaf's path using the same `/` separator, so
 those paths round-trip with `__getitem__`.
 
-Two surfaces are documented exceptions, each pending its own follow-up:
+One surface is a documented exception, pending its own follow-up:
 
-- `RecordArray` / `NumericRecordArray`: the mapping surface (`keys` /
-  `len` / `in`) is still **top-level** (first level of field names)
-  pending the batch-axis rework, so `"outer" in arr` can be `True` while
-  `arr["outer"]` raises if `outer` is an interior node. String `[]` *is*
+- `RecordArray` / `NumericRecordArray` (deleted): the mapping-surface
+  split this bullet used to document died with the classes. String `[]` *is*
   leaf-keyed. Treat this as temporary.
 - Record-based **distributions** (`RecordDistribution`,
   `RecordEmpiricalDistribution`, …): their `fields` / `keys()` / `in` /
@@ -279,9 +277,9 @@ accessed via `.samples` / `.draws()` and the size property
 (`num_atoms` or `replicate_size` per §1.9) reports the count.
 Parametric distributions do not have either property.
 
-Iteration is reserved for the `Record` family — `Record`,
-`NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
-field names dict-style (`keys()` / `values()` / `items()`). A
+Iteration is reserved for the `Record` family — `Record` and
+`NumericRecord` — which iterate field names dict-style
+(`keys()` / `values()` / `items()`). A
 `RecordBatch` is a collection, not a named tree: it iterates leading-axis
 views like an array, and its fields are read from `event_template`.
 

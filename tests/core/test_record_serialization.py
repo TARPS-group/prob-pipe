@@ -157,7 +157,7 @@ def test_record_array_pickle_roundtrip():
     )
     ra2 = roundtrip(ra)
     assert ra2.batch_shape == (2,)
-    assert ra2.fields == ("x", "y")
+    assert ra2.event_template.fields == ("x", "y")
     assert list(ra2["x"]) == pytest.approx([1.0, 2.0])
 
 
@@ -170,7 +170,7 @@ def test_record_array_template_preserved():
         element_spec=template,
     )
     ra2 = roundtrip(ra)
-    assert ra2.template == template
+    assert ra2.event_template == template
 
 
 # ---------------------------------------------------------------------------

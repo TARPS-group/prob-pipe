@@ -1307,7 +1307,7 @@ class TestEventTemplateStorage:
         ra = RecordBatch.stack(
             [NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)], level_name="draw"
         )
-        assert ra.event_template is ra.template
+        assert ra.event_template is ra.element_spec.event_template
 
     def test_explicit_nested_template_validates_recursively(self):
         from probpipe.core.event_template import EventTemplate

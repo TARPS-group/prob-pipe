@@ -20,9 +20,12 @@ from probpipe.core import _workflow_call, _workflow_execution, _workflow_sweep
 from probpipe.core._workflow_plan import build_broadcast_plan
 
 
-def _numeric_record_array(field: str, values: range) -> NumericRecordBatch:
+def _numeric_record_array(
+    field: str, values: range, *, level_name: str = "draw"
+) -> NumericRecordBatch:
     return NumericRecordBatch.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values], level_name="draw"
+        [NumericRecord("nr", **{field: float(value)}) for value in values],
+        level_name=level_name,
     )
 
 
@@ -51,7 +54,8 @@ class TestSliceSweepValues:
         parent = NumericRecordBatch.stack(
             [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)], level_name="draw"
         )
-        values = {"x": parent.view("x"), "y": parent.view("y")}
+        views = parent.select_all()
+        values = {"x": views["x"], "y": views["y"]}
         plan = _plan(values)
 
         observed = [
@@ -71,8 +75,8 @@ class TestSliceSweepValues:
 
     def test_arrays_from_different_parents_use_row_major_product(self):
         values = {
-            "a": _numeric_record_array("a", range(2)),
-            "b": _numeric_record_array("b", range(3)),
+            "a": _numeric_record_array("a", range(2), level_name="outer"),
+            "b": _numeric_record_array("b", range(3), level_name="inner"),
         }
         plan = _plan(values)
 

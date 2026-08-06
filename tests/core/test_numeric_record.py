@@ -157,14 +157,14 @@ class TestConstruction:
             _array_backend,
             _broadcast_distributions,
             _numeric_record,
-            _record_array,
+            _record_batch,
             event_template,
         )
         from probpipe.record import design
 
         # dtype-level predicate (lives in _array_backend): imported directly from
         # there wherever only a dtype is in hand
-        assert _record_array._is_numeric_dtype is _array_backend._is_numeric_dtype
+        assert _record_batch._is_numeric_dtype is _array_backend._is_numeric_dtype
         assert _broadcast_distributions._is_numeric_dtype is _array_backend._is_numeric_dtype
         assert design._is_numeric_dtype is _array_backend._is_numeric_dtype
         # leaf-level predicate: one resolver shared by the record gate and inference

@@ -305,7 +305,7 @@ class TestWithNameOnBatchTypes:
         assert ra2.name_is_auto is False
         assert ra2["a"] is ra["a"]
         assert ra2.batch_shape == ra.batch_shape
-        assert ra2.template is ra.template
+        assert ra2.event_template is ra.event_template
         assert ra.name_is_auto is True  # original unchanged
 
     def test_numeric_record_array(self):

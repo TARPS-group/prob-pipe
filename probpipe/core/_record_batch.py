@@ -1001,10 +1001,8 @@ def _stack_column(values: list[Any], spec: ValueSpec, *, kind: str) -> Any:
     calls for and an element comes back as the object that was put in.
     """
     if isinstance(spec, ArraySpec):
-        # Through ``_to_jax_array``, the one conversion every compute boundary
-        # routes through, so a leaf whose type is registered with an
-        # ``ArrayBackend`` converts by its backend's rule rather than by whatever
-        # the numpy protocol happens to make of it.
+        # Through the array backend, not ``jnp.asarray``: a registered container
+        # converts by its own ``to_jax``, and the duck path cannot see it.
         return jnp.stack([_to_jax_array(value) for value in values])
     store = _from_iterable(values, kind=kind)
     store.setflags(write=False)

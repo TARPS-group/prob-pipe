@@ -199,7 +199,7 @@ class TestResamplingARecordValuedComponent:
         batch = self._paired()._sample(key, (5,))
 
         assert batch["a"].batch_shape == (batch["a"]["x"].shape[0],)
-        assert all(spec.shape == () for spec in batch["a"].template.values())
+        assert all(spec.shape == () for spec in batch["a"].event_template.values())
 
     def test_one_draw_is_a_record_rather_than_a_one_row_batch(self, key):
         drawn = self._paired()._sample(key, ())
@@ -833,7 +833,7 @@ class TestMakeStack:
         out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordBatch)
         assert out.batch_shape == (4,)
-        assert out.fields == ("demo",)
+        assert out.event_template.fields == ("demo",)
         np.testing.assert_allclose(out["demo"], [1.0, 2.0, 3.0, 4.0])
 
     def test_list_of_arrays_preserves_event_shape(self):
@@ -884,8 +884,8 @@ class TestMakeStack:
         out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, RecordBatch)
         assert out["x"].dtype == jnp.bfloat16
-        assert out.template["x"] == ArraySpec((2,))  # numeric, not None/opaque
-        assert out.template["label"] == OpaqueSpec()
+        assert out.event_template["x"] == ArraySpec((2,))  # numeric, not None/opaque
+        assert out.event_template["label"] == OpaqueSpec()
 
     def test_list_of_distributions_gives_distribution_array(self):
         from probpipe import DistributionArray, Normal
