@@ -326,3 +326,27 @@ class TestBatchAnnotationsSuppressTheSweep:
         plan = _plan({"p": _batch()}, hints={"p": Batch[dict]})
 
         assert plan.regime == "none"
+
+
+class TestOptionalBatchAnnotations:
+    def test_an_optional_container_annotation_still_takes_the_value_whole(self):
+        """``Batch | None`` names the container as surely as ``Batch``: the value
+        answers whichever arm it satisfies, and ``None`` answers none."""
+        from typing import Optional
+
+        from probpipe.core._batch import Batch
+        from probpipe.core._record_batch import RecordBatch
+
+        batch = _batch()
+        hints = (Batch | None, RecordBatch | None, Optional[Batch], Batch[dict] | None)  # noqa: UP045
+        for hint in hints:
+            plan = _plan({"p": batch}, hints={"p": hint})
+
+            assert plan.regime == "none", hint
+
+    def test_a_non_container_union_still_sweeps(self):
+        from probpipe import Record
+
+        plan = _plan({"p": _batch()}, hints={"p": Record | None})
+
+        assert plan.regime == "sweep"

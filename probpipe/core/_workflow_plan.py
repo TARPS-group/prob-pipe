@@ -10,7 +10,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
-from typing import Any, Literal, get_origin
+from types import UnionType
+from typing import Any, Literal, Union, get_args, get_origin
 
 from . import _workflow_call, _workflow_distribution_normalization
 from ._batch import Batch
@@ -217,7 +218,12 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     so family membership alone would deliver a batch whole to a body that
     declared it takes something else, silently skipping the sweep.
     """
-    base = get_origin(expected) or expected
+    origin = get_origin(expected)
+    if origin in (Union, UnionType):
+        # An optional container annotation still names the container: the value
+        # answers whichever arm it satisfies, and ``None`` answers none.
+        return any(_value_matches_hint(value, arm) for arm in get_args(expected))
+    base = origin or expected
     try:
         return (
             isinstance(base, type)
