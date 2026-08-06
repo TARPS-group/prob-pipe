@@ -1421,3 +1421,38 @@ class TestVariadicPlanning:
 
         assert result.num_atoms == 8
         assert result.provenance.metadata["broadcast_args"] == ["**extras['x']"]
+
+
+class TestDeclaredSupportOnABatchedOutput:
+    def test_every_column_is_checked_against_its_own_support(self):
+        """A batch is a collection, not a named tree: walking it as one finds no
+        children and asks a multi-field batch to convert to a single array."""
+        from probpipe import NumericRecordBatch
+
+        template = EventTemplate(
+            a=ArraySpec((), support=positive), b=ArraySpec((), support=positive)
+        )
+        valid = NumericRecordBatch(
+            {"a": jnp.ones(3), "b": jnp.ones(3) * 2},
+            "draw",
+            element_spec=EventTemplate(a=(), b=()),
+        )
+
+        result = Function(func=lambda: valid, output_template=template).apply()
+
+        assert result is valid
+
+    def test_a_column_outside_its_support_is_named(self):
+        from probpipe import NumericRecordBatch
+
+        template = EventTemplate(
+            a=ArraySpec((), support=positive), b=ArraySpec((), support=positive)
+        )
+        invalid = NumericRecordBatch(
+            {"a": jnp.ones(3), "b": jnp.asarray([1.0, -2.0, 3.0])},
+            "draw",
+            element_spec=EventTemplate(a=(), b=()),
+        )
+
+        with pytest.raises(ValueError, match=r"output at 'b'.*support positive"):
+            Function(func=lambda: invalid, output_template=template).apply()

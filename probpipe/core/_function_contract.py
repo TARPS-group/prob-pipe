@@ -425,6 +425,22 @@ def _validate_function_output_supports(
     value: Any,
 ) -> None:
     """Validate declared ArraySpec supports at an eager execution boundary."""
+    if isinstance(value, RecordBatch):
+        # A batch is a collection, not a named tree: its columns are keyed by leaf
+        # path and each carries the batch axes in front of its event shape, which a
+        # support check reads elementwise. Walking it as a tree would find no
+        # children and take the single-leaf path, which asks a multi-field batch to
+        # convert to one array.
+        for path, spec in template.items():
+            assert isinstance(spec, ValueSpec)
+            _validate_function_output_leaf_support(
+                function_name=function_name,
+                path=path,
+                spec=spec,
+                value=value._raw_column(path),
+            )
+        return
+
     children = getattr(value, "children", None)
     if not isinstance(children, Mapping):
         children = value if isinstance(value, Mapping) else None

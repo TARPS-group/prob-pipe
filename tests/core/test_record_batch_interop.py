@@ -12,6 +12,8 @@ gates are pinned before any producer starts returning batches.
 
 from __future__ import annotations
 
+from typing import Any
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -375,3 +377,86 @@ class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
 
         np.testing.assert_array_equal(np.asarray(roundtripped["a"]), [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(np.asarray(roundtripped["b"]), [0.0, 10.0, 20.0])
+
+
+class TestATransformCannotAddAnUnnamedLevel:
+    def test_an_added_batch_axis_is_refused(self):
+        """``vmap`` adds an axis on the way out, and unflattening has no name to
+        give the level it would belong to. Taking the stored spec instead would
+        return a batch whose own ``batch_shape`` its columns contradict."""
+
+        def body(x):
+            return NumericRecordBatch(
+                {"s": x + jnp.zeros(2)},
+                "inner",
+                element_spec=EventTemplate(s=()),
+                axis_groups=((2,),),
+            )
+
+        with pytest.raises(ValueError, match="An added axis belongs to no level"):
+            jax.vmap(body)(jnp.arange(3.0))
+
+    def test_a_dropped_batch_axis_still_renames_the_levels(self):
+        """The refusal is for *added* axes only: dropping one is what a transform
+        ordinarily does, and the surviving levels are named as before."""
+        batch = NumericRecordBatch(
+            {"s": jnp.zeros((3, 2))},
+            ("outer", "inner"),
+            element_spec=EventTemplate(s=()),
+            axis_groups=((3,), (2,)),
+        )
+
+        seen: list[Any] = []
+        jax.vmap(lambda b: seen.append(b) or jnp.zeros(()))(batch)
+
+        assert seen[0].level_names == ("inner",)
+        assert seen[0].batch_shape == (2,)
+
+
+class TestBatchFingerprinting:
+    """A batch's multiplicity is part of its type, so it is hashed."""
+
+    @staticmethod
+    def _one(level: str = "draw", groups=((3,),)):
+        return NumericRecordBatch(
+            {"x": jnp.arange(3.0)}, (level,), element_spec=EventTemplate(x=()), axis_groups=groups
+        )
+
+    def test_a_multi_field_batch_fingerprints(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        batch = NumericRecordBatch(
+            {"a": jnp.arange(3.0), "b": jnp.arange(3.0)},
+            "draw",
+            element_spec=EventTemplate(a=(), b=()),
+        )
+
+        assert isinstance(fingerprint(batch), str)
+
+    def test_level_names_change_the_fingerprint(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        assert fingerprint(self._one("draw")) != fingerprint(self._one("chain"))
+
+    def test_a_single_field_batch_is_not_its_column(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        assert fingerprint(self._one()) != fingerprint(jnp.arange(3.0))
+
+    def test_axis_grouping_changes_the_fingerprint(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        split = NumericRecordBatch(
+            {"x": jnp.zeros((2, 3))},
+            ("a", "b"),
+            element_spec=EventTemplate(x=()),
+            axis_groups=((2,), (3,)),
+        )
+        joined = NumericRecordBatch(
+            {"x": jnp.zeros((2, 3))},
+            "a",
+            element_spec=EventTemplate(x=()),
+            axis_groups=((2, 3),),
+        )
+
+        assert fingerprint(split) != fingerprint(joined)

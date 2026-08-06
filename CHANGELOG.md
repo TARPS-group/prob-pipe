@@ -514,6 +514,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   follows the leaves — `NumericRecordBatch` when the template is numeric, the
   permissive `RecordBatch` otherwise — but a batched draw is a batch either way.
 
+  **A transform cannot add a level.** `vmap` strips the mapped axis on the way in,
+  which unflattening handles by re-deriving which levels survived; on the way out
+  it *adds* one, and an added axis belongs to no level. Unflattening has no name
+  to give, so it now raises instead of keeping the stored spec — which returned a
+  batch whose `batch_shape` its own columns contradicted, making every method that
+  reads the shape quietly wrong. Map over a batch's columns, or build the batch
+  where the axis is added.
+
+  **A batch is fingerprinted by its levels and its columns.** A multi-field batch
+  failed fingerprinting outright, so provenance omitted it; a single-field one was
+  hashed as its sole column, omitting the schema and the levels. Both are fixed:
+  the spec, the level names and their axis groups, and the raw columns in leaf
+  order all contribute.
+
+  A declared `support` on a batched output is checked column by column. Walking a
+  batch as a named tree found no children and asked a multi-field batch to convert
+  to one array, so two valid columns raised.
+
   `RecordArray` / `NumericRecordArray` still exist and are unchanged for direct
   use — no producer returns one. `NumericRecordArray.from_vector` keeps returning
   a `NumericRecordArray`, renesting the batch's flat columns itself, so the class
