@@ -6,10 +6,12 @@ import inspect
 from typing import Any
 
 import jax.numpy as jnp
+import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordArray
 from probpipe.core import _workflow_call
+from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._workflow_distribution_normalization import (
     normalize_distribution_values,
 )
@@ -268,3 +270,59 @@ class TestAnnotationDispatch:
         plan = _plan({"p": ra}, hints={"p": RecordBatch})
 
         assert plan.regime == "sweep"
+
+
+class TestPartialLevelOverlap:
+    def test_a_shared_level_across_different_level_sets_is_refused(self):
+        """Aligning one shared level across differently-leveled operands is not
+        built; a product would read the shared name as two unrelated axes and
+        mint the same level twice."""
+        from probpipe.core.event_template import EventTemplate
+
+        two = NumericRecordBatch(
+            {"x": jnp.arange(6.0).reshape(2, 3)},
+            ("chain", "draw"),
+            element_spec=EventTemplate(x=()),
+            axis_groups=((2,), (3,)),
+        )
+        one = _batch("draw", 3)
+
+        with pytest.raises(ValueError, match="share the level 'draw'"):
+            _plan({"a": two, "b": one})
+
+    def test_the_same_levels_at_different_geometries_are_refused(self):
+        """The flat shape can agree while the partition does not; zipping would
+        hand the output whichever partition arrived first."""
+        from probpipe.core.event_template import EventTemplate
+
+        ga = NumericRecordBatch(
+            {"x": jnp.zeros((2, 3, 4))},
+            ("a", "b"),
+            element_spec=EventTemplate(x=()),
+            axis_groups=((2,), (3, 4)),
+        )
+        gb = NumericRecordBatch(
+            {"y": jnp.zeros((2, 3, 4))},
+            ("a", "b"),
+            element_spec=EventTemplate(y=()),
+            axis_groups=((2, 3), (4,)),
+        )
+
+        with pytest.raises(ValueError, match="same levels but are batched differently"):
+            _plan({"a": ga, "b": gb})
+
+
+class TestBatchAnnotationsSuppressTheSweep:
+    def test_the_abstract_batch_annotation_takes_the_value_whole(self):
+        from probpipe.core._batch import Batch
+
+        plan = _plan({"p": _batch()}, hints={"p": Batch})
+
+        assert plan.regime == "none"
+
+    def test_a_generic_alias_answers_by_its_origin(self):
+        from probpipe.core._batch import Batch
+
+        plan = _plan({"p": _batch()}, hints={"p": Batch[dict]})
+
+        assert plan.regime == "none"

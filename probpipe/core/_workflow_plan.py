@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from math import prod
-from typing import Any, Literal
+from typing import Any, Literal, get_origin
 
 from . import _workflow_call, _workflow_distribution_normalization
 from ._batch import Batch
@@ -143,7 +143,19 @@ def group_array_args_by_parent(
         batch_shape = tuple(first.batch_shape)
         for ref in arg_refs[1:]:
             other = _workflow_call.input_ref_value(values, ref)
-            if tuple(other.batch_shape) != batch_shape:
+            if isinstance(first, Batch):
+                # Two operands naming the same levels claim the same axes, group
+                # by group: agreeing on the flat shape alone would zip a
+                # ((2,), (3, 4)) partition with a ((2, 3), (4,)) one and hand the
+                # output whichever arrived first.
+                if tuple(getattr(other, "axis_groups", ())) != tuple(first.axis_groups):
+                    raise ValueError(
+                        f"{arg_refs[0].label!r} and {ref.label!r} carry the same levels but "
+                        f"are batched differently: {tuple(first.axis_groups)} against "
+                        f"{tuple(getattr(other, 'axis_groups', ()))}. Levels align by name, "
+                        f"so operands naming the same levels must hold them on the same axes"
+                    )
+            elif tuple(other.batch_shape) != batch_shape:
                 raise ValueError(
                     f"{arg_refs[0].label!r} and {ref.label!r} are zipped together but are "
                     f"batched differently: {batch_shape} against {tuple(other.batch_shape)}. "
@@ -157,6 +169,26 @@ def group_array_args_by_parent(
                 size=prod(batch_shape),
             )
         )
+    # A level name in two groups is one multiplicity read at two geometries:
+    # the groups differ, so their level tuples differ, and aligning the shared
+    # level across differently-leveled operands — broadcasting the rest — is
+    # not built yet. Refused rather than producted: a product would read the
+    # shared name as two unrelated axes, and the aggregate would then mint the
+    # same level twice.
+    owners: dict[str, tuple[str, tuple[str, ...]]] = {}
+    for group in groups:
+        first = _workflow_call.input_ref_value(values, group.arg_refs[0])
+        names = tuple(first.level_names) if isinstance(first, Batch) else (group.arg_refs[0].label,)
+        for level_name in dict.fromkeys(names):
+            prior = owners.setdefault(level_name, (group.arg_refs[0].label, names))
+            if prior[1] != names or prior[0] != group.arg_refs[0].label:
+                raise ValueError(
+                    f"{prior[0]!r} and {group.arg_refs[0].label!r} share the level "
+                    f"{level_name!r} without sharing all their levels ({prior[1]} against "
+                    f"{names}). Aligning one shared level across differently-leveled operands "
+                    f"is not supported yet; rename it with with_level_names to sweep them "
+                    f"independently, or give both operands the same levels to zip them"
+                )
     return tuple(groups)
 
 
@@ -185,11 +217,12 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     so family membership alone would deliver a batch whole to a body that
     declared it takes something else, silently skipping the sweep.
     """
+    base = get_origin(expected) or expected
     try:
         return (
-            isinstance(expected, type)
-            and issubclass(expected, (RecordArray, RecordBatch, DistributionArray))
-            and isinstance(value, expected)
+            isinstance(base, type)
+            and issubclass(base, (Batch, RecordArray, DistributionArray))
+            and isinstance(value, base)
         )
     except TypeError:
         return False
