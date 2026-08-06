@@ -111,8 +111,8 @@ are authoritative schemas but never derive or replace that signature. Use
 Use `__call__` for distribution lifting, array sweeps, orchestration, result
 wrapping, and Function-first provenance.
 
-If an implementation returns an existing `Record`, `RecordArray`, or
-`Distribution`, `apply` preserves its identity. `__call__` instead creates a
+If an implementation returns an existing `Record`, `RecordBatch`,
+`RecordArray`, or `Distribution`, `apply` preserves its identity. `__call__` instead creates a
 shallow result copy that shares value data and templates, owns a separate
 annotations container, and receives only the current call's provenance. Do not
 restore identity-through behavior at the workflow boundary. Variadic Functions
@@ -281,7 +281,9 @@ Parametric distributions do not have either property.
 
 Iteration is reserved for the `Record` family — `Record`,
 `NumericRecord`, `RecordArray`, `NumericRecordArray` — which iterate
-field names dict-style (`keys()` / `values()` / `items()`).
+field names dict-style (`keys()` / `values()` / `items()`). A
+`RecordBatch` is a collection, not a named tree: it iterates leading-axis
+views like an array, and its fields are read from `event_template`.
 
 `DistributionArray` is positional and follows numpy/jax conventions:
 `len(da)` is the leading-axis dim and `da.size` is the total cell

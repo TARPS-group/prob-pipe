@@ -12,8 +12,10 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 import jax
+import numpy as np
 
 from . import _workflow_call, _workflow_execution, _workflow_plan, _workflow_result
+from ._batch import Batch
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_array import _RecordArrayView
@@ -78,6 +80,7 @@ def execute_sweep(
             # The aggregate mints the levels the sweep ranged over, so it aligns
             # by name with the batch it swept.
             level_names=plan.sweep_level_names,
+            axis_groups=plan.sweep_axis_groups,
             name=workflow_name,
             field_name=workflow_name,
             event_template=output_template,
@@ -149,7 +152,7 @@ def slice_sweep_values(
     index: int,
     array_groups: tuple[_workflow_plan.ArrayBroadcastGroup, ...],
 ) -> dict[str, Any]:
-    """Materialize one row-major sweep cell under parent-grouped arrays."""
+    """Materialize one row-major sweep cell under the zip groups."""
     out = dict(values)
     rem = index
     # Highest-index group varies fastest under row-major flattening of
@@ -157,11 +160,21 @@ def slice_sweep_values(
     for group in reversed(array_groups):
         idx = rem % group.size
         rem = rem // group.size
+        # A batch spanning several axes addresses its element by position, one
+        # indexer per axis; a flat index would read the leading axis alone and
+        # run off its end. Positional tuples are a batch key — on a record
+        # array a tuple spells a field path — so the legacy class keeps its
+        # flat index.
+        position: Any = idx
+        if len(group.batch_shape) > 1:
+            position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
         replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
         for ref in group.arg_refs:
             source = _workflow_call.input_ref_value(values, ref)
             if isinstance(source, DistributionArray):
                 replacements[ref] = source._flat_component(idx)
+            elif isinstance(source, Batch):
+                replacements[ref] = source[position]
             else:
                 replacements[ref] = source[idx]
         out = _workflow_call.replace_input_refs(out, replacements)

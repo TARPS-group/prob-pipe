@@ -46,6 +46,7 @@ from ._record_array import RecordArray
 from ._record_batch import RecordBatch
 from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
+from .record import Record
 from .tracked import Annotated, TrackedTerm, auto_name
 
 logger = logging.getLogger(__name__)
@@ -880,10 +881,22 @@ class Function(Node, TrackedTerm, Annotated):
         *,
         func: Callable[..., Any],
     ) -> Exception | None:
-        """Return the JAX trace-probe error for the current call, if any."""
+        """Return the JAX trace-probe error for the current call, if any.
+
+        The probe traces the operation the dispatch is choosing, not merely the
+        body: a sweep runs the body under ``jax.vmap``, and a body can trace
+        cleanly bare yet be impossible under the transform — one that returns a
+        batch, whose added axis no level can name. So a batched-record argument
+        is probed the way ``execute_sweep_rows_jax`` will actually feed it: its
+        leaf columns, mapped over one row, rebuilt into a ``Record`` inside the
+        traced call. A probe failure means sequential dispatch, which is always
+        able to run the call — the two paths agree on results by contract, so
+        falling back costs speed, never correctness.
+        """
         try:
             dummy_kw = dict(values)
             broadcast_refs = set(broadcast_args)
+            batched_sources: dict[_workflow_call.WorkflowInputRef, Any] = {}
             for ref in _workflow_call.iter_input_refs(self._signature_info, values):
                 v = _workflow_call.input_ref_value(values, ref)
                 if ref in broadcast_refs:
@@ -892,6 +905,7 @@ class Function(Node, TrackedTerm, Annotated):
                     # receive.
                     if isinstance(v, (RecordArray, RecordBatch)):
                         replacement = v[0]
+                        batched_sources[ref] = v
                     else:
                         dist = v
                         # ``event_shape`` raises on multi-field NRDs
@@ -926,7 +940,32 @@ class Function(Node, TrackedTerm, Annotated):
                     else:
                         replacement = v
                     dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
-            jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
+            if batched_sources:
+                refs = list(batched_sources)
+
+                def _row_call(rows_leaves):
+                    kw = dummy_kw
+                    for row_ref, leaves in zip(refs, rows_leaves):
+                        kw = _workflow_call.replace_input_ref(
+                            kw, row_ref, Record(row_ref.label, leaves, name_is_auto=True)
+                        )
+                    return func(**kw)
+
+                probe_leaves = []
+                for source in batched_sources.values():
+                    n_batch = len(source.batch_shape)
+                    probe_leaves.append(
+                        {
+                            leaf: jnp.reshape(
+                                jnp.asarray(source[leaf]),
+                                (-1, *jnp.shape(source[leaf])[n_batch:]),
+                            )[:1]
+                            for leaf in source.event_template
+                        }
+                    )
+                jax.make_jaxpr(jax.vmap(_row_call))(tuple(probe_leaves))
+            else:
+                jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
         except Exception as exc:
             return exc
         return None

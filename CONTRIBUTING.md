@@ -507,13 +507,13 @@ uv build packaging/probpipe   # probpipe (metapackage)
    auto-derived).
 7. **Uniform output wrap at the Function boundary** — every
    `@function` return is coerced into the
-   `Record | RecordArray | Distribution` contract before it reaches the
-   caller.  Scalars and `jnp.ndarray`s become a single-field auto-named
+   `Record | RecordBatch | RecordArray | Distribution` contract before it
+   reaches the caller.  Scalars and `jnp.ndarray`s become a single-field auto-named
    `NumericRecord` with field `fn_name` (no sweep) or
    `NumericRecordArray({fn_name: arr}, batch_shape=sweep_shape)`
    (swept); `dict` / `list` / `tuple` promote via `_make_stack`;
-   existing `Record` / `RecordArray` / `Distribution` values preserve their
-   structure and backing data but `Function.__call__` returns a shallow copy
+   existing `Record` / `RecordBatch` / `RecordArray` / `Distribution` values
+   preserve their structure and backing data but `Function.__call__` returns a shallow copy
    as an independent result term. The copy gets a fresh annotations container,
    discards the returned object's prior provenance, and records the called
    Function followed by tracked inputs as its direct parents. All resolved
@@ -541,7 +541,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `float(mean(d))`, and `sample(grf)(X)` stay terse.
 8. **Array inputs vectorize with the product rule** — when a
    `@function` is called with array-valued inputs
-   (`RecordArray` or `DistributionArray` with nonempty
+   (`RecordBatch`, `RecordArray`, or `DistributionArray` with nonempty
    `batch_shape`) passed to slots whose hints don't match the
    batched type, the Function layer dispatches cell-by-cell
    and stacks the returns.  Multiple array inputs combine by their
@@ -572,8 +572,10 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and the `TrackedTerm` / `Annotated` identity attributes |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
-| `RecordArray` | Batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array |
-| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `to_vector` / `mean` / `var` |
+| `RecordBatch` | Batch of `Record` elements over named levels (`level_names` / `axis_groups`), stored one column per leaf path; positional index → element or sub-batch view, field index → the column in its batch form. A batched draw from a joint law is one of these. Deliberately **not** a `Record`: fields are read from `event_template`, not `fields` / `items()`. |
+| `NumericRecordBatch` (subclass of `RecordBatch`) | All-numeric batch; adds `to_vector` / `from_vector(name, template, vec, *, level_names)` and the single-field array shims. Reduce a column directly (`jnp.mean(batch["x"], axis=0)`) — the batch has no `mean` / `var` of its own. |
+| `RecordArray` | Legacy batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array. No producer returns one; being replaced by `RecordBatch`. |
+| `NumericRecordArray` (subclass of `RecordArray`) | Legacy numeric batch; adds `to_vector` / `mean` / `var` |
 | `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, template, vec)` / `NumericRecordArray.from_vector(...)` rebuild a numeric value from its 1-D vector given a template, without an example instance |
 | `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
@@ -809,7 +811,9 @@ Three rules govern how the framework's universal types relate.
 
 3. **Iteration is a Record-family convention.** `Record`,
    `NumericRecord`, `RecordArray`, `NumericRecordArray` iterate field
-   names dict-style. `DistributionArray` is positional (``len(da)``
+   names dict-style. A `RecordBatch` is a collection, not a named tree:
+   it iterates leading-axis views, and its fields are read from
+   `event_template`. `DistributionArray` is positional (``len(da)``
    is the leading-axis size, ``prod(da.batch_shape)`` is the total
    cell count; access via ``da[i]``). Every other `Distribution`
    subclass — including `EmpiricalDistribution`,

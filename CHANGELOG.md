@@ -498,7 +498,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   **A broadcast that stacks a batch per row names its own level.** Stacking rows
   that are each a batch puts the sweep in front of the levels a row already
-  carried — level names `("sweep", …)` — rather than refusing nested batched
+  carried — the swept levels' own names in front of the row's — rather than
+  refusing nested batched
   records as it used to. Since the columns are leaf-keyed, a nested element needs
   no special case.
 
@@ -521,6 +522,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch whose `batch_shape` its own columns contradicted, making every method that
   reads the shape quietly wrong. Map over a batch's columns, or build the batch
   where the axis is added.
+
+  **The sweep addresses a multi-level batch by position** — one indexer per
+  batch axis, where a flat index read the leading axis alone and ran off its end
+  — and the aggregate carries the swept groups' own axis partition, so two
+  independent sweeps followed by a batch-returning body mint one level per group
+  rather than refusing. An empty declared sweep builds its aggregate from the
+  output template, every declared field present at zero rows.
+
+  **Automatic dispatch probes the vmap it is choosing.** A body that traces
+  cleanly bare but cannot run under ``vmap`` — one returning a batch, whose
+  added axis no level names — now resolves to sequential dispatch, which
+  produces the same result by the dispatch-equivalence contract, instead of
+  failing mid-call.
+
+  **A same-rank transform cannot lie about sizes.** Slicing a batch's columns
+  keeps every axis, so the levels carry over onto the sizes the columns actually
+  have; columns left disagreeing about their batch axes are refused rather than
+  papered over with the stored spec.
 
   **A batch is fingerprinted by its levels and its columns.** A multi-field batch
   failed fingerprinting outright, so provenance omitted it; a single-field one was

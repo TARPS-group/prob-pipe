@@ -443,6 +443,34 @@ class TestBatchFingerprinting:
 
         assert fingerprint(self._one()) != fingerprint(jnp.arange(3.0))
 
+    def test_equal_multi_field_batches_hash_equal(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        def build():
+            return NumericRecordBatch(
+                {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
+                "draw",
+                element_spec=EventTemplate(a=(), b=()),
+            )
+
+        assert fingerprint(build()) == fingerprint(build())
+
+    def test_swapping_two_columns_values_changes_the_hash(self):
+        from probpipe.core._fingerprint import fingerprint
+
+        ab = NumericRecordBatch(
+            {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
+            "draw",
+            element_spec=EventTemplate(a=(), b=()),
+        )
+        ba = NumericRecordBatch(
+            {"a": jnp.arange(3.0) * 10, "b": jnp.arange(3.0)},
+            "draw",
+            element_spec=EventTemplate(a=(), b=()),
+        )
+
+        assert fingerprint(ab) != fingerprint(ba)
+
     def test_axis_grouping_changes_the_fingerprint(self):
         from probpipe.core._fingerprint import fingerprint
 
@@ -460,3 +488,180 @@ class TestBatchFingerprinting:
         )
 
         assert fingerprint(split) != fingerprint(joined)
+
+
+class TestMultiLevelSweeps:
+    def test_a_two_level_batch_sweeps_its_full_grid(self):
+        """The sweep addresses an element by position, one indexer per batch
+        axis; a flat index would read the leading axis alone and run off its
+        end at the third cell."""
+        grid = NumericRecordBatch(
+            {"x": jnp.arange(6.0).reshape(2, 3)},
+            ("chain", "draw"),
+            element_spec=EventTemplate(x=()),
+            axis_groups=((2,), (3,)),
+        )
+
+        @function
+        def scale(p):
+            return jnp.asarray(p["x"]) * 10.0
+
+        out = scale(p=grid)
+
+        assert out.batch_shape == (2, 3)
+        np.testing.assert_allclose(np.asarray(out["scale"]), np.arange(6.0).reshape(2, 3) * 10.0)
+
+    def test_two_groups_and_a_returned_batch_keep_their_partition(self):
+        """The aggregate mints one level per swept group, then the rows' own
+        levels: collapsing the sweep into one group would leave more names than
+        levels and refuse."""
+        a = NumericRecordBatch({"a": jnp.arange(2.0)}, "outer", element_spec=EventTemplate(a=()))
+        b = NumericRecordBatch({"b": jnp.arange(3.0)}, "inner", element_spec=EventTemplate(b=()))
+
+        @function
+        def rows(a, b):
+            return NumericRecordBatch(
+                {"s": jnp.asarray(a["a"]) + jnp.asarray(b["b"]) + jnp.zeros(2)},
+                "rows",
+                element_spec=EventTemplate(s=()),
+                axis_groups=((2,),),
+            )
+
+        out = rows(a=a, b=b)
+
+        assert out.level_names == ("outer", "inner", "rows")
+        assert out.axis_groups == ((2,), (3,), (2,))
+
+
+class TestAutoDispatchFallsBackForABatchReturningBody:
+    def test_the_default_dispatch_produces_the_sequential_result(self):
+        """The probe traces the vmap the dispatch is choosing, so a body vmap
+        cannot run — one returning a batch, whose added axis no level names —
+        resolves to sequential instead of failing mid-call. Dispatch paths
+        agree on results by contract, so the fallback changes speed alone."""
+        source = NumericRecordBatch(
+            {"x": jnp.arange(3.0)}, "draw", element_spec=EventTemplate(x=())
+        )
+
+        @function
+        def widen(v):
+            return NumericRecordBatch(
+                {"s": jnp.asarray(v["x"]) + jnp.zeros(2)},
+                "inner",
+                element_spec=EventTemplate(s=()),
+                axis_groups=((2,),),
+            )
+
+        out = widen(v=source)
+
+        assert out.level_names == ("draw", "inner")
+        assert out.batch_shape == (3, 2)
+
+    def test_a_numeric_body_is_unaffected(self):
+        source = NumericRecordBatch(
+            {"x": jnp.arange(3.0)}, "draw", element_spec=EventTemplate(x=())
+        )
+
+        @function
+        def double(v):
+            return jnp.asarray(v["x"]) * 2.0
+
+        out = double(v=source)
+
+        assert out.batch_shape == (3,)
+        np.testing.assert_allclose(np.asarray(out["double"]), [0.0, 2.0, 4.0])
+
+
+class TestSameRankTransformsCannotLieEither:
+    def test_a_resizing_transform_rewrites_the_level_sizes(self):
+        """Slicing keeps every axis, so the levels carry over onto the sizes the
+        columns actually have — where reusing the stored spec would claim two
+        rows above one-row columns."""
+        batch = NumericRecordBatch(
+            {"x": jnp.arange(2.0), "y": jnp.arange(2.0) * 10},
+            "draw",
+            element_spec=EventTemplate(x=(), y=()),
+        )
+
+        sliced = jax.tree.map(lambda leaf: leaf[:1], batch)
+
+        assert sliced.batch_shape == (1,)
+        assert sliced.level_names == ("draw",)
+        assert sliced._raw_column("x").shape == (1,)
+
+    def test_columns_that_disagree_are_refused(self):
+        import jax.tree_util as jtu
+
+        batch = NumericRecordBatch(
+            {"x": jnp.arange(2.0), "y": jnp.arange(2.0)},
+            "draw",
+            element_spec=EventTemplate(x=(), y=()),
+        )
+        _, treedef = jtu.tree_flatten(batch)
+
+        with pytest.raises(ValueError, match="disagreeing batch axes"):
+            jtu.tree_unflatten(treedef, [jnp.zeros(2), jnp.zeros(3)])
+
+
+class TestOpaqueBatchesStack:
+    def test_rows_holding_opaque_fields_stack_by_raw_column(self):
+        """One row's opaque field presents as an OpaqueBatch; stacking the
+        presented form hands wrappers to jnp.stack. The columns stack, through
+        numpy, so the objects ride as they are."""
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        rows = [
+            RecordBatch(
+                {
+                    "tag": np.array([f"{i}a", f"{i}b"], dtype=object),
+                    "x": jnp.arange(2.0) + i,
+                },
+                "inner",
+                element_spec=EventTemplate(tag=None, x=()),
+            )
+            for i in range(3)
+        ]
+
+        out = _make_stack(rows, n=3, field_name="demo", level_names=("sweep",))
+
+        assert out.level_names == ("sweep", "inner")
+        assert out.batch_shape == (3, 2)
+        assert list(out._raw_column("tag")[2]) == ["2a", "2b"]
+        np.testing.assert_allclose(np.asarray(out._raw_column("x")[1]), [1.0, 2.0])
+
+
+class TestObjectValuedMarginals:
+    def test_an_object_batch_takes_the_list_marginal(self):
+        """The record marginal is empirical over numeric leaves, so an object
+        batch routes to the general list marginal: atoms and weights, no
+        numeric pretence."""
+        from probpipe.core._broadcast_distributions import _ListMarginal, _make_marginal
+
+        batch = RecordBatch(
+            {"tag": np.array(["a", "b", "c"], dtype=object), "x": jnp.arange(3.0)},
+            "draw",
+            element_spec=EventTemplate(tag=None, x=()),
+        )
+
+        marginal = _make_marginal(batch)
+
+        assert isinstance(marginal, _ListMarginal)
+        assert marginal.num_atoms == 3
+        assert [row["tag"] for row in marginal.items] == ["a", "b", "c"]
+
+
+class TestAnEmptySweepAnswersToItsTemplate:
+    def test_zero_rows_still_build_the_declared_fields(self):
+        source = NumericRecordBatch(
+            {"x": jnp.zeros((0,))}, "design", element_spec=EventTemplate(x=())
+        )
+
+        @function(output_template=EventTemplate(y=()))
+        def fit(p):
+            return {"y": jnp.asarray(p["x"]) * 2.0}
+
+        out = fit(p=source)
+
+        assert list(out.event_template) == ["y"]
+        assert out.batch_shape == (0,)
+        assert np.asarray(out["y"]).shape == (0,)

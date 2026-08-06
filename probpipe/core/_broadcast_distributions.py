@@ -29,7 +29,12 @@ from ._empirical import (
 from ._object_batch import _is_object_array
 from ._record_array import NumericRecordArray, RecordArray
 from ._record_batch import RecordBatch
-from .event_template import EventTemplate, NumericEventTemplate, _full_array_shape_or_none
+from .event_template import (
+    ArraySpec,
+    EventTemplate,
+    NumericEventTemplate,
+    _full_array_shape_or_none,
+)
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -404,6 +409,34 @@ def _stack_declared_records(
     )
 
 
+def _empty_declared_stack(
+    batch_shape: tuple[int, ...],
+    *,
+    template: EventTemplate,
+    name: str,
+) -> Any:
+    """The declared aggregate at zero rows: every field present, every axis empty.
+
+    Built exactly as :func:`_stack_declared_records` would have built it, so an
+    empty sweep and a one-row sweep hand back the same type with the same fields
+    — a numeric leaf is an empty array of its declared shape and dtype, and a
+    non-array field an empty object column.
+    """
+    from ._record_array import NumericRecordArray, RecordArray
+
+    fields: dict[str, Any] = {}
+    for field_name, spec in template.children.items():
+        if isinstance(spec, EventTemplate):
+            fields[field_name] = _empty_declared_stack(batch_shape, template=spec, name=field_name)
+        elif isinstance(spec, ArraySpec) and all(isinstance(size, int) for size in spec.shape):
+            dtype = spec.dtype if spec.dtype is not None else jnp.zeros(()).dtype
+            fields[field_name] = jnp.zeros((*batch_shape, *spec.shape), dtype=dtype)
+        else:
+            fields[field_name] = np.empty(batch_shape, dtype=object)
+    cls = NumericRecordArray if isinstance(template, NumericEventTemplate) else RecordArray
+    return cls(fields, batch_shape=batch_shape, template=template, name=name)
+
+
 def _make_marginal(
     output_samples: Any,
     weights: Array | Weights | None = None,
@@ -445,6 +478,18 @@ def _make_marginal(
             {only_path: output_samples},
             name_is_auto=True,
         )
+
+    if isinstance(output_samples, RecordBatch) and not isinstance(
+        output_samples.event_template, NumericEventTemplate
+    ):
+        # The record marginal is empirical over numeric leaves — its reductions
+        # and resampling convert columns to arrays — so a batch holding a
+        # non-numeric field takes the general list marginal over its elements.
+        rows = [
+            output_samples[tuple(int(i) for i in position)]
+            for position in np.ndindex(*output_samples.batch_shape)
+        ]
+        return _ListMarginal(rows, weights, name=name)
 
     if isinstance(output_samples, (RecordArray, RecordBatch)):
         return _RecordMarginal(
@@ -566,6 +611,7 @@ def _make_stack(
     batch_shape: tuple[int, ...] | None = None,
     n: int | None = None,
     level_names: tuple[str, ...],
+    axis_groups: tuple[tuple[int, ...], ...] | None = None,
     name: str | None = None,
     field_name: str,
     event_template: EventTemplate | None = None,
@@ -628,9 +674,27 @@ def _make_stack(
         batch_shape = (n,)
     batch_shape = tuple(batch_shape)
     n_total = int(prod(batch_shape)) if batch_shape else 1
+    # One level per swept group, tiling the aggregate's leading axes. A single
+    # name takes them all, which is what a one-group sweep and the ``n``
+    # shortcut both are.
+    sweep_groups = tuple(axis_groups) if axis_groups is not None else (batch_shape,)
+    if len(sweep_groups) != len(level_names):
+        raise ValueError(
+            f"_make_stack mints one level per group of axes: {len(sweep_groups)} groups "
+            f"{sweep_groups} against {len(level_names)} names {list(level_names)}"
+        )
 
     # --- List-of-X path (Python-loop execution) -------------------------
     if isinstance(inner_outputs, list):
+        # With no rows there is no output to read a type off, so the declared
+        # template is the only honest source; without one, the generic handlers
+        # below would name a single opaque field after the function.
+        if not inner_outputs and event_template is not None:
+            return _empty_declared_stack(
+                batch_shape,
+                template=event_template,
+                name=name or field_name,
+            )
         if len(inner_outputs) != n_total:
             raise ValueError(
                 f"_make_stack got {len(inner_outputs)} outputs but "
@@ -668,16 +732,22 @@ def _make_stack(
                 for o in outs
             ):
                 # Columns are leaf-keyed, so a nested element needs no special
-                # case: each column stacks and reshapes like any other.
+                # case — and they are read raw: a field that is not an array
+                # presents as its own object batch, and what stacks is the
+                # column, through numpy so the objects are taken as they are.
                 columns = {}
                 for path in first.event_template:
-                    stacked = jnp.stack([o[path] for o in outs], axis=0)
+                    cols = [o._raw_column(path) for o in outs]
+                    if any(_is_object_array(c) for c in cols):
+                        stacked = np.stack(cols, axis=0)
+                    else:
+                        stacked = jnp.stack(cols, axis=0)
                     columns[path] = stacked.reshape(batch_shape + stacked.shape[1:])
                 return type(first)(
                     columns,
                     (*level_names, *first.level_names),
                     element_spec=first.element_spec,
-                    axis_groups=(batch_shape, *first.axis_groups),
+                    axis_groups=(*sweep_groups, *first.axis_groups),
                     name=name or field_name,
                     name_is_auto=True,
                 )

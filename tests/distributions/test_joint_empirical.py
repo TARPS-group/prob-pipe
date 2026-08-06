@@ -428,6 +428,25 @@ class TestObjectValuedDrawsAreBatches:
         assert drawn.batch_shape == (4,)
         assert set(drawn.event_template) == {"labels", "y"}
 
+    def test_object_valued_rows_stay_paired_through_sample(self):
+        """Rows are resampled jointly, so a drawn label always arrives with the
+        numeric value it was stored beside — checked through the public
+        ``sample`` op, not the private ``_sample``."""
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            y=np.asarray([1.0, 2.0, 3.0]),
+        )
+
+        drawn = sample(je, key=jax.random.PRNGKey(7), sample_shape=(64,))
+
+        stored = {("a", 1.0), ("b", 2.0), ("c", 3.0)}
+        seen = {
+            (label, float(value))
+            for label, value in zip(drawn._raw_column("labels"), np.asarray(drawn["y"]))
+        }
+        assert seen <= stored
+        assert len(seen) > 1  # 64 draws of 3 rows: more than one row appears
+
     def test_object_valued_single_draw_is_a_record(self):
         je = JointEmpirical(
             labels=np.array(["a", "b", "c"], dtype=object),

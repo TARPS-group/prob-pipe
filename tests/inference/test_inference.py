@@ -19,6 +19,7 @@ from probpipe import (
     EventTemplate,
     MultivariateNormal,
     Normal,
+    NumericRecordBatch,
     ProductDistribution,
     Record,
     mean,
@@ -258,7 +259,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws()
-        assert isinstance(draws, Record | RecordBatch)
+        assert isinstance(draws, NumericRecordBatch)
         # Insertion order from the template fixture: r, K, phi.
         assert tuple(draws.event_template.keys()) == ("r", "K", "phi")
         assert draws["r"].shape == (100,)
@@ -283,7 +284,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_single_chain_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws(chain=0)
-        assert isinstance(draws, Record | RecordBatch)
+        assert isinstance(draws, NumericRecordBatch)
         assert draws["r"].shape == (100,)
 
     def test_without_template_returns_array(self):
@@ -489,7 +490,7 @@ class TestApproximateDistributionValuesTemplate:
             event_template=template,
         )
         draws = post.draws(include_warmup=True)
-        assert isinstance(draws, Record | RecordBatch)
+        assert isinstance(draws, NumericRecordBatch)
         assert draws["a"].shape == (60,)  # 10 warmup + 50 draws
         assert draws["b"].shape == (60,)
 
@@ -509,7 +510,7 @@ class TestApproximateDistributionValuesTemplate:
             event_template=template,
         )
         draws = post.draws()
-        assert isinstance(draws, Record | RecordBatch)
+        assert isinstance(draws, NumericRecordBatch)
         assert isinstance(draws["params"], RecordBatch)
         assert draws["params/a"].shape == (30,)
         assert draws["params/b"].shape == (30,)
@@ -1276,7 +1277,7 @@ class TestEndToEndValuesPipeline:
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
         draws = posterior.draws()
-        assert isinstance(draws, Record | RecordBatch)
+        assert isinstance(draws, NumericRecordBatch)
         assert tuple(draws.event_template.keys()) == ("params",)
         assert draws["params"].shape == (500, 2)
 
@@ -1368,7 +1369,7 @@ class TestEndToEndValuesPipeline:
             event_template=template,
         )
         draws = post.draws()
-        assert isinstance(draws, Record | RecordBatch)
+        assert isinstance(draws, NumericRecordBatch)
         assert tuple(draws.event_template.keys()) == ("a", "b", "c")
         assert draws["a"].shape == (200,)
 
