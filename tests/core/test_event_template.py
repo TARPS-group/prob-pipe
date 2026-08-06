@@ -9,6 +9,8 @@ import numpy as np
 import pytest
 
 from probpipe import Function, NumericRecord, NumericRecordArray, Record
+from probpipe.core._batch import BatchSpec
+from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core.event_template import (
     ArraySpec,
     DistributionSpec,
@@ -1891,3 +1893,117 @@ class TestInferenceThroughTermSpecs:
 
         with pytest.raises(ValueError, match="does not conform"):
             Record("r", law=self._law(3), event_template=declared)
+
+
+class TestMultiplicityBindsFromAValue:
+    """A declared batch axis binds from the batch it is matched against.
+
+    `TestSymbolicMultiplicity` in ``tests/core/test_batch.py`` holds the
+    *declaration* side — what a spec reports and what it substitutes. These hold
+    the *pass*: a symbolic axis meets an actual `Batch` and takes its size, in the
+    one scope every other dimension binds in. A batch axis is a dimension like any
+    other, so the rules `TestInferenceThroughTermSpecs` pins for a term spec's
+    schema are the rules here.
+    """
+
+    @staticmethod
+    def _batch(size=3, level="item"):
+        return OpaqueBatch([object() for _ in range(size)], level)
+
+    @staticmethod
+    def _declared(axis="n", field=None):
+        fields: dict[str, Any] = {}
+        if field is not None:
+            fields["data"] = ArraySpec(shape=(field,))
+        fields["b"] = BatchSpec(OpaqueSpec(), [(axis,)], ["item"])
+        return EventTemplate(fields)
+
+    def test_an_axis_size_is_inferred_from_the_batch(self):
+        """The whole point: how many elements there are is read off the batch."""
+        record = Record("r", b=self._batch(3), event_template=self._declared())
+
+        assert record.event_template.is_concrete
+        assert record.event_template["b"].axis_groups == ((3,),)
+        assert record.event_template["b"].batch_size == 3
+
+    def test_an_axis_and_a_field_share_one_dimension(self):
+        """`("n",)` of elements beside an array of shape `("n",)` binds `n` once."""
+        record = Record(
+            "r", data=jnp.zeros(3), b=self._batch(3), event_template=self._declared(field="n")
+        )
+
+        assert record.event_template.is_concrete
+        assert record.event_template["data"].shape == (3,)
+        assert record.event_template["b"].axis_groups == ((3,),)
+
+    def test_field_order_does_not_change_the_outcome(self):
+        """One scope, so the axis may bind first or second and still agree.
+
+        Declared array-first, `n` is bound by the array and the multiplicity must
+        agree; declared batch-first, the reverse. An implementation giving the
+        batch its own copy of the bindings would pass one order and fail the
+        other, so both directions are asserted.
+        """
+        array_first = EventTemplate(
+            data=ArraySpec(shape=("n",)), b=BatchSpec(OpaqueSpec(), [("n",)], ["item"])
+        )
+        batch_first = EventTemplate(
+            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=ArraySpec(shape=("n",))
+        )
+
+        for declared in (array_first, batch_first):
+            record = Record("r", data=jnp.zeros(3), b=self._batch(3), event_template=declared)
+            assert record.event_template.is_concrete
+            assert record.event_template["data"].shape == (3,)
+            assert record.event_template["b"].axis_groups == ((3,),)
+
+    def test_a_disagreement_between_the_two_sides_raises(self):
+        """A batch of 3 beside an array of 5 is a contradiction, not a rebinding."""
+        with pytest.raises(
+            ValueError, match=r"binds symbolic dimension 'n' to 3, .*already bound to 5"
+        ):
+            Record(
+                "r", data=jnp.zeros(5), b=self._batch(3), event_template=self._declared(field="n")
+            )
+
+    def test_the_disagreement_raises_in_either_order(self):
+        """The batch-first direction, which a copied scope would let through."""
+        declared = EventTemplate(
+            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=ArraySpec(shape=("n",))
+        )
+
+        with pytest.raises(
+            ValueError, match=r"/data binds symbolic dimension 'n' to 5, .*already bound to 3"
+        ):
+            Record("r", b=self._batch(3), data=jnp.zeros(5), event_template=declared)
+
+    def test_a_bound_declaration_equals_the_concrete_one(self):
+        """Binding is inference, not a second dialect: the two declarations agree."""
+        inferred = Record("r", b=self._batch(3), event_template=self._declared())
+        concrete = Record(
+            "r",
+            b=self._batch(3),
+            event_template=EventTemplate(b=BatchSpec(OpaqueSpec(), [(3,)], ["item"])),
+        )
+
+        assert inferred.event_template == concrete.event_template
+        assert inferred.event_template["b"] == concrete.event_template["b"]
+
+    def test_a_concrete_axis_still_requires_an_exact_match(self):
+        """A fixed multiplicity is fixed, as a fixed array dimension is."""
+        declared = EventTemplate(b=BatchSpec(OpaqueSpec(), [(4,)], ["item"]))
+
+        with pytest.raises(ValueError, match="does not conform to its field spec"):
+            Record("r", b=self._batch(3), event_template=declared)
+
+    def test_a_value_carrying_no_multiplicity_says_so(self):
+        """A raw value is not a batch, so there is nothing to bind an axis from."""
+        with pytest.raises(ValueError, match="exposes no schema to bind it against"):
+            Record("r", b=jnp.zeros(3), event_template=self._declared())
+
+    def test_a_level_name_mismatch_is_refused_rather_than_bound(self):
+        """The tiling is structure, so it is checked rather than inferred."""
+        declared = EventTemplate(b=BatchSpec(OpaqueSpec(), [("n",)], ["draw"]))
+
+        with pytest.raises(ValueError, match=r"has levels \['item'\], expected \['draw'\]"):
+            Record("r", b=self._batch(3), event_template=declared)

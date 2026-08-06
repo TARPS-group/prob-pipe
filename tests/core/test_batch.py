@@ -1583,3 +1583,49 @@ class TestSymbolicMultiplicity:
     def test_a_concrete_batch_still_builds(self, flat):
         assert flat.batch_shape == (4,)
         assert flat.batch_size == 4
+
+    def test_a_symbolic_axis_binds_from_an_authoritative_spec(self):
+        """What a spec reports it also binds — the third of the trio.
+
+        The spec-to-spec path, which validates a declaration against another
+        declaration rather than against a live batch.
+        """
+        bindings: dict[str, int] = {}
+
+        assert _spec([("S",)], ["draw"]).bind_dims_from_spec(
+            _spec([(3,)], ["draw"]), bindings, "path"
+        )
+        assert bindings == {"S": 3}
+
+    def test_an_axis_and_an_element_dimension_share_one_scope(self):
+        """A batch of `("n",)` over arrays of shape `("n",)` binds `n` once."""
+        declared = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+        bindings: dict[str, int] = {}
+
+        assert declared.bind_dims_from_spec(
+            BatchSpec(ArraySpec(shape=(3,)), [(3,)], ["row"]), bindings, "path"
+        )
+        assert bindings == {"n": 3}
+
+    def test_a_batch_that_is_not_square_is_refused(self):
+        """The other half of declaring it square: 3 elements of length 5 is not."""
+        declared = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+        actual = BatchSpec(ArraySpec(shape=(5,)), [(3,)], ["row"])
+
+        with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
+            declared.bind_dims_from_spec(actual, {}, "path")
+
+    def test_binding_leaves_the_spec_unsubstituted(self):
+        """Substitution waits for the closed scope, as it does for every leaf."""
+        declared = _spec([("S",)], ["draw"])
+
+        declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
+
+        assert declared.axis_groups == (("S",),)
+
+    def test_a_different_tiling_is_refused_rather_than_bound(self):
+        """The tiling is structure: two levels do not bind against one."""
+        declared = BatchSpec(OpaqueSpec(), [("S",), ("T",)], ["chain", "draw"])
+
+        with pytest.raises(ValueError, match="has levels"):
+            declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")

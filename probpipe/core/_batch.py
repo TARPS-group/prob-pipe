@@ -68,7 +68,13 @@ from dataclasses import dataclass, replace
 from math import prod
 from typing import Any, Self, cast
 
-from .event_template import TermSpec, ValueSpec
+from .event_template import (
+    TermSpec,
+    ValueSpec,
+    _check_kind_of,
+    _unify_array_shape,
+    _unify_specs,
+)
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -273,6 +279,52 @@ class BatchSpec(TermSpec):
             ),
             self.level_names,
         )
+
+    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+        """Bind the declared multiplicity and element schema from a live *value*.
+
+        A live :class:`Batch` carries a concrete spec of its own, so binding
+        against the batch is binding against that spec.
+        """
+        actual = getattr(value, "spec", None)
+        if not isinstance(actual, BatchSpec):
+            raise ValueError(
+                f"{path} declares the polymorphic schema {self!r}, but "
+                f"{type(value).__name__} exposes no schema to bind it against"
+            )
+        _check_kind_of(actual, value, self, path)
+        self.bind_dims_from_spec(actual, bindings, path)
+
+    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+        """Bind the declared axis sizes and element schema against *actual*'s own.
+
+        The multiplicity binds like an array shape — a symbolic axis size takes
+        the actual size, and a name already bound must agree — and the element
+        spec binds by the same rule one level in. Both use the caller's
+        *bindings*, so an axis size and an element dimension sharing a name are
+        one dimension: a batch of ``("n",)`` over arrays of shape ``("n",)`` binds
+        ``n`` once and refuses a batch that is not square.
+
+        The level *tiling* is structure rather than size, so a mismatch in how
+        many levels there are, how many axes each holds, or what they are called
+        is refused here rather than bound.
+        """
+        if not isinstance(actual, BatchSpec):
+            return False
+        if self.level_names != actual.level_names:
+            raise ValueError(
+                f"{path} has levels {list(actual.level_names)}, expected {list(self.level_names)}"
+            )
+        declared_arity = [len(group) for group in self.axis_groups]
+        actual_arity = [len(group) for group in actual.axis_groups]
+        if declared_arity != actual_arity:
+            raise ValueError(
+                f"{path} tiles its axes as {actual_arity}, expected {declared_arity} "
+                f"from axis_groups={self.axis_groups!r}"
+            )
+        _unify_array_shape(self.batch_shape, actual.batch_shape, bindings, path)
+        _unify_specs(self.element_spec, actual.element_spec, bindings, path)
+        return True
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a :class:`Batch` whose own spec equals this one.

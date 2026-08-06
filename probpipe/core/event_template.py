@@ -148,6 +148,48 @@ class ValueSpec(ABC):
         """
         return self
 
+    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+        """Bind the dimensions this spec declares from *value*'s own structure.
+
+        The third member of the trio: whatever a spec reports in
+        :attr:`free_dims` and substitutes in :meth:`with_bound_dims`, it binds
+        here. A spec owns its own binding for the same reason it owns the other
+        two — a closed ``isinstance`` chain in this module could not name a spec
+        defined outside it, which is how a batch axis came to report a dimension
+        that nothing could bind.
+
+        The implementation **checks the kind** and binds sizes into *bindings*,
+        which is the caller's own mutable scope: a name inside a spec is the same
+        dimension as that name beside it, so it binds once and a disagreement
+        raises. Nothing is substituted here — a name may be bound by a field the
+        pass has not reached, so the caller substitutes once the scope is closed.
+
+        The default refuses, which is the honest answer for a spec that declares
+        dimensions without knowing how to bind them; a spec declaring none never
+        reaches this.
+        """
+        raise ValueError(
+            f"{path} declares {type(self).__name__}, whose dimensions this pass cannot "
+            f"bind from a value; bind them with with_dims before validating against one"
+        )
+
+    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+        """Bind this spec's dimensions from an authoritative *actual* spec.
+
+        The spec-to-spec counterpart of :meth:`bind_dims_from_value`, for the
+        path that validates a declaration against another declaration rather than
+        against a live value. It binds into the caller's *bindings* under the same
+        rules.
+
+        Returns
+        -------
+        bool
+            Whether this spec bound from *actual*. ``False`` leaves the caller to
+            fall back on comparing the two specs, which is the default and what a
+            spec declaring no dimensions wants.
+        """
+        return False
+
     @abstractmethod
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a valid value for this spec.
@@ -395,6 +437,19 @@ class RecordSpec(TermSpec):
         """This spec around a substituted record schema."""
         return RecordSpec(_replace_template_dimensions(self.event_template, bindings))
 
+    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+        """Bind the declared record schema against the schema *value* carries."""
+        actual = _schema_carried_by(value, self, path)
+        _check_kind_of(RecordSpec(actual), value, self, path)
+        _unify_template_node(self.event_template, actual, bindings, path)
+
+    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+        """Bind the declared record schema against *actual*'s own."""
+        if not isinstance(actual, RecordSpec):
+            return False
+        _unify_template_node(self.event_template, actual.event_template, bindings, path)
+        return True
+
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a ``Record`` whose template matches ``event_template``.
 
@@ -504,6 +559,21 @@ class DistributionSpec(TermSpec):
     def with_bound_dims(self, bindings: Mapping[str, int]) -> DistributionSpec:
         """This spec around a substituted event declaration."""
         return DistributionSpec(self.event_spec.with_bound_dims(bindings))
+
+    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+        """Bind the declared draw schema against the schema *value* carries."""
+        actual = _schema_carried_by(value, self, path)
+        _check_kind_of(DistributionSpec(actual), value, self, path)
+        _unify_template_node(self.event_spec.event_template, actual, bindings, path)
+
+    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+        """Bind the declared draw schema against *actual*'s own."""
+        if not isinstance(actual, DistributionSpec):
+            return False
+        _unify_template_node(
+            self.event_spec.event_template, actual.event_spec.event_template, bindings, path
+        )
+        return True
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a ``Distribution`` matching this event declaration.
@@ -623,6 +693,27 @@ class FunctionSpec(TermSpec):
             else _replace_template_dimensions(self.input_template, bindings),
             None if self.output_spec is None else self.output_spec.with_bound_dims(bindings),
         )
+
+    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+        """Bind each declared side from the matching side of *value*'s own declaration.
+
+        The two sides bind **independently**, which is not a conformance check on
+        the callable: a function is contravariant in its input, so declaring that
+        a value *is* an acceptable function is a separate question this does not
+        answer. A bare callable declares nothing, so there is nothing to bind from
+        and the dimensions stay free — which a caller learns from ``free_dims``
+        rather than from a refusal here.
+        """
+        if not self.is_valid(value):
+            raise ValueError(f"{path} does not conform to its field spec ({self!r})")
+        if self.input_template is not None:
+            actual_input = getattr(value, "input_template", None)
+            if isinstance(actual_input, EventTemplate):
+                _unify_template_node(self.input_template, actual_input, bindings, path)
+        if isinstance(self.output_spec, RecordSpec):
+            actual_output = getattr(value, "output_template", None)
+            if isinstance(actual_output, EventTemplate):
+                _unify_template_node(self.output_spec.event_template, actual_output, bindings, path)
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.
@@ -1408,11 +1499,9 @@ def _unify_specs(
         return ArraySpec(concrete_shape, dtype=expected.dtype, support=expected.support)
     if expected.free_dims and type(expected) is type(actual):
         # A polymorphic declaration meets an authoritative spec, so the same rule
-        # applies one level in: unify the schemas rather than compare them, and
-        # leave substitution to the end of the pass.
-        declared, other = _declared_schema_of(expected), _declared_schema_of(actual)
-        if declared is not None and other is not None:
-            _unify_template_node(declared, other, bindings, path)
+        # applies one level in: unify what each declares rather than compare them,
+        # and leave substitution to the end of the pass.
+        if expected.bind_dims_from_spec(actual, bindings, path):
             return expected
     if expected != actual:
         raise ValueError(f"{path} spec {actual!r} does not conform to {expected!r}")
@@ -1480,81 +1569,36 @@ def _unify_term_spec_with_value(
     field this pass has not reached, so no leaf can know at its own turn whether a
     name is bound; the caller substitutes once the pass is done.
     """
-    if isinstance(spec, FunctionSpec):
-        return _unify_function_spec_with_term(spec, value, bindings, path)
+    spec.bind_dims_from_value(value, bindings, path)
+    return spec
 
-    declared = _declared_schema_of(spec)
-    if declared is None:
-        raise ValueError(
-            f"{path} declares {type(spec).__name__}, whose dimensions this pass cannot "
-            f"bind from a value; bind them with with_dims before validating against one"
-        )
-    actual = _actual_schema_of(value)
-    if actual is None:
+
+def _schema_carried_by(value: Any, spec: ValueSpec, path: str) -> EventTemplate:
+    """The :class:`EventTemplate` *value* carries, for binding *spec* against.
+
+    A value that carries none cannot bind a polymorphic declaration, which is a
+    refusal rather than a silent pass: the declaration would stay symbolic with
+    nothing left to resolve it.
+    """
+    template = getattr(value, "event_template", None)
+    if not isinstance(template, EventTemplate):
         raise ValueError(
             f"{path} declares the polymorphic schema {spec!r}, but "
             f"{type(value).__name__} exposes no schema to bind it against"
         )
-    if not _spec_around(spec, actual).is_valid(value):
-        raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
-    _unify_template_node(declared, actual, bindings, path)
-    return spec
+    return template
 
 
-def _declared_schema_of(spec: ValueSpec) -> EventTemplate | None:
-    """The record schema a term spec declares, or ``None`` if it declares none."""
-    if isinstance(spec, RecordSpec):
-        return spec.event_template
-    if isinstance(spec, DistributionSpec):
-        return spec.event_spec.event_template
-    return None
+def _check_kind_of(around: ValueSpec, value: Any, spec: ValueSpec, path: str) -> None:
+    """Refuse *value* unless it satisfies *spec*'s kind.
 
-
-def _spec_around(spec: ValueSpec, schema: EventTemplate) -> ValueSpec:
-    """*spec* rebuilt around *schema*, for asking it what its kind admits.
-
-    Substituting the schema the value carries leaves the kind as the only thing
-    the spec's own ``is_valid`` still tests, so the check reuses that rather than
-    restating which value class each spec types.
+    Only the sizes are deferred to the pass, so a value of the wrong kind is
+    refused here as it would be for a concrete declaration. *around* is the spec
+    rebuilt around the schema the value actually carries, which leaves the kind as
+    the only thing its own ``is_valid`` still tests.
     """
-    if isinstance(spec, RecordSpec):
-        return RecordSpec(schema)
-    if isinstance(spec, DistributionSpec):
-        return DistributionSpec(schema)
-    return spec
-
-
-def _actual_schema_of(value: Any) -> EventTemplate | None:
-    """The schema *value* carries, if it carries one."""
-    template = getattr(value, "event_template", None)
-    return template if isinstance(template, EventTemplate) else None
-
-
-def _unify_function_spec_with_term(
-    spec: FunctionSpec,
-    value: Any,
-    bindings: dict[str, int],
-    path: str,
-) -> ValueSpec:
-    """Bind a polymorphic ``FunctionSpec``'s sides from the callable's own.
-
-    Each side binds against the matching side of the value's own declaration,
-    when it has one. A bare callable declares nothing, so there is nothing to
-    bind from and the dimensions stay free — which a caller learns from
-    ``free_dims`` rather than from a refusal here.
-    """
-    if not spec.is_valid(value):
+    if not around.is_valid(value):
         raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
-    if spec.input_template is not None:
-        actual_input = getattr(value, "input_template", None)
-        if isinstance(actual_input, EventTemplate):
-            _unify_template_node(spec.input_template, actual_input, bindings, path)
-    declared_output = spec.output_spec
-    if isinstance(declared_output, RecordSpec):
-        actual_output = getattr(value, "output_template", None)
-        if isinstance(actual_output, EventTemplate):
-            _unify_template_node(declared_output.event_template, actual_output, bindings, path)
-    return spec
 
 
 def _unify_array_shape(

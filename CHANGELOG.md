@@ -16,15 +16,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reported itself concrete. Design II.3 draws no line at a term-spec boundary:
   *any* symbolic entry makes a template polymorphic.
 
-  `free_dims` is now a property of every `ValueSpec`, and `EventTemplate`'s is
-  the union over its children, so a name is reported wherever it is declared.
-  Three things follow. Substitution reaches through a term spec, so every
-  dimension reported is bindable. **Unification binds through one too**: a term
-  spec's declared schema unifies against the actual term's own, in the shared
-  binding scope, so a name inside a `DistributionSpec` is the same dimension as
-  that name beside it — it binds once, and a disagreement raises. And a
-  `BatchSpec` axis size may now be a symbolic name, joining the same scope, so a
-  batch of `("n",)` over arrays of shape `("n",)` is square by declaration.
+  Reporting a dimension, substituting it, and binding it are now three methods
+  every `ValueSpec` answers, so whatever a spec declares is what that same spec
+  resolves. `EventTemplate.free_dims` is the union over its children, so a name
+  is reported wherever it is declared. Three things follow. Substitution reaches
+  through a term spec, so every dimension reported is bindable. **Unification
+  binds through one too**: a spec's declaration unifies against the actual term's
+  own, in the shared binding scope, so a name inside a `DistributionSpec` is the
+  same dimension as that name beside it — it binds once, and a disagreement
+  raises. And a `BatchSpec` axis size may now be a symbolic name in that same
+  scope, bound from the actual `Batch` it is matched against, so a batch of
+  `("n",)` over arrays of shape `("n",)` is square by declaration and one that is
+  not square is refused.
+
+  Binding is each spec's own method rather than a chain of type tests, which is
+  what lets it reach a spec this module cannot name: `BatchSpec` lives in
+  `_batch.py`, which imports from `event_template.py`, so a closed chain there
+  could report a batch axis as free and leave nothing able to bind it.
 
   This brings the term specs into line with `ArraySpec`, which has always
   accepted a concrete value against a symbolic shape and left the sizes to the
