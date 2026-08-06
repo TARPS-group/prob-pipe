@@ -408,27 +408,26 @@ def _empty_declared_stack(
     *,
     template: EventTemplate,
     name: str,
+    level_names: tuple[str, ...],
+    axis_groups: tuple[tuple[int, ...], ...],
 ) -> Any:
     """The declared aggregate at zero rows: every field present, every axis empty.
 
-    Built exactly as :func:`_stack_declared_records` would have built it, so an
+    Built exactly as :func:`_stack_declared_columns` would have built it, so an
     empty sweep and a one-row sweep hand back the same type with the same fields
-    — a numeric leaf is an empty array of its declared shape and dtype, and a
-    non-array field an empty object column.
+    and the same levels — a numeric leaf is an empty array of its declared shape
+    and dtype, and a non-array field an empty object column. Columns are keyed by
+    leaf path, so a nested template needs no per-subtree container.
     """
-    from ._record_array import NumericRecordArray, RecordArray
-
-    fields: dict[str, Any] = {}
-    for field_name, spec in template.children.items():
-        if isinstance(spec, EventTemplate):
-            fields[field_name] = _empty_declared_stack(batch_shape, template=spec, name=field_name)
-        elif isinstance(spec, ArraySpec) and all(isinstance(size, int) for size in spec.shape):
+    columns: dict[str, Any] = {}
+    for path, spec in template.items():
+        if isinstance(spec, ArraySpec) and all(isinstance(size, int) for size in spec.shape):
             dtype = spec.dtype if spec.dtype is not None else jnp.zeros(()).dtype
-            fields[field_name] = jnp.zeros((*batch_shape, *spec.shape), dtype=dtype)
+            columns[path] = jnp.zeros((*batch_shape, *spec.shape), dtype=dtype)
         else:
-            fields[field_name] = np.empty(batch_shape, dtype=object)
-    cls = NumericRecordArray if isinstance(template, NumericEventTemplate) else RecordArray
-    return cls(fields, batch_shape=batch_shape, template=template, name=name)
+            columns[path] = np.empty(batch_shape, dtype=object)
+    cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
+    return cls(columns, level_names, element_spec=template, axis_groups=axis_groups, name=name)
 
 
 def _make_marginal(
@@ -485,7 +484,7 @@ def _make_marginal(
         ]
         return _ListMarginal(rows, weights, name=name)
 
-    if isinstance(output_samples, (RecordArray, RecordBatch)):
+    if isinstance(output_samples, RecordBatch):
         return _RecordMarginal(
             output_samples,
             weights,
@@ -685,6 +684,8 @@ def _make_stack(
                 batch_shape,
                 template=event_template,
                 name=name or field_name,
+                level_names=level_names,
+                axis_groups=sweep_groups,
             )
         if len(inner_outputs) != n_total:
             raise ValueError(
@@ -927,7 +928,7 @@ def _make_stack(
             {field_name: inner_outputs.reshape(batch_shape + event_shape)},
             level_names,
             element_spec=EventTemplate(**{field_name: event_shape}),
-            axis_groups=(batch_shape,),
+            axis_groups=sweep_groups,
         )
 
     # vmap of a Record-returning function produces a Record with batched leaves

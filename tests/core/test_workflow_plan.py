@@ -11,7 +11,6 @@ import tensorflow_probability.substrates.jax.distributions as tfd
 
 from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordBatch
 from probpipe.core import _workflow_call
-from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._workflow_distribution_normalization import (
     normalize_distribution_values,
 )
@@ -301,20 +300,14 @@ class TestAnnotationDispatch:
 
         assert plan.regime == "none"
 
-    def test_the_other_family_member_does_not_skip_it(self):
+    def test_another_container_class_does_not_skip_it(self):
+        """A batch passed where a DistributionArray was declared is not what the
+        body said it takes whole, so it sweeps."""
         batch = _batch()
-        plan = _plan({"p": batch}, hints={"p": NumericRecordArray})
+        plan = _plan({"p": batch}, hints={"p": DistributionArray})
 
         assert plan.regime == "sweep"
         assert plan.array_args == (_ref("p"),)
-
-    def test_a_record_array_annotated_as_a_batch_is_swept(self):
-        from probpipe.core._record_batch import RecordBatch
-
-        ra = _numeric_record_array("x", range(3))
-        plan = _plan({"p": ra}, hints={"p": RecordBatch})
-
-        assert plan.regime == "sweep"
 
 
 class TestPartialLevelOverlap:
