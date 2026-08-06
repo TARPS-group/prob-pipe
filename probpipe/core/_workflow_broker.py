@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Generator
-from contextlib import contextmanager, nullcontext
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import Enum
@@ -538,6 +538,11 @@ class _AutomaticKeyBroker:
                         raise RuntimeError(
                             "a stochastic event identity completed with a different effect plan"
                         )
+                if self._replay_state is not None:
+                    self._replay_state.mark_successful_effects(
+                        effects,
+                        attempt=attempt,
+                    )
                 self._effects_by_identity.update(
                     (_effect_identity(effect), effect) for effect in effects
                 )
@@ -564,7 +569,7 @@ class _AutomaticKeyBroker:
             or self._invocation.occurrence_path != self._replay_state.occurrence_path
         ):
             return
-        self._replay_state.mark_successful_effects(effects)
+        self._replay_state.finalize_successful_effects(effects)
 
     def _record_effect(self, effect: ManagedEffectClaim) -> None:
         identity = _effect_identity(effect)
@@ -813,15 +818,7 @@ class _AutomaticKeyBroker:
         """Validate and atomically reconcile one reserved remote report."""
         self._assert_broker_open()
         report = _validated_managed_claim_report_snapshot(report)
-        replay_transaction = (
-            nullcontext(None)
-            if self._replay_state is None
-            else self._replay_state.claim_effects_transaction(
-                report.effects,
-                attempt=report.attempt,
-            )
-        )
-        with replay_transaction as replay_batch, self._managed_claims.lock:
+        with self._managed_claims.lock:
             state, child_invocations = self._validate_remote_report_unlocked(report)
             with self._effects_lock:
                 for effect in report.successful_effects:
@@ -831,8 +828,12 @@ class _AutomaticKeyBroker:
                             "a stochastic event identity completed with a different effect plan"
                         )
 
-                if replay_batch is not None:
-                    replay_batch.commit()
+                if self._replay_state is not None:
+                    self._replay_state._commit_effect_batch(
+                        report.effects,
+                        successful_effects=report.successful_effects,
+                        attempt=report.attempt,
+                    )
                 for effect in report.effects:
                     state.effect_claims_by_identity[_effect_identity(effect)] = effect
                 state.child_invocations.extend(child_invocations)

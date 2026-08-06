@@ -76,7 +76,8 @@ class _ReplayEventClaim:
     direct_claimed: bool = False
     work_item_token: bytes | None = None
     attempt_tokens: set[bytes] = field(default_factory=set)
-    successful: bool = False
+    direct_successful: bool = False
+    successful_attempt_token: bytes | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -89,26 +90,13 @@ class _ReplayClaimMutation:
     attempt_token: bytes | None
 
 
-@dataclass(slots=True)
-class _ReplayClaimBatch:
-    """Validated replay mutations held under the registry lock."""
+@dataclass(frozen=True, slots=True)
+class _ReplaySuccessMutation:
+    """One validated replay-success mutation awaiting atomic commit."""
 
-    mutations: tuple[_ReplayClaimMutation, ...]
-    committed: bool = False
-
-    def commit(self) -> None:
-        """Apply this already-validated batch without another failure point."""
-        if self.committed:
-            raise RuntimeError("a replay claim batch can be committed only once")
-        for mutation in self.mutations:
-            if mutation.direct:
-                mutation.claim.direct_claimed = True
-                continue
-            if mutation.claim.work_item_token is None:
-                mutation.claim.work_item_token = mutation.work_item_token
-            if mutation.attempt_token is not None:
-                mutation.claim.attempt_tokens.add(mutation.attempt_token)
-        self.committed = True
+    claim: _ReplayEventClaim
+    direct: bool
+    attempt_token: bytes | None
 
 
 @dataclass(slots=True)
@@ -269,27 +257,39 @@ class _ReplayState:
         attempt: ManagedAttemptState | None,
     ) -> None:
         """Validate and atomically claim an event before key derivation."""
-        with self.claim_effects_transaction((effect,), attempt=attempt) as batch:
-            batch.commit()
+        self._commit_effect_batch(
+            (effect,),
+            successful_effects=(),
+            attempt=attempt,
+        )
 
-    @contextmanager
-    def claim_effects_transaction(
+    def _commit_effect_batch(
         self,
         effects: tuple[ManagedEffectClaim, ...],
         *,
+        successful_effects: tuple[ManagedEffectClaim, ...],
         attempt: ManagedAttemptState | None,
-    ) -> Generator[_ReplayClaimBatch, None, None]:
-        """Hold an all-or-nothing replay claim batch for a parent transaction."""
+    ) -> None:
+        """Validate and atomically commit claims and their successful subset."""
         with self.claims_lock:
-            batch = self._prepare_effect_claim_batch_unlocked(effects, attempt=attempt)
-            yield batch
+            claim_mutations = self._prepare_effect_claim_batch_unlocked(
+                effects,
+                attempt=attempt,
+            )
+            success_mutations = self._prepare_success_batch_unlocked(
+                successful_effects,
+                attempt=attempt,
+                pending_claims=claim_mutations,
+            )
+            self._apply_claim_mutations_unlocked(claim_mutations)
+            self._apply_success_mutations_unlocked(success_mutations)
 
     def _prepare_effect_claim_batch_unlocked(
         self,
         effects: tuple[ManagedEffectClaim, ...],
         *,
         attempt: ManagedAttemptState | None,
-    ) -> _ReplayClaimBatch:
+    ) -> tuple[_ReplayClaimMutation, ...]:
         """Validate a replay batch without changing its expected-event registry."""
         mutations = []
         seen = set()
@@ -340,33 +340,171 @@ class _ReplayState:
                     attempt_token=attempt.attempt_token,
                 )
             )
-        return _ReplayClaimBatch(tuple(mutations))
+        return tuple(mutations)
+
+    def _prepare_success_batch_unlocked(
+        self,
+        effects: tuple[ManagedEffectClaim, ...],
+        *,
+        attempt: ManagedAttemptState | None,
+        pending_claims: tuple[_ReplayClaimMutation, ...],
+    ) -> tuple[_ReplaySuccessMutation, ...]:
+        """Validate success ownership without changing replay claim state."""
+        pending_by_claim = {id(mutation.claim): mutation for mutation in pending_claims}
+        mutations = []
+        seen = set()
+        for effect in effects:
+            encoded = _encoded_effect_identity(effect)
+            if encoded in seen:
+                raise ReplayCompatibilityError(
+                    "one successful replay batch duplicated an event identity"
+                )
+            seen.add(encoded)
+            claim = self.claims.get(encoded)
+            if claim is None:
+                raise ReplayCompatibilityError(
+                    "workflow execution completed with an unexpected replay event"
+                )
+            _require_matching_effect(claim.expected, effect)
+            if claim.direct_successful or claim.successful_attempt_token is not None:
+                raise ReplayCompatibilityError(
+                    "workflow execution marked an already successful replay event"
+                )
+
+            pending = pending_by_claim.get(id(claim))
+            if attempt is None:
+                directly_claimed = claim.direct_claimed or (pending is not None and pending.direct)
+                if not directly_claimed:
+                    raise ReplayCompatibilityError(
+                        "direct replay success requires a directly claimed event"
+                    )
+                mutations.append(
+                    _ReplaySuccessMutation(
+                        claim=claim,
+                        direct=True,
+                        attempt_token=None,
+                    )
+                )
+                continue
+
+            if claim.direct_claimed or (pending is not None and pending.direct):
+                raise ReplayCompatibilityError(
+                    "a managed successful replay event was directly claimed"
+                )
+            work_item_token = claim.work_item_token
+            if work_item_token is None and pending is not None:
+                work_item_token = pending.work_item_token
+            if work_item_token != attempt.work_item_token.value:
+                raise ReplayCompatibilityError(
+                    "successful replay event belongs to a different managed work item"
+                )
+            attempt_claimed = attempt.attempt_token in claim.attempt_tokens or (
+                pending is not None
+                and not pending.direct
+                and pending.attempt_token == attempt.attempt_token
+            )
+            if not attempt_claimed:
+                raise ReplayCompatibilityError(
+                    "the successful attempt did not claim its replay event"
+                )
+            mutations.append(
+                _ReplaySuccessMutation(
+                    claim=claim,
+                    direct=False,
+                    attempt_token=attempt.attempt_token,
+                )
+            )
+        return tuple(mutations)
+
+    @staticmethod
+    def _apply_claim_mutations_unlocked(
+        mutations: tuple[_ReplayClaimMutation, ...],
+    ) -> None:
+        """Apply a fully validated claim batch without another failure point."""
+        for mutation in mutations:
+            if mutation.direct:
+                mutation.claim.direct_claimed = True
+                continue
+            if mutation.claim.work_item_token is None:
+                mutation.claim.work_item_token = mutation.work_item_token
+            if mutation.attempt_token is not None:
+                mutation.claim.attempt_tokens.add(mutation.attempt_token)
+
+    @staticmethod
+    def _apply_success_mutations_unlocked(
+        mutations: tuple[_ReplaySuccessMutation, ...],
+    ) -> None:
+        """Apply a fully validated success batch without another failure point."""
+        for mutation in mutations:
+            if mutation.direct:
+                mutation.claim.direct_successful = True
+            else:
+                mutation.claim.successful_attempt_token = mutation.attempt_token
 
     def assert_all_events_claimed(self) -> None:
         """Reject a successful invocation that omitted any expected event."""
         with self.claims_lock:
-            missing_count = sum(not claim.successful for claim in self.claims.values())
+            missing_count = sum(
+                not claim.direct_successful and claim.successful_attempt_token is None
+                for claim in self.claims.values()
+            )
         if missing_count:
             raise ReplayCompatibilityError(
                 f"workflow replay completed with {missing_count} missing expected event(s)"
             )
 
-    def mark_successful_effects(self, effects: tuple[ManagedEffectClaim, ...]) -> None:
-        """Confirm the exact events retained by the successful root invocation."""
+    def mark_successful_effects(
+        self,
+        effects: tuple[ManagedEffectClaim, ...],
+        *,
+        attempt: ManagedAttemptState | None,
+    ) -> None:
+        """Bind successful events to their direct or managed claimant."""
+        self._commit_effect_batch(
+            (),
+            successful_effects=effects,
+            attempt=attempt,
+        )
+
+    def finalize_successful_effects(
+        self,
+        effects: tuple[ManagedEffectClaim, ...],
+    ) -> None:
+        """Confirm a successful root's direct and managed recipe effects."""
         with self.claims_lock:
+            direct_mutations = []
+            seen = set()
             for effect in effects:
                 encoded = _encoded_effect_identity(effect)
+                if encoded in seen:
+                    raise ReplayCompatibilityError(
+                        "one successful replay root duplicated an event identity"
+                    )
+                seen.add(encoded)
                 claim = self.claims.get(encoded)
                 if claim is None:
                     raise ReplayCompatibilityError(
                         "workflow execution completed with an unexpected replay event"
                     )
                 _require_matching_effect(claim.expected, effect)
-                if not claim.direct_claimed and claim.work_item_token is None:
+                if claim.successful_attempt_token is not None:
+                    continue
+                if claim.direct_successful:
+                    raise ReplayCompatibilityError(
+                        "workflow execution marked an already successful replay event"
+                    )
+                if not claim.direct_claimed:
                     raise ReplayCompatibilityError(
                         "workflow execution completed an unclaimed replay event"
                     )
-                claim.successful = True
+                direct_mutations.append(
+                    _ReplaySuccessMutation(
+                        claim=claim,
+                        direct=True,
+                        attempt_token=None,
+                    )
+                )
+            self._apply_success_mutations_unlocked(tuple(direct_mutations))
 
     def expected_effects_for_unit(
         self,
@@ -424,6 +562,14 @@ class _RemoteReplayClaims:
                 "one remote managed attempt duplicated a replay event claim"
             )
         self.claimed.add(encoded)
+
+    def assert_all_claimed(self) -> None:
+        """Reject a successful worker that omitted its assigned event namespace."""
+        missing_count = len(self.expected_by_identity.keys() - self.claimed)
+        if missing_count:
+            raise ReplayCompatibilityError(
+                f"remote workflow replay completed with {missing_count} missing expected event(s)"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -679,6 +825,10 @@ def _remote_replay_claim_scope(
     token = _REMOTE_REPLAY_CLAIMS.set(registry)
     try:
         yield
+    except BaseException:
+        raise
+    else:
+        registry.assert_all_claimed()
     finally:
         _REMOTE_REPLAY_CLAIMS.reset(token)
 

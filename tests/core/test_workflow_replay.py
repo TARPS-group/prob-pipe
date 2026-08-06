@@ -936,13 +936,21 @@ class TestReplayEventRegistry:
         token = ManagedWorkItemToken.create()
         first = ManagedAttemptState.create(token)
         retry = ManagedAttemptState.create(token)
+        unclaimed = ManagedAttemptState.create(token)
 
         state.claim_effect(effect, attempt=first)
         state.claim_effect(effect, attempt=retry)
         with pytest.raises(ReplayCompatibilityError, match="missing expected"):
             state.assert_all_events_claimed()
-        state.mark_successful_effects((effect,))
+        with pytest.raises(ReplayCompatibilityError, match="successful attempt"):
+            state.mark_successful_effects((effect,), attempt=unclaimed)
+        state.mark_successful_effects((effect,), attempt=retry)
         state.assert_all_events_claimed()
+        claim = state.claims[state.expected_events[0].encoded_identity]
+        assert claim.successful_attempt_token == retry.attempt_token
+
+        with pytest.raises(ReplayCompatibilityError, match="already successful"):
+            state.mark_successful_effects((effect,), attempt=first)
 
         with pytest.raises(ReplayCompatibilityError, match="duplicated"):
             state.claim_effect(effect, attempt=retry)
@@ -954,8 +962,61 @@ class TestReplayEventRegistry:
 
         direct_state = _workflow_replay._validate_provenance(_draw().provenance)
         direct_state.claim_effect(effect, attempt=None)
+        with pytest.raises(ReplayCompatibilityError, match="directly claimed"):
+            direct_state.mark_successful_effects((effect,), attempt=first)
+        direct_state.mark_successful_effects((effect,), attempt=None)
+        direct_state.assert_all_events_claimed()
+        with pytest.raises(ReplayCompatibilityError, match="already successful"):
+            direct_state.mark_successful_effects((effect,), attempt=None)
         with pytest.raises(ReplayCompatibilityError, match="duplicated"):
             direct_state.claim_effect(effect, attempt=None)
+
+    def test_replay_claim_batch_is_atomic(self):
+        state = _workflow_replay._validate_provenance(_draw().provenance)
+        effect = state.expected_events[0].managed_effect()
+        unexpected = copy.deepcopy(effect)
+        object.__setattr__(unexpected, "stochastic_source_id", ("source-group", 99))
+        attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
+
+        with pytest.raises(ReplayCompatibilityError, match="unexpected replay event"):
+            state._commit_effect_batch(
+                (effect, unexpected),
+                successful_effects=(),
+                attempt=attempt,
+            )
+
+        claim = state.claims[state.expected_events[0].encoded_identity]
+        assert claim.work_item_token is None
+        assert claim.attempt_tokens == set()
+        assert claim.successful_attempt_token is None
+
+    def test_remote_replay_scope_requires_its_complete_namespace(self):
+        state = _workflow_replay._validate_provenance(_draw().provenance)
+        effect = state.expected_events[0].managed_effect()
+        attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
+
+        with (
+            pytest.raises(ReplayCompatibilityError, match="missing expected"),
+            _workflow_replay._remote_replay_claim_scope((effect,), attempt),
+        ):
+            pass
+
+        with _workflow_replay._remote_replay_claim_scope((effect,), attempt):
+            _workflow_replay._claim_effect_before_derivation(
+                effect,
+                attempt=attempt,
+            )
+
+    def test_remote_replay_scope_does_not_mask_worker_errors(self):
+        state = _workflow_replay._validate_provenance(_draw().provenance)
+        effect = state.expected_events[0].managed_effect()
+        attempt = ManagedAttemptState.create(ManagedWorkItemToken.create())
+
+        with (
+            pytest.raises(ValueError, match="worker failed"),
+            _workflow_replay._remote_replay_claim_scope((effect,), attempt),
+        ):
+            raise ValueError("worker failed")
 
     def test_nested_automatic_drift_in_thread_is_unexpected_before_sampling(
         self,
