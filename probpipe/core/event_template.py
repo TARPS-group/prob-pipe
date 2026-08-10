@@ -151,22 +151,18 @@ class ValueSpec(ABC):
     def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
         """Bind the dimensions this spec declares from *value*'s own structure.
 
-        The third member of the trio: whatever a spec reports in
-        :attr:`free_dims` and substitutes in :meth:`with_bound_dims`, it binds
-        here. A spec owns its own binding for the same reason it owns the other
-        two — a closed ``isinstance`` chain in this module could not name a spec
-        defined outside it, which is how a batch axis came to report a dimension
-        that nothing could bind.
+        A spec reports its dimensions in :attr:`free_dims`, substitutes them in
+        :meth:`with_bound_dims`, and binds them here. Each spec owns all three, so
+        a spec defined outside this module resolves its own dimensions.
 
-        The implementation **checks the kind** and binds sizes into *bindings*,
-        which is the caller's own mutable scope: a name inside a spec is the same
-        dimension as that name beside it, so it binds once and a disagreement
-        raises. Nothing is substituted here — a name may be bound by a field the
-        pass has not reached, so the caller substitutes once the scope is closed.
+        An implementation checks the kind and binds sizes into *bindings*, the
+        caller's own mutable scope: a name inside a spec is the same dimension as
+        that name beside it, so it binds once and a disagreement raises. Nothing
+        is substituted here, since a name may be bound by a field the pass has not
+        reached; the caller substitutes once the scope is closed.
 
-        The default refuses, which is the honest answer for a spec that declares
-        dimensions without knowing how to bind them; a spec declaring none never
-        reaches this.
+        The default raises, so a spec that declares dimensions it cannot bind says
+        so rather than passing silently. A spec declaring none never reaches this.
         """
         raise ValueError(
             f"{path} declares {type(self).__name__}, whose dimensions this pass cannot "
@@ -176,17 +172,16 @@ class ValueSpec(ABC):
     def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
         """Bind this spec's dimensions from an authoritative *actual* spec.
 
-        The spec-to-spec counterpart of :meth:`bind_dims_from_value`, for the
-        path that validates a declaration against another declaration rather than
-        against a live value. It binds into the caller's *bindings* under the same
-        rules.
+        The counterpart of :meth:`bind_dims_from_value` for the path that
+        validates a declaration against another declaration rather than against a
+        live value. Binding follows the same rules: sizes go into the caller's
+        *bindings*, a name binds once, and a disagreement raises.
 
         Returns
         -------
         bool
             Whether this spec bound from *actual*. ``False`` leaves the caller to
-            fall back on comparing the two specs, which is the default and what a
-            spec declaring no dimensions wants.
+            compare the two specs instead, which is the default.
         """
         return False
 
@@ -284,6 +279,33 @@ class ArraySpec(ValueSpec):
     def free_dims(self) -> frozenset[str]:
         """The symbolic entries of :attr:`shape`."""
         return frozenset(entry for entry in self.shape if isinstance(entry, str))
+
+    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+        """Bind the symbolic entries of :attr:`shape` from *value*'s own shape.
+
+        Every symbolic entry takes a size, since an actual array has one per axis,
+        which is why an array declaration is concrete as soon as it is bound.
+        """
+        actual_shape = _full_array_shape_or_none(value)
+        if actual_shape is None:
+            raise ValueError(
+                f"{path} does not conform to its field spec ({self!r}): got {type(value).__name__}"
+            )
+        _unify_array_shape(self.shape, actual_shape, bindings, path)
+
+    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+        """Bind the symbolic entries of :attr:`shape` from *actual*'s own shape."""
+        if not isinstance(actual, ArraySpec):
+            return False
+        if any(isinstance(entry, str) for entry in actual.shape):
+            raise ValueError(
+                f"{path} has a polymorphic actual template; concrete dimensions are required"
+            )
+        _unify_array_shape(self.shape, actual.shape, bindings, path)
+        if self.dtype is not None and actual.dtype is not None:
+            if not np.can_cast(actual.dtype, self.dtype, casting="same_kind"):
+                raise ValueError(f"{path} dtype {actual.dtype} does not conform to {self.dtype}")
+        return True
 
     def with_bound_dims(self, bindings: Mapping[str, int]) -> ArraySpec:
         """This spec with each bound entry of :attr:`shape` replaced by its size."""
@@ -714,6 +736,20 @@ class FunctionSpec(TermSpec):
             actual_output = getattr(value, "output_template", None)
             if isinstance(actual_output, EventTemplate):
                 _unify_template_node(self.output_spec.event_template, actual_output, bindings, path)
+
+    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+        """Bind each declared side from the matching side of *actual*.
+
+        The sides bind independently, as they do from a value: a side the other
+        spec leaves undeclared binds nothing and stays free.
+        """
+        if not isinstance(actual, FunctionSpec):
+            return False
+        if self.input_template is not None and actual.input_template is not None:
+            _unify_template_node(self.input_template, actual.input_template, bindings, path)
+        if self.output_spec is not None and actual.output_spec is not None:
+            _unify_specs(self.output_spec, actual.output_spec, bindings, path)
+        return True
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a callable.
@@ -1484,19 +1520,15 @@ def _unify_specs(
     bindings: dict[str, int],
     path: str,
 ) -> ValueSpec:
-    """Unify one declared leaf spec with an authoritative actual spec."""
+    """Unify one declared leaf spec with an authoritative actual spec.
+
+    Each side binds through the declaring spec's own
+    :meth:`ValueSpec.bind_dims_from_spec`, and an array is concretized for the
+    same reason it is when bound from a value.
+    """
     if isinstance(expected, ArraySpec) and isinstance(actual, ArraySpec):
-        if any(isinstance(dimension, str) for dimension in actual.shape):
-            raise ValueError(
-                f"{path} has a polymorphic actual template; concrete dimensions are required"
-            )
-        concrete_shape = _unify_array_shape(expected.shape, actual.shape, bindings, path)
-        if expected.dtype is not None and actual.dtype is not None:
-            if not np.can_cast(actual.dtype, expected.dtype, casting="same_kind"):
-                raise ValueError(
-                    f"{path} dtype {actual.dtype} does not conform to {expected.dtype}"
-                )
-        return ArraySpec(concrete_shape, dtype=expected.dtype, support=expected.support)
+        expected.bind_dims_from_spec(actual, bindings, path)
+        return expected.with_bound_dims(bindings)
     if expected.free_dims and type(expected) is type(actual):
         # A polymorphic declaration meets an authoritative spec, so the same rule
         # applies one level in: unify what each declares rather than compare them,
@@ -1514,21 +1546,23 @@ def _unify_spec_with_value(
     bindings: dict[str, int],
     path: str,
 ) -> ValueSpec:
-    """Validate and concretize one declared leaf spec against an actual value."""
-    if spec.free_dims and not isinstance(spec, ArraySpec):
-        return _unify_term_spec_with_value(spec, value, bindings, path)
+    """Validate and concretize one declared leaf spec against an actual value.
+
+    A polymorphic declaration binds through the spec's own
+    :meth:`ValueSpec.bind_dims_from_value`. An array is returned *concrete*, since
+    an actual array gives every axis a size; a term spec is returned as declared,
+    since it may bind only some of its names and the rest belong to fields this
+    pass has not reached.
+    """
     if not isinstance(spec, ArraySpec):
+        if spec.free_dims:
+            return _unify_term_spec_with_value(spec, value, bindings, path)
         if not spec.is_valid(value):
             raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
         return spec
 
-    actual_shape = _full_array_shape_or_none(value)
-    if actual_shape is None:
-        raise ValueError(
-            f"{path} does not conform to its field spec ({spec!r}): got {type(value).__name__}"
-        )
-    concrete_shape = _unify_array_shape(spec.shape, actual_shape, bindings, path)
-    concrete = ArraySpec(concrete_shape, dtype=spec.dtype, support=spec.support)
+    spec.bind_dims_from_value(value, bindings, path)
+    concrete = spec.with_bound_dims(bindings)
     if not concrete.is_valid(value):
         raise ValueError(f"{path} does not conform to its field spec ({spec!r})")
     return concrete
@@ -1576,9 +1610,8 @@ def _unify_term_spec_with_value(
 def _schema_carried_by(value: Any, spec: ValueSpec, path: str) -> EventTemplate:
     """The :class:`EventTemplate` *value* carries, for binding *spec* against.
 
-    A value that carries none cannot bind a polymorphic declaration, which is a
-    refusal rather than a silent pass: the declaration would stay symbolic with
-    nothing left to resolve it.
+    A value carrying none raises, since the declaration would otherwise stay
+    symbolic with nothing left to resolve it.
     """
     template = getattr(value, "event_template", None)
     if not isinstance(template, EventTemplate):

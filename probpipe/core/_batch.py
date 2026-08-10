@@ -283,8 +283,8 @@ class BatchSpec(TermSpec):
     def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
         """Bind the declared multiplicity and element schema from a live *value*.
 
-        A live :class:`Batch` carries a concrete spec of its own, so binding
-        against the batch is binding against that spec.
+        A live :class:`Batch` carries a concrete spec of its own, so it binds
+        through that spec.
         """
         actual = getattr(value, "spec", None)
         if not isinstance(actual, BatchSpec):
@@ -298,16 +298,16 @@ class BatchSpec(TermSpec):
     def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
         """Bind the declared axis sizes and element schema against *actual*'s own.
 
-        The multiplicity binds like an array shape — a symbolic axis size takes
-        the actual size, and a name already bound must agree — and the element
-        spec binds by the same rule one level in. Both use the caller's
-        *bindings*, so an axis size and an element dimension sharing a name are
-        one dimension: a batch of ``("n",)`` over arrays of shape ``("n",)`` binds
-        ``n`` once and refuses a batch that is not square.
+        The multiplicity binds like an array shape: a symbolic axis size takes the
+        actual size, and a name already bound must agree. The element spec binds
+        by the same rule one level in. Both use the caller's *bindings*, so an
+        axis size and an element dimension sharing a name are one dimension — a
+        batch of ``("n",)`` over arrays of shape ``("n",)`` binds ``n`` once and
+        refuses a batch that is not square.
 
-        The level *tiling* is structure rather than size, so a mismatch in how
-        many levels there are, how many axes each holds, or what they are called
-        is refused here rather than bound.
+        The level tiling is structure rather than size, so how many levels there
+        are, how many axes each holds, and what they are called are checked
+        rather than bound.
         """
         if not isinstance(actual, BatchSpec):
             return False

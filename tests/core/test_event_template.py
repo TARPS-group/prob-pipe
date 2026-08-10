@@ -1899,16 +1899,24 @@ class TestMultiplicityBindsFromAValue:
     """A declared batch axis binds from the batch it is matched against.
 
     `TestSymbolicMultiplicity` in ``tests/core/test_batch.py`` holds the
-    *declaration* side — what a spec reports and what it substitutes. These hold
+    *declaration* side, what a spec reports and what it substitutes. These hold
     the *pass*: a symbolic axis meets an actual `Batch` and takes its size, in the
-    one scope every other dimension binds in. A batch axis is a dimension like any
-    other, so the rules `TestInferenceThroughTermSpecs` pins for a term spec's
+    same scope every other dimension binds in. A batch axis is a dimension like
+    any other, so the rules `TestInferenceThroughTermSpecs` pins for a term spec's
     schema are the rules here.
     """
 
     @staticmethod
     def _batch(size=3, level="item"):
         return OpaqueBatch([object() for _ in range(size)], level)
+
+    @staticmethod
+    def _grid(shape, level_names="grid", axis_groups=None):
+        """A batch whose store has *shape*, for the multi-axis and multi-level cases."""
+        store = np.empty(shape, dtype=object)
+        for index in np.ndindex(shape):
+            store[index] = object()
+        return OpaqueBatch(store, level_names, axis_groups=axis_groups if axis_groups else [shape])
 
     @staticmethod
     def _declared(axis="n", field=None):
@@ -1919,7 +1927,7 @@ class TestMultiplicityBindsFromAValue:
         return EventTemplate(fields)
 
     def test_an_axis_size_is_inferred_from_the_batch(self):
-        """The whole point: how many elements there are is read off the batch."""
+        """How many elements there are is read off the batch."""
         record = Record("r", b=self._batch(3), event_template=self._declared())
 
         assert record.event_template.is_concrete
@@ -2007,3 +2015,120 @@ class TestMultiplicityBindsFromAValue:
 
         with pytest.raises(ValueError, match=r"has levels \['item'\], expected \['draw'\]"):
             Record("r", b=self._batch(3), event_template=declared)
+
+    def test_one_level_may_hold_several_symbolic_axes(self):
+        """A level holding two axes binds each in turn."""
+        declared = EventTemplate(b=BatchSpec(OpaqueSpec(), [("rows", "cols")], ["grid"]))
+
+        record = Record("r", b=self._grid((3, 4)), event_template=declared)
+
+        assert record.event_template["b"].axis_groups == ((3, 4),)
+
+    def test_a_name_repeated_within_one_level_declares_a_square_grid(self):
+        """`("n", "n")` binds once and demands both axes agree."""
+        declared = EventTemplate(b=BatchSpec(OpaqueSpec(), [("n", "n")], ["grid"]))
+
+        record = Record("r", b=self._grid((3, 3)), event_template=declared)
+        assert record.event_template["b"].axis_groups == ((3, 3),)
+
+        with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 4, .*already bound to 3"):
+            Record("r", b=self._grid((3, 4)), event_template=declared)
+
+    def test_levels_bind_independently(self):
+        """Two levels, two dimensions, each read off its own axis."""
+        declared = EventTemplate(b=BatchSpec(OpaqueSpec(), [("c",), ("d",)], ["chain", "draw"]))
+
+        record = Record(
+            "r",
+            b=self._grid((2, 4), ["chain", "draw"], [(2,), (4,)]),
+            event_template=declared,
+        )
+
+        assert record.event_template["b"].axis_groups == ((2,), (4,))
+
+    def test_a_level_arity_mismatch_names_the_tiling(self):
+        """Two declared axes in a level do not bind against an actual one."""
+        declared = EventTemplate(b=BatchSpec(OpaqueSpec(), [("a", "b")], ["grid"]))
+
+        with pytest.raises(ValueError, match=r"tiles its axes as \[1\], expected \[2\]"):
+            Record("r", b=self._batch(3, level="grid"), event_template=declared)
+
+    def test_a_partially_bindable_template_binds_what_it_can(self):
+        """Binding is a refinement, so an unbindable name is left free.
+
+        A bare callable declares neither side, so `k` has nothing to bind
+        against, while the batch beside it still binds `n`. The result is a
+        template that is neither concrete nor refused.
+        """
+        declared = EventTemplate(
+            f=FunctionSpec(EventTemplate(x=ArraySpec(shape=("k",))), None),
+            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]),
+        )
+
+        record = Record("r", f=lambda x: x, b=self._batch(3), event_template=declared)
+
+        assert not record.event_template.is_concrete
+        assert record.event_template.free_dims == frozenset({"k"})
+        assert record.event_template["b"].axis_groups == ((3,),)
+
+
+class TestEverySpecBindsWhatItDeclares:
+    """A spec that reports dimensions implements binding for them.
+
+    `free_dims`, `with_bound_dims`, and the two binding methods are one contract:
+    a spec that reports a name and leaves binding to the base class would raise
+    the base's refusal at the moment the name had to be resolved. The check is
+    over the live subclasses, so a spec added later is held to it too.
+    """
+
+    @staticmethod
+    def _concrete_specs():
+        seen: list[type[ValueSpec]] = []
+        pending = [ValueSpec]
+        while pending:
+            for subclass in pending.pop().__subclasses__():
+                if subclass not in seen:
+                    seen.append(subclass)
+                    pending.append(subclass)
+        return [spec for spec in seen if not getattr(spec, "__abstractmethods__", False)]
+
+    def test_the_inventory_is_not_vacuous(self):
+        """The walk finds the specs it is meant to hold."""
+        found = set(self._concrete_specs())
+
+        assert {ArraySpec, OpaqueSpec, RecordSpec, DistributionSpec, FunctionSpec} <= found
+        assert BatchSpec in found
+
+    @pytest.mark.parametrize("method", ["bind_dims_from_value", "bind_dims_from_spec"])
+    def test_a_spec_reporting_dimensions_overrides_binding(self, method):
+        """Whatever reports a dimension resolves it, rather than inheriting a refusal."""
+        for spec in self._concrete_specs():
+            if spec.free_dims is ValueSpec.free_dims:
+                continue  # declares no dimensions, so the default is the answer
+            assert getattr(spec, method) is not getattr(ValueSpec, method), (
+                f"{spec.__name__} reports free_dims but inherits {method}"
+            )
+
+    def test_a_spec_declaring_no_dimensions_keeps_the_default(self):
+        """`OpaqueSpec` declares none, so the base class answers for it."""
+        assert OpaqueSpec.free_dims is ValueSpec.free_dims
+        assert OpaqueSpec.bind_dims_from_value is ValueSpec.bind_dims_from_value
+
+    def test_the_default_refuses_rather_than_passing_silently(self):
+        """A spec that reported a name it could not bind would say so."""
+
+        @dataclass(frozen=True)
+        class _DimlessButClaiming(ValueSpec):
+            def is_valid(self, value: Any) -> bool:
+                return True
+
+        with pytest.raises(ValueError, match="cannot bind from a value"):
+            _DimlessButClaiming().bind_dims_from_value(object(), {}, "p")
+
+    def test_an_array_binds_its_own_shape(self):
+        """`ArraySpec` owns its binding rather than being special-cased by the pass."""
+        bindings: dict[str, int] = {}
+
+        ArraySpec(shape=("n", "m")).bind_dims_from_value(jnp.zeros((2, 5)), bindings, "p")
+
+        assert bindings == {"n": 2, "m": 5}

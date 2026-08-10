@@ -1629,3 +1629,56 @@ class TestSymbolicMultiplicity:
 
         with pytest.raises(ValueError, match="has levels"):
             declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
+
+    def test_a_name_repeated_within_one_level_binds_once(self):
+        """`("n", "n")` on one level is a square grid, as it is in an array shape."""
+        declared = BatchSpec(OpaqueSpec(), [("n", "n")], ["grid"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(_spec([(3, 3)], ["grid"]), bindings, "path")
+        assert bindings == {"n": 3}
+
+        with pytest.raises(ValueError, match=r"'n' to 4, .*already bound to 3"):
+            declared.bind_dims_from_spec(_spec([(3, 4)], ["grid"]), {}, "path")
+
+    def test_levels_bind_their_own_dimensions(self):
+        """Distinct names on distinct levels each take their own axis."""
+        declared = BatchSpec(OpaqueSpec(), [("C",), ("D",)], ["chain", "draw"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(_spec([(2,), (4,)], ["chain", "draw"]), bindings, "path")
+
+        assert bindings == {"C": 2, "D": 4}
+
+    def test_a_nested_batch_binds_at_every_level(self):
+        """A batch of batches binds the outer axis and the inner one."""
+        declared = BatchSpec(BatchSpec(OpaqueSpec(), [("i",)], ["inner"]), [("o",)], ["outer"])
+        actual = BatchSpec(BatchSpec(OpaqueSpec(), [(5,)], ["inner"]), [(2,)], ["outer"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(actual, bindings, "path")
+
+        assert bindings == {"o": 2, "i": 5}
+
+    def test_one_name_across_two_nesting_levels_is_one_dimension(self):
+        """The outer axis and the inner one share a scope, so they must agree."""
+        declared = BatchSpec(BatchSpec(OpaqueSpec(), [("n",)], ["inner"]), [("n",)], ["outer"])
+        square = BatchSpec(BatchSpec(OpaqueSpec(), [(4,)], ["inner"]), [(4,)], ["outer"])
+        oblong = BatchSpec(BatchSpec(OpaqueSpec(), [(5,)], ["inner"]), [(4,)], ["outer"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(square, bindings, "path")
+        assert bindings == {"n": 4}
+
+        with pytest.raises(ValueError, match=r"'n' to 5, .*already bound to 4"):
+            declared.bind_dims_from_spec(oblong, {}, "path")
+
+    def test_an_element_dimension_binds_through_the_element_spec(self):
+        """The element's own schema binds by the same rule one level in."""
+        declared = BatchSpec(ArraySpec(shape=("d",)), [("n",)], ["item"])
+        actual = BatchSpec(ArraySpec(shape=(7,)), [(3,)], ["item"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(actual, bindings, "path")
+
+        assert bindings == {"n": 3, "d": 7}
