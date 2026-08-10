@@ -37,6 +37,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unification pass had special-cased — so the four methods are one contract
   rather than a rule with exceptions.
 
+  A `FunctionSpec`'s output binds whatever kind it declares. Only a record
+  declaration was read before, so a callable declaring an output that contradicted
+  the input bound the input alone and reported an output schema that was wrong
+  rather than merely unbound: input `("n",)` against a declared `(3,)` and an
+  actual output of `(5,)` reported `(5,)` as `(3,)`. A non-record declaration
+  describes the one value returned, so it now meets the sole leaf of the
+  callable's output template, and several output fields do not match it.
+
   This brings the term specs into line with `ArraySpec`, which has always
   accepted a concrete value against a symbolic shape and left the sizes to the
   single pass, per II.3's division of labor. A polymorphic term-spec declaration

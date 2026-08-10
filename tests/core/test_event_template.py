@@ -1895,6 +1895,79 @@ class TestInferenceThroughTermSpecs:
             Record("r", law=self._law(3), event_template=declared)
 
 
+class TestAFunctionOutputBindsWhateverItDeclares:
+    """A `FunctionSpec`'s output binds whether or not it declares a record.
+
+    `output_spec` is any value spec, since a callable may return a term of any
+    kind. A record declaration meets the callable's output template as a whole;
+    any other declaration describes the one value returned and meets that
+    template's sole leaf. Both bind, so a name shared with the input is one
+    dimension on either route.
+    """
+
+    @staticmethod
+    def _function(input_size=3, output_size=5):
+        return Function(
+            func=lambda x: jnp.zeros(output_size),
+            name="f",
+            input_template=EventTemplate(x=ArraySpec(shape=(input_size,))),
+            output_template=EventTemplate(out=ArraySpec(shape=(output_size,))),
+        )
+
+    @staticmethod
+    def _declared(output_spec):
+        return EventTemplate(f=FunctionSpec(EventTemplate(x=ArraySpec(shape=("n",))), output_spec))
+
+    def test_a_shared_name_binds_from_a_non_record_output(self):
+        """`n` on both sides binds once when the two agree."""
+        declared = self._declared(ArraySpec(shape=("n",)))
+
+        record = Record("r", f=self._function(4, 4), event_template=declared)
+
+        assert record.event_template.is_concrete
+        assert record.event_template["f"].output_spec.shape == (4,)
+
+    def test_a_non_record_output_that_disagrees_with_the_input_raises(self):
+        """The case a skipped output hid: the input says 3, the output says 5.
+
+        Binding only the input would leave the declaration reporting an output of
+        `(3,)` for a callable that returns `(5,)` — a schema that is not merely
+        unbound but wrong.
+        """
+        declared = self._declared(ArraySpec(shape=("n",)))
+
+        with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
+            Record("r", f=self._function(3, 5), event_template=declared)
+
+    def test_a_record_output_that_disagrees_raises_the_same_way(self):
+        """The route that already worked, asserted beside the one that did not."""
+        declared = self._declared(RecordSpec(EventTemplate(out=ArraySpec(shape=("n",)))))
+
+        with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
+            Record("r", f=self._function(3, 5), event_template=declared)
+
+    def test_one_declared_output_value_does_not_match_several_fields(self):
+        """A single value declaration meets a single field, so two is a mismatch."""
+        function = Function(
+            func=lambda x: x,
+            name="f",
+            input_template=EventTemplate(x=ArraySpec(shape=(3,))),
+            output_template=EventTemplate(a=ArraySpec(shape=(3,)), b=ArraySpec(shape=(4,))),
+        )
+        declared = self._declared(ArraySpec(shape=("n",)))
+
+        with pytest.raises(ValueError, match=r"declares one output value.*output fields"):
+            Record("r", f=function, event_template=declared)
+
+    def test_a_bare_callable_still_binds_nothing_from_its_output(self):
+        """No declaration to read, so the output stays free rather than raising."""
+        declared = self._declared(ArraySpec(shape=("k",)))
+
+        record = Record("r", f=lambda x: x, event_template=declared)
+
+        assert record.event_template.free_dims == frozenset({"n", "k"})
+
+
 class TestMultiplicityBindsFromAValue:
     """A declared batch axis binds from the batch it is matched against.
 

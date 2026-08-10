@@ -732,10 +732,30 @@ class FunctionSpec(TermSpec):
             actual_input = getattr(value, "input_template", None)
             if isinstance(actual_input, EventTemplate):
                 _unify_template_node(self.input_template, actual_input, bindings, path)
-        if isinstance(self.output_spec, RecordSpec):
+        if self.output_spec is not None:
             actual_output = getattr(value, "output_template", None)
             if isinstance(actual_output, EventTemplate):
-                _unify_template_node(self.output_spec.event_template, actual_output, bindings, path)
+                self._bind_output_from(actual_output, bindings, path)
+
+    def _bind_output_from(
+        self, actual_output: EventTemplate, bindings: dict[str, int], path: str
+    ) -> None:
+        """Bind the declared output against the schema the callable declares.
+
+        A record declaration meets the template as a whole. Any other declaration
+        describes the one value returned, so it meets the template's sole leaf,
+        the reading a leaf spec is given anywhere a value carries a one-field
+        template. A callable declaring several output fields does not match one.
+        """
+        if isinstance(self.output_spec, RecordSpec):
+            _unify_template_node(self.output_spec.event_template, actual_output, bindings, path)
+            return
+        if len(actual_output) != 1:
+            raise ValueError(
+                f"{path} declares one output value ({self.output_spec!r}), but the callable "
+                f"declares output fields {list(actual_output.keys())}"
+            )
+        _unify_specs(self.output_spec, next(iter(actual_output.values())), bindings, path)
 
     def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
         """Bind each declared side from the matching side of *actual*.
