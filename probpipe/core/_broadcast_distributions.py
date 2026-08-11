@@ -28,7 +28,7 @@ from ._empirical import (
 )
 from ._object_batch import _is_object_array
 from ._record_array import NumericRecordArray, RecordArray
-from ._record_batch import RecordBatch
+from ._record_batch import RecordBatch, _batch_class_for
 from .event_template import (
     ArraySpec,
     EventTemplate,
@@ -721,40 +721,61 @@ def _make_stack(
         # rows' own levels. Checked before the Record branch below, which would
         # otherwise claim a RecordArray (a Record subclass) and collapse its
         # inner batch axis.
-        if outs and all(isinstance(o, RecordBatch) for o in outs):
+        if outs and any(isinstance(o, RecordBatch) for o in outs):
+            # A batch row is all-or-nothing. Falling through on a mixture, or on
+            # rows that disagree, reaches the generic handlers — which would take a
+            # single-field numeric batch for an array, read its inner batch axis as
+            # an event axis, and discard the level names with it. There is no
+            # aggregate to build from rows that do not agree on what they hold, so
+            # this says so where the disagreement is visible.
+            if not all(isinstance(o, RecordBatch) for o in outs):
+                kinds = sorted({type(o).__name__ for o in outs})
+                raise TypeError(
+                    f"{field_name}: some rows returned a batch of records and some did not "
+                    f"({', '.join(kinds)}). A swept body returns one kind for every row, since "
+                    f"the aggregate has one schema; return a batch from every row or from none"
+                )
             first = outs[0]
             # Every row must agree on what it holds and on which axes hold it.
             # Matching the shape alone would take the first row's schema and level
             # names for all of them, dropping a field the others have and
             # misnaming their axes — a batch whose spec is a false statement about
             # its own columns.
-            if all(
-                o.element_spec == first.element_spec
-                and o.level_names == first.level_names
-                and o.axis_groups == first.axis_groups
-                for o in outs
-            ):
-                # Columns are leaf-keyed, so a nested element needs no special
-                # case — and they are read raw: a field that is not an array
-                # presents as its own object batch, and what stacks is the
-                # column, through numpy so the objects are taken as they are.
-                columns = {}
-                for path in first.event_template:
-                    cols = [o._raw_column(path) for o in outs]
-                    if any(_is_object_array(c) for c in cols):
-                        stacked = np.stack(cols, axis=0)
-                    else:
-                        stacked = jnp.stack(cols, axis=0)
-                    columns[path] = stacked.reshape(batch_shape + stacked.shape[1:])
-                return type(first)(
-                    columns,
-                    (*level_names, *first.level_names),
-                    element_spec=first.element_spec,
-                    axis_groups=(*sweep_groups, *first.axis_groups),
-                    name=name or field_name,
-                    name_is_auto=True,
+            for other in outs[1:]:
+                if (
+                    other.element_spec == first.element_spec
+                    and other.batch_shape == first.batch_shape
+                    and other.level_names == first.level_names
+                    and other.axis_groups == first.axis_groups
+                ):
+                    continue
+                raise ValueError(
+                    f"{field_name}: the rows returned batches that disagree — "
+                    f"{first.level_names} over {first.batch_shape} against "
+                    f"{other.level_names} over {other.batch_shape}. Rows stack into one batch, "
+                    f"which states one element spec and one multiplicity for all of them, so "
+                    f"every row must return the same schema on the same levels"
                 )
-            # Mismatched inner shapes fall through to the generic handlers.
+            # Columns are leaf-keyed, so a nested element needs no special
+            # case — and they are read raw: a field that is not an array
+            # presents as its own object batch, and what stacks is the
+            # column, through numpy so the objects are taken as they are.
+            columns = {}
+            for path in first.event_template:
+                cols = [o._raw_column(path) for o in outs]
+                if any(_is_object_array(c) for c in cols):
+                    stacked = np.stack(cols, axis=0)
+                else:
+                    stacked = jnp.stack(cols, axis=0)
+                columns[path] = stacked.reshape(batch_shape + stacked.shape[1:])
+            return _batch_class_for(first.element_spec)(
+                columns,
+                (*level_names, *first.level_names),
+                element_spec=first.element_spec,
+                axis_groups=(*sweep_groups, *first.axis_groups),
+                name=name or field_name,
+                name_is_auto=True,
+            )
 
         if outs and all(isinstance(o, RecordArray) for o in outs):
             first = outs[0]
@@ -773,7 +794,20 @@ def _make_stack(
                 reshaped = {
                     fname: arr.reshape(batch_shape + arr.shape[1:]) for fname, arr in fields.items()
                 }
-                return type(first)(
+                # The class follows the element template, not the row that
+                # happened to arrive first: a subclass with its own constructor —
+                # a ``Design``, built from marginals — is not something an
+                # aggregate over its rows can be rebuilt as.
+                # Imported locally because later branches of this function do,
+                # which makes the name local to it throughout.
+                from ._record_array import NumericRecordArray
+
+                aggregate = (
+                    NumericRecordArray
+                    if isinstance(first.template, NumericEventTemplate)
+                    else RecordArray
+                )
+                return aggregate(
                     reshaped,
                     batch_shape=batch_shape + first.batch_shape,
                     template=first.template,

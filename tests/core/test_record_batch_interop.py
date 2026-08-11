@@ -396,9 +396,10 @@ class TestATransformCannotAddAnUnnamedLevel:
         with pytest.raises(ValueError, match="An added axis belongs to no level"):
             jax.vmap(body)(jnp.arange(3.0))
 
-    def test_a_dropped_batch_axis_still_renames_the_levels(self):
-        """The refusal is for *added* axes only: dropping one is what a transform
-        ordinarily does, and the surviving levels are named as before."""
+    def test_dropping_one_of_two_batch_axes_is_refused_too(self):
+        """An added axis is refused because no level names it; a *partially*
+        dropped one is refused because no shape says which level went. Removing
+        every axis is the case that works, and it yields a ``Record``."""
         batch = NumericRecordBatch(
             {"s": jnp.zeros((3, 2))},
             ("outer", "inner"),
@@ -406,11 +407,13 @@ class TestATransformCannotAddAnUnnamedLevel:
             axis_groups=((3,), (2,)),
         )
 
-        seen: list[Any] = []
-        jax.vmap(lambda b: seen.append(b) or jnp.zeros(()))(batch)
+        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+            jax.vmap(lambda b: jnp.zeros(()))(batch)
 
-        assert seen[0].level_names == ("inner",)
-        assert seen[0].batch_shape == (2,)
+        single = NumericRecordBatch({"s": jnp.zeros(3)}, "outer", element_spec=EventTemplate(s=()))
+        seen: list[Any] = []
+        jax.vmap(lambda b: seen.append(type(b).__name__) or jnp.zeros(()))(single)
+        assert seen == ["NumericRecord"]
 
 
 class TestBatchFingerprinting:
@@ -580,18 +583,21 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
 
 
 class TestSameRankTransformsCannotLieEither:
-    def test_a_resizing_transform_rewrites_the_level_sizes(self):
-        """Slicing keeps every axis, so the levels carry over onto the sizes the
-        columns actually have — where reusing the stored spec would claim two
-        rows above one-row columns."""
+    def test_a_resizing_transform_is_refused(self):
+        """Slicing keeps every axis and changes what the level holds. Carrying the
+        names onto the new sizes is right for a per-level slice and wrong for
+        anything else landing on the same shape, so it is refused; indexing is the
+        route that carries its selection instead of inferring it."""
         batch = NumericRecordBatch(
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0) * 10},
             "draw",
             element_spec=EventTemplate(x=(), y=()),
         )
 
-        sliced = jax.tree.map(lambda leaf: leaf[:1], batch)
+        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+            jax.tree.map(lambda leaf: leaf[:1], batch)
 
+        sliced = batch[0:1]
         assert sliced.batch_shape == (1,)
         assert sliced.level_names == ("draw",)
         assert sliced._raw_column("x").shape == (1,)
@@ -750,8 +756,11 @@ class TestZeroWidthEventsUnderExplicitJax:
 
 
 class TestShapeCannotRecoverAxisProvenance:
-    """Which axis a transform took is not readable off sizes alone; where two
-    stories explain one shape, the batch refuses rather than guesses."""
+    """Which axis a transform took is not readable off sizes alone, so a batch is
+    rebuilt only where no axis has to be identified: all of them kept, or all
+    removed. A partial reduction is refused whatever the sizes are — distinct
+    sizes narrow the candidates without establishing which axis the transform
+    actually consumed."""
 
     @staticmethod
     def _grid(chain: int, draw: int):
@@ -762,23 +771,16 @@ class TestShapeCannotRecoverAxisProvenance:
             axis_groups=((chain,), (draw,)),
         )
 
-    def test_removing_one_of_two_equal_axes_is_ambiguous(self):
-        with pytest.raises(ValueError, match="more than one of the levels"):
-            jax.vmap(lambda v: 0.0, in_axes=1)(self._grid(2, 2))
+    @pytest.mark.parametrize(("chain", "draw"), [(2, 2), (2, 3)], ids=["equal", "distinct"])
+    def test_removing_one_of_two_axes_is_refused(self, chain, draw):
+        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+            jax.vmap(lambda v: 0.0, in_axes=1)(self._grid(chain, draw))
 
-    def test_a_distinctly_sized_removal_names_the_survivor(self):
-        """``in_axes=1`` strips ``draw``, so the body's batch is ``chain`` — the
-        level that survived, not the leftmost that fits."""
-        seen: list[Any] = []
-        jax.vmap(lambda v: seen.append(v) or 0.0, in_axes=1)(self._grid(2, 3))
-
-        assert seen[0].level_names == ("chain",)
-        assert seen[0].batch_shape == (2,)
-
-    def test_a_permutation_of_the_batch_axes_is_refused(self):
-        """A transpose reads like a per-axis resize by shape alone; retiling
-        would keep each level's name on an axis now holding another's rows."""
-        with pytest.raises(ValueError, match="permutation of the same sizes"):
+    def test_an_unequal_permutation_is_refused(self):
+        """A transpose changes the batch shape here, so it is caught by the same
+        gate a resize is. An *equal*-sized transpose changes nothing about the
+        shape and is undetectable — see the batch's own contract tests."""
+        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
             jax.tree.map(lambda leaf: leaf.T, self._grid(2, 3))
 
 
@@ -790,7 +792,7 @@ class TestATransformCannotRetypeTheElement:
             element_spec=EventTemplate(x=ArraySpec((), dtype=jnp.float32)),
         )
 
-        with pytest.raises(ValueError, match=r"never\s+retype the element"):
+        with pytest.raises(TypeError, match="does not admit"):
             jax.tree.map(lambda leaf: leaf.astype(jnp.complex64), batch)
 
     def test_a_same_kind_widening_is_admitted(self):

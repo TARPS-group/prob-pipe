@@ -636,11 +636,7 @@ class RecordBatch(Batch[Record]):
         and left to the constructor to re-derive when it was auto, since the old one
         described the pre-edit fields.
         """
-        # Lazy: the numeric module builds on this one, so the edge points that way.
-        from ._numeric_record_batch import NumericRecordBatch
-
-        cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
-        return cls(
+        return _batch_class_for(template)(
             dict(columns),
             self.level_names,
             element_spec=template,
@@ -759,6 +755,22 @@ class RecordBatch(Batch[Record]):
 # ---------------------------------------------------------------------------
 # Construction helpers
 # ---------------------------------------------------------------------------
+
+
+def _batch_class_for(element_spec: RecordSpec | EventTemplate) -> type[RecordBatch]:
+    """The batch class an element declaration calls for.
+
+    The kind of batch follows the *element*: an all-numeric element gets the
+    numeric specialization and its flat layout, anything else the permissive base.
+    Read the class from the declaration rather than from a batch that happens to
+    be at hand — a subclass carrying its own constructor, a ``Design`` built from
+    marginals, is not a thing an aggregate over its rows can be rebuilt as.
+    """
+    # Lazy: the numeric module builds on this one, so the edge points that way.
+    from ._numeric_record_batch import NumericRecordBatch
+
+    template = _record_declaration_template(element_spec)
+    return NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
 
 
 def _record_element_spec(decl: RecordSpec | EventTemplate, *, kind: str) -> RecordSpec:
