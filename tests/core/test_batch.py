@@ -334,7 +334,7 @@ class TestSpec:
         fields on ``DistributionSpec`` and ``FunctionSpec``.
         """
         hints = get_type_hints(BatchSpec)
-        assert hints["axis_groups"] == tuple[tuple[int, ...], ...]
+        assert hints["axis_groups"] == tuple[tuple[int | str, ...], ...]
         assert hints["level_names"] == tuple[str, ...]
 
     def test_specs_compare_and_hash_by_value(self):
@@ -795,9 +795,22 @@ class TestSpecValidation:
         with pytest.raises(TypeError, match="axis sizes are integers"):
             _spec([(2.7,)], ["draw"])
 
-    def test_a_string_is_not_an_axis_size(self):
-        with pytest.raises(TypeError, match="axis sizes are integers"):
+    def test_an_identifier_is_a_symbolic_axis_size(self):
+        """A name defers a size, as an `ArraySpec` shape entry may."""
+        assert _spec([("draws",)], ["draw"]).axis_groups == (("draws",),)
+
+    def test_a_symbolic_axis_size_must_be_an_identifier(self):
+        with pytest.raises(ValueError, match="must be an identifier"):
+            _spec([("not an identifier",)], ["draw"])
+
+    def test_a_numeric_string_is_not_a_size(self):
+        """The likeliest slip: "3" is a name, and not one with_dims could bind."""
+        with pytest.raises(ValueError, match="must be an identifier"):
             _spec([("3",)], ["draw"])
+
+    def test_an_empty_name_is_refused(self):
+        with pytest.raises(ValueError, match="must be an identifier"):
+            _spec([("",)], ["draw"])
 
     def test_replacing_a_field_revalidates_the_levels(self):
         from dataclasses import replace
@@ -1510,3 +1523,162 @@ class TestAStoredElementKeepsItsOwnIdentity:
         """The view is the batch's own, so it is named by what it selects."""
         assert stored[0:2].name == "b[draw=0:2]"
         assert stored[0:2][0] is self.leaves[0]
+
+
+class TestSymbolicMultiplicity:
+    """An axis size may be a name, as an `ArraySpec` shape entry may.
+
+    A *declaration* may defer how many elements a level holds — "returns a batch
+    of `S` draws" before `S` is known. A live batch may not: it holds elements at
+    positions.
+    """
+
+    def test_a_symbolic_axis_size_is_reported_as_free(self):
+        spec = _spec([("S",)], ["draw"])
+
+        assert spec.free_dims == frozenset({"S"})
+        assert spec.batch_shape == ("S",)
+
+    def test_free_dims_unions_the_element_schema_and_the_multiplicity(self):
+        """Distinct names, so neither operand can pass for the union."""
+        spec = BatchSpec(ArraySpec(shape=("d",)), [("S",)], ["draw"])
+
+        assert spec.free_dims == frozenset({"S", "d"})
+        assert spec.free_axis_dims == frozenset({"S"})
+
+    def test_a_shared_name_declares_a_square_batch(self):
+        """One scope: `("n",)` of arrays of shape `("n",)` is square by declaration."""
+        spec = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+
+        assert spec.free_dims == frozenset({"n"})
+
+    def test_only_the_multiplicity_must_be_concrete_for_a_live_batch(self):
+        """How many elements there are is a different question from what one is."""
+        spec = BatchSpec(ArraySpec(shape=("d",)), [(4,)], ["draw"])
+
+        assert spec.free_axis_dims == frozenset()
+        assert spec.batch_size == 4
+        assert _ListBatch(range(4), spec).batch_shape == (4,)
+
+    def test_a_concrete_multiplicity_is_free_of_dimensions(self):
+        assert _spec([(2,), (3,)], ["chain", "draw"]).free_dims == frozenset()
+
+    def test_batch_size_is_undefined_while_an_axis_is_symbolic(self):
+        spec = _spec([("S",)], ["draw"])
+
+        with pytest.raises(ValueError, match="undefined while an axis size is symbolic"):
+            _ = spec.batch_size
+
+    def test_a_live_batch_refuses_a_symbolic_axis(self):
+        """A batch holds elements at positions, so its multiplicity is concrete."""
+        with pytest.raises(ValueError, match="leaves the axis size S unbound"):
+            _ListBatch([], _spec([("S",)], ["draw"]))
+
+    def test_a_symbolic_axis_is_substitutable(self):
+        spec = _spec([("S",)], ["draw"])
+
+        assert spec.with_bound_dims({"S": 3}).axis_groups == ((3,),)
+        assert spec.with_bound_dims({"S": 3}).free_dims == frozenset()
+
+    def test_a_concrete_batch_still_builds(self, flat):
+        assert flat.batch_shape == (4,)
+        assert flat.batch_size == 4
+
+    def test_a_symbolic_axis_binds_from_an_authoritative_spec(self):
+        """What a spec reports it also binds — the third of the trio.
+
+        The spec-to-spec path, which validates a declaration against another
+        declaration rather than against a live batch.
+        """
+        bindings: dict[str, int] = {}
+
+        assert _spec([("S",)], ["draw"]).bind_dims_from_spec(
+            _spec([(3,)], ["draw"]), bindings, "path"
+        )
+        assert bindings == {"S": 3}
+
+    def test_an_axis_and_an_element_dimension_share_one_scope(self):
+        """A batch of `("n",)` over arrays of shape `("n",)` binds `n` once."""
+        declared = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+        bindings: dict[str, int] = {}
+
+        assert declared.bind_dims_from_spec(
+            BatchSpec(ArraySpec(shape=(3,)), [(3,)], ["row"]), bindings, "path"
+        )
+        assert bindings == {"n": 3}
+
+    def test_a_batch_that_is_not_square_is_refused(self):
+        """The other half of declaring it square: 3 elements of length 5 is not."""
+        declared = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+        actual = BatchSpec(ArraySpec(shape=(5,)), [(3,)], ["row"])
+
+        with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
+            declared.bind_dims_from_spec(actual, {}, "path")
+
+    def test_binding_leaves_the_spec_unsubstituted(self):
+        """Substitution waits for the closed scope, as it does for every leaf."""
+        declared = _spec([("S",)], ["draw"])
+
+        declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
+
+        assert declared.axis_groups == (("S",),)
+
+    def test_a_different_tiling_is_refused_rather_than_bound(self):
+        """The tiling is structure: two levels do not bind against one."""
+        declared = BatchSpec(OpaqueSpec(), [("S",), ("T",)], ["chain", "draw"])
+
+        with pytest.raises(ValueError, match="has levels"):
+            declared.bind_dims_from_spec(_spec([(3,)], ["draw"]), {}, "path")
+
+    def test_a_name_repeated_within_one_level_binds_once(self):
+        """`("n", "n")` on one level is a square grid, as it is in an array shape."""
+        declared = BatchSpec(OpaqueSpec(), [("n", "n")], ["grid"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(_spec([(3, 3)], ["grid"]), bindings, "path")
+        assert bindings == {"n": 3}
+
+        with pytest.raises(ValueError, match=r"'n' to 4, .*already bound to 3"):
+            declared.bind_dims_from_spec(_spec([(3, 4)], ["grid"]), {}, "path")
+
+    def test_levels_bind_their_own_dimensions(self):
+        """Distinct names on distinct levels each take their own axis."""
+        declared = BatchSpec(OpaqueSpec(), [("C",), ("D",)], ["chain", "draw"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(_spec([(2,), (4,)], ["chain", "draw"]), bindings, "path")
+
+        assert bindings == {"C": 2, "D": 4}
+
+    def test_a_nested_batch_binds_at_every_level(self):
+        """A batch of batches binds the outer axis and the inner one."""
+        declared = BatchSpec(BatchSpec(OpaqueSpec(), [("i",)], ["inner"]), [("o",)], ["outer"])
+        actual = BatchSpec(BatchSpec(OpaqueSpec(), [(5,)], ["inner"]), [(2,)], ["outer"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(actual, bindings, "path")
+
+        assert bindings == {"o": 2, "i": 5}
+
+    def test_one_name_across_two_nesting_levels_is_one_dimension(self):
+        """The outer axis and the inner one share a scope, so they must agree."""
+        declared = BatchSpec(BatchSpec(OpaqueSpec(), [("n",)], ["inner"]), [("n",)], ["outer"])
+        square = BatchSpec(BatchSpec(OpaqueSpec(), [(4,)], ["inner"]), [(4,)], ["outer"])
+        oblong = BatchSpec(BatchSpec(OpaqueSpec(), [(5,)], ["inner"]), [(4,)], ["outer"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(square, bindings, "path")
+        assert bindings == {"n": 4}
+
+        with pytest.raises(ValueError, match=r"'n' to 5, .*already bound to 4"):
+            declared.bind_dims_from_spec(oblong, {}, "path")
+
+    def test_an_element_dimension_binds_through_the_element_spec(self):
+        """The element's own schema binds by the same rule one level in."""
+        declared = BatchSpec(ArraySpec(shape=("d",)), [("n",)], ["item"])
+        actual = BatchSpec(ArraySpec(shape=(7,)), [(3,)], ["item"])
+        bindings: dict[str, int] = {}
+
+        declared.bind_dims_from_spec(actual, bindings, "path")
+
+        assert bindings == {"n": 3, "d": 7}

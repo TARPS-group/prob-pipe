@@ -127,7 +127,8 @@ class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
 
 class BatchSpec(TermSpec):     # a Batch; is_valid accepts a matching batch
     element_spec: ValueSpec               # the spec every element satisfies
-    axis_groups: tuple[tuple[int, ...], ...]   # the multiplicity, tiled into levels (II.5)
+    axis_groups: tuple[tuple[int | str, ...], ...]  # the multiplicity, tiled into levels (II.5);
+                                          #   a str names a symbolic dimension, as in ArraySpec
     level_names: tuple[str, ...]
 # DistributionSpec and ConditionalDistributionSpec are the other two term specs (Part III).
 ```
@@ -189,6 +190,7 @@ class EventTemplate(NamedTree[ValueSpec]):
     def is_concrete(self) -> bool: ...                      # False when any dimension is symbolic
     @property
     def free_dims(self) -> frozenset[str]: ...              # the unbound symbolic dimensions
+    def with_dims(self, **sizes: int) -> EventTemplate: ... # bind them; a new template
     def numeric_subset(self) -> NumericEventTemplate: ...   # remove non-ArraySpec leaves
 ```
 
@@ -208,7 +210,9 @@ Checking a value against a polymorphic template cannot be done leaf by leaf, bec
 
 The work splits accordingly. A leaf's `is_valid` checks its own rank and dtype, and nothing else — an `ArraySpec`'s `support` is descriptive metadata, unchecked. Sizes belong to the one pass, since only it sees every occurrence of a name.
 
-Binding returns a new template rather than mutating the original, so refinement is monotone. Until every name is bound the template is not concrete, so a `NumericEventTemplate` has no flat layout: an operation that needs sizes raises, naming the free dimensions.
+**Every spec reports, substitutes, and binds its own dimensions.** `ValueSpec.free_dims` gives the names one spec declares, and a template's are the union over its fields. A term spec's schema therefore lies inside the scope: a name declared within a `DistributionSpec` is the same dimension as that name beside it, so it binds once and a disagreement raises. The outcome does not depend on the order the fields were declared in. Keeping all three with the spec is what reaches a spec the schema layer cannot name — a batch axis, declared one layer out — so every dimension a template reports is one some spec can bind.
+
+Binding returns a new template rather than mutating the original, so refinement is monotone. `with_dims(**sizes)` binds explicitly, naming any dimension left unbound; a value binds by unification. Until every name is bound the template is not concrete, so a `NumericEventTemplate` has no flat layout: an operation that needs sizes raises, naming the free dimensions.
 
 ### Rationale
 
@@ -297,6 +301,8 @@ class Batch[E](TrackedTerm):
 **Axis groups.** A batch's axes are partitioned into ordered **levels**. `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and positional `[]` address the leading **axis**, `batch_shape[0]`, rather than the leading level. The two coincide when the outermost level holds one axis: iterating `(N,)` of `(S,)` then walks the `N`, yielding each inner batch of `S` as a view. When the outermost level spans several axes, the leading axis is only the first of them, so indexing drops that axis and leaves the level in place, one axis shorter. Nesting needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store.
 
 **The batch's own type.** A batch stores a `BatchSpec` (II.2), which carries the element spec and the named multiplicity together; `element_spec`, `axis_groups`, and `level_names` are views on it. This keeps the storage rule reading the same way for a batch as for any other term — `spec` is the batch's *own* type, not its element's — which is what makes `OpaqueBatch` well typed even though an `OpaqueSpec` names no kind. It also mirrors the model, where a batch inhabits the *family* kind over its element's kind rather than the element kind itself.
+
+**A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, exactly as an `ArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds — "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A declaration may be polymorphic; a live `Batch` may not, since it holds elements at positions, so construction refuses a spec with free dimensions and `batch_size` is undefined until they are bound.
 
 **Level names.** Each level carries a name, listed in order by `level_names`, and names are unique within a batch. An operation that mints a level takes the name to give it; a name already in use raises, as does a rename onto one, so the caller supplies another. A suffixing rule was considered and rejected: `draw2` would state the order the levels were added in, a fact about the computation path rather than about meaning, and levels are named precisely so that operands align by meaning. `with_level_names` repins names on a shallow copy, shapes and elements unchanged, re-reading its own derived name under the new ones so that it and any view taken from it agree. Renaming a *view* is refused where the new name belongs to a level the view derives its name from but no longer carries, since the derived name would then be ambiguous; `with_name` re-roots it instead. Names must be identifiers, since `at_levels` addresses a level by keyword. Operations align batched operands by level name — two levels meant to correspond under different names are lined up by renaming one — and level names are independent of the field names within an element.
 
