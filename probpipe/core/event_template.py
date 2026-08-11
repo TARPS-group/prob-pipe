@@ -64,7 +64,7 @@ its docstring for details.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Hashable, Iterable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from math import prod
 from typing import Any
@@ -389,6 +389,35 @@ def _to_declaration(decl: _OutputDecl) -> ValueSpec:
     if isinstance(decl, EventTemplate):
         return RecordSpec(decl)
     return decl
+
+
+def _reshaped_template(
+    template: EventTemplate, reshape: Callable[[tuple[int, ...]], tuple[int, ...]]
+) -> EventTemplate:
+    """*template* with every array field's shape mapped through *reshape*.
+
+    The template-to-template counterpart of inferring one from data, for the
+    operations that move a leading axis: a batch's rows become one element's, an
+    empirical's atoms become its stacked samples, a replicate prepends its own.
+    Deriving the result from the values instead would answer the shape correctly
+    and lose everything else — ``dtype``, ``support``, an ``OpaqueSpec``'s
+    ``meta``, a nested field's own kinds are exactly what inference cannot
+    recover — so here only the shape moves and the rest rides through.
+
+    A field with no shape to move is carried unchanged, and a nested template is
+    reshaped in turn.
+    """
+    children: dict[str, _FieldSpec] = {}
+    for path, spec in template.children.items():
+        if isinstance(spec, EventTemplate):
+            children[path] = _reshaped_template(spec, reshape)
+        elif isinstance(spec, ArraySpec):
+            children[path] = ArraySpec(
+                tuple(reshape(tuple(spec.shape))), dtype=spec.dtype, support=spec.support
+            )
+        else:
+            children[path] = spec
+    return EventTemplate(children)
 
 
 def _to_record_declaration(decl: _EventDecl) -> RecordSpec:

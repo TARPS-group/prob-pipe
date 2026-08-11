@@ -170,16 +170,23 @@ class TestMinibatching:
 
         assert _data_size(_draws(7)) == 7
 
-    def test_indexing_gathers_the_named_columns(self):
+    def test_indexing_gathers_the_named_columns_into_a_batch(self):
+        """A minibatch of records is a collection of them, so gathering rows
+        gives a *batch*. Handing back a plain ``Record`` of gathered columns
+        would state the batch's shape as one element's — the false type a
+        per-datum transform then reads."""
         from probpipe.inference._minibatch import _index_along_leading
 
         batch = _draws(5)
 
         picked = _index_along_leading(batch, jnp.array([0, 2, 4]))
 
-        assert isinstance(picked, Record)
+        assert isinstance(picked, RecordBatch)
+        assert picked.batch_shape == (3,)
         assert list(picked.event_template.keys()) == ["a", "b"]
         assert np.allclose(picked["a"], jnp.array([0.0, 2.0, 4.0]))
+        # The element declaration is the source's, not one re-read off the rows.
+        assert picked.element_spec == batch.element_spec
 
 
 class TestDesignCoercion:

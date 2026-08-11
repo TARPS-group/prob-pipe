@@ -58,7 +58,7 @@ from ._numeric_record_distribution import (
 )
 from ._record_batch import RecordBatch
 from .constraints import Constraint, real
-from .event_template import EventTemplate
+from .event_template import EventTemplate, _reshaped_template
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -519,6 +519,14 @@ class RecordEmpiricalDistribution(
         # A batch already declares what one element is, pinned dtypes and all;
         # re-deriving it from the stacked leaves would lose whatever inference
         # cannot recover.
+        if element_declaration is None and isinstance(samples, Record):
+            # The samples' own declaration describes the stacked leaves, so one
+            # atom's is that declaration with the rows axis taken off. Reading it
+            # off the values instead answers the shape and loses the rest — a
+            # pinned dtype, a support, an opaque field's meta.
+            element_declaration = _reshaped_template(
+                samples.event_template, lambda shape: shape[1:]
+            )
         self._event_template = (
             element_declaration
             if element_declaration is not None
@@ -1157,12 +1165,20 @@ class RecordBootstrapReplicateDistribution(
             name=name,
             source_size=default_replicate_size,
         )
-        # Replicate produces (n, *event_shape) per field; advertise that
-        # via the event_template.
-        self._event_template = _event_template_from_data(
-            self._record_data,
-            leading_shape=(self._replicate_size,),
-        )
+        # A replicate is ``replicate_size`` atoms, so its template is the atom's
+        # with a rows axis in front. Taken from the source's declaration rather
+        # than from the stored data, which would drop what the declaration
+        # carries and inference cannot rebuild.
+        atom = getattr(source, "event_template", None)
+        if isinstance(atom, EventTemplate):
+            self._event_template = _reshaped_template(
+                atom, lambda shape: (self._replicate_size, *shape)
+            )
+        else:
+            self._event_template = _event_template_from_data(
+                self._record_data,
+                leading_shape=(self._replicate_size,),
+            )
 
     # -- shape ---------------------------------------------------------------
 

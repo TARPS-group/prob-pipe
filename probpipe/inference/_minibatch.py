@@ -44,7 +44,8 @@ from ..core._distribution_base import Distribution
 from ..core._object_batch import _is_object_array
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
-from ..core._record_batch import RecordBatch
+from ..core._record_batch import RecordBatch, _batch_class_for
+from ..core.event_template import _reshaped_template
 from ..core.protocols import (
     SupportsLogProb,
     SupportsRandomUnnormalizedLogProb,
@@ -99,6 +100,9 @@ def _data_size(data: Any) -> int:
     return len(data)
 
 
+DATUM_LEVEL = "datum"
+
+
 def _index_column(column: Any, indices: Array) -> Any:
     """One column's rows at *indices*, keeping an object column out of ``jnp``."""
     if _is_object_array(column):
@@ -107,28 +111,41 @@ def _index_column(column: Any, indices: Array) -> Any:
 
 
 def _index_along_leading(data: Any, indices: Array) -> Any:
-    """Index along the leading axis. Works for records, batches of them, and arrays.
+    """The rows of *data* at *indices*, in the kind *data* is.
 
-    Returns a plain ``Record`` (never a batch) when the source is
-    record-shaped — the minibatch needs a flat dict of indexed leaves;
-    per-datum vmap dispatches over the leading axis of each. Neither a
-    ``RecordBatch`` nor a ``RecordBatch`` indexes by an array of positions, so
-    both are read a field at a time.
+    A batch of records comes back a **batch** of the same elements. Handing back
+    a plain ``Record`` of gathered columns would state the batch's shape as one
+    element's, which is a false type and one a per-datum transform then reads;
+    a minibatch of records is a collection of them, so it is one here too.
+
+    A flat ``Record`` of equal-leading-axis leaves is the other accepted data
+    layout, and it is a batch in all but name — the leading axis *is* the rows.
+    It comes back as one, declared over what a row holds, so everything
+    downstream sees the same kind whichever way the data was supplied.
+
+    Positions are gathered a column at a time: neither kind indexes by an array
+    of positions, and a non-array field is read raw so an object column is not
+    handed to ``jnp``.
     """
     if isinstance(data, RecordBatch):
-        # Raw columns, not ``data[path]``: a non-array field presents as its own
-        # object batch, which ``jnp.asarray`` cannot take.
-        return Record(
-            data.name,
-            {path: _index_column(data._raw_column(path), indices) for path in data.event_template},
+        columns = {
+            path: _index_column(data._raw_column(path), indices) for path in data.event_template
+        }
+        return _batch_class_for(data.element_spec)(
+            columns,
+            DATUM_LEVEL,
+            element_spec=data.element_spec,
+            name=data.name,
             name_is_auto=True,
         )
     if isinstance(data, Record):
-        # Covers Record and RecordBatch (the latter via subclass).
-        return Record(
-            data.name,
-            {f: jnp.asarray(child)[indices] for f, child in data.children.items()},
-            name_is_auto=True,
+        columns = {path: jnp.asarray(leaf)[indices] for path, leaf in data.children.items()}
+        # The record's template describes the stacked leaves, so one row's is
+        # that template with the rows axis taken off — carried, not re-derived,
+        # so a pinned dtype or support reaches the per-datum call.
+        element = _reshaped_template(data.event_template, lambda shape: shape[1:])
+        return _batch_class_for(element)(
+            columns, DATUM_LEVEL, element_spec=element, name=data.name, name_is_auto=True
         )
     return jnp.asarray(data)[indices]
 
