@@ -510,6 +510,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RecordEmpiricalDistribution`, which requires a `Record` and is the subject of
   #340.
 
+  Level alignment reads the levels an operand **has**. A batched operand carrying
+  none of its own — a `RecordArray`, or a `DistributionArray`, which is swept by
+  its `batch_shape` without being a `Batch` — has an anonymous multiplicity: it
+  aligns with nothing by name and products with everything. Standing its parameter
+  name in for the levels it lacks made a parameter named `draw` collide with a real
+  `draw` level on another operand, refusing a call whose two axes are independent,
+  over a level neither operand disagreed about. A `DistributionArray` stays
+  levelless past the cutover, so this outlives the `RecordArray` removal.
+
 - **Renamed, for the storage rule (#381):** `FunctionSpec.output_template` is
   now **`output_spec`**, storing any `ValueSpec` or `None`, and
   `DistributionSpec.event_template` is now **`event_spec`**, storing a

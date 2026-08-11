@@ -290,6 +290,31 @@ class TestPartialLevelOverlap:
         with pytest.raises(ValueError, match="share the level 'draw'"):
             _plan({"a": two, "b": one})
 
+    def test_a_levelless_operand_does_not_own_its_parameter_name_as_a_level(self):
+        """An operand with no levels of its own cannot share one.
+
+        Its multiplicity is anonymous, so it aligns with nothing by name and
+        products with everything. Standing the parameter's name in for the levels
+        it does not have collides with a real level of that name on another
+        operand — and refuses a call whose two axes are simply independent, on
+        the strength of a level neither operand disagrees about.
+
+        A ``DistributionArray`` is the levelless operand that outlives the
+        cutover: it is swept by its ``batch_shape`` without being a ``Batch``, so
+        it carries no level names of its own either before or after the batch
+        types stop being records.
+        """
+        levelless = DistributionArray.from_batched_params(
+            Normal, batch_shape=(2,), loc=jnp.asarray([0.0, 1.0]), scale=1.0, name="d"
+        )
+        batch = _batch("draw", 3)
+
+        plan = _plan({"draw": levelless, "other": batch})
+
+        assert plan.regime == "sweep"
+        # Two independent multiplicities: a product, not a zip.
+        assert len(plan.array_groups) == 2
+
     def test_the_same_levels_at_different_geometries_are_refused(self):
         """The flat shape can agree while the partition does not; zipping would
         hand the output whichever partition arrived first."""

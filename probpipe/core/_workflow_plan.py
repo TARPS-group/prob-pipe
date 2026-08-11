@@ -179,7 +179,14 @@ def group_array_args_by_parent(
     owners: dict[str, tuple[str, tuple[str, ...]]] = {}
     for group in groups:
         first = _workflow_call.input_ref_value(values, group.arg_refs[0])
-        names = tuple(first.level_names) if isinstance(first, Batch) else (group.arg_refs[0].label,)
+        if not isinstance(first, Batch):
+            # An operand carrying no levels of its own cannot share one: its
+            # multiplicity is anonymous, so it aligns with nothing by name and
+            # products with everything. Standing the parameter's name in for the
+            # levels it does not have would collide with a real level of that name
+            # on another operand and refuse a call whose axes are independent.
+            continue
+        names = tuple(first.level_names)
         for level_name in dict.fromkeys(names):
             prior = owners.setdefault(level_name, (group.arg_refs[0].label, names))
             if prior[1] != names or prior[0] != group.arg_refs[0].label:
