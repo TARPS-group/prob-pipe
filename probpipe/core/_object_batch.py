@@ -118,6 +118,29 @@ class _ObjectBatch[E](Batch[E]):
             provenance=provenance,
         )
 
+    @classmethod
+    def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, name: str) -> Self:
+        """This batch over *store* as given, without copying or re-checking it.
+
+        The public constructor copies the elements, freezes the copy, and checks
+        every entry against the element spec — each O(batch_size), and each
+        earning its cost against a caller who owns the array and may write to it
+        or have filled it with the wrong thing. A caller holding a store it
+        already froze and already validated has neither to defend against, and
+        entering through ``__init__`` would make presenting one field a walk over
+        the whole batch.
+
+        The store is shared, not copied, so this is a view: it is the caller's
+        responsibility that the buffer is frozen and its entries satisfy *spec*'s
+        element spec.
+        """
+        # ``object.__new__`` for the reason :meth:`_sub_batch_at` gives: a host's
+        # own ``__new__`` may select a class from constructor arguments.
+        batch = object.__new__(cls)
+        object.__setattr__(batch, "_store", store)
+        batch._init_batch(spec, name=name, name_is_auto=True)
+        return batch
+
     # -- the storage seam ---------------------------------------------------
 
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:

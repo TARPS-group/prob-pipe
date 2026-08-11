@@ -106,7 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the sub-batch over the columns beneath it, so a nested record batches and reads
   back. A column comes back in the batch form its spec calls for: the array itself
   for an array field, a `FunctionBatch` or an `OpaqueBatch` for a field with no
-  native stacked form.
+  native stacked form. Either way it is a **view** — the object batch shares the
+  column rather than copying it, so reading a field costs nothing per element.
 
   **A batch is a collection, not a named tree**, so there is no field-keyed
   `Mapping` protocol — no `keys()` / `values()` / `items()` / `children` /
@@ -132,12 +133,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   Under `vmap` the body receives an **element**, not the batch: the transform
   removes the mapped axis, so the multiplicity is re-derived from what arrives and
-  a `Record` is handed over once no batch axis remains. *Which* axes are left names
-  the surviving levels, matched against the ones the batch started with, so mapping
-  a named axis with `in_axes` is as well described as the leading one, and a level
-  spanning several axes keeps what is left of it. Rebuilding against the stored spec would give the
-  body an object whose `batch_shape` its own columns contradict, and every method
-  reading that shape — `to_vector` among them — would be wrong.
+  a `Record` is handed over once no batch axis remains. Rebuilding against the
+  stored spec would give the body an object whose `batch_shape` its own columns
+  contradict, and every method reading that shape — `to_vector` among them — would
+  be wrong.
+
+  *Which* axes are left names the surviving levels, matched against the ones the
+  batch started with, so mapping a named axis with `in_axes` is as well described
+  as the leading one, and a level spanning several axes keeps what is left of it. A
+  transform may also **resize** a batch axis, which changes what each level holds
+  rather than which levels there are, so the names carry over onto the sizes the
+  columns now have.
+
+  Where the children do not determine an honest spec, the rebuild **refuses**
+  rather than stating one it cannot support — a false `BatchSpec` is not an
+  approximation, since it goes on to drive level-name alignment. Refused: an
+  **added** axis, which belongs to no level and which unflattening has no name to
+  give one (the operation that adds an axis is what names its level); a removal
+  whose surviving shape **more than one** level layout explains, where shape alone
+  cannot say which axis the transform took; a **permutation** of the same sizes,
+  which shape cannot tell from a per-axis resize; columns left **disagreeing** on
+  the batch axes, since a batch states one multiplicity for all its fields; and a
+  resized or retyped **element**, whose own axes and dtype are the element type's
+  rather than the transform's. Equal sizes *within* one level stay unambiguous,
+  since either reading leaves the same level standing.
 
   The structural transforms re-derive the class from their result, as the record
   transforms do: an edit that removes the last non-numeric field promotes, one that

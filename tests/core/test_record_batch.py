@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import pickle
+import warnings
 
 import jax
 import jax.numpy as jnp
@@ -19,6 +20,7 @@ import numpy as np
 import pytest
 
 from probpipe import (
+    ArrayBackend,
     ArraySpec,
     EventTemplate,
     FunctionBatch,
@@ -27,9 +29,21 @@ from probpipe import (
     OpaqueBatch,
     Record,
     RecordSpec,
+    register_array_backend,
 )
+from probpipe.core import _array_backend
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
+
+
+@pytest.fixture
+def clean_registry():
+    """Snapshot and restore the backend registry around a test's registrations."""
+    saved = dict(_array_backend._backend_registry)
+    yield
+    _array_backend._backend_registry.clear()
+    _array_backend._backend_registry.update(saved)
+
 
 # A nested, all-numeric element: the shape a nested field makes.
 NESTED = EventTemplate(outer=EventTemplate(a=(), b=()), m=(2,))
@@ -337,6 +351,41 @@ class TestColumnBatchForms:
         )
         assert batch["site"].name == "design['site']"
 
+    def test_an_object_column_is_presented_as_a_view_not_a_copy(self):
+        """Reading a field is O(1), as it is for an array field.
+
+        The object batch's public constructor copies the pointer array and walks
+        every entry, both of which defend against a caller who owns the array —
+        and neither of which this batch needs, having frozen the column and
+        checked its entries against the same spec when it was built. Entering
+        through it would make reading one field a walk over the whole batch.
+        """
+        batch = RecordBatch(
+            {"f": _object_column([lambda x: x, lambda x: 2 * x])},
+            "variant",
+            element_spec=EventTemplate(f=FunctionSpec()),
+        )
+        first, second = batch["f"], batch["f"]
+        assert first._store is batch._columns["f"]
+        assert first._store is second._store
+        # Shared, so still nobody's to write through.
+        assert not first._store.flags.writeable
+
+    def test_an_empty_batch_presents_an_empty_column(self):
+        """A batch of no elements is a batch, so reading one of its fields is
+        reading a field: the column comes back as the empty batch of its kind
+        rather than being refused for holding nothing.
+        """
+        batch = RecordBatch(
+            {"f": np.array([], dtype=object)},
+            "variant",
+            element_spec=EventTemplate(f=FunctionSpec()),
+        )
+        assert batch.batch_shape == (0,)
+        column = batch["f"]
+        assert isinstance(column, FunctionBatch)
+        assert column.batch_shape == (0,)
+
 
 class TestColumnEntryValidation:
     """A batch asserts its ``element_spec`` of every element, so a non-array
@@ -376,19 +425,34 @@ class TestColumnSpecConformance:
                 element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32)),
             )
 
-    def test_a_same_kind_cast_is_admitted(self):
+    @pytest.mark.parametrize(
+        ("column_dtype", "declared"),
+        [
+            (jnp.float16, jnp.float32),
+            (jnp.float32, jnp.float16),
+            (jnp.int16, jnp.int32),
+            (jnp.int32, jnp.int16),
+        ],
+        ids=["float-widening", "float-narrowing", "int-widening", "int-narrowing"],
+    )
+    def test_a_same_kind_cast_is_admitted(self, column_dtype, declared):
         # The rule ``ArraySpec.is_valid`` applies to one value: a widening or a
         # within-kind narrowing passes.
-        for column_dtype, declared in [
-            (jnp.float32, jnp.float64),
-            (jnp.float64, jnp.float32),
-            (jnp.int32, jnp.int64),
-        ]:
-            NumericRecordBatch(
-                {"x": jnp.zeros(3, dtype=column_dtype)},
-                "draw",
-                element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=declared)),
-            )
+        #
+        # The pairs stay inside 32 bits deliberately. ``jax_enable_x64`` is off by
+        # default, so a 64-bit request is truncated to 32 with a warning — which
+        # would collapse the narrowing case to a same-dtype one and leave the
+        # direction under test unexercised. Promoting the warning to an error is
+        # what keeps that from creeping back.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            column = jnp.zeros(3, dtype=column_dtype)
+        assert column.dtype == column_dtype
+        NumericRecordBatch(
+            {"x": column},
+            "draw",
+            element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=declared)),
+        )
 
     @pytest.mark.parametrize("spec", [FunctionSpec(), None], ids=["function", "opaque"])
     def test_a_field_with_no_stacked_form_refuses_a_dense_column(self, spec):
@@ -1045,6 +1109,39 @@ class TestStack:
         assert isinstance(batch["site"], OpaqueBatch)
         assert batch["site"][1] == "south"
 
+    def test_stack_converts_a_leaf_by_its_registered_backend(self, clean_registry):
+        """Stacking goes through ``_to_jax_array``, the one conversion every
+        compute boundary routes through, so a leaf type is converted by the rule
+        its ``ArrayBackend`` states.
+
+        A bare ``jnp.asarray`` would reach only the leaves that speak the numpy
+        protocol, and a container registered *because* it does not — a lazy or
+        disk-backed one — would fail to stack at all.
+        """
+
+        class Boxed:
+            def __init__(self, value):
+                self.value = value
+
+        register_array_backend(
+            Boxed,
+            ArrayBackend(
+                event_shape=lambda b: (),
+                numpy_dtype=lambda b: np.dtype("float32"),
+                to_jax=lambda b: jnp.asarray(b.value, dtype=jnp.float32),
+                to_numpy=lambda b: np.asarray(b.value, dtype="float32"),
+            ),
+        )
+        # Unconvertible by the numpy protocol on its own.
+        with pytest.raises(TypeError):
+            jnp.asarray(Boxed(1.0))
+
+        template = EventTemplate(x=())
+        records = [Record("r", {"x": Boxed(v)}, event_template=template) for v in (1.0, 2.0)]
+        batch = RecordBatch.stack(records, level_name="row")
+        assert batch.batch_shape == (2,)
+        np.testing.assert_allclose(batch["x"], [1.0, 2.0])
+
 
 # ---------------------------------------------------------------------------
 # Equality, repr, copying
@@ -1288,3 +1385,111 @@ class TestPyTree:
         gradient = jax.grad(loss)(batch)
         assert isinstance(gradient, NumericRecordBatch)
         np.testing.assert_array_equal(np.asarray(gradient["outer/b"]), np.asarray([0.0, 4.0, 8.0]))
+
+
+class TestPyTreeRebuildRefusals:
+    """What a transform is allowed to do to a batch, and what it must be refused for.
+
+    Unflattening rebuilds the spec from the children, because a transform may
+    legitimately change the multiplicity — a ``Record`` threads its declaration
+    through the aux, but a batch cannot, since ``vmap`` removes an axis the aux
+    still names. The children are therefore the only evidence, and where they do
+    not determine an honest spec the rebuild refuses rather than states one it
+    cannot support. A false ``BatchSpec`` is not an approximation: it goes on to
+    drive level-name alignment.
+    """
+
+    @staticmethod
+    def _batch(shape, levels, **kwargs):
+        return NumericRecordBatch(
+            {"x": jnp.zeros(shape)}, levels, element_spec=EventTemplate(x=()), **kwargs
+        )
+
+    def test_a_resized_axis_retiles_rather_than_reusing_the_stale_spec(self):
+        """A transform may resize a batch axis: which levels there are is
+        unchanged, so the names carry over onto the sizes the columns now have.
+
+        Comparing the rank alone would reuse the stored spec here and leave the
+        batch claiming a multiplicity it does not hold — six elements where two
+        remain, with an out-of-range index silently clamping instead of raising.
+        """
+        batch = self._batch((3, 2), ("chain", "draw"))
+        cut = jax.tree.map(lambda column: column[:1], batch)
+        assert cut.batch_shape == (1, 2)
+        assert cut.batch_size == 2
+        assert cut.level_names == ("chain", "draw")
+        with pytest.raises(IndexError):
+            _ = cut[2, 1]
+
+    def test_a_permuted_batch_shape_is_refused(self):
+        """A transpose reads as a per-axis resize by shape alone, and retiling
+        would keep each level's name on an axis now holding another's positions.
+        """
+        batch = self._batch((2, 3), ("chain", "draw"))
+        with pytest.raises(ValueError, match="a permutation of the same sizes"):
+            jax.tree.map(lambda column: column.T, batch)
+
+    def test_an_added_axis_is_refused(self):
+        """``vmap`` stacking a batch-returning body inserts an axis no level
+        names, and unflattening has no name to give one.
+
+        Reusing the spec would leave the batch reporting fewer elements than it
+        holds, with the rest unreachable.
+        """
+        inner = self._batch((2,), "inner")
+        outer = self._batch((3,), "outer")
+        with pytest.raises(ValueError, match="batch axes where its levels account for"):
+            jax.vmap(lambda _: inner)(outer)
+
+    def test_an_ambiguous_level_is_refused_rather_than_guessed(self):
+        """Two levels of equal size explain the same removal, and shape alone
+        cannot say which axis the transform took.
+
+        Choosing the leftmost would hand the body a batch named for the level
+        that was *removed* — right for the default ``in_axes=0`` and wrong for
+        any other, silently.
+        """
+        batch = self._batch((2, 2), ("chain", "draw"))
+        with pytest.raises(ValueError, match="cannot say which level survived"):
+            jax.vmap(lambda inner: inner["x"].sum(), in_axes=1)(batch)
+
+    def test_equal_sizes_inside_one_level_stay_unambiguous(self):
+        """The ambiguity only bites across a level boundary: when both candidate
+        removals leave the same level standing, either answer is the same answer.
+        """
+        batch = self._batch((2, 2), ("both",), axis_groups=((2, 2),))
+        seen: list[tuple] = []
+        jax.vmap(lambda inner: (seen.append(inner.level_names), inner["x"].sum())[1], in_axes=1)(
+            batch
+        )
+        assert seen[0] == ("both",)
+
+    def test_distinct_sizes_still_resolve_exactly(self):
+        """With one explanation there is nothing to guess, whichever axis went."""
+        batch = self._batch((2, 3), ("chain", "draw"))
+        seen: list[tuple] = []
+        jax.vmap(lambda inner: (seen.append(inner.level_names), inner["x"].sum())[1], in_axes=1)(
+            batch
+        )
+        assert seen[0] == ("chain",)
+
+    def test_columns_disagreeing_on_the_batch_axes_are_refused(self):
+        """A batch states one multiplicity for all its fields, so a transform
+        that leaves two columns different batch shapes leaves none to rebuild.
+        """
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros(4), "y": jnp.zeros(4)}, "draw", element_spec=EventTemplate(x=(), y=())
+        )
+        leaves, treedef = jax.tree_util.tree_flatten(batch)
+        with pytest.raises(ValueError, match="disagreeing batch axes"):
+            jax.tree_util.tree_unflatten(treedef, [leaves[0][:2], leaves[1]])
+
+    def test_a_resized_event_axis_is_refused(self):
+        """The batch axes are a transform's to reshape; the element's own are the
+        element type's, and a batch may not report an element it does not hold.
+        """
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros((3, 4))}, "draw", element_spec=EventTemplate(x=(4,))
+        )
+        with pytest.raises(ValueError, match="never the element's own"):
+            jax.tree.map(lambda column: column[:, :2], batch)
