@@ -332,16 +332,21 @@ class TestColumnBatchForms:
         assert column[0] == "north"
         assert column.level_names == ("row",)
 
-    def test_a_field_with_no_batch_form_is_refused_by_name(self):
+    def test_a_field_with_no_batch_form_is_refused_at_construction(self):
+        """A batch admits the element kinds it can present, and no more.
+
+        Reading a field gives the batch of its element kind, and a distribution
+        has none — so admitting the field and refusing the read would make a
+        batch nobody can take a field from. The refusal moves to where the field
+        is declared."""
         from probpipe import DistributionSpec, Normal
 
         law = Normal(0.0, 1.0, name="n")
         spec = EventTemplate({"d": DistributionSpec(law.event_template), "x": ()})
-        batch = RecordBatch(
-            {"d": _object_column([law, law]), "x": jnp.zeros(2)}, "row", element_spec=spec
-        )
-        with pytest.raises(TypeError, match="DistributionSpec, which has no batch form yet"):
-            batch["d"]
+        with pytest.raises(TypeError, match="DistributionSpec, which has no batch form"):
+            RecordBatch(
+                {"d": _object_column([law, law]), "x": jnp.zeros(2)}, "row", element_spec=spec
+            )
 
     def test_a_column_batch_carries_a_derived_name(self):
         labels = np.empty(2, dtype=object)
