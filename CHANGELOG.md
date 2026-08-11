@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed (breaking)
+
+- **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
+  `RecordBatch` / `NumericRecordBatch`.** A batched record was a `Record`
+  subclass, which made `isinstance(x, Record)` true of a collection and put a
+  batch's `len` and iteration in competition with a record's fields. The batch
+  types are `Batch` subclasses now: they hold named levels, `len` and `iter`
+  speak about the collection, and the field structure is read from
+  `event_template` where it belongs. `RecordBatch.stack` replaces
+  `RecordArray.stack`, `NumericRecordBatch.to_vector` / `from_vector` replace
+  their array counterparts, and a producer that returned a `RecordArray` returns
+  a `RecordBatch`.
+
+  `_RecordArrayView` goes with them: a field selection off a batch is an ordinary
+  batch, and sibling selections align by their shared level names rather than by
+  a parent pointer. `Design` and `FullFactorialDesign` are batches.
+
+  **This supersedes the interim states described by earlier entries in this same
+  release.** Several of them were written while both families existed and say so
+  — that the array types are untouched, that producers still return one, that
+  `RecordArray.spec` raises. Those describe steps along the way; at the release
+  boundary the array types do not exist, and only this entry describes what
+  ships.
+
 ### Fixed
 
 - **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
@@ -183,7 +207,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values, which is what keeps an opaque field opaque when its values happen to be
   numeric.
 
-  This is additive: the existing `RecordArray` / `NumericRecordArray` are untouched
+  This was additive at the time: the then-existing `RecordArray` / `NumericRecordArray` were untouched
   and still what the library uses, and the new classes are not yet exported.
 
 - **A `Record` stores its `RecordSpec`.** `Record.spec` is the single stored
@@ -198,7 +222,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the record side. A `Distribution`'s `event_spec` and a `Function`'s
   `output_spec` follow with their own layers, and the slot moves onto the
   tracked base once every kind carries one. A batched record still subclasses
-  `Record` and is not one record, so `RecordArray.spec` raises rather than
+  `Record` and is not one record, so `RecordArray.spec` raised rather than
   reporting an element's spec as the batch's own type: a batch's type specifies
   the collection. That override goes away with the subclassing, when the batch
   types become collections rather than records.
@@ -579,8 +603,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch as a named tree found no children and asked a multi-field batch to convert
   to one array, so two valid columns raised.
 
-  `RecordArray` / `NumericRecordArray` still exist and are unchanged for direct
-  use — no producer returns one. `NumericRecordArray.from_vector` keeps returning
+  `RecordArray` / `NumericRecordArray` still existed at this step, unchanged for
+  direct use, with no producer returning one. `NumericRecordArray.from_vector` keeps returning
   a `NumericRecordArray`, renesting the batch's flat columns itself, so the class
   stays coherent while it lasts.
 
@@ -605,7 +629,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ArviZ bridge finds its variables through `event_template`, which a batch has and
   `.fields` is not.
 
-  Producers still return `RecordArray`, so nothing changes for existing code:
+  Producers still returned `RecordArray` at this step, so nothing changed for
+  existing code:
   these are the gates a batch will arrive at, opened first and on their own. Two
   paths are deliberately left for the cutover, each needing a decision rather than
   a wider gate: stacking a list of batched records from a broadcast, which has to

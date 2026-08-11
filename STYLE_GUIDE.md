@@ -238,9 +238,6 @@ those paths round-trip with `__getitem__`.
 
 One surface is a documented exception, pending its own follow-up:
 
-- `RecordArray` / `NumericRecordArray` (deleted): the mapping-surface
-  split this bullet used to document died with the classes. String `[]` *is*
-  leaf-keyed. Treat this as temporary.
 - Record-based **distributions** (`RecordDistribution`,
   `RecordEmpiricalDistribution`, …): their `fields` / `keys()` / `in` /
   `[]` surface is still **top-level** pending the distribution

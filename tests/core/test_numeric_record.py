@@ -149,10 +149,15 @@ class TestConstruction:
         """Every numeric gate must agree on what counts as numeric by consuming
         a shared predicate rather than duplicating the logic. Two levels are
         shared: the dtype-level ``_is_numeric_dtype`` (used directly where only
-        a dtype is in hand — ``NumericRecordBatch``, the broadcast-template
-        builder, the ``Design`` marginals probe) and the leaf-level
-        ``_is_numeric_leaf`` (the registry-first resolver that wraps it,
-        consumed by ``NumericRecord`` and template inference)."""
+        a dtype is in hand — ``NumericRecordBatch``, the ``Design`` marginals
+        probe) and the leaf-level ``_is_numeric_leaf`` (the registry-first
+        resolver that wraps it, consumed by ``NumericRecord`` and template
+        inference).
+
+        Broadcast aggregation consumes neither: it picks the batch class from the
+        element declaration through ``_batch_class_for``, which is the same gate
+        one level up, so the module has no numeric decision of its own to keep in
+        agreement."""
         from probpipe.core import (
             _array_backend,
             _broadcast_distributions,
@@ -165,8 +170,11 @@ class TestConstruction:
         # dtype-level predicate (lives in _array_backend): imported directly from
         # there wherever only a dtype is in hand
         assert _record_batch._is_numeric_dtype is _array_backend._is_numeric_dtype
-        assert _broadcast_distributions._is_numeric_dtype is _array_backend._is_numeric_dtype
         assert design._is_numeric_dtype is _array_backend._is_numeric_dtype
+        # Aggregation delegates instead of deciding: one factory, read from the
+        # element declaration.
+        assert _broadcast_distributions._batch_class_for is _record_batch._batch_class_for
+        assert not hasattr(_broadcast_distributions, "_is_numeric_dtype")
         # leaf-level predicate: one resolver shared by the record gate and inference
         assert _numeric_record._is_numeric_leaf is _array_backend._is_numeric_leaf
         assert event_template._is_numeric_leaf is _array_backend._is_numeric_leaf

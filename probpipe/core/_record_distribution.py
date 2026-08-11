@@ -206,16 +206,20 @@ class _RecordDistributionView(Distribution):
         self._key_path = (key,)
         self._template_field = template.children[key]
 
-    # -- Parent identity (mirrors ``_RecordBatchView``) --------------------
+    # -- Parent identity ---------------------------------------------------
 
     @property
     def parent(self) -> Distribution:
         """The :class:`RecordDistribution` this view points at.
 
-        Shared-identity signal for the ``Function`` sweep layer:
-        views with the same ``parent`` co-sample (preserve correlation)
-        when passed as sibling broadcast args to a Function.
-        Matches the ``_RecordBatchView.parent`` surface.
+        Shared-identity signal for the ``Function`` sweep layer: views with
+        the same ``parent`` co-sample (preserve correlation) when passed as
+        sibling broadcast args to a Function.
+
+        A *value* batch needs no such pointer — a field selection off a
+        ``RecordBatch`` is an ordinary batch, and sibling selections align by
+        their shared level names. A distribution view has no level names to align
+        on, so identity is what says two views draw from one law.
         """
         return self._parent
 
@@ -235,7 +239,7 @@ class _RecordDistributionView(Distribution):
         # Nested template / opaque / distribution / function leaf.
         return ()
 
-    # -- Single-field array-like shims (mirrors ``_RecordBatchView``) ------
+    # -- Single-field array-like shims -------------------------------------
 
     @property
     def shape(self) -> tuple[int, ...]:

@@ -157,7 +157,7 @@ class FullFactorialDesign(Design):
     >>> ff = FullFactorialDesign(r=[1.5, 1.8], K=[60.0, 80.0])
     >>> ff.batch_shape
     (4,)
-    >>> ff.fields
+    >>> tuple(ff.event_template.keys())
     ('r', 'K')
 
     Mixed numeric / categorical marginals are supported — columns fall

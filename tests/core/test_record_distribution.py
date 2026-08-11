@@ -1,7 +1,8 @@
 """Tests for the ``RecordDistribution`` / ``_RecordDistributionView`` surface.
 
-- Public ``.parent`` / ``.field`` properties on ``_RecordDistributionView``
-  (parallel to ``_RecordBatchView``).
+- Public ``.parent`` / ``.field`` properties on ``_RecordDistributionView``,
+  which say two views draw from one law — the identity a *value* batch has no
+  need of, since its field selections align by shared level names instead.
 - Single-field ``.shape`` / ``.ndim`` shims on ``RecordDistribution``
   and ``_RecordDistributionView`` — and their multi-field ``TypeError``.
 - ``event_shapes`` returns ``dict[str, tuple[int, ...]]`` uniformly,
@@ -48,8 +49,8 @@ def multi_field_dist():
 
 
 class TestViewParentField:
-    """``dist[field]`` returns a view whose ``.parent`` / ``.field`` are
-    public and match ``_RecordBatchView``'s surface."""
+    """``dist[field]`` returns a view whose ``.parent`` / ``.field`` are public,
+    which is what lets sibling views be recognized as drawing from one law."""
 
     def test_view_parent_is_dist(self, multi_field_dist):
         view = multi_field_dist["x"]

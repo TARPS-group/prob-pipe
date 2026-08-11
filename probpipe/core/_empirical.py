@@ -470,11 +470,25 @@ class RecordEmpiricalDistribution(
         sample_shape: tuple[int, ...] | None = None,
         name: str | None = None,
     ):
+        element_declaration: EventTemplate | None = None
         if isinstance(samples, RecordBatch):
             # A batch holds its rows axis in the batch; the empirical stores a
             # record whose leaves carry it, so peel to that form — raw columns,
             # since a non-array field presents as its own object batch.
-            samples = Record(samples.name, samples._raw_columns(), name_is_auto=True)
+            #
+            # *Every* batch axis is one row here. An empirical distribution has a
+            # flat list of atoms, so a multi-level batch flattens to one, in the
+            # row-major order its own positional indexing reads; leaving the axes
+            # as they are would take the leading one for the rows and fold the
+            # rest into each atom's event shape, turning a (2, 3) batch of scalars
+            # into two atoms of three values.
+            element_declaration = samples.event_template
+            rows = samples.batch_size
+            columns = {
+                path: column.reshape((rows, *column.shape[len(samples.batch_shape) :]))
+                for path, column in samples._raw_columns().items()
+            }
+            samples = Record(samples.name, columns, name_is_auto=True)
         if not isinstance(samples, Record):
             if not _is_numeric_array(samples):
                 raise TypeError(
@@ -502,7 +516,14 @@ class RecordEmpiricalDistribution(
         # call Distribution.__init__ directly for name registration.
         Distribution.__init__(self, name=name, name_is_auto=name_is_auto)
         self._approximate = True
-        self._event_template = _event_template_from_data(samples)
+        # A batch already declares what one element is, pinned dtypes and all;
+        # re-deriving it from the stacked leaves would lose whatever inference
+        # cannot recover.
+        self._event_template = (
+            element_declaration
+            if element_declaration is not None
+            else _event_template_from_data(samples)
+        )
 
     # -- properties ---------------------------------------------------------
 

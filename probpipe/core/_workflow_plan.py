@@ -78,7 +78,7 @@ def build_broadcast_plan(
                 continue
             dist_args.append(ref)
 
-    array_groups = group_array_args_by_parent(values=values, refs=array_args)
+    array_groups = build_array_zip_groups(values=values, refs=array_args)
     sweep_batch_shape = tuple(axis for group in array_groups for axis in group.batch_shape)
     sweep_level_names = tuple(n for group in array_groups for n in group.level_names)
     sweep_axis_groups = tuple(g for group in array_groups for g in group.axis_groups)
@@ -139,7 +139,7 @@ def group_by_root(
     return [(root, tuple(group_refs)) for root, group_refs in groups.values()]
 
 
-def group_array_args_by_parent(
+def build_array_zip_groups(
     *,
     values: Mapping[str, Any],
     refs: Sequence[_workflow_call.WorkflowInputRef],

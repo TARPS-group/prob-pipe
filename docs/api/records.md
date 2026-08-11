@@ -4,7 +4,7 @@ Named, immutable containers for structured non-random data, plus the
 batched (`RecordBatch`) and parameter-sweep (`Design`) variants built on
 top.
 
-Field access is bracket-only: `record["x"]`, `array["x"]`. Slash-delimited
+Field access is bracket-only: `record["x"]`, `batch["x"]`. Slash-delimited
 strings index nested paths: `record["params/intercept"]`.
 
 ## Records
@@ -67,7 +67,7 @@ an empty sequence, whose shape could not be inferred anyway.
 
 ::: probpipe.OpaqueBatch
 
-## Record arrays
+## Record batches
 
 ::: probpipe.RecordBatch
 

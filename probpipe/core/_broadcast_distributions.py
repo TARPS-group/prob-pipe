@@ -20,7 +20,7 @@ import numpy as np
 
 from .._weights import Weights
 from ..custom_types import Array
-from ._array_backend import _is_numeric_dtype, _to_jax_array
+from ._array_backend import _to_jax_array
 from ._distribution_base import Distribution
 from ._empirical import (
     EmpiricalDistribution,
@@ -184,7 +184,7 @@ class _MixtureSampling:
         # not supported here.
         if all(isinstance(r, Record) for r in results):
             template = results[0].event_template
-            cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
+            cls = _batch_class_for(template)
             stacked = cls.stack(results, level_name=DRAW_LEVEL)
             if sample_shape == ():
                 return stacked[0]
@@ -393,7 +393,7 @@ def _stack_declared_columns(
             )
         columns[path] = batched.reshape(batch_shape + tuple(shape[1:]))
 
-    cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
+    cls = _batch_class_for(template)
     return cls(
         columns,
         level_names,
@@ -426,7 +426,7 @@ def _empty_declared_stack(
             columns[path] = jnp.zeros((*batch_shape, *spec.shape), dtype=dtype)
         else:
             columns[path] = np.empty(batch_shape, dtype=object)
-    cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
+    cls = _batch_class_for(template)
     return cls(columns, level_names, element_spec=template, axis_groups=axis_groups, name=name)
 
 
@@ -800,47 +800,25 @@ def _make_stack(
                     element_spec=flat.element_spec,
                     axis_groups=sweep_groups,
                 )
-            # Manual per-field assembly: numpy-array-like leaves stack
-            # numerically, object-dtype leaves use np.asarray(..., dtype=object).
+            # No declared template, so the element structure is inferred from the
+            # rows. ``RecordBatch.stack`` is what infers it: columns are keyed by
+            # leaf path, so a nested element is columns like any other — the
+            # nesting needs no special case here, and neither does a field whose
+            # values are opaque, which stacks into an object column.
             first = outs[0]
-            if any(isinstance(c, EventTemplate) for c in first.event_template.children.values()):
-                # Stacking nested-Record outputs requires building a nested batch,
-                # which the batch type does not yet construct; surface a clear
-                # error rather than a confusing leaf-only KeyError.
-                raise NotImplementedError(
-                    "Broadcasting a workflow output that is a nested Record into a "
-                    "batch is not yet supported; flatten the output to top-level "
-                    "fields, or sample without broadcasting."
-                )
             if any(tuple(o.children) != tuple(first.children) for o in outs):
                 raise TypeError("_make_stack: Records in list have inconsistent fields.")
-            fields: dict[str, Any] = {}
-            for fname in first.children:
-                values = [o[fname] for o in outs]
-                try:
-                    # Native leaves convert per element at this eager batch
-                    # boundary, through the array backend's to_jax.
-                    stacked = jnp.stack(
-                        [
-                            _to_jax_array(v) if _full_array_shape_or_none(v) is not None else v
-                            for v in values
-                        ],
-                        axis=0,
-                    )
-                    fields[fname] = stacked.reshape(batch_shape + stacked.shape[1:])
-                except (TypeError, ValueError):
-                    arr = np.asarray(values, dtype=object)
-                    fields[fname] = arr.reshape(batch_shape + arr.shape[1:])
-            tpl_spec: dict[str, Any] = {}
-            for fname, v in fields.items():
-                if hasattr(v, "dtype") and _is_numeric_dtype(v.dtype):
-                    tpl_spec[fname] = tuple(v.shape[len(batch_shape) :])
-                else:
-                    tpl_spec[fname] = None
-            return RecordBatch(
-                fields,
+            # One level over all the rows, then re-cut to the sweep's own
+            # geometry: the rows arrive flat and the grid is what they came from.
+            flat = RecordBatch.stack(outs, level_name=level_names[0])
+            columns = {
+                path: column.reshape(batch_shape + column.shape[1:])
+                for path, column in flat._raw_columns().items()
+            }
+            return _batch_class_for(flat.element_spec)(
+                columns,
                 level_names,
-                element_spec=EventTemplate(tpl_spec),
+                element_spec=flat.element_spec,
                 axis_groups=sweep_groups,
             )
 
