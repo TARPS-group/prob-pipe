@@ -988,3 +988,22 @@ class TestSingleFieldCoercion:
         nra = NumericRecordArray.stack([NumericRecord("nr", result=float(i)) for i in range(4)])
         with pytest.raises(TypeError):
             float(nra)
+
+
+# ---------------------------------------------------------------------------
+# The Record accessors a batch is not entitled to
+# ---------------------------------------------------------------------------
+
+
+class TestRecordArrayIsNotOneRecord:
+    def test_a_batch_carries_no_record_spec(self):
+        """A batch subclasses ``Record`` without being one record, so it refuses
+        ``spec`` rather than reporting an element's spec as its own type.
+        """
+        ra = RecordArray.stack([NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)])
+        with pytest.raises(AttributeError, match="carries no RecordSpec"):
+            _ = ra.spec
+        # Raising AttributeError is what makes the absence readable to a probe.
+        assert not hasattr(ra, "spec")
+        # The element schema is still reachable, under its own name.
+        assert ra.event_template.fields == ("x",)

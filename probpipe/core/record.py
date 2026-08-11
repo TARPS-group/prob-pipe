@@ -595,16 +595,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def spec(self) -> RecordSpec:
         """This record's own :class:`RecordSpec` — the single stored source of its type.
 
-        Fixed at construction and always present. A declaration given as a bare
-        :class:`EventTemplate` is stored wrapped, so after construction only the
-        spec remains and the declared kind is its class. :attr:`event_template`
-        is a view on it.
-
-        Notes
-        -----
-        Interim: a batched record subclasses ``Record`` without being one, and
-        overrides this to raise. That ends with the subclassing, so the accessor
-        is contractually total on records.
+        Set at construction. A declaration given as a bare :class:`EventTemplate`
+        is stored wrapped, so after construction only the spec remains and the
+        declared kind is its class. :attr:`event_template` is a view on it.
         """
         return self._spec
 
@@ -621,10 +614,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         -----
         Inference is a lossy fallback (it cannot recover an ``ArraySpec``'s
         ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
-        ``RecordSpec`` / ``DistributionSpec`` / ``FunctionSpec``). The spec rides in the
-        JAX pytree aux data, so a value reconstructed by ``tree_unflatten``
-        carries this same structure; unpickling instead infers a fresh
-        template from the rebuilt data.
+        ``RecordSpec`` / ``DistributionSpec`` / ``FunctionSpec``), so both round
+        trips out of this process carry the declaration rather than re-deriving
+        it: the spec rides in the JAX pytree aux data, and ``__reduce__``
+        serializes it. A value reconstructed by ``tree_unflatten`` or by
+        ``pickle.loads`` carries this same structure.
         """
         return self._spec.event_template
 

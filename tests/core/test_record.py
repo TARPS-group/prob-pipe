@@ -1127,6 +1127,53 @@ class TestSpecStorage:
         second = Record("a", {"x": jnp.ones(2)}, event_template=tpl)
         assert jax.tree_util.tree_structure(first) == jax.tree_util.tree_structure(second)
 
+    def test_the_declaration_form_does_not_reach_the_treedef(self):
+        """Equal declarations give one treedef however they were written.
+
+        The aux is the spec, so a treedef compares by declaration. Writing that
+        declaration as a bare template or as the spec that wraps it must not
+        split it in two — a treedef is a jit cache key, so a split there would
+        silently retrace.
+        """
+        tpl = EventTemplate(x=(2,))
+        forms = (
+            tpl,
+            RecordSpec(tpl),
+            EventTemplate(x=(2,)),  # equal but distinct
+            RecordSpec(EventTemplate(x=(2,))),
+        )
+        treedefs = {
+            jax.tree_util.tree_structure(Record("a", {"x": jnp.zeros(2)}, event_template=form))
+            for form in forms
+        }
+        assert len(treedefs) == 1
+        # Hashing agrees with equality, which is what a cache lookup relies on.
+        assert len({hash(treedef) for treedef in treedefs}) == 1
+
+    def test_a_different_declaration_gives_a_different_treedef(self):
+        two = Record("a", {"x": jnp.zeros(2)}, event_template=EventTemplate(x=(2,)))
+        three = Record("a", {"x": jnp.zeros(3)}, event_template=EventTemplate(x=(3,)))
+        assert jax.tree_util.tree_structure(two) != jax.tree_util.tree_structure(three)
+
+    def test_jit_traces_once_across_the_declaration_forms(self):
+        """The end the treedef test is a proxy for: one trace, not four."""
+        traces = []
+
+        @jax.jit
+        def total(record):
+            traces.append(1)
+            return record["x"].sum()
+
+        tpl = EventTemplate(x=(2,))
+        for form in (
+            tpl,
+            RecordSpec(tpl),
+            EventTemplate(x=(2,)),
+            RecordSpec(EventTemplate(x=(2,))),
+        ):
+            total(Record("a", {"x": jnp.zeros(2)}, event_template=form))
+        assert len(traces) == 1
+
     def test_the_spec_survives_a_pickle_roundtrip(self):
         import pickle
 
@@ -1162,23 +1209,6 @@ class TestSpecStorage:
         nr = NumericRecord("nr", {"x": jnp.zeros(2), "y": jnp.asarray(1.0)}, event_template=spec)
         assert nr.spec is spec
         assert nr.spec.event_template is nr.event_template
-
-    def test_a_batch_carries_no_record_spec(self):
-        """Interim: a batch subclasses ``Record`` without being one record, so it
-        refuses the accessor rather than reporting an element's spec as its own.
-
-        This case goes away with the subclassing, when the batch types become
-        collections in their own right — and so does this test.
-        """
-        from probpipe import NumericRecord, RecordArray
-
-        ra = RecordArray.stack([NumericRecord("nr", x=1.0), NumericRecord("nr", x=2.0)])
-        with pytest.raises(AttributeError, match="carries no RecordSpec"):
-            _ = ra.spec
-        # Raising AttributeError is what makes the absence readable to a probe.
-        assert not hasattr(ra, "spec")
-        # The element schema is still reachable, under its own name.
-        assert ra.event_template.fields == ("x",)
 
 
 # ---------------------------------------------------------------------------
@@ -1262,7 +1292,9 @@ class TestEventTemplateStorage:
             event_template=EventTemplate(x=ArraySpec(shape=(2,), dtype=jnp.float32)),
         )
 
-    def test_pytree_roundtrip_reinfers_template(self):
+    def test_pytree_roundtrip_threads_the_declaration(self):
+        # The declaration rides in the aux and comes back with the value; it is
+        # not re-derived from the rebuilt leaves.
         r = Record("r", x=jnp.asarray(1.0), y=jnp.zeros(2))
         leaves, treedef = jax.tree_util.tree_flatten(r)
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)

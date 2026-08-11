@@ -193,8 +193,9 @@ class NumericRecord(Record):
         _validate_leaves: bool = True,
         **fields: ArrayLike | NumericRecord,
     ):
-        # Read as a template for the child lookups below, but forwarded to
-        # ``Record.__init__`` unwrapped, so a supplied spec is stored verbatim.
+        # Read as a template for the child lookups below. ``event_template``
+        # itself goes on to ``Record.__init__`` in the caller's own form, so a
+        # supplied spec is stored verbatim rather than re-wrapped.
         declared_template = _record_declaration_template(event_template)
         # Build the validated field dict *before* Record's __init__ runs, so
         # ``_fields`` is populated exactly once and the "constructed once,
