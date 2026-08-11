@@ -240,6 +240,16 @@ class RecordBatch(Batch[Record]):
             if isinstance(spec, ArraySpec):
                 _check_array_column(column, spec, path=path, kind=kind)
                 continue
+            if not isinstance(spec, FunctionSpec | OpaqueSpec):
+                # A field kind with no batch form cannot be *read* back: reading
+                # one presents the column as the batch of its element kind, and
+                # there is none for this. Admitting it at construction would make
+                # a batch nobody can take a field from.
+                raise TypeError(
+                    f"{kind}: the field {path!r} is declared {type(spec).__name__}, which has no "
+                    f"batch form, so a batch cannot present its column; an array field, a "
+                    f"callable field, and an opaque field are the forms a column takes"
+                )
             if not _is_object_array(column):
                 raise TypeError(
                     f"{kind}: the field {path!r} is declared {type(spec).__name__}, which has no "
@@ -542,7 +552,12 @@ class RecordBatch(Batch[Record]):
                 "replace() takes a path-keyed mapping or keyword updates, not both: a path "
                 "given in each would have no unambiguous value"
             )
-        edits = {path: _unwrapped_field(value) for path, value in (_updates or updates).items()}
+        edits: dict[str, Any] = {}
+        declared: dict[str, ValueSpec] = {}
+        for path, value in (_updates or updates).items():
+            edits[path], spec = _unwrapped_field(value)
+            if spec is not None:
+                declared[path] = spec
         if not edits:
             raise ValueError(f"{type(self).__name__}.replace() needs at least one update")
         unknown = [path for path in edits if path not in self._columns]
@@ -552,7 +567,9 @@ class RecordBatch(Batch[Record]):
                 f"replace edits, it does not add"
             )
         columns = {**self._columns, **edits}
-        return self._rebuilt(columns, _element_template_for(columns, self, edited=set(edits)))
+        return self._rebuilt(
+            columns, _element_template_for(columns, self, edited=set(edits), declared=declared)
+        )
 
     def merge(self, other: Self) -> Self:
         """Union this batch's elements with *other*'s, field by field.
@@ -801,13 +818,19 @@ def _leaf_keyed_columns(
 
 
 def _element_template_for(
-    columns: Mapping[str, Any], batch: RecordBatch, *, edited: set[str]
+    columns: Mapping[str, Any],
+    batch: RecordBatch,
+    *,
+    edited: set[str],
+    declared: Mapping[str, ValueSpec] | None = None,
 ) -> EventTemplate:
     """The element structure *columns* describe, given *batch*'s axes.
 
     An untouched field keeps the spec it already carried; an *edited* one takes
-    the spec its new values imply, read by removing the batch axes from the
-    front of their shape. This is the record transforms' own policy — an
+    the spec *declared* for its new values where there is one — replacing a field
+    with the batch that reading it gave states the kind rather than implying it —
+    and otherwise the spec its new values imply, read by removing the batch axes
+    from the front of their shape. This is the record transforms' own policy — an
     untouched child is identity-preserved, a replaced one is re-inferred — with
     the batch axes discounted first.
     """
@@ -828,21 +851,30 @@ def _element_template_for(
                 f"not carry this batch's axes {batch.batch_shape}; a field's values span the "
                 f"batch, so a replacement does too"
             )
-        specs[path] = _inferred_field_spec(column, tuple(shape[rank:]))
+        if declared is not None and path in declared:
+            specs[path] = declared[path]
+        else:
+            specs[path] = _inferred_field_spec(column, tuple(shape[rank:]))
     return EventTemplate(specs)
 
 
-def _unwrapped_field(value: Any) -> Any:
-    """*value* as a field's stored values, unwrapping a batch of them.
+def _unwrapped_field(value: Any) -> tuple[Any, ValueSpec | None]:
+    """*value* as a field's stored values, with the spec it declared them under.
 
     Reading a field that is not an array gives the matching object batch, so that
     is what a caller has to hand when they want to put one back. Unwrapping it
     here keeps the two directions symmetric: what ``[]`` yields is accepted
     wherever a field's values are taken.
+
+    The batch's ``element_spec`` comes back with the store, because it is the
+    field's kind *stated* rather than guessed. Inferring it again from the values
+    is wrong in both directions: an empty column has no values to read a kind
+    from, and a column of callables under an opaque field reads as callable.
+    Raw values carry no spec, so those still infer.
     """
     if isinstance(value, FunctionBatch | OpaqueBatch):
-        return value._store
-    return value
+        return value._store, value.element_spec
+    return value, None
 
 
 def _inferred_field_spec(column: Any, event_shape: tuple[int, ...]) -> Any:
