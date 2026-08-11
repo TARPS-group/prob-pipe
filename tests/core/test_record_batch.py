@@ -1310,57 +1310,34 @@ class TestPyTree:
         assert stacked.shape == (3, 4)
         np.testing.assert_array_equal(np.asarray(stacked), np.asarray(batch.to_vector()))
 
-    def test_vmap_over_a_named_axis_leaves_the_axes_that_survive(self):
-        """Which axes are left names the levels, and that cannot be read off the
-        count: ``in_axes`` maps any axis, not only the leading one."""
+    @pytest.mark.parametrize("in_axes", [0, 1], ids=["leading", "named"])
+    def test_raw_vmap_over_one_level_of_a_multi_level_batch_is_refused(self, in_axes):
+        """Mapping *some* of a batch's axes leaves the survivors unnamed.
+
+        Which axis ``vmap`` consumed is its own knowledge; the shape that arrives
+        does not record it, and the leading axis is no more identifiable than any
+        other — two levels of equal size explain the same removal either way. So
+        the partial reduction is refused rather than guessed at, for the default
+        ``in_axes`` as much as for a named one.
+        """
         batch = NumericRecordBatch(
             {"x": jnp.zeros((2, 3, 4))}, ("chain", "draw"), element_spec=EventTemplate(x=(4,))
         )
+        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+            jax.vmap(lambda inner: inner["x"].sum(), in_axes=in_axes)(batch)
 
-        def levels_seen_under(axis):
-            seen: list[tuple] = []
-
-            def body(inner):
-                seen.append((inner.batch_shape, inner.level_names))
-                return inner.to_vector()
-
-            stacked = jax.vmap(body, in_axes=axis)(batch)
-            return seen[0], stacked.ndim
-
-        assert levels_seen_under(0) == (((3,), ("draw",)), 3)
-        assert levels_seen_under(1) == (((2,), ("chain",)), 3)
-
-    def test_vmap_through_a_level_spanning_several_axes(self):
+    def test_raw_vmap_through_a_level_spanning_several_axes_is_refused(self):
+        """A level holding several axes is no more recoverable: consuming one of
+        them leaves the rest of that level standing, which is again a partial
+        reduction the arriving shape cannot attribute."""
         batch = NumericRecordBatch(
             {"x": jnp.zeros((2, 3, 5))},
             ("grid", "draw"),
             element_spec=EventTemplate(x=()),
             axis_groups=((2, 3), (5,)),
         )
-        seen: list[tuple] = []
-        jax.vmap(
-            lambda inner: (
-                seen.append((inner.axis_groups, inner.level_names)),
-                inner["x"].sum(),
-            )[1],
-            in_axes=1,
-        )(batch)
-        # ``grid`` keeps the axis it has left; ``draw`` is untouched.
-        assert seen[0] == (((2,), (5,)), ("grid", "draw"))
-
-    def test_vmap_over_a_two_level_batch_leaves_the_inner_level(self):
-        batch = NumericRecordBatch(
-            {"x": jnp.zeros((2, 3, 4))}, ("chain", "draw"), element_spec=EventTemplate(x=(4,))
-        )
-        seen: list[tuple] = []
-
-        def body(inner):
-            seen.append((type(inner).__name__, inner.batch_shape, inner.level_names))
-            return inner.to_vector()
-
-        stacked = jax.vmap(body)(batch)
-        assert seen == [("NumericRecordBatch", (3,), ("draw",))]
-        assert stacked.shape == (2, 3, 4)
+        with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
+            jax.vmap(lambda inner: inner["x"].sum(), in_axes=1)(batch)
 
     def test_an_untransformed_round_trip_is_still_a_batch(self):
         batch = nested_batch()
@@ -1387,15 +1364,15 @@ class TestPyTree:
         np.testing.assert_array_equal(np.asarray(gradient["outer/b"]), np.asarray([0.0, 4.0, 8.0]))
 
 
-class TestPyTreeRebuildRefusals:
-    """What a transform is allowed to do to a batch, and what it must be refused for.
+class TestPyTreeRebuildContract:
+    """Which raw pytree transformations a batch can be rebuilt under, and why the
+    rest are refused.
 
-    Unflattening rebuilds the spec from the children, because a transform may
-    legitimately change the multiplicity — a ``Record`` threads its declaration
-    through the aux, but a batch cannot, since ``vmap`` removes an axis the aux
-    still names. The children are therefore the only evidence, and where they do
-    not determine an honest spec the rebuild refuses rather than states one it
-    cannot support. A false ``BatchSpec`` is not an approximation: it goes on to
+    A ``Record`` threads its declaration through the pytree aux; a batch cannot,
+    because ``vmap`` removes an axis the aux still names. What arrives is the only
+    evidence, and **a shape is not a provenance** — so the rebuild supports two
+    transformations and refuses the rest, rather than inferring which axis went.
+    A ``BatchSpec`` naming the wrong level is not an approximation: it goes on to
     drive level-name alignment.
     """
 
@@ -1405,78 +1382,103 @@ class TestPyTreeRebuildRefusals:
             {"x": jnp.zeros(shape)}, levels, element_spec=EventTemplate(x=()), **kwargs
         )
 
-    def test_a_resized_axis_retiles_rather_than_reusing_the_stale_spec(self):
-        """A transform may resize a batch axis: which levels there are is
-        unchanged, so the names carry over onto the sizes the columns now have.
+    REFUSAL = "keeps every batch axis or removes all of them"
 
-        Comparing the rank alone would reuse the stored spec here and leave the
-        batch claiming a multiplicity it does not hold — six elements where two
-        remain, with an out-of-range index silently clamping instead of raising.
+    # -- supported ----------------------------------------------------------
+
+    def test_a_shape_preserving_map_reuses_the_spec(self):
+        """The ordinary round trip: every batch axis still there, so the stored
+        spec still describes the columns and is reused rather than rebuilt."""
+        batch = self._batch((3, 2), ("chain", "draw"))
+        doubled = jax.tree.map(lambda column: column * 2, batch)
+        assert doubled.spec is batch.spec
+        assert doubled.batch_shape == (3, 2)
+        assert doubled.level_names == ("chain", "draw")
+
+    def test_removing_every_batch_axis_gives_one_record(self):
+        """No batch axis left means the value *is* an element, so a ``Record``
+        comes back rather than a batch of nothing."""
+        seen: list[str] = []
+        batch = self._batch((3,), "draw")
+        jax.vmap(lambda row: (seen.append(type(row).__name__), row["x"])[1])(batch)
+        assert seen == ["NumericRecord"]
+
+    # -- refused ------------------------------------------------------------
+
+    def test_a_resized_axis_is_refused(self):
+        """A resize keeps the axis count and changes what the level holds.
+
+        Carrying the level names onto the new sizes would be right for a per-level
+        slice and wrong for anything else that lands on the same shape — a
+        transpose composed with a slice, say — so it is refused. Index the batch
+        instead, which is told which positions it keeps.
         """
         batch = self._batch((3, 2), ("chain", "draw"))
-        cut = jax.tree.map(lambda column: column[:1], batch)
-        assert cut.batch_shape == (1, 2)
-        assert cut.batch_size == 2
-        assert cut.level_names == ("chain", "draw")
-        with pytest.raises(IndexError):
-            _ = cut[2, 1]
+        with pytest.raises(ValueError, match=self.REFUSAL):
+            jax.tree.map(lambda column: column[:1], batch)
+        # The supported route to the same value, exact because it carries the
+        # selection rather than inferring it.
+        assert batch[0:1].batch_shape == (1, 2)
+        assert batch[0:1].level_names == ("chain", "draw")
 
-    def test_a_permuted_batch_shape_is_refused(self):
-        """A transpose reads as a per-axis resize by shape alone, and retiling
-        would keep each level's name on an axis now holding another's positions.
-        """
+    def test_a_mixed_drop_and_resize_is_refused(self):
+        """The case a shape cannot distinguish at all: dropping one axis while
+        resizing another lands on a shape a *different* single drop explains, so
+        the surviving levels would be misnamed with nothing to signal it."""
+        batch = self._batch((2, 3, 4), ("a", "b", "c"))
+        with pytest.raises(ValueError, match=self.REFUSAL):
+            jax.tree.map(lambda column: column[0, :2, :], batch)
+
+    def test_an_unequal_permutation_is_refused(self):
         batch = self._batch((2, 3), ("chain", "draw"))
-        with pytest.raises(ValueError, match="a permutation of the same sizes"):
+        with pytest.raises(ValueError, match=self.REFUSAL):
             jax.tree.map(lambda column: column.T, batch)
 
     def test_an_added_axis_is_refused(self):
         """``vmap`` stacking a batch-returning body inserts an axis no level
-        names, and unflattening has no name to give one.
-
-        Reusing the spec would leave the batch reporting fewer elements than it
-        holds, with the rest unreachable.
-        """
+        names, and unflattening has no name to give one."""
         inner = self._batch((2,), "inner")
-        outer = self._batch((3,), "outer")
         with pytest.raises(ValueError, match="batch axes where its levels account for"):
-            jax.vmap(lambda _: inner)(outer)
+            jax.vmap(lambda _: inner)(self._batch((3,), "outer"))
 
-    def test_an_ambiguous_level_is_refused_rather_than_guessed(self):
-        """Two levels of equal size explain the same removal, and shape alone
-        cannot say which axis the transform took.
+    def test_a_column_reporting_no_shape_is_refused(self):
+        """A stored column is an array, so one reporting no shape came from the
+        transform. Rebuilding at the old multiplicity would leave every positional
+        read failing on a value that cannot hold it."""
+        batch = self._batch((3,), "draw")
+        with pytest.raises(ValueError, match="column reporting no shape"):
+            jax.tree.map(lambda column: float(column.sum()), batch)
 
-        Choosing the leftmost would hand the body a batch named for the level
-        that was *removed* — right for the default ``in_axes=0`` and wrong for
-        any other, silently.
-        """
-        batch = self._batch((2, 2), ("chain", "draw"))
-        with pytest.raises(ValueError, match="cannot say which level survived"):
-            jax.vmap(lambda inner: inner["x"].sum(), in_axes=1)(batch)
+    def test_object_data_under_a_numeric_field_is_refused(self):
+        """An ``ArraySpec`` requires numeric data whether or not it pins a dtype,
+        so the kind is re-checked and not only the pinned dtype — otherwise a
+        numeric batch comes back holding objects."""
+        batch = self._batch((3,), "draw")
+        with pytest.raises(TypeError, match="is declared an array, so its column is a numeric"):
+            jax.tree.map(lambda _: np.array(["a", "b", "c"], dtype=object), batch)
 
-    def test_equal_sizes_inside_one_level_stay_unambiguous(self):
-        """The ambiguity only bites across a level boundary: when both candidate
-        removals leave the same level standing, either answer is the same answer.
-        """
-        batch = self._batch((2, 2), ("both",), axis_groups=((2, 2),))
-        seen: list[tuple] = []
-        jax.vmap(lambda inner: (seen.append(inner.level_names), inner["x"].sum())[1], in_axes=1)(
-            batch
+    def test_a_cross_kind_dtype_is_refused(self):
+        """The pinned-dtype rule is the constructor's: a widening or a within-kind
+        narrowing passes, a change of kind does not. Float data under an
+        integer-pinned field is the direction that fails."""
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros(3, dtype=jnp.int32)},
+            "draw",
+            element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32)),
         )
-        assert seen[0] == ("both",)
+        with pytest.raises(TypeError, match="does not admit"):
+            jax.tree.map(lambda column: column.astype(jnp.float32), batch)
 
-    def test_distinct_sizes_still_resolve_exactly(self):
-        """With one explanation there is nothing to guess, whichever axis went."""
-        batch = self._batch((2, 3), ("chain", "draw"))
-        seen: list[tuple] = []
-        jax.vmap(lambda inner: (seen.append(inner.level_names), inner["x"].sum())[1], in_axes=1)(
-            batch
+    def test_a_resized_event_axis_is_refused(self):
+        """The batch axes are the transform's; the element's own are the element
+        type's."""
+        batch = NumericRecordBatch(
+            {"x": jnp.zeros((3, 4))}, "draw", element_spec=EventTemplate(x=(4,))
         )
-        assert seen[0] == ("chain",)
+        with pytest.raises(ValueError, match="never the element's own"):
+            jax.tree.map(lambda column: column[:, :2], batch)
 
     def test_columns_disagreeing_on_the_batch_axes_are_refused(self):
-        """A batch states one multiplicity for all its fields, so a transform
-        that leaves two columns different batch shapes leaves none to rebuild.
-        """
         batch = NumericRecordBatch(
             {"x": jnp.zeros(4), "y": jnp.zeros(4)}, "draw", element_spec=EventTemplate(x=(), y=())
         )
@@ -1484,12 +1486,19 @@ class TestPyTreeRebuildRefusals:
         with pytest.raises(ValueError, match="disagreeing batch axes"):
             jax.tree_util.tree_unflatten(treedef, [leaves[0][:2], leaves[1]])
 
-    def test_a_resized_event_axis_is_refused(self):
-        """The batch axes are a transform's to reshape; the element's own are the
-        element type's, and a batch may not report an element it does not hold.
+    # -- unsupported, and undetectable --------------------------------------
+
+    def test_an_equal_sized_permutation_is_undetectable(self):
+        """Documents a limit rather than a behavior.
+
+        A transpose of a square batch arrives at ``tree_unflatten`` with exactly
+        the shapes a no-op round trip arrives with, so no rule here can tell them
+        apart. Preserving every batch axis is a **precondition** on a raw pytree
+        transform, not something this can check: the result below carries the
+        original level names over transposed data, and that is why the precondition
+        is stated rather than enforced.
         """
-        batch = NumericRecordBatch(
-            {"x": jnp.zeros((3, 4))}, "draw", element_spec=EventTemplate(x=(4,))
-        )
-        with pytest.raises(ValueError, match="never the element's own"):
-            jax.tree.map(lambda column: column[:, :2], batch)
+        batch = self._batch((2, 2), ("chain", "draw"))
+        transposed = jax.tree.map(lambda column: column.T, batch)
+        assert transposed.level_names == ("chain", "draw")
+        assert transposed.batch_shape == (2, 2)

@@ -1,10 +1,17 @@
 """NumericRecordBatch — the all-numeric specialization of :class:`RecordBatch`.
 
 Every field of a :class:`NumericRecordBatch` is a numeric array, so the whole
-batch is a bare pytree of arrays whose leading axes are the batch axes: it passes
-through ``jit`` / ``vmap`` / ``grad`` unchanged, and it gains the batched flat
-layout, :meth:`NumericRecordBatch.to_vector` and
+batch is a bare pytree of arrays whose leading axes are the batch axes: its
+columns are the JAX leaves ``jit`` / ``vmap`` / ``grad`` traverse, and it gains
+the batched flat layout, :meth:`NumericRecordBatch.to_vector` and
 :meth:`NumericRecordBatch.from_vector`.
+
+Being a pytree is not the same as surviving every transform. The columns
+transport, but the *batch* is rebuilt only where the level identity of what
+arrives is recoverable — a transform preserving every batch axis, or removing all
+of them, which yields one :class:`~probpipe.NumericRecord`. Mapping over one level
+of several is refused, since no shape says which level was consumed;
+:func:`~probpipe.core._record_batch._unflatten_with` states the contract.
 
 The split mirrors the single-record side, where :class:`~probpipe.Record` and
 :class:`~probpipe.NumericRecord` live apart for the same reason: the numeric
@@ -40,9 +47,11 @@ class NumericRecordBatch(RecordBatch):
     """A :class:`RecordBatch` whose every column is a numeric array.
 
     The all-numeric specialization, carrying a ``NumericEventTemplate``: a bare
-    pytree of arrays whose leading axes are the ``batch_shape``, so it passes
-    through ``jit`` / ``vmap`` / ``grad`` unchanged. It adds the batched flat
-    layout, :meth:`to_vector` and :meth:`from_vector`.
+    pytree of arrays whose leading axes are the ``batch_shape``, so its columns
+    are the leaves ``jit`` / ``vmap`` / ``grad`` traverse. The batch itself is
+    rebuilt only under a transform that keeps every batch axis or removes all of
+    them; see the module docstring. It adds the batched flat layout,
+    :meth:`to_vector` and :meth:`from_vector`.
 
     Construction is that of :class:`RecordBatch`, narrowed: *element_spec* must
     describe an all-numeric element, and every column must carry a numeric dtype.

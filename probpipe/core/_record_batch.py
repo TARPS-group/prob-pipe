@@ -32,8 +32,6 @@ See design III.3.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import replace
-from itertools import combinations
 from typing import Any, Self
 
 import jax
@@ -124,10 +122,11 @@ class RecordBatch(Batch[Record]):
 
     Notes
     -----
-    Construction requires at least one element, while *selecting* none is
-    allowed: ``batch[0:0]`` is a batch of nothing, as the level algebra intends.
-    The asymmetry is the one the object batches state — an empty literal is
-    almost always a mistake, and a shape cannot be inferred from it.
+    Construction requires at least one *field*, not at least one element: a
+    zero-sized column is a batch of nothing, which is what a declared aggregate
+    over no rows is, and ``batch[0:0]`` selects the same thing. What cannot be
+    admitted is an empty field mapping, which fixes neither the fields nor a shape
+    to read the batch axes from.
 
     An **object** column is copied and frozen, so a caller keeping a handle on
     what they passed cannot afterwards write a value the batch's spec refuses.
@@ -1063,21 +1062,41 @@ def _record_batch_flatten(batch: RecordBatch) -> tuple[list, tuple[BatchSpec, st
 
 
 def _unflatten_with(cls: type[RecordBatch]):
-    """Build the unflatten hook for *cls*, rebuilding at the multiplicity that arrived.
+    """Build the unflatten hook for *cls*, over the transforms it can rebuild under.
 
-    A transform may hand back children with fewer axes than the batch was
-    flattened with: ``vmap`` strips the mapped axis, so what its body receives is
-    one *element*, not the batch. The stored spec describes the batch, so
-    rebuilding against it verbatim would produce an object whose ``batch_shape``
-    its own columns contradict — and every method that reads the shape,
-    ``to_vector`` among them, would then be wrong.
+    A batch cannot thread its declaration through a pytree round trip the way a
+    :class:`Record` does. ``vmap`` removes an axis the stored spec still names, so
+    rebuilding against that spec verbatim would produce an object whose
+    ``batch_shape`` its own columns contradict, and every method reading the shape
+    — ``to_vector`` among them — would be wrong.
 
-    So the multiplicity is re-derived from the children. Axes are consumed from
-    the outermost level in, since that is the end a transform strips; when none
-    remain the value *is* one element, and a ``Record`` is returned rather than a
-    batch of nothing. Validation is skipped either way: a traced column's dtype
-    and shape are the transform's business, and the batch was validated when
-    first built.
+    What arrives is the only evidence, and **a shape is not a provenance**. A
+    no-op round trip and a transpose of a square batch arrive identically; a
+    dropped middle axis plus a resized survivor can imitate a dropped leading one.
+    So this hook does not try to infer which axis went. It supports two
+    transformations and refuses the rest:
+
+    - **Every batch axis preserved.** The spec is reused, which is the ordinary
+      round trip — through ``jit``, ``grad``, and a shape-preserving ``tree_map``.
+    - **Every batch axis removed.** The value *is* one element, so a
+      :class:`Record` is returned rather than a batch of nothing. This is what
+      ``vmap`` over a single-level batch does.
+
+    Anything else — a partial rank reduction, an added axis, a resized axis, a
+    column that reports no shape — is refused, because no reading of the arriving
+    shapes is more than a guess about which level survived, and a ``BatchSpec``
+    that names the wrong level is a false statement that goes on to drive
+    level-name alignment.
+
+    Notes
+    -----
+    The supported transformations are a **precondition**, not a check: a raw
+    pytree transform must preserve every batch axis or remove all of them. An
+    axis permutation that preserves the shape satisfies neither, and cannot be
+    detected here — it is unsupported rather than refused. Mapping over one level
+    of a multi-level batch needs an operation that knows which level it consumed;
+    the workflow sweep has that knowledge and never routes through here, mapping
+    raw columns and building each row explicitly instead.
     """
 
     def _unflatten(aux: tuple[BatchSpec, str, bool], children: list) -> RecordBatch | Record:
@@ -1091,15 +1110,18 @@ def _unflatten_with(cls: type[RecordBatch]):
         columns = dict(zip(template.keys(), children, strict=True))
 
         rank = _surviving_batch_rank(columns, template, spec)
-        if rank is not None:
-            _refuse_resized_event_axes(columns, template, rank)
         if rank is None:
-            # The children's shapes are unreadable, so take the spec as given —
-            # the round trip out of an untransformed batch, where it is right.
-            batch = object.__new__(cls)
-            object.__setattr__(batch, "_columns", columns)
-            batch._init_batch(spec, name=name, name_is_auto=name_is_auto)
-            return batch
+            # A stored column is an array and reports a shape, so one that reports
+            # none was put there by the transform. Taking the spec as given would
+            # rebuild the batch at its old multiplicity over columns that cannot
+            # hold it — a batch whose every positional read then fails.
+            raise ValueError(
+                f"a transform left this {cls.__name__} a column reporting no shape, so the "
+                f"multiplicity it holds cannot be read and no spec describes it. A column is "
+                f"an array of one value per element; map a batch's columns to arrays, or build "
+                f"the result explicitly from what the transform produced"
+            )
+        _refuse_a_retyped_element(columns, template, rank, kind=cls.__name__)
         if rank > len(spec.batch_shape):
             raise ValueError(
                 f"a transform left this {cls.__name__}'s fields with {rank} batch axes where "
@@ -1116,91 +1138,64 @@ def _unflatten_with(cls: type[RecordBatch]):
                 name_is_auto=name_is_auto,
                 _validate_leaves=False,
             )
-        if rank == len(spec.batch_shape):
-            surviving = _surviving_batch_shape(columns, rank)
-            if surviving == spec.batch_shape:
-                # Reuse the stored spec where the multiplicity is unchanged, which
-                # is the ordinary round trip: rebuilding an equal one would
-                # allocate at every transform boundary and cost the identity a
-                # caller relies on.
-                rebuilt = spec
-            elif sorted(surviving) == sorted(spec.batch_shape):
-                # The sizes moved rather than changed: a transpose reads like a
-                # per-axis resize by shape alone, and retiling would keep every
-                # level name on an axis that now holds another level's positions.
-                raise ValueError(
-                    f"a transform left this batch's axes at {surviving} where its levels "
-                    f"{spec.level_names} held {spec.batch_shape} — a permutation of the same "
-                    f"sizes, which shape alone cannot tell from a per-axis resize. Rebuild "
-                    f"the result naming its levels"
-                )
-            else:
-                # Same levels, new sizes: a transform that keeps every axis but
-                # resizes some — a per-column slice, say — changes what each
-                # level holds, not which levels there are, so the names carry
-                # over onto the sizes the columns actually have.
-                groups: list[tuple[int, ...]] = []
-                consumed = 0
-                for group in spec.axis_groups:
-                    groups.append(tuple(surviving[consumed : consumed + len(group)]))
-                    consumed += len(group)
-                rebuilt = replace(spec, axis_groups=tuple(groups))
-        else:
-            surviving = _surviving_batch_shape(columns, rank)
-            levels = _levels_for_shape(spec, surviving)
-            if levels is None:
-                raise ValueError(
-                    f"a transform left this {cls.__name__}'s fields with batch axes "
-                    f"{surviving}, which no selection of {spec.batch_shape} explains, so its "
-                    f"levels cannot be named"
-                )
-            rebuilt = replace(spec, **levels)
+        surviving = _surviving_batch_shape(columns, rank)
+        if surviving != spec.batch_shape:
+            # Every batch axis is still there or none of them are; a partial
+            # reduction and a resize both leave a multiplicity no reading of these
+            # shapes can attribute to levels. Which axis a transform consumed is
+            # its own knowledge, not something its output shape records: with two
+            # levels of equal size either could be the survivor, and a drop
+            # combined with a resize imitates a drop somewhere else entirely.
+            raise ValueError(
+                f"a transform left this {cls.__name__}'s columns spanning batch axes "
+                f"{surviving} where its levels {spec.level_names} hold {spec.batch_shape}. A "
+                f"batch rebuilds under a transform that keeps every batch axis or removes all "
+                f"of them; anything between leaves the surviving levels unnamed, and a shape "
+                f"cannot say which axis went. Map over the batch's columns and build the "
+                f"result naming its levels, or index the batch, which is told what it drops"
+            )
         batch = object.__new__(cls)
         object.__setattr__(batch, "_columns", columns)
-        batch._init_batch(rebuilt, name=name, name_is_auto=name_is_auto)
+        batch._init_batch(spec, name=name, name_is_auto=name_is_auto)
         return batch
 
     return _unflatten
 
 
-def _refuse_resized_event_axes(columns: dict[str, Any], template: EventTemplate, rank: int) -> None:
-    """Raise if a column's trailing axes differ from its field's event shape.
+def _refuse_a_retyped_element(
+    columns: dict[str, Any], template: EventTemplate, rank: int, *, kind: str
+) -> None:
+    """Raise unless every column still holds the element its field declares.
 
-    The batch axes are a transform's to drop or resize; the element's own axes
-    are the element type's, and a column whose event part changed would leave the
-    rebuilt batch declaring an element it does not hold — a per-column slice
-    passing the rank check while shrinking the event, or a transpose reading an
-    event axis as a batch axis. Only fields declaring a concrete shape can be
-    checked; the rest are declared by rank alone, which the rank derivation
-    already enforced.
+    The batch axes are the transform's to keep or remove; the element's own axes
+    and dtype are the element type's. A column whose event part changed would
+    leave the rebuilt batch declaring an element it does not hold — a per-column
+    slice shrinking the event while passing the rank check, or an object array
+    arriving under a field declared numeric.
+
+    The **kind** is re-checked, not only a pinned dtype: an ``ArraySpec`` requires
+    numeric data whether or not it names a dtype, so this asks the constructor's
+    own :func:`_check_array_column`, which settles kind and dtype together. That
+    is the rule a batch is built under, and a transform is not a licence to
+    escape it.
+
+    Only a field declaring a concrete shape can have its event axes checked; the
+    rest are declared by rank alone, which the rank derivation already enforced.
     """
     for path, column in columns.items():
         shape = _column_shape(column)
-        if shape is None:
-            continue
         field = template[path]
-        if not isinstance(field, ArraySpec) or not all(isinstance(s, int) for s in field.shape):
+        if not isinstance(field, ArraySpec):
+            continue
+        _check_array_column(column, field, path=path, kind=kind)
+        if shape is None or not all(isinstance(s, int) for s in field.shape):
             continue
         if tuple(shape[rank:]) != tuple(field.shape):
             raise ValueError(
                 f"a transform left the column {path!r} with event axes {tuple(shape[rank:])} "
-                f"where its field declares {tuple(field.shape)}; a transform may drop or "
-                f"resize batch axes, never the element's own. Build a new batch under the "
+                f"where its field declares {tuple(field.shape)}; a transform may keep or "
+                f"remove batch axes, never the element's own. Build a new batch under the "
                 f"element type it now holds"
-            )
-        # A pinned dtype is the element's own as much as its axes are, held to
-        # the constructor's rule: same-kind casting admits a widening, a change
-        # of kind does not.
-        dtype = getattr(column, "dtype", None)
-        if (
-            field.dtype is not None
-            and dtype is not None
-            and not np.can_cast(dtype, field.dtype, casting="same_kind")
-        ):
-            raise ValueError(
-                f"a transform left the column {path!r} with dtype {dtype} where its field "
-                f"declares {field.dtype}; a transform may drop or resize batch axes, never "
-                f"retype the element. Build a new batch under the element type it now holds"
             )
 
 
@@ -1261,58 +1256,6 @@ def _surviving_batch_shape(columns: dict[str, Any], rank: int) -> tuple[int, ...
             f"so there is none to rebuild under"
         )
     return next(iter(shapes), ())
-
-
-def _levels_for_shape(spec: BatchSpec, surviving: tuple[int, ...]) -> dict[str, tuple] | None:
-    """The level tiling for *surviving*, given the axes *spec* started with.
-
-    A transform removes whole axes, so *which* of the original axes are left is
-    what names the levels — and that cannot be read off the count alone. ``vmap``
-    maps the leading axis by default but takes ``in_axes`` for any other, so the
-    removed axes are found by matching *surviving* against every candidate
-    selection. A level whose axes are all gone goes with them, and one partly
-    consumed keeps what is left.
-
-    Candidates that disagree are refused rather than chosen among: two levels of
-    equal size explain the same removal, and shape alone cannot say which axis
-    the transform actually took — picking the leftmost would hand the body a
-    batch named for the level that was removed.
-
-    Returns ``None`` when no selection of the original axes yields *surviving*:
-    the transform did not simply drop axes, and the levels cannot be named
-    honestly.
-    """
-    original = spec.batch_shape
-    dropped_count = len(original) - len(surviving)
-    if dropped_count < 0:
-        return None
-    candidates: list[dict[str, tuple]] = []
-    for dropped in combinations(range(len(original)), dropped_count):
-        if tuple(size for i, size in enumerate(original) if i not in dropped) != surviving:
-            continue
-        groups: list[tuple[int, ...]] = []
-        names: list[str] = []
-        axis = 0
-        for level_name, group in zip(spec.level_names, spec.axis_groups, strict=True):
-            kept = tuple(size for offset, size in enumerate(group) if axis + offset not in dropped)
-            axis += len(group)
-            if kept:
-                groups.append(kept)
-                names.append(level_name)
-        candidate = {"axis_groups": tuple(groups), "level_names": tuple(names)}
-        if candidate not in candidates:
-            candidates.append(candidate)
-    if not candidates:
-        return None
-    if len(candidates) > 1:
-        raise ValueError(
-            f"a transform removed axes from batch shape {original} whose sizes match more "
-            f"than one of the levels {spec.level_names}, so shape alone cannot say which "
-            f"level survived: the axes left could be "
-            f"{' or '.join(str(c['level_names']) for c in candidates)}. Map over an axis "
-            f"whose size is unique to its level, or rebuild the result naming its levels"
-        )
-    return candidates[0]
 
 
 jax.tree_util.register_pytree_node(RecordBatch, _record_batch_flatten, _unflatten_with(RecordBatch))
