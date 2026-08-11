@@ -66,9 +66,15 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, replace
 from math import prod
-from typing import Any, Self
+from typing import Any, Self, cast
 
-from .event_template import TermSpec, ValueSpec
+from .event_template import (
+    TermSpec,
+    ValueSpec,
+    _check_kind_of,
+    _unify_array_shape,
+    _unify_specs,
+)
 from .provenance import Provenance
 from .tracked import TrackedTerm
 
@@ -129,6 +135,16 @@ class BatchSpec(TermSpec):
     ``element_spec`` is as well formed here as a term spec, which is what lets a
     batch of opaque values carry a term spec of its own.
 
+    An axis size may be a **symbolic dimension name** instead of an integer, as
+    an ``ArraySpec`` shape entry may, so that a declaration can fix the number of
+    levels while deferring how many elements each holds — "returns a batch of
+    ``S`` draws" before ``S`` is known. The names share one scope with the
+    element's schema, so a batch of ``("n",)`` over arrays of shape ``("n",)`` is
+    square by declaration. Only the *multiplicity* must be concrete for a live
+    :class:`Batch`, which holds elements at positions; an element's own schema may
+    stay polymorphic, since how many elements there are is a different question
+    from what one of them looks like.
+
     A duplicate level name is an error rather than something this class resolves.
     An operation that mints a level takes the name to give it, so a name already
     in use means the caller must supply another, and
@@ -136,13 +152,13 @@ class BatchSpec(TermSpec):
     """
 
     element_spec: ValueSpec
-    axis_groups: tuple[tuple[int, ...], ...]
+    axis_groups: tuple[tuple[int | str, ...], ...]
     level_names: tuple[str, ...]
 
     def __init__(
         self,
         element_spec: ValueSpec,
-        axis_groups: Iterable[Iterable[int]],
+        axis_groups: Iterable[Iterable[int | str]],
         level_names: Iterable[str],
     ) -> None:
         """Store the element spec and the multiplicity, validating the levels.
@@ -160,7 +176,7 @@ class BatchSpec(TermSpec):
                 f"read as one name per character; write a tuple, as ({level_names!r},) for a "
                 f"single level"
             )
-        groups: list[tuple[int, ...]] = []
+        groups: list[tuple[int | str, ...]] = []
         for group in axis_groups:
             if not isinstance(group, Iterable):
                 # A flat batch_shape is the natural thing to reach for here, and
@@ -171,20 +187,20 @@ class BatchSpec(TermSpec):
                     f"((4,),)"
                 )
             groups.append(tuple(_axis_size(size) for size in group))
-        groups = tuple(groups)
+        tiled: tuple[tuple[int | str, ...], ...] = tuple(groups)
         names = tuple(level_names)
 
-        if not groups:
+        if not tiled:
             raise ValueError("a Batch has at least one batch axis; axis_groups was empty")
-        for group in groups:
+        for group in tiled:
             if not group:
-                raise ValueError(f"every level holds at least one axis; got axis_groups={groups}")
+                raise ValueError(f"every level holds at least one axis; got axis_groups={tiled}")
             for size in group:
-                if size < 0:
-                    raise ValueError(f"axis sizes are non-negative; got axis_groups={groups}")
-        if len(names) != len(groups):
+                if isinstance(size, int) and size < 0:
+                    raise ValueError(f"axis sizes are non-negative; got axis_groups={tiled}")
+        if len(names) != len(tiled):
             raise ValueError(
-                f"level_names must name every level: {len(names)} names for {len(groups)} levels"
+                f"level_names must name every level: {len(names)} names for {len(tiled)} levels"
             )
         for level_name in names:
             if not isinstance(level_name, str):
@@ -206,18 +222,109 @@ class BatchSpec(TermSpec):
             )
 
         object.__setattr__(self, "element_spec", element_spec)
-        object.__setattr__(self, "axis_groups", groups)
+        object.__setattr__(self, "axis_groups", tiled)
         object.__setattr__(self, "level_names", names)
 
     @property
-    def batch_shape(self) -> tuple[int, ...]:
+    def batch_shape(self) -> tuple[int | str, ...]:
         """The batch axes, flat: the concatenation of :attr:`axis_groups`."""
         return tuple(size for group in self.axis_groups for size in group)
 
     @property
     def batch_size(self) -> int:
-        """The total element count, ``prod(batch_shape)``."""
-        return prod(self.batch_shape)
+        """The total element count, ``prod(batch_shape)``.
+
+        Raises
+        ------
+        ValueError
+            If the multiplicity is polymorphic. A count is a number, and a
+            declaration that defers a size has none until it is bound — the same
+            reason a polymorphic ``NumericEventTemplate`` has no flat layout.
+        """
+        if self.free_axis_dims:
+            dimensions = ", ".join(sorted(self.free_axis_dims))
+            raise ValueError(
+                f"batch_size counts elements, so it is undefined while an axis size is "
+                f"symbolic; unbound: {dimensions}"
+            )
+        return prod(cast(tuple[int, ...], self.batch_shape))
+
+    @property
+    def free_dims(self) -> frozenset[str]:
+        """The unbound dimensions of the element's schema and of the multiplicity.
+
+        One scope, as everywhere: a name shared between an axis size and the
+        element's schema is one dimension, so a batch declared as ``("n",)`` of
+        arrays of shape ``("n",)`` states that it is square.
+        """
+        return self.element_spec.free_dims | self.free_axis_dims
+
+    @property
+    def free_axis_dims(self) -> frozenset[str]:
+        """The unbound dimensions of the *multiplicity* alone.
+
+        What a live batch requires bound, since it holds elements at positions.
+        An element's own schema may stay polymorphic: how many elements there are
+        is a different question from what one of them looks like.
+        """
+        return frozenset(size for size in self.batch_shape if isinstance(size, str))
+
+    def with_bound_dims(self, bindings: Mapping[str, int]) -> BatchSpec:
+        """This spec with both its element schema and its axis sizes substituted."""
+        return BatchSpec(
+            self.element_spec.with_bound_dims(bindings),
+            tuple(
+                tuple(bindings.get(size, size) if isinstance(size, str) else size for size in group)
+                for group in self.axis_groups
+            ),
+            self.level_names,
+        )
+
+    def bind_dims_from_value(self, value: Any, bindings: dict[str, int], path: str) -> None:
+        """Bind the declared multiplicity and element schema from a live *value*.
+
+        A live :class:`Batch` carries a concrete spec of its own, so it binds
+        through that spec.
+        """
+        actual = getattr(value, "spec", None)
+        if not isinstance(actual, BatchSpec):
+            raise ValueError(
+                f"{path} declares the polymorphic schema {self!r}, but "
+                f"{type(value).__name__} exposes no schema to bind it against"
+            )
+        _check_kind_of(actual, value, self, path)
+        self.bind_dims_from_spec(actual, bindings, path)
+
+    def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
+        """Bind the declared axis sizes and element schema against *actual*'s own.
+
+        The multiplicity binds like an array shape: a symbolic axis size takes the
+        actual size, and a name already bound must agree. The element spec binds
+        by the same rule one level in. Both use the caller's *bindings*, so an
+        axis size and an element dimension sharing a name are one dimension — a
+        batch of ``("n",)`` over arrays of shape ``("n",)`` binds ``n`` once and
+        refuses a batch that is not square.
+
+        The level tiling is structure rather than size, so how many levels there
+        are, how many axes each holds, and what they are called are checked
+        rather than bound.
+        """
+        if not isinstance(actual, BatchSpec):
+            return False
+        if self.level_names != actual.level_names:
+            raise ValueError(
+                f"{path} has levels {list(actual.level_names)}, expected {list(self.level_names)}"
+            )
+        declared_arity = [len(group) for group in self.axis_groups]
+        actual_arity = [len(group) for group in actual.axis_groups]
+        if declared_arity != actual_arity:
+            raise ValueError(
+                f"{path} tiles its axes as {actual_arity}, expected {declared_arity} "
+                f"from axis_groups={self.axis_groups!r}"
+            )
+        _unify_array_shape(self.batch_shape, actual.batch_shape, bindings, path)
+        _unify_specs(self.element_spec, actual.element_spec, bindings, path)
+        return True
 
     def is_valid(self, value: Any) -> bool:
         """Whether *value* is a :class:`Batch` whose own spec equals this one.
@@ -375,6 +482,14 @@ class Batch[E](TrackedTerm, ABC):
         """
         if not isinstance(spec, BatchSpec):
             raise TypeError(f"a Batch is specified by a BatchSpec, got {type(spec).__name__}")
+        if spec.free_axis_dims:
+            dimensions = ", ".join(sorted(spec.free_axis_dims))
+            raise ValueError(
+                f"a Batch holds elements at positions, so its multiplicity is concrete; "
+                f"this spec leaves the axis size {dimensions} unbound. A polymorphic "
+                f"BatchSpec is a declaration — bind it before building the batch it "
+                f"describes. An element's own schema may stay polymorphic"
+            )
         object.__setattr__(self, "_spec", spec)
         object.__setattr__(self, "_root_name", name)
         object.__setattr__(self, "_root_spec", spec)
@@ -873,7 +988,7 @@ class Batch[E](TrackedTerm, ABC):
         integer-indexed axis is gone, and a level all of whose axes are gone goes
         with them.
         """
-        groups: list[tuple[int, ...]] = []
+        groups: list[tuple[int | str, ...]] = []
         names: list[str] = []
         start = 0
         for level_name, group in zip(self.level_names, self.axis_groups, strict=True):
@@ -886,7 +1001,7 @@ class Batch[E](TrackedTerm, ABC):
                 groups.append(surviving)
                 names.append(level_name)
             start += len(group)
-        return tuple(groups), tuple(names)
+        return cast(tuple[tuple[int, ...], ...], tuple(groups)), tuple(names)
 
     def _with_level_names(self, level_names: tuple[str, ...]) -> Self:
         """A shallow copy specified over *level_names*, sharing shape and elements.
@@ -930,12 +1045,27 @@ class Batch[E](TrackedTerm, ABC):
         return renamed
 
 
-def _axis_size(size: Any) -> int:
-    """An axis size as an ``int``, rejecting anything not integral."""
+def _axis_size(size: Any) -> int | str:
+    """An axis size as an ``int``, or a symbolic dimension name as a ``str``.
+
+    The two spellings ``ArraySpec.shape`` accepts, for the same reason: a
+    declaration may defer a size while fixing the rank. A name must be a
+    non-empty identifier, as a level name must be.
+    """
+    if isinstance(size, str):
+        if not size.isidentifier():
+            raise ValueError(
+                f"a symbolic axis size must be an identifier, so that with_dims can "
+                f"bind it by keyword; got {size!r}"
+            )
+        return size
     try:
         return operator.index(size)
     except TypeError:
-        raise TypeError(f"axis sizes are integers, got {type(size).__name__}: {size!r}") from None
+        raise TypeError(
+            f"axis sizes are integers or symbolic dimension names, "
+            f"got {type(size).__name__}: {size!r}"
+        ) from None
 
 
 def _normalize_indexer(
@@ -1048,8 +1178,12 @@ def _as_storage_slice(indexer: int | range) -> int | slice:
 
 
 def _whole_of(spec: BatchSpec) -> tuple[range, ...]:
-    """The selection of a batch that selects all of itself: every axis whole."""
-    return tuple(range(size) for size in spec.batch_shape)
+    """The selection of a batch that selects all of itself: every axis whole.
+
+    Reads a *live* batch's spec, whose axes are concrete — a symbolic
+    multiplicity is refused at construction.
+    """
+    return tuple(range(size) for size in cast(tuple[int, ...], spec.batch_shape))
 
 
 def _render_axis(entry: int | range) -> str:
@@ -1086,7 +1220,7 @@ def _render_index(root_spec: BatchSpec, selection: tuple[int | range, ...]) -> s
         # A level selected whole is left out, an axis counting as whole only when
         # it spans every position *in order* — a reversal is a selection, not a
         # no-op, so ``range(size)`` is compared rather than the count of positions.
-        if all(entry == range(size) for entry, size in zip(entries, group, strict=True)):
+        if all(entry == range(cast(int, size)) for entry, size in zip(entries, group, strict=True)):
             continue
         rendered = tuple(_render_axis(entry) for entry in entries)
         positions = rendered[0] if len(rendered) == 1 else f"({', '.join(rendered)})"

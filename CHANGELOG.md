@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
+  A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
+  `DistributionSpec`'s event declaration, a `FunctionSpec`'s either side — was
+  invisible to `free_dims`, so `EventTemplate(law=DistributionSpec(x=("obs",)))`
+  reported itself concrete. Design II.3 draws no line at a term-spec boundary:
+  *any* symbolic entry makes a template polymorphic.
+
+  Reporting a dimension, substituting it, and binding it are now three methods
+  every `ValueSpec` answers, so the spec that declares a dimension resolves it.
+  `EventTemplate.free_dims` is the union over its children, so a name is reported
+  wherever it is declared. Three things follow. Substitution reaches through a
+  term spec, so every dimension reported is bindable. **Unification binds through
+  one too**: a spec's declaration unifies against the actual term's own, in the
+  shared binding scope, so a name inside a `DistributionSpec` is the same
+  dimension as that name beside it — it binds once, and a disagreement raises.
+  And a `BatchSpec` axis size may now be a symbolic name in that same scope,
+  bound from the actual `Batch` it is matched against, so a batch of `("n",)`
+  over arrays of shape `("n",)` is square by declaration, and a batch that is not
+  square is refused.
+
+  Each spec owns its own binding, which is what reaches a spec the schema layer
+  cannot name: `BatchSpec` lives in `_batch.py`, which imports from
+  `event_template.py`, so a type test there could report a batch axis as free
+  while nothing could bind it. Every spec that reports a dimension implements
+  both binding methods — `ArraySpec` and `FunctionSpec` included, which the
+  unification pass had special-cased — so the four methods are one contract
+  rather than a rule with exceptions.
+
+  A `FunctionSpec`'s output binds whatever kind it declares. Only a record
+  declaration was read before, so a callable declaring an output that contradicted
+  the input bound the input alone and reported an output schema that was wrong
+  rather than merely unbound: input `("n",)` against a declared `(3,)` and an
+  actual output of `(5,)` reported `(5,)` as `(3,)`. A non-record declaration
+  describes the one value returned, so it now meets the sole leaf of the
+  callable's output template, and several output fields do not match it.
+
+  This brings the term specs into line with `ArraySpec`, which has always
+  accepted a concrete value against a symbolic shape and left the sizes to the
+  single pass, per II.3's division of labor. A polymorphic term-spec declaration
+  was previously unsatisfiable: `is_valid` compared inner templates for exact
+  equality, so a symbolic declaration never matched a concrete value.
+
+  A live `Batch` still requires a concrete multiplicity — it holds elements at
+  positions — so construction refuses a polymorphic `BatchSpec`, and
+  `batch_size` raises until the dimensions are bound.
+
 - **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
   references to the same law denote one random variable, so they must come from
   one draw. Passing the same `Distribution` to two arguments sampled it twice
@@ -90,6 +136,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   in-memory jit cache keys and provenance only, never persisted.
 
 ### Added
+
+- **`EventTemplate.with_dims(**sizes)`** binds symbolic dimensions explicitly,
+  returning a new template so refinement stays monotone, and naming any
+  dimension left unbound. It reaches through a term spec, and auto-promotes to
+  `NumericEventTemplate` when the bound template is all-numeric, so a bound
+  template gains its flat layout. The law-level `with_dims` design 03 names on
+  `Distribution` will delegate to it.
 
 - **`FunctionBatch` and `OpaqueBatch` — the batch forms that store objects.** A
   numeric array batches natively, with the batch axes leading, so it needs no
