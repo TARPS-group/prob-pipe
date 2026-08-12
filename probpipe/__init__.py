@@ -43,6 +43,12 @@ from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_array import NumericRecordArray, RecordArray
+from probpipe.core._registry_catalog import (
+    EntrySummary,
+    RegistryInfo,
+    SupportsRegistryCataloging,
+    registry_catalog,
+)
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
@@ -235,6 +241,8 @@ __all__ = [
     "DistributionArray",
     "DistributionSpec",
     "EmpiricalDistribution",
+    # Registry catalog
+    "EntrySummary",
     "EventTemplate",
     "Exponential",
     "FlatNumericRecordDistribution",
@@ -297,6 +305,7 @@ __all__ = [
     "RecordDistribution",
     "RecordEmpiricalDistribution",
     "RecordSpec",
+    "RegistryInfo",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
@@ -311,6 +320,7 @@ __all__ = [
     "SupportsQuantile",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
+    "SupportsRegistryCataloging",
     "SupportsSampling",
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
@@ -360,6 +370,7 @@ __all__ = [
     "real",
     "register_array_backend",
     "register_bijector",
+    "registry_catalog",
     "rwmh",
     "simplex",
     "sphere",
