@@ -215,7 +215,7 @@ class TestInnerDraw:
         actual = inner._unnormalized_log_prob(theta)
         np.testing.assert_allclose(float(actual), float(expected), rtol=1e-5)
 
-    def test_record_and_recordarray_inputs_equivalent(
+    def test_record_and_record_batch_inputs_equivalent(
         self,
         prior,
         likelihood,
@@ -234,7 +234,7 @@ class TestInnerDraw:
         X, y = regression_data
         n = X.shape[0]
         record_data = Record("r", X=X, y=y)
-        recordarray_data = NumericRecordBatch(
+        record_batch_data = NumericRecordBatch(
             {"X": jnp.asarray(X), "y": jnp.asarray(y)},
             level_names="draw",
             axis_groups=((n,),),
@@ -242,13 +242,13 @@ class TestInnerDraw:
         )
 
         m_rec = MinibatchedDistribution(prior, likelihood, record_data, batch_size=20)
-        m_ra = MinibatchedDistribution(prior, likelihood, recordarray_data, batch_size=20)
+        m_batch = MinibatchedDistribution(prior, likelihood, record_batch_data, batch_size=20)
 
         # Same key → same minibatch indices → same log-density at theta.
         key = jax.random.PRNGKey(13)
         theta = jnp.array([0.1, -0.1])
         lp_rec = float(m_rec._draw_one(key)._unnormalized_log_prob(theta))
-        lp_ra = float(m_ra._draw_one(key)._unnormalized_log_prob(theta))
+        lp_ra = float(m_batch._draw_one(key)._unnormalized_log_prob(theta))
         np.testing.assert_allclose(lp_rec, lp_ra, rtol=1e-5)
 
     def test_with_replacement_flag(self, prior, likelihood, data_record):

@@ -24,7 +24,13 @@ BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
 
 @dataclass(frozen=True)
 class ArrayBroadcastGroup:
-    """One parent-identity group of array-valued sweep arguments."""
+    """One zip group of array-valued sweep arguments — read along the same axes.
+
+    What puts two arguments in one group depends on what they are: a batch is
+    grouped by its level names, since levels are how batches align; a value with
+    a parent — a distribution view — by that parent, since sibling views of one
+    law have no level names to align on.
+    """
 
     arg_refs: tuple[_workflow_call.WorkflowInputRef, ...]
     batch_shape: tuple[int, ...]

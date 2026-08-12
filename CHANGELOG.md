@@ -24,12 +24,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch, and sibling selections align by their shared level names rather than by
   a parent pointer. `Design` and `FullFactorialDesign` are batches.
 
-  **This supersedes the interim states described by earlier entries in this same
-  release.** Several of them were written while both families existed and say so
-  — that the array types are untouched, that producers still return one, that
-  `RecordArray.spec` raises. Those describe steps along the way; at the release
-  boundary the array types do not exist, and only this entry describes what
-  ships.
+  **This supersedes every earlier entry in this release that speaks of the array
+  types.** Several were written while both families existed and describe those
+  types as retained, unexported, or gaining behavior — the steps by which the
+  batch types were built alongside them and then took over. Read those as a
+  record of how the change was staged, not as the shipped API. At the release
+  boundary the array types do not exist, `RecordBatch.stack` is the stacking
+  entry point, and `NumericRecordBatch.to_vector` / `from_vector` are the
+  flat-layout pair. Only this entry describes what ships.
 
 ### Fixed
 

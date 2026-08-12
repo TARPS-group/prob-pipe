@@ -1305,7 +1305,7 @@ class TestToVector:
     def test_batched_shape_is_batch_shape_plus_vector_size(self):
         tpl = EventTemplate(x=(), y=(3,))
         flat = jnp.arange(2 * 5 * tpl.vector_size, dtype=float).reshape(2, 5, tpl.vector_size)
-        v = NumericRecordBatch.from_vector("nra", tpl, flat, level_names="draw")
+        v = NumericRecordBatch.from_vector("nrb", tpl, flat, level_names="draw")
         assert isinstance(v, NumericRecordBatch)
         assert v.to_vector().shape == (2, 5, tpl.vector_size)
 
@@ -1353,32 +1353,32 @@ class TestFromVectorRoundTripBatched:
     def test_single_batch_axis(self):
         tpl = EventTemplate(x=(), y=(3,))
         flat = jnp.arange(4 * tpl.vector_size, dtype=float).reshape(4, tpl.vector_size)
-        v = NumericRecordBatch.from_vector("nra", tpl, flat, level_names="draw")
+        v = NumericRecordBatch.from_vector("nrb", tpl, flat, level_names="draw")
         assert isinstance(v, NumericRecordBatch)
         assert v.batch_shape == (4,)
-        assert NumericRecordBatch.from_vector("nra", tpl, v.to_vector(), level_names="draw") == v
+        assert NumericRecordBatch.from_vector("nrb", tpl, v.to_vector(), level_names="draw") == v
 
     def test_multi_axis_batch_shape(self):
         # batch_shape=(2, 3) catches trailing-axis split / reshape bugs.
         tpl = EventTemplate(x=(), y=(3,), z=(2, 2))
         flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
-        v = NumericRecordBatch.from_vector("nra", tpl, flat, level_names="draw")
+        v = NumericRecordBatch.from_vector("nrb", tpl, flat, level_names="draw")
         assert isinstance(v, NumericRecordBatch)
         assert v.batch_shape == (2, 3)
         assert jnp.array_equal(v.to_vector(), flat)
-        assert NumericRecordBatch.from_vector("nra", tpl, v.to_vector(), level_names="draw") == v
+        assert NumericRecordBatch.from_vector("nrb", tpl, v.to_vector(), level_names="draw") == v
 
     def test_nested_multi_axis_batch_shape(self):
         # Nested numeric subtree + multi-axis batch: from_vector builds a nested
         # NumericRecordBatch as a field of the outer NumericRecordBatch.
         tpl = EventTemplate(x=(), nested=EventTemplate(a=(), b=(2,)), y=(3,))
         flat = jnp.arange(2 * 3 * tpl.vector_size, dtype=float).reshape(2, 3, tpl.vector_size)
-        v = NumericRecordBatch.from_vector("nra", tpl, flat, level_names="draw")
+        v = NumericRecordBatch.from_vector("nrb", tpl, flat, level_names="draw")
         assert isinstance(v, NumericRecordBatch)
         assert v.batch_shape == (2, 3)
         assert isinstance(v["nested"], NumericRecordBatch)
         assert v["nested/b"].shape == (2, 3, 2)
-        assert NumericRecordBatch.from_vector("nra", tpl, v.to_vector(), level_names="draw") == v
+        assert NumericRecordBatch.from_vector("nrb", tpl, v.to_vector(), level_names="draw") == v
 
 
 class TestFromVectorErrors:

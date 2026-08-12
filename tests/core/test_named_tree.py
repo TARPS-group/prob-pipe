@@ -382,13 +382,13 @@ class TestRecordAutoPromotion:
             element_spec=EventTemplate(a=()),
         )
         assert type(ra) is RecordBatch
-        nra = NumericRecordBatch(
+        nrb = NumericRecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
         )
-        assert type(nra) is NumericRecordBatch
+        assert type(nrb) is NumericRecordBatch
 
 
 # ===========================================================================

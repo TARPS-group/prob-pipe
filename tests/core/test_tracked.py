@@ -309,18 +309,18 @@ class TestWithNameOnBatchTypes:
         assert ra.name_is_auto is True  # original unchanged
 
     def test_numeric_record_batch(self):
-        nra = NumericRecordBatch(
+        nrb = NumericRecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
             name="orig",
         )
-        nra2 = nra.with_name("new")
+        nra2 = nrb.with_name("new")
         assert nra2.name == "new"
         assert nra2.name_is_auto is False
-        assert nra2["a"] is nra["a"]
-        assert nra.name == "orig"
+        assert nra2["a"] is nrb["a"]
+        assert nrb.name == "orig"
 
     def test_distribution_array(self):
         da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="batch")
@@ -524,15 +524,15 @@ class TestProductPickleRoundTrip:
 
 class TestBatchPickleRoundTrip:
     def test_numeric_record_batch_pickle_preserves_identity(self):
-        nra = NumericRecordBatch(
+        nrb = NumericRecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
             name="mine",
         )
-        nra.with_provenance(Provenance("op"))
-        back = pickle.loads(pickle.dumps(nra))
+        nrb.with_provenance(Provenance("op"))
+        back = pickle.loads(pickle.dumps(nrb))
         assert back.name == "mine"
         assert back.name_is_auto is False
         assert back.provenance.operation == "op"

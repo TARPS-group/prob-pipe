@@ -110,6 +110,26 @@ def _index_column(column: Any, indices: Array) -> Any:
     return jnp.asarray(column)[indices]
 
 
+def _refuse_multi_axis_rows(data: Any) -> None:
+    """Refuse a batch whose rows are not a single axis.
+
+    Rows are the leading axis, so a batch spanning more than one is a grid whose
+    trailing axes have no agreed per-datum reading: gathering from a ``(N, K)``
+    batch leaves ``(b, K)`` columns with one rows axis to name two, and the
+    per-datum transform downstream removes one axis rather than one *of two*.
+    Checked where the distribution is built, so an unusable one cannot exist —
+    ``dataset_size`` would otherwise report the leading axis and the first draw
+    would raise.
+    """
+    if isinstance(data, RecordBatch) and len(data.batch_shape) != 1:
+        raise ValueError(
+            f"MinibatchedDistribution takes a batch whose rows are one axis; got "
+            f"{data.batch_shape} over levels {data.level_names}. Index the batch down to a "
+            f"single rows axis before minibatching — what its trailing axes mean per datum "
+            f"is not defined"
+        )
+
+
 def _index_along_leading(data: Any, indices: Array) -> Any:
     """The rows of *data* at *indices*, in the kind *data* is.
 
@@ -128,17 +148,6 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     handed to ``jnp``.
     """
     if isinstance(data, RecordBatch):
-        if len(data.batch_shape) != 1:
-            # Rows are the leading axis, so a batch with more than one is a grid
-            # whose trailing axes have no agreed reading here: gathering rows from
-            # a (N, K) batch leaves (b, K) columns and only one level to name
-            # them, and the per-datum transform downstream can remove one axis,
-            # not one *of two*. Refused rather than given a meaning by accident.
-            raise ValueError(
-                f"MinibatchedDistribution takes a batch with one level of rows; got "
-                f"{data.level_names} over {data.batch_shape}. Select or reshape to a single "
-                f"rows level first — what the trailing axes mean per datum is not defined"
-            )
         columns = {
             path: _index_column(data._raw_column(path), indices) for path in data.event_template
         }
@@ -263,6 +272,7 @@ class MinibatchedDistribution(
             )
 
         # Validate data + batch_size.
+        _refuse_multi_axis_rows(data)
         n = _data_size(data)
         if batch_size < 1 or batch_size > n:
             raise ValueError(f"batch_size must be in [1, len(data)={n}]; got {batch_size}.")

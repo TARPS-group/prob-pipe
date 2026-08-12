@@ -154,12 +154,12 @@ class TestLogProbDualInput:
             name="post",
         )
         # Build a 3-row NumericRecordBatch
-        nra = NumericRecordBatch(
+        nrb = NumericRecordBatch(
             {"intercept": jnp.array([0.5, 0.6, 0.7]), "slope": jnp.array([-0.3, -0.4, -0.5])},
             "draw",
             element_spec=NumericEventTemplate(intercept=(), slope=()),
         )
-        lp = kde._log_prob(nra)
+        lp = kde._log_prob(nrb)
         assert lp.shape == (3,)
         # Matches the flat form
         lp_flat = kde._log_prob(

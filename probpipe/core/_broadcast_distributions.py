@@ -345,6 +345,20 @@ Concrete subtype depends on output kind:
 """
 
 
+def _packed_object_column(values: list) -> np.ndarray:
+    """*values* as a frozen object column, one entry per row.
+
+    A field the declaration does not call an array holds one value per element
+    whatever those values look like, so they are packed rather than stacked. An
+    opaque field whose rows are arrays is the case that matters: stacking them
+    numerically would turn each row's own axes into batch axes the levels never
+    named.
+    """
+    column = _from_iterable(values, kind="declared output")
+    column.setflags(write=False)
+    return column
+
+
 def _stack_declared_columns(
     records: list[Record] | Record,
     *,
@@ -386,10 +400,15 @@ def _stack_declared_columns(
                     axis=0,
                 )
             else:
-                batched = _from_iterable(values, kind="declared output")
-                batched.setflags(write=False)
+                batched = _packed_object_column(values)
         else:
+            # A batched ``Record`` arrives from the JAX paths, where ``vmap``
+            # stacked the rows itself and a declared-opaque field is whatever
+            # shape its values happened to have. The declared kind decides here
+            # too, or that shape is read as a second multiplicity.
             batched = records[path]
+            if not isinstance(template[path], ArraySpec):
+                batched = _packed_object_column(list(batched))
 
         shape = getattr(batched, "shape", ())
         if tuple(shape[:1]) != (n_total,):

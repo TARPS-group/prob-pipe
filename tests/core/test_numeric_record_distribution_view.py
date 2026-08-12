@@ -186,7 +186,7 @@ class TestLogProb:
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(5)
         flat_xs = mvn4._sample(key, sample_shape=(10,))
-        rec_xs = NumericRecordBatch.from_vector("nra", split_template, flat_xs, level_names="draw")
+        rec_xs = NumericRecordBatch.from_vector("nrb", split_template, flat_xs, level_names="draw")
         lp_rec = jnp.asarray(log_prob(rec, rec_xs))
         lp_flat = jnp.asarray(log_prob(mvn4, flat_xs))
         np.testing.assert_allclose(lp_rec, lp_flat, rtol=1e-5)

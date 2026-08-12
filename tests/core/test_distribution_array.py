@@ -524,7 +524,7 @@ class TestMeanVianSweep:
         assert m.batch_shape == (3, 2)
         assert m["mean"].shape == (3, 2)
 
-    def test_record_components_mean_is_recordarray(self):
+    def test_record_components_mean_is_record_batch(self):
         comps = [
             ProductDistribution(
                 x=Normal(loc=float(i), scale=1.0, name=f"x{i}"),

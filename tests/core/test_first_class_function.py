@@ -208,7 +208,7 @@ class TestApplyContract:
         np.testing.assert_allclose(result["y"], np.asarray([1.0, 2.0]))
 
     @pytest.mark.parametrize("batch_shape", [(2, 3), (0, 3)])
-    def test_declared_output_accepts_multidimensional_and_empty_record_batchs(
+    def test_declared_output_accepts_multidimensional_and_empty_record_batches(
         self,
         batch_shape,
     ):

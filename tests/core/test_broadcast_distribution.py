@@ -857,7 +857,7 @@ class TestMakeStack:
         np.testing.assert_allclose(out["a"], [0, 1, 2, 3, 4])
         np.testing.assert_allclose(out["b"], [0, 2, 4, 6, 8])
 
-    def test_list_of_mixed_records_falls_back_to_recordarray(self):
+    def test_list_of_mixed_records_falls_back_to_record_batch(self):
         """Records with a string (non-numeric) leaf can't go through
         ``NumericRecordBatch.stack``. The fallback path builds each
         field independently — numeric leaves via ``jnp.stack``,
@@ -1041,7 +1041,7 @@ class TestCoerceOutput:
         assert isinstance(out, Record)
         assert list(out.keys()) == ["summary/mean", "summary/count", "x"]
 
-    def test_stack_mode_attaches_to_recordarray(self):
+    def test_stack_mode_attaches_to_record_batch(self):
         from probpipe import NumericRecord, NumericRecordBatch
         from probpipe.core._workflow_result import _coerce_output
 
