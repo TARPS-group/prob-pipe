@@ -143,6 +143,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NumericEventTemplate` when the bound template is all-numeric, so a bound
   template gains its flat layout. The law-level `with_dims` design 03 names on
   `Distribution` will delegate to it.
+- **A `Record` stores its `RecordSpec`.** `Record.spec` is the single stored
+  source of a record's type, and `event_template` becomes a view on it, so the
+  two cannot disagree. Construction accepts either form of a record
+  declaration: a `RecordSpec` is stored verbatim and a bare `EventTemplate` is
+  wrapped, the two denoting the same space. Everything that reads
+  `event_template` is unaffected.
+
+  This is the storage rule the tracked types share — a term carries the spec of
+  its kind, and its schema accessors are views on that one object — reaching
+  the record side. A `Distribution`'s `event_spec` and a `Function`'s
+  `output_spec` follow with their own layers, and the slot moves onto the
+  tracked base once every kind carries one. A batched record still subclasses
+  `Record` and is not one record, so `RecordArray.spec` raises rather than
+  reporting an element's spec as the batch's own type: a batch's type specifies
+  the collection. That override goes away with the subclassing, when the batch
+  types become collections rather than records.
+
+  The JAX pytree aux data is now the `(spec, name, name_is_auto)` triple rather
+  than `(event_template, …)`, and pickled records serialize the spec. Aux stays
+  hashable and equal for equal declarations, so treedefs still compare by value
+  and a jit cache keyed on one is unaffected — including across the two
+  declaration forms, which agree. A pickle written before this change still
+  loads, its bare template accepted as the declaration it is.
 
 - **`FunctionBatch` and `OpaqueBatch` — the batch forms that store objects.** A
   numeric array batches natively, with the batch axes leading, so it needs no

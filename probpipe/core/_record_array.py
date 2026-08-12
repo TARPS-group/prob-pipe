@@ -22,6 +22,7 @@ from .event_template import (
     ArraySpec,
     EventTemplate,
     NumericEventTemplate,
+    RecordSpec,
     _full_array_shape_or_none,
 )
 from .record import Record
@@ -181,6 +182,30 @@ class RecordArray(Record):
     def template(self) -> EventTemplate:
         """Structural description of each element."""
         return self._template
+
+    @property
+    def spec(self) -> RecordSpec:
+        """Not carried by a batch — read the element schema from :attr:`event_template`.
+
+        A term's ``spec`` is its *own* type, and a batch's type specifies the
+        collection, not one element, so a ``RecordSpec`` would be the wrong type
+        to report.
+
+        Raises
+        ------
+        AttributeError
+            Always, so ``hasattr`` reports ``False``.
+
+        Notes
+        -----
+        Interim: a batch subclasses :class:`Record` without being one record.
+        Both the subclassing and this override end when the batch types become
+        collections in their own right.
+        """
+        raise AttributeError(
+            f"{type(self).__name__} carries no RecordSpec: a batch's own type specifies "
+            f"the collection, not one element. Read the element schema with event_template"
+        )
 
     @property
     def event_template(self) -> EventTemplate:

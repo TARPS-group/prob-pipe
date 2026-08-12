@@ -94,7 +94,7 @@ if it were user-guide reference text.
 |---|---|
 | `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
 | `EventTemplate` / `NumericEventTemplate` / `ValueSpec` (raw-value: `ArraySpec`·`OpaqueSpec`; `TermSpec`: `RecordSpec`·`DistributionSpec`·`FunctionSpec`) | docstrings in `probpipe/core/event_template.py`; #235 Chapter 1 |
-| `Record` / `NumericRecord` | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
+| `Record` / `NumericRecord` (each stores its type as a `RecordSpec`, with `event_template` a view on it) | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
 | `Batch` / `BatchSpec` (the multiplicity axis: levels, level names, view identity) | docstrings in `probpipe/core/_batch.py`; #235 Chapter 2 |
 | Batch types (`RecordArray`/`NumericRecordArray`/`DistributionArray` → `*Batch`) | docstrings in `_record_array.py`, `_distribution_array.py`; #235 Chapter 2 |
 | `FunctionBatch` / `OpaqueBatch` (the batch forms that *store* their elements, over shared object-array storage) | docstrings in `probpipe/core/_function_batch.py`, `_opaque_batch.py` (storage in `_object_batch.py`); #235 Chapter 2 |
