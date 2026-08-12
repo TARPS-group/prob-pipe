@@ -251,6 +251,9 @@ class _BijectorRegistryFacade:
 
     ``priority`` on each :class:`~probpipe.core._registry_catalog.EntrySummary`
     is ``None`` because the underlying registry has no priority concept.
+
+    See ``docs/contributor/dispatch-conventions.md`` for the conventions
+    behind non-conforming registries and their catalog adapters.
     """
 
     name: ClassVar[str] = "bijectors"
