@@ -510,17 +510,18 @@ class NumericRecordDistribution(RecordDistribution):
     def flatten_value(value, *, event_shape: tuple[int, ...] = ()) -> Array:
         """Flatten a sample to a flat trailing axis.
 
-        Accepts ``Record`` / ``NumericRecord`` / ``NumericRecordArray``
+        Accepts a ``Record``, a ``NumericRecord``, or a batch of either
         (which already carry their template) or a raw array. Raw-array
         inputs need ``event_shape`` to disambiguate batch axes from
         event axes; without it, the input gets a trailing singleton
         axis (matching the scalar-event default).
         """
         from ._numeric_record import NumericRecord
+        from ._numeric_record_batch import NumericRecordBatch
         from ._record_array import NumericRecordArray
         from .record import Record
 
-        if isinstance(value, (NumericRecordArray, NumericRecord)):
+        if isinstance(value, (NumericRecordArray, NumericRecordBatch, NumericRecord)):
             return value.to_vector()
         if isinstance(value, Record):
             return value.to_numeric().to_vector()
@@ -1012,6 +1013,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     # Imports hoisted once for all closures below (and to avoid
     # circular-import risk at module load time).
     from ._numeric_record import NumericRecord
+    from ._numeric_record_batch import NumericRecordBatch
     from ._record_array import NumericRecordArray
 
     protocols: set[str] = set()
@@ -1053,7 +1055,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         extra_bases.append(SupportsLogProb)
 
         def _log_prob(self, x) -> Array:
-            if isinstance(x, (NumericRecord, NumericRecordArray)):
+            if isinstance(x, (NumericRecord, NumericRecordArray, NumericRecordBatch)):
                 flat = x.to_vector()
             else:
                 flat = jnp.asarray(x)

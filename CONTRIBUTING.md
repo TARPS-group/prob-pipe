@@ -544,9 +544,14 @@ uv build packaging/probpipe   # probpipe (metapackage)
    (`RecordArray` or `DistributionArray` with nonempty
    `batch_shape`) passed to slots whose hints don't match the
    batched type, the Function layer dispatches cell-by-cell
-   and stacks the returns.  Multiple array inputs combine by the
-   **product rule** (Cartesian full factorial); the sweep's
-   `batch_shape` is the concatenation of each array arg's
+   and stacks the returns.  Multiple array inputs combine by their
+   **levels**: operands carrying the same level names (sibling views of
+   one batch, or two batches naming the same levels on the same axes)
+   zip along them, operands with no level in common combine by the
+   **product rule** (Cartesian full factorial), and one level name at
+   two geometries — or shared by operands whose other levels differ —
+   is refused rather than producted silently.  The sweep's
+   `batch_shape` is the concatenation of each zip group's
    `batch_shape`.  Scalar `Distribution` inputs marginalise via
    Monte Carlo, unchanged.  A `DistributionArray` is always treated
    as `Array[Distribution]` (never marginalised in-place), so

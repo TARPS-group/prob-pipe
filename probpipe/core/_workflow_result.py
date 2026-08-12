@@ -1,7 +1,7 @@
 """Default event-result contract helpers for Function calls.
 
 This private module owns the boundary rule that raw workflow returns
-become ``Record | RecordArray | Distribution`` values and receive
+become a record, a batch of records, or a distribution, and receive
 provenance when appropriate. Other tracked terms remain event payloads under
 this default contract; returning one directly requires the explicit term-result
 planning reserved for #369.
@@ -9,6 +9,7 @@ planning reserved for #369.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any, Literal
 
 import jax.numpy as jnp
@@ -18,6 +19,7 @@ from ._distribution_base import Distribution
 from ._function_contract import _wrap_declared_function_output
 from ._numeric_record import _is_numeric_leaf
 from ._record_array import RecordArray
+from ._record_batch import RecordBatch
 from .event_template import EventTemplate, _to_record_declaration
 from .provenance import Provenance
 from .record import Record
@@ -40,11 +42,11 @@ def _wrap_as_record(
     field_name: str,
     output_template: EventTemplate | None = None,
 ) -> Any:
-    """Coerce a raw return into the Record | RecordArray | Distribution contract.
+    """Coerce a raw return into the record / batch / distribution contract.
 
     Uniform rule applied at the Function boundary:
 
-    - Already-structured values (``Record`` / ``RecordArray`` /
+    - Already-structured values (a record, a batch of records, or a
       ``Distribution``) retain their structure here. ``_coerce_output``
       copies a directly returned tracked value before attaching call
       provenance.
@@ -71,7 +73,7 @@ def _wrap_as_record(
             function_name=field_name,
             output_template=output_template,
         )
-    if isinstance(value, (Distribution, Record)):
+    if isinstance(value, (Distribution, Record, RecordBatch)):
         return value
     if isinstance(value, dict) and value:
         return Record(field_name, value, name_is_auto=True)
@@ -98,7 +100,7 @@ def _coerce_output(
     field_name: str,
     output_template: EventTemplate | None = None,
 ) -> Any:
-    """Enforce the Record | RecordArray | Distribution output contract.
+    """Enforce the record / batch / distribution output contract.
 
     Parameters
     ----------
@@ -112,9 +114,9 @@ def _coerce_output(
         * ``"wrap"`` — non-broadcast call; ``value`` is whatever the
           user's function returned. Scalars / arrays become
           a single-field record named after the function; dict / list / tuple
-          promote via ``_wrap_as_record``; existing Record /
-          RecordArray / Distribution values become independent shallow
-          result copies.
+          promote via ``_wrap_as_record``; an existing record, batch of
+          records, or ``Distribution`` becomes an independent shallow
+          result copy.
         * ``"stack"`` — array-valued broadcast; ``value`` is a stacked
           aggregate from ``_make_stack`` (``NumericRecordArray`` /
           ``RecordArray`` / ``DistributionArray``).
@@ -129,7 +131,7 @@ def _coerce_output(
 
     Returns
     -------
-    Record | RecordArray | Distribution
+    Record | RecordArray | RecordBatch | Distribution
         The value, possibly wrapped or shallow-copied, with the current
         call's ``.provenance`` attached. A copied result does not retain the
         implementation-returned object's prior provenance.
@@ -157,7 +159,10 @@ def _copy_result_term(
     """Copy a retained tracked container into an independent result term."""
     clone = value._shallow_copy()
     if output_template is not None:
-        if isinstance(clone, RecordArray):
+        if isinstance(clone, RecordBatch):
+            element_spec = _to_record_declaration(output_template)
+            object.__setattr__(clone, "_spec", replace(clone.spec, element_spec=element_spec))
+        elif isinstance(clone, RecordArray):
             object.__setattr__(clone, "_template", output_template)
         elif isinstance(clone, Record):
             object.__setattr__(clone, "_spec", _to_record_declaration(output_template))

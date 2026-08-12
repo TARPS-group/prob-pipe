@@ -23,6 +23,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._record_array import NumericRecordArray
 from ..core.distribution import Distribution
 from ..core.ops import sample as _sample_op
@@ -172,7 +173,7 @@ def _simulate_offline(
     # Round-trip through the canonical 1-D vector layout: single-field priors'
     # raw draws are not field-indexable by name, so from_vector gives uniform
     # named access. Structured draws serialize via to_vector; raw arrays ravel.
-    if isinstance(theta, NumericRecordArray):
+    if isinstance(theta, (NumericRecordArray, NumericRecordBatch)):
         theta_flat = jnp.asarray(theta.to_vector()).reshape(num_simulations, -1)
     else:
         theta_flat = jnp.asarray(theta).reshape(num_simulations, -1)

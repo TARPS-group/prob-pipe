@@ -258,10 +258,11 @@ class _RecordDistributionView(Distribution):
     # -- Internals ----------------------------------------------------------
 
     def _extract(self, structured: Any) -> Array:
-        """Extract this field from a parent sample (Record, NumericRecordArray, or flat array)."""
+        """Extract this field from a parent sample (a record, a batch of them, or a flat array)."""
         from ._record_array import RecordArray
+        from ._record_batch import RecordBatch
 
-        if isinstance(structured, (Record, RecordArray)):
+        if isinstance(structured, (Record, RecordArray, RecordBatch)):
             return structured[self._key]
         # Flat array — unflatten via the parent's static unflatten_value.
         # Only numeric parents define unflatten_value; non-numeric Record
@@ -277,7 +278,7 @@ class _RecordDistributionView(Distribution):
             jnp.asarray(structured),
             template=self._parent.event_template,
         )
-        if isinstance(result, (Record, RecordArray)):
+        if isinstance(result, (Record, RecordArray, RecordBatch)):
             return result[self._key]
         return result
 
@@ -293,9 +294,10 @@ class _RecordDistributionView(Distribution):
         expose ``draws()``.
         """
         from ._record_array import RecordArray
+        from ._record_batch import RecordBatch
 
         draws = self._parent.draws()
-        if isinstance(draws, (Record, RecordArray)):
+        if isinstance(draws, (Record, RecordArray, RecordBatch)):
             return jnp.asarray(draws[self._key])
         from ._numeric_record import _reconstruct_from_vector
 

@@ -24,6 +24,17 @@ import json
 import numpy as np
 
 
+def _is_structured(value: Any) -> bool:
+    """Whether *value* enumerates named fields, so one export variable fits each.
+
+    A record or a batch of them carries an ``event_template``, which is the
+    nested-aware enumeration :func:`_leaf_keys` reads. A test double may expose
+    only the top-level ``.fields``; either is enough to key the export by field
+    rather than treating the value as one opaque array.
+    """
+    return hasattr(value, "event_template") or hasattr(value, "fields")
+
+
 def _leaf_keys(value: Any) -> list[str]:
     """Leaf keys of a draws/samples container, one export variable per leaf.
 

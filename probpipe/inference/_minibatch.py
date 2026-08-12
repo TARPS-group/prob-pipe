@@ -43,6 +43,7 @@ from ..core._distribution_base import Distribution
 from ..core._random_functions import RandomFunction
 from ..core._random_measures import RandomMeasure
 from ..core._record_array import RecordArray
+from ..core._record_batch import RecordBatch
 from ..core.protocols import (
     SupportsLogProb,
     SupportsRandomUnnormalizedLogProb,
@@ -67,12 +68,12 @@ __all__ = ["MinibatchedDistribution"]
 def _data_size(data: Any) -> int:
     """Return the leading-axis length of *data*.
 
-    Accepts a ``RecordArray`` (uses ``batch_shape[0]``), a flat
+    Accepts a batch of records (uses ``batch_shape[0]``), a flat
     ``Record`` of equal-leading-axis array leaves, an array-like with
     ``.shape``, or any object with ``__len__``. Nested Records are
     rejected — minibatching expects a flat-field layout.
     """
-    if isinstance(data, RecordArray):
+    if isinstance(data, (RecordArray, RecordBatch)):
         return data.batch_shape[0]
     if isinstance(data, Record):
         children = dict(data.children)
@@ -98,15 +99,20 @@ def _data_size(data: Any) -> int:
 
 
 def _index_along_leading(data: Any, indices: Array) -> Any:
-    """Index along the leading axis. Works for Records, arrays, RecordArrays.
+    """Index along the leading axis. Works for records, batches of them, and arrays.
 
-    Returns a plain ``Record`` (not a ``RecordArray``) when the source
-    is Record-shaped — the minibatch needs a flat dict of indexed
-    leaves; per-datum vmap dispatches over the leading axis of each.
-    ``RecordArray.__getitem__`` doesn't accept array indices, but since
-    ``RecordArray`` subclasses ``Record``, the Record branch picks it
-    up via field-name access.
+    Returns a plain ``Record`` (never a batch) when the source is
+    record-shaped — the minibatch needs a flat dict of indexed leaves;
+    per-datum vmap dispatches over the leading axis of each. Neither a
+    ``RecordArray`` nor a ``RecordBatch`` indexes by an array of positions, so
+    both are read a field at a time.
     """
+    if isinstance(data, RecordBatch):
+        return Record(
+            data.name,
+            {path: jnp.asarray(data[path])[indices] for path in data.event_template},
+            name_is_auto=True,
+        )
     if isinstance(data, Record):
         # Covers Record and RecordArray (the latter via subclass).
         return Record(

@@ -533,6 +533,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A batch of records is recognized wherever a batched record was.** A
+  `RecordBatch` is deliberately not a `Record`, so every place that recognized a
+  batched value by `isinstance(x, Record)`, by a `RecordArray` subclass check, or
+  by duck-typing on `.fields` stopped recognizing one when a batch arrived. None
+  of those gates raise — they take the other branch — so a batch would have been
+  re-wrapped as a single opaque field, minibatched by its field count, or read as
+  a bare array. Each now admits a batch and does with it what it did with a
+  `RecordArray`:
+
+  the `Function` boundary keeps a returned batch as the batch it is and copies it
+  into an independent result under the declared output template, validating each
+  column against its field; broadcast planning treats a batch argument as a
+  batched one and sweeps its rows, handing the body an *element*; the broadcast
+  helpers count, gather, and unwrap a batch's rows, a gather keeping the levels it
+  started with; a marginal peels a batch's rows axis into a record of batched
+  leaves; a field view reads its column out of a batch; the flat-vector boundary,
+  the joint log-densities, and the GLM design coercion accept one; minibatching
+  reads its row count from `batch_shape` and gathers a field at a time; and the
+  ArviZ bridge finds its variables through `event_template`, which a batch has and
+  `.fields` is not.
+
+  Producers still return `RecordArray`, so nothing changes for existing code:
+  these are the gates a batch will arrive at, opened first and on their own. Two
+  paths are deliberately left for the cutover, each needing a decision rather than
+  a wider gate: stacking a list of batched records from a broadcast, which has to
+  name the levels the broadcast grid mints, and
+  `RecordEmpiricalDistribution`, which requires a `Record` and is the subject of
+  #340.
+
+  Level alignment reads the levels an operand **has**. A batched operand carrying
+  none of its own — a `RecordArray`, or a `DistributionArray`, which is swept by
+  its `batch_shape` without being a `Batch` — has an anonymous multiplicity: it
+  aligns with nothing by name and products with everything. Standing its parameter
+  name in for the levels it lacks made a parameter named `draw` collide with a real
+  `draw` level on another operand, refusing a call whose two axes are independent,
+  over a level neither operand disagreed about. A `DistributionArray` stays
+  levelless past the cutover, so this outlives the `RecordArray` removal.
+
 - **Renamed, for the storage rule (#381):** `FunctionSpec.output_template` is
   now **`output_spec`**, storing any `ValueSpec` or `None`, and
   `DistributionSpec.event_template` is now **`event_spec`**, storing a

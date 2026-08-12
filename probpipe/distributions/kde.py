@@ -18,6 +18,7 @@ from .._dtype import _as_float_array
 from .._weights import Weights
 from ..core._empirical import RecordEmpiricalDistribution
 from ..core._numeric_record import NumericRecord
+from ..core._numeric_record_batch import NumericRecordBatch
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._record_array import NumericRecordArray
 from ..core.constraints import Constraint, real
@@ -180,7 +181,7 @@ class KDEDistribution(TFPDistribution):
     def _log_prob(self, value: Any) -> Array:
         tpl = getattr(self, "_event_template", None)
         if tpl is not None and len(tpl.fields) > 1:
-            if isinstance(value, (Record, NumericRecord, NumericRecordArray)):
+            if isinstance(value, (Record, NumericRecord, NumericRecordArray, NumericRecordBatch)):
                 value = NumericRecordDistribution.flatten_value(value)
         return self._tfp_dist.log_prob(jnp.asarray(value))
 
