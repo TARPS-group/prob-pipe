@@ -1474,6 +1474,39 @@ class TestPyTreeRebuildContract:
         with pytest.raises(TypeError, match="does not admit"):
             jax.tree.map(lambda column: column.astype(jnp.float32), batch)
 
+    def test_retyping_a_callable_column_is_refused(self):
+        """A shape-preserving transform can swap what a column holds without
+        touching its rank, so a column of callables can come back as integers
+        while the batch still declares ``FunctionSpec``. The element's kind is
+        the element type's, not the transform's."""
+        column = _object_column([lambda x: x, lambda x: 2 * x])
+        batch = RecordBatch({"f": column}, "row", element_spec=EventTemplate(f=FunctionSpec()))
+        with pytest.raises(TypeError, match="does not admit"):
+            jax.tree.map(lambda _: np.array([1, 2], dtype=object), batch)
+
+    def test_retyping_an_opaque_column_is_refused(self):
+        """The same for a field whose spec narrows what an entry may be."""
+        from probpipe.core.event_template import OpaqueSpec
+
+        column = _object_column(["north", "south"])
+        batch = RecordBatch(
+            {"site": column}, "row", element_spec=EventTemplate(site=OpaqueSpec(meta="units"))
+        )
+        replacement = np.empty(2, dtype=object)
+        replacement[0], replacement[1] = {"a": 1}, {"b": 2}
+        # A mapping is the one thing an opaque field refuses, since it would slip
+        # past the per-entry check the object batches make.
+        with pytest.raises(TypeError, match="does not admit|transform left"):
+            jax.tree.map(lambda _: replacement, batch)
+
+    def test_an_object_column_replaced_by_an_array_is_refused(self):
+        """A non-array field's column holds one entry per element; a dense array
+        would make its *entries* array elements rather than the values."""
+        column = _object_column([lambda x: x, lambda x: 2 * x])
+        batch = RecordBatch({"f": column}, "row", element_spec=EventTemplate(f=FunctionSpec()))
+        with pytest.raises(TypeError, match="object array"):
+            jax.tree.map(lambda _: jnp.zeros(2), batch)
+
     def test_a_resized_event_axis_is_refused(self):
         """The batch axes are the transform's; the element's own are the element
         type's."""
