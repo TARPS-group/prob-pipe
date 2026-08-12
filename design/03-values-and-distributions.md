@@ -190,14 +190,30 @@ class RecordBatch(Batch[Record]):
 
 Storage is columnar: per-field columns in each field's batch form. A field column is therefore a direct view, and an element `Record` is assembled on demand from the columns rather than stored a second time. A `RecordBatch` omits the field-keyed `Mapping` protocol (`keys()` / `values()` / `children`), so `len` and `iter` unambiguously range over the batch, and the field structure is read from `event_template`.
 
-When every element is a `NumericRecord`, the batch is a `NumericRecordBatch`: a pytree of arrays whose leading dimensions are the `batch_shape`, bound to one shared `NumericEventTemplate`. Because it is a bare array pytree, it passes through `vmap` / `grad` / `jit` unchanged. It also adds batched flat vectorization, where `to_vector` stacks one flat vector per element into a `(*batch_shape, vector_size)` array:
+When every element is a `NumericRecord`, the batch is a `NumericRecordBatch`: a pytree of arrays whose leading dimensions are the `batch_shape`, bound to one shared `NumericEventTemplate`. Its columns are the leaves `vmap` / `grad` / `jit` traverse. The batch is *rebuilt* on the way out only where the level identity of what arrives is recoverable — a transform that preserves every batch axis, or one that removes all of them, which yields a single `NumericRecord`. Mapping one level of several is refused: the pytree hook is not told which axis the transform consumed, and no shape records it, so a rebuilt `BatchSpec` could name the wrong level. An operation that knows which level it consumes carries that knowledge itself; the workflow sweep does, mapping raw columns and building each row explicitly. It also adds batched flat vectorization, where `to_vector` stacks one flat vector per element into a `(*batch_shape, vector_size)` array:
 
 ```python
 class NumericRecordBatch(RecordBatch):
     def to_vector(self) -> Array: ...
     @classmethod
-    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array) -> NumericRecordBatch: ...
+    def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array, *,
+                    level_names: str | Iterable[str],
+                    axis_groups: Iterable[Iterable[int]] | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
+```
+
+An operation that mints a level takes the name to give it (II.5), so both of the
+constructions that mint one require it: `from_vector` names the levels it
+reconstructs, which is what lets a multi-level batch round-trip, and `stack`
+names the single level it introduces.
+
+```python
+class RecordBatch(Batch[Record]):
+    @classmethod
+    def stack(cls, records: list[Record], *, level_name: str,
+              element_spec: RecordSpec | EventTemplate | None = None) -> RecordBatch: ...
+    # one level of (len(records),); the element spec is taken from the first record
+    # when omitted, and every record's fields must be exactly its fields
 ```
 
 ### Rationale

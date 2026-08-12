@@ -1068,6 +1068,43 @@ def _axis_size(size: Any) -> int | str:
         ) from None
 
 
+def _axis_groups_for(
+    shape: tuple[int, ...],
+    names: tuple[str, ...],
+    axis_groups: Iterable[Iterable[int]] | None,
+    *,
+    kind: str,
+) -> tuple[tuple[int, ...], ...]:
+    """The axis groups for *shape*, defaulting to one axis per level.
+
+    A supplied grouping must tile the store's own shape: it says which axes each
+    level holds, and the axes are the ones the elements are actually arranged in.
+    A grouping that disagreed would make every accessor — ``batch_shape``,
+    ``len``, ``repr``, the spec itself — a statement about a shape the storage
+    does not have, and indexing would leave the batch's own bounds check to fail
+    somewhere inside numpy instead.
+    """
+    if axis_groups is None:
+        if len(names) != len(shape):
+            axes = "axis" if len(shape) == 1 else "axes"
+            raise ValueError(
+                f"{kind} places one axis per level unless axis_groups says otherwise, so "
+                f"{len(shape)} {axes} need {len(shape)} level names; "
+                f"got {len(names)}: {list(names)}"
+            )
+        return tuple((size,) for size in shape)
+
+    groups = tuple(tuple(_axis_size(size) for size in group) for group in axis_groups)
+    tiled = tuple(size for group in groups for size in group)
+    if tiled != shape:
+        raise ValueError(
+            f"axis_groups must tile the shape the elements are stored in: {groups} tiles "
+            f"{tiled}, but {kind} was given elements of shape {shape}. Each entry is an axis "
+            f"*size*, and the sizes in order are the store's own shape"
+        )
+    return groups
+
+
 def _normalize_indexer(
     indexer: Any, size: int, axis: int, shape: tuple[int, ...], where: str | None = None
 ) -> int | range:
