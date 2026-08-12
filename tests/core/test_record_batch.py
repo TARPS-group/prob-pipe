@@ -1558,8 +1558,6 @@ class TestRankZeroReconstruction:
         """A non-array column is an object array even when it holds one entry, so
         handing it straight to the record would declare the field's kind over a
         zero-dimensional ndarray — a value its own spec refuses."""
-        from probpipe.core.event_template import OpaqueSpec as _Opaque  # noqa: F401
-
         column = _object_column([value])
         batch = RecordBatch({"f": column}, "row", element_spec=EventTemplate(f=spec))
         element = jax.tree.map(lambda c: c.reshape(()), batch)
