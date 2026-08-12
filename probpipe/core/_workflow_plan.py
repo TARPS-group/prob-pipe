@@ -97,12 +97,12 @@ def build_broadcast_plan(
     )
 
 
-def group_by_root(
+def group_by_alignment(
     *,
     values: Mapping[str, Any],
     refs: Sequence[_workflow_call.WorkflowInputRef],
 ) -> list[tuple[Any, tuple[_workflow_call.WorkflowInputRef, ...]]]:
-    """Group input references by root ancestor, with the root of each group.
+    """Group input references by what aligns them, with each group's root.
 
     A value with no parent is its own root, so one group holds every reference
     that denotes the same underlying random variable: the same distribution
@@ -152,7 +152,7 @@ def group_array_args_by_parent(
     which rather than a product to be formed silently.
     """
     groups: list[ArrayBroadcastGroup] = []
-    for _root, arg_refs in group_by_root(values=values, refs=refs):
+    for _root, arg_refs in group_by_alignment(values=values, refs=refs):
         first = _workflow_call.input_ref_value(values, arg_refs[0])
         batch_shape = tuple(first.batch_shape)
         if isinstance(first, Batch):
