@@ -2,7 +2,7 @@
 
 A ``_RecordArrayView`` is a thin single-field wrapper around a
 ``RecordArray`` column, carrying the parent RA as shared-identity
-metadata. The ``WorkflowFunction`` sweep layer recognises sibling
+metadata. The ``Function`` sweep layer recognises sibling
 views (views of the same parent) and iterates them in lockstep (zip)
 rather than cartesian-producting them.
 
@@ -35,10 +35,10 @@ from probpipe import (
     NumericRecordArray,
     Record,
     RecordArray,
-    workflow_function,
+    function,
 )
 from probpipe.core._record_array import _RecordArrayView
-from probpipe.core.record import EventTemplate
+from probpipe.core.event_template import EventTemplate
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -48,7 +48,9 @@ from probpipe.core.record import EventTemplate
 @pytest.fixture
 def numeric_ra():
     """A NumericRecordArray with two numeric fields, batch_shape=(4,)."""
-    return NumericRecordArray.stack([NumericRecord(x=float(i), y=float(i * 2)) for i in range(4)])
+    return NumericRecordArray.stack(
+        [NumericRecord("nr", x=float(i), y=float(i * 2)) for i in range(4)]
+    )
 
 
 @pytest.fixture
@@ -95,8 +97,8 @@ class TestViewConstruction:
 
     def test_view_aliases_underlying_column(self, numeric_ra):
         v = numeric_ra.view("x")
-        # No copy — the underlying array is the parent's store entry.
-        assert v._store["x"] is numeric_ra._store["x"]
+        # No copy — the underlying array is the parent's field entry.
+        assert v._tree["x"] is numeric_ra._tree["x"]
 
     def test_view_unknown_field_raises(self, numeric_ra):
         with pytest.raises(KeyError):
@@ -203,7 +205,7 @@ class TestViewForwarding:
 
 
 class TestSweepGroupingByParent:
-    """The ``WorkflowFunction`` sweep layer groups array-valued args by
+    """The ``Function`` sweep layer groups array-valued args by
     parent identity. Views sharing a parent iterate in lockstep (zip);
     distinct parents (including two independent ``RecordArray``s or
     two views of different parents) product."""
@@ -211,7 +213,7 @@ class TestSweepGroupingByParent:
     def test_two_views_same_parent_zip(self, numeric_ra):
         """Two views of ``numeric_ra`` zip into a single (4,) axis."""
 
-        @workflow_function
+        @function
         def f(x, y):
             return x + y
 
@@ -227,10 +229,10 @@ class TestSweepGroupingByParent:
     def test_two_views_different_parents_product(self):
         """Views from two different ``RecordArray``s carry different
         parent ids → distinct groups → cartesian product."""
-        ra_a = NumericRecordArray.stack([NumericRecord(a=float(i)) for i in range(3)])
-        ra_b = NumericRecordArray.stack([NumericRecord(b=float(j * 10)) for j in range(2)])
+        ra_a = NumericRecordArray.stack([NumericRecord("nr", a=float(i)) for i in range(3)])
+        ra_b = NumericRecordArray.stack([NumericRecord("nr", b=float(j * 10)) for j in range(2)])
 
-        @workflow_function
+        @function
         def f(a, b):
             return a + b
 
@@ -241,9 +243,9 @@ class TestSweepGroupingByParent:
     def test_view_plus_plain_ra_products(self, numeric_ra):
         """A view and an independent ``RecordArray`` are in different
         groups (the view's parent ≠ the independent RA) → product."""
-        other = NumericRecordArray.stack([NumericRecord(z=float(k * 100)) for k in range(2)])
+        other = NumericRecordArray.stack([NumericRecord("nr", z=float(k * 100)) for k in range(2)])
 
-        @workflow_function
+        @function
         def f(x, p):
             return x + p["z"]
 
@@ -255,10 +257,10 @@ class TestSweepGroupingByParent:
         """A 3-field NumericRecordArray with three sibling views
         collapses to one (n,) axis, not (n, n, n)."""
         ra = NumericRecordArray.stack(
-            [NumericRecord(a=float(i), b=float(i * 2), c=float(i * 10)) for i in range(5)]
+            [NumericRecord("nr", a=float(i), b=float(i * 2), c=float(i * 10)) for i in range(5)]
         )
 
-        @workflow_function
+        @function
         def g(a, b, c):
             return a + b + c
 
@@ -278,17 +280,17 @@ class TestSweepGroupingByParent:
 
 class TestPatternParity:
     """``Design.select_all()`` returns sibling views — splatting them
-    through a ``WorkflowFunction`` produces the same output as passing
+    through a ``Function`` produces the same output as passing
     the whole Design as a single ``Record``-typed arg."""
 
     def test_parity_on_full_factorial(self):
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
 
-        @workflow_function
+        @function
         def fit_a(p: NumericRecord):
             return p["r"] * p["K"]
 
-        @workflow_function
+        @function
         def fit_b(r, K):
             return r * K
 
@@ -307,11 +309,11 @@ class TestPatternParity:
             scale=[0.5, 1.0],
         )
 
-        @workflow_function
+        @function
         def label_a(p: Record):
             return f"{p['method']}-{float(p['scale']):.1f}"
 
-        @workflow_function
+        @function
         def label_b(method, scale):
             return f"{method}-{float(scale):.1f}"
 
@@ -340,7 +342,7 @@ class TestRawColumnsUnchanged:
     is a single ``NumericRecord``, not a per-cell sweep."""
 
     def test_raw_columns_go_through_body_once(self, numeric_ra):
-        @workflow_function
+        @function
         def f(x, y):
             return x + y
 
@@ -370,7 +372,7 @@ class TestMixedGroupingComposition:
             [Normal(loc=float(i), scale=1.0, name=f"n{i}") for i in range(2)],
         )
 
-        @workflow_function
+        @function
         def f(x, d):
             # d is a scalar Distribution per cell — add x to its mean.
             return x + float(d._mean())
@@ -385,7 +387,7 @@ class TestMixedGroupingComposition:
         Output is a DistributionArray of (4,) per-row marginals."""
         noise = Normal(loc=0.0, scale=0.1, name="noise")
 
-        @workflow_function(n_broadcast_samples=20, dispatch="sequential")
+        @function(n_broadcast_samples=20, dispatch="sequential")
         def f(x, noise: float):
             return x + noise
 

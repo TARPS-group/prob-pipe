@@ -6,7 +6,7 @@ Exercises:
 - effective_workflow_kind resolution (per-instance vs global)
 - Graceful fallback when Prefect is not installed
 - Task runner auto-detection and explicit override
-- Strict WorkflowFunction / Module workflow_kind validation
+- Strict Function / Module workflow_kind validation
 - Module inherits global config
 - PROBPIPE_WORKFLOW_KIND environment-variable override
 """
@@ -193,7 +193,7 @@ class TestTaskRunnerAutoDetection:
 
 
 class TestEffectiveWorkflowKind:
-    """Test the resolution logic on WorkflowFunction instances."""
+    """Test the resolution logic on Function instances."""
 
     @pytest.fixture(autouse=True)
     def _reset_config(self, monkeypatch):
@@ -215,24 +215,24 @@ class TestEffectiveWorkflowKind:
         The shipped default is OFF regardless of Prefect importability,
         so this case subsumes the prior `prefect missing` variant.
         """
-        from probpipe.core.node import WorkflowFunction
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
+        wf = Function(func=noop, dispatch="sequential", seed=0)
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_explicit_task_overrides_global(self):
         """Per-instance TASK beats global OFF."""
         prefect_config.workflow_kind = WorkflowKind.OFF
 
-        from probpipe.core.node import WorkflowFunction
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -247,12 +247,12 @@ class TestEffectiveWorkflowKind:
         """Per-instance OFF beats global TASK."""
         prefect_config.workflow_kind = WorkflowKind.TASK
 
-        from probpipe.core.node import WorkflowFunction
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=noop,
             workflow_kind=WorkflowKind.OFF,
             dispatch="sequential",
@@ -267,12 +267,12 @@ class TestEffectiveWorkflowKind:
         monkeypatch.setattr(node_mod, "task", None)
         monkeypatch.setattr(node_mod, "flow", None)
 
-        from probpipe.core.node import WorkflowFunction
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=noop,
             workflow_kind=WorkflowKind.TASK,
             dispatch="sequential",
@@ -291,24 +291,24 @@ class TestEffectiveWorkflowKind:
 
         prefect_config.workflow_kind = WorkflowKind.TASK
 
-        from probpipe.core.node import WorkflowFunction
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
+        wf = Function(func=noop, dispatch="sequential", seed=0)
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
     def test_global_flow_applies_to_default_instance(self):
         """Global FLOW → DEFAULT instance resolves to FLOW."""
         prefect_config.workflow_kind = WorkflowKind.FLOW
 
-        from probpipe.core.node import WorkflowFunction
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
+        wf = Function(func=noop, dispatch="sequential", seed=0)
         import probpipe.core.node as node_mod
 
         if node_mod.task is not None:
@@ -316,12 +316,12 @@ class TestEffectiveWorkflowKind:
 
     def test_config_change_after_construction(self):
         """Config change after WF creation takes effect (lazy resolution)."""
-        from probpipe.core.node import WorkflowFunction
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
-        wf = WorkflowFunction(func=noop, dispatch="sequential", seed=0)
+        wf = Function(func=noop, dispatch="sequential", seed=0)
         prefect_config.workflow_kind = WorkflowKind.OFF
         assert wf.effective_workflow_kind is WorkflowKind.OFF
 
@@ -340,28 +340,28 @@ class TestEffectiveWorkflowKind:
 class TestWorkflowKindConstructorValidation:
     """Verify constructors reject old-style workflow_kind values."""
 
-    def test_workflow_function_rejects_string(self):
-        from probpipe.core.node import WorkflowFunction
+    def test_function_rejects_string(self):
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
         with pytest.raises(TypeError, match="WorkflowKind enum member"):
-            WorkflowFunction(
+            Function(
                 func=noop,
                 workflow_kind="task",
                 dispatch="sequential",
                 seed=0,
             )
 
-    def test_workflow_function_rejects_none(self):
-        from probpipe.core.node import WorkflowFunction
+    def test_function_rejects_none(self):
+        from probpipe.core.node import Function
 
         def noop(x):
             return x
 
         with pytest.raises(TypeError, match="WorkflowKind enum member"):
-            WorkflowFunction(
+            Function(
                 func=noop,
                 workflow_kind=None,
                 dispatch="sequential",
@@ -405,7 +405,7 @@ class TestModuleInheritsConfig:
                 return x + 1
 
         mod = MyModule()
-        # The child WorkflowFunction should have DEFAULT as raw value
+        # The child Function should have DEFAULT as raw value
         assert mod.step._workflow_kind_raw is WorkflowKind.DEFAULT
 
     def test_module_explicit_off_passes_off_to_children(self):

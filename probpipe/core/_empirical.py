@@ -57,14 +57,17 @@ from ._numeric_record_distribution import (
     NumericRecordDistribution,
 )
 from .constraints import Constraint, real
+from .event_template import EventTemplate
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
     SupportsMean,
+    SupportsQuantile,
     SupportsSampling,
     SupportsVariance,
 )
-from .record import EventTemplate, Record
+from .record import Record
+from .tracked import auto_name
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -77,33 +80,69 @@ def _event_template_from_data(
 ) -> EventTemplate:
     """Build a ``EventTemplate`` from stored Record data.
 
-    Strips the first dimension (sample axis) from each field to get
-    event shapes, optionally prepending ``leading_shape``.
+    Strips the first dimension (sample axis) from each leaf to get event
+    shapes, optionally prepending ``leading_shape``. Leaf-keyed by full
+    ``/``-path, so a nested record yields a matching nested template
+    (path-keyed construction rebuilds the nesting).
     """
     specs: dict[str, tuple[int, ...]] = {}
-    for fname in record_data.fields:
-        arr = jnp.asarray(record_data[fname])
-        specs[fname] = (*leading_shape, *arr.shape[1:])
+    for key, val in record_data.items():
+        arr = jnp.asarray(val)
+        specs[key] = (*leading_shape, *arr.shape[1:])
     return EventTemplate(specs)
 
 
 def _index_record(record_data: Record, idx) -> NumericRecord:
-    """Index every field of a Record with the same indices.
+    """Index every leaf of a Record with the same indices.
 
     Returns a :class:`NumericRecord` so single-field results expose the
     ``__jax_array__`` / ``__float__`` shims at downstream call sites.
+    Leaf-keyed, so nested structure is preserved through the indexing.
     """
-    return NumericRecord({f: jnp.asarray(record_data[f])[idx] for f in record_data.fields})
+    return Record(
+        record_data.name,
+        {k: jnp.asarray(v)[idx] for k, v in record_data.items()},
+        name_is_auto=True,
+    )
 
 
 def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
-    """Apply *op* to each field of a Record, returning a :class:`NumericRecord`.
+    """Apply *op* to each leaf of a Record, returning a :class:`NumericRecord`.
 
     All-numeric outputs by construction; returning a ``NumericRecord``
     lets single-field consumers use ``jnp.asarray(result)`` /
     ``float(result)`` directly via the existing single-field shims.
+    Leaf-keyed, so nested structure is preserved.
     """
-    return NumericRecord({f: op(jnp.asarray(record_data[f])) for f in record_data.fields})
+    return Record(
+        record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()}, name_is_auto=True
+    )
+
+
+def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:
+    """Weight-aware quantile(s) of ``values`` along axis 0.
+
+    ``values`` has shape ``(n, *event)``, ``weights`` shape ``(n,)``, and ``q``
+    is a scalar or ``(Q,)`` array of probabilities. Returns shape
+    ``(*q.shape, *event)``. Uses the midpoint-CDF (Hazen, type-5) plotting
+    positions with linear interpolation: each sorted atom sits at its
+    cumulative weight less half its own weight. For uniform weights this
+    reduces to the type-5 empirical quantile, which differs from
+    ``jnp.quantile`` (type-7) at interior levels but agrees at the median and
+    the extremes.
+    """
+    n = values.shape[0]
+    event = values.shape[1:]
+    flat = values.reshape(n, -1)
+    order = jnp.argsort(flat, axis=0)
+    sorted_v = jnp.take_along_axis(flat, order, axis=0)
+    sorted_w = jnp.take_along_axis(jnp.broadcast_to(weights[:, None], flat.shape), order, axis=0)
+    cdf = jnp.cumsum(sorted_w, axis=0) - 0.5 * sorted_w
+    cdf = cdf / jnp.sum(sorted_w, axis=0, keepdims=True)
+    q1d = jnp.atleast_1d(q)
+    cols = jax.vmap(lambda c, v: jnp.interp(q1d, c, v), in_axes=(1, 1), out_axes=1)(cdf, sorted_v)
+    out = cols.reshape((q1d.shape[0], *event))
+    return out if jnp.ndim(q) > 0 else out[0]
 
 
 def _wrap_numeric_array_as_record(
@@ -139,7 +178,7 @@ def _wrap_numeric_array_as_record(
             f"{role} from a numeric array requires a non-empty name=, "
             f"so the auto-wrapped Record has a meaningful field name. "
             f"Pass name='theta' (or similar), or wrap the array yourself: "
-            f"Record(theta=arr)."
+            f"Record('theta', theta=arr)."
         )
     arr = _as_float_array(arr)
     if arr.ndim == 0:
@@ -157,7 +196,7 @@ def _wrap_numeric_array_as_record(
         n = prod(sample_shape)
         event_shape = arr.shape[n_sample_dims:]
         arr = arr.reshape(n, *event_shape)
-    return Record({name: arr}), name
+    return Record(name, {name: arr}, name_is_auto=True), name
 
 
 def _validate_record_samples(record_data: Record) -> int:
@@ -167,9 +206,10 @@ def _validate_record_samples(record_data: Record) -> int:
     field and report its shape so users can debug shape mismatches
     without having to instrument the call site.
     """
-    if not record_data.fields:
+    field_paths = tuple(record_data.event_template.keys())
+    if not field_paths:
         raise ValueError("Record samples must have at least one field.")
-    first_name = record_data.fields[0]
+    first_name = field_paths[0]
     first = jnp.asarray(record_data[first_name])
     if first.ndim == 0:
         raise ValueError(
@@ -178,7 +218,7 @@ def _validate_record_samples(record_data: Record) -> int:
             f"field {first_name!r} has shape {first.shape}."
         )
     n = int(first.shape[0])
-    for f in record_data.fields[1:]:
+    for f in field_paths[1:]:
         arr = jnp.asarray(record_data[f])
         if arr.ndim == 0:
             raise ValueError(
@@ -216,8 +256,8 @@ class EmpiricalDistribution[T](
 
     - ``samples`` is a :class:`Record` (each field stacked along axis 0),
     - or ``samples`` is a numeric JAX/numpy array and ``name=...`` is
-      passed (the array auto-wraps as a single-field ``Record({name:
-      arr})``).
+      passed (the array auto-wraps as a single-field record keyed by
+      ``name``).
 
     Otherwise, the generic base is returned and stores ``samples`` as a
     numpy object array.
@@ -263,9 +303,8 @@ class EmpiricalDistribution[T](
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        if name is None:
-            name = "empirical"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, "empirical")
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -364,12 +403,14 @@ class RecordEmpiricalDistribution(
     SupportsMean,
     SupportsVariance,
     SupportsCovariance,
+    SupportsQuantile,
 ):
     """Empirical distribution over Record-structured numeric samples.
 
     Each *sample* is a row of the stored Record: if the data has fields
     ``X`` of shape ``(n, p)`` and ``y`` of shape ``(n,)``, then a single
-    draw is ``Record(X=array(p,), y=scalar)``. Joint row indexing
+    draw is a record with field ``X`` of shape ``(p,)`` and scalar field
+    ``y``. Joint row indexing
     preserves per-observation correlation across fields during sampling
     and resampling.
 
@@ -381,13 +422,15 @@ class RecordEmpiricalDistribution(
     Inherits :class:`NumericRecordDistribution` shape semantics
     (``event_template``, ``event_shapes``, ``event_size``,
     ``batch_shape``) plus exact weighted moments
-    (``mean``, ``variance``, ``cov``) over each field.
+    (``mean``, ``variance``, ``cov``) and weighted ``quantile`` over each
+    field.
 
     Parameters
     ----------
     samples : Record | array-like
         Sample data. A Record's fields each stack along axis 0; a
-        numeric array auto-wraps as ``Record({name: arr})``.
+        numeric array auto-wraps as a single-field record keyed by
+        ``name``.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalised internally). Mutually
         exclusive with *log_weights*.
@@ -448,11 +491,10 @@ class RecordEmpiricalDistribution(
         self._record_data = samples
         self._num_atoms = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        if name is None:
-            name = "empirical(" + ",".join(samples.fields) + ")"
+        name, name_is_auto = auto_name(name, "empirical(" + ",".join(samples.fields) + ")")
         # Skip EmpiricalDistribution.__init__ (different storage shape);
         # call Distribution.__init__ directly for name registration.
-        Distribution.__init__(self, name=name)
+        Distribution.__init__(self, name=name, name_is_auto=name_is_auto)
         self._approximate = True
         self._event_template = _event_template_from_data(samples)
 
@@ -479,8 +521,10 @@ class RecordEmpiricalDistribution(
         # to that rule.
         cached = getattr(self, "_samples_record", None)
         if cached is None:
-            cached = NumericRecord(
-                {f: jnp.asarray(self._record_data[f]) for f in self._record_data.fields}
+            cached = Record(
+                self.name,
+                {k: jnp.asarray(v) for k, v in self._record_data.items()},
+                name_is_auto=True,
             )
             object.__setattr__(self, "_samples_record", cached)
         return cached
@@ -513,8 +557,7 @@ class RecordEmpiricalDistribution(
         cached = getattr(self, "_flat_samples_cache", None)
         if cached is None:
             parts = [
-                jnp.asarray(self._record_data[f]).reshape(self._num_atoms, -1)
-                for f in self._record_data.fields
+                jnp.asarray(v).reshape(self._num_atoms, -1) for _, v in self._record_data.items()
             ]
             cached = jnp.concatenate(parts, axis=-1)
             object.__setattr__(self, "_flat_samples_cache", cached)
@@ -545,14 +588,15 @@ class RecordEmpiricalDistribution(
         Raises
         ------
         AttributeError
-            If ``len(self.fields) > 1``.
+            If the stored value has more than one leaf field
+            (``len(self._record_data) > 1``).
         """
-        if len(self._record_data.fields) == 1:
-            f = self._record_data.fields[0]
-            return tuple(jnp.asarray(self._record_data[f]).shape[1:])
+        if len(self._record_data) == 1:
+            (key,) = self._record_data.keys()
+            return tuple(jnp.asarray(self._record_data[key]).shape[1:])
         raise AttributeError(
             f"{type(self).__name__} has multiple fields "
-            f"({self._record_data.fields}); ``event_shape`` is only "
+            f"({tuple(self._record_data.keys())}); ``event_shape`` is only "
             f"defined for single-field records. Use ``event_shapes`` "
             f"(plural) for the per-field dict."
         )
@@ -565,13 +609,11 @@ class RecordEmpiricalDistribution(
         :attr:`event_shape` (singular), which is single-field-only and
         raises on multi-field.
         """
-        return {
-            f: tuple(jnp.asarray(self._record_data[f]).shape[1:]) for f in self._record_data.fields
-        }
+        return {k: tuple(jnp.asarray(v).shape[1:]) for k, v in self._record_data.items()}
 
     @property
     def dtypes(self) -> dict[str, jnp.dtype]:
-        return {f: jnp.asarray(self._record_data[f]).dtype for f in self._record_data.fields}
+        return {k: jnp.asarray(v).dtype for k, v in self._record_data.items()}
 
     @property
     def dim(self) -> int:
@@ -584,7 +626,7 @@ class RecordEmpiricalDistribution(
 
     @property
     def supports(self) -> dict[str, Constraint]:
-        return {f: real for f in self._record_data.fields}
+        return dict.fromkeys(self._record_data, real)
 
     # -- sampling -----------------------------------------------------------
 
@@ -598,9 +640,9 @@ class RecordEmpiricalDistribution(
             return _index_record(self._record_data, idx)
         indices = self._w.choice(key, shape=(prod(sample_shape),))
         fields: dict[str, jnp.ndarray] = {}
-        for f in self._record_data.fields:
-            arr = jnp.asarray(self._record_data[f])
-            fields[f] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
+        for field_path in self._record_data:
+            arr = jnp.asarray(self._record_data[field_path])
+            fields[field_path] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
         # Return a ``NumericRecord`` rather than a ``NumericRecordArray``
         # for the batched case. ``NumericRecordArray`` would carry a
         # ``batch_shape`` that ``jax.vmap``'s pytree validation rejects
@@ -615,7 +657,7 @@ class RecordEmpiricalDistribution(
         # or calls ``flatten_value`` (which handles both types).
         # Single-field consumers still get the shape shim via the
         # NumericRecord coercion path.
-        return NumericRecord(fields)
+        return Record(self.name, fields, name_is_auto=True)
 
     # -- moments ------------------------------------------------------------
 
@@ -634,6 +676,21 @@ class RecordEmpiricalDistribution(
         """
         return _fieldwise_op(self._record_data, self._w.covariance)
 
+    def _quantile(self, q: ArrayLike) -> NumericRecord:
+        """Per-field quantile(s) at probability level(s) ``q`` (weight-aware).
+
+        Uses the midpoint-CDF (Hazen, type-5) plotting positions with linear
+        interpolation (see :func:`_weighted_quantile`) for both uniform and
+        non-uniform weights, so the estimator is continuous in the weights.
+        """
+        qa = jnp.asarray(q)
+        weights = self._w.normalized
+
+        def op(a: Array) -> Array:
+            return _weighted_quantile(a, weights, qa)
+
+        return _fieldwise_op(self._record_data, op)
+
     # -- expectation --------------------------------------------------------
 
     def _expectation(
@@ -651,12 +708,16 @@ class RecordEmpiricalDistribution(
         constructed from an array, so they expect to operate on
         arrays). Multi-field records pass the row Record as-is.
         """
-        single_field = len(self._record_data.fields) == 1
-        only_field = self._record_data.fields[0] if single_field else None
+        keys = tuple(self._record_data.keys())
+        single_field = len(keys) == 1
+        only_field = keys[0] if single_field else None
 
         def _row(i):
             r = _index_record(self._record_data, i)
-            return r[only_field] if single_field else r
+            if not single_field:
+                return r
+            assert only_field is not None
+            return r[only_field]
 
         if num_evaluations is not None and num_evaluations < self._num_atoms:
             if key is None:
@@ -680,7 +741,7 @@ class RecordEmpiricalDistribution(
     def __repr__(self) -> str:
         return (
             f"RecordEmpiricalDistribution(num_atoms={self._num_atoms}, "
-            f"fields=({', '.join(self._record_data.fields)}))"
+            f"fields=({', '.join(self._record_data.keys())}))"
         )
 
 
@@ -770,7 +831,7 @@ class BootstrapReplicateDistribution[T](
                     f"positive int giving the number of items per replicate."
                 )
             self._source_kind = "sampleable"
-            self._source = source
+            self._source_dist = source
             self._data = None
             self._w = None
             default_replicate_size = replicate_size
@@ -782,7 +843,7 @@ class BootstrapReplicateDistribution[T](
             return
 
         self._source_kind = "data"
-        self._source = None
+        self._source_dist = None
         if isinstance(source, EmpiricalDistribution):
             self._data = source.samples
             self._w = source._w
@@ -823,9 +884,8 @@ class BootstrapReplicateDistribution[T](
             if replicate_size < 1:
                 raise ValueError(f"replicate_size must be positive, got {replicate_size}")
             self._replicate_size = replicate_size
-        if name is None:
-            name = "bootstrap"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, "bootstrap")
+        super().__init__(name=name, name_is_auto=name_is_auto)
         if self._source_kind == "sampleable":
             self._source_size = None
         else:
@@ -874,7 +934,7 @@ class BootstrapReplicateDistribution[T](
 
     def _one_bootstrap(self, key: PRNGKey) -> Any:
         if self._source_kind == "sampleable":
-            return self._source._sample(key, sample_shape=(self._replicate_size,))
+            return self._source_dist._sample(key, sample_shape=(self._replicate_size,))
         idx = self._w.choice(key, shape=(self._replicate_size,))
         return self._data[idx]
 
@@ -946,7 +1006,7 @@ class BootstrapReplicateDistribution[T](
             return (
                 f"BootstrapReplicateDistribution("
                 f"replicate_size={self._replicate_size}, "
-                f"source={type(self._source).__name__})"
+                f"source={type(self._source_dist).__name__})"
             )
         return (
             f"BootstrapReplicateDistribution("
@@ -1062,7 +1122,7 @@ class RecordBootstrapReplicateDistribution(
         # Bootstrap-base bookkeeping. Set self._data so the base's
         # `.data` property returns the Record (matches old behaviour).
         self._source_kind = "data"
-        self._source = None
+        self._source_dist = None
         self._data = self._record_data
         self._init_bootstrap_state(
             default_replicate_size,
@@ -1180,7 +1240,7 @@ class RecordBootstrapReplicateDistribution(
 
     @property
     def supports(self) -> dict[str, Constraint]:
-        return {f: real for f in self._record_data.fields}
+        return dict.fromkeys(self._record_data.fields, real)
 
     # -- sampling -----------------------------------------------------------
 
@@ -1202,7 +1262,7 @@ class RecordBootstrapReplicateDistribution(
         for f in self._record_data.fields:
             arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
             stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
-        return NumericRecord(stacked)
+        return Record(self.name, stacked, name_is_auto=True)
 
     def _unwrap_dataset(self, dataset: Any) -> Any:
         """Unwrap a single-field auto-wrap dataset to its bare array.

@@ -88,7 +88,7 @@ class CmdStanNutsMethod(InferenceMethod):
             chains,
             parents=(dist,),
             algorithm="cmdstan_nuts",
-            auxiliary=inference_data,
+            annotations=inference_data,
             num_results=num_results,
             num_warmup=num_warmup,
             num_chains=num_chains,

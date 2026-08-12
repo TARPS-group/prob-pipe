@@ -21,12 +21,14 @@ from ..core._numeric_record import NumericRecord
 from ..core._numeric_record_distribution import NumericRecordDistribution
 from ..core._record_array import NumericRecordArray
 from ..core.constraints import Constraint, real
-from ..core.record import NumericEventTemplate, Record
+from ..core.event_template import NumericEventTemplate
+from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike
 from ._tfp_base import TFPDistribution
 
 if TYPE_CHECKING:
-    from ..core.record import EventTemplate
+    from ..core.event_template import EventTemplate
 
 __all__ = ["KDEDistribution"]
 
@@ -63,7 +65,7 @@ class KDEDistribution(TFPDistribution):
         — preserving named fields end-to-end across e.g. an MCMC posterior
         being routed through KDE as the new prior in
         :class:`~probpipe.modeling.IncrementalConditioner`. The template's
-        ``flat_size`` must equal ``samples.shape[1]``.
+        ``vector_size`` must equal ``samples.shape[1]``.
     name : str or None
         Distribution name for provenance.
     """
@@ -90,8 +92,7 @@ class KDEDistribution(TFPDistribution):
         n, d = samples.shape
         self._samples = samples
         self._d = d
-        if name is None:
-            name = "kde"
+        name, name_is_auto = auto_name(name, "kde")
 
         # Multi-field template support: when the caller supplies a template
         # with more than one field, preset ``_event_template`` so that
@@ -100,7 +101,7 @@ class KDEDistribution(TFPDistribution):
         # template's flat width matches the samples' trailing dimension.
         if event_template is not None and len(event_template.fields) > 1:
             if isinstance(event_template, NumericEventTemplate):
-                expected = event_template.flat_size
+                expected = event_template.vector_size
             else:
                 expected = sum(
                     int(jnp.prod(jnp.array(shape))) if shape else 1
@@ -108,13 +109,13 @@ class KDEDistribution(TFPDistribution):
                 )
             if expected != d:
                 raise ValueError(
-                    f"event_template flat_size ({expected}) does not match "
+                    f"event_template vector_size ({expected}) does not match "
                     f"samples flat dimension ({d}); template fields="
                     f"{event_template.fields}"
                 )
             object.__setattr__(self, "_event_template", event_template)
 
-        super().__init__(name=name)
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)

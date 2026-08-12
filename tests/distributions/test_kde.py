@@ -56,9 +56,9 @@ class TestEventTemplateConstructor:
         assert kde.event_template is two_field_template
         assert kde.event_template.fields == ("intercept", "slope")
 
-    def test_mismatched_flat_size_raises(self, flat_samples):
-        bad_tpl = EventTemplate(a=(), b=(), c=())  # flat_size=3, samples flat dim=2
-        with pytest.raises(ValueError, match="flat_size"):
+    def test_mismatched_vector_size_raises(self, flat_samples):
+        bad_tpl = EventTemplate(a=(), b=(), c=())  # vector_size=3, samples flat dim=2
+        with pytest.raises(ValueError, match="vector_size"):
             KDEDistribution(flat_samples, event_template=bad_tpl, name="bad")
 
     def test_single_field_template_unchanged(self, flat_samples):
@@ -129,7 +129,7 @@ class TestLogProbDualInput:
             event_template=two_field_template,
             name="post",
         )
-        nr = NumericRecord(intercept=jnp.array(0.5), slope=jnp.array(-0.3))
+        nr = NumericRecord("nr", intercept=jnp.array(0.5), slope=jnp.array(-0.3))
         lp_struct = kde._log_prob(nr)
         lp_flat = kde._log_prob(jnp.array([0.5, -0.3]))
         assert jnp.allclose(lp_struct, lp_flat)
@@ -141,7 +141,7 @@ class TestLogProbDualInput:
             event_template=two_field_template,
             name="post",
         )
-        rec = Record(intercept=jnp.array(0.5), slope=jnp.array(-0.3))
+        rec = Record("r", intercept=jnp.array(0.5), slope=jnp.array(-0.3))
         lp = kde._log_prob(rec)
         assert jnp.isfinite(lp)
 
@@ -183,6 +183,7 @@ class TestFromEmpirical:
     def test_multi_field_record_empirical(self, two_field_template):
         n = 200
         rec = Record(
+            "r",
             intercept=jax.random.normal(jax.random.PRNGKey(0), (n,)),
             slope=jax.random.normal(jax.random.PRNGKey(1), (n,)),
         )

@@ -65,7 +65,7 @@ m = dist._mean()
 
 The density ops (`log_prob` and its family) also accept the value by **named
 fields** — `log_prob(model, intercept=0.0, X=X_obs, y=y_obs)` — packed into one
-draw via `Distribution._pack_value` / the public `EventTemplate.pack`
+draw via `Distribution._pack_value`
 (single-field → the bare value; multi-field → a `Record`), the same shape as
 `condition_on`'s named data kwargs. Because `dist` and `value` are ordinary
 parameters, a distribution field whose name is exactly `value` or `dist` is
@@ -81,27 +81,44 @@ _sample_impl, _log_prob_impl, _mean_impl, _condition_on_impl
 ```
 
 These functions contain the protocol-check-and-delegate logic and are
-registered in `_OP_REGISTRY`. They are wrapped by `WorkflowFunction`
+registered in `_OP_REGISTRY`. They are wrapped by `Function`
 for broadcasting/orchestration and by `_make_op` for the positional-arg
 public API.
 
-### 1.4 Standalone workflow functions
+### 1.4 Standalone Functions
 
-Workflow functions that are **not** ops (i.e., not universal operations
+Functions that are **not** ops (i.e., not universal operations
 on distributions) follow the pattern:
 
 - Implementation function: `_<name>_impl`
-- Public `WorkflowFunction` instance: `<name>`
+- Public `Function` instance: `<name>`
 
 ```python
 # probpipe/inference/_nutpie.py
 def _condition_on_nutpie_impl(model, data=None, *, ...):
     ...
 
-condition_on_nutpie = WorkflowFunction(
+condition_on_nutpie = Function(
     func=_condition_on_nutpie_impl, name="condition_on_nutpie"
 )
 ```
+
+Treat a public `Function` as an immutable, first-class `TrackedTerm` / `Annotated`
+computation term. Its construction-time `inspect.Signature` is the Python
+calling contract; optional `input_template` and `output_template` declarations
+are authoritative schemas but never derive or replace that signature. Use
+`apply(*args, **kwargs)` for one raw evaluation with binding and schema checks.
+Use `__call__` for distribution lifting, array sweeps, orchestration, result
+wrapping, and Function-first provenance.
+
+If an implementation returns an existing `Record`, `RecordArray`, or
+`Distribution`, `apply` preserves its identity. `__call__` instead creates a
+shallow result copy that shares value data and templates, owns a separate
+annotations container, and receives only the current call's provenance. Do not
+restore identity-through behavior at the workflow boundary. Variadic Functions
+without an input template are supported: the planner treats every `*args`
+element and `**kwargs` entry as an independent slot while reconstructing the
+original `BoundArguments` before invoking user code.
 
 Exception: functions whose return value is a model *component* rather than a
 `Record`/`Distribution` are deliberately **plain functions** — the workflow
@@ -150,8 +167,8 @@ Method classes are CamelCase: ``TFPNutsMethod``, ``CmdStanNutsMethod``,
 
 ### 1.8 Workflow option namespace
 
-`WorkflowFunction` keeps ProbPipe controls separate from wrapped-function
-kwargs. Use `@workflow_function(...)` for definition-time controls
+`Function` keeps ProbPipe controls separate from wrapped-function
+kwargs. Use `@function(...)` for definition-time controls
 such as `dispatch`, `seed`, and `n_broadcast_samples`, and use
 `workflow.with_options(...)(...)` for one-call overrides such as
 `seed`, `n_broadcast_samples`, and `include_inputs`.
@@ -194,11 +211,14 @@ or a whole resampled replicate (use `replicate_size`).
 
 ### 1.10 Record field iteration and path access
 
-`Record`, `EventTemplate`, `RecordArray`, and every Record-based
-distribution iterate fields in **insertion order** — the order
-keyword arguments were passed to the constructor (or the order of
-the input dict). Code must not rely on an alphabetical or sorted
-order; the constructor preserves what the caller wrote.
+The mapping protocol on `Record` and `EventTemplate` (`keys` / `values`
+/ `items` / `__iter__` / `__len__` / `__contains__` / `__getitem__`) is
+**leaf-keyed**: it enumerates every leaf by its full `/`-path, never
+interior nodes. The
+order is **canonical first-appearance order** — the order each field
+was first introduced (keyword-argument or input-dict order at
+construction). Code must not rely on an alphabetical or sorted order;
+the constructor preserves what the caller wrote.
 
 The `/` character is reserved as a nested-path separator. Field
 names may not contain `/` (raises `ValueError` at construction).
@@ -210,12 +230,43 @@ record["params/intercept"]   # same as record["params", "intercept"]
 "params/intercept" in record # same as record["params", "intercept"] not raising
 ```
 
-`EventTemplate.leaf_shapes` keys nested fields with the same `/`
-separator, so paths round-trip with `Record.__getitem__`.
+Because `[]` reaches only leaves, navigate to a leaf **or** an interior
+subtree with `at_path` instead — `record.at_path("params")` returns the
+sub-Record, whereas `record["params"]` raises when `params` is not a
+leaf. `keys()` lists every leaf's path using the same `/` separator, so
+those paths round-trip with `__getitem__`.
+
+Two surfaces are documented exceptions, each pending its own follow-up:
+
+- `RecordArray` / `NumericRecordArray`: the mapping surface (`keys` /
+  `len` / `in`) is still **top-level** (first level of field names)
+  pending the batch-axis rework, so `"outer" in arr` can be `True` while
+  `arr["outer"]` raises if `outer` is an interior node. String `[]` *is*
+  leaf-keyed. Treat this as temporary.
+- Record-based **distributions** (`RecordDistribution`,
+  `RecordEmpiricalDistribution`, …): their `fields` / `keys()` / `in` /
+  `[]` surface is still **top-level** pending the distribution
+  value-model work. Use `dist.event_template.keys()` for the leaf paths
+  of one draw.
+
+**Mappings are never leaves.** A `Mapping` value denotes tree
+structure: a dict field value is always materialised into a nested
+subtree, never stored as a single opaque leaf (construction recurses
+into every `Mapping`, whether passed as a keyword value or nested inside
+a positional mapping). There is no way to carry an opaque payload dict
+inside a `Record`; use a non-mapping container if you need one leaf.
+
+**Renaming fields.** `with_path_names(old=new, ...)` returns a
+same-family tree with the given nodes (leaves or whole subtrees)
+renamed. Keys are node paths, or bare names when unambiguous — a bare
+name resolves to the unique node so named and raises `ValueError`
+when the tree contains it more than once. It renames fields *within*
+the tree; renaming the object itself is `with_name`.
 
 When adding new Record-based containers, follow these conventions:
-preserve insertion order, reject `/` in field names, and accept the
-slash-delimited form in any string-keyed lookup.
+preserve first-appearance order, reject `/` in field names, materialize
+a mapping value into a nested subtree (never a leaf), key the mapping by
+leaf path, and accept the slash-delimited form in any string-keyed lookup.
 
 ### 1.11 Distribution iteration
 
@@ -235,6 +286,9 @@ field names dict-style (`keys()` / `values()` / `items()`).
 `DistributionArray` is positional and follows numpy/jax conventions:
 `len(da)` is the leading-axis dim and `da.size` is the total cell
 count (`prod(da.batch_shape)`); elements are accessed via `da[i]`.
+Its read-only `event_template` is an explicitly supplied authoritative
+Function aggregate template, a common template derived from compatible literal
+components, or `None` when no common declaration exists.
 Iteration walks the leading axis — for a 1-D `DistributionArray`
 it yields scalar cells; for a multi-d one it yields sub-arrays of
 shape `batch_shape[1:]`, mirroring `iter(np.zeros((2, 3)))`. For
@@ -319,8 +373,8 @@ from probpipe.core.record import Record
 ```
 
 A handful of `core/` and `distributions/` modules fit this profile —
-`protocols.py`, `record.py`, `distribution.py`, `ops.py`,
-`constraints.py`, `provenance.py`, `transition.py`, `node.py`,
+`protocols.py`, `named_tree.py`, `record.py`, `distribution.py`, `ops.py`,
+`constraints.py`, `provenance.py`, `tracked.py`, `transition.py`, `node.py`,
 `continuous.py`, `discrete.py`, `multivariate.py`, `transformed.py`.
 Everything else in those subpackages (the `_*.py` files) is an
 implementation detail re-exported via the package `__init__.py`.
@@ -346,7 +400,7 @@ example when helpful:
 
 Each public function (``sample``, ``mean``, ``log_prob``, ...) is a
 lightweight positional-arg wrapper around an internal
-:class:`~probpipe.core.node.WorkflowFunction`.
+:class:`~probpipe.core.node.Function`.
 
 Usage::
 
@@ -544,6 +598,8 @@ converters/   (imports core/, distributions/, custom_types)
      ↑
 modeling/     (imports core/, inference/, converters/, custom_types)
 inference/    (imports core/, custom_types)
+validation/   (imports core/, inference/, custom_types)
+diagnostics/  (imports core/, inference/, validation/, custom_types)
 ```
 
 ### Rules
@@ -561,6 +617,11 @@ inference/    (imports core/, custom_types)
 6. **`inference/`** must never import from `modeling/` or `converters/`.
 7. **`modeling/`** may import from `inference/` (for MCMC result types)
    and from `converters/` (for auto-conversion in conditioning).
+8. **`validation/`** may import from `core/`, `inference/`, and
+   `custom_types`.
+9. **`diagnostics/`** may import from `core/`, `inference/`, `validation/`,
+   and `custom_types`; it must not become a dependency of those packages except
+   for the documented lazy accessor edge below.
 
 > **Exceptions** (intentional reverse edges):
 >
@@ -569,6 +630,8 @@ inference/    (imports core/, custom_types)
 > - `inference/` → `distributions/` (lazy imports: prior-type dispatch on
 >   distribution classes in `_blackjax_ess`, `bijector_for` constraint
 >   reparameterization in `_bayesflow_posteriors`)
+> - `core/` → `diagnostics.views` (lazy import inside
+>   `Distribution.diagnostics` to construct the read-only diagnostics accessor)
 >
 > These use lazy (in-function) imports to avoid circular imports at
 > module load time.  Do not add new reverse edges without discussion.
@@ -725,16 +788,19 @@ modules (`_*.py`) whose symbols are re-exported through the package
 
 ### 9.2 Immutability
 
-Distribution objects are immutable. Parameters are fixed at construction;
-operations return new distribution objects rather than mutating state.
+Distribution and `Function` objects are immutable. Parameters, Function
+signatures, templates, controls, and implementations are fixed at construction;
+operations return new terms rather than mutating state.
 
-**The one carve-out is `Distribution._auxiliary`**, a `DataTree` whose
-job is to collect post-construction metadata (validation results,
-diagnostic outputs, future LOO/WAIC scores) under named groups. Ops
-like `predictive_check` mutate it in place because the alternative —
-returning a renamed clone for every diagnostic — would break the
-source/identity tracking that downstream code relies on. Treat it as
-append-only and never use it as a back-channel for mutating
+**The one carve-out is the `annotations` store** (`_annotations`, provided
+by the `Annotated` mixin in `probpipe.core.tracked` and carried by
+`Distribution` and `Record`): a string-keyed mapping — typically an
+`xarray.DataTree` — whose job is to collect post-construction metadata
+(validation results, diagnostic outputs, future LOO/WAIC scores) under
+named groups. Ops like `predictive_check` mutate it in place because the
+alternative — returning a renamed clone for every diagnostic — would
+break the provenance/identity tracking that downstream code relies on.
+Treat it as append-only and never use it as a back-channel for mutating
 parameter-like state.
 
 ### 9.3 Error messages

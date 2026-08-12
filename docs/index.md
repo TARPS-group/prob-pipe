@@ -11,13 +11,13 @@ In practice, these issues make it hard to explore the full design space of avail
 
 1. **`Distribution`**: the universal representation of random quantities (priors, posteriors, data-generating processes). A distribution's capabilities are declared via protocols (`SupportsSampling`, `SupportsLogProb`, ...), and ProbPipe converts between representations as needed.
 2. **`Record`**: the universal container for non-random structured data (observed datasets, hyperparameters, design matrices). `Record` is the deterministic counterpart of `Distribution`.
-3. **`WorkflowFunction`**: Usually construction by decorating a function with  `@workflow_function`. Pass the declared types of values, the workflow function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the functions declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all returned values from a workflow function are wrapped as an appropriate `Record` / `Distribution`. 
+3. **`Function`**: Usually constructed by decorating a function with `@function`. Pass the declared types of values and the Function runs normally. But pass a `Distribution` where a concrete value is expected, and ProbPipe propagates uncertainty automatically, returning a `Distribution` over the function's declared result type. Similarly, array-valued inputs (a `RecordArray`) broadcast across fixed values (e.g., for hyperparameter sweeps). To ensure composability and modularity, all values returned from a Function are wrapped as an appropriate `Record` / `Distribution`.
 
-`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `WorkflowFunction`, so they are interchangeable as arguments to workflow function. 
+`Distribution` and `Record` share a single interface for named-field access (`fields`, `select(...)`, `select_all()`) and passing components into a `Function`, so they are interchangeable as arguments to Functions.
 
 ## Built-in operations
 
-ProbPipe provides a set of built-in **ops**, which are workflow functions that can support specalized features to streamline pipeline construction:
+ProbPipe provides a set of built-in **ops**, which are Functions that can support specialized features to streamline pipeline construction:
 
 - **`condition_on`**: condition a model on observed data, automatically selecting the best inference algorithm (or specify one with `method=`).
 - **`mean`**, **`variance`**, **`cov`**, **`expectation`**: compute distributional summaries, with automatic Monte Carlo fallback when exact computation is unavailable.
@@ -70,10 +70,10 @@ ProbPipe ships as two distributions that share the same `probpipe` import name:
 
 | Install | What you get |
 |---|---|
-| `pip install probpipe` | **Recommended.** The minimal core plus the inference backends the docs use — PyMC, nutpie, and BayesFlow — so every example and tutorial runs out of the box (Python 3.12–3.13; see the 3.14 note below). |
+| `pip install probpipe` | **Recommended.** The minimal core plus the inference backends the docs use — PyMC, nutpie, pyabc, and BayesFlow — so every example and tutorial runs out of the box (Python 3.12–3.13; see the 3.14 note below). |
 | `pip install probpipe-core` | **Minimal.** The JAX base only (JAX, BlackJAX, TFP, ArviZ); add backends as extras, e.g. `pip install "probpipe-core[pymc]"`. |
 
-`probpipe` already bundles PyMC, nutpie, and BayesFlow. Any remaining optional extra can be added on top with either name — `pip install "probpipe[prefect]"` (also `[viz]`, `[stan]`) — and `probpipe-core` users add any backend the same way, e.g. `pip install "probpipe-core[pymc]"`. On **Python 3.14** `probpipe` omits BayesFlow (its neural-SBI backend caps `<3.14`), so the neural-SBI sections of the *Flexible inference* tutorial are unavailable there until upstream lifts the cap; everything else runs.
+`probpipe` already bundles PyMC, nutpie, pyabc, and BayesFlow. Any remaining optional extra can be added on top with either name — `pip install "probpipe[prefect]"` (also `[viz]`, `[stan]`) — and `probpipe-core` users add any backend the same way, e.g. `pip install "probpipe-core[pymc]"`. On **Python 3.14** `probpipe` omits BayesFlow (its neural-SBI backend caps `<3.14`), so the neural-SBI sections of the *Flexible inference* tutorial are unavailable there until upstream lifts the cap; everything else runs.
 
 > Publishing to PyPI is pending; for now install from source as shown above (the repository root builds `probpipe-core` — add the extras you need).
 
@@ -94,7 +94,7 @@ pip install ".[bayesflow]"  # BayesFlow amortized simulation-based inference (Py
 
 ### Ray via Prefect
 
-ProbPipe can dispatch Prefect-orchestrated `WorkflowFunction` tasks to Ray via Prefect-Ray:
+ProbPipe can dispatch Prefect-orchestrated `Function` tasks to Ray via Prefect-Ray:
 
 ```bash
 pip install "probpipe[prefect]"

@@ -1,7 +1,7 @@
-"""WorkflowFunction broadcast-planning helpers.
+"""Function broadcast-planning helpers.
 
 This private module classifies already-normalized workflow inputs into
-the broadcast regime and sweep shape that ``WorkflowFunction`` should
+the broadcast regime and sweep shape that ``Function`` should
 execute. Planning is intentionally side-effect-free.
 """
 
@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from math import prod
 from typing import Any, Literal
 
-from . import _workflow_distribution_normalization
+from . import _workflow_call, _workflow_distribution_normalization
 from ._distribution_array import DistributionArray
 from ._record_array import RecordArray
 from .distribution import Distribution
@@ -24,7 +24,7 @@ BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
 class ArrayBroadcastGroup:
     """One parent-identity group of array-valued sweep arguments."""
 
-    arg_names: tuple[str, ...]
+    arg_refs: tuple[_workflow_call.WorkflowInputRef, ...]
     batch_shape: tuple[int, ...]
     size: int
 
@@ -34,8 +34,8 @@ class BroadcastPlan:
     """Pure broadcast classification for one resolved workflow call."""
 
     regime: BroadcastRegime
-    dist_args: tuple[str, ...]
-    array_args: tuple[str, ...]
+    dist_args: tuple[_workflow_call.WorkflowInputRef, ...]
+    array_args: tuple[_workflow_call.WorkflowInputRef, ...]
     array_groups: tuple[ArrayBroadcastGroup, ...]
     sweep_batch_shape: tuple[int, ...]
     n_sweep: int
@@ -44,14 +44,15 @@ class BroadcastPlan:
 def build_broadcast_plan(
     *,
     values: Mapping[str, Any],
-    hints: Mapping[str, Any],
+    signature_info: _workflow_call.WorkflowSignatureInfo,
 ) -> BroadcastPlan:
     """Classify normalized values into a broadcast execution plan."""
-    dist_args: list[str] = []
-    array_args: list[str] = []
+    dist_args: list[_workflow_call.WorkflowInputRef] = []
+    array_args: list[_workflow_call.WorkflowInputRef] = []
 
-    for name, value in values.items():
-        expected = hints.get(name)
+    for ref in _workflow_call.iter_input_refs(signature_info, values):
+        value = _workflow_call.input_ref_value(values, ref)
+        expected = _workflow_call.input_ref_hint(signature_info, ref)
 
         is_record_array = isinstance(value, RecordArray)
         is_dist_array = isinstance(value, DistributionArray)
@@ -65,15 +66,15 @@ def build_broadcast_plan(
                 or expected is Any
             ):
                 continue
-            array_args.append(name)
+            array_args.append(ref)
             continue
 
         if isinstance(value, Distribution):
             if _workflow_distribution_normalization.is_distribution_hint(expected):
                 continue
-            dist_args.append(name)
+            dist_args.append(ref)
 
-    array_groups = group_array_args_by_parent(values=values, names=array_args)
+    array_groups = group_array_args_by_parent(values=values, refs=array_args)
     sweep_batch_shape = tuple(axis for group in array_groups for axis in group.batch_shape)
     n_sweep = prod(sweep_batch_shape)
 
@@ -87,32 +88,45 @@ def build_broadcast_plan(
     )
 
 
-def group_by_parent(
+def group_by_root(
     *,
     values: Mapping[str, Any],
-    names: Sequence[str],
-) -> dict[int, list[str]]:
-    """Group argument names by the identity of their source parent."""
-    groups: dict[int, list[str]] = {}
-    for name in names:
-        value = values[name]
-        parent = getattr(value, "parent", value)
-        groups.setdefault(id(parent), []).append(name)
-    return groups
+    refs: Sequence[_workflow_call.WorkflowInputRef],
+) -> list[tuple[Any, tuple[_workflow_call.WorkflowInputRef, ...]]]:
+    """Group input references by root ancestor, with the root of each group.
+
+    A value with no parent is its own root, so one group holds every reference
+    that denotes the same underlying random variable: the same distribution
+    passed twice, sibling views of one parent, and a parent passed alongside its
+    own view. References with no common root land in separate groups. Groups and
+    their members keep argument order, so the grouping is a deterministic
+    function of the call.
+
+    A root is found by a single ``parent`` lookup, which is exact for the view
+    types that exist: a view's parent is always a distribution, never another
+    view. A nested view type would need this walked transitively.
+    """
+    groups: dict[int, tuple[Any, list[_workflow_call.WorkflowInputRef]]] = {}
+    for ref in refs:
+        value = _workflow_call.input_ref_value(values, ref)
+        root = getattr(value, "parent", value)
+        groups.setdefault(id(root), (root, []))[1].append(ref)
+    return [(root, tuple(group_refs)) for root, group_refs in groups.values()]
 
 
 def group_array_args_by_parent(
     *,
     values: Mapping[str, Any],
-    names: Sequence[str],
+    refs: Sequence[_workflow_call.WorkflowInputRef],
 ) -> tuple[ArrayBroadcastGroup, ...]:
     """Build parent-identity groups for array-valued sweep arguments."""
     groups: list[ArrayBroadcastGroup] = []
-    for arg_names in group_by_parent(values=values, names=names).values():
-        batch_shape = tuple(values[arg_names[0]].batch_shape)
+    for _root, arg_refs in group_by_root(values=values, refs=refs):
+        first = _workflow_call.input_ref_value(values, arg_refs[0])
+        batch_shape = tuple(first.batch_shape)
         groups.append(
             ArrayBroadcastGroup(
-                arg_names=tuple(arg_names),
+                arg_refs=tuple(arg_refs),
                 batch_shape=batch_shape,
                 size=prod(batch_shape),
             )
@@ -122,8 +136,8 @@ def group_array_args_by_parent(
 
 def _broadcast_regime(
     *,
-    dist_args: Sequence[str],
-    array_args: Sequence[str],
+    dist_args: Sequence[_workflow_call.WorkflowInputRef],
+    array_args: Sequence[_workflow_call.WorkflowInputRef],
 ) -> BroadcastRegime:
     if dist_args and array_args:
         return "nested"

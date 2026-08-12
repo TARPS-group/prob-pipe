@@ -558,7 +558,7 @@ def rwmh(
     Returns
     -------
     ApproximateDistribution
-        Posterior samples with chain structure and an auxiliary
+        Posterior samples with chain structure and an annotations
         ArviZ-shaped ``DataTree`` carrying per-step acceptance stats
         and warmup positions.
     """
@@ -615,13 +615,13 @@ def rwmh(
         random_seed=random_seed,
     )
 
-    auxiliary = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
+    annotations = build_mcmc_datatree(chains, sample_stats, warmup_chains=warmups)
     event_template = extract_event_template(dist)
     return make_posterior(
         chains,
         parents=(dist,),
         algorithm="blackjax_rwmh",
-        auxiliary=auxiliary,
+        annotations=annotations,
         event_template=event_template,
         num_results=num_results,
         num_warmup=num_warmup,

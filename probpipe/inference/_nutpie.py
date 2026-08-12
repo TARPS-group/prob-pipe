@@ -6,7 +6,7 @@ import logging
 from typing import Any
 
 from ..core._registry import MethodInfo
-from ..core.node import workflow_function
+from ..core.node import function
 from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import extract_chain_columns, posterior_var_order
@@ -18,11 +18,11 @@ __all__ = ["NutpieNutsMethod", "condition_on_nutpie"]
 
 
 # ---------------------------------------------------------------------------
-# Standalone WorkflowFunction
+# Standalone Function
 # ---------------------------------------------------------------------------
 
 
-@workflow_function
+@function
 def condition_on_nutpie(
     model: Any,
     data: ArrayLike | None = None,
@@ -80,7 +80,7 @@ def condition_on_nutpie(
         chains,
         parents=(model,),
         algorithm="nutpie_nuts",
-        auxiliary=trace,
+        annotations=trace,
         event_template=event_template,
         field_order=field_order,
         num_results=num_results,
@@ -214,4 +214,4 @@ class NutpieNutsMethod(InferenceMethod):
         return MethodInfo(feasible=True, method_name=self.name)
 
     def execute(self, dist: Any, observed: Any, **kwargs: Any) -> ApproximateDistribution:
-        return condition_on_nutpie._func(dist, observed, **kwargs)
+        return condition_on_nutpie.apply(dist, observed, **kwargs)

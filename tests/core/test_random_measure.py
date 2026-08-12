@@ -203,7 +203,9 @@ class TestSampling:
     def test_single_sample_returns_distribution(self, key):
         comps = [Normal(loc=float(i), scale=1.0, name=f"n{i}") for i in range(3)]
         rm = _DiracRandomMeasure(comps)
-        drawn = sample(rm, key=key)
+        # ``apply`` exposes the sampled component itself; the public Function
+        # call creates an independent tracked result term.
+        drawn = sample.apply(rm, key=key)
         assert isinstance(drawn, Distribution)
         assert drawn in comps  # one of the components, by weight
 

@@ -14,6 +14,7 @@ the section on this page that covers it in detail.
 | New canonical bijector for a `Constraint` | A factory returning a TFP bijector | `register_bijector(constraint_or_class, factory)` — see [Custom bijectors](#custom-bijectors) |
 | New auxiliary-metadata adapter (custom array-like) | `capture` and `restore` callables | `register_aux(leaf_type, capture, restore)` — see [Custom auxiliary metadata](#custom-auxiliary-metadata) |
 | New registry (cataloging surface) | Pass `name="..."` to a `BaseDispatchRegistry` subclass, *or* expose `name`/`description`/`kind` + `entry_summaries()`/`describe_entry()` on a non-conforming registry | Self-registers (named dispatch registries) *or* `registry_catalog.register(...)` (adapter pattern) — see [Registry catalog](#registry-catalog) |
+| New array backend (custom array-like leaf type) | An `ArrayBackend` (shape / dtype / conversion hooks) | `register_array_backend(leaf_type, backend)` — see [Custom array backends](#custom-array-backends) |
 
 The two remaining sections — [Broadcasting internals](#broadcasting-internals-exposed-for-extension)
 and the [Internals](internals.md) page — document classes that an
@@ -228,18 +229,19 @@ registry handle itself are documented under
 `bijector_for(c)` for a given `Constraint` instance or class. See
 [Constraints → Bijectors](constraints.md#bijectors-for-unconstrained-reparameterization).
 
-## Custom auxiliary metadata
+## Custom array backends
 
-`register_aux` extends the `Record` ↔ `NumericRecord` round-trip to a
-new array-like type. See
-[Records → Auxiliary-metadata registry](records.md#auxiliary-metadata-registry).
+`register_array_backend` makes a new array-like container a first-class
+numeric leaf: recognised, promoted, converted at the compute boundary, and
+fingerprinted. See
+[Records → Array-backend registry](records.md#array-backend-registry).
 
 ## Broadcasting internals (exposed for extension)
 
 `DistributionArray` is the shape-indexed container produced by
-parameter-sweep workflow functions whose inner call returns a
+parameter-sweep `Function` calls whose inner call returns a
 `Distribution`. `BroadcastDistribution` is the joint container produced
-by `WorkflowFunction` when called with `workflow.with_options(include_inputs=True)(...)`.
+by `Function` when called with `workflow.with_options(include_inputs=True)(...)`.
 
 ::: probpipe.DistributionArray
 

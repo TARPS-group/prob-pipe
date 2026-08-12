@@ -1,0 +1,1066 @@
+"""Tests for the fingerprint utility module."""
+
+from __future__ import annotations
+
+import inspect
+import subprocess
+import sys
+import textwrap
+from functools import partial
+
+import jax.numpy as jnp
+import numpy as np
+import pytest
+
+from probpipe import (
+    ArraySpec,
+    DistributionSpec,
+    EventTemplate,
+    FunctionSpec,
+    Normal,
+    OpaqueSpec,
+    Record,
+    RecordSpec,
+    ValueSpec,
+)
+from probpipe.core._fingerprint import (
+    _fingerprint_with_strength,
+    _update_function,
+    fingerprint,
+)
+from probpipe.core.node import Function
+from probpipe.core.provenance import ParentInfo, Provenance
+
+# ===========================================================================
+# 1. Return type and format
+# ===========================================================================
+
+
+class TestReturnFormat:
+    def test_returns_string(self):
+        assert isinstance(fingerprint(Normal(loc=0.0, scale=1.0, name="n")), str)
+
+    def test_returns_16_chars(self):
+        assert len(fingerprint(Normal(loc=0.0, scale=1.0, name="n"))) == 16
+
+    def test_hex_characters_only(self):
+        fp = fingerprint(Normal(loc=0.0, scale=1.0, name="n"))
+        assert all(c in "0123456789abcdef" for c in fp)
+
+
+# ===========================================================================
+# 2. Strength classification
+# ===========================================================================
+
+
+class TestFingerprintStrength:
+    def test_structured_content_is_strong(self):
+        value = {"count": 3, "values": np.asarray([1.0, 2.0])}
+
+        digest, is_weak = _fingerprint_with_strength(value)
+
+        assert len(digest) == 16
+        assert is_weak is False
+
+    def test_opaque_identity_is_weak_and_process_local(self):
+        first = object()
+        second = object()
+
+        first_digest, first_is_weak = _fingerprint_with_strength(first)
+        repeated_digest, repeated_is_weak = _fingerprint_with_strength(first)
+        second_digest, second_is_weak = _fingerprint_with_strength(second)
+
+        assert first_digest == repeated_digest
+        assert first_digest != second_digest
+        assert first_is_weak is True
+        assert repeated_is_weak is True
+        assert second_is_weak is True
+
+    def test_weakness_propagates_through_structured_values(self):
+        _, is_weak = _fingerprint_with_strength({"opaque": object()})
+
+        assert is_weak is True
+
+    def test_callable_classification_is_conservative(self):
+        def plain(value=1):
+            return value
+
+        captured = 1
+
+        def closure(value):
+            return value + captured
+
+        class CallableObject:
+            def __call__(self, value):
+                return value
+
+            def method(self, value):
+                return value
+
+        callable_object = CallableObject()
+        weak_callables = (
+            closure,
+            callable_object.method,
+            partial(plain, 1),
+            callable_object,
+            CallableObject,
+            len,
+            np.add,
+        )
+
+        assert _fingerprint_with_strength(plain)[1] is False
+        assert all(_fingerprint_with_strength(value)[1] is True for value in weak_callables)
+
+    def test_function_closure_propagates_only_opaque_weakness(self):
+        def build(captured):
+            def implementation(value):
+                return value if captured is None else captured
+
+            return Function(func=implementation)
+
+        assert _fingerprint_with_strength(build(1))[1] is False
+        assert _fingerprint_with_strength(build(object()))[1] is True
+
+    def test_closure_free_function_is_strong_across_processes(self):
+        script = textwrap.dedent("""
+            from probpipe.core._fingerprint import _fingerprint_with_strength
+
+            def identity(value=1):
+                return value
+
+            print(*_fingerprint_with_strength(identity))
+        """)
+
+        def run():
+            return subprocess.check_output([sys.executable, "-c", script], text=True).strip()
+
+        assert run() == run()
+
+    def test_opaque_identity_is_not_portable_across_processes(self):
+        script = textwrap.dedent("""
+            from probpipe.core._fingerprint import _fingerprint_with_strength
+
+            print(*_fingerprint_with_strength(object()))
+        """)
+
+        def run():
+            return subprocess.check_output([sys.executable, "-c", script], text=True).strip()
+
+        assert run() != run()
+
+
+# ===========================================================================
+# 3. Python primitives
+# ===========================================================================
+
+
+class TestPrimitives:
+    def test_int_stable(self):
+        # Two separately-constructed equal values must produce the same digest.
+        assert fingerprint(int("42")) == fingerprint(int("42"))
+
+    def test_different_ints_differ(self):
+        assert fingerprint(1) != fingerprint(2)
+
+    def test_big_int_does_not_crash(self):
+        # Integers outside the signed-64-bit range must not raise.
+        assert isinstance(fingerprint(2**100), str)
+        assert isinstance(fingerprint([1, 2**100]), str)
+
+    def test_float_stable(self):
+        assert fingerprint(float("3.14")) == fingerprint(float("3.14"))
+
+    def test_different_floats_differ(self):
+        assert fingerprint(1.0) != fingerprint(2.0)
+
+    def test_nan_and_inf_do_not_crash(self):
+        assert isinstance(fingerprint(float("nan")), str)
+        assert isinstance(fingerprint(float("inf")), str)
+        assert isinstance(fingerprint(float("-inf")), str)
+
+    def test_bool_stable(self):
+        assert fingerprint(bool(1)) == fingerprint(bool(1))
+
+    def test_bool_differs_from_int(self):
+        # True == 1 in Python but they must hash differently — different types.
+        assert fingerprint(True) != fingerprint(1)
+
+    def test_false_differs_from_zero(self):
+        assert fingerprint(False) != fingerprint(0)
+
+    def test_string_stable(self):
+        assert fingerprint("hello") == fingerprint("hello")
+
+    def test_different_strings_differ(self):
+        assert fingerprint("a") != fingerprint("b")
+
+    def test_none_stable(self):
+        assert fingerprint(type(None)()) == fingerprint(type(None)())
+
+    def test_none_differs_from_zero(self):
+        assert fingerprint(None) != fingerprint(0)
+
+    def test_empty_list_stable(self):
+        assert fingerprint([]) == fingerprint([])
+
+    def test_empty_dict_stable(self):
+        assert fingerprint({}) == fingerprint({})
+
+    def test_list_stable(self):
+        assert fingerprint([1, 2, 3]) == fingerprint([1, 2, 3])
+
+    def test_tuple_stable(self):
+        assert fingerprint((1, 2)) == fingerprint((1, 2))
+
+    def test_list_differs_from_tuple(self):
+        assert fingerprint([1, 2]) != fingerprint((1, 2))
+
+    def test_dict_stable(self):
+        assert fingerprint({"a": 1, "b": 2}) == fingerprint({"a": 1, "b": 2})
+
+    def test_dict_different_values_differ(self):
+        assert fingerprint({"a": 1}) != fingerprint({"a": 2})
+
+    def test_unknown_type_does_not_crash(self):
+        class _Opaque:
+            def __repr__(self):
+                return "opaque"
+
+        assert isinstance(fingerprint(_Opaque()), str)
+
+
+# ===========================================================================
+# 3. Array hashing
+# ===========================================================================
+
+
+class TestArrayHashing:
+    def test_jax_array_stable(self):
+        a = jnp.array([1.0, 2.0, 3.0])
+        b = jnp.array([1.0, 2.0, 3.0])
+        assert fingerprint(a) == fingerprint(b)
+
+    def test_jax_array_different_values(self):
+        a = jnp.array([1.0, 2.0, 3.0])
+        b = jnp.array([1.0, 2.0, 9.0])
+        assert fingerprint(a) != fingerprint(b)
+
+    def test_jax_array_different_shapes(self):
+        a = jnp.array([1.0, 2.0])
+        b = jnp.array([[1.0, 2.0]])
+        assert fingerprint(a) != fingerprint(b)
+
+    def test_jax_array_different_dtypes(self):
+        # Use int32 vs float32 — always distinct regardless of x64 mode.
+        a = jnp.array(1, dtype=jnp.int32)
+        b = jnp.array(1, dtype=jnp.float32)
+        assert fingerprint(a) != fingerprint(b)
+
+    def test_numpy_array_stable(self):
+        a = np.array([1.0, 2.0])
+        b = np.array([1.0, 2.0])
+        assert fingerprint(a) == fingerprint(b)
+
+    def test_scalar_array_stable(self):
+        a = jnp.array(5.0)
+        b = jnp.array(5.0)
+        assert fingerprint(a) == fingerprint(b)
+
+    def test_max_array_bytes_none_hashes_fully(self):
+        # With no cap, two arrays that differ only in their last element must
+        # produce different digests even when they are large.
+        a = np.zeros(1000)
+        b = np.zeros(1000)
+        b[-1] = 1.0
+        assert fingerprint(a, max_array_bytes=None) != fingerprint(b, max_array_bytes=None)
+
+
+# ===========================================================================
+# 4. Depth guard
+# ===========================================================================
+
+
+class TestDepthGuard:
+    def test_deeply_nested_list_does_not_crash(self):
+        # Build a list nested 40 levels deep — beyond the depth=32 guard.
+        obj: list = []
+        for _ in range(40):
+            obj = [obj]
+        assert isinstance(fingerprint(obj), str)
+
+
+# ===========================================================================
+# 5. Record hashing
+# ===========================================================================
+
+
+class TestRecordHashing:
+    def test_same_record_stable(self):
+        r1 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
+        r2 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
+        assert fingerprint(r1) == fingerprint(r2)
+
+    def test_different_values_differ(self):
+        r1 = Record("r", x=jnp.array(1.0))
+        r2 = Record("r", x=jnp.array(9.0))
+        assert fingerprint(r1) != fingerprint(r2)
+
+    def test_different_fields_differ(self):
+        r1 = Record("r", x=jnp.array(1.0))
+        r2 = Record("r", y=jnp.array(1.0))
+        assert fingerprint(r1) != fingerprint(r2)
+
+    def test_extra_field_differs(self):
+        r1 = Record("r", x=jnp.array(1.0))
+        r2 = Record("r", x=jnp.array(1.0), y=jnp.array(2.0))
+        assert fingerprint(r1) != fingerprint(r2)
+
+    def test_multi_field_stable(self):
+        r1 = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array(3.0), c="label")
+        r2 = Record("r", a=jnp.array([1.0, 2.0]), b=jnp.array(3.0), c="label")
+        assert fingerprint(r1) == fingerprint(r2)
+
+    def test_string_field_differs(self):
+        r1 = Record("r", label="a")
+        r2 = Record("r", label="b")
+        assert fingerprint(r1) != fingerprint(r2)
+
+
+# ===========================================================================
+# 6. Distribution hashing
+# ===========================================================================
+
+
+class TestDistributionHashing:
+    def test_same_normal_stable(self):
+        n1 = Normal(loc=0.0, scale=1.0, name="x")
+        n2 = Normal(loc=0.0, scale=1.0, name="x")
+        assert fingerprint(n1) == fingerprint(n2)
+
+    def test_different_loc_differs(self):
+        n1 = Normal(loc=0.0, scale=1.0, name="x")
+        n2 = Normal(loc=1.0, scale=1.0, name="x")
+        assert fingerprint(n1) != fingerprint(n2)
+
+    def test_different_scale_differs(self):
+        n1 = Normal(loc=0.0, scale=1.0, name="x")
+        n2 = Normal(loc=0.0, scale=2.0, name="x")
+        assert fingerprint(n1) != fingerprint(n2)
+
+    def test_different_name_differs(self):
+        n1 = Normal(loc=0.0, scale=1.0, name="x")
+        n2 = Normal(loc=0.0, scale=1.0, name="y")
+        assert fingerprint(n1) != fingerprint(n2)
+
+    def test_different_distribution_types_differ(self):
+        from probpipe import Beta
+
+        n = Normal(loc=0.0, scale=1.0, name="x")
+        b = Beta(alpha=1.0, beta=1.0, name="x")
+        assert fingerprint(n) != fingerprint(b)
+
+    def test_empirical_distribution_stable(self):
+        from probpipe import RecordEmpiricalDistribution
+
+        samples = jnp.array([1.0, 2.0, 3.0])
+        e1 = RecordEmpiricalDistribution(samples, name="posterior")
+        e2 = RecordEmpiricalDistribution(samples, name="posterior")
+        assert fingerprint(e1) == fingerprint(e2)
+
+    def test_empirical_different_samples_differ(self):
+        from probpipe import RecordEmpiricalDistribution
+
+        e1 = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="post")
+        e2 = RecordEmpiricalDistribution(jnp.array([1.0, 2.0, 9.0]), name="post")
+        assert fingerprint(e1) != fingerprint(e2)
+
+    def test_empirical_non_uniform_weights_differ(self):
+        """IS/SMC reweighting must produce a different fingerprint."""
+        from probpipe import RecordEmpiricalDistribution
+
+        samples = jnp.array([1.0, 2.0, 3.0])
+        uniform = RecordEmpiricalDistribution(samples, name="post")
+        reweighted = RecordEmpiricalDistribution(
+            samples, weights=jnp.array([0.7, 0.2, 0.1]), name="post"
+        )
+        assert fingerprint(uniform) != fingerprint(reweighted)
+
+    def test_kde_distribution_stable(self):
+        """KDE (composite TFP distribution) must be stable."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        pts = jnp.array([0.0, 1.0, 2.0])
+        k1 = KDEDistribution(pts, name="kde")
+        k2 = KDEDistribution(pts, name="kde")
+        assert fingerprint(k1) == fingerprint(k2)
+
+    def test_kde_different_points_differ(self):
+        """Two KDE distributions with different data must have different fingerprints."""
+        from probpipe.distributions.kde import KDEDistribution
+
+        k1 = KDEDistribution(jnp.array([0.0, 1.0, 2.0]), name="kde")
+        k2 = KDEDistribution(jnp.array([0.0, 1.0, 99.0]), name="kde")
+        assert fingerprint(k1) != fingerprint(k2)
+
+
+class TestBootstrapSourceFingerprint:
+    """A sampleable-source bootstrap's fingerprint covers the live source
+    distribution, so replicates of different sources fingerprint distinctly."""
+
+    def test_different_sources_differ(self):
+        from probpipe import BootstrapReplicateDistribution
+
+        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        b2 = BootstrapReplicateDistribution(Normal(loc=5.0, scale=1.0, name="x"), replicate_size=10)
+        assert fingerprint(b1) != fingerprint(b2)
+
+    def test_same_source_matches(self):
+        from probpipe import BootstrapReplicateDistribution
+
+        b1 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        b2 = BootstrapReplicateDistribution(Normal(loc=0.0, scale=1.0, name="x"), replicate_size=10)
+        assert fingerprint(b1) == fingerprint(b2)
+
+
+# ===========================================================================
+# 7. Function hashing
+# ===========================================================================
+
+
+class TestFunctionHashing:
+    def _make_wf(self, func):
+        return Function(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
+
+    def test_legacy_content_marker_is_preserved(self):
+        """A pure API rename must not invalidate existing cache identities."""
+
+        class _RecordingHash:
+            def __init__(self):
+                self.chunks: list[bytes] = []
+
+            def update(self, chunk: bytes) -> None:
+                self.chunks.append(chunk)
+
+        hasher = _RecordingHash()
+        _update_function(hasher, self._make_wf(lambda x: x), None)
+
+        assert hasher.chunks[0] == b"wf:"
+
+    def test_same_function_stable(self):
+        def add(x: float, y: float) -> float:
+            return x + y
+
+        wf1 = self._make_wf(add)
+        wf2 = self._make_wf(add)
+        assert fingerprint(wf1) == fingerprint(wf2)
+
+    def test_callable_fingerprint_tracks_template_declarations(self, full_provenance_mode):
+        def identity(x):
+            return x
+
+        def build(*, input_shape=(), output_shape=()):
+            return Function(
+                func=identity,
+                input_template=EventTemplate(x=input_shape),
+                output_template=EventTemplate(y=output_shape),
+            )
+
+        baseline = build()
+        matching = build()
+        changed_input = build(input_shape=(5,))
+        changed_output = build(output_shape=(5,))
+
+        assert fingerprint(baseline) == fingerprint(matching)
+        assert fingerprint(baseline) != fingerprint(changed_input)
+        assert fingerprint(baseline) != fingerprint(changed_output)
+
+        provenance = Provenance.create("compare", parents=[baseline, changed_output])
+        assert provenance.parents[0].fingerprint != provenance.parents[1].fingerprint
+
+    def test_callable_fingerprint_tracks_frozen_signature_declaration(self):
+        def build(signature: inspect.Signature) -> Function:
+            def identity(x):
+                return x
+
+            identity.__signature__ = signature  # type: ignore[attr-defined]
+            return self._make_wf(identity)
+
+        base = inspect.Signature(
+            [
+                inspect.Parameter(
+                    "x",
+                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    annotation=int,
+                )
+            ],
+            return_annotation=int,
+        )
+        changed_kind = base.replace(
+            parameters=[base.parameters["x"].replace(kind=inspect.Parameter.KEYWORD_ONLY)]
+        )
+        changed_default = base.replace(parameters=[base.parameters["x"].replace(default=1)])
+        changed_annotation = base.replace(
+            parameters=[base.parameters["x"].replace(annotation=float)]
+        )
+        changed_return = base.replace(return_annotation=float)
+
+        baseline = fingerprint(build(base))
+        assert baseline == fingerprint(build(base))
+        assert baseline != fingerprint(build(changed_kind))
+        assert baseline != fingerprint(build(changed_default))
+        assert baseline != fingerprint(build(changed_annotation))
+        assert baseline != fingerprint(build(changed_return))
+
+    def test_empty_closure_cell_uses_stable_sentinel(self):
+        def build(*, empty: bool) -> Function:
+            captured = 1
+
+            def inner():
+                return captured
+
+            if empty:
+                del captured
+            return self._make_wf(inner)
+
+        empty_first = build(empty=True)
+        empty_second = build(empty=True)
+        bound = build(empty=False)
+
+        assert fingerprint(empty_first) == fingerprint(empty_second)
+        assert fingerprint(empty_first) != fingerprint(bound)
+
+    def test_different_function_bodies_differ(self):
+        def add(x: float, y: float) -> float:
+            return x + y
+
+        def multiply(x: float, y: float) -> float:
+            return x * y
+
+        assert fingerprint(self._make_wf(add)) != fingerprint(self._make_wf(multiply))
+
+    def test_changed_constant_in_body_differs(self):
+        def f_v1(x: float) -> float:
+            return x + 1.0
+
+        def f_v2(x: float) -> float:
+            return x + 2.0
+
+        assert fingerprint(self._make_wf(f_v1)) != fingerprint(self._make_wf(f_v2))
+
+    def test_nested_lambda_stable_across_processes(self):
+        """A function with a nested lambda must produce the same digest in two
+        separate processes — the old repr(co_consts) path embedded memory
+        addresses and broke this guarantee."""
+        script = textwrap.dedent("""
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            from probpipe.core._fingerprint import fingerprint
+            from probpipe.core.node import Function
+
+            def f(x: float) -> float:
+                transform = lambda v: v * 2.0  # noqa: E731
+                return transform(x)
+
+            wf = Function(func=f, dispatch="sequential", n_broadcast_samples=10, seed=42)
+            print(fingerprint(wf))
+        """)
+        site = str(next(p for p in sys.path if "site-packages" in p))
+        run = lambda: subprocess.check_output(  # noqa: E731
+            [sys.executable, "-c", script, site], text=True
+        ).strip()
+        assert run() == run()
+
+
+# ===========================================================================
+# 8. Fingerprint populated on ParentInfo via Provenance.create()
+# ===========================================================================
+
+
+class TestFingerprintInProvenance:
+    def test_parentinfo_fingerprint_set(self):
+        n = Normal(loc=0.0, scale=1.0, name="prior")
+        prov = Provenance.create("op", parents=[n])
+        assert prov is not None
+        parent = prov.parents[0]
+        assert isinstance(parent, ParentInfo)
+        assert parent.fingerprint is not None
+        assert len(parent.fingerprint) == 16
+        assert parent.fingerprint_is_weak is False
+
+    def test_parentinfo_fingerprint_stable_across_create_calls(self):
+        n = Normal(loc=0.0, scale=1.0, name="prior")
+        p1 = Provenance.create("op", parents=[n])
+        p2 = Provenance.create("op", parents=[n])
+        assert p1.parents[0].fingerprint == p2.parents[0].fingerprint
+
+    def test_different_parents_different_fingerprints(self):
+        n1 = Normal(loc=0.0, scale=1.0, name="a")
+        n2 = Normal(loc=5.0, scale=1.0, name="b")
+        prov = Provenance.create("op", parents=[n1, n2])
+        fp1 = prov.parents[0].fingerprint
+        fp2 = prov.parents[1].fingerprint
+        assert fp1 != fp2
+
+    def test_fingerprint_in_to_dict(self):
+        n = Normal(loc=0.0, scale=1.0, name="prior")
+        prov = Provenance.create("op", parents=[n])
+        d = prov.to_dict()
+        assert "fingerprint" in d["parents"][0]
+        assert d["parents"][0]["fingerprint"] == prov.parents[0].fingerprint
+
+    def test_off_mode_no_fingerprint(self):
+        import probpipe
+        from probpipe import ProvenanceMode
+
+        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        try:
+            n = Normal(loc=0.0, scale=1.0, name="prior")
+            prov = Provenance.create("op", parents=[n])
+            assert prov is None
+        finally:
+            probpipe.provenance_config.reset()
+
+    def test_fingerprint_error_logs_warning(self, monkeypatch, caplog):
+        """A fingerprint failure emits a warning and sets fingerprint=None."""
+        import logging
+
+        from probpipe.core import provenance as prov_mod
+
+        def _bad_fp(obj, **kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(prov_mod, "_fingerprint_func", _bad_fp, raising=False)
+
+        # Patch the lazy import inside create() to use our broken function.
+        import probpipe.core._fingerprint as fp_mod
+
+        monkeypatch.setattr(fp_mod, "_fingerprint_with_strength", _bad_fp)
+
+        n = Normal(loc=0.0, scale=1.0, name="prior")
+        with caplog.at_level(logging.WARNING, logger="probpipe.core.provenance"):
+            prov = Provenance.create("op", parents=[n])
+
+        assert prov is not None
+        assert prov.parents[0].fingerprint is None
+        assert prov.parents[0].fingerprint_is_weak is False
+        assert any(
+            "fingerprint" in r.message.lower() or "boom" in r.message for r in caplog.records
+        )
+
+
+# ===========================================================================
+# 9. Review-fix regressions — determinism, collisions, leaf-keyed records
+# ===========================================================================
+
+
+class TestFunctionCapture:
+    """Bytecode alone is not enough: referenced names, closures, and defaults."""
+
+    def _wf(self, func):
+        return Function(func=func, dispatch="sequential", n_broadcast_samples=10, seed=42)
+
+    def test_called_name_differs(self):
+        # ``jnp.sin`` vs ``jnp.cos``: identical co_code + co_consts, differing
+        # only in co_names — a collision before the fix.
+        assert fingerprint(self._wf(lambda x: jnp.sin(x))) != fingerprint(
+            self._wf(lambda x: jnp.cos(x))
+        )
+
+    def test_closure_capture_differs(self):
+        def make(k):
+            def g(x):
+                return x + k
+
+            return g
+
+        assert fingerprint(self._wf(make(1.0))) != fingerprint(self._wf(make(2.0)))
+
+    def test_default_arg_differs(self):
+        def d1(x, k=1.0):
+            return x + k
+
+        def d2(x, k=2.0):
+            return x + k
+
+        assert fingerprint(self._wf(d1)) != fingerprint(self._wf(d2))
+
+
+class TestSetHashing:
+    def test_order_independent(self):
+        assert fingerprint({1, 2, 3}) == fingerprint({3, 1, 2})
+
+    def test_content_differs(self):
+        assert fingerprint({1, 2, 3}) != fingerprint({1, 2, 4})
+
+    def test_frozenset_order_independent(self):
+        assert fingerprint(frozenset({"a", "b"})) == fingerprint(frozenset({"b", "a"}))
+
+    def test_stable_across_processes(self):
+        """Set iteration order is PYTHONHASHSEED-randomized; the digest is not."""
+        import os
+
+        script = textwrap.dedent("""
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            from probpipe.core._fingerprint import fingerprint
+            print(fingerprint({"alpha", "beta", "gamma", "delta"}))
+        """)
+        site = str(next(p for p in sys.path if "site-packages" in p))
+
+        def run(seed):
+            env = {**os.environ, "PYTHONHASHSEED": seed}
+            return subprocess.check_output(
+                [sys.executable, "-c", script, site], text=True, env=env
+            ).strip()
+
+        assert run("1") == run("2")
+
+
+class TestNumpyScalarHashing:
+    def test_int64_stable_and_differs(self):
+        # np.int64 is not an int subclass — it hit the repr fallback before.
+        assert fingerprint(np.int64(5)) == fingerprint(np.int64(5))
+        assert fingerprint(np.int64(5)) != fingerprint(np.int64(6))
+
+    def test_float32_stable(self):
+        assert fingerprint(np.float32(1.5)) == fingerprint(np.float32(1.5))
+
+
+class TestFloatCanonicalization:
+    def test_negative_zero_equals_zero(self):
+        assert fingerprint(-0.0) == fingerprint(0.0)
+
+    def test_nan_payloads_collapse(self):
+        import struct
+
+        alt_nan = struct.unpack(">d", struct.pack(">Q", 0x7FF8000000000001))[0]
+        assert alt_nan != alt_nan  # a NaN with a non-canonical payload
+        assert fingerprint(float("nan")) == fingerprint(alt_nan)
+
+
+class TestNestedRecordHashing:
+    def test_nested_record_stable(self):
+        r1 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
+        r2 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
+        assert fingerprint(r1) == fingerprint(r2)
+
+    def test_nested_leaf_change_differs(self):
+        r1 = Record("r", outer=Record("r", a=1.0, b=2.0), m=3.0)
+        r2 = Record("r", outer=Record("r", a=1.0, b=9.0), m=3.0)
+        assert fingerprint(r1) != fingerprint(r2)
+
+
+class TestEmpiricalReweighting:
+    """The Record-backed empirical class stores no ``_samples`` — reweighted
+    posteriors must still be distinguished (was a silent collision)."""
+
+    def _emp(self, weights):
+        from probpipe.core._empirical import EmpiricalDistribution
+
+        s = jnp.array([1.0, 2.0, 3.0])
+        return EmpiricalDistribution(s, log_weights=jnp.log(jnp.array(weights)), name="p")
+
+    def test_reweighted_differs(self):
+        assert fingerprint(self._emp([0.7, 0.2, 0.1])) != fingerprint(self._emp([0.1, 0.2, 0.7]))
+
+    def test_same_weights_stable(self):
+        assert fingerprint(self._emp([0.7, 0.2, 0.1])) == fingerprint(self._emp([0.7, 0.2, 0.1]))
+
+
+class TestArrayEdgeCases:
+    def test_over_cap_tail_change_detected(self):
+        # Above the cap: a change in the LAST element must be seen — the old
+        # sampling never covered the buffer tail.
+        base = np.arange(100_000, dtype=np.float64)
+        changed = base.copy()
+        changed[-1] = -1.0
+        assert fingerprint(jnp.asarray(base), max_array_bytes=1000) != fingerprint(
+            jnp.asarray(changed), max_array_bytes=1000
+        )
+
+    def test_over_cap_windowing_is_deterministic(self):
+        # Above the cap the digest is a deterministic function of the array
+        # (evenly-spaced windows + byte count), never random: same array, same
+        # digest across calls.
+        a = np.arange(100_000, dtype=np.float64)
+        assert fingerprint(a, max_array_bytes=1000) == fingerprint(a, max_array_bytes=1000)
+
+    def test_full_hash_catches_interior_change_windowing_can_miss(self):
+        # Windowing over the cap is lossy: an interior change between windows
+        # can collide. Hashing in full (max_array_bytes=None) always
+        # distinguishes it — which is why __eq__ metadata comparison uses the
+        # full hash (see record._leaf_metadata_key).
+        base = np.zeros(100_000, dtype=np.float64)
+        changed = base.copy()
+        changed[50_000] = 1.0  # a lone interior element, between window offsets
+        assert fingerprint(base, max_array_bytes=None) != fingerprint(changed, max_array_bytes=None)
+
+    def test_object_dtype_array_stable_by_content(self):
+        a = np.array(["x", "y", "z"], dtype=object)
+        b = np.array(["x", "y", "z"], dtype=object)
+        assert fingerprint(a) == fingerprint(b)
+
+
+class TestParentInfoIdentity:
+    def test_fingerprint_excluded_from_equality(self):
+        # Two descriptors for the same ancestor compare/hash equal regardless of
+        # the content digest, so a fingerprint can't perturb ancestor-set dedup.
+        a = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="aaaaaaaaaaaaaaaa")
+        b = ParentInfo(type_name="X", name="n", provenance=None, fingerprint="bbbbbbbbbbbbbbbb")
+        assert a == b
+        assert hash(a) == hash(b)
+
+    def test_fingerprint_strength_excluded_from_equality(self):
+        strong = ParentInfo(
+            type_name="X",
+            name="n",
+            provenance=None,
+            fingerprint="aaaaaaaaaaaaaaaa",
+            fingerprint_is_weak=False,
+        )
+        weak = ParentInfo(
+            type_name="X",
+            name="n",
+            provenance=None,
+            fingerprint="bbbbbbbbbbbbbbbb",
+            fingerprint_is_weak=True,
+        )
+
+        assert strong == weak
+        assert hash(strong) == hash(weak)
+
+
+class TestNumericContainerHashing:
+    """The ``container:`` tier — native numeric containers (xarray / pandas /
+    registered backends) hash by concrete type + materialised content, so
+    they are content-stable across processes rather than falling to the
+    process-dependent ``repr`` last resort. Container metadata (coords /
+    index / column labels) is deliberately *not* part of the digest.
+    """
+
+    def test_dataarray_hashes_by_content_not_repr(self):
+        xr = pytest.importorskip("xarray")
+        a = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"])
+        b = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"])
+        c = xr.DataArray(np.array([1.0, 2.0, 4.0]), dims=["t"])
+        assert fingerprint(a) == fingerprint(b)
+        assert fingerprint(a) != fingerprint(c)
+
+    def test_dataarray_coords_in_digest(self):
+        # Equal values, different coords -> DIFFERENT fingerprint: the
+        # container's metadata is identity-bearing content (a workflow may
+        # read coords), so it is folded into the digest.
+        xr = pytest.importorskip("xarray")
+        a = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [0, 1]})
+        b = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [10, 20]})
+        c = xr.DataArray(np.array([1.0, 2.0]), dims=["t"], coords={"t": [0, 1]})
+        assert fingerprint(a) != fingerprint(b)
+        assert fingerprint(a) == fingerprint(c)  # equal values AND coords
+
+    def test_series_index_and_values_in_digest(self):
+        pd = pytest.importorskip("pandas")
+        a = pd.Series([1.0, 2.0], index=["a", "b"])
+        b = pd.Series([1.0, 2.0], index=["x", "y"])  # different index (metadata)
+        c = pd.Series([1.0, 9.0], index=["a", "b"])  # different values
+        d = pd.Series([1.0, 2.0], index=["a", "b"])  # identical
+        assert fingerprint(a) != fingerprint(b)  # index is identity-bearing
+        assert fingerprint(a) != fingerprint(c)
+        assert fingerprint(a) == fingerprint(d)
+
+    def test_dataframe_builtin_backend_hashes_by_content_and_metadata(self):
+        # The built-in DataFrame registration routes values through to_numpy
+        # and folds index/columns/dtypes into the digest.
+        pd = pytest.importorskip("pandas")
+        a = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
+        b = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
+        c = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 5.0]})
+        d = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]})
+        assert fingerprint(a) != fingerprint(b)  # index is identity-bearing
+        assert fingerprint(a) != fingerprint(c)  # values differ
+        assert fingerprint(a) == fingerprint(d)
+
+    def test_distinct_container_types_differ(self):
+        # The concrete type is part of the digest, so equal values in
+        # different containers do not collide.
+        xr = pytest.importorskip("xarray")
+        pd = pytest.importorskip("pandas")
+        vals = np.array([1.0, 2.0, 3.0])
+        prints = {
+            fingerprint(xr.DataArray(vals)),
+            fingerprint(pd.Series(vals)),
+        }
+        assert len(prints) == 2
+
+    def test_string_column_frame_not_container_tier(self):
+        # A non-numeric container is not numeric, so it must not reach the
+        # container tier — it falls to weak identity and still fingerprints
+        # consistently for the same live object.
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"a": ["x", "y"]})
+        assert fingerprint(df) == fingerprint(df)
+
+    def test_native_container_stable_across_processes(self):
+        """A record with a native (xarray) leaf fingerprints identically in a
+        fresh interpreter — the property the future cache_key_fn relies on.
+        """
+        pytest.importorskip("xarray")
+        script = textwrap.dedent("""
+            import sys
+            sys.path.insert(0, sys.argv[1])
+            import numpy as np
+            import xarray as xr
+            from probpipe import Record
+            from probpipe.core._fingerprint import fingerprint
+            da = xr.DataArray(np.array([1.0, 2.0, 3.0]), dims=["t"], coords={"t": [10, 20, 30]})
+            print(fingerprint(Record("r", counts=da)))
+        """)
+        site = str(next(p for p in sys.path if "site-packages" in p))
+
+        def run():
+            return subprocess.check_output([sys.executable, "-c", script, site], text=True).strip()
+
+        assert run() == run()
+
+
+class TestValueSpecFingerprints:
+    """Specs are hashed as template leaves, by declaration and not by identity.
+
+    A declaration is stored as a spec (`DistributionSpec.event_spec`,
+    `FunctionSpec.output_spec`), so the spec hasher must recurse into it. These
+    tests pin that: equal declarations must agree, distinct ones must not, and
+    every spec kind must be reachable — a spec the hasher does not know falls
+    back to identity hashing, which silently breaks cache keys and provenance.
+    """
+
+    @staticmethod
+    def _fp(spec):
+        """Fingerprint a spec as a template leaf, asserting it hashed strongly.
+
+        A spec the hasher does not know falls through to identity hashing, which
+        still returns a digest — so every comparison below would be meaningless
+        without this check.
+        """
+        digest, weak = _fingerprint_with_strength(EventTemplate(field=spec))
+        assert not weak, "spec hashed by identity, not by declaration"
+        return digest
+
+    @pytest.fixture
+    def tau(self):
+        return EventTemplate(x=())
+
+    def test_every_spec_kind_is_reachable_by_the_hasher(self, tau):
+        """Each kind hashes by declaration; none falls through to identity."""
+        for spec in (
+            ArraySpec(()),
+            OpaqueSpec(),
+            RecordSpec(tau),
+            DistributionSpec(tau),
+            FunctionSpec(tau, tau),
+            FunctionSpec(),
+        ):
+            _, weak = _fingerprint_with_strength(EventTemplate(field=spec))
+            assert not weak, f"{type(spec).__name__} hashed by identity"
+
+    def test_an_unknown_spec_kind_is_reported_weak(self, tau):
+        """The contract boundary: a spec the hasher does not know is not silently
+        treated as strong, so a future kind that skips the hasher is visible."""
+
+        class _UnknownSpec(ValueSpec):
+            def is_valid(self, value):
+                return True
+
+        _, weak = _fingerprint_with_strength(EventTemplate(field=_UnknownSpec()))
+        assert weak
+
+    @pytest.mark.parametrize(
+        "make",
+        [
+            lambda t: RecordSpec(t),
+            lambda t: DistributionSpec(t),
+            lambda t: FunctionSpec(t, t),
+            lambda t: FunctionSpec(t, DistributionSpec(t)),
+        ],
+        ids=["record", "distribution", "function-record-out", "function-term-out"],
+    )
+    def test_equal_declarations_fingerprint_equal(self, make):
+        # Distinct-but-equal templates, so this pins declaration equality
+        # rather than object identity.
+        assert self._fp(make(EventTemplate(x=()))) == self._fp(make(EventTemplate(x=())))
+
+    def test_distinct_declarations_fingerprint_differently(self, tau):
+        other = EventTemplate(y=())
+        assert self._fp(RecordSpec(tau)) != self._fp(RecordSpec(other))
+        assert self._fp(DistributionSpec(tau)) != self._fp(DistributionSpec(other))
+        assert self._fp(FunctionSpec(tau, tau)) != self._fp(FunctionSpec(tau, other))
+
+    def test_declared_kind_changes_the_fingerprint(self, tau):
+        # The same space under different declared kinds must not collide: the
+        # declaration's class is the kind.
+        assert self._fp(RecordSpec(tau)) != self._fp(DistributionSpec(tau))
+        assert self._fp(FunctionSpec(tau, tau)) != self._fp(
+            FunctionSpec(tau, DistributionSpec(tau))
+        )
+
+    def test_unspecified_output_differs_from_a_declared_one(self, tau):
+        assert self._fp(FunctionSpec(tau)) != self._fp(FunctionSpec(tau, tau))
+
+    def test_a_deep_declaration_chain_truncates_instead_of_recursing(self, tau):
+        """Declaration edges are hashed through the depth-guarded entry point.
+
+        An output declaration may itself be a FunctionSpec, so the chain is
+        unbounded; hashing it must degrade to the depth marker and report weak
+        rather than exhaust the interpreter stack. The spec is hashed directly:
+        nesting it in a template instead would recurse in ``EventTemplate``'s
+        own hash, which is a separate concern.
+        """
+        spec = FunctionSpec()
+        for _ in range(1000):
+            spec = FunctionSpec(tau, spec)
+
+        _, weak = _fingerprint_with_strength(spec)
+        assert weak
+
+    # --- a spec is hashed by declaration wherever it appears, not by identity ---
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [lambda sp: sp, lambda sp: (sp,), lambda sp: [sp], lambda sp: {"f": sp}],
+        ids=["bare", "in-tuple", "in-list", "in-dict"],
+    )
+    def test_spec_outside_a_template_is_still_hashed_by_declaration(self, wrap, tau):
+        """A spec reached other than as a template leaf must not hash by identity.
+
+        The generic hasher must route a `ValueSpec` to the spec hasher, which
+        records the object type and the declaration fields. Falling through to
+        identity hashing would make equal declarations hash differently and
+        silently break cache keys and provenance.
+        """
+        # Both specs are bound and alive simultaneously, so they cannot share an
+        # address: under identity hashing the digests would differ.
+        left = RecordSpec(EventTemplate(x=()))
+        right = RecordSpec(EventTemplate(x=()))
+        first, weak = _fingerprint_with_strength(wrap(left))
+        second, _ = _fingerprint_with_strength(wrap(right))
+
+        assert not weak
+        assert first == second
+
+    @pytest.mark.parametrize(
+        "wrap",
+        [lambda sp: sp, lambda sp: (sp,), lambda sp: [sp], lambda sp: {"f": sp}],
+        ids=["bare", "in-tuple", "in-list", "in-dict"],
+    )
+    def test_declaration_fields_are_recorded_outside_a_template(self, wrap):
+        """Two specs of the same kind differing only in their declaration.
+
+        Distinguishing *kinds* would not pin this: the identity fallback writes
+        the type name too, so it separates a RecordSpec from a DistributionSpec
+        on its own. Only reading the declaration fields separates these.
+        """
+        one = RecordSpec(EventTemplate(x=()))
+        other = RecordSpec(EventTemplate(y=()))
+        first, weak = _fingerprint_with_strength(wrap(one))
+        second, _ = _fingerprint_with_strength(wrap(other))
+
+        assert not weak
+        assert first != second

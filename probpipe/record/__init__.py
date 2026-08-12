@@ -7,7 +7,7 @@ them. At present:
 
 - :class:`~probpipe.record.design.FullFactorialDesign` and its
   :class:`Design` base — parameter-sweep ``RecordArray``s that plug
-  directly into the ``WorkflowFunction`` sweep path.
+  directly into the ``Function`` sweep path.
 
 Re-exported from :mod:`probpipe` for convenience.
 """

@@ -11,7 +11,8 @@ from typing import Any
 
 import jax.numpy as jnp
 
-from ..core.record import NumericEventTemplate
+from ..core.event_template import NumericEventTemplate
+from ..core.tracked import auto_name
 from ._base import ProbabilisticModel
 
 logger = logging.getLogger(__name__)
@@ -74,9 +75,10 @@ class PyMCModel(ProbabilisticModel):
             ) from e
 
         self._model_fn = model_fn
-        # ``Distribution`` metaclass requires a non-empty name; default
-        # to the class name when the caller doesn't supply one.
-        self._name = name if name else "PyMCModel"
+        # Default to the class name when the caller does not supply one;
+        # the default is an auto-derived name.
+        name, name_is_auto = auto_name(name or None, "PyMCModel")
+        self._init_tracked(name, name_is_auto=name_is_auto)
 
         # Discover observed variable names from the model function signature.
         # Parameters with default value None are treated as observed variables
@@ -174,7 +176,7 @@ class PyMCModel(ProbabilisticModel):
         Derived from :attr:`event_template`; raises on a non-concrete
         free-RV shape, as the template does.
         """
-        return (self.event_template.flat_size,)
+        return (self.event_template.vector_size,)
 
     def _event_template_for(
         self,

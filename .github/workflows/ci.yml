@@ -4,7 +4,10 @@ on:
   push:
     branches: [main]
   pull_request:
-    branches: [main]
+    # dev/** covers stacked PRs (a PR based on another PR's dev/ branch),
+    # which would otherwise get no CI until the base merges and the PR
+    # retargets to main.
+    branches: [main, "dev/**"]
 
 # Cancel superseded runs on PR pushes (saves CI minutes during iteration).
 # Pushes to main keep running — never cancel work that gates the merged history.
@@ -43,8 +46,14 @@ jobs:
         run: |
           set -euo pipefail
           # Single source of truth for the pin lives in the pre-commit config.
+          # The rev regex tolerates an optional surrounding quote and leading
+          # `v` so a reformatted `rev: "v0.15.16"` still parses; `|| true`
+          # swallows a no-match grep exit (pipefail would otherwise abort the
+          # pipeline here) so the `test -n` below stays the single, clear
+          # "can't parse the pin" failure.
           ver=$(grep -A2 'astral-sh/ruff-pre-commit' .pre-commit-config.yaml \
-                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*v?([0-9][0-9.]*).*/\1/p' | head -1)
+                  | sed -nE 's/^[[:space:]]*rev:[[:space:]]*["'\'']?v?([0-9][0-9.]*).*/\1/p' \
+                  | head -1 || true)
           test -n "$ver"   # fail loudly if the rev can't be parsed
           echo "ruff=$ver" >> "$GITHUB_OUTPUT"
           echo "Resolved ruff $ver from .pre-commit-config.yaml"
@@ -82,7 +91,7 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: uv sync --frozen --extra dev --extra nutpie --extra pymc
+        run: uv sync --frozen --extra dev --extra nutpie --extra pymc --extra pyabc
 
       - name: Pyright (advisory — does not gate merges)
         continue-on-error: true
@@ -135,15 +144,18 @@ jobs:
           # this is what makes a lockfile-only dependency change actually
           # verified by CI rather than silently skipped. A change to this
           # workflow itself (ci.yml) also forces the suite so CI edits are
-          # self-tested. Also force the full suite on direct pushes to main
-          # (post-merge safety net — targeted tests are for PRs only).
+          # self-tested, as does a change to scripts/ci/import_graph.py — it
+          # decides which tests every other change runs, but is not itself a
+          # probpipe source, so it would otherwise select nothing. Also force
+          # the full suite on direct pushes to main (post-merge safety net —
+          # targeted tests are for PRs only).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL=true
           else
             RUN_ALL=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|probpipe/__init__.py|.github/workflows/ci.yml)
+                pyproject.toml|uv.lock|setup.cfg|setup.py|tests/conftest.py|scripts/ci/import_graph.py|probpipe/__init__.py|.github/workflows/ci.yml)
                   RUN_ALL=true ;;
               esac
             done
@@ -167,8 +179,8 @@ jobs:
             # provenance.py also runs tests/core/. Replaces the former inline
             # heredoc (issue #266).
 
-            # Split CHANGED into test files (include directly) and source
-            # files (expand via import graph before mapping to test folders).
+            # Split CHANGED into test files (included directly) and source
+            # files (resolved to their covering pytest targets below).
             CHANGED_SOURCE=""
             TEST_TARGETS=""
             for f in $CHANGED; do
@@ -179,28 +191,21 @@ jobs:
               fi
             done
 
-            # Expand source files transitively and map each to its test folder.
-            # Subpackage modules (probpipe/core/node.py) map to tests/core/.
-            # Root-level modules (probpipe/_utils.py) map to test files at
-            # tests/ root only (not descending into subfolders).
+            # Map source changes to their covering pytest targets via the shared,
+            # unit-tested resolver (scripts/ci/import_graph.py; tests in tests/ci/).
+            # It transitively expands over the import graph, then maps each
+            # affected module: subpackage modules (probpipe/core/node.py) ->
+            # tests/core/; root-level modules (probpipe/_utils.py) -> the root
+            # tests/test_*.py files; and the inference subpackage by filename
+            # convention (_foo.py -> tests/inference/test_foo.py; the __init__
+            # registration facade -> the registry integration tests) so a single
+            # method change runs only its own test file plus those, not the whole
+            # tests/inference/ folder (see #333).
             if [ -n "$CHANGED_SOURCE" ]; then
-              EXPANDED=$(python3 scripts/ci/import_graph.py expand $CHANGED_SOURCE)
-              echo "Expanded source files (via import graph):"
-              echo "$EXPANDED"
-              HAS_ROOT_CHANGE=false
-              for f in $EXPANDED; do
-                rel="${f#probpipe/}"
-                if echo "$rel" | grep -q '/'; then
-                  subpkg=$(echo "$rel" | cut -d'/' -f1)
-                  [ -d "tests/$subpkg" ] && TEST_TARGETS="$TEST_TARGETS tests/$subpkg"
-                else
-                  HAS_ROOT_CHANGE=true
-                fi
-              done
-              if [ "$HAS_ROOT_CHANGE" = "true" ]; then
-                ROOT_FILES=$(find tests -maxdepth 1 -name "test_*.py" | tr '\n' ' ')
-                TEST_TARGETS="$TEST_TARGETS $ROOT_FILES"
-              fi
+              MAPPED=$(python3 scripts/ci/import_graph.py test-targets $CHANGED_SOURCE)
+              echo "Source changes mapped to pytest targets:"
+              echo "$MAPPED"
+              TEST_TARGETS="$TEST_TARGETS $MAPPED"
             fi
 
             # Deduplicate (works for both file paths and directory paths)
@@ -232,7 +237,7 @@ jobs:
         # genuinely run those versions. (setup-uv's python-version input was
         # silently ignored on @v3, which let every leg fall back to the system
         # 3.12.) [pymc] is included so pymc 6 is exercised on all matrix legs.
-        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc
+        run: uv sync --frozen --python ${{ matrix.python-version }} --extra dev --extra nutpie --extra pymc --extra pyabc
 
       - name: Run tests (changed files only)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'false'
@@ -241,7 +246,18 @@ jobs:
         # would always fail here. The floor is enforced on the full-suite
         # run below; keep partial runs exempt with --cov-fail-under=0.
         run: |
-          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html
+          # A changed test file can be entirely skipped in this job's
+          # environment (e.g. a bayesflow/stan test when that extra isn't
+          # installed here — the dedicated extra job runs it). pytest then
+          # collects 0 tests and exits 5; treat that as a pass rather than
+          # failing the targeted run.
+          ec=0
+          uv run pytest ${{ steps.changed.outputs.test_files }} --cov-fail-under=0 --cov-report=xml --cov-report=html || ec=$?
+          if [ "$ec" = 5 ]; then
+            echo "No tests collected (all skipped in this environment); treating as pass."
+            ec=0
+          fi
+          exit "$ec"
 
       - name: Run tests (full suite)
         if: steps.changed.outputs.skip != 'true' && steps.changed.outputs.run_all == 'true'
@@ -429,7 +445,7 @@ jobs:
         # under its own ~/.bridgestan/<version>/ subdir, so a stale restore can't
         # mismatch.
         if: steps.stan_check.outputs.skip != 'true'
-        uses: actions/cache@v5
+        uses: actions/cache@v6
         with:
           path: ~/.bridgestan
           key: bridgestan-${{ runner.os }}-${{ hashFiles('uv.lock') }}
@@ -461,23 +477,24 @@ jobs:
 
   notebooks:
     # Execute the docs notebooks to keep the reference set honest against the
-    # current codebase. Two parallel legs: `examples` (lean — dev+nutpie) and
-    # `tutorials` (the SBI backends — bayesflow+pymc). Splitting roughly halves
+    # current codebase. Two parallel legs: `user_guide` (lean — dev+nutpie) and
+    # `tutorials` (the SBI backends — bayesflow+pymc+pyabc). Splitting roughly halves
     # the wall-clock vs one serial pass (~8 min each, on par with the test
-    # matrix) and spares the examples the ~200 MB pymc/bayesflow install (no
-    # example imports them in code). Separate from the unit-test matrix either
-    # way. Skipped per-leg when no notebook in its dir or probpipe source changes.
+    # matrix) and spares the User Guide the ~200 MB pymc/bayesflow install.
+    # User Guide notebooks do not import those backends in code. Separate from
+    # the unit-test matrix either way. Skipped per-leg when no notebook in its
+    # dir or probpipe source changes.
     name: notebooks (${{ matrix.group }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - group: examples
-            dir: docs/examples
+          - group: user_guide
+            dir: docs/user_guide
             extras: --extra dev --extra nutpie
           - group: tutorials
             dir: docs/tutorials
-            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc
+            extras: --extra dev --extra nutpie --extra bayesflow --extra pymc --extra pyabc
     runs-on: ubuntu-latest
     env:
       KERAS_BACKEND: jax   # bayesflow tutorials run keras on the JAX backend
@@ -505,15 +522,17 @@ jobs:
           # A dependency bump in pyproject.toml or uv.lock touches no notebook
           # or source file but can still break every notebook, so foundational
           # changes force the full notebook set (mirrors the test job's
-          # RUN_ALL); a change to ci.yml does too. Also force it on direct
-          # pushes to main (post-merge safety net).
+          # RUN_ALL); a change to ci.yml or the selection logic
+          # (scripts/ci/import_graph.py, which also drives notebook selection)
+          # does too. Also force it on direct pushes to main (post-merge safety
+          # net).
           if [ "${{ github.event_name }}" = "push" ]; then
             RUN_ALL_NB=true
           else
             RUN_ALL_NB=false
             for f in $CHANGED_ALL; do
               case "$f" in
-                pyproject.toml|uv.lock|setup.cfg|setup.py|.github/workflows/ci.yml) RUN_ALL_NB=true ;;
+                pyproject.toml|uv.lock|setup.cfg|setup.py|scripts/ci/import_graph.py|.github/workflows/ci.yml) RUN_ALL_NB=true ;;
               esac
             done
           fi
@@ -569,8 +588,8 @@ jobs:
         # Dependency versions are pinned in uv.lock. --frozen fails if the
         # lockfile is out of sync, so CI never silently drifts. --python pins
         # the interpreter (setup-uv's python-version input was ignored on @v3).
-        # Per-leg extras (matrix.extras): the examples leg needs only
-        # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc.
+        # Per-leg extras (matrix.extras): the User Guide leg needs only
+        # dev+nutpie; the tutorials leg adds the SBI backends bayesflow+pymc+pyabc.
         run: uv sync --frozen --python 3.12 ${{ matrix.extras }}
 
       - name: Execute affected notebooks

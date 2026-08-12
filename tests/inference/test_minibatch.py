@@ -62,7 +62,7 @@ def likelihood(regression_data):
 @pytest.fixture
 def data_record(regression_data):
     X, y = regression_data
-    return Record(X=X, y=y)
+    return Record("r", X=X, y=y)
 
 
 @pytest.fixture
@@ -110,7 +110,8 @@ class TestConstruction:
     def test_construction_rejects_nested_records(self, prior, likelihood):
         """Nested Records fail at construction with an actionable error."""
         nested = Record(
-            features=Record(X=jnp.zeros((200, 2)), extra=jnp.zeros((200,))),
+            "r",
+            features=Record("r", X=jnp.zeros((200, 2)), extra=jnp.zeros((200,))),
             y=jnp.zeros((200,)),
         )
         with pytest.raises(ValueError, match="flat Record"):
@@ -232,7 +233,7 @@ class TestInnerDraw:
 
         X, y = regression_data
         n = X.shape[0]
-        record_data = Record(X=X, y=y)
+        record_data = Record("r", X=X, y=y)
         recordarray_data = NumericRecordArray(
             {"X": jnp.asarray(X), "y": jnp.asarray(y)},
             batch_shape=(n,),

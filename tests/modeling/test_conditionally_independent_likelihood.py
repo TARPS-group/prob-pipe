@@ -121,7 +121,7 @@ class TestGLMLikelihood:
             [
                 glm.per_datum_log_likelihood(
                     params,
-                    Record(X=X[i], y=y[i]),
+                    Record("r", X=X[i], y=y[i]),
                 )
                 for i in range(X.shape[0])
             ]
@@ -130,7 +130,7 @@ class TestGLMLikelihood:
 
     def test_per_datum_requires_record_datum(self, bernoulli_glm):
         """A non-Record datum raises ``TypeError`` with a message
-        pointing at the expected ``Record(X=..., y=...)`` form."""
+        pointing at the expected ``Record("datum", X=..., y=...)`` form."""
         glm, _X = bernoulli_glm
         params = jnp.array([0.5, -0.5, 0.25])
         with pytest.raises(TypeError, match="Record"):
@@ -169,13 +169,13 @@ class TestDefaultFallback:
             """Sum across all leaves of the Record."""
 
             def log_likelihood(self, params, data):
-                # data is Record(X=..., y=...) with shape (n, ...) leaves
+                # data is Record("datum", X=..., y=...) with shape (n, ...) leaves
                 return jnp.sum(jnp.asarray(data["X"])) + jnp.sum(jnp.asarray(data["y"]))
 
         lkl = _RecordLikelihood()
         params = jnp.array([0.0])
         # A single observation as Record: X.shape == (2,), y.shape == ()
-        datum = Record(X=jnp.array([3.0, 2.0]), y=jnp.array(7.0))
+        datum = Record("r", X=jnp.array([3.0, 2.0]), y=jnp.array(7.0))
 
         lp = _default_per_datum_log_likelihood(lkl, params, datum)
         # After tree-map: X→shape (1, 2), y→shape (1,). sum(X)+sum(y) = 5+7 = 12

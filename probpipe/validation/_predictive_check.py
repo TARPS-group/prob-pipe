@@ -9,8 +9,9 @@ import jax
 import numpy as np
 
 from .._utils import _auto_key
-from ..core.distribution import RecordEmpiricalDistribution
-from ..core.node import workflow_function
+from ..core._numeric_record import NumericRecord
+from ..core.distribution import Distribution, RecordEmpiricalDistribution
+from ..core.node import function
 from ..core.protocols import SupportsSampling
 from ..custom_types import PRNGKey
 from ..modeling._likelihood import GenerativeLikelihood  # needed for type hint resolution
@@ -18,9 +19,9 @@ from ..modeling._likelihood import GenerativeLikelihood  # needed for type hint 
 __all__ = ["predictive_check"]
 
 
-@workflow_function
+@function
 def predictive_check[P, D](
-    distribution: SupportsSampling,
+    distribution: Distribution,
     generative_likelihood: GenerativeLikelihood[P, D],
     test_fn: Callable[[D], float],
     observed_data: D | None = None,
@@ -90,6 +91,13 @@ def predictive_check[P, D](
     if key is None:
         key = _auto_key()
 
+    # -- Unwrap NumericRecord if the node system resolved the distribution --
+    if isinstance(distribution, NumericRecord):
+        distribution = RecordEmpiricalDistribution(
+            distribution,  # NumericRecord is a Record subclass — accepted directly
+            name=getattr(distribution, "name", "posterior"),
+        )
+
     # -- Fast path: batched generation + vmap test_fn -----------------------
     if _supports_key_arg(generative_likelihood):
         stats_array = _predictive_check_batched(
@@ -127,29 +135,29 @@ def predictive_check[P, D](
         result["observed_statistic"] = obs_stat
         result["p_value"] = p_value
 
-    # Attach to the distribution's ``auxiliary`` DataTree under a
+    # Attach to the distribution's ``annotations`` DataTree under a
     # ``predictive_check`` group; each invocation appends a numbered
     # child Dataset (``check_0``, ``check_1``, …). This keeps the
     # validation history alongside the distribution without crowding
     # the public API surface with a separate ``validation_results``
     # property — and future validation functions (LOO, WAIC, …)
     # land under their own named groups in the same DataTree.
-    _record_check_in_auxiliary(distribution, stats_array, result)
+    _record_check_in_annotations(distribution, stats_array, result)
 
     return result
 
 
-def _record_check_in_auxiliary(
+def _record_check_in_annotations(
     distribution: Any,
     stats_array: Any,
     result: dict[str, Any],
 ) -> None:
     """Append a per-invocation result Dataset under
-    ``distribution.auxiliary["predictive_check/check_N"]``.
+    ``distribution.annotations["predictive_check/check_N"]``.
 
-    Mutates ``distribution._auxiliary`` in place. This is the
+    Mutates ``distribution._annotations`` in place. This is the
     documented exception to ``Distribution`` immutability (see
-    :attr:`Distribution.auxiliary` and ``CONTRIBUTING.md`` §"Design
+    :attr:`Distribution.annotations` and ``CONTRIBUTING.md`` §"Design
     principles" §1) — diagnostic ops attach results under named
     groups rather than returning renamed clones, which would break
     source/identity tracking.
@@ -161,7 +169,7 @@ def _record_check_in_auxiliary(
     - ``test_fn_name`` + optional ``observed_statistic`` /
       ``p_value`` become Dataset attrs.
 
-    Frozen/slotted distributions (where ``_auxiliary`` can't be set
+    Frozen/slotted distributions (where ``_annotations`` can't be set
     via ``object.__setattr__``) skip the attachment silently — the
     caller still gets the ``result`` dict via the public return.
     """
@@ -182,11 +190,11 @@ def _record_check_in_auxiliary(
         attrs=attrs,
     )
 
-    aux = getattr(distribution, "_auxiliary", None)
+    aux = getattr(distribution, "_annotations", None)
     if aux is None:
         aux = DataTree()
         try:
-            object.__setattr__(distribution, "_auxiliary", aux)
+            object.__setattr__(distribution, "_annotations", aux)
         except (AttributeError, TypeError):
             # Frozen/immutable distribution — give up silently.
             return

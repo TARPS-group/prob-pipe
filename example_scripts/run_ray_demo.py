@@ -5,7 +5,7 @@ uses ``RayTaskRunner`` so each bootstrap MCMC fit runs in a separate Ray
 worker process — true parallelism across CPU cores.
 
 This is the current Ray support path for ProbPipe: Prefect orchestrates
-``WorkflowFunction`` tasks, and Prefect-Ray submits those tasks to Ray. It is
+``Function`` tasks, and Prefect-Ray submits those tasks to Ray. It is
 not a native Ray backend and does not expose ``ray.remote`` or ``ray.put``
 through ProbPipe.
 
@@ -83,8 +83,8 @@ from probpipe import (
     SimpleModel,
     WorkflowKind,
     condition_on,
+    function,
     mean,
-    workflow_function,
 )
 
 # ``address="auto"`` attaches to the persistent Ray head you launched with
@@ -112,12 +112,12 @@ print()
 df = pd.read_csv("./docs/tutorials/data/horseshoe_crabs.csv")
 
 
-@workflow_function
+@function
 def prep_data(width, satellites) -> Record:
     width = np.asarray(width, dtype=np.float32)
     width_z = (width - np.mean(width)) / np.std(width)
     X = np.column_stack([np.ones(len(width)), width_z]).astype(np.float32)
-    return Record(X=X, y=np.asarray(satellites, dtype=np.float32))
+    return Record("data", X=X, y=np.asarray(satellites, dtype=np.float32))
 
 
 data = prep_data(df["width_cm"], df["satellites"])
@@ -190,7 +190,7 @@ for label, bagged in [("Poisson", bagged_poisson), ("NegBin", bagged_nb)]:
 # 5. Provenance
 # ---------------------------------------------------------------------------
 
-src = bagged_nb.source
+src = bagged_nb.provenance
 print("Provenance (NegBin bagged posterior):")
 print(f"  Operation:   {src.operation}")
 print(f"  Orchestrate: {src.metadata['orchestrate']}")

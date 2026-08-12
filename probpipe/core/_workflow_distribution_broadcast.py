@@ -1,4 +1,4 @@
-"""WorkflowFunction distribution-only broadcast helpers.
+"""Function distribution-only broadcast helpers.
 
 This private module owns scalar distribution broadcasting after call
 resolution, distribution normalization, and broadcast planning have
@@ -10,7 +10,7 @@ empirical enumeration, JAX ``vmap`` execution, and
 from __future__ import annotations
 
 import warnings
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from itertools import product as cartesian_product
 from typing import Any
 
@@ -23,11 +23,12 @@ except ImportError:
     task = flow = None
 
 from ..custom_types import Array, PRNGKey
-from . import _workflow_execution, _workflow_plan
-from ._record_distribution import _RecordDistributionView
+from . import _workflow_call, _workflow_execution, _workflow_plan
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution, EmpiricalDistribution
+from .event_template import EventTemplate
 from .provenance import Provenance
+from .tracked import TrackedTerm
 
 MIN_BROADCAST_SAMPLES = 5
 
@@ -36,7 +37,7 @@ def execute_distribution_broadcast(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    broadcast_args: Sequence[str],
+    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
     n_broadcast_samples: int,
     include_inputs: bool,
     get_key: Callable[[], PRNGKey],
@@ -46,9 +47,12 @@ def execute_distribution_broadcast(
     ],
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
-    require_jax_traceable: Callable[[dict[str, Any], list[str]], None],
+    require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
     workflow_name: str,
     workflow_kind: WorkflowKind,
+    output_template: EventTemplate | None = None,
+    provenance_parents: Sequence[TrackedTerm] = (),
+    provenance_inputs: Mapping[str, Any] | None = None,
 ) -> BroadcastDistribution | Distribution:
     """Execute one distribution-only broadcasted workflow call.
 
@@ -66,8 +70,8 @@ def execute_distribution_broadcast(
         Resolved workflow inputs. Entries named in ``broadcast_args`` must be
         scalar ``Distribution`` values; all other entries are passed through to
         every call row.
-    broadcast_args : sequence of str
-        Names of distribution-valued inputs to broadcast over.
+    broadcast_args : sequence of WorkflowInputRef
+        Distribution-valued input slots to broadcast over.
     n_broadcast_samples : int
         Number of Monte Carlo rows to draw. Small positive values are accepted
         with a warning; non-integers and non-positive values raise.
@@ -95,6 +99,13 @@ def execute_distribution_broadcast(
         Effective orchestration mode for this call. The value is recorded in
         provenance and passed to the JAX path so Prefect task/flow requests can
         fail clearly when Prefect is unavailable.
+    output_template : EventTemplate or None
+        Concrete authoritative template for declared outputs, when present.
+    provenance_parents : sequence of TrackedTerm
+        Call-level tracked lineage, already ordered and deduplicated.
+    provenance_inputs : mapping of str to Any or None
+        Call-level resolved plain inputs. Per-row sampled values do not replace
+        these original descriptors.
 
     Returns
     -------
@@ -105,7 +116,7 @@ def execute_distribution_broadcast(
     broadcast_args = list(broadcast_args)
     _validate_n_broadcast_samples(n_broadcast_samples)
 
-    empirical_args, sample_args, product_size = _split_empirical_args(
+    empirical_groups, sample_args, product_size = _split_empirical_args(
         values=values,
         broadcast_args=broadcast_args,
         n_broadcast_samples=n_broadcast_samples,
@@ -114,9 +125,9 @@ def execute_distribution_broadcast(
     dispatch = resolve_dispatch(
         values,
         broadcast_args,
-        jax_supported=not empirical_args,
+        jax_supported=not empirical_groups,
     )
-    if requested_dispatch == "jax" and empirical_args:
+    if requested_dispatch == "jax" and empirical_groups:
         raise ValueError(
             "dispatch='jax' does not support exact empirical enumeration; "
             "use dispatch='auto', 'sequential', or 'thread' for this path."
@@ -124,16 +135,17 @@ def execute_distribution_broadcast(
 
     # Enumeration preserves exact empirical weights and must run in all row-wise
     # dispatch modes; otherwise cartesian-product semantics vary by dispatch.
-    if empirical_args:
+    if empirical_groups:
         result = _broadcast_enumerate(
             func=func,
             values=values,
-            empirical_args=empirical_args,
+            empirical_groups=empirical_groups,
             sample_args=sample_args,
             product_size=product_size,
             n_broadcast_samples=n_broadcast_samples,
             get_key=get_key,
             make_execution_config=make_execution_config,
+            output_template=output_template,
         )
     elif dispatch == "jax":
         if requested_dispatch == "jax":
@@ -146,6 +158,7 @@ def execute_distribution_broadcast(
             get_key=get_key,
             workflow_name=workflow_name,
             workflow_kind=workflow_kind,
+            output_template=output_template,
         )
     else:
         result = _broadcast_sample(
@@ -155,6 +168,7 @@ def execute_distribution_broadcast(
             n_broadcast_samples=n_broadcast_samples,
             get_key=get_key,
             make_execution_config=make_execution_config,
+            output_template=output_template,
         )
 
     provenance = _make_broadcast_provenance(
@@ -165,8 +179,10 @@ def execute_distribution_broadcast(
         n_broadcast_samples=n_broadcast_samples,
         workflow_name=workflow_name,
         func=func,
+        provenance_parents=provenance_parents,
+        provenance_inputs=provenance_inputs,
     )
-    result.with_source(provenance)
+    result.with_provenance(provenance)
 
     if include_inputs:
         return result
@@ -194,108 +210,135 @@ def _validate_n_broadcast_samples(n_broadcast_samples: int) -> None:
 def _split_empirical_args(
     *,
     values: dict[str, Any],
-    broadcast_args: Sequence[str],
+    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
     n_broadcast_samples: int,
-) -> tuple[dict[str, EmpiricalDistribution], dict[str, Distribution], int]:
-    candidates: list[tuple[str, EmpiricalDistribution]] = []
-    sample_args: dict[str, Distribution] = {}
-    for name in broadcast_args:
-        dist = values[name]
-        if isinstance(dist, EmpiricalDistribution) and dist.num_atoms <= n_broadcast_samples:
-            candidates.append((name, dist))
-        else:
-            sample_args[name] = dist
-    candidates.sort(key=lambda pair: pair[1].num_atoms)
+) -> tuple[
+    tuple[tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]], ...],
+    dict[_workflow_call.WorkflowInputRef, Distribution],
+    int,
+]:
+    """Split the broadcast arguments into enumerable empirical groups and the rest.
 
-    empirical_args: dict[str, EmpiricalDistribution] = {}
+    A **co-sampling group** is enumerated or sampled as a unit, never split, so
+    the same empirical passed twice contributes one enumeration axis rather than
+    a squared grid. A group is enumerable when its root is an empirical small
+    enough to enumerate and every member *is* that root: a group holding a view
+    goes to the sampling path whole, which keeps a parent and its view on one
+    draw instead of enumerating one and sampling the other.
+
+    Groups are enumerated smallest-first while the running product fits the
+    budget; a group that does not fit falls through to sampling, where its
+    members still co-sample.
+    """
+    candidates: list[tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]]] = []
+    sample_args: dict[_workflow_call.WorkflowInputRef, Distribution] = {}
+    for root, arg_refs in _workflow_plan.group_by_root(values=values, refs=broadcast_args):
+        enumerable = (
+            isinstance(root, EmpiricalDistribution)
+            and root.num_atoms <= n_broadcast_samples
+            and all(_workflow_call.input_ref_value(values, ref) is root for ref in arg_refs)
+        )
+        if enumerable:
+            candidates.append((root, arg_refs))
+        else:
+            for ref in arg_refs:
+                sample_args[ref] = _workflow_call.input_ref_value(values, ref)
+    candidates.sort(key=lambda pair: pair[0].num_atoms)
+
+    empirical_groups: list[
+        tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]]
+    ] = []
     product_size = 1
-    for name, dist in candidates:
+    for dist, arg_refs in candidates:
         if product_size * dist.num_atoms <= n_broadcast_samples:
-            empirical_args[name] = dist
+            empirical_groups.append((dist, arg_refs))
             product_size *= dist.num_atoms
         else:
-            sample_args[name] = dist
+            for ref in arg_refs:
+                sample_args[ref] = dist
 
-    return empirical_args, sample_args, product_size
+    return tuple(empirical_groups), sample_args, product_size
 
 
 def _make_broadcast_provenance(
     *,
     values: dict[str, Any],
-    broadcast_args: Sequence[str],
+    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
     dispatch: str,
     workflow_kind: WorkflowKind,
     n_broadcast_samples: int,
     workflow_name: str,
     func: Callable[..., Any],
+    provenance_parents: Sequence[TrackedTerm],
+    provenance_inputs: Mapping[str, Any] | None,
 ) -> Provenance | None:
-    seen: set[int] = set()
-    candidates = []
-    for name in broadcast_args:
-        v = values[name]
-        if isinstance(v, Distribution) and id(v) not in seen:
-            seen.add(id(v))
-            candidates.append(v)
     return Provenance.create(
         "broadcast",
-        parents=candidates,
+        parents=list(provenance_parents),
         metadata={
             "dispatch": dispatch,
             "orchestrate": workflow_kind.value,
             "n_samples": n_broadcast_samples,
             "func": workflow_name or func.__name__,
-            "broadcast_args": list(broadcast_args),
+            "broadcast_args": [ref.label for ref in broadcast_args],
         },
+        inputs=provenance_inputs,
     )
 
 
 def _sample_broadcast_args(
     values: dict[str, Any],
-    broadcast_args: Sequence[str],
+    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
     n: int,
     key: PRNGKey,
-) -> dict[str, Array]:
-    """Sample all broadcast arguments, handling view reconnection.
+) -> dict[_workflow_call.WorkflowInputRef, Array]:
+    """Sample all broadcast arguments, one joint draw per co-sampling group.
 
-    Sibling views from the same parent distribution share one parent draw,
-    preserving cross-field correlation. Plain non-view distributions are
-    sampled independently per kwarg, even if the same object is passed under
-    multiple names.
+    Arguments are grouped by root ancestor, so the same distribution passed
+    twice, sibling views of one parent, and a parent passed alongside its own
+    view all fall in one group. Each group is drawn **once**, from its root, and
+    every member takes its own value out of that draw — the root itself whole, a
+    view through its field path. Dependence within a group therefore flows
+    through the wrapped function instead of being broken by independent
+    sampling, so ``f(d, d)`` approximates ``f(X, X)`` rather than ``f(X1, X2)``.
+
+    Groups with no common root are drawn from separate subkeys, which samples the
+    product of their laws.
     """
-    sampled: dict[str, Array] = {}
-    for arg_names in _workflow_plan.group_by_parent(
-        values=values,
-        names=broadcast_args,
-    ).values():
-        first = values[arg_names[0]]
-        if not isinstance(first, _RecordDistributionView):
-            for arg_name in arg_names:
-                key, subkey = jax.random.split(key)
-                sampled[arg_name] = values[arg_name]._sample(subkey, (n,))
-            continue
+    sampled: dict[_workflow_call.WorkflowInputRef, Array] = {}
+    for root, arg_refs in _workflow_plan.group_by_root(values=values, refs=broadcast_args):
         key, subkey = jax.random.split(key)
-        structured = first.parent._sample(subkey, (n,))
-        for arg_name in arg_names:
-            view = values[arg_name]
-            if hasattr(view, "_extract"):
-                sampled[arg_name] = view._extract(structured)
-            else:
-                val = structured
-                for k in getattr(view, "_key_path", (view.field,)):
-                    val = val[k]
-                sampled[arg_name] = val
+        drawn = root._sample(subkey, (n,))
+        for ref in arg_refs:
+            member = _workflow_call.input_ref_value(values, ref)
+            sampled[ref] = drawn if member is root else _project_from_root(member, drawn)
     return sampled
+
+
+def _project_from_root(view: Any, drawn: Any) -> Any:
+    """A view's own draw, taken out of its root's joint draw.
+
+    Not necessarily an array: a view of a field group projects the sub-record its
+    path names, so this returns whatever the root's draw holds there.
+    """
+    if hasattr(view, "_extract"):
+        return view._extract(drawn)
+    projected = drawn
+    for key_name in getattr(view, "_key_path", (view.field,)):
+        projected = projected[key_name]
+    return projected
 
 
 def _broadcast_jax(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    broadcast_args: list[str],
+    broadcast_args: list[_workflow_call.WorkflowInputRef],
     n_broadcast_samples: int,
     get_key: Callable[[], PRNGKey],
     workflow_name: str,
     workflow_kind: WorkflowKind,
+    output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
     """Execute distribution broadcasting through local ``jax.vmap``."""
     if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW) and (task is None or flow is None):
@@ -311,14 +354,12 @@ def _broadcast_jax(
         n_broadcast_samples,
         key,
     )
-    static = {k: v for k, v in values.items() if k not in broadcast_args}
 
     def single_call(broadcast_slice):
-        kw = dict(static)
-        kw.update(broadcast_slice)
-        return func(**kw)
+        replacements = dict(zip(broadcast_args, broadcast_slice))
+        return func(**_workflow_call.replace_input_refs(values, replacements))
 
-    batch = {name: sampled[name] for name in broadcast_args}
+    batch = tuple(sampled[ref] for ref in broadcast_args)
 
     def run_vmap():
         return jax.vmap(single_call)(batch)
@@ -335,10 +376,11 @@ def _broadcast_jax(
 
     results = run_vmap()
     return BroadcastDistribution(
-        input_samples=sampled,
+        input_samples={ref.label: sampled[ref] for ref in broadcast_args},
         output_samples=results,
         weights=None,
-        broadcast_args=broadcast_args,
+        broadcast_args=[ref.label for ref in broadcast_args],
+        output_template=output_template,
     )
 
 
@@ -346,8 +388,10 @@ def _broadcast_enumerate(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    empirical_args: dict[str, EmpiricalDistribution],
-    sample_args: dict[str, Distribution],
+    empirical_groups: tuple[
+        tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]], ...
+    ],
+    sample_args: dict[_workflow_call.WorkflowInputRef, Distribution],
     product_size: int,
     n_broadcast_samples: int,
     get_key: Callable[[], PRNGKey],
@@ -355,11 +399,16 @@ def _broadcast_enumerate(
         [],
         _workflow_execution.WorkflowExecutionConfig,
     ],
+    output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
-    """Enumerate empirical distributions and sample any remaining inputs."""
+    """Enumerate empirical distributions and sample any remaining inputs.
+
+    One axis of the cartesian product per co-sampling group, so every reference in
+    a group takes the same atom and contributes its weight once.
+    """
     key = get_key()
-    emp_names = list(empirical_args.keys())
-    emp_dists = [empirical_args[name] for name in emp_names]
+    emp_dists = [dist for dist, _refs in empirical_groups]
+    emp_refs = [arg_refs for _dist, arg_refs in empirical_groups]
 
     reps_per_combo = max(1, n_broadcast_samples // product_size) if sample_args else 1
     total = product_size * reps_per_combo
@@ -374,24 +423,26 @@ def _broadcast_enumerate(
     weights = []
     sample_idx = 0
 
-    all_broadcast_args = emp_names + sample_arg_names
+    all_broadcast_args = [ref for arg_refs in emp_refs for ref in arg_refs] + sample_arg_names
 
     for combo in cartesian_product(*(range(d.num_atoms) for d in emp_dists)):
         emp_weight = 1.0
-        for _name, dist, i in zip(emp_names, emp_dists, combo):
+        for dist, i in zip(emp_dists, combo, strict=True):
             emp_weight *= float(dist.weights[i])
 
         for _ in range(reps_per_combo):
-            call_values = dict(values)
+            replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
 
-            for name, dist, i in zip(emp_names, emp_dists, combo):
-                call_values[name] = _index_sample(dist.samples, i)
+            for dist, arg_refs, i in zip(emp_dists, emp_refs, combo, strict=True):
+                atom = _index_sample(dist.samples, i)
+                for ref in arg_refs:
+                    replacements[ref] = atom
 
-            for name in sample_args:
-                call_values[name] = _index_sample(sampled[name], sample_idx)
+            for ref in sample_args:
+                replacements[ref] = _index_sample(sampled[ref], sample_idx)
 
             weights.append(emp_weight / reps_per_combo)
-            call_value_list.append(call_values)
+            call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
             sample_idx += 1
 
     request = _workflow_execution.WorkflowExecutionRequest(
@@ -402,14 +453,19 @@ def _broadcast_enumerate(
     results = _workflow_execution.execute_many(request)
 
     all_input_samples = {
-        name: jnp.stack([cv[name] for cv in call_value_list]) for name in all_broadcast_args
+        ref.label: _stack_rows(
+            [_workflow_call.input_ref_value(call_values, ref) for call_values in call_value_list],
+            arg_name=ref.label,
+        )
+        for ref in all_broadcast_args
     }
 
     return BroadcastDistribution(
         input_samples=all_input_samples,
         output_samples=results,
         weights=jnp.array(weights),
-        broadcast_args=all_broadcast_args,
+        broadcast_args=[ref.label for ref in all_broadcast_args],
+        output_template=output_template,
     )
 
 
@@ -417,13 +473,14 @@ def _broadcast_sample(
     *,
     func: Callable[..., Any],
     values: dict[str, Any],
-    broadcast_args: list[str],
+    broadcast_args: list[_workflow_call.WorkflowInputRef],
     n_broadcast_samples: int,
     get_key: Callable[[], PRNGKey],
     make_execution_config: Callable[
         [],
         _workflow_execution.WorkflowExecutionConfig,
     ],
+    output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
     """Sample distribution arguments and execute one function call per sample."""
     key = get_key()
@@ -436,10 +493,8 @@ def _broadcast_sample(
 
     call_value_list = []
     for i in range(n_broadcast_samples):
-        call_values = dict(values)
-        for name in broadcast_args:
-            call_values[name] = _index_sample(samples_per_arg[name], i)
-        call_value_list.append(call_values)
+        replacements = {ref: _index_sample(samples_per_arg[ref], i) for ref in broadcast_args}
+        call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
 
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
@@ -449,20 +504,49 @@ def _broadcast_sample(
     results = _workflow_execution.execute_many(request)
 
     return BroadcastDistribution(
-        input_samples=samples_per_arg,
+        input_samples={ref.label: samples_per_arg[ref] for ref in broadcast_args},
         output_samples=results,
         weights=None,
-        broadcast_args=broadcast_args,
+        broadcast_args=[ref.label for ref in broadcast_args],
+        output_template=output_template,
     )
+
+
+def _stack_rows(rows: list[Any], *, arg_name: str) -> Any:
+    """Stack one argument's per-row values into a single batched value.
+
+    ``jnp.stack`` covers array-valued rows. A record-valued row is not an array
+    — a ``Record`` has fields, not a shape — so those stack through
+    ``RecordArray.stack``, giving a batch whose ``batch_shape`` is ``(n,)`` and
+    whose fields are the per-row leaves.
+    """
+    from ._record_array import RecordArray
+    from .record import Record
+
+    if rows and isinstance(rows[0], Record):
+        # Checked rather than caught: ``stack`` refuses a nested template, but it
+        # refuses other things too, and attributing every refusal to nesting
+        # would advise flattening a record that is already flat. A leaf path
+        # differs from a child name exactly when the record nests.
+        if tuple(rows[0].keys()) != rows[0].fields:
+            raise TypeError(
+                f"lifting {arg_name!r} would batch a record with nested fields, which a record "
+                f"batch does not represent yet; flatten the law's fields, or pass the nested "
+                f"parts as separate arguments"
+            )
+        return RecordArray.stack(rows)
+    return jnp.stack(rows)
 
 
 def _index_sample(s: Any, i: int) -> Any:
     """Index row ``i`` of a per-argument sample batch."""
-    from ._numeric_record import NumericRecord
     from .record import Record
 
     if isinstance(s, Record):
-        if len(s.fields) == 1:
-            return s[s.fields[0]][i]
-        return NumericRecord({f: s[f][i] for f in s.fields})
+        # Index each leaf field's batch row; rebuild by path key so a nested
+        # sample is reconstructed with its structure intact.
+        leaf_paths = tuple(s.event_template.keys())
+        if len(leaf_paths) == 1:
+            return s[leaf_paths[0]][i]
+        return Record(s.name, {p: s[p][i] for p in leaf_paths}, name_is_auto=True)
     return s[i]

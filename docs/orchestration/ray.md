@@ -5,14 +5,14 @@ Current support: **Ray through Prefect-Ray**.
 This is not a native Ray backend. ProbPipe does not expose `ray.remote`,
 `ray.put`, Ray actors, placement groups, or Ray resource hints as public
 ProbPipe APIs. Ray is used through Prefect's task runner interface, so existing
-`WorkflowFunction` calls can dispatch mapped tasks to Ray worker processes when
+`Function` calls can dispatch mapped tasks to Ray worker processes when
 Prefect orchestration is explicitly enabled.
 
 ## Execution Model
 
 The current execution path is:
 
-1. A `WorkflowFunction` receives distribution-valued or array-valued inputs.
+1. A `Function` receives distribution-valued or array-valued inputs.
 2. ProbPipe expands the call into mapped work with `Prefect task.map()` inside a
    lightweight flow.
 3. `probpipe.prefect_config.task_runner` supplies the Prefect task runner.

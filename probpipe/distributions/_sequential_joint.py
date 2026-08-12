@@ -33,6 +33,7 @@ from ..core.protocols import (
 )
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -174,9 +175,8 @@ class SequentialJointDistribution(
         self._raw_components: dict[str, Distribution | Callable[..., Distribution]] = dict(
             components
         )
-        if name is None:
-            name = "sequential(" + ",".join(components.keys()) + ")"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, "sequential(" + ",".join(components.keys()) + ")")
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}
         self._sampleable_error: str | None = None
@@ -331,7 +331,7 @@ class SequentialJointDistribution(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return Record(fields)
+        return Record(self.name, fields, name_is_auto=True)
 
     def _eval_log_prob(self, value, *, components: str) -> Array:
         """Evaluate log-density over selected components.
@@ -414,11 +414,17 @@ class SequentialJointDistribution(
         samples.  This returns the prototype (prior-evaluated) means
         as an approximation.
         """
-        return Record({k: v._mean() for k, v in self._proto_components.items()})
+        return Record(
+            self.name, {k: v._mean() for k, v in self._proto_components.items()}, name_is_auto=True
+        )
 
     def _variance(self) -> Record:
         """Per-component variances (approximate --- uses prototype components)."""
-        return Record({k: v._variance() for k, v in self._proto_components.items()})
+        return Record(
+            self.name,
+            {k: v._variance() for k, v in self._proto_components.items()},
+            name_is_auto=True,
+        )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(
@@ -495,7 +501,7 @@ class SequentialJointDistribution(
         result._components = unconditioned_pre
         result._event_template = _build_event_template(unconditioned_pre)
 
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],

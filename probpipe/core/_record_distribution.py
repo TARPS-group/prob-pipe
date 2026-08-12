@@ -20,7 +20,8 @@ import jax
 import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
-from ._distribution_base import Distribution, _DistributionMeta
+from ._distribution_base import Distribution
+from .event_template import ArraySpec, EventTemplate
 from .protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -28,9 +29,24 @@ from .protocols import (
     SupportsSampling,
     SupportsVariance,
 )
-from .record import ArraySpec, EventTemplate, Record
+from .record import Record
+from .tracked import _TrackedTermMeta
 
 __all__ = ["RecordDistribution", "_RecordDistributionView"]
+
+
+def _field_event_shape(template: EventTemplate, name: str) -> tuple[int, ...]:
+    """Event shape of one top-level field of *template*.
+
+    An :class:`ArraySpec` field returns its array ``shape``; a nested
+    sub-structure or non-array (opaque / distribution / function) field has no
+    single event shape and returns ``()``. This is a *distribution-side* view —
+    "what is the per-field event shape of one draw?" — kept here rather than on
+    :class:`EventTemplate`, whose own shape surface is leaf-level
+    (:attr:`~probpipe.NumericEventTemplate.leaf_shapes`).
+    """
+    spec = template.children[name]
+    return spec.shape if isinstance(spec, ArraySpec) else ()
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +165,7 @@ class _RecordDistributionView(Distribution):
     The Record-world analog of
     :class:`~probpipe.core._joint.DistributionView`. Preserves
     correlation when multiple views from the same parent are used in
-    :class:`~probpipe.core.node.WorkflowFunction` broadcasting.
+    :class:`~probpipe.core.node.Function` broadcasting.
 
     **Dynamic protocol support:** this base class intentionally does
     not inherit any ``SupportsFoo`` protocols. Each concrete instance
@@ -178,15 +194,17 @@ class _RecordDistributionView(Distribution):
         # ``parent.event_template`` is contractually non-``None``
         # (metaclass-enforced on every ``RecordDistribution`` instance).
         template = parent.event_template
-        if key not in template:
-            raise KeyError(f"No field {key!r} in event_template (available: {template.fields})")
-        # Bypass Distribution.__init__ validation (view name comes from
-        # the field key, not a user-supplied argument).
-        self._name = key
+        if key not in template.children:
+            raise KeyError(
+                f"No field {key!r} in event_template (available: {tuple(template.children)})"
+            )
+        # Bypass Distribution.__init__ validation; the view's name is
+        # derived from the field key, not user-supplied, so it is auto.
+        self._init_tracked(key, name_is_auto=True)
         self._parent = parent
         self._key = key
         self._key_path = (key,)
-        self._template_field = template[key]
+        self._template_field = template.children[key]
 
     # -- Parent identity (mirrors ``_RecordArrayView``) --------------------
 
@@ -194,9 +212,9 @@ class _RecordDistributionView(Distribution):
     def parent(self) -> Distribution:
         """The :class:`RecordDistribution` this view points at.
 
-        Shared-identity signal for the ``WorkflowFunction`` sweep layer:
+        Shared-identity signal for the ``Function`` sweep layer:
         views with the same ``parent`` co-sample (preserve correlation)
-        when passed as sibling broadcast args to a workflow function.
+        when passed as sibling broadcast args to a Function.
         Matches the ``_RecordArrayView.parent`` surface.
         """
         return self._parent
@@ -274,14 +292,15 @@ class _RecordDistributionView(Distribution):
         practice are ``ApproximateDistribution`` subclasses that do
         expose ``draws()``.
         """
-        from ._record_array import NumericRecordArray, RecordArray
+        from ._record_array import RecordArray
 
         draws = self._parent.draws()
         if isinstance(draws, (Record, RecordArray)):
             return jnp.asarray(draws[self._key])
-        result = NumericRecordArray.unflatten(
-            jnp.asarray(draws),
-            template=self._parent.event_template,
+        from ._numeric_record import _reconstruct_from_vector
+
+        result = _reconstruct_from_vector(
+            self._parent.name, self._parent.event_template, jnp.asarray(draws), name_is_auto=True
         )
         return jnp.asarray(result[self._key])
 
@@ -332,7 +351,7 @@ def _build_event_template(
 # ---------------------------------------------------------------------------
 
 
-class _RecordDistributionMeta(_DistributionMeta):
+class _RecordDistributionMeta(_TrackedTermMeta):
     """Metaclass adding the ``event_template`` set-or-derivable check
     on top of the base ``name`` check.
 
@@ -404,7 +423,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         return _RecordDistributionView(self, key)
 
     def select(self, *fields: str, **mapping: str) -> dict[str, _RecordDistributionView]:
-        """Select named fields as views for workflow function broadcasting.
+        """Select named fields as views for Function broadcasting.
 
         Positional args use the field name as the argument name.
         Keyword args remap: ``select(x="field_name")``.
@@ -427,7 +446,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         :meth:`Record.select_all` / :meth:`RecordArray.select_all` so
         the splat-all pattern works uniformly across the three field-
         bearing container types. Preserves cross-field correlation via
-        the parent-identity machinery in the ``WorkflowFunction`` sweep
+        the parent-identity machinery in the ``Function`` sweep
         layer.
         """
         return self.select(*self.fields)
@@ -459,11 +478,12 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
     def event_shapes(self) -> dict[str, tuple[int, ...]]:
         """Per-field event shapes (top-level fields only).
 
-        Thin delegate to :attr:`EventTemplate.event_shapes`. Nested
-        sub-templates and opaque leaves collapse to ``()``. The
+        An array-valued field reports its array shape; a nested sub-structure or
+        non-array (opaque / distribution / function) field reports ``()``. The
         metaclass guarantees ``event_template`` is non-``None``.
         """
-        return self.event_template.event_shapes
+        tpl = self.event_template
+        return {name: _field_event_shape(tpl, name) for name in tpl.fields}
 
     # -- Single-field array-like shims --------------------------------------
     # On a single-field distribution, ``.shape`` / ``.ndim`` delegate to
@@ -489,7 +509,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         multi-field distributions.
         """
         name = self._single_field_name()
-        return self.event_template.field_event_shape(name)
+        return _field_event_shape(self.event_template, name)
 
     @property
     def ndim(self) -> int:
