@@ -534,11 +534,16 @@ uv build packaging/probpipe   # probpipe (metapackage)
    Authoritative nested output templates use a private recursive aggregate
    packer across sequential and JAX dispatch; the public
    `RecordBatch.stack` contract remains unchanged. The field name for inferred
-   single-field output is always the function's own name. Single-field
-   `NumericRecord` / `NumericRecordBatch` / `Record`
-   expose shims (`__jax_array__`, `__float__`, `__call__`, `.shape`,
-   `.dtype`, `.ndim`) so `jnp.array(log_prob(d, v))`,
-   `float(mean(d))`, and `sample(grf)(X)` stay terse.
+   single-field output is always the function's own name. Single-field terms
+   expose shims, each only the ones its values admit. `Record` forwards
+   `__call__` to its one field, so a `Function` whose return is itself
+   callable — `sample(grf)`, which wraps the sampled random function in a
+   one-field record — is invoked as `sample(grf)(X)` rather than unwrapped
+   first. `NumericRecord` adds array conversion (`__array__`,
+   `__jax_array__`, `.shape`, `.dtype`, `.ndim`) and scalar conversion
+   (`__float__`, `__int__`, `__bool__`), so `jnp.array(log_prob(d, v))` and
+   `float(mean(d))` stay terse. `NumericRecordBatch` has the array
+   conversions but not the scalar ones.
 8. **Array inputs vectorize with the product rule** — when a
    `@function` is called with array-valued inputs
    (`RecordBatch` or `DistributionArray` with nonempty
