@@ -270,19 +270,19 @@ class TestConditionOn:
 
 
 # ---------------------------------------------------------------------------
-# WorkflowFunction routing
+# Function routing
 # ---------------------------------------------------------------------------
 
 
-class TestWorkflowFunctionRouting:
-    """Verify public ops are WorkflowFunction instances."""
+class TestFunctionRouting:
+    """Verify public ops are Function instances."""
 
-    def test_ops_are_workflow_functions(self):
-        from probpipe.core.node import WorkflowFunction
+    def test_ops_are_functions(self):
+        from probpipe.core.node import Function
 
         for name in ops.__all__:
             fn = getattr(ops, name)
-            assert isinstance(fn, WorkflowFunction), f"ops.{name} is not a WorkflowFunction"
+            assert isinstance(fn, Function), f"ops.{name} is not a Function"
 
     def test_public_ops_are_callable(self):
         for name in ops.__all__:

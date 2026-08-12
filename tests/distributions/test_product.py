@@ -24,7 +24,7 @@ from probpipe import (
 )
 from probpipe.core._record_array import RecordArray
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 from probpipe.core.record import Record
 
 # ---------------------------------------------------------------------------
@@ -298,19 +298,40 @@ class TestNestedSampleFlatten:
 
         s = sample(nested, key=jax.random.PRNGKey(0), sample_shape=(6,))
         assert isinstance(s, NumericRecordArray)
-        assert isinstance(s["outer"], NumericRecordArray)  # not a plain Record
+        assert isinstance(s.at_path("outer"), NumericRecordArray)  # not a plain Record
 
     def test_unbatched_nested_field_stays_record(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(0))
         assert isinstance(s, Record) and not isinstance(s, RecordArray)
-        assert isinstance(s["outer"], Record) and not isinstance(s["outer"], RecordArray)
+        assert isinstance(s.at_path("outer"), Record) and not isinstance(
+            s.at_path("outer"), RecordArray
+        )
+
+    def test_batched_depth_two_nested_sampling(self):
+        # A depth-2 nesting exercises the interior-subtree lookup inside
+        # _sample_nested (template.children, since template [] is leaf-only);
+        # only leaf components sit below depth 1 in the fixtures above.
+        from probpipe.core._record_array import NumericRecordArray
+
+        deep = ProductDistribution(
+            name="deep",
+            grp={
+                "sub": {"force": Normal(loc=0.0, scale=1.0, name="force")},
+                "mass": Normal(loc=1.0, scale=0.5, name="mass"),
+            },
+            noise=Normal(loc=0.0, scale=1.0, name="noise"),
+        )
+        s = sample(deep, key=jax.random.PRNGKey(0), sample_shape=(4,))
+        assert isinstance(s, NumericRecordArray)
+        assert tuple(s.template.keys()) == ("grp/sub/force", "grp/mass", "noise")
+        assert s["grp/sub/force"].shape == (4,)
 
     def test_batched_nested_flatten_roundtrip(self, nested):
         from probpipe.core._record_array import NumericRecordArray
 
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
-        leaves = list(nested.event_template.numeric_leaf_shapes)
-        flat = s.flatten()
+        leaves = list(nested.event_template.leaf_shapes)
+        flat = s.to_vector()
         assert flat.shape == (6, len(leaves))  # ('outer/a', 'outer/b', 'm')
         # Primary check: flatten places each sampled leaf into its own column in
         # canonical leaf order -- compared against the sample's own slash leaves.
@@ -319,7 +340,7 @@ class TestNestedSampleFlatten:
         for i, leaf in enumerate(leaves):
             np.testing.assert_allclose(flat[:, i], s[leaf], atol=1e-6)
         # Secondary: the columns round-trip back to the same leaves via unflatten.
-        rec = NumericRecordArray.unflatten(flat, template=nested.event_template, batch_shape=(6,))
+        rec = NumericRecordArray.from_vector("nra", nested.event_template, flat)
         for leaf in leaves:
             np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
 
@@ -346,8 +367,8 @@ class TestNestedSampleFlatten:
         assert not isinstance(joint, NumericRecordDistribution)
         s = sample(joint, key=jax.random.PRNGKey(0), sample_shape=(4,))
         assert isinstance(s, RecordArray) and not isinstance(s, NumericRecordArray)
-        assert isinstance(s["outer"], RecordArray)
-        assert not isinstance(s["outer"], NumericRecordArray)
+        assert isinstance(s.at_path("outer"), RecordArray)
+        assert not isinstance(s.at_path("outer"), NumericRecordArray)
 
 
 # ===========================================================================
@@ -381,6 +402,15 @@ class TestDistributionView:
     def test_mean_matches_component(self, joint_xz, mvn_z):
         view = joint_xz["z"]
         np.testing.assert_allclose(mean(view), mean(mvn_z), atol=1e-6)
+
+    def test_mean_variance_named_after_distribution(self):
+        # Regression: the _map_components loop variable must not shadow the
+        # threaded name, or mean/variance come back named after the last
+        # component ("y") instead of the product distribution.
+        prod = ProductDistribution(x=Normal(0.0, 1.0, name="x"), y=Normal(0.0, 1.0, name="y"))
+        assert mean(prod).name == prod.name
+        assert variance(prod).name == prod.name
+        assert mean(prod).name != "y"
 
     def test_parent_reference(self, joint_xy):
         view = joint_xy["x"]
@@ -438,10 +468,12 @@ class TestConditionOn:
         assert jnp.all(jnp.isfinite(lps))
 
     def test_provenance_attached(self, joint_xy):
+        raw = condition_on.apply(joint_xy, y=jnp.array(0.5))
         cond = condition_on(joint_xy, y=jnp.array(0.5))
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
-        assert "y" in cond.source.metadata["conditioned"]
+        assert raw.provenance.operation == "condition_on"
+        assert "y" in raw.provenance.metadata["conditioned"]
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_keyerror_on_unknown_component(self, joint_xy):
         with pytest.raises(KeyError, match="not found"):
@@ -467,7 +499,7 @@ class TestBroadcastingReconnection:
         def add(a: float, b: float) -> float:
             return a + b
 
-        return WorkflowFunction(
+        return Function(
             func=add,
             dispatch=backend,
             n_broadcast_samples=50,
@@ -514,7 +546,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=subtract,
             dispatch="sequential",
             n_broadcast_samples=20,
@@ -536,7 +568,7 @@ class TestBroadcastingReconnection:
         def add3(a: float, b: float, c: float) -> float:
             return a + b + c
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add3,
             dispatch="sequential",
             n_broadcast_samples=50,
@@ -558,7 +590,7 @@ class TestBroadcastingReconnection:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add,
             dispatch="jax",
             n_broadcast_samples=50,
@@ -580,7 +612,7 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=subtract,
             dispatch="jax",
             n_broadcast_samples=20,
@@ -830,7 +862,7 @@ class TestLogProbBatchValues:
         batch_lps = jnp.asarray(log_prob(joint_xy, samples))
 
         for i in range(10):
-            s_i = Record({k: v[i] for k, v in samples.items()})
+            s_i = Record("r", {k: v[i] for k, v in samples.items()})
             expected = float(log_prob(normal_x, s_i["x"])) + float(log_prob(normal_y, s_i["y"]))
             np.testing.assert_allclose(float(batch_lps[i]), expected, atol=1e-5)
 
@@ -878,12 +910,12 @@ class TestPositionalAndAutoRename:
         n = Normal(loc=0.0, scale=1.0, name="x")
         joint = ProductDistribution(growth_rate=n)
         comp = joint.components["growth_rate"]
-        assert comp.source is not None
-        assert comp.source.operation == "renamed"
-        assert len(comp.source.parents) == 1
-        assert comp.source.parents[0].name == "x"
-        assert comp.source.metadata["old_name"] == "x"
-        assert comp.source.metadata["new_name"] == "growth_rate"
+        assert comp.provenance is not None
+        assert comp.provenance.operation == "with_name"
+        assert len(comp.provenance.parents) == 1
+        assert comp.provenance.parents[0].name == "x"
+        assert comp.provenance.metadata["old_name"] == "x"
+        assert comp.provenance.metadata["new_name"] == "growth_rate"
 
     def test_auto_rename_samples_correctly(self):
         """Auto-renamed component samples from the same distribution."""
@@ -916,15 +948,15 @@ class TestPositionalAndAutoRename:
         # Should be the exact same object (no copy)
         assert joint.components["x"] is n
 
-    def test_renamed_method_directly(self):
-        """Distribution.renamed() returns a copy with new name."""
+    def test_with_name_method_directly(self):
+        """Distribution.with_name() returns a copy with new name."""
         n = Normal(loc=0.0, scale=1.0, name="x")
-        n2 = n.renamed("y")
+        n2 = n.with_name("y")
         assert n2.name == "y"
         assert n.name == "x"  # original unchanged
-        assert n2.source.operation == "renamed"
-        assert len(n2.source.parents) == 1
-        assert n2.source.parents[0].name == "x"
+        assert n2.provenance.operation == "with_name"
+        assert len(n2.provenance.parents) == 1
+        assert n2.provenance.parents[0].name == "x"
         # Sampling still works
         s = n2._sample(jax.random.PRNGKey(0), (10,))
         assert s.shape == (10,)
@@ -962,7 +994,7 @@ class TestPositionalAndAutoRename:
         original = Normal(loc=0.0, scale=1.0, name="x")
         joint = ProductDistribution(renamed_x=original)
         renamed = joint.components["renamed_x"]
-        assert any(a.obj is original for a in provenance_ancestors(renamed))
+        assert any(a.parent is original for a in provenance_ancestors(renamed))
 
 
 class TestDistributionViewFromDistribution:
@@ -989,7 +1021,7 @@ class TestEnumerateWithDistributionViews:
         def compute(a: float, b: float, c: float) -> float:
             return (a - b) + c
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=compute,
             dispatch="sequential",
             n_broadcast_samples=50,
@@ -1061,24 +1093,24 @@ class TestNestedProductDistribution:
         key = jax.random.PRNGKey(1)
         s = sample(nested_joint, key=key)
         assert isinstance(s, (Record, RecordArray))
-        assert isinstance(s["physics"], Record)
-        assert "force" in s["physics"]
-        assert "mass" in s["physics"]
+        assert isinstance(s.at_path("physics"), Record)
+        assert "force" in s.at_path("physics")
+        assert "mass" in s.at_path("physics")
         assert "observation" in s
 
     def test_sample_leaf_shapes(self, nested_joint):
         key = jax.random.PRNGKey(2)
         s = sample(nested_joint, key=key, sample_shape=(10,))
-        assert s["physics"]["force"].shape == (10,)
-        assert s["physics"]["mass"].shape == (10,)
+        assert s["physics/force"].shape == (10,)
+        assert s["physics/mass"].shape == (10,)
         assert s["observation"].shape == (10,)
 
     def test_sample_single(self, nested_joint):
         key = jax.random.PRNGKey(3)
         s = sample(nested_joint, key=key)
         # Each leaf should be a scalar
-        assert s["physics"]["force"].shape == ()
-        assert s["physics"]["mass"].shape == ()
+        assert s["physics/force"].shape == ()
+        assert s["physics/mass"].shape == ()
         assert s["observation"].shape == ()
 
     # -- log_prob ----------------------------------------------------------
@@ -1100,8 +1132,8 @@ class TestNestedProductDistribution:
         mass_dist = Gamma(concentration=2.0, rate=1.0, name="mass")
         obs_dist = Normal(loc=0.0, scale=0.1, name="observation")
         lp_manual = (
-            jnp.asarray(log_prob(force_dist, s["physics"]["force"]))
-            + jnp.asarray(log_prob(mass_dist, s["physics"]["mass"]))
+            jnp.asarray(log_prob(force_dist, s["physics/force"]))
+            + jnp.asarray(log_prob(mass_dist, s["physics/mass"]))
             + jnp.asarray(log_prob(obs_dist, s["observation"]))
         )
         np.testing.assert_allclose(float(lp_joint), float(lp_manual), atol=1e-5)
@@ -1111,15 +1143,15 @@ class TestNestedProductDistribution:
     def test_mean_nested(self, nested_joint):
         m = mean(nested_joint)
         assert isinstance(m, Record)
-        assert isinstance(m["physics"], Record)
-        assert m["physics"]["force"].shape == ()
-        assert m["physics"]["mass"].shape == ()
+        assert isinstance(m.at_path("physics"), Record)
+        assert m["physics/force"].shape == ()
+        assert m["physics/mass"].shape == ()
         assert m["observation"].shape == ()
 
     def test_variance_nested(self, nested_joint):
         v = variance(nested_joint)
         assert isinstance(v, Record)
-        assert isinstance(v["physics"], Record)
+        assert isinstance(v.at_path("physics"), Record)
         assert jnp.all(jnp.asarray(jax.tree.leaves(v)) >= 0)
 
     # -- flatten / unflatten -----------------------------------------------
@@ -1205,11 +1237,11 @@ class TestNestedProductDistribution:
         s = sample(cond, key=key, sample_shape=(5,))
         assert isinstance(s, (Record, RecordArray))
         assert "physics" in s
-        assert isinstance(s["physics"], Record)
-        assert "mass" in s["physics"]
-        assert "force" not in s["physics"]
+        assert isinstance(s.at_path("physics"), Record)
+        assert "mass" in s.at_path("physics")
+        assert "force" not in s.at_path("physics")
         assert "observation" in s
-        assert s["physics"]["mass"].shape == (5,)
+        assert s["physics/mass"].shape == (5,)
         assert s["observation"].shape == (5,)
 
     def test_condition_on_nested_leaf_log_prob(self, nested_joint):
@@ -1276,8 +1308,8 @@ class TestNestedProductDistribution:
     def test_condition_on_provenance(self, nested_joint):
         """Conditioned distribution should have provenance."""
         cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_condition_on_empty_raises(self, nested_joint):
         """Calling condition_on with no arguments should raise."""
@@ -1314,7 +1346,7 @@ class TestNestedProductDistribution:
     # -- broadcasting with nested views ------------------------------------
 
     def test_workflow_broadcasting_nested(self):
-        """_RecordDistributionViews from nested joints should work in WorkflowFunction."""
+        """_RecordDistributionViews from nested joints should work in Function."""
         # Use a flat joint so each view is a scalar for the add function
         joint = ProductDistribution(
             force=Normal(loc=0.0, scale=1.0, name="force"),
@@ -1326,7 +1358,7 @@ class TestNestedProductDistribution:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add,
             dispatch="sequential",
             n_broadcast_samples=30,
@@ -1370,9 +1402,9 @@ class TestNestedWithMVN:
         key = jax.random.PRNGKey(50)
         s = sample(nested_mvn, key=key, sample_shape=(5,))
         assert isinstance(s, (Record, RecordArray))
-        assert isinstance(s["group"], Record)
-        assert s["group"]["position"].shape == (5, 2)
-        assert s["group"]["scale"].shape == (5,)
+        assert isinstance(s.at_path("group"), Record)
+        assert s["group/position"].shape == (5, 2)
+        assert s["group/scale"].shape == (5,)
         assert s["label"].shape == (5,)
 
         # Flatten a single sample (no batch dim)
@@ -1386,7 +1418,7 @@ class TestNestedWithMVN:
         )
         assert isinstance(recovered, Record)
         np.testing.assert_allclose(
-            recovered["group"]["position"], s_single["group"]["position"], atol=1e-6
+            recovered["group/position"], s_single["group/position"], atol=1e-6
         )
 
     def test_getitem_top_level(self, nested_mvn):

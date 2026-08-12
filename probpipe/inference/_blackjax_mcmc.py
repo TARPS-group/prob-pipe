@@ -355,13 +355,13 @@ class _BlackJAXMCMCMethod(InferenceMethod):
             random_seed=random_seed,
             num_integration_steps=num_integration_steps,
         )
-        auxiliary = build_mcmc_datatree(chains, sample_stats)
+        annotations = build_mcmc_datatree(chains, sample_stats)
         prior = get_prior(dist)
         return make_posterior(
             chains,
             parents=(prior,),
             algorithm=self._method_name,
-            auxiliary=auxiliary,
+            annotations=annotations,
             event_template=event_template,
             num_results=num_results,
             num_warmup=num_warmup,

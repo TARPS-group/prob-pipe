@@ -166,7 +166,7 @@ class TestInferenceMethodRegistry:
 
     def test_method_override(self, simple_model, data):
         """method= should override auto-selection."""
-        posterior = condition_on(
+        posterior = condition_on.apply(
             simple_model,
             data,
             method="blackjax_rwmh",

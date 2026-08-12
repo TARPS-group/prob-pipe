@@ -4,7 +4,7 @@ Covers:
 - ApproximateDistribution: chain access, warmup, inference_data, draws
 - ApproximateDistribution with Record template: named draws
 - _RecordDistributionView: component views, select, broadcasting
-- rwmh workflow function: basic sampling with SupportsLogProb
+- rwmh Function: basic sampling with SupportsLogProb
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from probpipe import (
     variance,
 )
 from probpipe.core.distribution import _RecordDistributionView
-from probpipe.core.record import ArraySpec
+from probpipe.core.event_template import ArraySpec
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._inference_utils import build_mcmc_datatree
@@ -48,13 +48,13 @@ class TestApproximateDistribution:
         warmup1 = jax.random.normal(jax.random.PRNGKey(2), (10, 2))
         warmup2 = jax.random.normal(jax.random.PRNGKey(3), (10, 2))
         chains = [chain1, chain2]
-        auxiliary = build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
+        annotations = build_mcmc_datatree(chains, warmup_chains=[warmup1, warmup2])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         return make_posterior(
             chains,
             parents=(prior,),
             algorithm="test",
-            auxiliary=auxiliary,
+            annotations=annotations,
         )
 
     def test_empty_chains_raises(self):
@@ -75,19 +75,101 @@ class TestApproximateDistribution:
 
     def test_algorithm_from_provenance(self, two_chain_dist):
         assert two_chain_dist.algorithm == "test"
-        assert two_chain_dist.source.metadata["algorithm"] == "test"
+        assert two_chain_dist.provenance.metadata["algorithm"] == "test"
 
-    def test_auxiliary_is_inference_data(self, two_chain_dist):
-        assert two_chain_dist.auxiliary is not None
-        # arviz InferenceData (0.x has .groups(), 1.x DataTree has .children)
-        assert hasattr(two_chain_dist.auxiliary, "groups") or hasattr(
-            two_chain_dist.auxiliary, "children"
+    def test_annotations_contains_arviz_data(self, two_chain_dist):
+        assert two_chain_dist.annotations is not None
+        # ArviZ-compatible data use xarray DataTree on ArviZ 1.x.
+        assert hasattr(two_chain_dist.annotations, "groups") or hasattr(
+            two_chain_dist.annotations, "children"
         )
 
-    def test_inference_data_alias(self, two_chain_dist):
-        assert two_chain_dist.inference_data is two_chain_dist.auxiliary
+    def test_arviz_data_accessor(self, two_chain_dist):
+        aux = two_chain_dist.annotations
+        assert aux is not None
+        assert "arviz" in aux.children
 
-    def test_warmup_from_auxiliary(self, two_chain_dist):
+        arviz_data = two_chain_dist.arviz_data
+        assert arviz_data is not None
+        assert "posterior" in arviz_data.children
+        assert "warmup" in arviz_data.children
+
+    def test_inference_data_alias(self, two_chain_dist):
+        aux = two_chain_dist.annotations
+        assert aux is not None
+        assert "arviz" in aux.children
+
+        idata = two_chain_dist.inference_data
+        assert idata is not None
+        assert "posterior" in idata.children
+        assert "warmup" in idata.children
+
+    def test_arviz_data_none_without_annotations(self):
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        assert dist.arviz_data is None
+        assert dist.inference_data is None
+
+    def test_arviz_data_falls_back_to_legacy_annotations_layout(self):
+        import xarray as xr
+
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        legacy_aux = xr.DataTree.from_dict({"posterior": xr.Dataset()})
+        dist._annotations = legacy_aux
+
+        assert dist.arviz_data is legacy_aux
+        assert dist.inference_data is legacy_aux
+
+    def test_warmup_samples_none_when_arviz_data_has_no_children_attr(self):
+        dist = ApproximateDistribution(
+            [jax.random.normal(jax.random.PRNGKey(0), (5, 2))],
+            name="x",
+        )
+        dist._annotations = object()
+
+        assert dist.warmup_samples is None
+
+    def test_make_posterior_accepts_annotations_dataset_nodes(self):
+        import xarray as xr
+
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        posterior = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            annotations={"posterior": xr.Dataset()},
+        )
+
+        assert posterior.inference_data is not None
+        assert "posterior" in posterior.inference_data.children
+
+    def test_make_posterior_skips_annotations_root_group(self):
+        import xarray as xr
+
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        posterior = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            annotations={
+                "/": xr.Dataset(attrs={"ignored": True}),
+                "posterior": xr.Dataset(),
+            },
+        )
+
+        assert posterior.annotations is not None
+        assert "arviz" in posterior.annotations.children
+        assert "posterior" in posterior.inference_data.children
+        assert "" not in posterior.inference_data.children
+
+    def test_warmup_from_annotations(self, two_chain_dist):
         warmup = two_chain_dist.warmup_samples
         assert warmup is not None
         assert len(warmup) == 2
@@ -128,6 +210,31 @@ class TestApproximateDistribution:
         assert "num_chains=2" in r
         assert "num_draws=50" in r
         assert "test" in r
+
+    def test_make_posterior_forwards_weights(self):
+        """make_posterior(weights=) flows through to the posterior so a
+        weighted backend (e.g. SMC-ABC) keeps its importance weights and
+        the weighted mean reflects them."""
+        # Two particles at 0 and 10; weighting the second 0.8 pulls the
+        # mean from the unweighted 5 to 0.2*0 + 0.8*10 = 8.
+        chain = jnp.array([[0.0], [10.0]])
+        prior = Normal(loc=0.0, scale=1.0, name="theta")
+        post = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            weights=jnp.array([0.2, 0.8]),
+        )
+        assert post.weights is not None
+        np.testing.assert_allclose(np.asarray(mean(post)["posterior"]).ravel(), [8.0], atol=1e-6)
+
+    def test_make_posterior_weights_default_unweighted(self):
+        """Without weights=, make_posterior yields an equal-weight posterior
+        (the weighted-mean change is opt-in, not a default behaviour shift)."""
+        chain = jnp.array([[0.0], [10.0]])
+        prior = Normal(loc=0.0, scale=1.0, name="theta")
+        post = make_posterior([chain], parents=(prior,), algorithm="test")
+        np.testing.assert_allclose(np.asarray(mean(post)["posterior"]).ravel(), [5.0], atol=1e-6)
 
 
 class TestApproximateDistributionValuesTemplate:
@@ -321,15 +428,42 @@ class TestApproximateDistributionValuesTemplate:
                 field_order=["a"],
             )
 
+    def test_field_order_opaque_template_raises_clear_error(self):
+        """field_order cannot compute a permutation for opaque fields."""
+        template = EventTemplate(a=None, b=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
+            make_posterior(
+                [chain],
+                parents=(prior,),
+                algorithm="test",
+                event_template=template,
+                field_order=["a", "b"],
+            )
+
+    def test_multi_field_opaque_template_raises_clear_error(self):
+        """Multi-field splitting rejects opaque fields before sizing."""
+        template = EventTemplate(a=None, b=())
+        chain = jax.random.normal(jax.random.PRNGKey(0), (5, 2))
+        prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
+        with pytest.raises(ValueError, match="field 'a' has an opaque spec"):
+            make_posterior(
+                [chain],
+                parents=(prior,),
+                algorithm="test",
+                event_template=template,
+            )
+
     def test_array_shaped_fields(self):
         """Template with non-scalar fields unflattens correctly."""
         template = EventTemplate(
             mean=(3,),
             cov=(2, 2),
         )
-        flat_size = 3 + 4  # 3 + 2*2
-        chain = jax.random.normal(jax.random.PRNGKey(0), (20, flat_size))
-        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size), name="z")
+        vector_size = 3 + 4  # 3 + 2*2
+        chain = jax.random.normal(jax.random.PRNGKey(0), (20, vector_size))
+        prior = MultivariateNormal(loc=jnp.zeros(vector_size), cov=jnp.eye(vector_size), name="z")
         post = make_posterior(
             [chain],
             parents=(prior,),
@@ -345,13 +479,13 @@ class TestApproximateDistributionValuesTemplate:
         template = EventTemplate(a=(), b=())
         chain = jax.random.normal(jax.random.PRNGKey(0), (50, 2))
         warmup = jax.random.normal(jax.random.PRNGKey(1), (10, 2))
-        auxiliary = build_mcmc_datatree([chain], warmup_chains=[warmup])
+        annotations = build_mcmc_datatree([chain], warmup_chains=[warmup])
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         post = make_posterior(
             [chain],
             parents=(prior,),
             algorithm="test",
-            auxiliary=auxiliary,
+            annotations=annotations,
             event_template=template,
         )
         draws = post.draws(include_warmup=True)
@@ -365,9 +499,9 @@ class TestApproximateDistributionValuesTemplate:
             params=EventTemplate(a=(), b=()),
             scale=(),
         )
-        flat_size = 3  # a + b + scale
-        chain = jax.random.normal(jax.random.PRNGKey(0), (30, flat_size))
-        prior = MultivariateNormal(loc=jnp.zeros(flat_size), cov=jnp.eye(flat_size), name="z")
+        vector_size = 3  # a + b + scale
+        chain = jax.random.normal(jax.random.PRNGKey(0), (30, vector_size))
+        prior = MultivariateNormal(loc=jnp.zeros(vector_size), cov=jnp.eye(vector_size), name="z")
         post = make_posterior(
             [chain],
             parents=(prior,),
@@ -376,9 +510,9 @@ class TestApproximateDistributionValuesTemplate:
         )
         draws = post.draws()
         assert isinstance(draws, (Record, RecordArray))
-        assert isinstance(draws["params"], (Record, RecordArray))
-        assert draws["params"]["a"].shape == (30,)
-        assert draws["params"]["b"].shape == (30,)
+        assert isinstance(draws.at_path("params"), (Record, RecordArray))
+        assert draws["params/a"].shape == (30,)
+        assert draws["params/b"].shape == (30,)
         assert draws["scale"].shape == (30,)
 
     def test_nested_template_accessors_match_top_level_fields(self):
@@ -387,7 +521,7 @@ class TestApproximateDistributionValuesTemplate:
         With Option B's per-top-level-field split, every accessor on
         ``ApproximateDistribution`` is keyed by the user-supplied
         template's top-level fields. Nested ``EventTemplate`` fields
-        are stored as a flat ``(n, nested_flat_size)`` slice under the
+        are stored as a flat ``(n, nested_vector_size)`` slice under the
         top-level field name; the nested structure is recoverable via
         ``event_template[field]`` and ``draws()``.
         """
@@ -395,11 +529,11 @@ class TestApproximateDistributionValuesTemplate:
             params=EventTemplate(a=(), b=()),
             scale=(),
         )
-        flat_size = 3  # a + b + scale
-        chain = jax.random.normal(jax.random.PRNGKey(0), (40, flat_size))
+        vector_size = 3  # a + b + scale
+        chain = jax.random.normal(jax.random.PRNGKey(0), (40, vector_size))
         prior = MultivariateNormal(
-            loc=jnp.zeros(flat_size),
-            cov=jnp.eye(flat_size),
+            loc=jnp.zeros(vector_size),
+            cov=jnp.eye(vector_size),
             name="z",
         )
         post = make_posterior(
@@ -422,8 +556,8 @@ class TestApproximateDistributionValuesTemplate:
         with pytest.raises(AttributeError, match="multiple fields"):
             _ = post.event_shape
         # The nested template is preserved on ``event_template``.
-        assert isinstance(post.event_template["params"], EventTemplate)
-        assert post.event_template["params"].fields == ("a", "b")
+        assert isinstance(post.event_template.at_path("params"), EventTemplate)
+        assert tuple(post.event_template.at_path("params").children) == ("a", "b")
         # Moments key by the user's top-level fields, not by an
         # auto-wrap leaf.
         from probpipe import mean as op_mean
@@ -440,11 +574,11 @@ class TestApproximateDistributionValuesTemplate:
         # ``draws()`` walks the full template (incl. nesting).
         draws = post.draws()
         assert draws.fields == expected_fields
-        assert draws["params"]["a"].shape == (40,)
-        assert draws["params"]["b"].shape == (40,)
+        assert draws["params/a"].shape == (40,)
+        assert draws["params/b"].shape == (40,)
         assert draws["scale"].shape == (40,)
         # ``flat_samples`` view is the (n, total_dim) matrix.
-        assert post.flat_samples.shape == (40, flat_size)
+        assert post.flat_samples.shape == (40, vector_size)
 
     def test_without_warmup(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
@@ -453,32 +587,43 @@ class TestApproximateDistributionValuesTemplate:
         assert dist.num_chains == 1
         assert dist.num_draws == 20
 
-    def test_bare_dist_no_auxiliary(self):
+    def test_bare_dist_no_annotations(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
-        assert dist.auxiliary is None
+        assert dist.annotations is None
         assert dist.inference_data is None
 
-    def test_auxiliary_has_posterior_group(self):
+    def test_annotations_has_posterior_group(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
-        auxiliary = build_mcmc_datatree([chain])
+        annotations = build_mcmc_datatree([chain])
         prior = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="z")
-        post = make_posterior([chain], parents=(prior,), algorithm="test", auxiliary=auxiliary)
-        assert "posterior" in post.auxiliary
+        post = make_posterior(
+            [chain],
+            parents=(prior,),
+            algorithm="test",
+            annotations=annotations,
+        )
 
-    def test_algorithm_default_without_auxiliary(self):
+        assert post.annotations is not None
+        assert "arviz" in post.annotations.children
+
+        idata = post.inference_data
+        assert idata is not None
+        assert "posterior" in idata.children
+
+    def test_algorithm_default_without_annotations(self):
         chain = jax.random.normal(jax.random.PRNGKey(0), (20, 3))
         dist = ApproximateDistribution([chain], name="x")
         assert dist.algorithm == "unknown"
 
 
 # ---------------------------------------------------------------------------
-# rwmh workflow function
+# rwmh Function
 # ---------------------------------------------------------------------------
 
 
 class TestRWMH:
-    """Test the standalone rwmh workflow function."""
+    """Test the standalone rwmh Function."""
 
     def test_basic_sampling(self):
         """RWMH samples from a simple Normal distribution."""
@@ -497,7 +642,7 @@ class TestRWMH:
         assert result.algorithm == "blackjax_rwmh"
 
     def test_inference_data_produced(self):
-        """RWMH produces auxiliary DataTree with posterior group."""
+        """RWMH produces an annotations DataTree with posterior group."""
         dist = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
         result = rwmh(
             dist=dist,
@@ -510,8 +655,8 @@ class TestRWMH:
         assert "posterior" in result.inference_data
         # RWMH scalar stats (accept_rate, step_size) live in provenance,
         # not as per-draw arrays in sample_stats.
-        assert result.source.metadata["accept_rate"] > 0
-        assert result.source.metadata["step_size"] == 0.5
+        assert result.provenance.metadata["accept_rate"] > 0
+        assert result.provenance.metadata["step_size"] == 0.5
 
     def test_multi_chain(self):
         """RWMH with multiple chains."""
@@ -551,8 +696,8 @@ class TestRWMH:
             step_size=0.5,
             random_seed=42,
         )
-        assert result.source is not None
-        assert result.source.operation == "blackjax_rwmh"
+        assert result.provenance is not None
+        assert result.provenance.operation == "blackjax_rwmh"
 
     def test_with_log_prob_fn_normal_normal_conjugate(self):
         """RWMH posterior must recover the analytical Normal-Normal conjugate.
@@ -1010,7 +1155,7 @@ class TestRecordDistributionProperties:
 
     def test_record_distribution_flatten_unflatten(self, posterior):
         """NumericRecordDistribution.flatten_value / unflatten_value round-trip."""
-        v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
+        v = Record("r", K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
         flat = posterior.flatten_value(v)
         np.testing.assert_allclose(flat, [1.0, 2.0, 3.0])  # insertion: K, phi, r
         v2 = posterior.unflatten_value(flat, template=posterior.event_template)
@@ -1019,7 +1164,7 @@ class TestRecordDistributionProperties:
         np.testing.assert_allclose(float(v2["r"]), 3.0)
 
     def test_flatten_unflatten_roundtrip(self, posterior, template):
-        v = Record(K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
+        v = Record("r", K=jnp.array(1.0), phi=jnp.array(2.0), r=jnp.array(3.0))
         flat = posterior.flatten_value(v)
         assert flat.shape == (3,)
         v2 = posterior.unflatten_value(flat, template=posterior.event_template)
@@ -1047,43 +1192,43 @@ class TestRecordDistributionProperties:
         assert posterior.event_shapes == {"K": (), "phi": (), "r": ()}
 
     def test_record_distribution_event_size(self, posterior, template):
-        """``event_size`` matches template.flat_size."""
-        assert posterior.event_size == template.flat_size
+        """``event_size`` matches template.vector_size."""
+        assert posterior.event_size == template.vector_size
 
 
 class TestValuesSelect:
     """Record.select() for concrete data."""
 
     def test_positional(self):
-        v = Record(r=1.0, K=70.0, phi=10.0)
+        v = Record("r", r=1.0, K=70.0, phi=10.0)
         sel = v.select("r", "K")
         assert set(sel.keys()) == {"r", "K"}
         np.testing.assert_allclose(float(sel["r"]), 1.0)
         np.testing.assert_allclose(float(sel["K"]), 70.0)
 
     def test_keyword_remap(self):
-        v = Record(r=1.0, K=70.0)
+        v = Record("r", r=1.0, K=70.0)
         sel = v.select(growth_rate="r")
         assert "growth_rate" in sel
         np.testing.assert_allclose(float(sel["growth_rate"]), 1.0)
 
     def test_mixed(self):
-        v = Record(r=1.0, K=70.0, phi=10.0)
+        v = Record("r", r=1.0, K=70.0, phi=10.0)
         sel = v.select("phi", growth_rate="r")
         assert set(sel.keys()) == {"phi", "growth_rate"}
 
     def test_missing_field_raises(self):
-        v = Record(r=1.0)
+        v = Record("r", r=1.0)
         with pytest.raises(KeyError, match="nonexistent"):
             v.select("nonexistent")
 
     def test_missing_mapping_target_raises(self):
-        v = Record(r=1.0)
+        v = Record("r", r=1.0)
         with pytest.raises(KeyError, match="z"):
             v.select(x="z")
 
     def test_empty_select(self):
-        v = Record(r=1.0, K=70.0)
+        v = Record("r", r=1.0, K=70.0)
         sel = v.select()
         assert sel == {}
 
@@ -1177,9 +1322,9 @@ class TestEndToEndValuesPipeline:
 
     def test_workflow_broadcasting_values_correct(self, posterior):
         """Broadcast predict(params, x) computes correct function of posterior."""
-        from probpipe.core.node import workflow_function
+        from probpipe.core.node import function
 
-        @workflow_function(n_broadcast_samples=100, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=100, dispatch="sequential", seed=0)
         def predict(params, x):
             return params[0] + params[1] * x
 
@@ -1196,9 +1341,9 @@ class TestEndToEndValuesPipeline:
         bug would produce mean≈0 (by symmetry) but var≈2*var(params),
         so checking var is the real correlation test.
         """
-        from probpipe.core.node import workflow_function
+        from probpipe.core.node import function
 
-        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def identity_pair(a, b):
             return a - b
 
@@ -1237,9 +1382,9 @@ class TestEndToEndValuesPipeline:
 
     def test_workflow_mixed_posterior_and_independent(self, posterior):
         """Workflow with both posterior views and an independent distribution."""
-        from probpipe.core.node import workflow_function
+        from probpipe.core.node import function
 
-        @workflow_function(n_broadcast_samples=50, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=50, dispatch="sequential", seed=0)
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 

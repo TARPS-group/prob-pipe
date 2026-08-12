@@ -6,7 +6,8 @@ import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
-from ..core.record import EventTemplate, Record
+from ..core.event_template import EventTemplate
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["GLMLikelihood"]
@@ -23,10 +24,12 @@ def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
     if isinstance(x, jnp.ndarray):
         return x
     if isinstance(x, (Record, RecordArray)):
-        fields = x.fields
-        if len(fields) == 1:
-            return jnp.asarray(x[fields[0]])
-        arrays = [jnp.asarray(x[f]) for f in fields]
+        # Leaf keys via the template (RecordArray's own keys() is top-level and
+        # its [] is leaf-only), so a nested value coerces instead of raising.
+        keys = list(x.event_template.keys())
+        if len(keys) == 1:
+            return jnp.asarray(x[keys[0]])
+        arrays = [jnp.asarray(x[k]) for k in keys]
         return jnp.stack(arrays, axis=-1)
     return jnp.asarray(x)
 
@@ -36,7 +39,7 @@ class GLMLikelihood:
 
     Two accepted data forms:
 
-    * ``data = Record(X=X_covariates, y=y_observed)`` — both fields
+    * ``data = Record("data", X=X_covariates, y=y_observed)`` — both fields
       explicit; the canonical form. ``X`` is the covariate matrix only;
       *do not* include a constant column for the intercept.
     * ``data = y_observed`` (a bare response array) when ``X`` was
@@ -46,7 +49,7 @@ class GLMLikelihood:
     Joint bootstrapping of covariates and response uses the Record
     form::
 
-        Xy = Record(X=X_covariates, y=y_observed)
+        Xy = Record("Xy", X=X_covariates, y=y_observed)
         bootstrap = BootstrapReplicateDistribution(EmpiricalDistribution(Xy))
         bagged = condition_on.with_options(n_broadcast_samples=16)(
             model, bootstrap,
@@ -59,7 +62,7 @@ class GLMLikelihood:
         ``NegativeBinomial()``).
     x : array-like or None
         Default covariate matrix of shape ``(n, p)``. If ``None``, must
-        be provided per-call via ``data=Record(X=..., y=...)``. Should
+        be provided per-call via ``data=Record("data", X=..., y=...)``. Should
         contain **only the covariates** — the intercept is fit
         separately when ``fit_intercept=True``.
     fit_intercept : bool, default True
@@ -109,7 +112,7 @@ class GLMLikelihood:
 
         Two accepted forms:
 
-        1. ``data = Record(X=..., y=...)`` — both fields explicit; the
+        1. ``data = Record("data", X=..., y=...)`` — both fields explicit; the
            canonical form, free of axis-position ambiguity.
         2. ``data`` is a response array, and ``X`` was supplied at
            construction time — use the construction-time ``X``.
@@ -130,7 +133,7 @@ class GLMLikelihood:
         if self._x is not None:
             return self._x, _coerce_array(data)
         raise ValueError(
-            "GLMLikelihood data must be either a Record(X=..., y=...) "
+            "GLMLikelihood data must be either a Record('data', X=..., y=...) "
             "or a response array paired with an X passed at "
             "construction time."
         )
@@ -139,7 +142,7 @@ class GLMLikelihood:
         """Log-likelihood: sum of per-observation log-probs.
 
         *params* and *data* can be raw arrays or ``Record`` objects.
-        When *data* is ``Record(X=..., y=...)``, both the covariate
+        When *data* is ``Record("data", X=..., y=...)``, both the covariate
         matrix and response are extracted. The linear predictor
         ``eta = intercept + X @ slopes`` is computed via
         :meth:`_linear_predictor` so the ``fit_intercept`` convention is
@@ -168,17 +171,17 @@ class GLMLikelihood:
         params : Array or Record
             Coefficient vector of shape ``(p,)``.
         datum : Record
-            ``Record(X=x_i, y=y_i)`` with ``x_i`` of shape ``(p,)``
+            ``Record("datum", X=x_i, y=y_i)`` with ``x_i`` of shape ``(p,)``
             and ``y_i`` scalar.
 
         Raises
         ------
         TypeError
-            If ``datum`` is not a ``Record(X=..., y=...)``.
+            If ``datum`` is not a ``Record("datum", X=..., y=...)``.
         """
         if not (isinstance(datum, Record) and "X" in datum and "y" in datum):
             raise TypeError(
-                "GLMLikelihood.per_datum_log_likelihood requires datum=Record(X=x_i, y=y_i)."
+                "GLMLikelihood.per_datum_log_likelihood requires datum=Record('datum', X=x_i, y=y_i)."
             )
         # `atleast_1d` accommodates the single-covariate case where the
         # per-observation X leaf is naturally scalar — the matmul below

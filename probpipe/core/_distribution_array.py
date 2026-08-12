@@ -4,7 +4,7 @@ A ``DistributionArray`` is ``Array[Distribution]``: an ordered
 collection of independent scalar distributions addressed by a
 (multi-d) ``batch_shape``.
 
-Vectorized ops are delivered by the :class:`~probpipe.WorkflowFunction`
+Vectorized ops are delivered by the :class:`~probpipe.Function`
 sweep layer — when a ``DistributionArray`` is passed to an op like
 ``sample`` / ``mean`` / ``log_prob`` whose signature expects a scalar
 ``Distribution``, the WF dispatches cell-by-cell and stacks the results
@@ -12,7 +12,7 @@ into a ``NumericRecordArray`` / ``RecordArray`` (or nested
 ``DistributionArray`` when the op returns a distribution per cell).
 The class itself only carries the container surface.
 
-Use case: the natural output type of a ``WorkflowFunction`` parameter
+Use case: the natural output type of a ``Function`` parameter
 sweep whose inner call returns a ``Distribution``. Each cell's
 posterior stays identifiable rather than being marginalised.
 
@@ -48,7 +48,9 @@ import numpy as np
 
 from .._array_utils import _slice_leading_axes
 from ._distribution_base import Distribution
+from .event_template import EventTemplate
 from .protocols import SupportsArrayBackend
+from .tracked import auto_name
 
 if TYPE_CHECKING:
     from .protocols import _DistributionArrayBackend
@@ -66,9 +68,10 @@ class DistributionArray[T](Distribution[T]):
     addressed by a (multi-d) ``batch_shape``.
 
     Exposes only the container surface (indexing, iteration,
-    ``components``, ``batch_shape``, ``event_shape``). Vectorized
+    ``components``, ``batch_shape``, ``event_shape``, ``event_template``).
+    Vectorized
     ops (``sample``, ``mean``, ``variance``, ``log_prob``, …) are
-    delivered by the :class:`~probpipe.core.node.WorkflowFunction`
+    delivered by the :class:`~probpipe.core.node.Function`
     sweep layer, which treats the array as ``Array[Distribution]`` and
     dispatches cell-by-cell.
 
@@ -92,7 +95,7 @@ class DistributionArray[T](Distribution[T]):
     capabilities. Vectorization is handled at a different layer:
 
     1. ``sample(da, ...)`` calls the :class:`~probpipe.sample`
-       :class:`~probpipe.core.node.WorkflowFunction`, whose dispatch
+       :class:`~probpipe.core.node.Function`, whose dispatch
        sees a ``DistributionArray`` argument where the op's annotation
        expects a scalar ``SupportsSampling``.
     2. WF dispatches cell-by-cell: each ``da[i]`` is sampled, results
@@ -169,9 +172,9 @@ class DistributionArray[T](Distribution[T]):
         # leaves it ``None`` and uses ``_components`` as the
         # storage-of-truth.
         self._backend = None
-        if name is None:
-            name = "distribution_array"
-        super().__init__(name=name)
+        self._event_template: EventTemplate | None = None
+        name, name_is_auto = auto_name(name, "distribution_array")
+        super().__init__(name=name, name_is_auto=name_is_auto)
         # A DistributionArray holding MC-marginal components inherits
         # their approximation status; if any component is approximate
         # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
@@ -301,7 +304,10 @@ class DistributionArray[T](Distribution[T]):
             multi = np.unravel_index(flat, batch_shape) if batch_shape else ()
             multi_t = tuple(int(x) for x in multi)
             cell_params = {k: _slice_leading_axes(v, multi_t) for k, v in batched_params.items()}
-            components.append(dist_cls(name=f"{name}_{flat}", **cell_params))
+            cell = dist_cls(name=f"{name}_{flat}", **cell_params)
+            # The per-cell suffix is derived by this factory, not user-typed.
+            object.__setattr__(cell, "_name_is_auto", True)
+            components.append(cell)
         return cls(components, batch_shape=batch_shape, name=name)
 
     # -- backend-delegated constructor --------------------------------------
@@ -346,9 +352,9 @@ class DistributionArray[T](Distribution[T]):
         instance._components = None
         instance._batch_shape = tuple(backend.batch_shape)
         instance._backend = backend
-        if name is None:
-            name = "distribution_array"
-        Distribution.__init__(instance, name=name)
+        instance._event_template = None
+        name, name_is_auto = auto_name(name, "distribution_array")
+        Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
         # Approximation status flows from the backend. TFP-backed
         # arrays are exact; a future Record-backend (over a
         # ``RecordEmpiricalDistribution``) will report
@@ -396,6 +402,27 @@ class DistributionArray[T](Distribution[T]):
         if self._backend is not None:
             return tuple(self._backend.event_shape)
         return getattr(self._components[0], "event_shape", ())
+
+    @property
+    def event_template(self) -> EventTemplate | None:
+        """Authoritative template shared by the component distributions.
+
+        Function-produced arrays store the declared template explicitly.
+        Other arrays expose a template only when all materialized components
+        carry the same non-``None`` template.
+        """
+        if self._event_template is not None:
+            return self._event_template
+        if self._backend is not None:
+            return None
+        templates = [getattr(component, "event_template", None) for component in self.components]
+        if (
+            templates
+            and templates[0] is not None
+            and all(template == templates[0] for template in templates[1:])
+        ):
+            return templates[0]
+        return None
 
     @property
     def dtype(self):
@@ -447,6 +474,12 @@ class DistributionArray[T](Distribution[T]):
         ``shape=batch_shape`` object array.
         """
         bshape = self._batch_shape
+        if not bshape:
+            if key == ():
+                if self._backend is not None:
+                    return self._backend.cell(0)
+                return self._components[0]
+            raise IndexError("too many indices for 0-d DistributionArray")
         # Normalise the key to a tuple, one entry per leading axis.
         if isinstance(key, tuple):
             if len(key) > len(bshape):
@@ -460,11 +493,22 @@ class DistributionArray[T](Distribution[T]):
 
         # Fast path: all axes addressed by int (or int-like). Compute
         # the flat index directly; no object-array materialisation.
-        # ``np.ravel_multi_index`` rejects negative indices, so wrap
-        # them into the positive range first (``dists[-1]`` is a
-        # common pattern — e.g. "last posterior in an iterate output").
+        # ``np.ravel_multi_index`` rejects negative indices, so normalize
+        # valid Python-style negatives first. Positive overflow and
+        # negatives past the axis bounds must still raise ``IndexError``.
         if all(isinstance(k, (int, np.integer)) or hasattr(k, "__index__") for k in key_tuple):
-            indices = tuple(int(k) % dim for k, dim in zip(key_tuple, bshape))
+            indices = []
+            for axis, (k, dim) in enumerate(zip(key_tuple, bshape)):
+                idx = int(k)
+                if idx < 0:
+                    idx += dim
+                if idx < 0 or idx >= dim:
+                    raise IndexError(
+                        f"DistributionArray index {int(k)} is out of bounds "
+                        f"for axis {axis} with size {dim}"
+                    )
+                indices.append(idx)
+            indices = tuple(indices)
             flat = int(np.ravel_multi_index(indices, bshape))
             if self._backend is not None:
                 return self._backend.cell(flat)
@@ -492,6 +536,8 @@ class DistributionArray[T](Distribution[T]):
             new_components,
             batch_shape=sliced.shape,
             name=self._name,
+            name_is_auto=self._name_is_auto,
+            event_template=self._event_template,
         )
 
     def __iter__(self):
@@ -624,11 +670,13 @@ def _make_distribution_array(
     *,
     batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
+    name_is_auto: bool | None = None,
+    event_template: EventTemplate | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray``.
 
     Vectorized ops (``sample`` / ``mean`` / ``variance`` / ``log_prob``
-    / ...) are delivered uniformly by the ``WorkflowFunction`` sweep
+    / ...) are delivered uniformly by the ``Function`` sweep
     layer, which treats a ``DistributionArray`` as ``Array[Distribution]``
     and dispatches cell-by-cell. This factory therefore doesn't build
     protocol mixins — the class is one fixed type.
@@ -645,5 +693,24 @@ def _make_distribution_array(
         ``len(components)``.
     name : str, optional
         Name for provenance.
+    name_is_auto : bool, optional
+        Overrides the flag on the result — pass the parent's flag when the
+        result inherits a possibly-auto name (e.g. a slice). ``None`` keeps
+        the constructor's own resolution (auto iff *name* was omitted).
+    event_template : EventTemplate, optional
+        Authoritative template for a Function-produced aggregate. Every
+        component must expose the same template.
     """
-    return DistributionArray(components, batch_shape=batch_shape, name=name)
+    array = DistributionArray(components, batch_shape=batch_shape, name=name)
+    if event_template is not None:
+        for index, component in enumerate(array.components):
+            actual = getattr(component, "event_template", None)
+            if actual != event_template:
+                raise ValueError(
+                    f"DistributionArray component {index} event_template {actual!r} "
+                    f"does not match declared template {event_template!r}"
+                )
+        array._event_template = event_template
+    if name_is_auto is not None:
+        object.__setattr__(array, "_name_is_auto", bool(name_is_auto))
+    return array

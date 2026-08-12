@@ -50,6 +50,7 @@ from ..core.protocols import (
     SupportsUnnormalizedLogProb,
 )
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 if TYPE_CHECKING:
@@ -74,8 +75,8 @@ def _data_size(data: Any) -> int:
     if isinstance(data, RecordArray):
         return data.batch_shape[0]
     if isinstance(data, Record):
-        for f in data.fields:
-            leaf = data[f]
+        children = dict(data.children)
+        for f, leaf in children.items():
             if isinstance(leaf, Record):
                 raise ValueError(
                     f"MinibatchedDistribution requires a flat Record "
@@ -83,11 +84,11 @@ def _data_size(data: Any) -> int:
                     f"{f!r}; flatten the structure or use a "
                     f"RecordArray instead."
                 )
-        leading = {jnp.asarray(data[f]).shape[0] for f in data.fields}
+        leading = {jnp.asarray(leaf).shape[0] for leaf in children.values()}
         if len(leading) != 1:
             raise ValueError(
                 f"Record leaves have differing leading-axis lengths: "
-                f"{ {f: jnp.asarray(data[f]).shape[0] for f in data.fields} }. "
+                f"{ {f: jnp.asarray(leaf).shape[0] for f, leaf in children.items()} }. "
                 f"All leaves must share a common N for minibatching."
             )
         return leading.pop()
@@ -108,7 +109,11 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     """
     if isinstance(data, Record):
         # Covers Record and RecordArray (the latter via subclass).
-        return Record({f: jnp.asarray(data[f])[indices] for f in data.fields})
+        return Record(
+            data.name,
+            {f: jnp.asarray(child)[indices] for f, child in data.children.items()},
+            name_is_auto=True,
+        )
     return jnp.asarray(data)[indices]
 
 
@@ -226,9 +231,8 @@ class MinibatchedDistribution(
         self._with_replacement = bool(with_replacement)
         self._rescale_factor = float(self._n / batch_size)
 
-        if name is None:
-            name = f"MinibatchedDistribution(batch_size={batch_size})"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, f"MinibatchedDistribution(batch_size={batch_size})")
+        super().__init__(name=name, name_is_auto=name_is_auto)
 
     # -- read-only metadata --------------------------------------------------
 
@@ -287,6 +291,7 @@ class MinibatchedDistribution(
             batch=batch,
             rescale_factor=self._rescale_factor,
             name=f"{self.name}/draw",
+            name_is_auto=True,
         )
 
     # -- SupportsRandomUnnormalizedLogProb -----------------------------------
@@ -343,10 +348,11 @@ class _FixedMinibatchDistribution(
         rescale_factor: float,
         *,
         name: str | None = None,
+        name_is_auto: bool = False,
     ):
-        super().__init__(
-            name=name or "fixed_minibatch_distribution",
-        )
+        if not name:
+            name, name_is_auto = "fixed_minibatch_distribution", True
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._prior = prior
         self._likelihood = likelihood
         self._batch = batch
@@ -412,7 +418,7 @@ class _RandomMinibatchLogProb(
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution):
-        super().__init__(name=f"{measure.name}/random_log_prob")
+        super().__init__(name=f"{measure.name}/random_log_prob", name_is_auto=True)
         self._measure = measure
 
     # -- RandomFunction.__call__ --------------------------------------------
@@ -471,7 +477,7 @@ class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
-        super().__init__(name=f"{measure.name}@theta")
+        super().__init__(name=f"{measure.name}@theta", name_is_auto=True)
         self._measure = measure
         self._theta = theta
 

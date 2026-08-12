@@ -1,19 +1,20 @@
-"""Characterization tests for WorkflowFunction call resolution.
+"""Characterization tests for Function call resolution.
 
-These tests lock down the public-call boundary before WorkflowFunction
+These tests lock down the public-call boundary before Function
 internals are split into smaller private modules.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 
 import jax.numpy as jnp
 import pytest
 
 from probpipe import BroadcastDistribution, Normal
 from probpipe.core import _workflow_call
-from probpipe.core.node import Module, Node, WorkflowFunction, workflow_method
+from probpipe.core.node import Function, Module, Node, workflow_method
 
 
 @pytest.fixture
@@ -90,6 +91,91 @@ def _resolve_call(
 
 
 class TestWorkflowCallHelpers:
+    def test_input_refs_use_one_subscript_for_variadic_slots(self):
+        def collect(head, *items, **extras):
+            return head, items, extras
+
+        info = _workflow_call.make_signature_info(collect)
+        values = {
+            "head": 1,
+            "items": (2, 3),
+            "extras": {"tail": 4},
+        }
+
+        refs = _workflow_call.iter_input_refs(info, values)
+
+        assert refs == (
+            _workflow_call.WorkflowInputRef("head"),
+            _workflow_call.WorkflowInputRef("items", subscript=0),
+            _workflow_call.WorkflowInputRef("items", subscript=1),
+            _workflow_call.WorkflowInputRef("extras", subscript="tail"),
+        )
+        assert tuple(ref.label for ref in refs) == (
+            "head",
+            "*items[0]",
+            "*items[1]",
+            "**extras['tail']",
+        )
+        assert tuple(_workflow_call.input_ref_value(values, ref) for ref in refs) == (
+            1,
+            2,
+            3,
+            4,
+        )
+
+    def test_variadic_any_is_not_a_planner_pass_through_hint(self):
+        def collect(head: Any, *items: Any, **extras: Any):
+            return head, items, extras
+
+        info = _workflow_call.make_signature_info(collect)
+
+        assert _workflow_call.input_ref_hint(info, _workflow_call.WorkflowInputRef("head")) is Any
+        assert (
+            _workflow_call.input_ref_hint(
+                info,
+                _workflow_call.WorkflowInputRef("items", subscript=0),
+            )
+            is None
+        )
+        assert (
+            _workflow_call.input_ref_hint(
+                info,
+                _workflow_call.WorkflowInputRef("extras", subscript="tail"),
+            )
+            is None
+        )
+
+    def test_input_ref_replacement_preserves_signature_shaped_containers(self):
+        values = {
+            "head": 1,
+            "items": (2, 3),
+            "extras": {"tail": 4},
+        }
+        head = _workflow_call.WorkflowInputRef("head")
+        first_item = _workflow_call.WorkflowInputRef("items", subscript=0)
+        tail = _workflow_call.WorkflowInputRef("extras", subscript="tail")
+
+        singly_replaced = _workflow_call.replace_input_ref(values, first_item, 20)
+        jointly_replaced = _workflow_call.replace_input_refs(
+            values,
+            {
+                head: 10,
+                first_item: 20,
+                tail: 40,
+            },
+        )
+
+        assert singly_replaced == {
+            "head": 1,
+            "items": (20, 3),
+            "extras": {"tail": 4},
+        }
+        assert jointly_replaced == {
+            "head": 10,
+            "items": (20, 3),
+            "extras": {"tail": 40},
+        }
+
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
         assert _resolve_call(add_func, 1.0, 2.0).values == {"x": 1.0, "y": 2.0}
         assert _resolve_call(add_func, 1.0, y=2.0).values == {"x": 1.0, "y": 2.0}
@@ -98,19 +184,19 @@ class TestWorkflowCallHelpers:
         with pytest.raises(TypeError, match="multiple values"):
             _resolve_call(add_func, 1.0, x=2.0)
 
-    def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
+    def test_var_keyword_preserves_signature_shaped_mapping(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, scale=2.0)
 
-        assert call.values == {"x": 1.0, "scale": 2.0}
+        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, _ = kwargs_recorder
 
         call = _resolve_call(identity, x=1.0, kwargs={"scale": 2.0})
 
-        assert call.values == {"x": 1.0, "kwargs": {"scale": 2.0}}
+        assert call.values == {"x": 1.0, "kwargs": {"kwargs": {"scale": 2.0}}}
 
     def test_unbindable_workflow_control_name_raises_like_python(self, identity_func):
         with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -170,34 +256,34 @@ class TestWorkflowCallHelpers:
 
 class TestArgumentBinding:
     def test_positional_and_mixed_arguments_bind_like_python_calls(self, add_func):
-        wf = WorkflowFunction(func=add_func, dispatch="sequential")
+        wf = Function(func=add_func, dispatch="sequential")
 
         assert float(wf(jnp.asarray(1.0), jnp.asarray(2.0))) == 3.0
         assert float(wf(jnp.asarray(1.0), y=jnp.asarray(2.0))) == 3.0
 
     def test_duplicate_positional_and_keyword_argument_raises(self, add_func):
-        wf = WorkflowFunction(func=add_func, dispatch="sequential")
+        wf = Function(func=add_func, dispatch="sequential")
 
         with pytest.raises(TypeError, match="multiple values"):
             wf(jnp.asarray(1.0), x=jnp.asarray(2.0))
 
     def test_var_keyword_expands_extra_keywords(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = WorkflowFunction(func=identity, dispatch="sequential")
+        wf = Function(func=identity, dispatch="sequential")
 
         assert float(wf(x=1.0, scale=2.0)) == 1.0
         assert seen == [{"scale": 2.0}]
 
     def test_literal_kwargs_argument_is_not_unpacked(self, kwargs_recorder):
         identity, seen = kwargs_recorder
-        wf = WorkflowFunction(func=identity, dispatch="sequential")
+        wf = Function(func=identity, dispatch="sequential")
 
         assert float(wf(x=1.0, kwargs={"scale": 2.0})) == 1.0
         assert seen == [{"kwargs": {"scale": 2.0}}]
 
     def test_bind_values_and_function_defaults_are_resolved_before_call(self, affine_func):
-        default_wf = WorkflowFunction(func=affine_func, dispatch="sequential")
-        bound_wf = WorkflowFunction(
+        default_wf = Function(func=affine_func, dispatch="sequential")
+        bound_wf = Function(
             func=affine_func,
             dispatch="sequential",
             bind={"offset": 3.0},
@@ -209,7 +295,7 @@ class TestArgumentBinding:
         assert float(bound_wf(x=1.0, offset=4.0)) == 10.0
 
     def test_missing_required_input_raises_after_all_resolution_sources_fail(self, add_func):
-        wf = WorkflowFunction(func=add_func, dispatch="sequential")
+        wf = Function(func=add_func, dispatch="sequential")
 
         with pytest.raises(TypeError, match="Missing required input 'y'"):
             wf(x=1.0)
@@ -224,6 +310,19 @@ class TestModuleResolution:
         assert float(module.step()) == 12.0
         assert float(module.step(y=2.0)) == 7.0
 
+    def test_module_records_resolved_plain_inputs(self, full_provenance_mode):
+        dep = DataNode()
+        module = CallResolutionModule(dep=dep, x=5.0)
+
+        result = module.step()
+
+        assert result.provenance is not None
+        assert result.provenance.parents[1:] == ()
+        assert tuple(result.provenance.inputs) == ("dep", "x", "y")
+        assert result.provenance.inputs["dep"].parent is dep
+        assert result.provenance.inputs["x"].parent == 5.0
+        assert result.provenance.inputs["y"].parent == 7.0
+
     def test_module_wired_dependency_cannot_be_overridden_at_call_time(self):
         module = CallResolutionModule(dep=DataNode(), x=5.0)
 
@@ -234,7 +333,7 @@ class TestModuleResolution:
         def use_dep(dep: DataNode):
             return 1.0
 
-        wf = WorkflowFunction(func=use_dep, dispatch="sequential")
+        wf = Function(func=use_dep, dispatch="sequential")
 
         with pytest.raises(TypeError, match="expects dependency 'dep:"):
             wf(dep=object())
@@ -246,7 +345,7 @@ class TestCallOptions:
         identity_func,
         normal_dist,
     ):
-        wf = WorkflowFunction(
+        wf = Function(
             func=identity_func,
             n_broadcast_samples=20,
             dispatch="sequential",
@@ -267,7 +366,7 @@ class TestCallOptions:
         identity_func,
         normal_dist,
     ):
-        wf = WorkflowFunction(
+        wf = Function(
             func=identity_func,
             n_broadcast_samples=8,
             dispatch="sequential",

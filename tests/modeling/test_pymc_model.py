@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from probpipe import ApproximateDistribution
-from probpipe.core.record import ArraySpec
+from probpipe.core.event_template import ArraySpec
 from probpipe.modeling import PyMCModel
 
 
@@ -145,7 +145,7 @@ class TestPyMCModel:
         from probpipe import condition_on
 
         data = np.random.randn(50)
-        result = condition_on(
+        result = condition_on.apply(
             model,
             {"y": data},
             method="pymc_nuts",
@@ -161,8 +161,8 @@ class TestPyMCModel:
         assert result.inference_data is not None
         assert hasattr(result.inference_data, "posterior")
         assert hasattr(result.inference_data, "sample_stats")
-        assert result.source is not None
-        assert result.source.operation == "pymc_nuts"
+        assert result.provenance is not None
+        assert result.provenance.operation == "pymc_nuts"
 
     def test_condition_on_multicore_spawn(self, model):
         """Multi-core sampling (``cores=2``) runs under the spawn start method
@@ -180,7 +180,7 @@ class TestPyMCModel:
         _ = jnp.ones(1000).sum().block_until_ready()
 
         data = np.random.randn(50)
-        result = condition_on(
+        result = condition_on.apply(
             model,
             {"y": data},
             method="pymc_nuts",
@@ -208,7 +208,7 @@ class TestPyMCModel:
 
         data = np.random.randn(50)
         with _captured_pm_sample_kwargs() as captured:
-            result = condition_on(
+            result = condition_on.apply(
                 model,
                 {"y": data},
                 method="pymc_nuts",
@@ -400,7 +400,7 @@ class TestEventTemplate:
             return m
 
         y = np.zeros(8, dtype=np.float32)
-        result = condition_on(
+        result = condition_on.apply(
             PyMCModel(model_fn),
             {"y": y},
             method="pymc_advi",
@@ -677,14 +677,14 @@ class TestRecordDataUnpacking:
         return m
 
     def test_record_input_unpacked_by_field_name(self):
-        """A ``Record(X=..., y=...)`` populates both observed slots."""
+        """A ``Record("data", X=..., y=...)`` populates both observed slots."""
         from probpipe import Record
 
         rng = np.random.RandomState(0)
         N = 20
         X = np.asarray(rng.randn(N))[:, None].astype(np.float32)
         y = rng.poisson(2.0, size=N).astype(np.float32)
-        data = Record(X=jnp.asarray(X), y=jnp.asarray(y))
+        data = Record("r", X=jnp.asarray(X), y=jnp.asarray(y))
 
         model = PyMCModel(self._xy_model)
         # _pymc_model unpacks and coerces. Result is a PyMC model built
@@ -720,5 +720,5 @@ class TestRecordDataUnpacking:
         # Just confirm this doesn't raise the
         # "unsupported operand type(s) for *: 'TensorVariable' and
         #  'jaxlib._jax.ArrayImpl'" error from the un-coerced path.
-        built = model._pymc_model(data=Record(X=X, y=y))
+        built = model._pymc_model(data=Record("r", X=X, y=y))
         assert "y" in {rv.name for rv in built.observed_RVs}

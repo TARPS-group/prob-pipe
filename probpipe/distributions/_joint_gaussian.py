@@ -25,6 +25,7 @@ from ..core.protocols import (
 )
 from ..core.provenance import Provenance
 from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -95,9 +96,10 @@ class JointGaussian(
 
         self._mean_vec = mean
         self._cov_mat = cov
-        if name is None:
-            name = "joint_gaussian(" + ",".join(component_shapes.keys()) + ")"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(
+            name, "joint_gaussian(" + ",".join(component_shapes.keys()) + ")"
+        )
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._component_shapes = dict(component_shapes)
 
         # Build slices and component MultivariateNormal distributions
@@ -184,13 +186,13 @@ class JointGaussian(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return Record(result)
+        return Record(self.name, result, name_is_auto=True)
 
     def _log_prob(self, value) -> Array:
         from ..core._record_array import RecordArray
 
         if not isinstance(value, (Record, RecordArray)):
-            value = Record(value)
+            value = Record(self.name, value, name_is_auto=True)
         from .multivariate import MultivariateNormal as MVN
 
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
@@ -206,7 +208,7 @@ class JointGaussian(
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = self._mean_vec[sl]
-        return Record(result)
+        return Record(self.name, result, name_is_auto=True)
 
     def _variance(self) -> Record:
         diag = jnp.diag(self._cov_mat)
@@ -214,7 +216,7 @@ class JointGaussian(
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = diag[sl]
-        return Record(result)
+        return Record(self.name, result, name_is_auto=True)
 
     def _cov(self) -> Array:
         """Full covariance matrix."""
@@ -312,7 +314,7 @@ class JointGaussian(
             name=self._name,
             **u_shapes,
         )
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],

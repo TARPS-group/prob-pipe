@@ -1,8 +1,8 @@
 """Built-in operations for distribution computation.
 
 Each public function (``sample``, ``mean``, ``log_prob``, …) is a
-:class:`~probpipe.core.node.WorkflowFunction` created via the
-``@workflow_function`` decorator.  This means every call automatically
+:class:`~probpipe.core.node.Function` created via the
+``@function`` decorator.  This means every call automatically
 participates in broadcasting and Prefect orchestration when a
 distribution argument is passed where a concrete value is expected.
 
@@ -20,18 +20,20 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
 
 from .._utils import _auto_key
 from ..custom_types import Array, PRNGKey
 from .distribution import Distribution, RandomFunction
-from .node import workflow_function
+from .node import function
 from .protocols import (
     SupportsConditioning,
     SupportsCovariance,
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
+    SupportsQuantile,
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
@@ -47,6 +49,7 @@ __all__ = [
     "log_prob",
     "mean",
     "prob",
+    "quantile",
     "random_log_prob",
     "random_unnormalized_log_prob",
     "sample",
@@ -57,11 +60,11 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# Public API — each function is a WorkflowFunction via @workflow_function
+# Public API — each function is a Function via @function
 # ---------------------------------------------------------------------------
 
 
-@workflow_function
+@function
 def sample(
     dist: SupportsSampling,
     *,
@@ -96,10 +99,10 @@ def sample(
 #
 # Each density op accepts either a positional ``value`` or named field kwargs
 # packed into one draw via ``dist._pack_value`` (single-field → the bare
-# value; multi-field → a ``Record``). The ops stay plain WorkflowFunctions and
+# value; multi-field → a ``Record``). The ops stay plain Functions and
 # resolve this in their body — exactly as ``condition_on`` resolves its named
 # data kwargs from ``**kwargs``. Per-call controls use ``with_options`` (the
-# WorkflowFunction control path).
+# Function control path).
 
 
 def _resolve_value(
@@ -121,7 +124,7 @@ def _resolve_value(
     A distribution field whose name collides with the op's own ``value`` or
     ``dist`` parameter cannot be addressed by the keyword form (it binds to the
     parameter). For a multi-field distribution, pass a positional ``Record``
-    (``log_prob(d, Record(value=...))``); for a single-field one, pass the bare
+    (``log_prob(d, Record("v", value=...))``); for a single-field one, pass the bare
     positional value (``log_prob(d, v)`` — a scalar ``_log_prob`` does not
     accept a ``Record``). This mirrors ``condition_on``'s ``observed``.
     """
@@ -136,7 +139,7 @@ def _resolve_value(
     return value
 
 
-@workflow_function
+@function
 def log_prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> Array:
     """Evaluate the normalized log-density at *value*.
 
@@ -151,7 +154,7 @@ def log_prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> A
     return dist._log_prob(_resolve_value("log_prob", dist, value, field_kwargs))
 
 
-@workflow_function
+@function
 def prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> Array:
     """Evaluate the density at *value* (``exp(log_prob)``).
 
@@ -163,7 +166,7 @@ def prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> Array
     return jnp.exp(dist._log_prob(value))
 
 
-@workflow_function
+@function
 def unnormalized_log_prob(
     dist: SupportsUnnormalizedLogProb,
     value: Any = None,
@@ -182,7 +185,7 @@ def unnormalized_log_prob(
     return dist._unnormalized_log_prob(value)
 
 
-@workflow_function
+@function
 def unnormalized_prob(
     dist: SupportsUnnormalizedLogProb,
     value: Any = None,
@@ -201,7 +204,7 @@ def unnormalized_prob(
     return jnp.exp(dist._unnormalized_log_prob(value))
 
 
-@workflow_function
+@function
 def mean(dist: SupportsMean) -> Any:
     """Compute ``E[X]`` where ``X ~ dist``.
 
@@ -225,7 +228,7 @@ def mean(dist: SupportsMean) -> Any:
     return dist._mean()
 
 
-@workflow_function
+@function
 def variance(dist: SupportsVariance) -> Any:
     """Compute Var[X].
 
@@ -238,7 +241,7 @@ def variance(dist: SupportsVariance) -> Any:
     return dist._variance()
 
 
-@workflow_function
+@function
 def cov(dist: SupportsCovariance) -> Array:
     """Compute the covariance matrix.
 
@@ -252,7 +255,29 @@ def cov(dist: SupportsCovariance) -> Array:
     return dist._cov()
 
 
-@workflow_function
+@function
+def quantile(dist: SupportsQuantile, q: Any) -> Any:
+    """Compute quantile(s) of ``X ~ dist`` at probability level(s) ``q``.
+
+    ``q`` is a scalar or array of probabilities in ``[0, 1]``; the return is
+    ``T``-shaped per field (finite-sample distributions return the weight-aware
+    empirical quantile via ``_quantile``).
+
+    Requires the distribution to implement :class:`SupportsQuantile`. A concrete
+    ``q`` outside ``[0, 1]`` raises ``ValueError`` (the check is skipped when
+    ``q`` is traced, e.g. under ``jit``).
+    """
+    if not isinstance(dist, SupportsQuantile):
+        raise TypeError(
+            f"{type(dist).__name__} does not support quantile (does not implement SupportsQuantile)"
+        )
+    qa = jnp.asarray(q)
+    if not isinstance(qa, jax.core.Tracer) and bool(jnp.any((qa < 0) | (qa > 1) | jnp.isnan(qa))):
+        raise ValueError(f"quantile probabilities must lie in [0, 1]; got {q!r}")
+    return dist._quantile(q)
+
+
+@function
 def expectation(
     dist: SupportsExpectation,
     f: Any,
@@ -272,7 +297,7 @@ def expectation(
     )
 
 
-@workflow_function
+@function
 def random_log_prob(
     dist: SupportsRandomLogProb,
     value: Any = None,
@@ -305,7 +330,7 @@ def random_log_prob(
     return rf if value is None else rf(value)
 
 
-@workflow_function
+@function
 def random_unnormalized_log_prob(
     dist: SupportsRandomUnnormalizedLogProb,
     value: Any = None,
@@ -385,7 +410,7 @@ def _split_data_kwargs(
     return data_kwargs, inference_kwargs
 
 
-@workflow_function
+@function
 def condition_on(
     dist: Distribution,
     observed: Any = None,
@@ -401,13 +426,13 @@ def condition_on(
         # Positional (backward compatible):
         condition_on(model, y_obs)
 
-        # Named data kwargs — bundled into Record(X=..., y=...):
+        # Named data kwargs — bundled into a record with fields X and y:
         condition_on.with_options(n_broadcast_samples=16)(
             model, X=bootstrap["X"], y=bootstrap["y"],
         )
 
     When named data kwargs are distribution views from the same parent,
-    the workflow function broadcasting machinery samples the parent once
+    the Function broadcasting machinery samples the parent once
     and distributes the fields, preserving joint correlation.
 
     Dispatch priority:
@@ -452,7 +477,7 @@ def condition_on(
                     "Cannot provide both positional `observed` and named "
                     f"data kwargs ({', '.join(data_kwargs)})"
                 )
-            observed = Record(data_kwargs)
+            observed = Record("observed", data_kwargs, name_is_auto=True)
         return inference_method_registry.execute(dist, observed, method=method, **inference_kwargs)
 
     # Exact conditioning (conjugate updates, joint marginalization, etc.)
@@ -469,11 +494,11 @@ def condition_on(
                 "Cannot provide both positional `observed` and named "
                 f"data kwargs ({', '.join(data_kwargs)})"
             )
-        observed = Record(data_kwargs)
+        observed = Record("observed", data_kwargs, name_is_auto=True)
     return inference_method_registry.execute(dist, observed, **inference_kwargs)
 
 
-@workflow_function
+@function
 def from_distribution(
     source: Distribution,
     target_type: type,

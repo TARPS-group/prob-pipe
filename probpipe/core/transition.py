@@ -24,7 +24,7 @@ from collections.abc import Callable, Iterable
 from typing import Any
 
 from .distribution import Distribution
-from .node import WorkflowFunction, workflow_function
+from .node import Function, function
 from .provenance import Provenance
 
 __all__ = [
@@ -35,11 +35,11 @@ __all__ = [
 
 
 # ---------------------------------------------------------------------------
-# iterate — the fold WorkflowFunction
+# iterate — the fold Function
 # ---------------------------------------------------------------------------
 
 
-@workflow_function
+@function
 def iterate[T, S](
     step_fn: Callable[[Distribution[T], S], Distribution[T]],
     initial: Distribution[T],
@@ -63,7 +63,7 @@ def iterate[T, S](
     step_fn : callable
         ``(Distribution[T], S) -> Distribution[T]``.
         Any callable matching this signature — plain functions,
-        :class:`WorkflowFunction` instances, or bound methods.
+        :class:`Function` instances, or bound methods.
     initial : Distribution[T]
         The starting distribution.
     inputs : Iterable[S]
@@ -90,10 +90,10 @@ def iterate[T, S](
             )
 
         # Auto-attach provenance if not already set
-        if result.source is None:
+        if result.provenance is None:
             # write-once guard: re-sourcing an already-sourced result raises
             with contextlib.suppress(RuntimeError):
-                result.with_source(
+                result.with_provenance(
                     Provenance.create(
                         "iterate",
                         parents=[current],
@@ -119,7 +119,7 @@ def iterate[T, S](
 
 def _step_fn_name(step_fn: Callable) -> str:
     """Extract a human-readable name from a step function."""
-    if isinstance(step_fn, WorkflowFunction):
+    if isinstance(step_fn, Function):
         return step_fn._name
     return getattr(step_fn, "__name__", type(step_fn).__name__)
 
@@ -128,7 +128,7 @@ def with_conversion(
     step_fn: Callable,
     target_type: type,
     **convert_kwargs: Any,
-) -> WorkflowFunction:
+) -> Function:
     """Wrap a step function to convert its output after each step.
 
     After calling *step_fn*, converts the resulting distribution to
@@ -141,7 +141,7 @@ def with_conversion(
     MCMC output) but the next iteration needs a parametric
     distribution as input.
 
-    The returned wrapper is a :class:`WorkflowFunction`, so it appears
+    The returned wrapper is a :class:`Function`, so it appears
     as a node in the ProbPipe workflow DAG.
 
     Parameters
@@ -156,7 +156,7 @@ def with_conversion(
 
     Returns
     -------
-    WorkflowFunction
+    Function
         A new step function with the same call signature.
     """
     inner_name = _step_fn_name(step_fn)
@@ -167,7 +167,7 @@ def with_conversion(
         result = step_fn(dist, inp)
         return from_distribution(result, target_type, **convert_kwargs)
 
-    return WorkflowFunction(
+    return Function(
         func=_with_conversion_impl,
         name=f"with_conversion({inner_name}, {target_type.__name__})",
     )
@@ -178,7 +178,7 @@ def with_resampling(
     *,
     ess_threshold: float = 0.5,
     seed: int = 0,
-) -> WorkflowFunction:
+) -> Function:
     """Wrap a step function to resample when particle weights degenerate.
 
     After calling *step_fn*, if the result is an
@@ -186,12 +186,14 @@ def with_resampling(
     ``ESS / N < ess_threshold``, performs multinomial resampling to
     produce equally-weighted particles.
 
-    The pre-resampling ESS is stored in provenance metadata of the
-    resampled distribution (``dist.source.metadata["ess"]``) since
-    this information would otherwise be lost after resampling to
-    uniform weights.
+    When resampling occurs, the raw result from
+    ``wrapper.apply(...)`` carries ``"resample"`` provenance whose
+    metadata stores the pre-resampling ``"ess"`` and ``"ess_ratio"``.
+    A normal ``wrapper(...)`` call returns an independent Function result
+    whose provenance describes the wrapper invocation; it does not retain
+    that implementation-level resampling metadata.
 
-    The returned wrapper is a :class:`WorkflowFunction`, so it appears
+    The returned wrapper is a :class:`Function`, so it appears
     as a node in the ProbPipe workflow DAG.
 
     Parameters
@@ -206,7 +208,7 @@ def with_resampling(
 
     Returns
     -------
-    WorkflowFunction
+    Function
         A new step function with the same call signature.
 
     Notes
@@ -236,18 +238,23 @@ def with_resampling(
                 key = jax.random.PRNGKey(seed + call_count)
                 call_count += 1
                 indices = out_dist._w.choice(key, shape=(n,))
-                # Resample per-field (samples is a NumericRecord; index
-                # each field's stacked array along the sample axis).
+                # Resample per-leaf (samples is a NumericRecord; index each
+                # leaf's stacked array along the sample axis). Path-keyed
+                # construction rebuilds any nested structure.
                 from .record import Record
 
                 new_record = Record(
-                    {f: out_dist.samples[f][indices] for f in out_dist.samples.fields}
+                    out_dist.name,
+                    {k: v[indices] for k, v in out_dist.samples.items()},
+                    name_is_auto=True,
                 )
                 resampled = EmpiricalDistribution(
                     new_record,
                     name=out_dist.name,
                 )
-                resampled.with_source(
+                # The result inherits out_dist's name, so it mirrors its flag.
+                object.__setattr__(resampled, "_name_is_auto", out_dist.name_is_auto)
+                resampled.with_provenance(
                     Provenance.create(
                         "resample",
                         parents=[out_dist],
@@ -258,7 +265,7 @@ def with_resampling(
 
         return out_dist
 
-    return WorkflowFunction(
+    return Function(
         func=_with_resampling_impl,
         name=f"with_resampling({inner_name})",
     )

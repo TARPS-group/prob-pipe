@@ -19,7 +19,7 @@ from probpipe import (
     sample,
     variance,
 )
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -420,10 +420,12 @@ class TestConditionOn:
 
     def test_provenance(self):
         jg = JointGaussian(mean=jnp.zeros(2), cov=jnp.eye(2), x=1, y=1)
+        raw = condition_on.apply(jg, x=jnp.array([0.0]))
         cond = condition_on(jg, x=jnp.array([0.0]))
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
-        assert "x" in cond.source.metadata["conditioned"]
+        assert raw.provenance.operation == "condition_on"
+        assert "x" in raw.provenance.metadata["conditioned"]
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_conditional_sampling(self):
         """Draw samples from conditional and verify they're centered correctly."""
@@ -479,7 +481,7 @@ class TestBroadcasting:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add,
             dispatch="sequential",
             n_broadcast_samples=50,

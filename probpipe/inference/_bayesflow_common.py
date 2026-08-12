@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     # bijector annotations.
     import tensorflow_probability.substrates.jax.bijectors as tfb
 
-# Offline-simulation execution backend; values mirror ``WorkflowFunction``'s
+# Offline-simulation execution backend; values mirror ``Function``'s
 # dispatch names ("jax" = vmap the simulator, "sequential" = eager per-draw loop).
 SimBackend = Literal["jax", "sequential"]
 
@@ -82,7 +82,7 @@ def _adapter_field_keys(keys: tuple[str, ...]) -> tuple[str, ...]:
     """Positional internal keys (``theta_0``, ``theta_1``, ...) for the adapter.
 
     Both the training dict and the sample-side extraction derive these from the
-    prior's ``event_template`` leaf order (``numeric_leaf_shapes`` keys; ==
+    prior's ``event_template`` leaf order (``leaf_shapes`` keys; ==
     ``fields`` for a flat prior), so the mapping is deterministic across train
     and inference without storing it, and slash-delimited nested leaf paths
     never reach BayesFlow's key namespace.
@@ -166,15 +166,19 @@ def _simulate_offline(
     # Iterate numeric leaves (slash paths like "outer/a" for nested priors; ==
     # top-level fields for flat priors). The adapter re-keys positionally, so
     # leaf paths never reach BayesFlow's namespace.
-    leaf_keys = tuple(template.numeric_leaf_shapes)
+    leaf_keys = tuple(template.leaf_shapes)
     k_theta, k_sim = jax.random.split(key)
     theta = _sample_op(prior, key=k_theta, sample_shape=(num_simulations,))
-    # Round-trip through the canonical flat layout: single-field priors' raw draws
-    # are not field-indexable by name, so unflatten gives uniform named access.
-    theta_flat = jnp.asarray(theta.flatten()).reshape(num_simulations, -1)
-    record = NumericRecordArray.unflatten(
-        theta_flat, template=template, batch_shape=(num_simulations,)
-    )
+    # Round-trip through the canonical 1-D vector layout: single-field priors'
+    # raw draws are not field-indexable by name, so from_vector gives uniform
+    # named access. Structured draws serialize via to_vector; raw arrays ravel.
+    if isinstance(theta, NumericRecordArray):
+        theta_flat = jnp.asarray(theta.to_vector()).reshape(num_simulations, -1)
+    else:
+        theta_flat = jnp.asarray(theta).reshape(num_simulations, -1)
+    from ..core._numeric_record import _reconstruct_from_vector
+
+    record = _reconstruct_from_vector(prior.name, template, theta_flat, name_is_auto=True)
     # Invert before flattening: matrix-valued bijectors (positive-definite) require
     # the leaf's native (..., n, n) event shape, not the flat adapter layout.
     named = {}
@@ -187,8 +191,11 @@ def _simulate_offline(
 
     def _one(flat_row: Array, k: PRNGKey) -> Array:
         # Per-draw structured params (named-field access), per the
-        # GenerativeLikelihood contract.
-        params = NumericRecordArray.unflatten(flat_row, template=template, batch_shape=())
+        # GenerativeLikelihood contract. ``flat_row`` is 1-D, so from_vector
+        # rebuilds a single NumericRecord.
+        from ..core._numeric_record import _reconstruct_from_vector
+
+        params = _reconstruct_from_vector("params", template, flat_row, name_is_auto=True)
         return jnp.ravel(simulator.generate_data(params, 1, key=k)[0])
 
     if sim_backend == "jax":

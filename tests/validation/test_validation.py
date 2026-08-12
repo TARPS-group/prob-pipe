@@ -108,7 +108,7 @@ def observed_data():
 
 
 class TestPredictiveCheck:
-    """Tests for the predictive_check WorkflowFunction."""
+    """Tests for the predictive_check Function."""
 
     def test_prior_check_returns_replicated_statistics(self, prior, likelihood):
         result = predictive_check(
@@ -160,10 +160,44 @@ class TestPredictiveCheck:
                 num_replications=10,
             )
 
-    def test_is_workflow_function(self):
-        from probpipe.core.node import WorkflowFunction
+    def test_numeric_record_distribution_is_unwrapped(self, monkeypatch):
+        """Workflow-resolved NumericRecord values are wrapped for sampling."""
+        import probpipe.validation._predictive_check as predictive_check_module
+        from probpipe.core._numeric_record import NumericRecord
 
-        assert isinstance(predictive_check, WorkflowFunction)
+        numeric = NumericRecord("posterior", x=np.array([0.0, 1.0, 2.0]))
+
+        class _FakeRecordEmpiricalDistribution:
+            def __init__(self, values, name=None):
+                self.values = values
+                self.name = name
+
+            def _sample(self, key, shape):
+                assert self.values is numeric
+                assert self.name == "posterior"
+                return jax.random.normal(key, shape)
+
+        monkeypatch.setattr(
+            predictive_check_module,
+            "RecordEmpiricalDistribution",
+            _FakeRecordEmpiricalDistribution,
+        )
+
+        result = predictive_check(
+            numeric,
+            NumpyGaussianLikelihood(rng_seed=0),
+            test_fn=lambda d: float(jnp.mean(d)),
+            observed_data=jnp.ones(20),
+            num_replications=5,
+            key=jax.random.PRNGKey(0),
+        )
+
+        assert "p_value" in result
+
+    def test_is_function(self):
+        from probpipe.core.node import Function
+
+        assert isinstance(predictive_check, Function)
 
     def test_importable_from_top_level(self):
         from probpipe import predictive_check as pc
@@ -173,10 +207,10 @@ class TestPredictiveCheck:
     def test_importable_from_subpackage(self):
         assert callable(pc_direct)
 
-    def test_results_attached_to_distribution_auxiliary(self, prior, likelihood):
-        """predictive_check appends results to distribution.auxiliary."""
+    def test_results_attached_to_distribution_annotations(self, prior, likelihood):
+        """predictive_check appends results to distribution.annotations."""
         # Before any check, the distribution has no auxiliary metadata.
-        assert prior.auxiliary is None or "predictive_check" not in prior.auxiliary
+        assert prior.annotations is None or "predictive_check" not in prior.annotations
 
         predictive_check(
             prior,
@@ -186,13 +220,13 @@ class TestPredictiveCheck:
             num_replications=10,
             key=jax.random.PRNGKey(10),
         )
-        group = prior.auxiliary["predictive_check"]
+        group = prior.annotations["predictive_check"]
         assert len(list(group.children)) == 1
         check_ds = group["check_0"].dataset
         assert "replicated_statistics" in check_ds
         assert check_ds.attrs["test_fn_name"]
 
-    def test_multiple_checks_accumulate_in_auxiliary(
+    def test_multiple_checks_accumulate_in_annotations(
         self,
         prior,
         likelihood,
@@ -200,8 +234,8 @@ class TestPredictiveCheck:
     ):
         """Multiple predictive_check calls accumulate as ``check_N`` siblings."""
         group = (
-            prior.auxiliary["predictive_check"]
-            if (prior.auxiliary is not None and "predictive_check" in prior.auxiliary)
+            prior.annotations["predictive_check"]
+            if (prior.annotations is not None and "predictive_check" in prior.annotations)
             else None
         )
         n_before = len(list(group.children)) if group is not None else 0
@@ -222,7 +256,7 @@ class TestPredictiveCheck:
             num_replications=10,
             key=jax.random.PRNGKey(21),
         )
-        group = prior.auxiliary["predictive_check"]
+        group = prior.annotations["predictive_check"]
         assert len(list(group.children)) == n_before + 2
         last = group[f"check_{n_before + 1}"].dataset
         assert "p_value" in last.attrs
@@ -239,7 +273,7 @@ class TestPredictiveCheck:
             num_replications=10,
             key=jax.random.PRNGKey(30),
         )
-        group = prior.auxiliary["predictive_check"]
+        group = prior.annotations["predictive_check"]
         children = sorted(group.children, key=lambda c: c)
         last = group[children[-1]].dataset
         assert last.attrs["test_fn_name"] == "my_custom_stat"
@@ -251,20 +285,20 @@ class TestPredictiveCheck:
     ):
         """Distributions that disallow post-construction attribute
         writes (e.g., a custom subclass with ``__slots__`` that
-        excludes ``_auxiliary``) cause the in-place attachment to
+        excludes ``_annotations``) cause the in-place attachment to
         fail silently. The caller still gets the result dict from
         the public return so the validation itself isn't lost.
 
         Exercises the ``except AttributeError`` arm of the
         ``except (AttributeError, TypeError)`` branch in
-        ``_record_check_in_auxiliary``.
+        ``_record_check_in_annotations``.
         """
         from probpipe.validation._predictive_check import (
-            _record_check_in_auxiliary,
+            _record_check_in_annotations,
         )
 
         class _FrozenDist:
-            """Slotted dummy: ``object.__setattr__`` for ``_auxiliary``
+            """Slotted dummy: ``object.__setattr__`` for ``_annotations``
             raises ``AttributeError``."""
 
             __slots__ = ()
@@ -272,13 +306,13 @@ class TestPredictiveCheck:
         frozen = _FrozenDist()
         stats = jnp.zeros(5)
         result = {"test_fn_name": "stub", "replicated_statistics": stats}
-        _record_check_in_auxiliary(frozen, stats, result)
-        assert not hasattr(frozen, "_auxiliary")
+        _record_check_in_annotations(frozen, stats, result)
+        assert not hasattr(frozen, "_annotations")
 
     def test_typeerror_during_attachment_skips_silently(self):
         """Companion to the slotted-dummy test above — exercises the
         ``except TypeError`` arm explicitly. A distribution that
-        carries an ``_auxiliary`` property whose setter raises
+        carries an ``_annotations`` property whose setter raises
         ``TypeError`` (e.g., an immutable wrapper that explicitly
         rejects writes with ``TypeError`` rather than the more usual
         ``AttributeError``) bypasses attachment silently.
@@ -289,27 +323,54 @@ class TestPredictiveCheck:
         ``__setattr__``.
         """
         from probpipe.validation._predictive_check import (
-            _record_check_in_auxiliary,
+            _record_check_in_annotations,
         )
 
         class _AuxTypeErrorDist:
-            """``_auxiliary`` is a property whose setter raises
+            """``_annotations`` is a property whose setter raises
             ``TypeError`` — represents an immutable wrapper rejecting
             attachment with a typed error rather than ``AttributeError``."""
 
             @property
-            def _auxiliary(self):
+            def _annotations(self):
                 return None
 
-            @_auxiliary.setter
-            def _auxiliary(self, value):
-                raise TypeError("immutable: cannot set _auxiliary")
+            @_annotations.setter
+            def _annotations(self, value):
+                raise TypeError("immutable: cannot set _annotations")
 
         dist = _AuxTypeErrorDist()
         stats = jnp.zeros(5)
         result = {"test_fn_name": "stub", "replicated_statistics": stats}
         # No raise — the ``except TypeError`` clause swallows it.
-        _record_check_in_auxiliary(dist, stats, result)
+        _record_check_in_annotations(dist, stats, result)
+
+    def test_xarray_importerror_skips_attachment_silently(self, monkeypatch):
+        """If xarray is unavailable, auxiliary attachment is skipped."""
+        import builtins
+
+        from probpipe.validation._predictive_check import (
+            _record_check_in_annotations,
+        )
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "xarray":
+                raise ImportError("xarray unavailable")
+            return real_import(name, *args, **kwargs)
+
+        class _Dist:
+            pass
+
+        dist = _Dist()
+        stats = jnp.zeros(5)
+        result = {"test_fn_name": "stub", "replicated_statistics": stats}
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+
+        _record_check_in_annotations(dist, stats, result)
+
+        assert not hasattr(dist, "_annotations")
 
 
 # ---------------------------------------------------------------------------

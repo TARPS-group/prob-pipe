@@ -12,15 +12,16 @@ from probpipe import (
     ProductDistribution,
     Provenance,
     Record,
+    RecordArray,
     SupportsCovariance,
     SupportsLogProb,
     SupportsMean,
     SupportsSampling,
     SupportsVariance,
+    function,
     mean,
     sample,
     variance,
-    workflow_function,
 )
 from probpipe.core.distribution import (
     _ListMarginal,
@@ -158,6 +159,82 @@ class TestBroadcastDistributionSampling:
         np.testing.assert_allclose(batch["_output"], batch["x"] * 10, atol=1e-5)
 
 
+class TestResamplingARecordValuedComponent:
+    """A component may be record-shaped, which has fields rather than a shape."""
+
+    @staticmethod
+    def _paired(**controls):
+        """A batch of three rows whose record input determines the output."""
+        rows = [Record("r", x=jnp.array(float(i)), y=jnp.array(10.0 * i)) for i in range(1, 4)]
+        return BroadcastDistribution(
+            input_samples={"a": RecordArray.stack(rows)},
+            output_samples=jnp.array([10.0, 20.0, 30.0]),
+            weights=None,
+            broadcast_args=["a"],
+            **controls,
+        )
+
+    def test_a_record_valued_input_resamples(self, key):
+        batch = self._paired()._sample(key, (5,))
+
+        assert isinstance(batch["a"], RecordArray)
+        assert batch["a"].batch_shape == (5,)
+        assert batch["_output"].shape == (5,)
+
+    def test_the_drawn_rows_stay_paired(self, key):
+        """Every field and the output are gathered at the same rows, or not paired."""
+        batch = self._paired()._sample(key, (50,))
+
+        x, y = np.asarray(batch["a"]["x"]), np.asarray(batch["a"]["y"])
+        np.testing.assert_allclose(y, x * 10, atol=1e-5)
+        np.testing.assert_allclose(np.asarray(batch["_output"]), y, atol=1e-5)
+        assert set(x.tolist()) <= {1.0, 2.0, 3.0}
+
+    def test_the_resampled_batch_states_the_rows_it_holds(self, key):
+        """A RecordArray stores its row count, so a gather has to restate it.
+
+        Rebuilding through ``jax.tree.map`` would carry the count over from the
+        pytree aux data and claim three rows while holding five.
+        """
+        batch = self._paired()._sample(key, (5,))
+
+        assert batch["a"].batch_shape == (batch["a"]["x"].shape[0],)
+        assert all(spec.shape == () for spec in batch["a"].template.values())
+
+    def test_one_draw_is_a_record_rather_than_a_one_row_batch(self, key):
+        drawn = self._paired()._sample(key, ())
+
+        assert isinstance(drawn["a"], Record)
+        assert not isinstance(drawn["a"], RecordArray)
+        assert drawn["a"]["x"].shape == ()
+        np.testing.assert_allclose(
+            float(np.asarray(drawn["_output"])), float(np.asarray(drawn["a"]["y"])), atol=1e-5
+        )
+
+    def test_a_record_valued_output_resamples_too(self, key):
+        """The output side takes the same gather, and keeps its field names.
+
+        A vectorized broadcast over a record-returning function leaves the output
+        a batched ``Record``, whose ``[]`` addresses a field rather than a row.
+        """
+        bd = BroadcastDistribution(
+            input_samples={"a": jnp.array([1.0, 2.0, 3.0])},
+            output_samples=Record("o", z=jnp.array([10.0, 20.0, 30.0])),
+            weights=None,
+            broadcast_args=["a"],
+        )
+
+        batch = bd._sample(key, (5,))
+        assert batch["_output"]["z"].shape == (5,)
+        np.testing.assert_allclose(
+            np.asarray(batch["_output"]["z"]), np.asarray(batch["a"]) * 10, atol=1e-5
+        )
+
+        drawn = bd._sample(key, ())
+        assert drawn["_output"]["z"].shape == ()
+        assert drawn["_output"].event_template["z"].shape == ()
+
+
 # ---------------------------------------------------------------------------
 # BroadcastDistribution named component access
 # ---------------------------------------------------------------------------
@@ -213,9 +290,9 @@ class TestBroadcastDistributionProvenance:
             broadcast_args=["x"],
         )
         prov = Provenance("broadcast", metadata={"func": "test"})
-        bd.with_source(prov)
-        assert bd.source is prov
-        assert bd.source.operation == "broadcast"
+        bd.with_provenance(prov)
+        assert bd.provenance is prov
+        assert bd.provenance.operation == "broadcast"
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +439,27 @@ class TestMakeMarginal:
     def test_array_output(self):
         m = _make_marginal(jnp.ones((5, 2)), None)
         assert isinstance(m, _RecordMarginal)
+
+    def test_declared_bare_array_requires_single_leaf_template(self):
+        from probpipe import EventTemplate
+
+        with pytest.raises(ValueError, match=r"bare array.*single-leaf"):
+            _make_marginal(
+                jnp.ones((5, 2)),
+                None,
+                event_template=EventTemplate(left=(2,), right=(2,)),
+            )
+
+    def test_declared_bare_array_preserves_nested_single_leaf_path(self):
+        from probpipe import EventTemplate
+
+        samples = jnp.arange(10.0).reshape(5, 2)
+        template = EventTemplate(stats=EventTemplate(value=(2,)))
+
+        marginal = _make_marginal(samples, None, event_template=template)
+
+        assert marginal.event_template == template
+        np.testing.assert_allclose(marginal.samples["stats/value"], samples)
 
     def test_list_of_arrays(self):
         m = _make_marginal([jnp.array(1.0), jnp.array(2.0)], None)
@@ -656,19 +754,19 @@ class TestMakeMarginalEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# _RecordMarginal (Record-returning WorkflowFunctions)
+# _RecordMarginal (Record-returning Functions)
 # ---------------------------------------------------------------------------
 
 
 class TestRecordArrayMarginal:
-    """Record-returning WorkflowFunction outputs should be RecordArrayMarginal,
+    """Record-returning Function outputs should be RecordArrayMarginal,
     not _ListMarginal, and must support mean/variance/sample."""
 
     @pytest.fixture
     def record_workflow(self):
-        @workflow_function
+        @function
         def transform(x, y):
-            return Record(sum=x + y, diff=x - y)
+            return Record("r", sum=x + y, diff=x - y)
 
         return transform
 
@@ -752,7 +850,7 @@ class TestMakeStack:
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._broadcast_distributions import _make_stack
 
-        records = [NumericRecord(a=float(i), b=float(i) * 2) for i in range(5)]
+        records = [NumericRecord("nr", a=float(i), b=float(i) * 2) for i in range(5)]
         out = _make_stack(records, n=5, field_name="demo")
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (5,)
@@ -767,12 +865,27 @@ class TestMakeStack:
         from probpipe import NumericRecordArray, Record, RecordArray
         from probpipe.core._broadcast_distributions import _make_stack
 
-        records = [Record(a=float(i), label=f"row{i}") for i in range(3)]
+        records = [Record("r", a=float(i), label=f"row{i}") for i in range(3)]
         out = _make_stack(records, n=3, field_name="demo")
         assert isinstance(out, RecordArray)
         assert not isinstance(out, NumericRecordArray)
         np.testing.assert_allclose(out["a"], [0.0, 1.0, 2.0])
         np.testing.assert_array_equal(out["label"], ["row0", "row1", "row2"])
+
+    def test_bfloat16_field_inferred_numeric_not_opaque(self):
+        """The broadcast-template builder shares the numeric-dtype gate, so an
+        ml_dtypes (bfloat16) field stacks into an ArraySpec column rather than
+        being mislabeled opaque (#343)."""
+        from probpipe import Record, RecordArray
+        from probpipe.core._broadcast_distributions import _make_stack
+        from probpipe.core.event_template import ArraySpec, OpaqueSpec
+
+        records = [Record("r", x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
+        out = _make_stack(records, n=3, field_name="demo")
+        assert isinstance(out, RecordArray)
+        assert out["x"].dtype == jnp.bfloat16
+        assert out.template["x"] == ArraySpec((2,))  # numeric, not None/opaque
+        assert out.template["label"] == OpaqueSpec()
 
     def test_list_of_distributions_gives_distribution_array(self):
         from probpipe import DistributionArray, Normal
@@ -791,7 +904,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         inner = [
-            NumericRecordArray.stack([NumericRecord(x=float(i * 10 + j)) for j in range(4)])
+            NumericRecordArray.stack([NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)])
             for i in range(3)
         ]
         out = _make_stack(inner, n=3, field_name="demo")
@@ -812,6 +925,53 @@ class TestMakeStack:
         assert out.batch_shape == (4,)
         assert out["demo"].shape == (4, 3)
 
+    def test_declared_vmap_array_requires_single_leaf_template(self):
+        from probpipe import EventTemplate
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        with pytest.raises(ValueError, match=r"bare array.*single-leaf"):
+            _make_stack(
+                jnp.ones((4, 2)),
+                n=4,
+                field_name="demo",
+                event_template=EventTemplate(left=(2,), right=(2,)),
+            )
+
+    def test_declared_vmap_array_preserves_nested_single_leaf_path(self):
+        from probpipe import EventTemplate
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        values = jnp.arange(8.0).reshape(4, 2)
+        template = EventTemplate(stats=EventTemplate(value=(2,)))
+
+        out = _make_stack(
+            values,
+            n=4,
+            field_name="demo",
+            event_template=template,
+        )
+
+        assert out.event_template == template
+        np.testing.assert_allclose(out["stats/value"], values)
+
+    def test_declared_vmap_array_supports_multidimensional_batch_shape(self):
+        from probpipe import EventTemplate
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        values = jnp.arange(12.0).reshape(6, 2)
+        template = EventTemplate(stats=EventTemplate(value=(2,)))
+
+        out = _make_stack(
+            values,
+            batch_shape=(2, 3),
+            field_name="demo",
+            event_template=template,
+        )
+
+        assert out.batch_shape == (2, 3)
+        assert out.event_template == template
+        np.testing.assert_allclose(out["stats/value"], values.reshape(2, 3, 2))
+
     def test_vmap_record_with_batched_leaves_promotes_to_ra(self):
         """``jax.vmap`` of a Record-returning fn produces a Record whose
         leaves are already batched along a leading axis. That's the
@@ -819,7 +979,7 @@ class TestMakeStack:
         from probpipe import NumericRecordArray, Record
         from probpipe.core._broadcast_distributions import _make_stack
 
-        rec = Record(x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
+        rec = Record("r", x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
         out = _make_stack(rec, n=5, field_name="demo")
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (5,)
@@ -859,18 +1019,33 @@ class TestCoerceOutput:
         )
 
         np.testing.assert_allclose(float(out), 3.14)
-        assert out.source is None
+        assert out.provenance is None
+
+    def test_wrap_mode_explodes_nested_dict_return(self):
+        # A workflow return of a nested dict denotes tree structure: it wraps
+        # into a nested Record (mappings are never leaves), not a TypeError.
+        from probpipe import Record
+        from probpipe.core._workflow_result import _coerce_output
+
+        out = _coerce_output(
+            {"summary": {"mean": 1.0, "count": 2.0}, "x": 3.0},
+            broadcast_mode="wrap",
+            provenance=None,
+            field_name="f",
+        )
+        assert isinstance(out, Record)
+        assert list(out.keys()) == ["summary/mean", "summary/count", "x"]
 
     def test_stack_mode_attaches_to_recordarray(self):
         from probpipe import NumericRecord, NumericRecordArray
         from probpipe.core._workflow_result import _coerce_output
 
-        ra = NumericRecordArray.stack([NumericRecord(x=float(i)) for i in range(3)])
-        assert ra.source is None
+        ra = NumericRecordArray.stack([NumericRecord("nr", x=float(i)) for i in range(3)])
+        assert ra.provenance is None
         prov = Provenance("sweep", parents=())
         out = _coerce_output(ra, broadcast_mode="stack", provenance=prov, field_name="f")
         assert out is ra
-        assert ra.source.operation == "sweep"
+        assert ra.provenance.operation == "sweep"
 
     def test_attaches_to_distribution_array(self):
         from probpipe import DistributionArray, Normal
@@ -883,12 +1058,12 @@ class TestCoerceOutput:
             field_name="demo",
         )
         assert isinstance(da, DistributionArray)
-        assert da.source is None
+        assert da.provenance is None
         prov = Provenance("nested", parents=())
         _coerce_output(da, broadcast_mode="nested", provenance=prov, field_name="f")
-        assert da.source.operation == "nested"
+        assert da.provenance.operation == "nested"
 
-    def test_existing_source_is_not_overwritten(self):
+    def test_existing_provenance_is_not_overwritten(self):
         """If the broadcasting layer has already wired a fresh inner
         marginal with a source (e.g., a _MixtureMarginal was built with
         its own provenance), ``_coerce_output`` must not crash and the
@@ -896,7 +1071,7 @@ class TestCoerceOutput:
         from probpipe import NumericRecord
         from probpipe.core._workflow_result import _coerce_output
 
-        nr = NumericRecord(x=1.0).with_source(Provenance("inner", parents=()))
+        nr = NumericRecord("nr", x=1.0).with_provenance(Provenance("inner", parents=()))
         # Second set would normally raise RuntimeError; _coerce_output
         # swallows it.
         _coerce_output(
@@ -905,4 +1080,4 @@ class TestCoerceOutput:
             provenance=Provenance("outer", parents=()),
             field_name="f",
         )
-        assert nr.source.operation == "inner"
+        assert nr.provenance.operation == "inner"

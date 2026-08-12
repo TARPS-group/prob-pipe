@@ -1,6 +1,6 @@
 """CmdStan NUTS method: arviz 1.x integration.
 
-The cmdstan path builds its auxiliary ``DataTree`` via
+The cmdstan path builds its annotations ``DataTree`` via
 ``arviz_base.from_cmdstanpy`` -- rebound from the arviz-0.x ``arviz.from_cmdstanpy``
 during the arviz 1.x cutover. The ecosystem readiness probe never exercised
 this path, so a smoke test guards it. The static binding test runs everywhere
@@ -16,7 +16,7 @@ import pytest
 
 def test_cmdstan_method_binds_arviz_base():
     """The CmdStan method binds arviz 1.x by name (``arviz_base``), never bare
-    ``arviz`` -- it builds its auxiliary via ``arviz_base.from_cmdstanpy``."""
+    ``arviz`` -- it builds its annotations via ``arviz_base.from_cmdstanpy``."""
     import arviz_base
 
     from probpipe.inference import _cmdstan_method

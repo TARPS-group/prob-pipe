@@ -127,7 +127,7 @@ Using the abstractions you identified in Step 1c, check whether the PR
 reimplements logic that already exists. Common patterns to watch for:
 
 - Custom weight handling instead of using existing weight abstractions
-- Manual sampling loops instead of using `WorkflowFunction` broadcasting
+- Manual sampling loops instead of using `Function` broadcasting
 - Bespoke protocol checks instead of `isinstance` with existing protocols
 - Re-implementing ops logic instead of calling the ops
 - Duplicating registry dispatch logic instead of using existing registries

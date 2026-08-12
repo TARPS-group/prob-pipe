@@ -3,7 +3,7 @@
 A :class:`Design` is a :class:`~probpipe.RecordArray` whose rows are
 materialised from per-field **marginals** — the candidate values for
 each field — combined according to a subclass-specific rule. The
-resulting ``RecordArray`` plugs into the ``WorkflowFunction`` sweep
+resulting ``RecordArray`` plugs into the ``Function`` sweep
 path as a single array-valued input::
 
     result = fit(p=design)    # one inner call per row of the sweep
@@ -22,8 +22,9 @@ from typing import Any
 import jax.numpy as jnp
 import numpy as np
 
+from ..core._array_backend import _is_numeric_dtype
 from ..core._record_array import RecordArray
-from ..core.record import EventTemplate
+from ..core.event_template import EventTemplate
 
 __all__ = ["Design", "FullFactorialDesign"]
 
@@ -38,7 +39,7 @@ def _is_numeric_sequence(seq: Any) -> bool:
 
     Strings and byte sequences are rejected (they're iterable but
     categorical-valued). We probe via ``jnp.asarray`` and check the
-    resulting dtype's kind.
+    resulting dtype with the shared numeric-dtype predicate.
     """
     if isinstance(seq, (str, bytes)):
         return False
@@ -46,7 +47,7 @@ def _is_numeric_sequence(seq: Any) -> bool:
         arr = jnp.asarray(seq)
     except (TypeError, ValueError):
         return False
-    return arr.dtype.kind in "biufc"
+    return _is_numeric_dtype(arr.dtype)
 
 
 def _seq_to_column(
@@ -84,13 +85,13 @@ class Design(RecordArray):
     rows in ``__init__`` and stash the originating marginals for
     introspection.
 
-    Two equivalent ways to drive a sweep through a ``@workflow_function``::
+    Two equivalent ways to drive a sweep through a ``@function``::
 
-        @workflow_function
+        @function
         def fit(p): ...
         result = fit(p=design)              # one row per call
 
-        @workflow_function
+        @function
         def fit(r, K): ...
         result = fit(**design.select_all()) # zip across sibling views
 
@@ -192,4 +193,6 @@ class FullFactorialDesign(Design):
             template=EventTemplate(template_spec),
             name=f"FullFactorialDesign({','.join(names)})",
         )
+        # The name is derived from the marginals, not user-typed.
+        object.__setattr__(self, "_name_is_auto", True)
         object.__setattr__(self, "_marginals", dict(marginals))
