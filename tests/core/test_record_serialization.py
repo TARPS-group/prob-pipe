@@ -21,13 +21,13 @@ from probpipe import (
     RecordArray,
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
-from probpipe.core.record import (
+from probpipe.core.event_template import (
     ArraySpec,
     EventTemplate,
     NumericEventTemplate,
     OpaqueSpec,
-    Record,
 )
+from probpipe.core.record import Record
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -49,7 +49,7 @@ def cloudpickle_roundtrip(obj):
 
 
 def test_record_pickle_roundtrip():
-    r = Record(x=jnp.array(1.0), y=jnp.array([2.0, 3.0]), name="myrecord")
+    r = Record("myrecord", x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
     r2 = roundtrip(r)
     assert r2.name == "myrecord"
     assert r2.fields == ("x", "y")
@@ -58,14 +58,15 @@ def test_record_pickle_roundtrip():
 
 
 def test_record_pickle_auto_name():
-    r = Record(a=jnp.array(1.0), b=jnp.array(2.0))
+    r = Record("r", {"a": jnp.array(1.0), "b": jnp.array(2.0)}, name_is_auto=True)
     r2 = roundtrip(r)
     assert r2.name == r.name
+    assert r2.name_is_auto is True
     assert r2.fields == ("a", "b")
 
 
 def test_record_immutability_after_unpickle():
-    r = Record(x=jnp.array(1.0))
+    r = Record("r", x=jnp.array(1.0))
     r2 = roundtrip(r)
     with pytest.raises(AttributeError, match="immutable"):
         r2.x = jnp.array(99.0)
@@ -74,21 +75,21 @@ def test_record_immutability_after_unpickle():
 def test_record_provenance_preserved():
     from probpipe.core.provenance import Provenance
 
-    r = Record(x=jnp.array(1.0))
-    r.with_source(Provenance(operation="test_op", metadata={"k": "v"}))
-    assert r._source is not None
+    r = Record("r", x=jnp.array(1.0))
+    r.with_provenance(Provenance(operation="test_op", metadata={"k": "v"}))
+    assert r._provenance is not None
 
     r2 = roundtrip(r)
-    assert r2._source is not None
-    assert r2._source.operation == "test_op"
-    assert r2._source.metadata == {"k": "v"}
+    assert r2._provenance is not None
+    assert r2._provenance.operation == "test_op"
+    assert r2._provenance.metadata == {"k": "v"}
 
 
 def test_record_no_provenance_roundtrip():
-    r = Record(x=jnp.array(1.0))
-    assert r._source is None
+    r = Record("r", x=jnp.array(1.0))
+    assert r._provenance is None
     r2 = roundtrip(r)
-    assert r2._source is None
+    assert r2._provenance is None
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +112,7 @@ def test_numeric_event_template_pickle_roundtrip():
     t2 = roundtrip(t)
     assert type(t2) is NumericEventTemplate
     assert t2.fields == ("x", "y")
-    assert t2.flat_size == 4  # () + (3,)
+    assert t2.vector_size == 4  # () + (3,)
 
 
 # ---------------------------------------------------------------------------
@@ -120,22 +121,22 @@ def test_numeric_event_template_pickle_roundtrip():
 
 
 def test_numeric_record_pickle_roundtrip():
-    nr = NumericRecord(r=jnp.array(1.8), K=jnp.array(70.0), phi=jnp.array(10.0))
+    nr = NumericRecord("nr", r=jnp.array(1.8), K=jnp.array(70.0), phi=jnp.array(10.0))
     nr2 = roundtrip(nr)
     assert nr2.fields == ("r", "K", "phi")
     assert float(nr2["r"]) == pytest.approx(1.8)
-    assert nr2.flat_size == 3
+    assert nr2.vector_size == 3
 
 
-def test_numeric_record_flat_size_recomputed():
-    nr = NumericRecord(a=jnp.ones((2, 3)))
-    assert nr.flat_size == 6
+def test_numeric_record_vector_size_recomputed():
+    nr = NumericRecord("nr", a=jnp.ones((2, 3)))
+    assert nr.vector_size == 6
     nr2 = roundtrip(nr)
-    assert nr2.flat_size == 6
+    assert nr2.vector_size == 6
 
 
 def test_numeric_record_cloudpickle_roundtrip():
-    nr = NumericRecord(x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
+    nr = NumericRecord("nr", x=jnp.array(1.0), y=jnp.array([2.0, 3.0]))
     nr2 = cloudpickle_roundtrip(nr)
     assert nr2.fields == ("x", "y")
     assert float(nr2["x"]) == pytest.approx(1.0)
@@ -218,3 +219,140 @@ def test_bootstrap_replicate_pickle():
     # Verify it round-tripped as the right type and is callable
     assert type(brd2).__name__ == "RecordBootstrapReplicateDistribution"
     assert "replicate_size=3" in repr(brd2)
+
+
+# ---------------------------------------------------------------------------
+# Backend aux survives a pickle round-trip
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def xr_da():
+    xr = pytest.importorskip("xarray")
+    return xr.DataArray(
+        [1.0, 2.0, 3.0],
+        dims=["t"],
+        coords={"t": [10, 20, 30]},
+        attrs={"units": "meters"},
+        name="temps",
+    )
+
+
+def _coord_ints(leaf):
+    return [int(v) for v in leaf.coords["t"].values]
+
+
+class TestNumericRecordNativePickle:
+    """A NumericRecord's native leaves round-trip through pickle (and
+    cloudpickle, for Ray transport) verbatim: the backend objects pickle
+    themselves, so metadata survives at every nesting level with no capture
+    or restore step.
+    """
+
+    def test_pickle_preserves_top_level_xarray_native(self, xr_da):
+        nr = NumericRecord("nr", temps=xr_da, extra=jnp.array(1.0))
+        restored = roundtrip(nr)
+        # Native leaves pickle themselves: the restored field IS a DataArray.
+        assert restored["temps"].dims == ("t",)
+        assert _coord_ints(restored["temps"]) == [10, 20, 30]
+        assert restored["temps"].attrs == {"units": "meters"}
+        assert type(restored["temps"]).__name__ == "DataArray"
+
+    def test_pickle_preserves_nested_xarray_native(self, xr_da):
+        # A nested native leaf pickles through the nested record verbatim.
+        outer = NumericRecord("outer", grp=NumericRecord("grp", temps=xr_da))
+        back = roundtrip(outer)
+        assert back.at_path("grp/temps").dims == ("t",)
+        assert _coord_ints(back.at_path("grp/temps")) == [10, 20, 30]
+
+    def test_cloudpickle_preserves_xarray_native(self, xr_da):
+        # Ray ships task arguments via cloudpickle.
+        back = cloudpickle_roundtrip(NumericRecord("nr", temps=xr_da))
+        assert back["temps"].dims == ("t",)
+        assert _coord_ints(back["temps"]) == [10, 20, 30]
+
+    def test_pickle_preserves_pandas_series_native(self):
+        pd = pytest.importorskip("pandas")
+        s = pd.Series([1.0, 2.0, 3.0], index=["a", "b", "c"], name="obs")
+        back = roundtrip(NumericRecord("nr", vals=s))
+        restored = back["vals"]
+        assert isinstance(restored, pd.Series)
+        assert list(restored.index) == ["a", "b", "c"]
+        assert restored.name == "obs"
+        assert restored.dtype == s.dtype
+        assert [float(v) for v in restored] == [1.0, 2.0, 3.0]
+
+    def test_pickle_preserves_pandas_dataframe_native(self):
+        pd = pytest.importorskip("pandas")
+        df = pd.DataFrame({"x": [1.0, 2.0], "y": [3.0, 4.0]}, index=["r0", "r1"])
+        back = roundtrip(NumericRecord("nr", table=df))
+        restored = back["table"]
+        assert isinstance(restored, pd.DataFrame)
+        assert list(restored.columns) == ["x", "y"]
+        assert list(restored.index) == ["r0", "r1"]
+        assert [float(v) for v in restored["x"]] == [1.0, 2.0]
+
+    def test_cloudpickle_preserves_pandas_series_native(self):
+        pd = pytest.importorskip("pandas")
+        s = pd.Series([4.0, 5.0], index=["p", "q"], name="w")
+        back = cloudpickle_roundtrip(NumericRecord("nr", vals=s))
+        assert list(back["vals"].index) == ["p", "q"]
+        assert back["vals"].name == "w"
+
+
+# ---------------------------------------------------------------------------
+# Pickle preserves an explicit (non-inferred) event_template
+# ---------------------------------------------------------------------------
+
+
+class TestPicklePreservesTemplate:
+    """An explicit template that ``infer_from`` cannot reconstruct — a leaf
+    ``support`` or an ``OpaqueSpec.meta`` — must survive pickling. Otherwise the
+    transported record would silently re-infer a weaker schema and compare
+    unequal to its origin (a Ray / cloudpickle schema-drift hazard).
+    """
+
+    def test_plain_record_template_survives(self):
+        from probpipe.core.constraints import positive
+
+        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive), tag=OpaqueSpec(meta="units"))
+        r = Record("r", {"x": jnp.ones(3), "tag": "meters"}, event_template=tpl)
+        assert not isinstance(r, NumericRecord)  # opaque leaf keeps it a plain Record
+        back = roundtrip(r)
+        assert back.event_template == r.event_template
+        assert back == r
+
+    def test_numeric_record_template_survives(self):
+        from probpipe.core.constraints import positive
+
+        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
+        back = roundtrip(nr)
+        assert back.event_template == nr.event_template
+        assert back == nr
+
+    def test_cloudpickle_preserves_template(self):
+        from probpipe.core.constraints import positive
+
+        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
+        assert cloudpickle_roundtrip(nr).event_template == nr.event_template
+
+    def test_aux_native_path_template_survives(self):
+        xr = pytest.importorskip("xarray")
+        from probpipe.core.constraints import positive
+
+        da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
+        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        nr = NumericRecord("nr", {"x": da}, event_template=tpl)
+        back = roundtrip(nr)
+        assert back.event_template == nr.event_template  # explicit template survived
+        assert back["x"].dims == ("t",)  # the native leaf survived verbatim
+
+    def test_pickle_bare_array_record(self):
+        # Bare jax leaves are their own native form; the single pickle path
+        # round-trips them directly.
+        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))
+        back = roundtrip(nr)
+        assert [float(v) for v in back["x"]] == [1.0, 2.0]
+        assert float(back["y"]) == pytest.approx(3.0)

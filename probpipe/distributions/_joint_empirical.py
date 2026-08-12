@@ -35,6 +35,7 @@ from ..core.distribution import (
     RecordEmpiricalDistribution,
     _mc_expectation,
 )
+from ..core.event_template import EventTemplate
 from ..core.protocols import (
     SupportsConditioning,
     SupportsMean,
@@ -42,7 +43,8 @@ from ..core.protocols import (
     SupportsVariance,
 )
 from ..core.provenance import Provenance
-from ..core.record import EventTemplate, Record
+from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array, ArrayLike, PRNGKey
 from ._joint_utils import (
     KeyPath,
@@ -138,9 +140,8 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 
         self._joint_samples = stored
         self._num_atoms = n
-        if name is None:
-            name = "joint_empirical(" + ",".join(samples.keys()) + ")"
-        super().__init__(name=name)
+        name, name_is_auto = auto_name(name, "joint_empirical(" + ",".join(samples.keys()) + ")")
+        super().__init__(name=name, name_is_auto=name_is_auto)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()
         if self._components is not None:
@@ -212,7 +213,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         Subclasses override to return a typed batched container (e.g.
         ``NumericRecordArray``) when the leaves are numeric.
         """
-        return Record(self._resample_rows(key, sample_shape))
+        return Record(self.name, self._resample_rows(key, sample_shape), name_is_auto=True)
 
     def _resample_rows(
         self,
@@ -282,7 +283,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
             weights=self._w,
             name=self._name,
         )
-        result.with_source(
+        result.with_provenance(
             Provenance.create(
                 "condition_on",
                 parents=[self],
@@ -374,7 +375,7 @@ class NumericJointEmpirical(
                 batch_shape=sample_shape,
                 template=self.event_template,
             )
-        return Record(result)
+        return Record(self.name, result, name_is_auto=True)
 
     # -- event_shapes (used by the record template) ------------------------
 
@@ -387,11 +388,19 @@ class NumericJointEmpirical(
 
     def _mean(self) -> Record:
         """Per-component weighted means."""
-        return Record({cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()})
+        return Record(
+            self.name,
+            {cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()},
+            name_is_auto=True,
+        )
 
     def _variance(self) -> Record:
         """Per-component weighted variances."""
-        return Record({cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()})
+        return Record(
+            self.name,
+            {cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()},
+            name_is_auto=True,
+        )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):
         return _mc_expectation(

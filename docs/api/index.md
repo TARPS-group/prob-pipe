@@ -18,7 +18,7 @@ for known-name lookups.
 | Scale to Prefect / Ray / Dask | [Workflows and orchestration](workflows.md) |
 | Constrain parameters / move to unconstrained space | [Constraints and bijectors](constraints.md) |
 | Interop with TFP, scipy, xarray, or pandas | [Conversion and interop](converters.md) |
-| Inspect provenance of computed quantities | [Provenance](provenance.md) |
+| Inspect provenance of computed quantities | [Identity & provenance](provenance.md) |
 | Write a new distribution, inference method, or converter | [Extending ProbPipe](extending.md) |
 
 ## Pages
@@ -32,18 +32,18 @@ for known-name lookups.
   functions.
 - **[Records and data](records.md)** — `Record`, `NumericRecord`, the
   `RecordArray` family, `Weights`, parameter-sweep `Design`s, and the
-  auxiliary-metadata registry.
+  array-backend registry.
 - **[Modeling and inference](inference.md)** — model and likelihood
   classes, the inference-method registry and built-ins, iterative
   transformations, predictive checks.
-- **[Workflows and orchestration](workflows.md)** — `WorkflowFunction`,
+- **[Workflows and orchestration](workflows.md)** — `Function`,
   `Module`, the workflow decorators, and Prefect-orchestration
   configuration.
 - **[Constraints and bijectors](constraints.md)** — `Constraint`
   singletons and factories, the `bijector_for` map for reparameterization.
 - **[Conversion and interop](converters.md)** — `converter_registry`,
   `Converter`, the conversion-info dataclasses.
-- **[Provenance](provenance.md)** — `Provenance`, `provenance_ancestors`,
+- **[Identity & provenance](provenance.md)** — `TrackedTerm`, `Annotated`, `Provenance`, `provenance_ancestors`,
   `provenance_dag`.
 - **[Extending ProbPipe](extending.md)** — base classes, protocols, and
   extension contracts.

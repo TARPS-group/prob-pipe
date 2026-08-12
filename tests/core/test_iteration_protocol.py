@@ -59,7 +59,7 @@ def _make_transformed():
 # User-constructible Distribution subclasses, parametrised here to pin
 # the non-iterable rule (#142). WF-output classes (BroadcastDistribution,
 # _RecordMarginal / _MixtureMarginal / _ListMarginal, BootstrapDistribution
-# of an op return) are produced by the WorkflowFunction layer rather than
+# of an op return) are produced by the Function layer rather than
 # user code; they inherit non-iterability from their bases (Distribution
 # / RecordEmpiricalDistribution / Distribution) and don't need direct
 # parametrisation here.
@@ -133,7 +133,7 @@ def _make_minibatched_distribution():
     y = jnp.array([1.0, 0.0, 1.0, 0.0])
     prior = MultivariateNormal(loc=jnp.zeros(4), cov=jnp.eye(4), name="theta")
     lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
-    return MinibatchedDistribution(prior, lik, Record(X=X, y=y), batch_size=2)
+    return MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
 
 
 @pytest.mark.parametrize("make_dist", DISTRIBUTIONS)
@@ -169,17 +169,17 @@ def test_distribution_is_not_iterable(make_dist):
 
 
 def test_record_iterates_field_names():
-    r = Record(a=1.0, b=2.0)
+    r = Record("r", a=1.0, b=2.0)
     assert list(iter(r)) == ["a", "b"]
 
 
 def test_numeric_record_iterates_field_names():
-    nr = NumericRecord(a=jnp.array(1.0), b=jnp.array([2.0, 3.0]))
+    nr = NumericRecord("nr", a=jnp.array(1.0), b=jnp.array([2.0, 3.0]))
     assert list(iter(nr)) == ["a", "b"]
 
 
 def test_record_array_iterates_field_names():
-    from probpipe.core.record import EventTemplate
+    from probpipe.core.event_template import EventTemplate
 
     ra = RecordArray(
         a=jnp.zeros((5,)),
@@ -191,7 +191,7 @@ def test_record_array_iterates_field_names():
 
 
 def test_numeric_record_array_iterates_field_names():
-    from probpipe.core.record import NumericEventTemplate
+    from probpipe.core.event_template import NumericEventTemplate
 
     nra = NumericRecordArray(
         a=jnp.zeros((4,)),

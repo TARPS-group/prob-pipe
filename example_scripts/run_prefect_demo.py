@@ -52,8 +52,8 @@ from probpipe import (
     SimpleModel,
     WorkflowKind,
     condition_on,
+    function,
     mean,
-    workflow_function,
 )
 
 probpipe.prefect_config.workflow_kind = WorkflowKind.TASK
@@ -71,12 +71,12 @@ print()
 df = pd.read_csv("./docs/tutorials/data/horseshoe_crabs.csv")
 
 
-@workflow_function
+@function
 def prep_data(width, satellites) -> Record:
     width = np.asarray(width, dtype=np.float32)
     width_z = (width - np.mean(width)) / np.std(width)
     X = np.column_stack([np.ones(len(width)), width_z]).astype(np.float32)
-    return Record(X=X, y=np.asarray(satellites, dtype=np.float32))
+    return Record("data", X=X, y=np.asarray(satellites, dtype=np.float32))
 
 
 data = prep_data(df["width_cm"], df["satellites"])
@@ -149,7 +149,7 @@ for label, bagged in [("Poisson", bagged_poisson), ("NegBin", bagged_nb)]:
 # 5. Provenance
 # ---------------------------------------------------------------------------
 
-src = bagged_nb.source
+src = bagged_nb.provenance
 print("Provenance (NegBin bagged posterior):")
 print(f"  Operation:   {src.operation}")
 print(f"  Orchestrate: {src.metadata['orchestrate']}")

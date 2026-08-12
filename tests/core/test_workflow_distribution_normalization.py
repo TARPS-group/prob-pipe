@@ -1,6 +1,9 @@
-"""Characterization tests for WorkflowFunction distribution normalization."""
+"""Characterization tests for Function distribution normalization."""
 
 from __future__ import annotations
+
+import inspect
+from typing import Any, Protocol, runtime_checkable
 
 import jax.numpy as jnp
 import numpy as np
@@ -18,10 +21,11 @@ from probpipe import (
     log_prob,
     mean,
 )
+from probpipe.core._workflow_call import make_signature_info_from_signature
 from probpipe.core._workflow_distribution_normalization import (
     normalize_distribution_values,
 )
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 from probpipe.core.protocols import SupportsLogProb
 
 
@@ -58,7 +62,7 @@ class TestNormalizeDistributionValues:
     ):
         normalized = normalize_distribution_values(
             values={"dist": normal_external},
-            hints={"dist": Normal},
+            signature_info=_signature_info(("dist",), {"dist": Normal}),
         )
 
         assert isinstance(normalized["dist"], Normal)
@@ -76,7 +80,7 @@ class TestNormalizeDistributionValues:
         ):
             normalize_distribution_values(
                 values={"dist": source},
-                hints={"dist": UnsupportedDistribution},
+                signature_info=_signature_info(("dist",), {"dist": UnsupportedDistribution}),
             )
 
     def test_protocol_hint_converts_distribution_that_lacks_protocol(
@@ -85,7 +89,7 @@ class TestNormalizeDistributionValues:
     ):
         normalized = normalize_distribution_values(
             values={"dist": empirical_dist},
-            hints={"dist": SupportsLogProb},
+            signature_info=_signature_info(("dist",), {"dist": SupportsLogProb}),
         )
 
         assert normalized["dist"] is not empirical_dist
@@ -103,7 +107,7 @@ class TestNormalizeDistributionValues:
 
         normalized = normalize_distribution_values(
             values={"dist": da},
-            hints={"dist": Normal},
+            signature_info=_signature_info(("dist",), {"dist": Normal}),
         )
 
         assert isinstance(normalized["dist"], Normal)
@@ -120,7 +124,7 @@ class TestNormalizeDistributionValues:
 
         normalized = normalize_distribution_values(
             values={"dist": da},
-            hints={"dist": Normal},
+            signature_info=_signature_info(("dist",), {"dist": Normal}),
         )
 
         assert normalized["dist"] is da
@@ -131,14 +135,14 @@ class TestNormalizeDistributionValues:
     ):
         normalized = normalize_distribution_values(
             values={"x": normal_external},
-            hints={},
+            signature_info=_signature_info(("x",)),
         )
 
         assert isinstance(normalized["x"], NumericRecordDistribution)
         assert normalized["x"] is not normal_external
 
 
-# Facade checks below are retained to verify WorkflowFunction wiring.
+# Facade checks below are retained to verify Function wiring.
 class TestHintedDistributionConversion:
     def test_concrete_distribution_hint_converts_external_distribution(
         self,
@@ -146,7 +150,7 @@ class TestHintedDistributionConversion:
         normal_external,
     ):
         mean_of_normal, seen = mean_recorder
-        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
+        wf = Function(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=normal_external)
 
@@ -160,7 +164,7 @@ class TestHintedDistributionConversion:
             seen.append(dist)
             return log_prob(dist, jnp.asarray([0.0]))
 
-        wf = WorkflowFunction(func=log_prob_at_zero, dispatch="sequential")
+        wf = Function(func=log_prob_at_zero, dispatch="sequential")
 
         result = wf(dist=empirical_dist)
 
@@ -183,7 +187,7 @@ class TestDistributionArrayHandling:
             scale=jnp.asarray(1.0),
             name="zero_d",
         )
-        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
+        wf = Function(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=da)
 
@@ -199,7 +203,7 @@ class TestDistributionArrayHandling:
             scale=jnp.asarray([1.0]),
             name="one_cell",
         )
-        wf = WorkflowFunction(func=mean_of_normal, dispatch="sequential")
+        wf = Function(func=mean_of_normal, dispatch="sequential")
 
         result = wf(dist=da)
 
@@ -217,7 +221,7 @@ class TestUnhintedExternalDistribution:
             seen_values.append(value)
             return value * 2.0
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=double,
             n_broadcast_samples=8,
             dispatch="sequential",
@@ -233,3 +237,36 @@ class TestUnhintedExternalDistribution:
         # under IEEE 754, so the broadcast output should match the
         # recorded per-call inputs exactly.
         np.testing.assert_allclose(result.samples, 2.0 * jnp.stack(seen_values), atol=0.0)
+
+
+@runtime_checkable
+class _SupportsApply(Protocol):
+    def apply(self, *args: Any, **kwargs: Any) -> Any: ...
+
+
+def _signature_info(names, hints=None):
+    signature = inspect.Signature(
+        [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in names]
+    )
+    return make_signature_info_from_signature(signature, hints=hints)
+
+
+def test_non_distribution_capability_protocol_does_not_disable_lifting():
+    seen = []
+
+    def consume(x: _SupportsApply):
+        seen.append(x)
+        return x
+
+    wrapped = Function(
+        func=consume,
+        n_broadcast_samples=8,
+        dispatch="sequential",
+        seed=12,
+    )
+
+    result = wrapped(Normal(0, 1, name="x"))
+
+    assert result.num_atoms == 8
+    assert len(seen) == 8
+    assert all(not isinstance(value, Distribution) for value in seen)

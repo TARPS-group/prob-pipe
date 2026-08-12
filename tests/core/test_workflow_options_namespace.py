@@ -5,11 +5,28 @@ from __future__ import annotations
 import jax.numpy as jnp
 import pytest
 
-from probpipe import BroadcastDistribution, Normal, WorkflowFunction, workflow_function
+import probpipe
+import probpipe.core.node as node
+from probpipe import BroadcastDistribution, Function, Normal, function
 
 
-def test_workflow_function_decorator_sets_construction_defaults():
-    @workflow_function(
+def test_function_is_the_only_public_wrapper_api():
+    assert probpipe.Function is Function
+    assert probpipe.function is function
+    assert node.Function is Function
+    assert node.function is function
+    assert "WorkflowFunction" not in probpipe.__all__
+    assert "workflow_function" not in probpipe.__all__
+    assert not hasattr(probpipe, "WorkflowFunction")
+    assert not hasattr(probpipe, "workflow_function")
+    assert "WorkflowFunction" not in node.__all__
+    assert "workflow_function" not in node.__all__
+    assert not hasattr(node, "WorkflowFunction")
+    assert not hasattr(node, "workflow_function")
+
+
+def test_function_decorator_sets_construction_defaults():
+    @function(
         n_broadcast_samples=7,
         dispatch="sequential",
         seed=0,
@@ -22,19 +39,21 @@ def test_workflow_function_decorator_sets_construction_defaults():
     assert result.num_atoms == 7
 
 
-def test_workflow_function_has_no_options_alias():
-    assert not hasattr(workflow_function, "options")
+def test_function_has_no_options_alias():
+    assert not hasattr(function, "options")
 
 
 def test_bare_decorator_forms_wrap_functions():
-    @workflow_function
+    @function
     def bare(x):
         return x
 
-    @workflow_function()
+    @function()
     def bare_parentheses(x):
         return x
 
+    assert isinstance(bare, Function)
+    assert isinstance(bare_parentheses, Function)
     assert bare(1.0)["bare"] == 1.0
     assert bare_parentheses(2.0)["bare_parentheses"] == 2.0
 
@@ -43,7 +62,7 @@ def test_with_options_controls_sample_count_and_include_inputs():
     def identity(x):
         return x
 
-    wf = WorkflowFunction(
+    wf = Function(
         func=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
@@ -64,7 +83,7 @@ def test_with_options_seed_restarts_sampling_state_for_one_call():
     def identity(x):
         return x
 
-    wf = WorkflowFunction(
+    wf = Function(
         func=identity,
         n_broadcast_samples=8,
         dispatch="sequential",
@@ -86,13 +105,13 @@ def test_with_options_seed_is_separate_from_user_seed_parameter():
         return x + seed
 
     normal = Normal(loc=0.0, scale=1.0, name="x")
-    base = WorkflowFunction(
+    base = Function(
         func=identity,
         n_broadcast_samples=8,
         dispatch="sequential",
         seed=0,
     ).with_options(seed=42)(normal)
-    wf = WorkflowFunction(
+    wf = Function(
         func=add_user_seed,
         n_broadcast_samples=8,
         dispatch="sequential",
@@ -107,7 +126,7 @@ def test_with_options_seed_is_separate_from_user_seed_parameter():
 
 
 def test_workflow_control_names_are_user_parameters():
-    @workflow_function
+    @function
     def collect(seed, n_broadcast_samples, include_inputs, name, dispatch):
         return f"{seed}:{n_broadcast_samples}:{include_inputs}:{name}:{dispatch}"
 
@@ -129,7 +148,7 @@ def test_var_keyword_receives_workflow_control_names():
         seen.append(kwargs)
         return x
 
-    wf = WorkflowFunction(
+    wf = Function(
         func=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
@@ -158,7 +177,7 @@ def test_unbindable_call_time_control_name_is_rejected():
     def identity(x):
         return x
 
-    wf = WorkflowFunction(
+    wf = Function(
         func=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
@@ -173,7 +192,7 @@ def test_bindable_workflow_control_name_does_not_override():
     def identity(x, n_broadcast_samples):
         return x + n_broadcast_samples
 
-    wf = WorkflowFunction(
+    wf = Function(
         func=identity,
         n_broadcast_samples=5,
         dispatch="sequential",

@@ -298,7 +298,7 @@ keep an example running against an old API.
 ### Prefect orchestration
 
 ProbPipe ships with Prefect orchestration **off** by default — every
-`WorkflowFunction` runs in-process unless the caller opts in. Two
+`Function` runs in-process unless the caller opts in. Two
 ways to opt in:
 
 ```python
@@ -313,8 +313,8 @@ export PROBPIPE_WORKFLOW_KIND=task   # or flow / off / default
 ```
 
 Per-workflow overrides via
-`@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)` and
-explicit `WorkflowFunction(..., workflow_kind=probpipe.WorkflowKind.FLOW)`
+`@function(workflow_kind=probpipe.WorkflowKind.TASK)` and
+explicit `Function(..., workflow_kind=probpipe.WorkflowKind.FLOW)`
 are unaffected by either of the above. String aliases such as `"task"` /
 `"flow"` are not accepted; use `WorkflowKind` enum members explicitly.
 
@@ -336,8 +336,8 @@ GitHub Actions (`.github/workflows/ci.yml`):
 - Installs via `uv sync --frozen` from `uv.lock` (single source of truth
   for pinned dependency versions, shared between local dev and CI)
 - Test job uses extras `dev,nutpie,pymc`. The notebooks job is a two-leg
-  matrix that runs in parallel — an `examples` leg (`dev,nutpie`) for
-  `docs/examples` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
+  matrix that runs in parallel — a `user_guide` leg (`dev,nutpie`) for
+  `docs/user_guide` and a `tutorials` leg (`dev,nutpie,bayesflow,pymc`) for
   `docs/tutorials` — each scoped to its own directory with independent
   change detection, so an unrelated leg is skipped (`bridgestan` is installed
   only in the `stan` leg, below)
@@ -382,6 +382,8 @@ probpipe/
 ├── record/         # Record-adjacent constructions: parameter-sweep Designs
 ├── modeling/       # Model wrappers (SimpleModel, StanModel, PyMCModel, likelihoods)
 ├── inference/      # Inference methods + registry (BlackJAX, TFP, nutpie, RWMH)
+├── validation/     # Reference metrics, SBC, and interval coverage checks
+├── diagnostics/    # Posterior diagnostics, ArviZ interop, and diagnostic views
 ├── converters/     # Distribution conversion registry
 ├── linalg/         # Linear algebra for random functions
 ├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
@@ -395,6 +397,12 @@ a leading underscore (`_simple.py`, `_blackjax_rwmh.py`).  The package
 `probpipe` or from subpackage `__init__` modules, never from
 underscore modules directly.  See `probpipe/__init__.py` for the
 full public API surface.
+
+The diagnostics accessor is the one documented package-graph edge from
+`core/` back to a feature subpackage: `Distribution.diagnostics` lazily imports
+`probpipe.diagnostics.views.DiagnosticsView` only when the accessor is read.
+Keep this edge lazy so importing `probpipe.core` does not import the diagnostics
+subpackage or its optional ArviZ-facing dependencies.
 
 ### Distributions: `probpipe-core` and `probpipe`
 
@@ -428,16 +436,19 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 1. **Distributions are immutable** — parameters fixed at construction;
    operations return new distributions. The one documented exception
-   is `Distribution._auxiliary` (a `DataTree` of post-construction
+   is the `annotations` store (`_annotations`, provided by the
+   `Annotated` mixin in `probpipe.core.tracked`; a string-keyed
+   mapping, typically an `xarray.DataTree`, of post-construction
    metadata): validators and diagnostic ops (e.g.,
    `predictive_check`) attach their results in-place under named
-   groups (`auxiliary["predictive_check"]`, future `auxiliary["loo"]`,
-   ...). This is a deliberate carve-out — the alternative of returning
-   a renamed clone for every diagnostic would break source/identity
-   tracking that downstream code relies on. Treat `_auxiliary` as
-   append-only; never mutate other state post-construction.
-2. **Operations are standalone workflow functions** — `sample()`, `mean()`,
-   `log_prob()`, `condition_on()` are `WorkflowFunction` instances in
+   groups (`annotations["predictive_check"]`, future
+   `annotations["loo"]`, ...). This is a deliberate carve-out — the
+   alternative of returning a renamed clone for every diagnostic would
+   break the provenance/identity tracking that downstream code relies
+   on. Treat `_annotations` as append-only; never mutate other state
+   post-construction.
+2. **Operations are standalone Functions** — `sample()`, `mean()`,
+   `log_prob()`, `condition_on()` are `Function` instances in
    `probpipe/core/ops.py`.
 3. **Capabilities via protocols** — distributions declare support through
    `@runtime_checkable` protocols (e.g., `SupportsSampling`,
@@ -462,40 +473,77 @@ uv build packaging/probpipe   # probpipe (metapackage)
 5. **Record and Distributions are parallel** — `Record` is the universal
    container for non-random structured data; `Distribution` is the
    universal container for random quantities. Both support named fields,
-   `select()` for workflow function splatting, and JAX pytree
+   `select()` for Function splatting, and JAX pytree
    traversal.  The full pipeline (prior → inference → posterior
    predictive) produces named, provenance-tracked objects at every step.
    **Field access is bracket-only**: use `record["x"]`, `array["x"]`,
    `dist["x"]`.  Attribute access (`__getattr__`) was removed from
    `Record` and `RecordDistribution` because it shadowed methods and
-   properties like `.mean`, `.var`, `.fields`, `.flatten`, and produced
+   properties like `.mean`, `.var`, `.fields`, `.map`, and produced
    confusing errors.
-6. **Every distribution is named** — `Distribution.__init__` requires a
-   non-empty `name: str`.  Leaf distributions (Normal, Gamma, etc.)
-   require an explicit `name=` at construction.  Composite distributions
+6. **Every object is a tracked term** — Functions, distributions, records,
+   and the batch types all carry the `TrackedTerm` identity attributes and methods
+   (`name`, `name_is_auto`, write-once `provenance` via
+   `with_provenance`, `with_name`) from `probpipe.core.tracked`, and
+   the mixin's metaclass enforces a non-empty `name` at construction
+   for every host. `Function` is an immutable, schema-aware computation term;
+   its Python signature is captured independently from its optional
+   authoritative input and output templates. Leaf distributions (Normal,
+   Gamma, etc.) require an
+   explicit `name=` at construction.  Composite distributions
    (ProductDistribution, EmpiricalDistribution, TransformedDistribution,
-   etc.) auto-generate a name from their components when one is not
-   provided.  `ProductDistribution` validates that each component
-   distribution's `name` matches its keyword key (e.g.,
-   `ProductDistribution(x=Normal(0, 1, name="x"))`).
-7. **Uniform output wrap at the WorkflowFunction boundary** — every
-   `@workflow_function` return is coerced into the
+   etc.) auto-derive a name from their components when one is not
+   provided and record that with `name_is_auto=True`; an operation that
+   builds a new object from a parent keeps the flag consistent with
+   where the name came from.  `ProductDistribution` validates that each
+   component distribution's `name` matches its keyword key (e.g.,
+   `ProductDistribution(x=Normal(0, 1, name="x"))`).  `Record` and
+   `NumericRecord` take the name as the required first positional
+   argument (`Record(name, ...)`); an operation that produces a record
+   supplies a meaningful name — the producing distribution's or model's
+   name, or a domain term such as `"data"` / `"observed"` — and passes
+   `name_is_auto=True` so later composition can re-derive it. A nested
+   record stored as a field is renamed to its field key (also flagged
+   auto-derived).
+7. **Uniform output wrap at the Function boundary** — every
+   `@function` return is coerced into the
    `Record | RecordArray | Distribution` contract before it reaches the
-   caller.  Scalars and `jnp.ndarray`s become
-   `NumericRecord({fn_name: value})` (no sweep) or
+   caller.  Scalars and `jnp.ndarray`s become a single-field auto-named
+   `NumericRecord` with field `fn_name` (no sweep) or
    `NumericRecordArray({fn_name: arr}, batch_shape=sweep_shape)`
    (swept); `dict` / `list` / `tuple` promote via `_make_stack`;
-   existing `Record` / `RecordArray` / `Distribution` values pass
-   through unchanged.  The field name is always the function's own
-   name.  Single-field `NumericRecord` / `NumericRecordArray` / `Record`
+   existing `Record` / `RecordArray` / `Distribution` values preserve their
+   structure and backing data but `Function.__call__` returns a shallow copy
+   as an independent result term. The copy gets a fresh annotations container,
+   discards the returned object's prior provenance, and records the called
+   Function followed by tracked inputs as its direct parents. All resolved
+   non-tracked parameters are fingerprinted separately in
+   `Provenance.inputs`; defaults, construction bindings, Module values, and
+   distinct variadic slots therefore remain reproducible without becoming DAG
+   ancestors. Fingerprints use conservative fidelity tiers: structurally known
+   values are content-hashed, while opaque objects and complex callable forms
+   use process-local identity and set `fingerprint_is_weak=True`; weakness
+   propagates through composites. Existing operation controls remain
+   provenance metadata.
+   `Function.apply` is the raw boundary: it performs the same Python binding
+   and schema checks, but preserves the implementation return object's identity
+   and provenance.
+   Other tracked terms, including a `Function`, remain event payloads under
+   this default boundary; returning them directly requires the explicit
+   term-result planning reserved for #369.
+   Authoritative nested output templates use a private recursive aggregate
+   packer across sequential and JAX dispatch; the public
+   `RecordArray.stack` contract remains unchanged. The field name for inferred
+   single-field output is always the function's own name. Single-field
+   `NumericRecord` / `NumericRecordArray` / `Record`
    expose shims (`__jax_array__`, `__float__`, `__call__`, `.shape`,
    `.dtype`, `.ndim`) so `jnp.array(log_prob(d, v))`,
    `float(mean(d))`, and `sample(grf)(X)` stay terse.
 8. **Array inputs vectorize with the product rule** — when a
-   `@workflow_function` is called with array-valued inputs
+   `@function` is called with array-valued inputs
    (`RecordArray` or `DistributionArray` with nonempty
    `batch_shape`) passed to slots whose hints don't match the
-   batched type, the WorkflowFunction layer dispatches cell-by-cell
+   batched type, the Function layer dispatches cell-by-cell
    and stacks the returns.  Multiple array inputs combine by the
    **product rule** (Cartesian full factorial); the sweep's
    `batch_shape` is the concatenation of each array arg's
@@ -505,28 +553,34 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `sample(da)` / `mean(da)` / `log_prob(da, v)` are handled
    uniformly by the sweep path rather than by DistArray-specific
    methods.
+   Variadic inputs participate in the same planner: each `*args` element and
+   `**kwargs` entry is lifted or swept independently, annotations apply to each
+   element, and provenance labels use stable forms such as `*items[0]` and
+   `**extras['key']`.
 
 ### Key abstractions
 
 | Abstraction | Description |
 |-------------|-------------|
-| `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and `auxiliary` properties |
-| `Record` | Named, immutable, JAX-pytree container for structured non-random values; leaves stored verbatim (no coercion); `select()` for workflow function splatting |
-| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is a `jax.Array` (constructor coerces via `jnp.asarray`). Adds `flatten` / `unflatten` / `flat_size`. Captures backend metadata (xarray dims/coords, pandas index) via the aux registry; `to_native()` reverses the conversion to a permissive `Record`. `Record.to_numeric()` is the symmetric forward path. |
+| `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`) that the constructor reads back. `EventTemplate` and `Record` are its two families; each declares its leaf type (`ValueSpec` vs arbitrary values), and mappings are never leaves. |
+| `TrackedTerm` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `TrackedTerm` carries `name`, `name_is_auto`, and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Function`, `Distribution`, and `Record` mix in both; the batch types are tracked terms through their bases. |
+| `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and the `TrackedTerm` / `Annotated` identity attributes |
+| `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
+| `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |
 | `RecordArray` | Batch of `Record` elements with a `EventTemplate`; integer index → element, field index → batched array |
-| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `flatten` / `mean` / `var` |
-| `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); enables `NumericRecord.unflatten` without an example instance |
+| `NumericRecordArray` (subclass of `RecordArray`) | Batch of `NumericRecord` elements; adds `to_vector` / `mean` / `var` |
+| `EventTemplate` | Structural skeleton (field names, per-field shapes or `None`); the value classmethods `NumericRecord.from_vector(name, template, vec)` / `NumericRecordArray.from_vector(...)` rebuild a numeric value from its 1-D vector given a template, without an example instance |
 | `RecordDistribution` | Record-based distribution base; `fields`, `__getitem__` → `_RecordDistributionView`, `select()` / `select_all()` for correlated broadcasting. A `Distribution` represents one random variable; use `DistributionArray` for collections. |
 | `_RecordDistributionView` | Lightweight component reference; dynamic protocol support matching parent capabilities |
 | `NumericRecordDistribution` | Numeric-array distribution base; per-field `dtypes`, `supports`, `event_shapes`; base for all TFP-backed distributions |
 | `FlatNumericRecordDistribution` | Refinement of `NumericRecordDistribution` enforcing the flat contract: single field, `event_shape == (N,)`. Carries `flat_size` and `as_record_distribution(template=…)` — the inverse of `as_flat_distribution()`, lifting a flat distribution to a Record-keyed view under a user-supplied `NumericEventTemplate`. Algorithms that consume a flat parameter vector (MCMC, optimisers, VI / Pathfinder / Laplace surrogates) should declare their input as this type. Natively-multivariate parametrics (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `VonMisesFisher`) and `FlattenedDistributionView` all implement it. |
 | `FlattenedDistributionView` | A `FlatNumericRecordDistribution` produced by `nrd.as_flat_distribution()`. Wraps any base distribution and exposes flat-vector samples / log-probs (`event_shape == (event_size,)`), delegating through the base. |
 | `NumericRecordDistributionView` | The inverse view, produced by `FlatNumericRecordDistribution.as_record_distribution(template=…)`. Lifts a flat distribution to a Record-keyed structure; samples come back as `NumericRecord` / `NumericRecordArray` keyed by `template.fields`. |
-| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `components`). Vectorized ops are delivered by the `WorkflowFunction` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep workflow functions whose inner call returns a `Distribution`. |
+| `DistributionArray` | Shape-indexed `Array[Distribution]`; exposes only the container surface (indexing, iteration, `batch_shape`, `event_shape`, `event_template`, `components`). `event_template` is the explicitly supplied authoritative template for Function aggregates, the common component template for compatible literal arrays, or `None`. Vectorized ops are delivered by the `Function` sweep layer — passing a `DistributionArray` to an op whose hint is a scalar `Distribution` / protocol triggers cell-by-cell dispatch, and outputs stack into `NumericRecordArray` / `RecordArray` / (nested) `DistributionArray`. Produced by parameter-sweep Functions whose inner call returns a `Distribution`. |
 | `JointEmpirical` / `NumericJointEmpirical` | Weighted joint samples distribution. Generic base supports only sampling + conditioning; the numeric subclass adds exact `SupportsMean` / `SupportsVariance`. `JointEmpirical(...)` dispatches to `NumericJointEmpirical` when every field is numeric. (Empirical distributions do not claim `SupportsLogProb`; use `from_distribution(emp, KDEDistribution, …)` for a density.) |
 | `EmpiricalDistribution[T]` / `RecordEmpiricalDistribution` | Weighted empirical distribution. Generic base over arbitrary sample type ``T``; Record-based specialisation adds `event_shapes`, exact moments (`SupportsMean` / `SupportsVariance` / `SupportsCovariance`), and TFP-style shape semantics. Numeric-array sources auto-wrap as a single-field Record (requires `name=`). Two views on the stored draws: `samples` (structured `NumericRecord`, per-field access via `samples[name]`) and `flat_samples` (flat `(n, dim)` matrix across all fields, in insertion order). Use `flat_samples` for stacked-matrix idioms like `post.flat_samples.mean(axis=0)` for per-parameter posterior summaries. |
 | `BootstrapReplicateDistribution[T]` / `RecordBootstrapReplicateDistribution` | N-fold product over a source: each draw is a bootstrapped dataset of `n` i.i.d. observations. Accepts a `Record`, `RecordEmpiricalDistribution`, numeric array, or any `SupportsSampling` source (in which case `n` is mandatory). |
-| `WorkflowFunction` | Orchestration-aware function wrapper (Prefect off by default; see the Prefect-orchestration section above); groups views by parent for correlated broadcasting |
+| `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `EventTemplate`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
 | `BaseDispatchRegistry` | Abstract base for priority-based registries: holds registration, priority management (incl. opt-in-only sentinel + override warnings), and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
@@ -536,7 +590,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `SimpleGenerativeModel` | Simulator-only model wrapper for SBI/ABC (prior + `GenerativeLikelihood`) |
 | `IncrementalConditioner` | Stateful `Module` for sequential Bayesian updating via `update()` / `update_all()` |
 | `iterate` / combinators | Iterative distribution transformation; `with_conversion`, `with_resampling` |
-| `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordArray` subclass carrying per-field marginals; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready `RecordArray`. Pipe into a `WorkflowFunction` as a single `Record`-typed arg to trigger the WF sweep path. |
+| `Design` / `FullFactorialDesign` (`probpipe.record`) | `RecordArray` subclass carrying per-field marginals; `FullFactorialDesign(**marginals)` materialises the Cartesian product as a sweep-ready `RecordArray`. Pipe into a `Function` as a single `Record`-typed arg to trigger the Function sweep path. |
 
 ### Inference method registry
 
@@ -569,6 +623,7 @@ Built-in methods:
 | 75 | `blackjax_elliptical_slice` | BlackJAX | `SimpleModel` + Gaussian prior + JAX-traceable likelihood |
 | 55 | `blackjax_rwmh` | BlackJAX | Any `SupportsLogProb` (eager fallback for non-traceable targets) |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
+| 6 | `pyabc_smcabc` | pyabc | `SimpleGenerativeModel` with a flattenable prior (requires the `[pyabc]` extra) |
 | 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 | 0 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
 | 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
@@ -606,28 +661,38 @@ When adding a new converter, choose a priority that reflects its
 specificity – higher priority means it is tried first. Protocol-level
 converters should be above concrete-type converters.
 
-### Aux registry
+### Array-backend registry
 
-The `aux_registry` in `probpipe.core._array_backend` is a flat
-`dict[type, AuxHooks]` mapping a leaf type to a `(capture, restore)`
-pair. It is used only for round-tripping backend-specific metadata
-across the `Record` ↔ `NumericRecord` boundary — `jnp.asarray` drops
-xarray dims/coords/attrs and pandas index/columns/dtypes, and the
-aux registry restores them.
+The backend registry in `probpipe.core._array_backend` is a flat
+`dict[type, ArrayBackend]` mapping a native container type to its
+recognition/conversion hooks. `NumericRecord` stores leaves in native
+form, so most containers need no support code: anything exposing a
+numeric numpy `dtype` / `shape` is recognised by duck-typing and
+converted with `jnp.asarray` at the compute boundary. Register a
+backend for containers the duck path cannot see or convert — a
+non-numpy dtype, a device tensor needing custom conversion, a
+frames-style container:
 
 ```python
-from probpipe import register_aux
+from probpipe import ArrayBackend, register_array_backend
 
-register_aux(
-    MyArrayLike,
-    capture=lambda leaf: {"label": leaf.label},
-    restore=lambda arr, aux: MyArrayLike(arr, label=aux["label"]),
+register_array_backend(
+    MyTensor,
+    ArrayBackend(
+        event_shape=lambda t: tuple(t.shape),
+        numpy_dtype=lambda t: np.dtype("float32"),
+        to_jax=lambda t: jnp.asarray(t.numpy()),
+        to_numpy=lambda t: t.numpy(),
+    ),
 )
 ```
 
-Built-in registrations cover `xarray.DataArray`, `pandas.Series`,
-and `pandas.DataFrame`. Lookup walks the MRO of `type(obj)`, so
-registering a base class also covers its subclasses.
+One registration makes the type recognised everywhere at once:
+template inference and `ArraySpec.is_valid`, `NumericRecord`
+promotion, boundary conversion, batch stacking, and `fingerprint()`.
+The built-in registration covers `pandas.DataFrame` (per-column
+`.dtypes`, no single `.dtype`). Lookup walks the MRO of `type(obj)`,
+so registering a base class also covers its subclasses.
 
 This registry is **not** a behavioural-dispatch hierarchy — it has
 no priority system, no feasibility check, no `execute()`. Use a
@@ -680,10 +745,10 @@ subclass:
 
 ```python
 EmpiricalDistribution(jnp.ones((100, 3)), name="theta")
-# → returns RecordEmpiricalDistribution; auto-wraps the array as
-#   Record(theta=arr)
+# → returns RecordEmpiricalDistribution; auto-wraps the array as a
+#   single-field record with field "theta"
 
-EmpiricalDistribution(Record(x=jnp.zeros((50,)), y=jnp.zeros((50,))))
+EmpiricalDistribution(Record("draws", x=jnp.zeros((50,)), y=jnp.zeros((50,))))
 # → returns RecordEmpiricalDistribution; multi-field record
 ```
 

@@ -1,4 +1,4 @@
-"""Tests for the nutpie workflow function.
+"""Tests for the nutpie Function.
 
 These tests require nutpie (and pymc, for the PyMC integration path) to
 be installed.  Helper / error-path tests that don't require a compiled
@@ -93,7 +93,7 @@ class TestImportError:
             patch.dict("sys.modules", {"nutpie": None}),
             pytest.raises(ImportError, match="pip install nutpie"),
         ):
-            condition_on_nutpie._func(MagicMock(), num_results=10)
+            condition_on_nutpie.apply(MagicMock(), num_results=10)
 
 
 # ---------------------------------------------------------------------------
@@ -228,7 +228,7 @@ class TestNutpieStanIntegration:
             name="linreg",
         )
 
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": y.tolist()},
             num_results=200,
@@ -277,7 +277,7 @@ class TestNutpieIntegration:
         np.random.seed(0)
         y_obs = np.array([1.2, 0.8, 1.1, 0.9, 1.0], dtype=float)
         model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": y_obs},
             num_results=500,
@@ -288,8 +288,8 @@ class TestNutpieIntegration:
         assert isinstance(result, ApproximateDistribution)
         assert result.num_chains == 2
         assert result.algorithm == "nutpie_nuts"
-        assert result.source is not None
-        assert result.source.operation == "nutpie_nuts"
+        assert result.provenance is not None
+        assert result.provenance.operation == "nutpie_nuts"
         # Analytical posterior: prior N(0, 10), likelihood N(mu, 1) with n=5
         #   Precision: 1/100 + 5 = 5.01  ->  var = 0.1996
         #   Mean:      5.0 * y_bar / 5.01
@@ -307,10 +307,10 @@ class TestNutpieIntegration:
         np.testing.assert_allclose(float(jnp.mean(mu_draws)), post_mean, atol=0.05)
         np.testing.assert_allclose(float(jnp.std(mu_draws)), post_sd, atol=0.05)
 
-    def test_auxiliary_trace_attached(self):
+    def test_annotations_trace_attached(self):
         model = PyMCModel(_gaussian_pymc_fn, name="gaussian")
         y_obs = np.array([0.0, 1.0], dtype=float)
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": y_obs},
             num_results=50,
@@ -342,7 +342,7 @@ class TestNutpieIntegration:
             return m
 
         model = PyMCModel(model_fn, name="ordering")
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": np.zeros(4, dtype=float)},
             num_results=300,
@@ -375,7 +375,7 @@ class TestNutpieIntegration:
             return m
 
         model = PyMCModel(model_fn, name="partial")
-        result = condition_on_nutpie._func(
+        result = condition_on_nutpie.apply(
             model,
             data={"y": np.zeros(5, dtype=float)},
             num_results=200,

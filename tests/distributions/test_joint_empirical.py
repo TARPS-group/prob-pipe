@@ -20,7 +20,7 @@ from probpipe import (
     variance,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
-from probpipe.core.node import WorkflowFunction
+from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -348,10 +348,12 @@ class TestConditionOn:
             x=jnp.array([1.0, 2.0]),
             y=jnp.array([3.0, 4.0]),
         )
+        raw = condition_on.apply(je, x=jnp.array(1.0))
         cond = condition_on(je, x=jnp.array(1.0))
-        assert cond.source is not None
-        assert cond.source.operation == "condition_on"
-        assert "x" in cond.source.metadata["conditioned"]
+        assert raw.provenance.operation == "condition_on"
+        assert "x" in raw.provenance.metadata["conditioned"]
+        assert cond.provenance is not None
+        assert cond.provenance.operation == "workflow.condition_on"
 
     def test_condition_on_unknown_raises(self):
         je = JointEmpirical(
@@ -394,7 +396,7 @@ class TestBroadcasting:
         def add(a: float, b: float) -> float:
             return a + b
 
-        wf = WorkflowFunction(
+        wf = Function(
             func=add,
             dispatch="sequential",
             n_broadcast_samples=30,

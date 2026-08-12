@@ -1,245 +1,519 @@
-"""Aux hooks for round-tripping Record leaves through `NumericRecord`.
+"""The array-backend registry: recognition and conversion for native leaves.
 
-ProbPipe's native array form is the JAX array. A :class:`Record`
-permissively holds whatever the user passes (numpy / jax arrays,
-``xarray.DataArray``, ``pandas.Series``/``DataFrame``, plain Python
-scalars, opaque objects). Conversion to :class:`NumericRecord` calls
-``jnp.asarray`` on every leaf, which discards backend-specific metadata
-(xarray dims/coords/attrs, pandas index/columns/dtypes). The aux
-registry restores that metadata on the reverse trip.
+A :class:`~probpipe.NumericRecord` stores each leaf **in its native form**
+(a ``jax`` / ``numpy`` array, an ``xarray.DataArray``, a ``pandas`` object,
+...) and converts to ``jax.Array`` lazily, at the compute boundary. Most
+numeric containers need no support code for that: anything exposing a numpy
+``dtype`` and ``shape`` and speaking the numpy protocol is recognised by
+duck-typing and converted with ``jnp.asarray``.
 
-Each registered hook is an :class:`AuxHooks` pair:
+This registry exists for the containers the duck path cannot see or convert
+correctly. A registered :class:`ArrayBackend` tells ProbPipe, for one leaf
+type, how to answer the four questions every numeric gate asks:
 
-* ``capture(leaf)`` — extract the metadata that ``jnp.asarray`` would
-  drop. Called at ``NumericRecord`` construction.
-* ``restore(jax_array, aux)`` — rebuild the original backend object
-  from a JAX array plus the captured metadata. Called by
-  :meth:`NumericRecord.to_native`.
+* ``is_numeric(obj)`` — does *this instance* hold numeric data? (A frame
+  type is registered as a whole; a particular frame may hold string
+  columns.)
+* ``event_shape(obj)`` — the leaf's event shape, read without touching
+  values.
+* ``numpy_dtype(obj)`` — the leaf's single numpy dtype, or ``None`` when it
+  has no single dtype (a heterogeneous frame).
+* ``to_jax(obj)`` / ``to_numpy(obj)`` — materialising conversions, used at
+  the compute boundary and for content fingerprints.
 
-Built-in registrations (gated on import availability):
+Every consumer — template inference and ``ArraySpec.is_valid``, the
+``Record`` → ``NumericRecord`` promotion probe, the ``NumericRecord``
+conversion cache, batch stacking, and ``fingerprint()`` — resolves
+**registry first, duck-typing second**, so registering one backend makes a
+new array type recognised, validated, promoted, converted, and fingerprinted
+everywhere at once.
 
-* ``xarray.DataArray`` — captures ``(dims, coords, attrs)``.
-* ``pandas.Series`` — captures ``(index, name, dtype)``.
-* ``pandas.DataFrame`` — captures ``(index, columns, dtypes)``.
+Built-in registrations: ``xarray.DataArray`` and ``pandas.Series`` /
+``pandas.DataFrame``. They are registered rather than left to the duck path
+for two reasons. The first is to expose their identity-bearing metadata (an
+``xarray`` array's dims / coords / attrs / name, a ``pandas`` object's index /
+columns) through the ``metadata`` hook. The second, for pandas, is to handle
+nullable / masked numeric columns (``Int64``, ``Float64``, ``boolean``). The
+generic duck path cannot see those columns as numeric, but the pandas backend
+accepts them, encoding each NA as ``NaN`` in the columns' common dense dtype.
+Bare ``numpy`` / ``jax`` arrays stay unregistered — the duck path covers them and
+they carry no metadata beyond their values.
 
-``numpy.ndarray`` and ``jax.Array`` are deliberately absent from the
-registry — they have no metadata worth preserving and the
-"no hook → no aux" branch in :meth:`NumericRecord.to_native` returns
-them as plain JAX arrays.
-
-The registry is a metadata side-channel, not a behavioural-dispatch
-hierarchy. If you need backend-specific reductions or device
-placement, convert to the appropriate type yourself; this module
-only handles round-trip metadata.
+Batch stacking hooks (a per-backend native ``stack`` / ``element``) are
+expected to join this registry with the batch-axis rework; the keyword-only
+field layout keeps that addition non-breaking for existing registrations.
 """
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 import jax
+import jax.numpy as jnp
 import numpy as np
 
 __all__ = [
-    "AuxHooks",
-    "aux_for",
-    "register_aux",
+    "ArrayBackend",
+    "array_backend_for",
+    "register_array_backend",
 ]
 
 
+def _default_to_jax(obj: Any) -> jax.Array:
+    return jnp.asarray(np.asarray(obj))
+
+
+def _default_to_numpy(obj: Any) -> np.ndarray:
+    return np.asarray(obj)
+
+
+def _safe_numpy_dtype(dtype: Any) -> np.dtype | None:
+    """``np.dtype(dtype)`` or ``None`` when the dtype is not numpy-coercible.
+
+    A pandas extension / masked dtype (``Int64Dtype`` etc.) reports a numpy
+    ``kind`` but raises on ``np.dtype(...)``; such a container has no single
+    dense numpy dtype, so this returns ``None`` rather than propagating.
+    """
+    try:
+        return np.dtype(dtype)
+    except (TypeError, ValueError):
+        return None
+
+
+# dtype.kind codes for numeric arrays: b=bool, i=int, u=uint, f=float, c=complex.
+_NUMERIC_KINDS = frozenset("biufc")
+
+
+def _is_numeric_dtype(dtype: Any) -> bool:
+    """Whether *dtype* is a numeric dtype — the shared numeric-gate predicate.
+
+    Covers the standard numpy kinds (bool, int, uint, float, complex) plus
+    the ml_dtypes extension types JAX registers (``bfloat16``, the
+    ``float8_*`` family, ``int4`` / ``uint4``), which numpy reports as kind
+    ``"V"``. A dtype that is **not** ``numpy.dtype``-coercible — a pandas
+    extension / masked dtype such as ``Int64Dtype`` — is **not** numeric on
+    this generic (duck-typing) path: it is not a dense numpy dtype, so a bare
+    value carrying one is not treated as a plain numeric array. A registered
+    :class:`~probpipe.ArrayBackend` may still recognise its own masked dtypes
+    and convert them: the built-in pandas backend accepts nullable numeric
+    columns, encoding each NA as ``NaN`` at the compute boundary. So this
+    predicate governs only the duck path, not the registry. Structured
+    (record) dtypes are likewise not numeric.
+    Every place that decides "is this array numeric?" — template inference,
+    spec validation, and the ``NumericRecord`` / ``NumericRecordArray`` leaf
+    gates — routes through this predicate so the sites cannot drift apart.
+    """
+    try:
+        np_dtype = np.dtype(dtype)
+    except (TypeError, ValueError):
+        # ``np.dtype`` raises ``TypeError`` for a pandas extension / masked
+        # dtype and ``ValueError`` for an object it cannot interpret at all
+        # (e.g. a mock). Either way it is not a dense numpy dtype, so not
+        # numeric.
+        return False
+    kind = np_dtype.kind
+    if kind in _NUMERIC_KINDS:
+        return True
+    return kind == "V" and jnp.issubdtype(np_dtype, jnp.number)
+
+
 @dataclass(frozen=True)
-class AuxHooks:
-    """A pair of ``(capture, restore)`` hooks for one backend type.
+class ArrayBackend:
+    """Recognition and conversion hooks for one native array-container type.
+
+    All fields are keyword-only. ``event_shape`` is required; the rest have
+    working defaults for containers that speak the numpy protocol.
 
     Parameters
     ----------
-    capture : callable
-        ``capture(leaf) -> aux`` — extract backend-specific metadata
-        that would otherwise be lost when ``jnp.asarray`` coerces the
-        leaf to a JAX array. May return any pickle-friendly value.
-    restore : callable
-        ``restore(arr, aux) -> leaf`` — reconstruct an instance of the
-        original backend type from a JAX array and the previously
-        captured ``aux`` blob.
+    event_shape : callable
+        ``event_shape(obj) -> tuple[int, ...]`` — the leaf's event shape,
+        read from container metadata without materialising values.
+    numpy_dtype : callable, optional
+        ``numpy_dtype(obj) -> np.dtype | None`` — the leaf's single numpy
+        dtype, or ``None`` when the container has no single dtype (e.g. a
+        heterogeneous frame). Defaults to reading ``obj.dtype``.
+    is_numeric : callable, optional
+        ``is_numeric(obj) -> bool`` — whether *this instance* holds numeric
+        data. Defaults to ``True`` (the registered type is numeric by
+        construction).
+    to_jax : callable, optional
+        ``to_jax(obj) -> jax.Array`` — the compute-boundary conversion.
+        Materialises lazy/disk-backed values. Defaults to
+        ``jnp.asarray(np.asarray(obj))``.
+    to_numpy : callable, optional
+        ``to_numpy(obj) -> np.ndarray`` — the fingerprint materialisation.
+        Defaults to ``np.asarray(obj)``.
+    metadata : callable, optional
+        ``metadata(obj) -> Any`` — the container's **identity-bearing
+        metadata beyond its values** (an ``xarray`` array's dims / coords /
+        attrs / name, a ``pandas`` object's index / columns), as a
+        fingerprint-able structure (nested tuples / dicts / arrays / scalars).
+        Values are *not* included (they are covered by ``to_numpy``). This is
+        what makes the metadata part of a record's identity: ``fingerprint``
+        folds it into the digest and ``Record.__eq__`` compares it, so two
+        containers with equal values but different coords are distinct.
+        Defaults to ``None`` — a container with no identity-bearing metadata
+        (a bare array, zarr, dask), whose identity is its values alone.
     """
 
-    capture: Callable[[Any], Any]
-    restore: Callable[[jax.Array, Any], Any]
+    event_shape: Callable[[Any], tuple[int, ...]] = field(kw_only=True)
+    numpy_dtype: Callable[[Any], np.dtype | None] = field(
+        kw_only=True, default=lambda obj: _safe_numpy_dtype(obj.dtype)
+    )
+    is_numeric: Callable[[Any], bool] = field(kw_only=True, default=lambda obj: True)
+    to_jax: Callable[[Any], jax.Array] = field(kw_only=True, default=_default_to_jax)
+    to_numpy: Callable[[Any], np.ndarray] = field(kw_only=True, default=_default_to_numpy)
+    metadata: Callable[[Any], Any] = field(kw_only=True, default=lambda obj: None)
 
 
-# Registry keyed by leaf type. Walk via ``aux_for`` rather than direct
-# ``__getitem__`` so subclasses pick up their parent's hooks.
-aux_registry: dict[type, AuxHooks] = {}
+# Registry keyed by leaf type. Walk via ``array_backend_for`` rather than
+# direct ``__getitem__`` so subclasses pick up their parent's registration.
+_backend_registry: dict[type, ArrayBackend] = {}
 
 
-def register_aux(
-    leaf_type: type,
-    *,
-    capture: Callable[[Any], Any],
-    restore: Callable[[jax.Array, Any], Any],
-) -> None:
-    """Register `(capture, restore)` hooks for a backend leaf type.
+def register_array_backend(leaf_type: type, backend: ArrayBackend) -> None:
+    """Register *backend* as the array-backend hooks for *leaf_type*.
+
+    Registering a type makes its instances first-class numeric leaves
+    everywhere at once: template inference and ``ArraySpec.is_valid``
+    recognise them, all-numeric records holding them auto-promote to
+    ``NumericRecord``, the compute boundary converts them through
+    ``backend.to_jax``, batch stacking coerces them per element, and
+    ``fingerprint()`` hashes their content through ``backend.to_numpy``.
 
     Parameters
     ----------
     leaf_type : type
-        The Python type of the leaves whose metadata should be
-        preserved across a ``Record``/``NumericRecord`` round-trip.
-    capture : callable
-        ``capture(leaf) -> aux``.
-    restore : callable
-        ``restore(arr, aux) -> leaf``.
+        The container type to register. Lookup walks the MRO of a value's
+        type, so registering a base class also covers its subclasses.
+    backend : ArrayBackend
+        The recognition/conversion hooks.
 
     Notes
     -----
     Re-registering an existing ``leaf_type`` overwrites the previous
-    hook silently. Lookup uses :func:`aux_for` which walks the MRO of
-    ``type(obj)``, so registering a base class also covers its
-    subclasses.
+    registration and issues a ``UserWarning``, so an accidental double
+    registration (e.g. two libraries claiming the same type) is visible.
     """
-    aux_registry[leaf_type] = AuxHooks(capture=capture, restore=restore)
+    if leaf_type in _backend_registry:
+        warnings.warn(
+            f"register_array_backend: overwriting the existing ArrayBackend "
+            f"registration for {leaf_type.__name__}.",
+            stacklevel=2,
+        )
+    _backend_registry[leaf_type] = backend
 
 
-def aux_for(obj: Any) -> AuxHooks | None:
-    """Return the registered hooks for ``obj``, or ``None`` if absent.
+def array_backend_for(obj: Any) -> ArrayBackend | None:
+    """Return the registered backend for ``obj``'s type, or ``None``.
 
     Walks the MRO of ``type(obj)`` so subclass instances pick up
-    base-class registrations.
+    base-class registrations. Consumers resolve registry-first and fall
+    back to numpy-protocol duck-typing when this returns ``None``.
 
     Notes
     -----
-    Exact-type lookup is checked before the MRO walk so the common
-    ``np.ndarray`` / ``jax.Array`` leaves on the
-    ``NumericRecord.__init__`` / pytree-unflatten hot path skip a
-    multi-step MRO traversal.
+    Exact-type lookup is checked before the MRO walk, so a registered type
+    resolves in one dict probe and only a subclass of a registered type pays
+    for the walk. Unregistered leaves (bare ``np.ndarray`` / ``jax.Array``,
+    the common case) miss the exact probe and walk their MRO, but that is
+    short and off the hot path — ``_child_field_as_jax`` fast-returns a
+    ``jax.Array`` leaf before this is ever called.
     """
-    if not aux_registry:
+    if not _backend_registry:
         return None
     cls = type(obj)
-    # Exact-type fast path — covers the common case where the
-    # registered key is the leaf's concrete class.
-    hooks = aux_registry.get(cls)
-    if hooks is not None:
-        return hooks
+    backend = _backend_registry.get(cls)
+    if backend is not None:
+        return backend
     for base in cls.__mro__[1:]:
-        hooks = aux_registry.get(base)
-        if hooks is not None:
-            return hooks
+        backend = _backend_registry.get(base)
+        if backend is not None:
+            return backend
     return None
+
+
+def _to_jax_array(value: Any) -> jax.Array:
+    """Convert a native numeric leaf to ``jax.Array`` — the compute-boundary step.
+
+    Uses the registered backend's ``to_jax`` when *value*'s type is
+    registered, else ``jnp.asarray`` (the numpy-protocol duck path). This is
+    the single conversion every boundary — the ``NumericRecord`` cache,
+    batch stacking — routes through, and the point where a lazy or
+    disk-backed value materialises.
+    """
+    backend = array_backend_for(value)
+    if backend is not None:
+        return backend.to_jax(value)
+    return jnp.asarray(value)
+
+
+# ---------------------------------------------------------------------------
+# Leaf resolvers: registry-first, duck-typing fallback
+# ---------------------------------------------------------------------------
+#
+# Every numeric gate asks one of a few questions about a leaf — is it numeric?
+# what is its shape / dtype? materialise it to numpy — and each resolves the
+# same way: the registered backend's hook if the leaf's type is registered,
+# else the numpy-protocol duck path. These helpers hold that one resolution
+# (mirroring ``_to_jax_array`` for ``to_jax``) so each question's duck fallback
+# lives in one place and cannot drift between call sites.
+
+# Numeric Python scalars. A bare scalar leaf is normalised to a 0-d
+# ``jax.Array`` at ``NumericRecord`` construction, but it still counts as
+# numeric everywhere the raw value is inspected.
+_NUMERIC_SCALARS = (bool, int, float, complex, np.integer, np.floating, np.bool_)
+
+
+def _is_numeric_leaf(value: Any) -> bool:
+    """Whether *value* is a numeric leaf — the shared numeric predicate.
+
+    Registry-first: a registered container answers through its ``is_numeric``
+    hook; a numeric Python scalar counts; everything else duck-types on a
+    numeric ``dtype`` / ``shape``. Strings, object arrays, and opaque types are
+    not numeric. Every "is this leaf numeric?" site shares this one decision,
+    so promotion, ``_full_array_shape_or_none``, and spec validation cannot
+    drift apart on what counts.
+    """
+    if isinstance(value, (str, bytes)):
+        return False
+    if isinstance(value, _NUMERIC_SCALARS):
+        return True
+    backend = array_backend_for(value)
+    if backend is not None:
+        return backend.is_numeric(value)
+    return hasattr(value, "dtype") and hasattr(value, "shape") and _is_numeric_dtype(value.dtype)
+
+
+def _event_shape_of(value: Any) -> tuple[int, ...]:
+    """The numeric leaf's event shape — registry ``event_shape``, else ``.shape``.
+
+    Reads container metadata only, never the values. A scalar reports ``()``.
+    Assumes *value* is numeric (see :func:`_is_numeric_leaf`).
+    """
+    backend = array_backend_for(value)
+    if backend is not None:
+        return tuple(backend.event_shape(value))
+    return tuple(getattr(value, "shape", ()))
+
+
+def _numpy_dtype_of(value: Any) -> np.dtype | None:
+    """The leaf's single numpy dtype, or ``None`` when it has none.
+
+    Registry-first (``None`` for a heterogeneous container with no single
+    dtype); else the value's own ``.dtype``, else the numpy dtype of a
+    materialised copy. Reads metadata only except on that last fallback.
+    """
+    backend = array_backend_for(value)
+    if backend is not None:
+        return backend.numpy_dtype(value)
+    nd = getattr(value, "dtype", None)
+    if nd is None:
+        nd = np.asarray(value).dtype
+    return nd
+
+
+def _to_numpy_array(value: Any) -> np.ndarray:
+    """Materialise a numeric leaf to numpy on its native basis.
+
+    The registered backend's ``to_numpy`` (native dtype and full precision)
+    when *value*'s type is registered, else ``np.asarray`` — the basis
+    :func:`fingerprint` hashes on and ``Record.__eq__`` compares. The numpy
+    counterpart of :func:`_to_jax_array`.
+    """
+    backend = array_backend_for(value)
+    if backend is not None:
+        return np.asarray(backend.to_numpy(value))
+    return np.asarray(value)
+
+
+def _metadata_of(value: Any) -> Any:
+    """The leaf's identity-bearing container metadata, or ``None``.
+
+    A registered backend's ``metadata`` (an ``xarray`` array's dims / coords /
+    attrs, a ``pandas`` object's index / columns); ``None`` for a bare array or
+    an unregistered leaf, whose identity is its values alone.
+    """
+    backend = array_backend_for(value)
+    return backend.metadata(value) if backend is not None else None
 
 
 # ---------------------------------------------------------------------------
 # Built-in registrations (gated on import availability)
 # ---------------------------------------------------------------------------
+#
+# ``xarray`` and ``pandas`` containers are registered (not left to the
+# numpy-protocol duck path) so their identity-bearing metadata — coords /
+# dims / attrs / name, or index / columns — is available to ``fingerprint``
+# and ``Record.__eq__`` via the ``metadata`` hook. The duck path remains for
+# containers whose identity is their values alone (bare numpy / jax arrays,
+# zarr, dask), which need no registration and carry no ``metadata``.
 
 
 def _register_xarray() -> None:
-    """Register the built-in ``xarray.DataArray`` aux hooks.
-
-    No-op when xarray isn't importable, so probpipe stays usable
-    without xarray installed.
-    """
+    """Register the built-in ``xarray.DataArray`` backend. No-op without xarray."""
     try:
         import xarray as xr
     except ImportError:
         return
 
-    def _capture(leaf: xr.DataArray) -> dict[str, Any]:
-        # Capture each coord's full ``(dims, values, attrs)`` triple so
-        # multi-dim coords and per-coord attrs survive the round-trip
-        # — not just the values aligned with the coord's own name.
-        # ``v.values`` is already a ``np.ndarray``; no need to re-wrap.
-        coords: dict[str, dict[str, Any]] = {}
-        for k, v in leaf.coords.items():
-            coords[k] = {
-                "dims": tuple(v.dims),
-                "values": v.values,
-                "attrs": dict(v.attrs),
-            }
+    def _metadata(da: xr.DataArray) -> Any:
+        # Everything that distinguishes the container beyond its values: the
+        # named dims, each coord's values, free-form attrs, and the name.
         return {
-            "dims": tuple(leaf.dims),
-            "coords": coords,
-            "attrs": dict(leaf.attrs),
-            "name": leaf.name,
+            "dims": tuple(da.dims),
+            "coords": {str(k): np.asarray(v.values) for k, v in da.coords.items()},
+            "attrs": dict(da.attrs),
+            "name": da.name,
         }
 
-    def _restore(arr: jax.Array, aux: dict[str, Any]) -> xr.DataArray:
-        # Rebuild each coord as a ``DataArray(values, dims=…, attrs=…)``
-        # so xarray sees the original dims and attrs.
-        coords = {
-            k: xr.DataArray(
-                v["values"],
-                dims=v["dims"],
-                attrs=v.get("attrs", {}),
-            )
-            for k, v in aux["coords"].items()
-        }
-        return xr.DataArray(
-            np.asarray(arr),
-            dims=aux["dims"],
-            coords=coords,
-            attrs=aux["attrs"],
-            name=aux.get("name"),
-        )
-
-    register_aux(xr.DataArray, capture=_capture, restore=_restore)
+    register_array_backend(
+        xr.DataArray,
+        ArrayBackend(
+            event_shape=lambda da: tuple(da.shape),
+            numpy_dtype=lambda da: _safe_numpy_dtype(da.dtype),
+            is_numeric=lambda da: _is_numeric_dtype(da.dtype),
+            to_jax=lambda da: jnp.asarray(da.values),
+            to_numpy=lambda da: np.asarray(da.values),
+            metadata=_metadata,
+        ),
+    )
 
 
 def _register_pandas() -> None:
-    """Register the built-in ``pandas.Series`` and ``pandas.DataFrame`` aux hooks.
+    """Register the built-in ``pandas.Series`` / ``pandas.DataFrame`` backends.
 
-    No-op when pandas isn't importable.
+    A ``Series`` speaks the numpy protocol but carries an index and name; a
+    ``DataFrame`` additionally has no single ``.dtype`` (per-column ``.dtypes``
+    the duck path cannot read). Both answer shape / dtype / numericness from
+    metadata without materialising values.
 
-    Notes
-    -----
-    The captured aux blob keeps live ``pandas.Index`` / ``columns`` /
-    ``dtype`` objects rather than copies. That's intentional for the
-    in-memory round-trip semantics, but it means a ``NumericRecord.aux``
-    dict containing pandas entries is not pickle-portable to a process
-    that lacks pandas — unpickling will fail to reconstruct the
-    ``Index`` type.
+    Nullable / masked numeric columns (``Int64``, ``Float64``, ``boolean``,
+    pyarrow / Sparse numerics) are accepted as numeric even though the generic
+    gate rejects their dtype: such a column has no dense numpy view, so the
+    container converts to its columns' **common dense dtype** (see
+    ``_dense_dtype``) with each NA encoded as ``NaN`` — the only missing-value
+    representation ``jax`` offers. That common dtype keeps a nullable float at
+    its own width (``Float32 -> float32``) and a complex column complex
+    (``Sparse[complex128] -> complex128``); a nullable integer / boolean
+    promotes to ``float64`` (no integer NaN). The native leaf is stored
+    verbatim, so the validity mask survives at rest; NA becomes NaN only at the
+    compute boundary. Categorical / string / datetime extension dtypes are not
+    numeric and leave the container a plain ``Record``. No-op without pandas.
     """
     try:
         import pandas as pd
     except ImportError:
         return
 
-    def _series_capture(leaf: pd.Series) -> dict[str, Any]:
+    def _is_nullable_numeric(dtype: Any) -> bool:
+        # A masked / extension *numeric* dtype: numeric, but with a validity
+        # mask and no dense numpy view. Excludes categorical / string /
+        # datetime, which are extension dtypes yet not numeric.
+        is_ext = pd.api.types.is_extension_array_dtype(dtype)
+        return is_ext and pd.api.types.is_numeric_dtype(dtype)
+
+    def _column_numeric(dtype: Any) -> bool:
+        # A column ProbPipe can turn into a dense numeric array: a plain numpy
+        # numeric dtype (generic gate), or a nullable numeric one (NA -> NaN).
+        return _is_numeric_dtype(dtype) or _is_nullable_numeric(dtype)
+
+    def _extension_dense_dtype(dtype: Any) -> np.dtype | None:
+        # The underlying dense numpy dtype of a masked / extension numeric
+        # dtype: pandas masked dtypes expose it as ``.numpy_dtype``, a
+        # ``SparseDtype`` as ``.subtype``. ``None`` if neither is readable.
+        for attr in ("numpy_dtype", "subtype"):
+            nd = getattr(dtype, attr, None)
+            if nd is not None:
+                try:
+                    return np.dtype(nd)
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    def _dense_dtype(dtypes: Any) -> np.dtype | None:
+        # The single dense numpy dtype a Series / DataFrame of these column
+        # dtypes densifies to, or None when a column has no dense numpy dtype.
+        # A masked / extension numeric column has no dense numpy view and must
+        # hold NA as NaN. It contributes its underlying dtype when that already
+        # holds NaN, so a nullable float keeps its width and a complex column
+        # stays complex; an integer or boolean underlying promotes to float64
+        # instead. Every other column contributes its own dtype, and the result
+        # is their common promotion, so a complex column is never truncated to a
+        # float.
+        contribs: list[np.dtype] = []
+        for d in dtypes:
+            if _is_nullable_numeric(d):
+                sub = _extension_dense_dtype(d)
+                contribs.append(
+                    sub if sub is not None and sub.kind in "fc" else np.dtype("float64")
+                )
+            else:
+                nd = _safe_numpy_dtype(d)
+                if nd is None:
+                    return None
+                contribs.append(nd)
+        return np.result_type(*contribs) if contribs else None
+
+    def _dense(obj: Any, dtypes: Any) -> np.ndarray:
+        # A masked column has no dense numpy view; converting with an explicit
+        # target dtype encodes each NA as NaN and keeps complex columns complex
+        # (see _dense_dtype). Otherwise the native numpy view is used unchanged.
+        if any(_is_nullable_numeric(d) for d in dtypes):
+            return obj.to_numpy(dtype=_dense_dtype(dtypes), na_value=np.nan)
+        return obj.to_numpy()
+
+    def _series_metadata(s: pd.Series) -> Any:
+        return {"index": np.asarray(s.index), "name": s.name}
+
+    def _series_numpy_dtype(s: pd.Series) -> np.dtype | None:
+        # Report the single dense dtype the series densifies to (see
+        # _dense_dtype), so numpy_dtype matches what to_numpy / to_jax produce.
+        return _dense_dtype((s.dtype,))
+
+    register_array_backend(
+        pd.Series,
+        ArrayBackend(
+            event_shape=lambda s: tuple(s.shape),
+            numpy_dtype=_series_numpy_dtype,
+            is_numeric=lambda s: _column_numeric(s.dtype),
+            to_jax=lambda s: jnp.asarray(_dense(s, (s.dtype,))),
+            to_numpy=lambda s: _dense(s, (s.dtype,)),
+            metadata=_series_metadata,
+        ),
+    )
+
+    def _frame_is_numeric(df: pd.DataFrame) -> bool:
+        dtypes = df.dtypes
+        return len(dtypes) > 0 and all(_column_numeric(d) for d in dtypes)
+
+    def _frame_numpy_dtype(df: pd.DataFrame) -> np.dtype | None:
+        # Report the single dense dtype the frame densifies to (see
+        # _dense_dtype), so numpy_dtype matches what to_numpy / to_jax produce.
+        return _dense_dtype(df.dtypes)
+
+    def _frame_metadata(df: pd.DataFrame) -> Any:
         return {
-            "index": leaf.index,
-            "name": leaf.name,
-            "dtype": leaf.dtype,
+            "index": np.asarray(df.index),
+            "columns": np.asarray(df.columns),
+            "dtypes": tuple(str(d) for d in df.dtypes),
         }
 
-    def _series_restore(arr: jax.Array, aux: dict[str, Any]) -> pd.Series:
-        return pd.Series(
-            np.asarray(arr),
-            index=aux["index"],
-            name=aux["name"],
-            dtype=aux["dtype"],
-        )
-
-    def _frame_capture(leaf: pd.DataFrame) -> dict[str, Any]:
-        return {
-            "index": leaf.index,
-            "columns": leaf.columns,
-            "dtypes": leaf.dtypes.to_dict(),
-        }
-
-    def _frame_restore(arr: jax.Array, aux: dict[str, Any]) -> pd.DataFrame:
-        df = pd.DataFrame(
-            np.asarray(arr),
-            index=aux["index"],
-            columns=aux["columns"],
-        )
-        # Restore per-column dtypes (numpy materialisation may have
-        # promoted everything to a common dtype).
-        return df.astype(aux["dtypes"])
-
-    register_aux(pd.Series, capture=_series_capture, restore=_series_restore)
-    register_aux(pd.DataFrame, capture=_frame_capture, restore=_frame_restore)
+    register_array_backend(
+        pd.DataFrame,
+        ArrayBackend(
+            event_shape=lambda df: tuple(df.shape),
+            numpy_dtype=_frame_numpy_dtype,
+            is_numeric=_frame_is_numeric,
+            to_jax=lambda df: jnp.asarray(_dense(df, df.dtypes)),
+            to_numpy=lambda df: _dense(df, df.dtypes),
+            metadata=_frame_metadata,
+        ),
+    )
 
 
 _register_xarray()

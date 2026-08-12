@@ -189,12 +189,12 @@ class _TFPGradientMethod(InferenceMethod):
             step_size=kwargs.get("step_size", 0.1),
             random_seed=random_seed,
         )
-        auxiliary = build_mcmc_datatree(chains, sample_stats)
+        annotations = build_mcmc_datatree(chains, sample_stats)
         return make_posterior(
             chains,
             parents=(prior,),
             algorithm=self._method_name,
-            auxiliary=auxiliary,
+            annotations=annotations,
             event_template=event_template,
             num_results=num_results,
             num_warmup=num_warmup,

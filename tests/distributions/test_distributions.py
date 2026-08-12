@@ -180,8 +180,8 @@ class TestMultivariateNormal:
         g2 = from_distribution(ed, MultivariateNormal, name="fitted")
         np.testing.assert_allclose(g2.loc, gaussian.loc, atol=0.2)
         assert g2.name == "fitted"
-        assert g2.source is not None
-        assert g2.source.operation == "from_distribution"
+        assert g2.provenance is not None
+        assert g2.provenance.operation == "workflow.from_distribution"
 
     def test_from_distribution_gaussian(self, gaussian, key):
         """Moment-match from another MultivariateNormal via sampling."""
@@ -292,8 +292,8 @@ class TestEmpiricalDistribution:
         ed = from_distribution(gaussian, RecordEmpiricalDistribution, key=key, num_samples=50)
         assert ed.num_atoms == 50
         assert ed.event_shape == gaussian.event_shape
-        assert ed.source is not None
-        assert ed.source.operation == "from_distribution"
+        assert ed.provenance is not None
+        assert ed.provenance.operation == "workflow.from_distribution"
         assert ed.name == gaussian.name
 
     def test_from_distribution_custom_name(self, gaussian, key):
@@ -320,7 +320,7 @@ class TestEmpiricalValidationMessages:
         """First field is 0-D → message names the field and shape."""
         from probpipe import Record
 
-        rec = Record(x=jnp.array(1.0))
+        rec = Record("r", x=jnp.array(1.0))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
         msg = str(exc.value)
@@ -332,7 +332,7 @@ class TestEmpiricalValidationMessages:
         and the reference field."""
         from probpipe import Record
 
-        rec = Record(x=jnp.zeros(5), y=jnp.array(2.0))
+        rec = Record("r", x=jnp.zeros(5), y=jnp.array(2.0))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
         msg = str(exc.value)
@@ -346,7 +346,7 @@ class TestEmpiricalValidationMessages:
         names the field, its full shape, and the reference field."""
         from probpipe import Record
 
-        rec = Record(x=jnp.zeros(5), y=jnp.zeros(7))
+        rec = Record("r", x=jnp.zeros(5), y=jnp.zeros(7))
         with pytest.raises(ValueError) as exc:
             RecordEmpiricalDistribution(rec)
         msg = str(exc.value)
@@ -399,6 +399,7 @@ class TestFlatSamples:
         from probpipe import Record
 
         rec = Record(
+            "r",
             mu=jnp.arange(8.0),
             log_sigma=jnp.arange(8.0) + 100.0,
         )
@@ -416,6 +417,7 @@ class TestFlatSamples:
         from probpipe import Record
 
         rec = Record(
+            "r",
             mu=jnp.arange(10.0),
             beta=jnp.arange(30.0).reshape(10, 3),
         )
@@ -431,8 +433,8 @@ class TestFlatSamples:
         # Insertion-order rule: flat_samples columns follow `dist.fields`.
         from probpipe import Record
 
-        rec1 = Record(z=jnp.zeros(5), a=jnp.ones(5))
-        rec2 = Record(a=jnp.ones(5), z=jnp.zeros(5))
+        rec1 = Record("r", z=jnp.zeros(5), a=jnp.ones(5))
+        rec2 = Record("r", a=jnp.ones(5), z=jnp.zeros(5))
         ed1 = RecordEmpiricalDistribution(rec1)
         ed2 = RecordEmpiricalDistribution(rec2)
         # Different insertion order → different flat_samples column order.
@@ -457,6 +459,7 @@ class TestFlatSamples:
         from probpipe import Record
 
         rec = Record(
+            "r",
             empty=jnp.zeros((10, 0)),
             real=jnp.arange(30.0).reshape(10, 3),
         )
@@ -681,21 +684,21 @@ class TestDistributionABC:
         with pytest.raises(TypeError):
             from_distribution(None, NumericRecordDistribution)
 
-    def test_source_default_none(self, gaussian):
+    def test_provenance_default_none(self, gaussian):
         g = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="z")
-        assert g.source is None
+        assert g.provenance is None
 
-    def test_with_source(self, gaussian):
+    def test_with_provenance(self, gaussian):
         p = Provenance("test")
-        gaussian.with_source(p)
-        assert gaussian.source is p
+        gaussian.with_provenance(p)
+        assert gaussian.provenance is p
 
-    def test_with_source_write_once(self, gaussian):
+    def test_with_provenance_write_once(self, gaussian):
         p1 = Provenance("first")
-        gaussian.with_source(p1)
+        gaussian.with_provenance(p1)
         p2 = Provenance("second")
-        with pytest.raises(RuntimeError, match="Source already set"):
-            gaussian.with_source(p2)
+        with pytest.raises(RuntimeError, match="Provenance already set"):
+            gaussian.with_provenance(p2)
 
     def test_name(self, loc, cov_matrix):
         g = MultivariateNormal(loc=loc, cov=cov_matrix, name="z")

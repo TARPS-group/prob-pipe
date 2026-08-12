@@ -5,8 +5,10 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.distribution import Distribution
+from ..core.event_template import EventTemplate
 from ..core.protocols import SupportsLogProb
-from ..core.record import EventTemplate, Record
+from ..core.record import Record
+from ..core.tracked import auto_name
 from ..custom_types import Array
 from ._base import ProbabilisticModel
 from ._likelihood import Likelihood
@@ -70,9 +72,10 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
             )
         self._prior = prior
         self._likelihood = likelihood
-        # ``Distribution`` metaclass requires a non-empty name; default
-        # to the class name when the caller doesn't supply one.
-        self._name = name if name else "SimpleModel"
+        # Default to the class name when the caller does not supply one;
+        # the default is an auto-derived name.
+        name, name_is_auto = auto_name(name or None, "SimpleModel")
+        self._init_tracked(name, name_is_auto=name_is_auto)
 
         # Build merged event_template: prior params + likelihood data fields.
         # This makes fields include both parameter and data names,
@@ -90,16 +93,15 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         # unrelated types, so the ``Record`` check is sufficient on
         # its own.
         if isinstance(data_tpl, Record):
-            data_tpl = EventTemplate.from_record(data_tpl)
+            data_tpl = EventTemplate.infer_from(data_tpl)
         if data_tpl is not None:
             overlap = set(prior_tpl.fields) & set(data_tpl.fields)
             if overlap:
                 raise ValueError(f"Parameter and data field names overlap: {overlap}")
-            merged: dict[str, Any] = {}
-            for f in prior_tpl.fields:
-                merged[f] = prior_tpl[f]
-            for f in data_tpl.fields:
-                merged[f] = data_tpl[f]
+            # Combine at the one-level (``children``) view so a nested prior/data
+            # subtree is carried over whole rather than indexed by a top-level
+            # subtree name (which leaf-keyed ``[]`` would reject).
+            merged: dict[str, Any] = {**dict(prior_tpl.children), **dict(data_tpl.children)}
             self._event_template: EventTemplate = EventTemplate(merged)
         else:
             self._event_template = prior_tpl
@@ -217,7 +219,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
                     f"positionally instead."
                 )
             params = self._prior._pack_value(**{f: value[f] for f in self._prior_fields})
-            data = Record(**{f: value[f] for f in data_fields})
+            data = Record("data", {f: value[f] for f in data_fields}, name_is_auto=True)
             return params, data
         raise TypeError(
             f"SimpleModel._log_prob expects a Record over {self.fields} or a "

@@ -1,6 +1,8 @@
-"""Tests for WorkflowFunction sweep execution helpers."""
+"""Tests for Function sweep execution helpers."""
 
 from __future__ import annotations
+
+import inspect
 
 import jax.numpy as jnp
 import numpy as np
@@ -14,12 +16,26 @@ from probpipe import (
     NumericRecordArray,
     mean,
 )
-from probpipe.core import _workflow_execution, _workflow_sweep
+from probpipe.core import _workflow_call, _workflow_execution, _workflow_sweep
 from probpipe.core._workflow_plan import build_broadcast_plan
 
 
 def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
-    return NumericRecordArray.stack([NumericRecord(**{field: float(value)}) for value in values])
+    return NumericRecordArray.stack(
+        [NumericRecord("nr", **{field: float(value)}) for value in values]
+    )
+
+
+def _ref(name: str) -> _workflow_call.WorkflowInputRef:
+    return _workflow_call.WorkflowInputRef(name)
+
+
+def _plan(values):
+    signature = inspect.Signature(
+        [inspect.Parameter(name, inspect.Parameter.POSITIONAL_OR_KEYWORD) for name in values]
+    )
+    signature_info = _workflow_call.make_signature_info_from_signature(signature)
+    return build_broadcast_plan(values=values, signature_info=signature_info)
 
 
 def _unexpected_distribution_broadcast(*args, **kwargs):
@@ -33,10 +49,10 @@ def _require_not_called(*args, **kwargs):
 class TestSliceSweepValues:
     def test_views_from_same_parent_zip(self):
         parent = NumericRecordArray.stack(
-            [NumericRecord(x=float(i), y=float(10 + i)) for i in range(3)]
+            [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)]
         )
         values = {"x": parent.view("x"), "y": parent.view("y")}
-        plan = build_broadcast_plan(values=values, hints={})
+        plan = _plan(values)
 
         observed = [
             _workflow_sweep.slice_sweep_values(
@@ -58,7 +74,7 @@ class TestSliceSweepValues:
             "a": _numeric_record_array("a", range(2)),
             "b": _numeric_record_array("b", range(3)),
         }
-        plan = build_broadcast_plan(values=values, hints={})
+        plan = _plan(values)
 
         observed = [
             _workflow_sweep.slice_sweep_values(
@@ -87,7 +103,7 @@ class TestSliceSweepValues:
             name="d",
         )
         values = {"d": da}
-        plan = build_broadcast_plan(values=values, hints={})
+        plan = _plan(values)
 
         first = _workflow_sweep.slice_sweep_values(
             values=values,
@@ -109,7 +125,7 @@ class TestSliceSweepValues:
 class TestExecuteSweep:
     def test_row_wise_sweep_uses_execution_request(self, monkeypatch):
         values = {"p": _numeric_record_array("x", range(3))}
-        plan = build_broadcast_plan(values=values, hints={})
+        plan = _plan(values)
         execution = _workflow_execution.WorkflowExecutionConfig(
             mode="thread",
             max_workers=2,
@@ -158,7 +174,7 @@ class TestExecuteSweep:
 
     def test_include_inputs_is_rejected_for_sweep(self):
         values = {"p": _numeric_record_array("x", range(1))}
-        plan = build_broadcast_plan(values=values, hints={})
+        plan = _plan(values)
         execution = _workflow_execution.WorkflowExecutionConfig(
             mode="sequential",
             name="identity",
@@ -184,7 +200,7 @@ class TestExecuteSweep:
             "p": _numeric_record_array("x", range(2)),
             "noise": Normal(loc=0.0, scale=1.0, name="noise"),
         }
-        plan = build_broadcast_plan(values=values, hints={})
+        plan = _plan(values)
         execution = _workflow_execution.WorkflowExecutionConfig(
             mode="sequential",
             name="nested",
@@ -235,16 +251,16 @@ class TestExecuteSweep:
         assert calls == [
             {
                 "x": 0.0,
-                "dist_args": ("noise",),
+                "dist_args": (_ref("noise"),),
                 "n": 7,
                 "include_inputs": True,
             },
             {
                 "x": 1.0,
-                "dist_args": ("noise",),
+                "dist_args": (_ref("noise"),),
                 "n": 7,
                 "include_inputs": True,
             },
         ]
-        assert result.source.operation == "workflow.nested"
-        assert result.source.metadata["k"] == 7
+        assert result.provenance.operation == "workflow.nested"
+        assert result.provenance.metadata["k"] == 7

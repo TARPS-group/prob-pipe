@@ -7,6 +7,134 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
+  A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
+  `DistributionSpec`'s event declaration, a `FunctionSpec`'s either side — was
+  invisible to `free_dims`, so `EventTemplate(law=DistributionSpec(x=("obs",)))`
+  reported itself concrete. Design II.3 draws no line at a term-spec boundary:
+  *any* symbolic entry makes a template polymorphic.
+
+  Reporting a dimension, substituting it, and binding it are now three methods
+  every `ValueSpec` answers, so the spec that declares a dimension resolves it.
+  `EventTemplate.free_dims` is the union over its children, so a name is reported
+  wherever it is declared. Three things follow. Substitution reaches through a
+  term spec, so every dimension reported is bindable. **Unification binds through
+  one too**: a spec's declaration unifies against the actual term's own, in the
+  shared binding scope, so a name inside a `DistributionSpec` is the same
+  dimension as that name beside it — it binds once, and a disagreement raises.
+  And a `BatchSpec` axis size may now be a symbolic name in that same scope,
+  bound from the actual `Batch` it is matched against, so a batch of `("n",)`
+  over arrays of shape `("n",)` is square by declaration, and a batch that is not
+  square is refused.
+
+  Each spec owns its own binding, which is what reaches a spec the schema layer
+  cannot name: `BatchSpec` lives in `_batch.py`, which imports from
+  `event_template.py`, so a type test there could report a batch axis as free
+  while nothing could bind it. Every spec that reports a dimension implements
+  both binding methods — `ArraySpec` and `FunctionSpec` included, which the
+  unification pass had special-cased — so the four methods are one contract
+  rather than a rule with exceptions.
+
+  A `FunctionSpec`'s output binds whatever kind it declares. Only a record
+  declaration was read before, so a callable declaring an output that contradicted
+  the input bound the input alone and reported an output schema that was wrong
+  rather than merely unbound: input `("n",)` against a declared `(3,)` and an
+  actual output of `(5,)` reported `(5,)` as `(3,)`. A non-record declaration
+  describes the one value returned, so it now meets the sole leaf of the
+  callable's output template, and several output fields do not match it.
+
+  This brings the term specs into line with `ArraySpec`, which has always
+  accepted a concrete value against a symbolic shape and left the sizes to the
+  single pass, per II.3's division of labor. A polymorphic term-spec declaration
+  was previously unsatisfiable: `is_valid` compared inner templates for exact
+  equality, so a symbolic declaration never matched a concrete value.
+
+  A live `Batch` still requires a concrete multiplicity — it holds elements at
+  positions — so construction refuses a polymorphic `BatchSpec`, and
+  `batch_size` raises until the dimensions are bound.
+
+- **Aliased lifted arguments now co-sample (#388).** Within one lifted call, two
+  references to the same law denote one random variable, so they must come from
+  one draw. Passing the same `Distribution` to two arguments sampled it twice
+  instead, so `f(d, d)` approximated `f(X1, X2)` — a silently wrong answer, with
+  `difference(dist, dist)` returning a spread around zero rather than zero.
+
+  Arguments were already grouped by root ancestor, as the co-sampling contract
+  requires; the grouping was then discarded for plain distributions and honored
+  only for field views. Each group is now drawn **once**, from its root, with
+  every member taking its own value out of that draw. Two further cases follow
+  from the same change: a parent passed alongside its own view no longer raises
+  (it was projected as though the parent were a view), and an empirical passed
+  twice contributes **one** enumeration axis rather than a squared grid — over
+  three atoms, `f(e, e)` enumerates 3 points instead of 9, each weighted once
+  instead of squared.
+
+  Arguments with no common root are unaffected, down to the subkeys: a group of
+  one consumes exactly one key split, as before. Only calls that were already
+  returning wrong values change their output.
+
+- **A record-valued law can be lifted.** Passing a record-valued
+  `Distribution` as an argument raised `TypeError: ... is not array-like`, from
+  two places that assumed every argument's samples were an array. Broadcast
+  assembly read the row count from the samples' `shape`, which a record batch
+  refuses unless it holds exactly one leaf; the count now comes from
+  `batch_shape`, the one accessor that means the same thing for every batched
+  value. (Not `len`: on a `RecordArray` that is the *field* count, which would
+  have made `num_atoms` silently wrong.) And enumeration stacked each
+  argument's per-row values with `jnp.stack`, which a `Record` row is not; those
+  now stack through `RecordArray.stack`.
+
+  The first of those is what kept `f(d, d["x"])` — a parent alongside its own
+  view, the remaining co-sampling case above — from running end to end once its
+  draws were shared. Record-valued laws now lift under `auto`, `sequential`, and
+  `thread` dispatch, including record-valued empiricals, whether enumerated or
+  passed twice. Explicit `dispatch="jax"` reports the usual not-traceable error
+  when the wrapped function indexes a record.
+
+  **The joint those lifts produce also resamples.** `include_inputs=True` keeps
+  every input beside the output, and drawing from that joint gathers the same
+  rows from each, which is what keeps a drawn tuple paired. A record-shaped
+  component has fields rather than a shape, so handing it an array of rows raised
+  `TypeError: key must be str, tuple, or int`. Every component now goes through
+  one gather that reads the container it is given: an array indexes directly, a
+  list of per-row objects gathers positionally, and a record is rebuilt from its
+  gathered leaves. The rebuild is deliberate rather than a `jax.tree.map` — a
+  `RecordArray` stores its row count and a `Record` its event template, both in
+  pytree aux data, so mapping over the leaves alone would have produced a batch
+  quietly claiming the rows it started with. The same gather covers the output
+  side, where a vectorized broadcast over a record-returning function leaves the
+  output a batched `Record`. A single draw is unwrapped to one record rather than
+  a one-row batch, its field names intact.
+
+  Two shapes are still unsupported. A record with **nested** fields cannot be
+  batched at all, since a record batch is keyed by its top-level children rather
+  than by leaf path, so lifting such a law is refused with a message naming the
+  argument rather than surfacing what the container said. That is #340, and a
+  strict `xfail` in the broadcast tests marks the case so it reports the day
+  record batches become leaf-keyed.
+
+  The other: a record-valued empirical passed alongside a
+  field view of itself. That group routes to sampling rather than enumeration,
+  where `RecordEmpiricalDistribution._sample` hands back a plain record batched
+  on its leaves rather than a record batch — deliberately, so a vmap'd caller
+  can flatten it — and the view half of the group has no rows to project from. That is a distribution-
+  layer contract gap rather than a broadcast one.
+
+- **Value specs are fingerprinted by declaration, not identity (#381).** The
+  spec hasher now covers `RecordSpec` and recurses into a stored declaration
+  (`DistributionSpec.event_spec`, `FunctionSpec.output_spec`), which is a spec
+  rather than a template. The generic hasher also routes any `ValueSpec` to it,
+  so a spec reached other than as a template leaf — bare, or inside a tuple,
+  list, or mapping — records its type and declaration fields instead of falling
+  through to identity hashing. Previously such a spec hashed weakly, so two
+  *equal* declarations produced different fingerprints and silently broke jit
+  cache keys and provenance. Because a record declaration is now stored as a
+  `RecordSpec`, the digest of a template carrying a `DistributionSpec`, or a
+  `FunctionSpec` with a declared output, also changes value; fingerprints are
+  in-memory jit cache keys and provenance only, never persisted.
+
 ### Added
 
 - **`RegistryCatalog` + `SupportsRegistryCataloging` protocol — a
@@ -25,6 +153,245 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   behaviour is unchanged.  Re-exported at the top level:
   `probpipe.registry_catalog`, `probpipe.EntrySummary`,
   `probpipe.RegistryInfo`, `probpipe.SupportsRegistryCataloging`.
+- **`EventTemplate.with_dims(**sizes)`** binds symbolic dimensions explicitly,
+  returning a new template so refinement stays monotone, and naming any
+  dimension left unbound. It reaches through a term spec, and auto-promotes to
+  `NumericEventTemplate` when the bound template is all-numeric, so a bound
+  template gains its flat layout. The law-level `with_dims` design 03 names on
+  `Distribution` will delegate to it.
+
+- **`FunctionBatch` and `OpaqueBatch` — the batch forms that store objects.** A
+  numeric array batches natively, with the batch axes leading, so it needs no
+  class; a callable and an opaque object have no such form, so each gets a thin
+  `Batch` that stores its elements and carries the one `element_spec` they all
+  satisfy, adding no interface beyond it. Elements go in as a flat sequence or
+  as an object array of any shape, with a name required for every level — a
+  placeholder would read as meaning something while naming nothing, the same
+  reason a level clash is not resolved by suffixing.
+
+  Storage is a numpy object array, chosen for the contract rather than for
+  arrays: numpy basic indexing returns a **view**, so a sub-batch shares its
+  parent's store in every indexing form, and it honors a descending or stepped
+  slice in the order given, which is the order a view's derived names are stated
+  in. The store is frozen and a supplied array is copied — only the pointer
+  array, so the elements stay shared — so a batch holds the elements it
+  validated and a view cannot write through to its parent. Elements are never
+  unpacked: a batch of arrays or of lists stays a batch of two things rather than
+  becoming one 2-d array, and a container that iterates into its *parts* rather
+  than into elements (a string, a mapping, a numeric array) is refused, since
+  each would otherwise yield a batch of pieces of one object.
+
+  An element comes back as the object that was stored, untouched — neither
+  renamed nor given provenance. Identity and lineage are derived where a batch
+  *materializes* an element per index; these store theirs, so what the caller put
+  in is what comes out.
+
+  `OpaqueBatch` is the case a batch's own spec exists for — an `OpaqueSpec`
+  names no ProbPipe kind, yet the batch is specified all the same, at the family
+  kind over it. Every element is checked against the shared spec at construction,
+  reporting the position that failed, since a batch asserts that spec of *all*
+  of them, and `axis_groups` must tile the shape the elements are stored in, so
+  the spec cannot describe a shape the storage does not have.
+
+- **`TermSpec` — the term-spec sub-hierarchy, and declarations stored as specs
+  (#381).** `ValueSpec` now splits into *raw-value specs* (`ArraySpec`,
+  `OpaqueSpec`), which name no ProbPipe kind, and *term specs*, one per kind,
+  whose concrete class *is* the kind. `TermSpec(ValueSpec)` is the marker
+  `isinstance` reads; `is_valid` stays declared once on `ValueSpec`, so a term
+  spec is accepted anywhere a leaf is. New `RecordSpec` completes the four
+  corners beside `DistributionSpec`, `FunctionSpec`, and the conditional spec
+  to come, and `DistributionSpec` / `FunctionSpec` are reparented under
+  `TermSpec`.
+
+  An **output declaration** is any value specification, matching the model's
+  `Fun(σ, ρ)` with `ρ` a value specification: a callable may declare a term
+  result of any kind or a raw-value result, the latter typing the value the wrap
+  boundary places in a single-field `Record`. An **event** declaration is
+  narrower, record-valued, because `DistributionSpec.is_valid` checks it.
+
+  A *declaration* — of an event or an output — is now **stored as a spec**: a
+  bare `EventTemplate` is accepted as construction sugar wherever a record
+  declaration is meant and normalised to `RecordSpec(template)`, so after
+  construction the declared kind is simply the stored spec's class. This makes
+  an operation's result kind a structural test rather than an inference from a
+  runtime value. A callable's `output_spec` accepts any kind; an *event*
+  declaration is record-valued for now, since a `Distribution` exposes an
+  `EventTemplate` and nothing that reports a term-valued draw kind, so a
+  random-measure declaration is refused at construction rather than accepted
+  and always reported invalid. `FunctionSpec` declares no check on its output,
+  so nothing there is expressible-but-unsatisfiable.
+
+- **`Batch[E]` — the generic multiplicity axis (#350).** New
+  `probpipe.core._batch` module holding the tracked nd-collection ABC the
+  concrete batch types will specialize. A batch says *how many* objects there
+  are, separately from what one object contains, so `len` / `iter` /
+  `batch_shape` / `batch_size` speak only about the batch axes and never about
+  an element's structure.
+
+  Axes are partitioned into ordered **levels**: `axis_groups` tiles
+  `batch_shape` into contiguous groups, outermost first, with `batch_shape`
+  their flat concatenation — so `N` laws of `S` draws each are `(N,)` of `(S,)`
+  rather than one anonymous `(N, S)`, and anything stated over `batch_shape`
+  applies to a multi-level batch unchanged. Each level carries a name
+  (`level_names`, repinned by `with_level_names`), and names are unique within a
+  batch: an operation minting a level takes the name to give it, and a name
+  already present raises rather than being altered, exactly as a rename onto an
+  existing name does.
+
+  Indexing has two entry points. `at_levels(**levels)` takes one indexer per
+  named level and returns a view — the by-name counterpart of positional `[]`,
+  and the level analogue of `NamedTree.at_path`. `[]` itself dispatches on
+  whether the key is a **position** or a **name**: a position (an integer, a
+  slice, or a tuple of those) addresses the batch axes, while a name (a string,
+  or a tuple of strings for a path) addresses a field within every element —
+  which a batch of records will answer and a batch of anything else refuses. A
+  tuple mixing the two addresses neither, and is refused as a mix rather than as
+  a wrong number of indices. A whole axis is written `:` positionally; `None`
+  spells it in `at_levels` alone, where a keyword cannot take a `:` literal.
+
+  A view is **named by what it selects**, naming the level each selection
+  addresses — `"posterior[chain=0]"` for a sub-batch,
+  `"posterior[chain=0, draw=7]"` for an element, `"posterior[draw=1:3]"` for a
+  range. Levels selected whole are left out, so selecting all of a batch derives
+  the batch's own name, and the levels that appear are listed in the batch's own
+  order. The selection is tracked against the batch the name is rooted in, so a
+  derived name is a function of what the view selects: indexing two levels in one
+  call, in two calls, or in the other order all read alike, and two different
+  selections of one batch never do. A selection carries the *lineage* of the batch it came
+  out of rather than a node recording the read: nothing is computed by reading one
+  position out of a collection, and which position it was is what the name says.
+
+  A batch's **specification is its own**, at the *family* kind: the new
+  `BatchSpec` term spec carries the element's specification together with that
+  named multiplicity, and a batch stores it as the single source of its type.
+  `spec` therefore names the collection, just as any other term's spec names the
+  term, while `element_spec`, `axis_groups`, `level_names`, `batch_shape`, and
+  `batch_size` are views on it; the level invariants are the spec's own, checked
+  when it is constructed. A batch of values naming no kind is specified all the
+  same, a raw-value `element_spec` being as well formed as a term spec.
+
+  Element storage is the concrete class's business — the only thing left to a
+  subclass, through the `_element_at` and `_sub_batch_at` hooks. The second
+  presents a *view* that shares the store rather than copying out of it, which is
+  why selecting all of a batch needs no special case. A third hook, `_at_fields`,
+  is supplied only where the elements have fields to address by name. Renaming a
+  level touches no storage, so it defaults to a shallow copy.
+
+  A batch is immutable, round-trips through `pickle` and `copy`, and reprs as its
+  class, its name, and each level with its sizes, reading no element.
+  `FunctionBatch`, `RecordBatch`, and `DistributionBatch` follow separately.
+
+- **First-class, tracked `Function` values (#368).** `Function` is now an
+  immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
+  Python `signature`, optional authoritative `input_template` and
+  `output_template`, and a raw `apply(*args, **kwargs)` execution boundary.
+  `ArraySpec` shapes accept symbolic dimension names; templates expose
+  `free_dims` / `is_concrete`, and each invocation unifies input and output
+  symbols without mutating declarations. Decorated and private-
+  implementation-backed Functions share the same planner, invocation-local
+  RNG and dispatch state, and output validation.
+  Variadic arguments now participate in lifting and sweeps through stable
+  per-element planner slots; `Any` on a variadic parameter remains
+  non-restrictive rather than suppressing those behaviors. Authoritative nested
+  outputs aggregate identically across sequential, threaded, Prefect, and JAX
+  dispatch without changing the public `RecordArray.stack` contract, and
+  declared distribution sweeps expose their concrete schema through
+  `DistributionArray.event_template`.
+  Callable and private-implementation fingerprints encode frozen signatures
+  and templates structurally; callable implementations additionally encode
+  their code, defaults, and closure, while private implementations use stable
+  opaque-default type fallbacks rather than address-bearing signature strings.
+  Authoritative output validation requires field trees and concrete shapes to
+  conform, uses same-kind dtype checks for bare values, mappings, and Records,
+  and enforces their declared supports against concrete values. An existing
+  Distribution must carry an `event_template` exactly equal to the concrete
+  declaration; Function neither reconciles parallel `dtypes` / `supports`
+  accessors nor rewrites the Distribution's intrinsic template. Consolidating
+  Distribution schema ownership remains follow-up work. Support-bearing value
+  outputs use row-wise execution under auto dispatch because their
+  data-dependent checks cannot run while JAX traces; explicit JAX dispatch and
+  direct `jax.jit(Function.apply)` report that limitation. `apply` preserves a
+  returned container's original template, while the independent `__call__`
+  result copy carries the concrete declared template for Records and retains
+  an already-matching Distribution template.
+  `LinOp.apply(x)` now delegates to `matvec(x)`, preserving existing operator
+  structure and behavior. `Function._from_implementation(...)` is the internal
+  construction entry point for dynamically produced ordinary Functions; #370
+  will layer fitted-producer validation and attestations over that boundary.
+  Result plans and `OperationRef` remain follow-up work.
+
+- **`NamedTree` — the public name-keyed tree substrate (#338).** New
+  `probpipe.core.named_tree` module holding the ordered, immutable,
+  `/`-path-navigable tree that `EventTemplate` and `Record` now share as their
+  common base (previously the private `_NamedTree`). The substrate owns the
+  leaf-keyed mapping interface, nested-dict export (`to_nested_dict`) that the
+  constructor reads back, and the
+  structural edits `merge` / `without` / `replace`, and gains
+  `with_path_names(old=new, ...)` — rename leaves or whole subtrees by path,
+  or by bare name when unique in the tree. Each family declares its leaf type
+  (`ValueSpec` for templates; arbitrary values for records), checked at
+  construction, and **a `Mapping` is never a leaf**: a dict field value is
+  always materialised into a nested subtree, never stored as an opaque leaf.
+  Diagnostics payloads, previously carried as Records with dict-valued fields,
+  are now plain dicts.
+
+- **`TrackedTerm` / `Annotated` identity-and-metadata mixins (#336).** New
+  `probpipe.core.tracked` module defining the shared identity attributes and methods every
+  ProbPipe object carries: `TrackedTerm` (a `name`, a `name_is_auto` flag, and a
+  write-once `provenance` attached via `with_provenance`, plus `with_name` for
+  rename-as-copy) and `Annotated` (a free-form `annotations` mapping).
+  `Distribution` and `Record` / `NumericRecord` inherit both; the batch types
+  (`RecordArray` / `NumericRecordArray` / `DistributionArray`) are tracked
+  terms too. `name_is_auto` records whether an object's name was auto-derived
+  by the operation that produced it (`True`) or supplied by the user
+  (`False`), so later composition can re-derive auto names while preserving
+  user-given ones. The construction-time guarantee that every tracked term
+  has a non-empty name is enforced by the mixin's metaclass, replacing the
+  previous `Distribution`-only metaclass check and extending it to the
+  `Record` family. Both mixins are exported from the top-level `probpipe`
+  package.
+
+- **pyabc SMC-ABC inference backend (#238).** A `pyabc_smcabc` method
+  (priority 6) for `SimpleGenerativeModel`: it derives a joint pyabc prior from
+  the prior's flattened parameter vector (so correlated and multivariate priors
+  work, not just products of independent marginals), runs SMC-ABC against the
+  observed data, and returns importance-weighted particles keyed by parameter
+  name. Auto-dispatches via `condition_on` for a pure generative model. Ships as
+  the `[pyabc]` extra (bundled by the `probpipe` metapackage); `make_posterior`
+  gains a `weights=` argument so weighted particles flow through to the
+  `ApproximateDistribution` without resampling.
+
+- **`probpipe.diagnostics` posterior diagnostics subsystem.** Adds in-place
+  mutator operations `add_rhat`, `add_ess`, `add_mcse`,
+  `add_mcmc_diagnostics`, `add_ppc`, and `add_loo`; structured
+  `posterior.diagnostics` views (`DiagnosticsView`, `MCMCView`, `PPCView`, and
+  `LOOView`); and ArviZ-compatible interop through `posterior.arviz_data`.
+
+- **`probpipe.validation` posterior-vs-reference comparison metrics.** A
+  dependency-light scoring layer for validating inference methods against a
+  trusted reference: `Reference` (a container for analytic / long-NUTS /
+  sandwich references — high-precision `(mean, cov)`, `draws`, and/or a target
+  `score_fn`), `standardized_mean_error` (Mahalanobis mean error
+  `‖Σ_ref^{-1/2}(μ̂ − μ_ref)‖₂`), `relative_cov_error` (operator-norm whitened
+  covariance error `‖I − Σ_ref^{-1/2} Σ̂ Σ_ref^{-1/2}‖₂`), `std_ratios`,
+  `sliced_wasserstein`, `mmd` (unbiased
+  RBF), `ksd` (IMQ kernel Stein discrepancy), and the `score_posterior`
+  aggregator.
+
+- **`probpipe.validation` calibration checks.** `simulation_based_calibration`
+  (Talts et al. 2018) drives an inference method over many `(θ★, data,
+  posterior)` replications and tests whether the rank of the truth among the
+  posterior draws is uniform — returning an `SBCResult` with per-parameter rank
+  histograms and a KS-to-uniform p-value. `interval_coverage` checks whether
+  central credible intervals contain the truth at their nominal rate. Both run a
+  backend-agnostic loop over `condition_on`.
+
+- **`quantile` op and `SupportsQuantile` protocol.** `quantile(dist, q)` returns
+  per-field quantile(s) at probability level(s) `q`, parallel to
+  `mean`/`variance`/`cov`. `RecordEmpiricalDistribution` implements it
+  weight-aware via the midpoint-CDF (Hazen, type-5) quantile, used for both
+  uniform and non-uniform weights so the estimator is continuous in the
+  weights.
 
 - **`ProvenanceMode` enum and `provenance_config` singleton for lineage-tracking
   control.** Three modes are available: `FULL` retains live references to every
@@ -40,10 +407,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ```
 
 - **`ParentInfo` descriptor** (new public export).  A frozen dataclass carrying
-  `type_name`, `name`, `source` (the parent's own `Provenance`, kept in all
-  non-OFF modes so the ancestry DAG remains traversable), `fingerprint`
-  (reserved for a future caching layer), and `obj` (the live parent object,
-  set only in FULL mode).
+  `type_name`, `name`, `provenance` (the parent's own `Provenance`, kept in all
+  non-OFF modes so the ancestry DAG remains traversable), `fingerprint` and
+  `fingerprint_is_weak` (see below), and `parent` (the live parent object, set
+  only in FULL mode).
+
+- **`ParentInfo.fingerprint` — classified best-effort hashing for provenance.**
+  Every `ParentInfo` descriptor now carries a 16-character best-effort digest
+  plus `fingerprint_is_weak`. Known content-bearing values and closure-free
+  Python functions receive portable structural fingerprints. Closure-bearing
+  functions, bound methods, partials, callable instances, classes, builtins,
+  and unsupported objects use process-local identity and are marked weak;
+  weakness propagates through composite fingerprints. Large arrays (> 256 MB)
+  are sampled at evenly-spaced offsets rather than read in full. Both the
+  fingerprint and its classification are visible in `to_dict()` output, so a
+  future cross-run `cache_key_fn` can fail closed on weak inputs.
 
 - **`Provenance.create()` factory classmethod.**  Centralises mode-checking:
   reads `provenance_config.mode`, wraps each parent in a `ParentInfo`, and
@@ -71,6 +449,251 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   over from a follow-up that didn't make it into PR #204: the "Overrides
   also" paragraph in the class docstring is re-flowed so the second
   sentence reads continuously (no semantic change).
+- **Renamed, for the storage rule (#381):** `FunctionSpec.output_template` is
+  now **`output_spec`**, storing any `ValueSpec` or `None`, and
+  `DistributionSpec.event_template` is now **`event_spec`**, storing a
+  `RecordSpec`. The names now carry their content: `*_template` is always a
+  record schema, `*_spec` a declaration of any kind — which is why
+  `RecordSpec.event_template` keeps its name.
+
+  To migrate: **positional** construction is unchanged, and both constructors
+  still accept an `EventTemplate` and wrap it, so `DistributionSpec(tau)` and
+  `FunctionSpec(tau, tau)` keep working. **Keyword** construction moves to the
+  new parameter name, and so does every **read** of the old attribute:
+
+  ```python
+  DistributionSpec(event_template=tau)    ->  DistributionSpec(event_spec=tau)
+  FunctionSpec(tau, output_template=tau)  ->  FunctionSpec(tau, output_spec=tau)
+  spec.event_template                     ->  spec.event_spec.event_template
+  ```
+
+  Each field is now declared at the type it *stores* — `event_spec: RecordSpec`,
+  `output_spec: ValueSpec | None` — with the wider template sugar carried by the
+  constructor signature, so a type checker and the generated API reference both
+  read the post-construction guarantee. `ArraySpec` follows the same split, its
+  `dtype` field declared as the `numpy.dtype` it stores rather than the
+  `DTypeLike` spellings it accepts.
+
+- **Function calls establish a new result identity and provenance boundary
+  (#368, breaking).** Existing operations such as `condition_on` and
+  `from_distribution` now record point-call operations as `workflow.<name>`,
+  with the called Function as the first parent followed by tracked inputs.
+  Resolved ordinary arguments are fingerprinted separately in
+  `Provenance.inputs` and do not become ancestry nodes. When an implementation
+  directly returns a `Record`, `RecordArray`, or `Distribution`,
+  `Function.__call__` returns a shallow independent result rather than the same
+  object, clears the implementation result's provenance, and attaches only the
+  current call provenance. Consequently, implementation-domain metadata such
+  as `conditioned`, `ess`, or backend algorithm details is not propagated to
+  the public call result; a plain point-call result carries `{"func": name}`
+  while broadcast and sweep results retain their own execution metadata. Use
+  `Function.apply()` when raw identity, provenance, or domain metadata is
+  required. Existing operation controls remain provenance metadata. Other
+  tracked return values remain event payloads until #369 adds explicit
+  term-result planning.
+
+- **`TrackedTerm` renamed from `Tracked` (breaking).** The mixin carrying a
+  `name`, a `name_is_auto` flag, and a `provenance` is now `TrackedTerm`, the
+  name the design reference uses for what it holds: the objects operations
+  consume and produce are *tracked terms*, while templates and specs are
+  structural helpers that are not. The private metaclass follows as
+  `_TrackedTermMeta`. This is a hard rename with no compatibility aliases, and
+  nothing about identity, provenance, or immutability behaviour changes.
+
+- **`WorkflowFunction` renamed to `Function` (#377, breaking).** The public
+  decorator is likewise renamed from `@workflow_function` to `@function`.
+  This is a hard rename with no compatibility aliases; call, lifting,
+  dispatch, RNG, provenance, and output-wrapping behavior are unchanged.
+
+- **`from_nested_dict` and `_flatten_paths` removed — the constructor reads a
+  nested mapping directly (breaking).** Under the *"a mapping is never a leaf"*
+  invariant, `Record(name, data)` already materialises every nested mapping
+  value into a subtree, so `Record.from_nested_dict` /
+  `NamedTree.from_nested_dict` (and the private `NamedTree._flatten_paths`)
+  added nothing the constructor lacked. Build from a nested mapping with
+  `Record(name, data)` and round-trip via `Record(name, r.to_nested_dict())`.
+  This also **tightens validation**: an input mixing a `/`-path key with a
+  nested-dict value under the same prefix (e.g. `{"y/a": 1.0, "y": {"b": 2.0}}`)
+  now raises, where `from_nested_dict` silently reshaped it. `Record.ensure`
+  and the workflow-output wrap, which used `_flatten_paths` internally, are
+  unaffected.
+
+- **`FunctionSpec` requires explicit input/output `EventTemplate`s (#357, breaking).**
+  Neither side accepts a bare `ValueSpec` anymore (previously wrapped into a
+  single-field template keyed `"input"` / `"output"`); pass an `EventTemplate`
+  or `None`, writing a single-field signature out explicitly —
+  `FunctionSpec(EventTemplate(x=()), EventTemplate(out=()))`. This removes the
+  `FunctionSpec` / `DistributionSpec` constructor asymmetry (both now take an
+  explicit template) and keeps a function's field names caller-chosen rather
+  than a fixed placeholder. `LinOp`'s design is aligned in the same spirit
+  (its input/output templates carry meaningful names), with the deliberate
+  exception that a self-adjoint operator's two sides may share one name.
+- **`NamedTree` is generic over its leaf type — `NamedTree[L]` (#356).** The
+  shared tree substrate now carries its leaf type as a type parameter, so
+  `py.typed` consumers see the real leaf type rather than `Any` on the
+  leaf-trafficking surface: `EventTemplate` binds `NamedTree[ValueSpec]` (so
+  `template["x"]` type-checks as a `ValueSpec`) while `Record` binds
+  `NamedTree[Any]`. The leaf accessors (`[]`, `values`, `items`, `map`) carry
+  `L`, and the structure-preserving transforms (`without` / `merge` /
+  `replace` / `with_path_names` / `map`) return `Self`.
+  Annotations only — no runtime behavior change.
+
+- **`NumericRecord` stores native-form leaves; conversion is lazy at the
+  compute boundary (breaking).** Leaves are no longer coerced to `jax.Array`
+  at construction: a numeric array or container (`jax` / `numpy` /
+  `xarray.DataArray` / `pandas` / registered backends) is stored **verbatim**,
+  validated from container metadata only, and converted at the compute
+  boundary (JAX pytree flatten, `to_vector`, the single-field scalar shim)
+  through a set-once per-leaf cache — so a lazy or disk-backed leaf is not
+  materialised at construction, and `record["x"]` returns the native leaf
+  (previously always a `jax.Array`). Backend metadata now survives structural
+  transforms and pickling because data and metadata never separate;
+  `NumericRecord.to_native()` is **removed** (leaves are already native —
+  navigation is the export), and `to_numeric()` is the identity on a
+  `NumericRecord` (on a plain `Record` it validates rather than
+  converts). All-numeric records holding
+  native containers **auto-promote** to `NumericRecord` (the previous
+  backend-leaf exclusion is removed), and `EventTemplate.infer_from` infers
+  `ArraySpec` for them. Native leaves are stored by reference (no defensive
+  copies). A native container's metadata (an `xarray` leaf's coords / dims /
+  attrs, a `pandas` leaf's index / columns) is **part of a record's identity**:
+  `Record.__eq__` and `fingerprint()` distinguish it, so two records with equal
+  values but different coords are unequal and fingerprint differently.
+  `Record.__eq__`, `to_numpy()`, and content fingerprints route through the
+  array-backend registry (so a registered non-numpy container is compared and
+  materialised by its own hooks) and materialise lazy leaves on demand;
+  `Record.__hash__` stays a coarse structural hash (shape + dtype, no values or
+  metadata) that does not materialise. The capture/restore aux machinery is
+  retired: `AuxHooks` / `register_aux` / `aux_for` and `NumericRecord.aux` are
+  **removed**, replaced by the recognition/conversion registry `ArrayBackend` /
+  `register_array_backend` / `array_backend_for` (with hooks
+  `event_shape` / `numpy_dtype` / `is_numeric` / `to_jax` / `to_numpy` /
+  `metadata`) — one registration makes a new container type recognised,
+  validated, promoted, converted (including at the eager batch-stacking
+  boundary), and content-fingerprinted everywhere at once. `fingerprint()`
+  hashes native containers by type + materialised values + identity metadata
+  instead of falling to the process-dependent `repr` tier. A pandas
+  nullable / masked *numeric* column (`Int64`, `Float64`, `boolean`, Sparse /
+  pyarrow numerics) is a first-class numeric leaf. It is stored verbatim, so
+  its validity mask stays intact at rest. At the compute boundary it converts
+  to its columns' common dense dtype with each NA encoded as `NaN` — the only
+  missing-value form `jax` offers — so missing data round-trips as `NaN`. That
+  dtype keeps a nullable float at its own width and a complex column complex
+  (`Sparse[complex128]` → `complex128`); a nullable integer / boolean promotes
+  to `float64` (no integer `NaN`). The generic duck-typing gate still rejects
+  a *bare*
+  extension dtype (it is not a dense numpy dtype); the pandas backend
+  recognises its own masked dtypes. Non-numeric extension dtypes (categorical /
+  string / datetime) are not numeric and leave the container a plain `Record`.
+
+- **`Record` / `NumericRecord` construction is name-first, and all-numeric
+  records auto-promote (#338, breaking).** The constructors are now
+  `Record(name, fields=None, /, *, event_template=None, name_is_auto=False,
+  **kw_fields)` — the
+  record's name is a required first positional argument, and the old `name=`
+  keyword and nameless forms are removed. `Record(...)` whose fields are all
+  numeric (bare arrays and scalars, no backend metadata) returns a
+  `NumericRecord`; passing an explicit non-numeric `event_template=` pins a
+  plain `Record`. Structural transforms (`without` / `merge` / `replace` /
+  `with_path_names`) re-derive the numeric axis the same way, and a nested
+  record stored as a field is renamed to its field key. An operation that
+  assembles a record supplies a meaningful, deterministic name derived from
+  its inputs (the producing distribution's or model's name, or a domain term
+  such as `"observed"` / `"data"`) and marks it `name_is_auto=True`. The
+  pytree registration now carries
+  the event template and identity in the treedef aux data, so
+  `jax.tree_util.tree_map` over a `Record` preserves its template, name, and
+  auto flag. Value-level (de)serialization entry points moved onto the value
+  types: `Record.from_field_values(name, template, values)` replaces
+  `EventTemplate.from_field_values(values)` (removed), and
+  `NumericRecord.from_vector(name, template, vec)` replaces
+  `NumericEventTemplate.from_vector` (removed) as the classmethod inverse of
+  the value-level `NumericRecord.to_vector`. `Record.from_dict` likewise takes
+  the name first. Construction now validates each
+  leaf against its field spec's `is_valid` (structure only: shape and dtype,
+  the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). An
+  `ArraySpec`'s `support` is descriptive metadata and is not checked by
+  `is_valid` — a data-dependent check that is not `jax.jit`-traceable.
+
+- **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
+  breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
+  now subclass a common `ValueSpec` ABC, and every spec implements
+  `is_valid(value) -> bool` — a structural check that a concrete value matches
+  the spec (shape and dtype for arrays — an `ArraySpec`'s `support` is
+  descriptive metadata and is **not** checked by `is_valid`, being
+  data-dependent and not `jax.jit`-traceable; `OpaqueSpec` accepts any
+  non-mapping value; a `DistributionSpec` requires a `Distribution` carrying an
+  equal `event_template`; `FunctionSpec` requires a callable). A non-matching
+  value
+  returns `False` rather than raising, but an unexpected error from inspecting
+  a malformed value is left to propagate rather than masked as invalid. The
+  `LeafSpec` type alias is **removed**; use `ValueSpec` (exported from
+  `probpipe`). **Renamed** `DistributionSpec.inner_template` →
+  `event_template`. `FunctionSpec`'s `input_template` / `output_template` are
+  now optional (default `None`, meaning "structure unspecified", so a bare
+  `FunctionSpec()` describes any callable); either may still be given as a
+  bare `ValueSpec`, wrapped in a single-field template (fields `input` /
+  `output`). `ArraySpec` fixes: `dtype` is
+  normalised to `numpy.dtype` at construction so equal dtypes compare and hash
+  equal however they were spelled (the field is annotated `DTypeLike`
+  accordingly), and a spec with an unset `dtype` no longer compares equal to
+  one with a concrete dtype (the two previously compared equal but hashed
+  apart).
+
+- **Identity attributes and methods renamed to the design-reference vocabulary (#336,
+  breaking).** The duplicated per-class naming/provenance/metadata code on
+  `Distribution` and `Record` is replaced by the `TrackedTerm` / `Annotated`
+  mixins, with a hard rename (no aliases): `source` → `provenance`,
+  `with_source(...)` → `with_provenance(...)`, `renamed(...)` →
+  `with_name(...)` (rename provenance now records the operation as
+  `"with_name"`), and the `auxiliary` metadata store → `annotations`
+  (`_auxiliary` → `_annotations`; a `DataTree` remains a valid value and the
+  diagnostics accessors are unchanged). `make_posterior`'s `auxiliary=`
+  keyword is now `annotations=`. `ParentInfo` fields follow the reference:
+  `obj` → `parent` and `source` → `provenance` (the serialized provenance
+  dict key changes accordingly). `BootstrapReplicateDistribution`'s internal
+  source-distribution slot is renamed `_source_dist` and is now included in
+  content fingerprints (previously it was unintentionally skipped, so
+  replicates of different source distributions could fingerprint equal).
+
+- **Leaf-keyed named-collection surface for `Record` / `EventTemplate` (#326,
+  breaking).** The mapping protocol (`keys`, `values`, `items`, `__iter__`,
+  `__len__`, `__contains__`, `__getitem__`) is now keyed by **leaves** — every
+  field's full `/`-path in canonical first-appearance order — instead of the top
+  level only. `record["x"]` therefore reaches a leaf and raises on an interior
+  node; navigate to a leaf **or** a subtree with `record.at_path("x")`, and use
+  `record.children` for the one-level view. **Removed** `EventTemplate.leaf_paths`
+  (use `keys()`), `to_leaf_list` (use `list(values())`), `from_leaf_list` (use
+  `from_field_values`), and `map_with_names` (use `map_with_keys`). `Record.fields`
+  and `Record.to_dict` survive as **temporary** aliases for `children` and
+  `to_nested_dict`. `RecordArray` / `NumericRecordArray` keep a top-level mapping
+  for now, pending the batch-axis rework.
+
+- **`EventTemplate` moved to its own module and `Record` now carries an
+  authoritative `EventTemplate` (breaking changes to the value-model surface).**
+  `EventTemplate` / `NumericEventTemplate` and the leaf specs now live in
+  `probpipe.core.event_template` (the public `probpipe.*` exports are unchanged).
+  A `Record` stores its `EventTemplate` rather than re-deriving it on access.
+  Several methods moved or were removed:
+  - **Removed** `EventTemplate.pack`, `numeric_fields`, `non_numeric_fields`,
+    `event_shapes`, and `field_event_shape`; **removed** `Record.flatten` /
+    `Record.unflatten` (use `jax.tree_util.tree_flatten` for the JAX-pytree path).
+  - **Renamed** `EventTemplate.from_record` → `EventTemplate.infer_from`
+    (best-effort, lossy inference). The value upcast is consolidated to
+    `Record.to_numeric()`.
+  - **Moved** `leaf_shapes` onto `NumericEventTemplate`; `numeric_leaf_shapes`
+    is consolidated into `leaf_shapes`. (`to_vector` / `from_vector` are now
+    value-level methods on `NumericRecord` / `NumericRecordArray` — see the
+    value-model entry above — not template methods.)
+  - **Added** leaf-keyed (de)composition: the mapping protocol
+    (`keys` / `values` / `items` / `__iter__`) enumerates every leaf by its
+    canonical `/`-path. Reconstruction from a leaf list is now
+    `Record.from_field_values` (the former `EventTemplate.from_field_values`
+    was removed; see the value-model entry above).
+
+- **User Guide notebooks moved from the former examples section.** The docs nav
+  and grouped overview now list all 11 User Guide notebooks under
+  `/user_guide/.../`, including the Prefect scalability guide.
 
 - **Adopt `ruff format` for code formatting.** Formatting is now owned by
   `ruff format` (Black-style) rather than the previous manual horizontal-packing
@@ -110,8 +733,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (core + all backends) (#237).** The root distribution is renamed `probpipe-core` (minimal JAX base —
   every inference backend is an optional extra), and a new code-less `probpipe`
   metapackage (`packaging/probpipe/`) pins `probpipe-core` and bundles the
-  backends the docs exercise — PyMC, nutpie, and BayesFlow (marker-guarded
-  `python_version < "3.14"`) — so `pip install probpipe` runs every example and
+  backends the docs exercise — PyMC, nutpie, pyabc, and BayesFlow (the last
+  marker-guarded `python_version < "3.14"`) — so `pip install probpipe` runs every example and
   tutorial (on Python 3.12–3.13; 3.14 omits BayesFlow until upstream lifts its
   cap). The `probpipe` **import** name is unchanged in both. Extras not
   already bundled (`prefect`, `viz`, `stan`) are re-exported on the metapackage,
@@ -119,8 +742,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pip install "probpipe-core[<extra>]"`. The package `authors` metadata is set
   to the ProbPipe Development Team, with the full contributor list in `AUTHORS`.
   Existing from-source installs should reinstall to pick up the renamed
-  distribution. (The `pyabc` SMC-ABC backend joins `probpipe` once it lands; CI
-  to build and publish both distributions follows in a separate PR.)
+  distribution. (CI to build and publish both distributions follows in a
+  separate PR.)
 
 - **Nested `ProductDistribution` support in the record layer (#262).**
   `RecordArray` accepts slash-delimited paths in string indexing
@@ -152,7 +775,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   single draw via `Distribution._pack_value` (single-field → the bare field
   value; multi-field → a `Record`), whose general field validation and
   `Record` building is the new public `RecordTemplate.pack`. The ops stay plain
-  `WorkflowFunction`s that resolve this in their body — the same shape as
+  `Function`s that resolve this in their body — the same shape as
   `condition_on`'s named data kwargs — so the positional form (including
   `value=`) is unchanged and still broadcasts, and per-call controls use
   `with_options` (`log_prob.with_options(seed=0)(dist, value)`). The keyword
@@ -208,6 +831,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   extras list also gains the previously-missing `bayesflow` extra.
 
 ### Fixed
+
+- **ml_dtypes arrays (bfloat16, float8, int4) now classify as numeric
+  (#343).** The numeric-dtype gates previously keyed on numpy's
+  `dtype.kind`, under which the ml_dtypes extension types JAX registers
+  report `"V"` (void) — so a bfloat16 array failed `ArraySpec.is_valid`,
+  inferred as an `OpaqueSpec`, and was rejected as a `NumericRecord` /
+  `NumericRecordArray` leaf. All five gates (template inference, spec
+  validation, the two record-layer leaf checks, the broadcast-template
+  builder, and the `Design` marginals probe) now route through one shared
+  predicate that also admits ml_dtypes numerics; structured (record)
+  dtypes remain non-numeric. The internal `_NUMERIC_DTYPE_KINDS` constant
+  is removed in favor of the shared predicate.
+
+- **Core container indexing and nested reductions.** `DistributionArray`
+  integer indexing now raises `IndexError` for positive overflow and negatives
+  past the axis bounds, while 0-d arrays accept only empty-tuple indexing.
+  `NumericRecordArray.mean()` and `.var()` now recurse through nested numeric
+  record fields instead of treating nested records as arrays.
 
 - **Linear-algebra and Gaussian-conditioning edge cases on the algebra bug-fix
   branch.** `RootLinOp.diag()` now squares diagonal roots; `CholeskyLinOp`
@@ -470,7 +1111,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Removed surface:
   - The **`[sbi]` extra** (`pip install probpipe[sbi]`) and its
     `sbijax>=0.3.6` dependency.
-  - The public workflow functions **`sbi_learn_conditional`** and
+  - The public Functions **`sbi_learn_conditional`** and
     **`sbi_learn_likelihood`** (exported from both `probpipe` and
     `probpipe.inference`), the **`DirectSamplerSBIModel`** they
     returned (exported from `probpipe.inference`), their `method=`
@@ -522,7 +1163,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Normal`, `MultivariateNormal`, `JointGaussian` (named multi-field
     Gaussian with cross-covariance), and `ProductDistribution`
     compositions via the new `_gaussian_prior_params` helper.
-- New workflow function `probpipe.elliptical_slice(model, data, ...)`.
+- New Function `probpipe.elliptical_slice(model, data, ...)`.
 
 ### Changed
 
@@ -556,18 +1197,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
-- **`WorkflowFunction` controls now live outside user call kwargs.**
-  `@workflow_function(...)` configures definition-time controls, and
+- **`Function` controls now live outside user call kwargs.**
+  `@function(...)` configures definition-time controls, and
   `workflow.with_options(...)(...)` is the call-time override API for
   `seed`, `n_broadcast_samples`, and `include_inputs`. Wrapped
   functions may now declare and receive those names as ordinary
   parameters. Passing those names as call kwargs no longer configures
   ProbPipe controls; use `workflow.with_options(...)(...)` instead.
-- **`WorkflowFunction.workflow_kind` and `Module.workflow_kind` now require
+- **`Function.workflow_kind` and `Module.workflow_kind` now require
   `WorkflowKind` enum members.** String aliases such as `"task"` / `"flow"`
   and `None` are no longer accepted and now raise `TypeError`; use
   `WorkflowKind.TASK`, `WorkflowKind.FLOW`, or `WorkflowKind.OFF` explicitly.
-  The old `parallel=` / `vectorize=` keyword guard on `WorkflowFunction` was
+  The old `parallel=` / `vectorize=` keyword guard on `Function` was
   also removed, so those names are no longer specially reserved by the
   constructor.
 - **`tfp_rwmh` removed.** The hand-rolled Python-loop RWMH that sat
@@ -1057,7 +1698,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Or via the new `PROBPIPE_WORKFLOW_KIND` environment variable
   (`off` / `task` / `flow` / `default`, case-insensitive), which is
   read once at import time. Per-workflow overrides remain available via
-  `@workflow_function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
+  `@function(workflow_kind=probpipe.WorkflowKind.TASK)`; string
   aliases are no longer accepted in this release (see the
   `workflow_kind` breaking entry above).
   Migration: production callers that relied on the implicit
@@ -1298,7 +1939,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Record.to_numeric()` / `NumericRecord.to_native()`** — explicit
   conversion to / from ProbPipe's native JAX-array form, with metadata
-  round-trip via the aux registry.
+  round-trip via the aux registry. Backend metadata survives the structural
+  edits (`without` / `merge` / `replace` / `with_path_names`) for leaves they
+  leave unchanged, at any nesting depth, and a pickle round-trip (an
+  aux-carrying record pickles through its native form, so `to_native` stays
+  faithful across `pickle` / Ray transport); a value transform (`map`) or a
+  JAX pytree round-trip drops it.
 - **`probpipe.AuxHooks` / `register_aux(...)` / `aux_for(...)` /
   `aux_registry`** in :mod:`probpipe.core._array_backend` — a registry
   of ``(capture, restore)`` hooks for round-tripping backend-specific
@@ -1332,11 +1978,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`_RecordArrayView`** (`RecordArray.view(field)`) — single-field view of a
   ``RecordArray`` column that carries its parent as shared-identity metadata.
-  The ``WorkflowFunction`` sweep layer groups sibling views from one parent
+  The ``Function`` sweep layer groups sibling views from one parent
   into a single zip axis; views from different parents product.
 - **Uniform `select_all()`** on ``Record`` / ``RecordArray`` /
   ``RecordDistribution``. Splatting the result into a
-  ``@workflow_function`` preserves correlation on the two batched variants
+  ``@function`` preserves correlation on the two batched variants
   and plain splats fields on scalar ``Record``.
 - **Public `.parent` / `.field`** properties on both
   ``_RecordArrayView`` and ``_RecordDistributionView``.

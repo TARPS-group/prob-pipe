@@ -1,7 +1,8 @@
-"""Approximate empirical distribution with chain structure and auxiliary DataTree."""
+"""Approximate empirical distribution with chain structure and annotations DataTree."""
 
 from __future__ import annotations
 
+from math import prod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -11,11 +12,51 @@ import jax.numpy as jnp
 
 from .._weights import Weights
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
+from ..core.event_template import ArraySpec, EventTemplate, NumericEventTemplate, OpaqueSpec
 from ..core.provenance import Provenance
-from ..core.record import ArraySpec, EventTemplate, OpaqueSpec, Record, _spec_size
+from ..core.record import Record
 from ..custom_types import Array, ArrayLike
 
 __all__ = ["ApproximateDistribution", "make_posterior"]
+
+
+def _spec_size(spec: ArraySpec | EventTemplate) -> int:
+    """Number of scalar elements one field contributes to a flat vector.
+
+    Given the spec of a single field of an :class:`EventTemplate`, return how
+    many scalars that field occupies in the dense 1-D vector layout (see
+    :meth:`~probpipe.NumericRecord.to_vector`): ``prod(shape)`` for an
+    :class:`ArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
+    nested :class:`NumericEventTemplate`. Summing this over a template's fields
+    gives the template's own ``vector_size``; it is used here to size each
+    field's contiguous column block when splitting a flat chain.
+
+    Parameters
+    ----------
+    spec
+        One field's spec, as returned by :meth:`EventTemplate.__getitem__`.
+
+    Raises
+    ------
+    TypeError
+        If the field has no flat size — a non-numeric leaf
+        (:class:`~probpipe.OpaqueSpec` / :class:`~probpipe.DistributionSpec` /
+        :class:`~probpipe.FunctionSpec`) or a mixed (non-all-numeric) nested
+        :class:`EventTemplate`.
+    """
+    if isinstance(spec, NumericEventTemplate):
+        return spec.vector_size
+    if isinstance(spec, EventTemplate):
+        raise TypeError(
+            f"nested {type(spec).__name__} contains non-numeric leaves; "
+            f"a flat size requires a NumericEventTemplate."
+        )
+    if isinstance(spec, ArraySpec):
+        return prod(spec.shape) if spec.shape else 1
+    raise TypeError(
+        f"template field ({type(spec).__name__}) has no flat size; only numeric "
+        f"(ArraySpec) fields and nested NumericEventTemplate fields do."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -49,7 +90,7 @@ def _column_permutation(
         )
     sizes: dict[str, int] = {}
     for field_name in event_template.fields:
-        spec = event_template[field_name]
+        spec = event_template.children[field_name]
         if isinstance(spec, OpaqueSpec):
             raise ValueError(
                 f"ApproximateDistribution requires a numeric template; "
@@ -79,7 +120,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     Stores per-chain sample arrays for chain-structured access via
     :meth:`draws`.  Algorithm metadata, sample statistics, warmup
-    samples, and the ArviZ ``DataTree`` live in ``dist.auxiliary``
+    samples, and the ArviZ ``DataTree`` live in ``dist.annotations``
     (on the Distribution base class), not as attributes of this class.
 
     Parameters
@@ -113,7 +154,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     :meth:`_mean` / :meth:`_variance`, and the public ops
     (``mean(post)`` / ``variance(post)``) all return Records whose
     keys match :attr:`fields`. Nested ``EventTemplate`` fields are
-    stored as a flat ``(n, nested_flat_size)`` array under the
+    stored as a flat ``(n, nested_vector_size)`` array under the
     top-level field name; the nested structure is recoverable via
     ``event_template[field]`` and via :meth:`draws`, which walks
     the full template (including nesting) using the original
@@ -171,7 +212,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         self._user_template = event_template is not None
         # Multi-field template → split the flat chain by top-level
         # field. Nested ``EventTemplate`` fields are stored as a
-        # 2-D ``(n, nested_flat_size)`` slice under the top-level
+        # 2-D ``(n, nested_vector_size)`` slice under the top-level
         # field name; the nested structure is recovered via
         # ``event_template[field]`` and ``draws()``. Slice sizes use
         # ``_spec_size``, which already handles both flat and nested
@@ -186,7 +227,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             # ``_spec_size`` message.
             sizes: list[int] = []
             for field_name in event_template.fields:
-                spec = event_template[field_name]
+                spec = event_template.children[field_name]
                 if isinstance(spec, OpaqueSpec):
                     raise ValueError(
                         f"ApproximateDistribution requires a numeric "
@@ -204,11 +245,11 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             offset = 0
             fields: dict[str, Array] = {}
             for field_name, size in zip(event_template.fields, sizes):
-                spec = event_template[field_name]
+                spec = event_template.children[field_name]
                 chunk = flat[..., offset : offset + size]
                 if isinstance(spec, EventTemplate):
                     # Nested: keep flat-per-top-level-field. Shape is
-                    # ``(*sample_shape, nested_flat_size)``.
+                    # ``(*sample_shape, nested_vector_size)``.
                     fields[field_name] = chunk
                 else:
                     # ArraySpec leaf (opaque rejected above, nested handled).
@@ -216,7 +257,11 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     shape = spec.shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
-            super().__init__(Record(fields), weights=weights, name=name or "posterior")
+            super().__init__(
+                Record(name or "posterior", fields, name_is_auto=True),
+                weights=weights,
+                name=name or "posterior",
+            )
             self._event_template = event_template
         else:
             # Single-field path: ``name`` (default ``"posterior"``)
@@ -261,32 +306,58 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     @property
     def algorithm(self) -> str:
         """Name of the inference algorithm (read from provenance)."""
-        src = self.source
+        src = self.provenance
         if src is not None:
             return src.metadata.get("algorithm", src.operation)
         return "unknown"
 
     @property
-    def inference_data(self) -> DataTree | None:
-        """The auxiliary DataTree, for ArviZ compatibility.
+    def arviz_data(self) -> DataTree | None:
+        """The ArviZ-compatible xarray DataTree stored under ``_annotations["arviz"]``.
 
-        Alias for ``self.auxiliary``.  Use ArviZ functions for diagnostics::
+        Use ArviZ, arviz-stats, and arviz-plots functions for diagnostics and
+        plots::
 
             import arviz_stats
-            arviz_stats.summary(posterior.inference_data)
+            arviz_stats.summary(posterior.arviz_data)
+
+        Plotting utilities may also consume this tree where supported.
+
+        Returns ``None`` if no annotations have been attached. Falls
+        back to ``_annotations`` directly if set before the ``/arviz/``
+        subtree convention was adopted.
         """
-        return self.auxiliary
+        aux = self.annotations
+        if aux is None:
+            return None
+        if hasattr(aux, "children") and "arviz" in aux.children:
+            return aux["arviz"]
+        return aux
+
+    @property
+    def inference_data(self) -> DataTree | None:
+        """Backward-compatible alias for :attr:`arviz_data`.
+
+        Modern ArviZ uses ``xarray.DataTree`` via ``arviz-base`` rather than
+        the legacy ``InferenceData`` object. New ProbPipe code should prefer
+        ``posterior.arviz_data``.
+        """
+        return self.arviz_data
 
     @property
     def warmup_samples(self) -> list[Array] | None:
-        """Per-chain warmup samples extracted from auxiliary data."""
-        aux = self.auxiliary
-        if aux is None:
+        """Per-chain warmup samples extracted from the annotations."""
+        arviz_data = self.arviz_data
+        if arviz_data is None:
             return None
-        # auxiliary is an arviz 1.x ``xarray.DataTree``; groups are children
-        if "warmup" not in aux.children:
+
+        # ``arviz_data`` is expected to be an ArviZ-compatible xarray DataTree.
+        # Warmup samples, when present, live under the ``warmup`` group.
+        children = arviz_data.children if hasattr(arviz_data, "children") else {}
+        if "warmup" not in children:
             return None
-        warmup = aux["warmup"]["params"]
+
+        warmup = arviz_data["warmup"]["params"]
         n_chains = warmup.sizes.get("chain", 1)
         return [jnp.asarray(warmup.sel(chain=i).values) for i in range(n_chains)]
 
@@ -303,7 +374,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         chain : int or None
             Chain index.  If ``None``, concatenates all chains.
         include_warmup : bool
-            If ``True`` and warmup samples are in the auxiliary DataTree,
+            If ``True`` and warmup samples are in the annotations DataTree,
             prepend them.
 
         Returns
@@ -331,9 +402,13 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
         # historical behaviour of single-field auto-wrap empiricals
         # under the previous numeric-array hierarchy.
         if getattr(self, "_user_template", False):
-            from ..core._record_array import NumericRecordArray
+            # Reconstruct: batch_shape is inferred from the leading axes of
+            # the concatenated draws (a matrix ``(n, vector_size)``).
+            from ..core._numeric_record import _reconstruct_from_vector
 
-            return NumericRecordArray.unflatten(samples, template=self.event_template)
+            return _reconstruct_from_vector(
+                self.name, self.event_template, samples, name_is_auto=True
+            )
         return samples
 
     def __repr__(self) -> str:
@@ -363,9 +438,10 @@ def make_posterior(
     parents: tuple[Distribution, ...],
     algorithm: str,
     *,
-    auxiliary: DataTree | None = None,
+    annotations: DataTree | None = None,
     event_template: EventTemplate | None = None,
     field_order: list[str] | None = None,
+    weights: ArrayLike | Weights | None = None,
     **meta: Any,
 ) -> ApproximateDistribution:
     """Build an ApproximateDistribution with provenance.
@@ -378,8 +454,8 @@ def make_posterior(
         Parent distributions for provenance tracking.
     algorithm : str
         Inference algorithm name (e.g. ``"tfp_nuts"``, ``"blackjax_rwmh"``).
-    auxiliary : DataTree or None
-        Pre-built auxiliary DataTree (diagnostics, sample stats, warmup).
+    annotations : DataTree or None
+        Pre-built annotations DataTree (diagnostics, sample stats, warmup).
         Inference methods are responsible for building this.
     event_template : EventTemplate or None
         If provided, ``draws()`` returns named ``Record``.
@@ -390,25 +466,43 @@ def make_posterior(
         order may differ from the template's (e.g. a backend that sorts
         variable names) so columns are aligned to fields by name rather
         than position (see issue #233).
+    weights : array-like, :class:`~probpipe.Weights`, or None
+        Optional per-sample importance weights (across all chains),
+        forwarded to :class:`ApproximateDistribution`. Lets weighted
+        backends — e.g. SMC-ABC, which returns importance-weighted
+        particles — preserve their weights instead of resampling to an
+        equal-weight chain.
     **meta
         Additional metadata stored in provenance.
 
     Returns
     -------
     ApproximateDistribution
-        Posterior with chain structure, auxiliary DataTree, and provenance.
+        Posterior with chain structure, annotations DataTree, and provenance.
     """
+    import xarray as xr
+
     result = ApproximateDistribution(
         chains,
         name="posterior",
         event_template=event_template,
         field_order=field_order,
+        weights=weights,
     )
 
-    if auxiliary is not None:
-        result._auxiliary = auxiliary
+    if annotations is not None:
+        # Nest ArviZ-compatible DataTree groups under /arviz/ so _annotations
+        # can hold other subtrees (e.g. /diagnostics/) alongside it.
+        dicto: dict = {}
+        for group_path, node in annotations.items():
+            if group_path == "/":
+                continue
+            clean = group_path.lstrip("/")
+            ds = node.to_dataset() if isinstance(node, xr.DataTree) else node
+            dicto[f"arviz/{clean}"] = ds
+        result._annotations = xr.DataTree.from_dict(dicto)
 
-    result.with_source(
+    result.with_provenance(
         Provenance.create(
             algorithm, parents=list(parents), metadata={"algorithm": algorithm, **meta}
         )

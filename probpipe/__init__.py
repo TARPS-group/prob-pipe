@@ -33,12 +33,15 @@ from probpipe.converters import (
     converter_registry,
 )
 from probpipe.core._array_backend import (
-    AuxHooks,
-    aux_for,
-    register_aux,
+    ArrayBackend,
+    array_backend_for,
+    register_array_backend,
 )
+from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._distribution_array import DistributionArray
+from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_array import NumericRecordArray, RecordArray
 from probpipe.core._registry_catalog import (
     EntrySummary,
@@ -86,11 +89,23 @@ from probpipe.core.distribution import (
     set_default_num_evaluations,
     set_return_approx_dist,
 )
+from probpipe.core.event_template import (
+    ArraySpec,
+    DistributionSpec,
+    EventTemplate,
+    FunctionSpec,
+    NumericEventTemplate,
+    OpaqueSpec,
+    RecordSpec,
+    TermSpec,
+    ValueSpec,
+)
+from probpipe.core.named_tree import NamedTree
 from probpipe.core.node import (
+    Function,
     Module,
-    WorkflowFunction,
     abstract_workflow_method,
-    workflow_function,
+    function,
     workflow_method,
 )
 from probpipe.core.protocols import (
@@ -100,6 +115,7 @@ from probpipe.core.protocols import (
     SupportsExpectation,
     SupportsLogProb,
     SupportsMean,
+    SupportsQuantile,
     SupportsRandomLogProb,
     SupportsRandomUnnormalizedLogProb,
     SupportsSampling,
@@ -108,15 +124,9 @@ from probpipe.core.protocols import (
 )
 from probpipe.core.provenance import ParentInfo, Provenance, provenance_ancestors, provenance_dag
 from probpipe.core.record import (
-    ArraySpec,
-    DistributionSpec,
-    EventTemplate,
-    FunctionSpec,
-    LeafSpec,
-    NumericEventTemplate,
-    OpaqueSpec,
     Record,
 )
+from probpipe.core.tracked import Annotated, TrackedTerm
 from probpipe.core.transition import (
     iterate,
     with_conversion,
@@ -197,12 +207,15 @@ from probpipe.record import Design, FullFactorialDesign
 from probpipe.validation import predictive_check
 
 __all__ = [
+    "Annotated",
     # Inference
     "ApproximateDistribution",
+    "ArrayBackend",
     "ArrayRandomFunction",
     "ArraySpec",
-    # Array backend / aux registry
-    "AuxHooks",
+    "Batch",
+    "BatchSpec",
+    # Array-backend registry
     "BayesFlowLikelihood",
     "BayesFlowModel",
     "BayesFlowRatio",
@@ -236,6 +249,8 @@ __all__ = [
     "FlatNumericRecordDistribution",
     "FlattenedDistributionView",
     "FullFactorialDesign",
+    "Function",
+    "FunctionBatch",
     "FunctionSpec",
     # Modeling
     "GLMLikelihood",
@@ -251,7 +266,6 @@ __all__ = [
     # KDE
     "KDEDistribution",
     "Laplace",
-    "LeafSpec",
     "Likelihood",
     "LinearBasisFunction",
     "LogNormal",
@@ -260,6 +274,7 @@ __all__ = [
     "Multinomial",
     # Multivariate
     "MultivariateNormal",
+    "NamedTree",
     "NegativeBinomial",
     # Continuous
     "Normal",
@@ -270,6 +285,7 @@ __all__ = [
     "NumericRecordArray",
     "NumericRecordDistribution",
     "NumericRecordDistributionView",
+    "OpaqueBatch",
     "OpaqueSpec",
     "ParentInfo",
     "Pareto",
@@ -289,6 +305,7 @@ __all__ = [
     "RecordBootstrapReplicateDistribution",
     "RecordDistribution",
     "RecordEmpiricalDistribution",
+    "RecordSpec",
     "RegistryInfo",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
@@ -301,6 +318,7 @@ __all__ = [
     "SupportsExpectation",
     "SupportsLogProb",
     "SupportsMean",
+    "SupportsQuantile",
     "SupportsRandomLogProb",
     "SupportsRandomUnnormalizedLogProb",
     "SupportsRegistryCataloging",
@@ -308,26 +326,28 @@ __all__ = [
     "SupportsUnnormalizedLogProb",
     "SupportsVariance",
     "TFPDistribution",
+    "TermSpec",
+    "TrackedTerm",
     # Transformed
     "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
+    "ValueSpec",
     "VonMisesFisher",
     # Weights
     "Weights",
     "Wishart",
-    # WorkflowFunction
-    "WorkflowFunction",
     # Configuration
     "WorkflowKind",
     "abstract_workflow_method",
-    "aux_for",
+    "array_backend_for",
     "bijector_for",
     "boolean",
     "condition_on_nutpie",
     # Converters
     "converter_registry",
     "elliptical_slice",
+    "function",
     "greater_than",
     "inference_method_registry",
     "integer_interval",
@@ -351,7 +371,7 @@ __all__ = [
     "provenance_config",
     "provenance_dag",
     "real",
-    "register_aux",
+    "register_array_backend",
     "register_bijector",
     "registry_catalog",
     "rwmh",
@@ -360,12 +380,11 @@ __all__ = [
     "unit_interval",
     "with_conversion",
     "with_resampling",
-    "workflow_function",
     "workflow_method",
 ]
 
 # ---------------------------------------------------------------------------
-# Standalone operations (plain functions + WorkflowFunction wrappers)
+# Standalone operations (plain functions + Function wrappers)
 # ---------------------------------------------------------------------------
 from probpipe.core.ops import (
     condition_on,
@@ -376,6 +395,7 @@ from probpipe.core.ops import (
     log_prob,
     mean,
     prob,
+    quantile,
     random_log_prob,
     random_unnormalized_log_prob,
     sample,

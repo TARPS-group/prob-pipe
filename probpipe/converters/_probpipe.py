@@ -87,7 +87,7 @@ def _convert_to_normal(source, key, **kw):
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Normal(loc=m, scale=jnp.sqrt(v), name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -103,7 +103,7 @@ def _convert_to_beta(source, key, **kw):
     alpha = jnp.maximum(m * common, 0.01)
     beta = jnp.maximum((1.0 - m) * common, 0.01)
     r = Beta(alpha=alpha, beta=beta, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -116,7 +116,7 @@ def _convert_to_gamma(source, key, **kw):
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Gamma(concentration=m**2 / v, rate=m / v, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -131,7 +131,7 @@ def _convert_to_inverse_gamma(source, key, **kw):
     conc = m**2 / v + 2
     scale = m * (m**2 / v + 1)
     r = InverseGamma(concentration=conc, scale=scale, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -144,7 +144,7 @@ def _convert_to_exponential(source, key, **kw):
     m_raw = source._mean()
     m = _point_estimate(m_raw)
     r = Exponential(rate=1.0 / m, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw))
+    r.with_provenance(_mm_provenance(source, m_raw))
     return r
 
 
@@ -159,7 +159,7 @@ def _convert_to_lognormal(source, key, **kw):
     scale = jnp.sqrt(jnp.log(1.0 + v / (m**2)))
     loc = jnp.log(m) - scale**2 / 2.0
     r = LogNormal(loc=loc, scale=scale, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -176,7 +176,7 @@ def _convert_to_studentt(source, key, **kw):
     r = StudentT(
         df=df, loc=m, scale=jnp.sqrt(v * (df - 2.0) / df), name=kw.get("name") or source.name
     )
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -190,7 +190,7 @@ def _convert_to_uniform(source, key, **kw):
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     half = jnp.sqrt(3.0 * v)
     r = Uniform(low=m - half, high=m + half, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -203,7 +203,7 @@ def _convert_to_cauchy(source, key, **kw):
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Cauchy(loc=m, scale=jnp.sqrt(v) / 2.0, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -216,7 +216,7 @@ def _convert_to_laplace(source, key, **kw):
     m_raw, v_raw = source._mean(), source._variance()
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
     r = Laplace(loc=m, scale=jnp.sqrt(v / 2.0), name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -230,7 +230,7 @@ def _convert_to_halfnormal(source, key, **kw):
     v = _point_estimate(v_raw)
     # var = scale^2 * (1 - 2/pi), so scale = sqrt(var / (1 - 2/pi))
     r = HalfNormal(scale=jnp.sqrt(v / (1.0 - 2.0 / jnp.pi)), name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, var_result=v_raw))
+    r.with_provenance(_mm_provenance(source, var_result=v_raw))
     return r
 
 
@@ -245,7 +245,7 @@ def _convert_to_halfcauchy(source, key, **kw):
     samples = source._sample(key, (num_samples,))
     med = jnp.median(samples)
     r = HalfCauchy(loc=0.0, scale=jnp.maximum(med, 0.01), name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -262,7 +262,7 @@ def _convert_to_pareto(source, key, **kw):
     scale = jnp.maximum(jnp.min(samples), 1e-6)
     conc = jnp.maximum(n / jnp.sum(jnp.log(samples / scale)), 0.01)
     r = Pareto(concentration=conc, scale=scale, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -284,7 +284,7 @@ def _convert_to_truncatednormal(source, key, **kw):
         high=jnp.max(samples),
         name=kw.get("name") or source.name,
     )
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -298,7 +298,7 @@ def _convert_to_bernoulli(source, key, **kw):
         return source
     kw.pop("num_samples", None)
     r = Bernoulli(probs=source._mean(), name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -315,7 +315,7 @@ def _convert_to_binomial(source, key, **kw):
     kw.pop("num_samples", None)
     probs = source._mean() / total_count
     r = Binomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -326,7 +326,7 @@ def _convert_to_poisson(source, key, **kw):
         return source
     kw.pop("num_samples", None)
     r = Poisson(rate=source._mean(), name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -341,7 +341,7 @@ def _convert_to_categorical(source, key, **kw):
     counts = jnp.array([(samples == k).sum() for k in range(n_cat)])
     probs = counts / counts.sum()
     r = Categorical(probs=probs, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -359,7 +359,7 @@ def _convert_to_negativebinomial(source, key, **kw):
     m = source._mean()
     probs = total_count / (total_count + m)
     r = NegativeBinomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -377,7 +377,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
         loc = source._mean()
         cov_mat = source._cov()
         r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
-        r.with_source(_mm_provenance(source))
+        r.with_provenance(_mm_provenance(source))
         return r
     # General case: use _mean() and _cov() directly
     m_raw = source._mean()
@@ -394,7 +394,7 @@ def _convert_to_multivariatenormal(source, key, **kw):
     cov_mat = 0.5 * (cov_mat + cov_mat.T)
     cov_mat = cov_mat + 1e-6 * jnp.eye(cov_mat.shape[0])
     r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
-    r.with_source(_mm_provenance(source, m_raw))
+    r.with_provenance(_mm_provenance(source, m_raw))
     return r
 
 
@@ -410,7 +410,7 @@ def _convert_to_dirichlet(source, key, **kw):
     conc0 = jnp.maximum(conc0, 0.01)
     conc = jnp.maximum(m * conc0, 0.01)
     r = Dirichlet(concentration=conc, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw, v_raw))
+    r.with_provenance(_mm_provenance(source, m_raw, v_raw))
     return r
 
 
@@ -430,7 +430,7 @@ def _convert_to_multinomial(source, key, **kw):
     probs = m / total_count
     probs = probs / probs.sum()
     r = Multinomial(total_count=total_count, probs=probs, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source, m_raw))
+    r.with_provenance(_mm_provenance(source, m_raw))
     return r
 
 
@@ -450,7 +450,7 @@ def _convert_to_wishart(source, key, **kw):
     r = Wishart(
         df=df, scale_tril=jnp.linalg.cholesky(scale_mat), name=kw.get("name") or source.name
     )
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -470,7 +470,7 @@ def _convert_to_vonmisesfisher(source, key, **kw):
     r = VonMisesFisher(
         mean_direction=mean_dir, concentration=conc, name=kw.get("name") or source.name
     )
-    r.with_source(_mm_provenance(source, m_raw))
+    r.with_provenance(_mm_provenance(source, m_raw))
     return r
 
 
@@ -483,7 +483,7 @@ def _convert_to_empirical(source, key, **kw):
         key = _auto_key()
     samples = source._sample(key, (num_samples,))
     r = RecordEmpiricalDistribution(samples, name=kw.get("name") or source.name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 
@@ -518,7 +518,7 @@ def _convert_to_kde(source, key, **kw):
         # ``from_empirical``, which threads the source's
         # ``event_template`` so KDE preserves named fields (issue #267).
         r = KDEDistribution.from_empirical(source, bandwidth=bandwidth, name=name)
-        r.with_source(_mm_provenance(source))
+        r.with_provenance(_mm_provenance(source))
         return r
 
     if isinstance(source, EmpiricalDistribution):
@@ -537,7 +537,7 @@ def _convert_to_kde(source, key, **kw):
         key = _auto_key()
     samples = source._sample(key, (num_samples,))
     r = KDEDistribution(samples, bandwidth=bandwidth, name=name)
-    r.with_source(_mm_provenance(source))
+    r.with_provenance(_mm_provenance(source))
     return r
 
 

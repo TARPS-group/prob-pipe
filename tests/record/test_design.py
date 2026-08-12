@@ -16,11 +16,11 @@ from probpipe import (
     NumericRecordArray,
     Record,
     RecordArray,
-    workflow_function,
+    function,
 )
 
 # Some assertions use NumericRecord / NumericRecordArray — these only
-# appear as WorkflowFunction outputs, not as Design types. A Design is
+# appear as Function outputs, not as Design types. A Design is
 # always a plain RecordArray subclass; the columns themselves are
 # jnp.ndarray for numeric marginals.
 
@@ -126,7 +126,7 @@ class TestFullFactorial:
 
 
 class TestDesignAsSweep:
-    """The two idiomatic ways to pipe a Design into a WorkflowFunction.
+    """The two idiomatic ways to pipe a Design into a Function.
 
     Pattern A (general): ``f(p=design)`` with ``f(p)`` taking a
     single ``Record`` arg — the WF sweep path runs one inner call per
@@ -138,7 +138,7 @@ class TestDesignAsSweep:
     """
 
     def test_single_record_arg_triggers_sweep(self):
-        @workflow_function
+        @function
         def fit(p: NumericRecord):
             return p["r"] * p["K"]
 
@@ -159,7 +159,7 @@ class TestDesignAsSweep:
         producing a ``NumericRecordArray`` identical to the single
         Record-arg pattern (``fit(p=design)``)."""
 
-        @workflow_function
+        @function
         def product(r, K):
             return r * K
 
@@ -178,11 +178,11 @@ class TestDesignAsSweep:
         (``f(**design.select_all())``) produce identical outputs."""
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
 
-        @workflow_function
+        @function
         def fit_a(p: NumericRecord):
             return p["r"] * p["K"]
 
-        @workflow_function
+        @function
         def fit_b(r, K):
             return r * K
 
@@ -200,7 +200,7 @@ class TestDesignAsSweep:
         because they carry no parent-identity signal the WF layer can
         use to zip them."""
 
-        @workflow_function
+        @function
         def product(r, K):
             return r * K
 
@@ -219,7 +219,7 @@ class TestDesignAsSweep:
         Record arg pattern is the only one that works when any marginal
         is string-valued."""
 
-        @workflow_function
+        @function
         def label(p: Record):
             return f"{p['method']}-{float(p['scale']):.1f}"
 
@@ -247,7 +247,7 @@ class TestSelectAll:
     def test_select_all_returns_views(self):
         """``select_all()`` returns single-field views that share the
         Design as their parent. Sibling views passed to a
-        ``WorkflowFunction`` zip rather than cartesian-product — the
+        ``Function`` zip rather than cartesian-product — the
         mechanism behind ``f(**design.select_all()) ≡ f(p=design)``."""
         from probpipe.core._record_array import _RecordArrayView
 
