@@ -50,7 +50,7 @@ class TestMixinMembership:
         assert isinstance(nr, TrackedTerm)
         assert isinstance(nr, Annotated)
 
-    def test_record_array_is_tracked(self):
+    def test_record_batch_is_tracked(self):
         ra = RecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",
@@ -122,7 +122,7 @@ class TestNameIsAuto:
         assert r.name == "sample"
         assert r.name_is_auto is True
 
-    def test_unnamed_record_array_is_auto(self):
+    def test_unnamed_record_batch_is_auto(self):
         ra = RecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",
@@ -292,7 +292,7 @@ class TestWithNameOnBatchTypes:
     """with_name on the batch types: a copy under the new user-given name,
     sharing field data, with the original unchanged."""
 
-    def test_record_array(self):
+    def test_record_batch(self):
         ra = RecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",
@@ -308,7 +308,7 @@ class TestWithNameOnBatchTypes:
         assert ra2.event_template is ra.event_template
         assert ra.name_is_auto is True  # original unchanged
 
-    def test_numeric_record_array(self):
+    def test_numeric_record_batch(self):
         nra = NumericRecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",
@@ -523,7 +523,7 @@ class TestProductPickleRoundTrip:
 
 
 class TestBatchPickleRoundTrip:
-    def test_numeric_record_array_pickle_preserves_identity(self):
+    def test_numeric_record_batch_pickle_preserves_identity(self):
         nra = NumericRecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",

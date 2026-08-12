@@ -27,7 +27,7 @@ from ._empirical import (
     RecordEmpiricalDistribution,
 )
 from ._numeric_record_batch import NumericRecordBatch
-from ._object_batch import _is_object_array
+from ._object_batch import _from_iterable, _is_object_array
 from ._record_batch import RecordBatch, _batch_class_for
 from .event_template import (
     ArraySpec,
@@ -370,7 +370,12 @@ def _stack_declared_columns(
     for path in template:
         if isinstance(records, list):
             values = [record[path] for record in records]
-            try:
+            # The declared *kind* decides the storage, not what the values happen
+            # to look like. An opaque field holding one array per row is a column
+            # of two objects, not a numeric column whose second axis is another
+            # multiplicity — reading it off the runtime shape states a batch
+            # geometry the levels never described.
+            if isinstance(template[path], ArraySpec):
                 batched = jnp.stack(
                     [
                         _to_jax_array(value)
@@ -380,8 +385,9 @@ def _stack_declared_columns(
                     ],
                     axis=0,
                 )
-            except (TypeError, ValueError):
-                batched = np.asarray(values, dtype=object)
+            else:
+                batched = _from_iterable(values, kind="declared output")
+                batched.setflags(write=False)
         else:
             batched = records[path]
 

@@ -1301,7 +1301,7 @@ class TestEventTemplateStorage:
         assert rebuilt == r
         assert rebuilt.event_template == r.event_template
 
-    def test_record_array_event_template_is_template(self):
+    def test_record_batch_event_template_is_template(self):
         from probpipe import NumericRecord, RecordBatch
 
         ra = RecordBatch.stack(

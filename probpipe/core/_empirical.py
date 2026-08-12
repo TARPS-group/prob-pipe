@@ -58,7 +58,7 @@ from ._numeric_record_distribution import (
 )
 from ._record_batch import RecordBatch
 from .constraints import Constraint, real
-from .event_template import EventTemplate, _reshaped_template
+from .event_template import EventTemplate, NumericEventTemplate, _reshaped_template
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -281,7 +281,19 @@ class EmpiricalDistribution[T](
 
     def __new__(cls, samples=None, *args, **kwargs):
         if cls is EmpiricalDistribution and samples is not None:
-            if isinstance(samples, (Record, RecordBatch)):
+            if isinstance(samples, RecordBatch):
+                # The record-based empirical is a ``NumericRecordDistribution``,
+                # and a batch now admits callable and opaque fields. Routing one
+                # of those here fails inside JAX staging rather than at the door.
+                if not isinstance(samples.event_template, NumericEventTemplate):
+                    raise TypeError(
+                        f"EmpiricalDistribution over a batch of records requires numeric "
+                        f"fields; {samples.name!r} declares {samples.event_template}. The "
+                        f"record-valued empirical carries numeric shape semantics, and an "
+                        f"opaque or callable field has none"
+                    )
+                return object.__new__(RecordEmpiricalDistribution)
+            if isinstance(samples, Record):
                 return object.__new__(RecordEmpiricalDistribution)
             if _is_numeric_array(samples):
                 return object.__new__(RecordEmpiricalDistribution)
@@ -1169,8 +1181,15 @@ class RecordBootstrapReplicateDistribution(
         # with a rows axis in front. Taken from the source's declaration rather
         # than from the stored data, which would drop what the declaration
         # carries and inference cannot rebuild.
+        # An empirical source's ``event_template`` is already one atom's; a raw
+        # ``Record`` source's still carries the rows axis its leaves are stacked
+        # along, so that comes off before the replicate axis goes on. Getting this
+        # backwards advertises ``(n, rows, *event)`` where a draw is
+        # ``(n, *event)``.
         atom = getattr(source, "event_template", None)
         if isinstance(atom, EventTemplate):
+            if not isinstance(source, EmpiricalDistribution):
+                atom = _reshaped_template(atom, lambda shape: shape[1:])
             self._event_template = _reshaped_template(
                 atom, lambda shape: (self._replicate_size, *shape)
             )

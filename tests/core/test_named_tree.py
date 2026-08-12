@@ -178,7 +178,7 @@ class TestWithPathNames:
         renamed = r.with_path_names(a="alpha")
         assert renamed.event_template["alpha"] == spec
 
-    def test_record_array_defers(self):
+    def test_record_batch_defers(self):
         from probpipe import RecordBatch
 
         ra = RecordBatch(

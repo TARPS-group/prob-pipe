@@ -777,7 +777,7 @@ class TestRecordBatchMarginal:
             Normal(loc=2.0, scale=0.1, name="y"),
         )
 
-    def test_record_output_produces_record_array_marginal(
+    def test_record_output_produces_record_batch_marginal(
         self,
         record_workflow,
         prior,
@@ -826,7 +826,7 @@ class TestMakeStack:
     shape-(n,) aggregate. Every case is a parameter-sweep-like scenario
     where row identity must survive; there is no marginalisation."""
 
-    def test_list_of_scalars_wraps_as_numeric_record_array(self):
+    def test_list_of_scalars_wraps_as_numeric_record_batch(self):
         from probpipe import NumericRecordBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
@@ -897,7 +897,7 @@ class TestMakeStack:
         assert out.batch_shape == (3,)
         assert out[0] is comps[0]
 
-    def test_list_of_record_arrays_nests_batch_shape(self):
+    def test_list_of_record_batches_nests_batch_shape(self):
         """Each inner RecordBatch has its own batch_shape (m,). Stacking
         n of them produces a RecordBatch with batch_shape (n, m)."""
         from probpipe import NumericRecord, NumericRecordBatch
@@ -915,7 +915,7 @@ class TestMakeStack:
         np.testing.assert_allclose(out["x"][0], [0, 1, 2, 3])
         np.testing.assert_allclose(out["x"][2], [20, 21, 22, 23])
 
-    def test_vmap_ndarray_wraps_as_numeric_record_array(self):
+    def test_vmap_ndarray_wraps_as_numeric_record_batch(self):
         """A bare ``jnp.ndarray`` with leading axis n (typical ``jax.vmap``
         output for scalar-returning fns) wraps without unstacking."""
         from probpipe import NumericRecordBatch

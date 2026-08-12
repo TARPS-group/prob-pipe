@@ -111,8 +111,8 @@ def group_by_root(
     function of the call.
 
     A view with a ``parent`` is grouped by a single lookup, which is exact for
-    the view types that carry one: such a view's parent is always a distribution
-    or a record array, never another view. A nested view type would need this
+    the view types that carry one: such a view's parent is always a distribution,
+    never another view. A nested view type would need this
     walked transitively.
 
     A batch has no parent to look up — a view over one is another batch over the
@@ -238,8 +238,8 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     """Whether the annotation names a batched container the value satisfies.
 
     Both halves are load-bearing. The annotation must be a batched-container
-    class, because an *element* annotation — ``p: Record``, which a record array
-    also satisfies by subclassing — is how a body says it wants one row, and the
+    class, because an *element* annotation — ``p: Record`` — is how a body says
+    it wants one row, and the
     sweep is what delivers rows. And the value must actually satisfy it: a
     parameter annotated with one batched-record class does not accept the other,
     so family membership alone would deliver a batch whole to a body that

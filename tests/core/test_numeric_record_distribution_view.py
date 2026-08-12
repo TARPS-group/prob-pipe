@@ -118,7 +118,7 @@ class TestSampling:
         assert draw["intercept"].shape == ()
         assert draw["slope"].shape == (3,)
 
-    def test_sample_batched_is_record_array(self, mvn4, split_template):
+    def test_sample_batched_is_record_batch(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
         draws = sample(rec, key=jax.random.PRNGKey(0), sample_shape=(5,))
         assert isinstance(draws, NumericRecordBatch)

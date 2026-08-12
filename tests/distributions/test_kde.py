@@ -97,7 +97,7 @@ class TestSampleRoundTrip:
         assert isinstance(s, _NumericRecord)
         assert tuple(s.event_template.keys()) == ("intercept", "slope")
 
-    def test_sample_batched_returns_record_array(self, two_field_template, flat_samples):
+    def test_sample_batched_returns_record_batch(self, two_field_template, flat_samples):
         kde = KDEDistribution(
             flat_samples,
             event_template=two_field_template,
@@ -145,7 +145,7 @@ class TestLogProbDualInput:
         lp = kde._log_prob(rec)
         assert jnp.isfinite(lp)
 
-    def test_batched_record_array(self, two_field_template, flat_samples):
+    def test_batched_record_batch(self, two_field_template, flat_samples):
         """A NumericRecordBatch input is flattened to (batch, d) and the
         TFP mixture log-prob returns a (batch,) array."""
         kde = KDEDistribution(

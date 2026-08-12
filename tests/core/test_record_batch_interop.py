@@ -888,3 +888,67 @@ class TestAnEmpiricalTakesABatch:
         stored = {(float(i), float(i * 10)) for i in range(4)}
         seen = set(zip(np.asarray(drawn["X"]).tolist(), np.asarray(drawn["y"]).tolist()))
         assert seen <= stored
+
+
+class TestBatchValuedRowAggregation:
+    """A swept body returns one kind of row, and the aggregate is not its rows' class."""
+
+    @staticmethod
+    def _rows(n: int = 3):
+        return NumericRecordBatch(
+            {"x": jnp.arange(float(n))}, "row", element_spec=EventTemplate(x=ArraySpec(shape=()))
+        )
+
+    @staticmethod
+    def _inner(n: int, level: str = "inner"):
+        return NumericRecordBatch(
+            {"y": jnp.zeros(n)}, level, element_spec=EventTemplate(y=ArraySpec(shape=()))
+        )
+
+    def test_mixing_batch_and_non_batch_rows_is_refused(self):
+        def body(x):
+            return self._inner(2) if float(x["x"]) < 1.5 else Record("r", y=0.0)
+
+        with pytest.raises(TypeError, match="some rows returned a batch of records"):
+            Function(func=body, dispatch="sequential")(x=self._rows())
+
+    @pytest.mark.parametrize(
+        "second",
+        [
+            pytest.param(lambda s: s._inner(3), id="batch-shape"),
+            pytest.param(lambda s: s._inner(2, level="other"), id="level-names"),
+        ],
+    )
+    def test_rows_disagreeing_on_their_multiplicity_are_refused(self, second):
+        def body(x):
+            return self._inner(2) if float(x["x"]) < 0.5 else second(self)
+
+        with pytest.raises(ValueError, match="returned batches that disagree"):
+            Function(func=body, dispatch="sequential")(x=self._rows())
+
+    def test_rows_disagreeing_on_their_element_spec_are_refused(self):
+        def body(x):
+            if float(x["x"]) < 0.5:
+                return self._inner(2)
+            return NumericRecordBatch(
+                {"z": jnp.zeros(2)}, "inner", element_spec=EventTemplate(z=ArraySpec(shape=()))
+            )
+
+        with pytest.raises(ValueError, match="returned batches that disagree"):
+            Function(func=body, dispatch="sequential")(x=self._rows())
+
+    def test_compatible_batch_rows_stack_with_the_sweep_in_front(self):
+        out = Function(func=lambda x: self._inner(2), dispatch="sequential")(x=self._rows())
+        assert out.batch_shape == (3, 2)
+        assert out.level_names == ("row", "inner")
+
+    def test_a_returned_design_aggregates_as_a_plain_batch(self):
+        """The aggregate is not itself a design: a subclass with its own
+        constructor cannot be rebuilt from columns."""
+        from probpipe.record.design import FullFactorialDesign
+
+        out = Function(func=lambda x: FullFactorialDesign(a=[1.0, 2.0]), dispatch="sequential")(
+            x=self._rows()
+        )
+        assert type(out) is NumericRecordBatch
+        assert out.batch_shape == (3, 2)

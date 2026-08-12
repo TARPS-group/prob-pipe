@@ -128,6 +128,17 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
     handed to ``jnp``.
     """
     if isinstance(data, RecordBatch):
+        if len(data.batch_shape) != 1:
+            # Rows are the leading axis, so a batch with more than one is a grid
+            # whose trailing axes have no agreed reading here: gathering rows from
+            # a (N, K) batch leaves (b, K) columns and only one level to name
+            # them, and the per-datum transform downstream can remove one axis,
+            # not one *of two*. Refused rather than given a meaning by accident.
+            raise ValueError(
+                f"MinibatchedDistribution takes a batch with one level of rows; got "
+                f"{data.level_names} over {data.batch_shape}. Select or reshape to a single "
+                f"rows level first — what the trailing axes mean per datum is not defined"
+            )
         columns = {
             path: _index_column(data._raw_column(path), indices) for path in data.event_template
         }

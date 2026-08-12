@@ -199,7 +199,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flat dimension last and the levels kept as the leading axes, and `from_vector`
   inverts it, naming the levels it reconstructs so a multi-level batch round-trips
   and casting each field back to its declared dtype, which concatenating promoted.
-  It is a bare array pytree, so it passes through `jit` / `vmap` / `grad` unchanged.
+  Its columns are the leaves `jit` / `vmap` / `grad` traverse; the batch itself
+  is rebuilt only under the transforms the contract below states.
 
   **Raw pytree transformations have a stated contract**, because a batch cannot
   thread its declaration through a round trip the way a `Record` does: `vmap`

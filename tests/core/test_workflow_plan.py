@@ -19,7 +19,7 @@ from probpipe.core.distribution import Distribution
 from probpipe.core.protocols import SupportsSampling
 
 
-def _numeric_record_array(
+def _numeric_record_batch(
     field: str, values: range, *, level_name: str = "draw"
 ) -> NumericRecordBatch:
     return NumericRecordBatch.stack(
@@ -63,8 +63,8 @@ class TestBroadcastRegime:
         assert plan.dist_args == (_ref("x"),)
         assert plan.array_args == ()
 
-    def test_record_array_value_selects_sweep_regime(self):
-        values = {"p": _numeric_record_array("x", range(4))}
+    def test_record_batch_value_selects_sweep_regime(self):
+        values = {"p": _numeric_record_batch("x", range(4))}
 
         plan = _plan(values)
 
@@ -85,7 +85,7 @@ class TestBroadcastRegime:
 
     def test_array_and_distribution_values_select_nested_regime(self):
         values = {
-            "p": _numeric_record_array("x", range(4)),
+            "p": _numeric_record_batch("x", range(4)),
             "noise": Normal(loc=0.0, scale=1.0, name="noise"),
         }
 
@@ -107,7 +107,7 @@ class TestHintClassification:
         assert protocol.regime == "none"
 
     def test_array_hints_skip_array_sweep(self):
-        ra = _numeric_record_array("x", range(4))
+        ra = _numeric_record_batch("x", range(4))
         da = DistributionArray.from_batched_params(
             Normal,
             batch_shape=(2,),
@@ -151,8 +151,8 @@ class TestArrayGrouping:
     def test_batches_with_no_level_in_common_form_a_product(self):
         """Levels align by name, so batches sharing none are independent: each is
         its own group and the sweep ranges over the grid."""
-        ra_a = _numeric_record_array("a", range(3), level_name="outer")
-        ra_b = _numeric_record_array("b", range(2), level_name="inner")
+        ra_a = _numeric_record_batch("a", range(3), level_name="outer")
+        ra_b = _numeric_record_batch("b", range(2), level_name="inner")
 
         plan = _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
@@ -179,8 +179,8 @@ class TestArrayGrouping:
     def test_one_level_name_at_two_sizes_is_refused(self):
         """Two batches naming the same level claim to range over the same thing,
         so disagreeing about its size is a mistake rather than a product."""
-        ra_a = _numeric_record_array("a", range(3))
-        ra_b = _numeric_record_array("b", range(2))
+        ra_a = _numeric_record_batch("a", range(3))
+        ra_b = _numeric_record_batch("b", range(2))
 
         with pytest.raises(ValueError, match="batched differently"):
             _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})

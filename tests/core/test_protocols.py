@@ -492,7 +492,7 @@ class TestMixtureSamplingDispatch:
         assert isinstance(s, jnp.ndarray)
         assert s.shape == (4,)
 
-    def test_record_components_stacked_as_record_array(self):
+    def test_record_components_stacked_as_record_batch(self):
         from probpipe import Record
         from probpipe.core._broadcast_distributions import _make_mixture_marginal
 

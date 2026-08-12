@@ -185,7 +185,7 @@ class TestApplyContract:
         assert result.event_template == template
         assert returned.event_template != template
 
-    def test_declared_output_accepts_record_array_as_a_batched_event(self):
+    def test_declared_output_accepts_record_batch_as_a_batched_event(self):
         intrinsic = EventTemplate(y=())
         declared = EventTemplate(y=ArraySpec((), dtype="float32"))
         returned = NumericRecordBatch(
@@ -208,7 +208,7 @@ class TestApplyContract:
         np.testing.assert_allclose(result["y"], np.asarray([1.0, 2.0]))
 
     @pytest.mark.parametrize("batch_shape", [(2, 3), (0, 3)])
-    def test_declared_output_accepts_multidimensional_and_empty_record_arrays(
+    def test_declared_output_accepts_multidimensional_and_empty_record_batchs(
         self,
         batch_shape,
     ):
@@ -240,7 +240,7 @@ class TestApplyContract:
         with pytest.raises(ValueError, match=r"shape"):
             wrapped.apply()
 
-    def test_declared_output_checks_record_array_dtype_and_support(self):
+    def test_declared_output_checks_record_batch_dtype_and_support(self):
         dtype_template = EventTemplate(y=ArraySpec((), dtype="int32"))
         float_array = RecordBatch(
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
@@ -1274,7 +1274,7 @@ class TestVariadicPlanning:
         assert tuple(result.input_samples) == ("*items[0]",)
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
 
-    def test_record_array_in_varargs_is_swept(self):
+    def test_record_batch_in_varargs_is_swept(self):
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
@@ -1285,7 +1285,7 @@ class TestVariadicPlanning:
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(result["<lambda>"], np.arange(3.0) + 2)
 
-    def test_record_array_in_any_varargs_is_swept(self):
+    def test_record_batch_in_any_varargs_is_swept(self):
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )
@@ -1298,7 +1298,7 @@ class TestVariadicPlanning:
         assert result.batch_shape == (3,)
         np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
 
-    def test_record_array_in_any_varkwargs_is_swept(self):
+    def test_record_batch_in_any_varkwargs_is_swept(self):
         rows = NumericRecordBatch.stack(
             [NumericRecord("row", value=jnp.asarray(float(i))) for i in range(3)], level_name="draw"
         )

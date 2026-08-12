@@ -147,7 +147,7 @@ def test_numeric_record_cloudpickle_roundtrip():
 # ---------------------------------------------------------------------------
 
 
-def test_record_array_pickle_roundtrip():
+def test_record_batch_pickle_roundtrip():
     template = EventTemplate(x=(), y=(3,))
     ra = RecordBatch(
         {"x": jnp.array([1.0, 2.0]), "y": jnp.ones((2, 3))},
@@ -161,7 +161,7 @@ def test_record_array_pickle_roundtrip():
     assert list(ra2["x"]) == pytest.approx([1.0, 2.0])
 
 
-def test_record_array_template_preserved():
+def test_record_batch_template_preserved():
     template = EventTemplate(x=(), y=(3,))
     ra = RecordBatch(
         {"x": jnp.array([1.0]), "y": jnp.ones((1, 3))},
@@ -178,7 +178,7 @@ def test_record_array_template_preserved():
 # ---------------------------------------------------------------------------
 
 
-def test_numeric_record_array_pickle_roundtrip():
+def test_numeric_record_batch_pickle_roundtrip():
     template = EventTemplate(x=(), y=(2,))
     nra = NumericRecordBatch(
         {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.ones((3, 2))},
@@ -192,7 +192,7 @@ def test_numeric_record_array_pickle_roundtrip():
     assert list(nra2["x"]) == pytest.approx([1.0, 2.0, 3.0])
 
 
-def test_numeric_record_array_cloudpickle_roundtrip():
+def test_numeric_record_batch_cloudpickle_roundtrip():
     template = EventTemplate(x=())
     nra = NumericRecordBatch(
         {"x": jnp.array([1.0, 2.0])},
