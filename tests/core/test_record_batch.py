@@ -34,6 +34,7 @@ from probpipe import (
 from probpipe.core import _array_backend
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core.event_template import OpaqueSpec
 
 
 @pytest.fixture
@@ -1496,7 +1497,7 @@ class TestPyTreeRebuildContract:
         replacement[0], replacement[1] = {"a": 1}, {"b": 2}
         # A mapping is the one thing an opaque field refuses, since it would slip
         # past the per-entry check the object batches make.
-        with pytest.raises(TypeError, match="does not admit|transform left"):
+        with pytest.raises(TypeError, match=r"does not admit|transform left"):
             jax.tree.map(lambda _: replacement, batch)
 
     def test_an_object_column_replaced_by_an_array_is_refused(self):
@@ -1540,3 +1541,27 @@ class TestPyTreeRebuildContract:
         transposed = jax.tree.map(lambda column: column.T, batch)
         assert transposed.level_names == ("chain", "draw")
         assert transposed.batch_shape == (2, 2)
+
+
+class TestRankZeroReconstruction:
+    """Removing every batch axis yields one element, so what the columns hold has
+    to come out of its storage."""
+
+    @pytest.mark.parametrize(
+        ("spec", "value"),
+        [
+            pytest.param(FunctionSpec(), (lambda x: x), id="function"),
+            pytest.param(OpaqueSpec(meta="units"), "north", id="opaque"),
+        ],
+    )
+    def test_a_rank_zero_object_column_yields_the_value_not_its_array(self, spec, value):
+        """A non-array column is an object array even when it holds one entry, so
+        handing it straight to the record would declare the field's kind over a
+        zero-dimensional ndarray — a value its own spec refuses."""
+        from probpipe.core.event_template import OpaqueSpec as _Opaque  # noqa: F401
+
+        column = _object_column([value])
+        batch = RecordBatch({"f": column}, "row", element_spec=EventTemplate(f=spec))
+        element = jax.tree.map(lambda c: c.reshape(()), batch)
+        assert isinstance(element, Record)
+        assert spec.is_valid(element["f"])
