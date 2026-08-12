@@ -830,7 +830,7 @@ class TestMakeStack:
         from probpipe import NumericRecordArray
         from probpipe.core._broadcast_distributions import _make_stack
 
-        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo")
+        out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
         assert out.fields == ("demo",)
@@ -841,7 +841,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         values = [jnp.arange(3.0) + 10.0 * i for i in range(4)]
-        out = _make_stack(values, n=4, field_name="demo")
+        out = _make_stack(values, n=4, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
         assert out["demo"].shape == (4, 3)
@@ -851,7 +851,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         records = [NumericRecord("nr", a=float(i), b=float(i) * 2) for i in range(5)]
-        out = _make_stack(records, n=5, field_name="demo")
+        out = _make_stack(records, n=5, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (5,)
         np.testing.assert_allclose(out["a"], [0, 1, 2, 3, 4])
@@ -866,7 +866,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         records = [Record("r", a=float(i), label=f"row{i}") for i in range(3)]
-        out = _make_stack(records, n=3, field_name="demo")
+        out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, RecordArray)
         assert not isinstance(out, NumericRecordArray)
         np.testing.assert_allclose(out["a"], [0.0, 1.0, 2.0])
@@ -881,7 +881,7 @@ class TestMakeStack:
         from probpipe.core.event_template import ArraySpec, OpaqueSpec
 
         records = [Record("r", x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
-        out = _make_stack(records, n=3, field_name="demo")
+        out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, RecordArray)
         assert out["x"].dtype == jnp.bfloat16
         assert out.template["x"] == ArraySpec((2,))  # numeric, not None/opaque
@@ -892,7 +892,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(3)]
-        out = _make_stack(comps, n=3, field_name="demo")
+        out = _make_stack(comps, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, DistributionArray)
         assert out.batch_shape == (3,)
         assert out[0] is comps[0]
@@ -907,7 +907,7 @@ class TestMakeStack:
             NumericRecordArray.stack([NumericRecord("nr", x=float(i * 10 + j)) for j in range(4)])
             for i in range(3)
         ]
-        out = _make_stack(inner, n=3, field_name="demo")
+        out = _make_stack(inner, n=3, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (3, 4)
         np.testing.assert_allclose(out["x"][0], [0, 1, 2, 3])
@@ -920,7 +920,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         arr = jnp.arange(12.0).reshape(4, 3)
-        out = _make_stack(arr, n=4, field_name="demo")
+        out = _make_stack(arr, n=4, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (4,)
         assert out["demo"].shape == (4, 3)
@@ -935,6 +935,7 @@ class TestMakeStack:
                 n=4,
                 field_name="demo",
                 event_template=EventTemplate(left=(2,), right=(2,)),
+                level_names=("sweep",),
             )
 
     def test_declared_vmap_array_preserves_nested_single_leaf_path(self):
@@ -949,6 +950,7 @@ class TestMakeStack:
             n=4,
             field_name="demo",
             event_template=template,
+            level_names=("sweep",),
         )
 
         assert out.event_template == template
@@ -966,6 +968,7 @@ class TestMakeStack:
             batch_shape=(2, 3),
             field_name="demo",
             event_template=template,
+            level_names=("sweep",),
         )
 
         assert out.batch_shape == (2, 3)
@@ -980,7 +983,7 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         rec = Record("r", x=jnp.arange(5.0), y=jnp.arange(5.0) + 10)
-        out = _make_stack(rec, n=5, field_name="demo")
+        out = _make_stack(rec, n=5, field_name="demo", level_names=("sweep",))
         assert isinstance(out, NumericRecordArray)
         assert out.batch_shape == (5,)
 
@@ -988,13 +991,13 @@ class TestMakeStack:
         from probpipe.core._broadcast_distributions import _make_stack
 
         with pytest.raises(ValueError, match=r"expected prod\(batch_shape\)=5"):
-            _make_stack([1.0, 2.0, 3.0], n=5, field_name="demo")
+            _make_stack([1.0, 2.0, 3.0], n=5, field_name="demo", level_names=("sweep",))
 
     def test_ndarray_leading_axis_mismatch_raises(self):
         from probpipe.core._broadcast_distributions import _make_stack
 
         with pytest.raises(ValueError, match="expected leading axis"):
-            _make_stack(jnp.arange(6.0), n=4, field_name="demo")
+            _make_stack(jnp.arange(6.0), n=4, field_name="demo", level_names=("sweep",))
 
 
 # ===========================================================================
@@ -1056,6 +1059,7 @@ class TestCoerceOutput:
             [Normal(loc=0.0, scale=1.0, name=f"d{i}") for i in range(3)],
             n=3,
             field_name="demo",
+            level_names=("sweep",),
         )
         assert isinstance(da, DistributionArray)
         assert da.provenance is None

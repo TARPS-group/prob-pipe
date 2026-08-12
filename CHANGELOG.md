@@ -533,6 +533,109 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **A joint law draws a `RecordBatch`.** `_sample` on the four joint laws —
+  product, sequential, Gaussian, and empirical — returns a `NumericRecordBatch`
+  (a `RecordBatch` when a leaf is non-numeric) for a batched draw, over a single
+  `draw` level spanning however many axes the `sample_shape` had. An unbatched
+  draw is a `Record`, unchanged. The flat-vector reconstruction behind
+  `unflatten_value` returns a batch for the same reason, and both classes are now
+  exported: a value handed to a caller must be nameable by that caller.
+
+  **A nested draw is one flat batch, not a batch per subtree.** A batch stores one
+  column per *field*, so a nested product draws into one mapping over leaf paths
+  and the result is a single batch whose `batch["outer"]` is a *view* over the
+  columns beneath `outer`. Where the previous nested draw built a record-array per
+  subtree, there is now one store, which is also what makes a nested field
+  reachable by path.
+
+  **A broadcast that stacks a batch per row names its own level.** Stacking rows
+  that are each a batch puts the sweep in front of the levels a row already
+  carried — the swept levels' own names in front of the row's — rather than
+  refusing nested batched
+  records as it used to. Since the columns are leaf-keyed, a nested element needs
+  no special case.
+
+  Three consequences for calling code. A batched draw is not a `Record`, so
+  `isinstance(draw, Record)` is `False` where it used to be `True`; ask for
+  `RecordBatch`, or for either. A batch is a collection, not a named tree, so a
+  draw's fields are read from `draw.event_template` rather than `draw.fields` /
+  `.items()` / `.at_path()`, while `draw["x"]` and `draw["outer/a"]` are
+  unchanged. And a batch has no `mean` / `var` over its batch axis; reduce the
+  column, as `jnp.mean(draw["x"], axis=0)`.
+
+  An object-valued law draws a batch on the same terms as a numeric one: the class
+  follows the leaves — `NumericRecordBatch` when the template is numeric, the
+  permissive `RecordBatch` otherwise — but a batched draw is a batch either way.
+
+  **A transform cannot add a level.** `vmap` strips the mapped axis on the way in,
+  which unflattening handles by re-deriving which levels survived; on the way out
+  it *adds* one, and an added axis belongs to no level. Unflattening has no name
+  to give, so it now raises instead of keeping the stored spec — which returned a
+  batch whose `batch_shape` its own columns contradicted, making every method that
+  reads the shape quietly wrong. Map over a batch's columns, or build the batch
+  where the axis is added.
+
+  **The sweep addresses a multi-level batch by position** — one indexer per
+  batch axis, where a flat index read the leading axis alone and ran off its end
+  — and the aggregate carries the swept groups' own axis partition, so two
+  independent sweeps followed by a batch-returning body mint one level per group
+  rather than refusing. An empty declared sweep builds its aggregate from the
+  output template, every declared field present at zero rows.
+
+  **Automatic dispatch probes the vmap it is choosing.** A body that traces
+  cleanly bare but cannot run under ``vmap`` — one returning a batch, whose
+  added axis no level names — now resolves to sequential dispatch, which
+  produces the same result by the dispatch-equivalence contract, instead of
+  failing mid-call.
+
+  **Levels align by name, and only whole.** Operands carrying the same level
+  names zip; operands with no level in common form a product; a level shared by
+  operands whose other levels differ is refused — aligning it would broadcast
+  the rest, which is not built, and a product would read the shared name as two
+  unrelated axes. Operands naming the same levels must also hold them on the
+  same axes: the flat shape can agree while the partition does not. A parameter
+  annotated `Batch` (or a generic alias such as `Batch[Record]`) takes the value
+  whole, since it names a batched container.
+
+  **A transform never resizes the element's own axes.** A per-column slice can
+  pass the rank check while shrinking the event, and a transpose reads an event
+  axis as a batch axis; both now raise, as does a reduction below the event
+  rank. An empty sweep builds its declared fields only when zero rows were
+  *expected* — an empty list where rows were expected is a missing-output error,
+  not a fabrication. The dispatch probe states the flat batch size exactly as
+  the executor does, so a zero-width event column passes under explicit
+  `dispatch="jax"`.
+
+  **Shape cannot recover axis provenance, so ambiguity refuses.** A removal
+  whose size matches more than one level (``vmap(..., in_axes=1)`` over equal
+  sizes) and a permutation of the batch axes (a transpose, which shape alone
+  cannot tell from a per-axis resize) both raise rather than guess; a
+  distinctly-sized removal now names the level that *survived*, not the
+  leftmost that fits. A pinned dtype is held like the event axes, under the
+  constructor's same-kind rule. And zero-row sweeps take one aggregation path
+  under every dispatch, so the output schema does not depend on how rows would
+  have been executed.
+
+  **A same-rank transform cannot lie about sizes.** Slicing a batch's columns
+  keeps every axis, so the levels carry over onto the sizes the columns actually
+  have; columns left disagreeing about their batch axes are refused rather than
+  papered over with the stored spec.
+
+  **A batch is fingerprinted by its levels and its columns.** A multi-field batch
+  failed fingerprinting outright, so provenance omitted it; a single-field one was
+  hashed as its sole column, omitting the schema and the levels. Both are fixed:
+  the spec, the level names and their axis groups, and the raw columns in leaf
+  order all contribute.
+
+  A declared `support` on a batched output is checked column by column. Walking a
+  batch as a named tree found no children and asked a multi-field batch to convert
+  to one array, so two valid columns raised.
+
+  `RecordArray` / `NumericRecordArray` still exist and are unchanged for direct
+  use — no producer returns one. `NumericRecordArray.from_vector` keeps returning
+  a `NumericRecordArray`, renesting the batch's flat columns itself, so the class
+  stays coherent while it lasts.
+
 - **A batch of records is recognized wherever a batched record was.** A
   `RecordBatch` is deliberately not a `Record`, so every place that recognized a
   batched value by `isinstance(x, Record)`, by a `RecordArray` subclass check, or

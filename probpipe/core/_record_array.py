@@ -638,7 +638,26 @@ class NumericRecordArray(RecordArray):
                 f"(shape (*batch_shape, vector_size)); got shape {tuple(vec.shape)}. "
                 f"Reconstruct a single value with NumericRecord.from_vector."
             )
-        return _reconstruct_from_vector(name, template, vec, name_is_auto=False)
+        batch = _reconstruct_from_vector(name, template, vec, name_is_auto=False)
+        return cls._from_batch(name, template, batch)
+
+    @classmethod
+    def _from_batch(cls, name: str, template: EventTemplate, batch: Any) -> NumericRecordArray:
+        """This class's nested form of a batch's flat columns.
+
+        A batch stores one column per *leaf*; this class stores one child per
+        *top-level* field, nesting an array of its own under an interior node. The
+        flat split itself lives on the batch, so only the renesting is here — and
+        it goes when this class does.
+        """
+        fields: dict[str, Any] = {}
+        for field, spec in template.children.items():
+            fields[field] = (
+                cls._from_batch(field, spec, batch[field])
+                if isinstance(spec, EventTemplate)
+                else batch[field]
+            )
+        return cls(fields, batch_shape=batch.batch_shape, template=template)
 
     # -- Reductions ---------------------------------------------------------
 

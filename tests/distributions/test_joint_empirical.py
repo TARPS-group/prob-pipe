@@ -19,6 +19,7 @@ from probpipe import (
     sample,
     variance,
 )
+from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import Function
 
@@ -131,7 +132,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(je, key=key, sample_shape=(10,))
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, RecordBatch)
         assert s["x"].shape == (10,)
         assert s["y"].shape == (10,)
 
@@ -309,7 +310,7 @@ class TestConditionOn:
         )
         cond = condition_on(je, x=jnp.array(1.0))
         s = sample(cond, key=jax.random.PRNGKey(0), sample_shape=(5,))
-        assert set(s.fields) == {"y"}
+        assert set(s.event_template) == {"y"}
         assert s["y"].shape == (5,)
 
     def test_condition_on_preserves_correlation(self):
@@ -408,3 +409,50 @@ class TestBroadcasting:
         # Mean of x is 2.0, so mean of a+b should be ~22
         mean_val = float(jnp.mean(result.samples))
         assert abs(mean_val - 22.0) < 5.0
+
+
+class TestObjectValuedDrawsAreBatches:
+    """An object-valued law draws on the same terms as a numeric one: the class
+    follows the leaves, but a batched draw is a batch either way."""
+
+    def test_object_valued_batched_draw_is_a_plain_batch(self):
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            y=np.asarray([1.0, 2.0, 3.0]),
+        )
+
+        drawn = je._sample(jax.random.PRNGKey(0), (4,))
+
+        assert type(drawn) is RecordBatch
+        assert drawn.level_names == ("draw",)
+        assert drawn.batch_shape == (4,)
+        assert set(drawn.event_template) == {"labels", "y"}
+
+    def test_object_valued_rows_stay_paired_through_sample(self):
+        """Rows are resampled jointly, so a drawn label always arrives with the
+        numeric value it was stored beside — checked through the public
+        ``sample`` op, not the private ``_sample``."""
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            y=np.asarray([1.0, 2.0, 3.0]),
+        )
+
+        drawn = sample(je, key=jax.random.PRNGKey(7), sample_shape=(64,))
+
+        stored = {("a", 1.0), ("b", 2.0), ("c", 3.0)}
+        seen = {
+            (label, float(value))
+            for label, value in zip(drawn._raw_column("labels"), np.asarray(drawn["y"]))
+        }
+        assert seen <= stored
+        assert len(seen) > 1  # 64 draws of 3 rows: more than one row appears
+
+    def test_object_valued_single_draw_is_a_record(self):
+        je = JointEmpirical(
+            labels=np.array(["a", "b", "c"], dtype=object),
+            y=np.asarray([1.0, 2.0, 3.0]),
+        )
+
+        drawn = je._sample(jax.random.PRNGKey(0), ())
+
+        assert isinstance(drawn, Record) and not isinstance(drawn, RecordBatch)

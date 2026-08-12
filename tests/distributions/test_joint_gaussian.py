@@ -19,6 +19,7 @@ from probpipe import (
     sample,
     variance,
 )
+from probpipe.core._record_batch import RecordBatch
 from probpipe.core.node import Function
 
 # ---------------------------------------------------------------------------
@@ -132,7 +133,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(jg, key=key, sample_shape=(10,))
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, RecordBatch)
         assert s["x"].shape == (10, 1)
         assert s["y"].shape == (10, 1)
 
@@ -436,7 +437,7 @@ class TestConditionOn:
         # sd / sqrt(5000) ~ 0.006
         key = jax.random.PRNGKey(20)
         s = sample(cond, key=key, sample_shape=(5000,))
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, RecordBatch)
         np.testing.assert_allclose(float(jnp.mean(s["y"])), 2.7, atol=0.03)
 
     def test_dict_for_leaf_raises(self):

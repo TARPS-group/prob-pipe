@@ -19,13 +19,14 @@ from probpipe import (
     EventTemplate,
     MultivariateNormal,
     Normal,
+    NumericRecordBatch,
     ProductDistribution,
     Record,
-    RecordArray,
     mean,
     sample,
     variance,
 )
+from probpipe.core._record_batch import RecordBatch
 from probpipe.core.distribution import _RecordDistributionView
 from probpipe.core.event_template import ArraySpec
 from probpipe.inference import rwmh
@@ -258,14 +259,14 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws()
-        assert isinstance(draws, (Record, RecordArray))
+        assert isinstance(draws, NumericRecordBatch)
         # Insertion order from the template fixture: r, K, phi.
-        assert draws.fields == ("r", "K", "phi")
+        assert tuple(draws.event_template.keys()) == ("r", "K", "phi")
         assert draws["r"].shape == (100,)
 
     def test_draws_has_correct_fields(self, posterior_with_template):
         draws = posterior_with_template.draws()
-        assert draws.fields == ("r", "K", "phi")
+        assert tuple(draws.event_template.keys()) == ("r", "K", "phi")
 
     def test_draws_field_shapes(self, posterior_with_template):
         draws = posterior_with_template.draws()
@@ -283,7 +284,7 @@ class TestApproximateDistributionValuesTemplate:
 
     def test_draws_single_chain_returns_values(self, posterior_with_template):
         draws = posterior_with_template.draws(chain=0)
-        assert isinstance(draws, (Record, RecordArray))
+        assert isinstance(draws, NumericRecordBatch)
         assert draws["r"].shape == (100,)
 
     def test_without_template_returns_array(self):
@@ -489,7 +490,7 @@ class TestApproximateDistributionValuesTemplate:
             event_template=template,
         )
         draws = post.draws(include_warmup=True)
-        assert isinstance(draws, (Record, RecordArray))
+        assert isinstance(draws, NumericRecordBatch)
         assert draws["a"].shape == (60,)  # 10 warmup + 50 draws
         assert draws["b"].shape == (60,)
 
@@ -509,8 +510,8 @@ class TestApproximateDistributionValuesTemplate:
             event_template=template,
         )
         draws = post.draws()
-        assert isinstance(draws, (Record, RecordArray))
-        assert isinstance(draws.at_path("params"), (Record, RecordArray))
+        assert isinstance(draws, NumericRecordBatch)
+        assert isinstance(draws["params"], RecordBatch)
         assert draws["params/a"].shape == (30,)
         assert draws["params/b"].shape == (30,)
         assert draws["scale"].shape == (30,)
@@ -573,7 +574,8 @@ class TestApproximateDistributionValuesTemplate:
         assert v["scale"].shape == ()
         # ``draws()`` walks the full template (incl. nesting).
         draws = post.draws()
-        assert draws.fields == expected_fields
+        # Top-level names, which is what the accessors are keyed by.
+        assert tuple(draws.event_template.children) == expected_fields
         assert draws["params/a"].shape == (40,)
         assert draws["params/b"].shape == (40,)
         assert draws["scale"].shape == (40,)
@@ -736,7 +738,7 @@ class TestRWMH:
 
         raw_draws = result.draws()
         if hasattr(raw_draws, "fields"):
-            raw_draws = jnp.concatenate([raw_draws[f] for f in raw_draws.fields], axis=-1)
+            raw_draws = jnp.concatenate([raw_draws[f] for f in raw_draws.event_template], axis=-1)
         draws = np.asarray(raw_draws).reshape(-1, 2)
         # MC standard error: posterior_sd / sqrt(effective_n).
         # ``adapt=True`` (the default) fits the proposal covariance from
@@ -1275,8 +1277,8 @@ class TestEndToEndValuesPipeline:
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""
         draws = posterior.draws()
-        assert isinstance(draws, (Record, RecordArray))
-        assert draws.fields == ("params",)
+        assert isinstance(draws, NumericRecordBatch)
+        assert tuple(draws.event_template.keys()) == ("params",)
         assert draws["params"].shape == (500, 2)
 
     def test_draws_values_correct(self, posterior):
@@ -1367,8 +1369,8 @@ class TestEndToEndValuesPipeline:
             event_template=template,
         )
         draws = post.draws()
-        assert isinstance(draws, (Record, RecordArray))
-        assert draws.fields == ("a", "b", "c")
+        assert isinstance(draws, NumericRecordBatch)
+        assert tuple(draws.event_template.keys()) == ("a", "b", "c")
         assert draws["a"].shape == (200,)
 
         # Per-field views

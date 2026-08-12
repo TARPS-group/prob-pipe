@@ -345,6 +345,23 @@ class RecordBatch(Batch[Record]):
 
     # -- field access -------------------------------------------------------
 
+    def _raw_column(self, path: str) -> Any:
+        """One field's column exactly as stored, before any presentation.
+
+        ``batch[path]`` *presents* a column: an array field is the array, but a
+        callable or opaque field comes back as the batch of its element kind, a
+        :class:`FunctionBatch` or an :class:`OpaqueBatch`, which is what reading
+        one field wants. An operation rearranging the storage itself — gathering
+        rows, peeling the batch axis off — needs the column, object array and
+        all, and presenting it first would make those operations wrong for every
+        field that is not an array.
+        """
+        return self._columns[path]
+
+    def _raw_columns(self) -> dict[str, Any]:
+        """Every column as stored, keyed by leaf path."""
+        return dict(self._columns)
+
     def _column_as_batch(self, key: str) -> Any:
         """One field's column, in the batch form its spec calls for.
 
@@ -636,11 +653,7 @@ class RecordBatch(Batch[Record]):
         and left to the constructor to re-derive when it was auto, since the old one
         described the pre-edit fields.
         """
-        # Lazy: the numeric module builds on this one, so the edge points that way.
-        from ._numeric_record_batch import NumericRecordBatch
-
-        cls = NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
-        return cls(
+        return _batch_class_for(template)(
             dict(columns),
             self.level_names,
             element_spec=template,
@@ -759,6 +772,22 @@ class RecordBatch(Batch[Record]):
 # ---------------------------------------------------------------------------
 # Construction helpers
 # ---------------------------------------------------------------------------
+
+
+def _batch_class_for(element_spec: RecordSpec | EventTemplate) -> type[RecordBatch]:
+    """The batch class an element declaration calls for.
+
+    The kind of batch follows the *element*: an all-numeric element gets the
+    numeric specialization and its flat layout, anything else the permissive base.
+    Read the class from the declaration rather than from a batch that happens to
+    be at hand — a subclass carrying its own constructor, a ``Design`` built from
+    marginals, is not a thing an aggregate over its rows can be rebuilt as.
+    """
+    # Lazy: the numeric module builds on this one, so the edge points that way.
+    from ._numeric_record_batch import NumericRecordBatch
+
+    template = _record_declaration_template(element_spec)
+    return NumericRecordBatch if isinstance(template, NumericEventTemplate) else RecordBatch
 
 
 def _record_element_spec(decl: RecordSpec | EventTemplate, *, kind: str) -> RecordSpec:

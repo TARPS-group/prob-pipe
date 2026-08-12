@@ -208,12 +208,32 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
     def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
         """Resample rows jointly, preserving per-row correlation.
 
-        The generic base returns a ``Record`` regardless of
-        ``sample_shape`` (with batched fields for non-empty shapes).
-        Subclasses override to return a typed batched container (e.g.
-        ``NumericRecordArray``) when the leaves are numeric.
+        A batched draw is a batch over one ``draw`` level, a single draw a
+        ``Record``. The class follows the leaves — a numeric template gives a
+        :class:`NumericRecordBatch` and anything else the permissive
+        :class:`RecordBatch` — so an object-valued law draws a batch on the same
+        terms as a numeric one.
         """
-        return Record(self.name, self._resample_rows(key, sample_shape), name_is_auto=True)
+        from ..core._numeric_record_batch import NumericRecordBatch
+        from ..core._record_batch import RecordBatch
+        from ..core.event_template import NumericEventTemplate
+
+        rows = self._resample_rows(key, sample_shape)
+        if not sample_shape:
+            return Record(self.name, rows, name_is_auto=True)
+        cls = (
+            NumericRecordBatch
+            if isinstance(self.event_template, NumericEventTemplate)
+            else RecordBatch
+        )
+        return cls(
+            rows,
+            "draw",
+            element_spec=self.event_template,
+            axis_groups=(sample_shape,),
+            name=self.name,
+            name_is_auto=True,
+        )
 
     def _resample_rows(
         self,
@@ -362,20 +382,6 @@ class NumericJointEmpirical(
             cname: RecordEmpiricalDistribution(arr, weights=self._w, name=cname)
             for cname, arr in self._joint_samples.items()
         }
-
-    # -- Sampling: return NumericRecordArray for batched draws --------------
-
-    def _sample_joint_rows(self, key: PRNGKey, sample_shape: tuple[int, ...]):
-        from ..core._record_array import NumericRecordArray
-
-        result = self._resample_rows(key, sample_shape)
-        if sample_shape:
-            return NumericRecordArray(
-                result,
-                batch_shape=sample_shape,
-                template=self.event_template,
-            )
-        return Record(self.name, result, name_is_auto=True)
 
     # -- event_shapes (used by the record template) ------------------------
 

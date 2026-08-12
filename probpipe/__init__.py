@@ -41,8 +41,10 @@ from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._distribution_array import DistributionArray
 from probpipe.core._function_batch import FunctionBatch
 from probpipe.core._numeric_record import NumericRecord
+from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_array import NumericRecordArray, RecordArray
+from probpipe.core._record_batch import RecordBatch
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
@@ -274,6 +276,7 @@ __all__ = [
     "NumericRandomMeasure",
     "NumericRecord",
     "NumericRecordArray",
+    "NumericRecordBatch",
     "NumericRecordDistribution",
     "NumericRecordDistributionView",
     "OpaqueBatch",
@@ -293,6 +296,7 @@ __all__ = [
     # Record
     "Record",
     "RecordArray",
+    "RecordBatch",
     "RecordBootstrapReplicateDistribution",
     "RecordDistribution",
     "RecordEmpiricalDistribution",

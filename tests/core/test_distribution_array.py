@@ -33,6 +33,7 @@ from probpipe.core._distribution_array import (
     DistributionArray,
     _make_distribution_array,
 )
+from probpipe.core._numeric_record_batch import NumericRecordBatch
 
 # ---------------------------------------------------------------------------
 # Construction & invariants
@@ -496,7 +497,10 @@ class TestSampleViaSweep:
         ]
         da = _make_distribution_array(comps)
         s = sample(da, sample_shape=(5,))
-        assert isinstance(s, NumericRecordArray)
+        assert isinstance(s, NumericRecordBatch)
+        # The sweep mints the level it swept — here the argument's own name,
+        # the distribution array carrying no levels of its own yet.
+        assert s.level_names == ("dist", "draw")
         # sweep (3,) + inner batch (5,) → (3, 5); fields carry no leaf
         # (scalar Normals inside the Product).
         assert s.batch_shape == (3, 5)

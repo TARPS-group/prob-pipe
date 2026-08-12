@@ -120,7 +120,7 @@ deduplicated lineage parents; ordinary slots remain distinct in
 `apply` deliberately performs no distribution lifting, batch sweep, result
 wrapping, orchestration, or call-provenance creation. It is therefore also the
 raw execution boundary used by inference integrations. If the implementation
-returns an existing `Record`, `RecordArray`, or `Distribution`, `apply`
+returns an existing `Record`, batch of records, or `Distribution`, `apply`
 preserves that object's identity, annotations, and provenance. `__call__`
 instead creates a shallow independent result item: value data and templates are
 shared by default, the annotations container is copied, prior provenance is

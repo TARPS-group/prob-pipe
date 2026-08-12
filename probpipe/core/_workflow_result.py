@@ -79,7 +79,11 @@ def _wrap_as_record(
         return Record(field_name, value, name_is_auto=True)
     if isinstance(value, (list, tuple)) and value:
         try:
-            return _make_stack(list(value), n=len(value), field_name=field_name)
+            # A returned sequence ranges over nothing the call named, so the
+            # level takes the function's own name.
+            return _make_stack(
+                list(value), n=len(value), level_names=(field_name,), field_name=field_name
+            )
         except (TypeError, ValueError):
             pass
     # Numeric scalar / array → NumericRecord with the function's
@@ -162,6 +166,12 @@ def _copy_result_term(
         if isinstance(clone, RecordBatch):
             element_spec = _to_record_declaration(output_template)
             object.__setattr__(clone, "_spec", replace(clone.spec, element_spec=element_spec))
+            # The columns are reordered to match: a batch flattens its columns in
+            # its spec's leaf order, so a declared template that orders the same
+            # fields differently would otherwise pair every value with the wrong
+            # key on the next unflatten.
+            columns = clone._raw_columns()
+            object.__setattr__(clone, "_columns", {p: columns[p] for p in output_template})
         elif isinstance(clone, RecordArray):
             object.__setattr__(clone, "_template", output_template)
         elif isinstance(clone, Record):

@@ -1009,10 +1009,34 @@ class TestFlatLayout:
         assert rebuilt["f"].dtype == jnp.float32
         np.testing.assert_array_equal(np.asarray(rebuilt["i"]), np.asarray([0, 1, 2]))
 
-    def test_from_vector_needs_a_name_for_every_batch_axis(self):
+    def test_from_vector_takes_every_batch_axis_as_one_named_level(self):
+        """One name is one level however many axes the flat vector carried: the
+        draw it came from is one multiplicity, not one per axis."""
+        template = EventTemplate(x=(2,))
+
+        batch = NumericRecordBatch.from_vector(
+            "v", template, jnp.zeros((4, 5, 2)), level_names="draw"
+        )
+
+        assert batch.level_names == ("draw",)
+        assert batch.batch_shape == (4, 5)
+        assert batch.axis_groups == ((4, 5),)
+
+    def test_from_vector_gives_several_names_one_axis_each(self):
+        template = EventTemplate(x=(2,))
+
+        batch = NumericRecordBatch.from_vector(
+            "v", template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw")
+        )
+
+        assert batch.axis_groups == ((4,), (5,))
+
+    def test_from_vector_refuses_more_names_than_axes(self):
         template = EventTemplate(x=(2,))
         with pytest.raises(ValueError, match="need 2 level names"):
-            NumericRecordBatch.from_vector("v", template, jnp.zeros((4, 5, 2)), level_names="draw")
+            NumericRecordBatch.from_vector(
+                "v", template, jnp.zeros((4, 5, 2)), level_names=("chain", "draw", "extra")
+            )
 
     def test_to_vector_on_an_empty_selection(self):
         """The class advertises ``batch[0:0]``, so vectorizing one must work: the

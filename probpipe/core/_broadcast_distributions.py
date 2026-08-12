@@ -26,9 +26,15 @@ from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
+from ._object_batch import _is_object_array
 from ._record_array import NumericRecordArray, RecordArray
-from ._record_batch import RecordBatch
-from .event_template import EventTemplate, NumericEventTemplate, _full_array_shape_or_none
+from ._record_batch import RecordBatch, _batch_class_for
+from .event_template import (
+    ArraySpec,
+    EventTemplate,
+    NumericEventTemplate,
+    _full_array_shape_or_none,
+)
 from .protocols import (
     SupportsLogProb,
     SupportsMean,
@@ -70,7 +76,12 @@ class _RecordMarginal(RecordEmpiricalDistribution):
         # constructor wants one row per batch index, so peel it: the leaves keep
         # the rows axis and the record above them loses it. Leaf-keyed, so a
         # nested batch peels correctly; path-keyed construction rebuilds nesting.
-        if isinstance(samples, (RecordArray, RecordBatch)):
+        if isinstance(samples, RecordBatch):
+            template = samples.event_template
+            # Raw columns: a non-array field presents as its own object batch,
+            # which is not what belongs in a record of batched leaves.
+            samples = Record(samples.name, samples._raw_columns(), name_is_auto=True)
+        elif isinstance(samples, RecordArray):
             template = samples.event_template
             samples = Record(samples.name, {k: samples[k] for k in template}, name_is_auto=True)
         else:
@@ -398,6 +409,34 @@ def _stack_declared_records(
     )
 
 
+def _empty_declared_stack(
+    batch_shape: tuple[int, ...],
+    *,
+    template: EventTemplate,
+    name: str,
+) -> Any:
+    """The declared aggregate at zero rows: every field present, every axis empty.
+
+    Built exactly as :func:`_stack_declared_records` would have built it, so an
+    empty sweep and a one-row sweep hand back the same type with the same fields
+    — a numeric leaf is an empty array of its declared shape and dtype, and a
+    non-array field an empty object column.
+    """
+    from ._record_array import NumericRecordArray, RecordArray
+
+    fields: dict[str, Any] = {}
+    for field_name, spec in template.children.items():
+        if isinstance(spec, EventTemplate):
+            fields[field_name] = _empty_declared_stack(batch_shape, template=spec, name=field_name)
+        elif isinstance(spec, ArraySpec) and all(isinstance(size, int) for size in spec.shape):
+            dtype = spec.dtype if spec.dtype is not None else jnp.zeros(()).dtype
+            fields[field_name] = jnp.zeros((*batch_shape, *spec.shape), dtype=dtype)
+        else:
+            fields[field_name] = np.empty(batch_shape, dtype=object)
+    cls = NumericRecordArray if isinstance(template, NumericEventTemplate) else RecordArray
+    return cls(fields, batch_shape=batch_shape, template=template, name=name)
+
+
 def _make_marginal(
     output_samples: Any,
     weights: Array | Weights | None = None,
@@ -439,6 +478,18 @@ def _make_marginal(
             {only_path: output_samples},
             name_is_auto=True,
         )
+
+    if isinstance(output_samples, RecordBatch) and not isinstance(
+        output_samples.event_template, NumericEventTemplate
+    ):
+        # The record marginal is empirical over numeric leaves — its reductions
+        # and resampling convert columns to arrays — so a batch holding a
+        # non-numeric field takes the general list marginal over its elements.
+        rows = [
+            output_samples[tuple(int(i) for i in position)]
+            for position in np.ndindex(*output_samples.batch_shape)
+        ]
+        return _ListMarginal(rows, weights, name=name)
 
     if isinstance(output_samples, (RecordArray, RecordBatch)):
         return _RecordMarginal(
@@ -548,11 +599,19 @@ def _make_marginal(
 # ---------------------------------------------------------------------------
 
 
+# The level a draw mints, which the design names (05-operations, ``sample``). A
+# broadcast has no name of its own to give: the level it mints is the one it
+# swept, so the caller supplies that name rather than this module inventing one.
+DRAW_LEVEL = "draw"
+
+
 def _make_stack(
     inner_outputs: Any,
     *,
     batch_shape: tuple[int, ...] | None = None,
     n: int | None = None,
+    level_names: tuple[str, ...],
+    axis_groups: tuple[tuple[int, ...], ...] | None = None,
     name: str | None = None,
     field_name: str,
     event_template: EventTemplate | None = None,
@@ -580,6 +639,13 @@ def _make_stack(
         ``batch_shape`` or ``n`` (the 1-D shortcut); exactly one.
     n : int, optional
         Shortcut for ``batch_shape=(n,)``.
+    level_names : tuple of str
+        Names the levels this aggregation mints, one per group of
+        ``batch_shape``'s axes, and required for the reason
+        :meth:`Batch.with_level_names` gives: an operation that mints a level
+        takes the name to give it, since operands align by level name and only
+        the caller knows what the axes range over. A sweep passes the names of
+        the levels it swept, so the aggregate aligns with the input it came from.
     name : str, optional
         Name for the resulting aggregate.
 
@@ -608,9 +674,30 @@ def _make_stack(
         batch_shape = (n,)
     batch_shape = tuple(batch_shape)
     n_total = int(prod(batch_shape)) if batch_shape else 1
+    # One level per swept group, tiling the aggregate's leading axes. A single
+    # name takes them all, which is what a one-group sweep and the ``n``
+    # shortcut both are.
+    sweep_groups = tuple(axis_groups) if axis_groups is not None else (batch_shape,)
+    if len(sweep_groups) != len(level_names):
+        raise ValueError(
+            f"_make_stack mints one level per group of axes: {len(sweep_groups)} groups "
+            f"{sweep_groups} against {len(level_names)} names {list(level_names)}"
+        )
 
     # --- List-of-X path (Python-loop execution) -------------------------
     if isinstance(inner_outputs, list):
+        # With no rows there is no output to read a type off, so the declared
+        # template is the only honest source; without one, the generic handlers
+        # below would name a single opaque field after the function. Only a
+        # sweep that *expects* zero rows takes this path — an empty list where
+        # rows were expected is a missing-output error, and fabricating the
+        # declared fields would hide it.
+        if not inner_outputs and n_total == 0 and event_template is not None:
+            return _empty_declared_stack(
+                batch_shape,
+                template=event_template,
+                name=name or field_name,
+            )
         if len(inner_outputs) != n_total:
             raise ValueError(
                 f"_make_stack got {len(inner_outputs)} outputs but "
@@ -630,10 +717,66 @@ def _make_stack(
                 for output in outs
             ]
 
-        # Check the more-specific subclass first: all RecordArrays
-        # (since ``RecordArray`` is itself a ``Record`` subclass, the
-        # generic Record branch below would otherwise claim them and
-        # collapse the inner batch axis).
+        # A batch per row stacks into one batch with the sweep in front of the
+        # rows' own levels. Checked before the Record branch below, which would
+        # otherwise claim a RecordArray (a Record subclass) and collapse its
+        # inner batch axis.
+        if outs and any(isinstance(o, RecordBatch) for o in outs):
+            # A batch row is all-or-nothing. Falling through on a mixture, or on
+            # rows that disagree, reaches the generic handlers — which would take a
+            # single-field numeric batch for an array, read its inner batch axis as
+            # an event axis, and discard the level names with it. There is no
+            # aggregate to build from rows that do not agree on what they hold, so
+            # this says so where the disagreement is visible.
+            if not all(isinstance(o, RecordBatch) for o in outs):
+                kinds = sorted({type(o).__name__ for o in outs})
+                raise TypeError(
+                    f"{field_name}: some rows returned a batch of records and some did not "
+                    f"({', '.join(kinds)}). A swept body returns one kind for every row, since "
+                    f"the aggregate has one schema; return a batch from every row or from none"
+                )
+            first = outs[0]
+            # Every row must agree on what it holds and on which axes hold it.
+            # Matching the shape alone would take the first row's schema and level
+            # names for all of them, dropping a field the others have and
+            # misnaming their axes — a batch whose spec is a false statement about
+            # its own columns.
+            for other in outs[1:]:
+                if (
+                    other.element_spec == first.element_spec
+                    and other.batch_shape == first.batch_shape
+                    and other.level_names == first.level_names
+                    and other.axis_groups == first.axis_groups
+                ):
+                    continue
+                raise ValueError(
+                    f"{field_name}: the rows returned batches that disagree — "
+                    f"{first.level_names} over {first.batch_shape} against "
+                    f"{other.level_names} over {other.batch_shape}. Rows stack into one batch, "
+                    f"which states one element spec and one multiplicity for all of them, so "
+                    f"every row must return the same schema on the same levels"
+                )
+            # Columns are leaf-keyed, so a nested element needs no special
+            # case — and they are read raw: a field that is not an array
+            # presents as its own object batch, and what stacks is the
+            # column, through numpy so the objects are taken as they are.
+            columns = {}
+            for path in first.event_template:
+                cols = [o._raw_column(path) for o in outs]
+                if any(_is_object_array(c) for c in cols):
+                    stacked = np.stack(cols, axis=0)
+                else:
+                    stacked = jnp.stack(cols, axis=0)
+                columns[path] = stacked.reshape(batch_shape + stacked.shape[1:])
+            return _batch_class_for(first.element_spec)(
+                columns,
+                (*level_names, *first.level_names),
+                element_spec=first.element_spec,
+                axis_groups=(*sweep_groups, *first.axis_groups),
+                name=name or field_name,
+                name_is_auto=True,
+            )
+
         if outs and all(isinstance(o, RecordArray) for o in outs):
             first = outs[0]
             if any(isinstance(c, EventTemplate) for c in first.template.children.values()):
@@ -651,7 +794,20 @@ def _make_stack(
                 reshaped = {
                     fname: arr.reshape(batch_shape + arr.shape[1:]) for fname, arr in fields.items()
                 }
-                return type(first)(
+                # The class follows the element template, not the row that
+                # happened to arrive first: a subclass with its own constructor —
+                # a ``Design``, built from marginals — is not something an
+                # aggregate over its rows can be rebuilt as.
+                # Imported locally because later branches of this function do,
+                # which makes the name local to it throughout.
+                from ._record_array import NumericRecordArray
+
+                aggregate = (
+                    NumericRecordArray
+                    if isinstance(first.template, NumericEventTemplate)
+                    else RecordArray
+                )
+                return aggregate(
                     reshaped,
                     batch_shape=batch_shape + first.batch_shape,
                     template=first.template,
@@ -921,6 +1077,18 @@ def _row_count(component: Any) -> int:
     return component.shape[0] if hasattr(component, "shape") else len(component)
 
 
+def _gather_column(column: Any, indices: Array) -> Any:
+    """One column's rows at *indices*, keeping the column's own kind.
+
+    A numeric column gathers as an array. An object column holds one Python value
+    per row and gathers through numpy, which takes the positions without trying to
+    make an array of the values themselves.
+    """
+    if _is_object_array(column):
+        return column[np.asarray(indices)]
+    return column[indices]
+
+
 def _take_rows(component: Any, indices: Array) -> Any:
     """Gather the rows *indices* of one batched component, keeping its container.
 
@@ -938,7 +1106,10 @@ def _take_rows(component: Any, indices: Array) -> Any:
         # that one size rewritten; which level holds the axis is unchanged.
         leading, *rest = component.axis_groups
         return type(component)(
-            {path: component[path][indices] for path in component.event_template},
+            {
+                path: _gather_column(component._raw_column(path), indices)
+                for path in component.event_template
+            },
             component.level_names,
             element_spec=component.element_spec,
             axis_groups=((indices.shape[0], *leading[1:]), *rest),

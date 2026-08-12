@@ -19,6 +19,7 @@ from probpipe import (
     sample,
     unnormalized_log_prob,
 )
+from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import Function
 
@@ -115,7 +116,7 @@ class TestSampling:
         )
         key = jax.random.PRNGKey(1)
         s = sample(joint, key=key, sample_shape=(10,))
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, RecordBatch)
         assert s["z"].shape == (10,)
         assert s["x"].shape == (10,)
 
@@ -137,7 +138,7 @@ class TestSampling:
             x=lambda z: Normal(loc=z, scale=0.5, name="x"),
         )
         s = sample(joint, sample_shape=(5,))
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, RecordBatch)
         assert s["z"].shape == (5,)
         assert s["x"].shape == (5,)
 
@@ -395,8 +396,8 @@ class TestConditionOn:
         cond2 = condition_on(cond1, z=jnp.array(0.0))
         assert cond2.fields == ("y",)
         s = sample(cond2, sample_shape=(5,))
-        assert isinstance(s, (Record, RecordArray))
-        assert set(s.fields) == {"y"}
+        assert isinstance(s, RecordBatch)
+        assert set(s.event_template) == {"y"}
         assert s["y"].shape == (5,)
 
     def test_raises_on_conditioning_all(self):

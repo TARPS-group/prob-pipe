@@ -22,7 +22,7 @@ from probpipe import (
     Normal,
     NumericEventTemplate,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     cov,
     expectation,
@@ -121,7 +121,7 @@ class TestSampling:
     def test_sample_batched_is_record_array(self, mvn4, split_template):
         rec = mvn4.as_record_distribution(template=split_template)
         draws = sample(rec, key=jax.random.PRNGKey(0), sample_shape=(5,))
-        assert isinstance(draws, NumericRecordArray)
+        assert isinstance(draws, NumericRecordBatch)
         assert draws.batch_shape == (5,)
         assert draws["intercept"].shape == (5,)
         assert draws["slope"].shape == (5, 3)
@@ -186,7 +186,7 @@ class TestLogProb:
         rec = mvn4.as_record_distribution(template=split_template)
         key = jax.random.PRNGKey(5)
         flat_xs = mvn4._sample(key, sample_shape=(10,))
-        rec_xs = NumericRecordArray.from_vector("nra", split_template, flat_xs)
+        rec_xs = NumericRecordBatch.from_vector("nra", split_template, flat_xs, level_names="draw")
         lp_rec = jnp.asarray(log_prob(rec, rec_xs))
         lp_flat = jnp.asarray(log_prob(mvn4, flat_xs))
         np.testing.assert_allclose(lp_rec, lp_flat, rtol=1e-5)

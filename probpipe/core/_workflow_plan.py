@@ -30,6 +30,13 @@ class ArrayBroadcastGroup:
     arg_refs: tuple[_workflow_call.WorkflowInputRef, ...]
     batch_shape: tuple[int, ...]
     size: int
+    # What the group's axes range over, for the aggregate to mint its levels
+    # under. A batched operand already says: its own level names are what an
+    # output must carry to align with it. An operand with no levels of its own is
+    # named for the argument it arrived as, which is a name from the call rather
+    # than one invented here.
+    level_names: tuple[str, ...]
+    axis_groups: tuple[tuple[int, ...], ...]
 
 
 @dataclass(frozen=True)
@@ -41,6 +48,8 @@ class BroadcastPlan:
     array_args: tuple[_workflow_call.WorkflowInputRef, ...]
     array_groups: tuple[ArrayBroadcastGroup, ...]
     sweep_batch_shape: tuple[int, ...]
+    sweep_level_names: tuple[str, ...]
+    sweep_axis_groups: tuple[tuple[int, ...], ...]
     n_sweep: int
 
 
@@ -72,6 +81,8 @@ def build_broadcast_plan(
 
     array_groups = group_array_args_by_parent(values=values, refs=array_args)
     sweep_batch_shape = tuple(axis for group in array_groups for axis in group.batch_shape)
+    sweep_level_names = tuple(n for group in array_groups for n in group.level_names)
+    sweep_axis_groups = tuple(g for group in array_groups for g in group.axis_groups)
     n_sweep = prod(sweep_batch_shape)
 
     return BroadcastPlan(
@@ -80,6 +91,8 @@ def build_broadcast_plan(
         array_args=tuple(array_args),
         array_groups=tuple(array_groups),
         sweep_batch_shape=sweep_batch_shape,
+        sweep_level_names=sweep_level_names,
+        sweep_axis_groups=sweep_axis_groups,
         n_sweep=n_sweep,
     )
 
@@ -142,6 +155,12 @@ def group_array_args_by_parent(
     for _root, arg_refs in group_by_alignment(values=values, refs=refs):
         first = _workflow_call.input_ref_value(values, arg_refs[0])
         batch_shape = tuple(first.batch_shape)
+        if isinstance(first, Batch):
+            level_names = tuple(first.level_names)
+            group_axes = tuple(first.axis_groups)
+        else:
+            level_names = (arg_refs[0].label,)
+            group_axes = (batch_shape,)
         for ref in arg_refs[1:]:
             other = _workflow_call.input_ref_value(values, ref)
             if isinstance(first, Batch):
@@ -168,6 +187,8 @@ def group_array_args_by_parent(
                 arg_refs=tuple(arg_refs),
                 batch_shape=batch_shape,
                 size=prod(batch_shape),
+                level_names=level_names,
+                axis_groups=group_axes,
             )
         )
     # A level name in two groups is one multiplicity read at two geometries:

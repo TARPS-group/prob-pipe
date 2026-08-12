@@ -18,7 +18,7 @@ lazy conversion contract, the flat-vector layout (``to_vector`` /
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from math import prod
 from typing import Any
 
@@ -482,9 +482,7 @@ class NumericRecord(Record):
 # ---------------------------------------------------------------------------
 
 
-def _value_treedef(
-    template: NumericEventTemplate, batch_shape: tuple[int, ...]
-) -> jax.tree_util.PyTreeDef:
+def _value_treedef(template: NumericEventTemplate) -> jax.tree_util.PyTreeDef:
     """PyTreeDef of the value :func:`_reconstruct_from_vector` builds.
 
     A throwaway ``NumericRecord`` / ``NumericRecordArray`` skeleton mirroring
@@ -501,11 +499,7 @@ def _value_treedef(
             if isinstance(spec, NumericEventTemplate):
                 fields[name] = _build(spec)
             else:
-                fields[name] = jnp.broadcast_to(numeric_fill, (*batch_shape, *spec.shape))
-        if batch_shape:
-            from ._record_array import NumericRecordArray
-
-            return NumericRecordArray(fields, batch_shape=batch_shape, template=tpl)
+                fields[name] = jnp.broadcast_to(numeric_fill, spec.shape)
         # A template carries no name; the caller renames the reconstructed
         # value. Skip leaf validation: the placeholder fill is float32 and the
         # template may pin another dtype (int32 / bool) — this skeleton exists
@@ -519,16 +513,21 @@ def _value_treedef(
 
 
 def _reconstruct_from_vector(
-    name: str, template: NumericEventTemplate, vec: Array, *, name_is_auto: bool
+    name: str,
+    template: NumericEventTemplate,
+    vec: Array,
+    *,
+    name_is_auto: bool,
+    level_names: str | Iterable[str] = "draw",
 ) -> NumericRecord | Any:
     """Reconstruct a numeric value from its flat vector, under *name*.
 
     Splits *vec* along its trailing axis into *template*'s leaves (canonical
     leaf order), reshapes each to its event shape, and rebuilds the structured
-    value: a single :class:`NumericRecord` when *vec* is 1-D, a batched
-    :class:`~probpipe.NumericRecordArray` (``batch_shape == vec.shape[:-1]``)
-    otherwise. This is the value-level machinery behind
-    :meth:`NumericRecord.from_vector` / :meth:`NumericRecordArray.from_vector`;
+    value: a single :class:`NumericRecord` when *vec* is 1-D, a
+    :class:`~probpipe.NumericRecordBatch` over one level of
+    ``vec.shape[:-1]`` otherwise. This is the value-level machinery behind
+    :meth:`NumericRecord.from_vector` / :meth:`NumericRecordBatch.from_vector`;
     the template supplies only the leaf layout (shapes, order), never
     constructing the value itself.
 
@@ -573,7 +572,23 @@ def _reconstruct_from_vector(
                 leaves.append(leaf)
 
     _collect(template)
-    value = jax.tree_util.tree_unflatten(_value_treedef(template, batch_shape), leaves)
+    if batch_shape:
+        # A batch reconstructs itself: its storage is one array per field, which
+        # the flat blocks already are, so there is no tree to unflatten.
+        from ._numeric_record_batch import NumericRecordBatch
+
+        # One level over however many axes the flat vector carried: a
+        # ``sample_shape`` of several axes is one multiplicity, named once, which
+        # is what the operation model says a draw level is.
+        return NumericRecordBatch(
+            dict(zip(template.keys(), leaves, strict=True)),
+            level_names,
+            element_spec=template,
+            axis_groups=(batch_shape,),
+            name=name,
+            name_is_auto=name_is_auto,
+        )
+    value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
     object.__setattr__(value, "_name", name)
     object.__setattr__(value, "_name_is_auto", name_is_auto)
     return value

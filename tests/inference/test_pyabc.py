@@ -201,7 +201,7 @@ class TestPyABCWeightsAndDraws:
             random_seed=0,
         )
         draws = post.draws()
-        assert "theta" in draws.fields
+        assert "theta" in draws.event_template.fields
         assert np.asarray(draws["theta"]).shape == (post.num_atoms,)
 
     def test_summary_fn_applied(self):
