@@ -16,8 +16,11 @@ import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
+    ArraySpec,
+    EventTemplate,
     GLMLikelihood,
     MultivariateNormal,
+    NumericRecordBatch,
     Record,
     random_unnormalized_log_prob,
 )
@@ -474,3 +477,16 @@ class TestJITTraceability:
         # Re-call to confirm no retracing failure
         grad2 = step(theta + 0.01)
         assert grad2.shape == (2,)
+
+
+def test_a_multi_axis_batch_is_refused_at_construction(prior, likelihood):
+    """Rows are one axis. A grid's trailing axes have no per-datum reading, and
+    the check belongs where the distribution is built — otherwise ``dataset_size``
+    reports the leading axis and the first draw is what raises."""
+    grid = NumericRecordBatch(
+        {"x": jnp.ones((4, 3))},
+        ("n", "k"),
+        element_spec=EventTemplate(x=ArraySpec(shape=())),
+    )
+    with pytest.raises(ValueError, match="rows are one axis"):
+        MinibatchedDistribution(prior, likelihood, grid, batch_size=2)

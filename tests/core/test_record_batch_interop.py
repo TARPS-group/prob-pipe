@@ -952,3 +952,35 @@ class TestBatchValuedRowAggregation:
         )
         assert type(out) is NumericRecordBatch
         assert out.batch_shape == (3, 2)
+
+
+class TestDeclaredOpaqueOutputAcrossDispatches:
+    """A field the declaration calls opaque holds one value per row, whatever
+    those values look like — on every dispatch.
+
+    Stacking them numerically instead would turn each row's own axes into batch
+    axes the levels never named, and the batch refuses its own output. The
+    sequential and JAX paths build the columns by different routes, so the
+    equivalence is asserted rather than assumed.
+    """
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "jax", "auto"])
+    def test_an_opaque_field_of_arrays_is_one_object_per_row(self, dispatch):
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", i=jnp.asarray(1)), NumericRecord("row", i=jnp.asarray(2))],
+            level_name="row",
+        )
+
+        @function(output_template=EventTemplate(y=None), dispatch=dispatch)
+        def make_vector(row):
+            return {"y": jnp.array([row["i"], row["i"] + 1])}
+
+        result = make_vector(row=rows)
+
+        assert result.batch_shape == (2,)
+        assert result.event_template == EventTemplate(y=None)
+        column = result._raw_column("y")
+        assert column.dtype == object
+        assert column.shape == (2,)
+        assert [int(v) for v in result[0]["y"]] == [1, 2]
+        assert [int(v) for v in result[1]["y"]] == [2, 3]

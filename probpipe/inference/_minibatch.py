@@ -239,7 +239,9 @@ class MinibatchedDistribution(
         ``likelihood`` is not
         :class:`~probpipe.ConditionallyIndependentLikelihood`.
     ValueError
-        If ``batch_size`` is not in ``[1, len(data)]``.
+        If ``batch_size`` is not in ``[1, len(data)]``; or if ``data`` is a
+        batch of records whose rows span more than one axis, since what its
+        trailing axes mean per datum is not defined.
     """
 
     _sampling_cost: str = "low"

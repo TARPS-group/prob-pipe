@@ -545,7 +545,7 @@ def _make_marginal(
         if output_samples and all(isinstance(r, Record) for r in output_samples):
             try:
                 if event_template is not None:
-                    ra = _stack_declared_columns(
+                    aggregate = _stack_declared_columns(
                         output_samples,
                         batch_shape=(len(output_samples),),
                         axis_groups=((len(output_samples),),),
@@ -554,9 +554,9 @@ def _make_marginal(
                         name=name or "marginal",
                     )
                 else:
-                    ra = RecordBatch.stack(output_samples, level_name=DRAW_LEVEL)
+                    aggregate = RecordBatch.stack(output_samples, level_name=DRAW_LEVEL)
                 return _RecordMarginal(
-                    ra,
+                    aggregate,
                     weights,
                     name=name,
                     event_template=event_template,

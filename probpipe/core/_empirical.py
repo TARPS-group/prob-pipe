@@ -279,6 +279,9 @@ class EmpiricalDistribution[T](
         exclusive with *log_weights*. Uniform when neither is given.
     log_weights : array-like, :class:`~probpipe.Weights`, or None
         Log-unnormalised weights. Mutually exclusive with *weights*.
+    name : str, optional
+        Distribution name. Mandatory when *samples* is a bare numeric
+        array.
 
     Raises
     ------
@@ -286,9 +289,6 @@ class EmpiricalDistribution[T](
         If *samples* is a batch of records declaring a field that is not
         numeric. The record-valued empirical carries numeric shape semantics,
         which a callable or opaque field has none of.
-    name : str, optional
-        Distribution name. Mandatory when *samples* is a bare numeric
-        array.
     """
 
     def __new__(cls, samples=None, *args, **kwargs):
@@ -452,10 +452,13 @@ class RecordEmpiricalDistribution(
 
     Parameters
     ----------
-    samples : Record | array-like
-        Sample data. A Record's fields each stack along axis 0; a
-        numeric array auto-wraps as a single-field record keyed by
-        ``name``.
+    samples : Record | RecordBatch | array-like
+        Sample data. A Record's fields each stack along axis 0; a numeric array
+        auto-wraps as a single-field record keyed by ``name``. A **numeric**
+        batch of records contributes *every* batch axis as atoms — a ``(2, 3)``
+        batch is six of them, flattened in the row-major order the batch's own
+        indexing reads — and keeps the element declaration it was built with
+        rather than one re-read off the rows.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalised internally). Mutually
         exclusive with *log_weights*.
