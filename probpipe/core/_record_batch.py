@@ -1163,9 +1163,20 @@ def _unflatten_with(cls: type[RecordBatch]):
                 f"over its columns rather than over the batch"
             )
         if rank == 0:
+            # No batch axis left means the columns *are* one element's values. A
+            # non-array column is still an object array holding it, though, and
+            # handing that to the record would declare a callable field whose
+            # value is a zero-dimensional ndarray — so the single entry comes out
+            # of its storage.
+            element = {
+                path: column.item()
+                if _is_object_array(column) and getattr(column, "ndim", None) == 0
+                else column
+                for path, column in columns.items()
+            }
             return Record(
                 name,
-                columns,
+                element,
                 event_template=element_spec,
                 name_is_auto=name_is_auto,
                 _validate_leaves=False,
@@ -1218,6 +1229,27 @@ def _refuse_a_retyped_element(
         shape = _column_shape(column)
         field = template[path]
         if not isinstance(field, ArraySpec):
+            # A field with no stacked form is checked the way the constructor
+            # checks it: entry by entry against its own spec. A shape-preserving
+            # transform can replace a column of callables with integers and leave
+            # the rank untouched, so without this the rebuilt batch keeps
+            # declaring ``FunctionSpec`` over values that are not callable.
+            if not _is_object_array(column):
+                raise TypeError(
+                    f"a transform left the column {path!r} as a "
+                    f"{type(column).__name__} where its field declares "
+                    f"{type(field).__name__}, whose column holds one entry per element as an "
+                    f"object array"
+                )
+            for index, entry in np.ndenumerate(column):
+                if not field.is_valid(entry):
+                    position = index[0] if len(index) == 1 else index
+                    raise TypeError(
+                        f"a transform left the entry at {position} of the column {path!r} a "
+                        f"{type(entry).__name__}, which its field's {type(field).__name__} does "
+                        f"not admit; a transform may keep or remove batch axes, never retype the "
+                        f"element"
+                    )
             continue
         _check_array_column(column, field, path=path, kind=kind)
         if shape is None or not all(isinstance(s, int) for s in field.shape):

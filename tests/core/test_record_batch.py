@@ -34,6 +34,7 @@ from probpipe import (
 from probpipe.core import _array_backend
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core.event_template import OpaqueSpec
 
 
 @pytest.fixture
@@ -1474,6 +1475,39 @@ class TestPyTreeRebuildContract:
         with pytest.raises(TypeError, match="does not admit"):
             jax.tree.map(lambda column: column.astype(jnp.float32), batch)
 
+    def test_retyping_a_callable_column_is_refused(self):
+        """A shape-preserving transform can swap what a column holds without
+        touching its rank, so a column of callables can come back as integers
+        while the batch still declares ``FunctionSpec``. The element's kind is
+        the element type's, not the transform's."""
+        column = _object_column([lambda x: x, lambda x: 2 * x])
+        batch = RecordBatch({"f": column}, "row", element_spec=EventTemplate(f=FunctionSpec()))
+        with pytest.raises(TypeError, match="does not admit"):
+            jax.tree.map(lambda _: np.array([1, 2], dtype=object), batch)
+
+    def test_retyping_an_opaque_column_is_refused(self):
+        """The same for a field whose spec narrows what an entry may be."""
+        from probpipe.core.event_template import OpaqueSpec
+
+        column = _object_column(["north", "south"])
+        batch = RecordBatch(
+            {"site": column}, "row", element_spec=EventTemplate(site=OpaqueSpec(meta="units"))
+        )
+        replacement = np.empty(2, dtype=object)
+        replacement[0], replacement[1] = {"a": 1}, {"b": 2}
+        # A mapping is the one thing an opaque field refuses, since it would slip
+        # past the per-entry check the object batches make.
+        with pytest.raises(TypeError, match=r"does not admit|transform left"):
+            jax.tree.map(lambda _: replacement, batch)
+
+    def test_an_object_column_replaced_by_an_array_is_refused(self):
+        """A non-array field's column holds one entry per element; a dense array
+        would make its *entries* array elements rather than the values."""
+        column = _object_column([lambda x: x, lambda x: 2 * x])
+        batch = RecordBatch({"f": column}, "row", element_spec=EventTemplate(f=FunctionSpec()))
+        with pytest.raises(TypeError, match="object array"):
+            jax.tree.map(lambda _: jnp.zeros(2), batch)
+
     def test_a_resized_event_axis_is_refused(self):
         """The batch axes are the transform's; the element's own are the element
         type's."""
@@ -1507,3 +1541,27 @@ class TestPyTreeRebuildContract:
         transposed = jax.tree.map(lambda column: column.T, batch)
         assert transposed.level_names == ("chain", "draw")
         assert transposed.batch_shape == (2, 2)
+
+
+class TestRankZeroReconstruction:
+    """Removing every batch axis yields one element, so what the columns hold has
+    to come out of its storage."""
+
+    @pytest.mark.parametrize(
+        ("spec", "value"),
+        [
+            pytest.param(FunctionSpec(), (lambda x: x), id="function"),
+            pytest.param(OpaqueSpec(meta="units"), "north", id="opaque"),
+        ],
+    )
+    def test_a_rank_zero_object_column_yields_the_value_not_its_array(self, spec, value):
+        """A non-array column is an object array even when it holds one entry, so
+        handing it straight to the record would declare the field's kind over a
+        zero-dimensional ndarray — a value its own spec refuses."""
+        from probpipe.core.event_template import OpaqueSpec as _Opaque  # noqa: F401
+
+        column = _object_column([value])
+        batch = RecordBatch({"f": column}, "row", element_spec=EventTemplate(f=spec))
+        element = jax.tree.map(lambda c: c.reshape(()), batch)
+        assert isinstance(element, Record)
+        assert spec.is_valid(element["f"])
