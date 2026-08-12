@@ -19,7 +19,7 @@ from probpipe import (
     Function,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     Provenance,
     ProvenanceMode,
     ReplayCompatibilityError,
@@ -86,8 +86,11 @@ def _replay(result):
     return result.provenance.controls["replay"]
 
 
-def _record_array():
-    return NumericRecordArray.stack([NumericRecord("row", x=float(value)) for value in range(2)])
+def _record_batch():
+    return NumericRecordBatch.stack(
+        [NumericRecord("row", x=float(value)) for value in range(2)],
+        level_name="draw",
+    )
 
 
 class TestWorkflowRecipeRecording:
@@ -274,7 +277,7 @@ class TestWorkflowRecipeRecording:
         workflow = Function(func=_add, n_broadcast_samples=5, dispatch="sequential")
         with workflow_run(seed=12):
             result = workflow(
-                row=_record_array(),
+                row=_record_batch(),
                 noise=Normal(loc=0.0, scale=1.0, name="noise"),
             )
 

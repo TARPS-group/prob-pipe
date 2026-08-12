@@ -526,37 +526,28 @@ def _stack_rows(rows: list[Any], *, arg_name: str) -> Any:
 
     ``jnp.stack`` covers array-valued rows. A record-valued row is not an array
     — a ``Record`` has fields, not a shape — so those stack through
-    ``RecordArray.stack``, giving a batch whose ``batch_shape`` is ``(n,)`` and
-    whose fields are the per-row leaves.
+    ``RecordBatch.stack``, giving a batch of one ``draw`` level over the rows.
+    A nested record needs no special case: a column is keyed by leaf path, so
+    nesting costs the stacking nothing.
     """
-    from ._record_array import RecordArray
+    from ._broadcast_distributions import DRAW_LEVEL
+    from ._record_batch import RecordBatch
     from .record import Record
 
     if rows and isinstance(rows[0], Record):
-        try:
-            return RecordArray.stack(rows)
-        except TypeError:
-            # ``RecordArray`` is child-keyed, while a sampled nested Record is
-            # leaf-keyed. Preserve that structure by stacking its pytree leaves.
-            # Other stack failures must retain their original diagnosis.
-            if tuple(rows[0].keys()) == rows[0].fields:
-                raise
-            try:
-                return jax.tree.map(lambda *leaves: jnp.stack(leaves), *rows)
-            except (TypeError, ValueError) as nested_error:
-                raise TypeError(
-                    f"lifting {arg_name!r} could not batch its nested record rows"
-                ) from nested_error
+        return RecordBatch.stack(rows, level_name=DRAW_LEVEL)
     return jnp.stack(rows)
 
 
 def _index_sample(s: Any, i: int) -> Any:
     """Index row ``i`` of a per-argument sample batch."""
+    from ._record_batch import RecordBatch
     from .record import Record
 
-    if isinstance(s, Record):
+    if isinstance(s, (Record, RecordBatch)):
         # Index each leaf field's batch row; rebuild by path key so a nested
-        # sample is reconstructed with its structure intact.
+        # sample is reconstructed with its structure intact. A row of a batch is
+        # a single record, so the rebuild is the same either way.
         leaf_paths = tuple(s.event_template.keys())
         if len(leaf_paths) == 1:
             return s[leaf_paths[0]][i]

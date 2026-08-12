@@ -15,7 +15,8 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, MultivariateNormal, NumericEventTemplate, NumericRecordArray
+from probpipe import EventTemplate, MultivariateNormal, NumericEventTemplate
+from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.diagnostics._arviz_bridge import extract_draws
 from probpipe.diagnostics._datatree_store import to_named_posterior_dataset
 from probpipe.diagnostics._loo import _add_log_likelihood
@@ -115,7 +116,9 @@ class _RecordDrawsPosterior:
         return self._n_draws
 
     def draws(self, *, chain):
-        return NumericRecordArray.from_vector("nra", self._template, self._chains[chain])
+        return NumericRecordBatch.from_vector(
+            "nrb", self._template, self._chains[chain], level_names="draw"
+        )
 
 
 class _LinearModel:

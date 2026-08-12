@@ -23,7 +23,8 @@ from probpipe import (
     variance,
     workflow_run,
 )
-from probpipe.core._record_array import RecordArray
+from probpipe.core._numeric_record_batch import NumericRecordBatch
+from probpipe.core._record_batch import RecordBatch
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import Function
 from probpipe.core.record import Record
@@ -108,7 +109,7 @@ class TestProductDistribution:
     def test_sample_returns_values(self, joint_xy):
         key = jax.random.PRNGKey(0)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         assert set(s.fields) == {"x", "y"}
 
     def test_sample_shapes_scalar(self, joint_xy):
@@ -233,7 +234,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_scalar_components(self, joint_xy):
         key = jax.random.PRNGKey(60)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(
@@ -247,7 +248,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_mixed_components(self, joint_xz):
         key = jax.random.PRNGKey(61)
         s = sample(joint_xz, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         flat = joint_xz.flatten_value(s)
         assert flat.shape == (4,)
         recovered = joint_xz.unflatten_value(
@@ -261,7 +262,7 @@ class TestFlattenUnflatten:
     def test_roundtrip_no_batch_dim(self, joint_xy):
         key = jax.random.PRNGKey(62)
         s = sample(joint_xy, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         flat = joint_xy.flatten_value(s)
         assert flat.shape == (2,)
         recovered = joint_xy.unflatten_value(
@@ -279,9 +280,9 @@ class TestFlattenUnflatten:
 
 
 class TestNestedSampleFlatten:
-    """A batched draw from a nested ProductDistribution is a canonical, nested
-    NumericRecordArray that flattens and round-trips; the unbatched draw stays
-    a plain Record."""
+    """A batched draw from a nested ProductDistribution is one flat
+    NumericRecordBatch over leaf paths that flattens and round-trips; the
+    unbatched draw stays a plain Record."""
 
     @pytest.fixture
     def nested(self):
@@ -294,26 +295,22 @@ class TestNestedSampleFlatten:
             m=Normal(loc=-1.0, scale=1.0, name="m"),
         )
 
-    def test_batched_nested_field_is_record_array(self, nested):
-        from probpipe.core._record_array import NumericRecordArray
-
+    def test_batched_nested_field_is_a_sub_batch(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(0), sample_shape=(6,))
-        assert isinstance(s, NumericRecordArray)
-        assert isinstance(s.at_path("outer"), NumericRecordArray)  # not a plain Record
+        assert isinstance(s, NumericRecordBatch)
+        assert isinstance(s["outer"], NumericRecordBatch)  # the sub-batch, not a plain Record
 
     def test_unbatched_nested_field_stays_record(self, nested):
         s = sample(nested, key=jax.random.PRNGKey(0))
-        assert isinstance(s, Record) and not isinstance(s, RecordArray)
+        assert isinstance(s, Record) and not isinstance(s, RecordBatch)
         assert isinstance(s.at_path("outer"), Record) and not isinstance(
-            s.at_path("outer"), RecordArray
+            s.at_path("outer"), RecordBatch
         )
 
     def test_batched_depth_two_nested_sampling(self):
         # A depth-2 nesting exercises the interior-subtree lookup inside
         # _sample_nested (template.children, since template [] is leaf-only);
         # only leaf components sit below depth 1 in the fixtures above.
-        from probpipe.core._record_array import NumericRecordArray
-
         deep = ProductDistribution(
             name="deep",
             grp={
@@ -323,13 +320,11 @@ class TestNestedSampleFlatten:
             noise=Normal(loc=0.0, scale=1.0, name="noise"),
         )
         s = sample(deep, key=jax.random.PRNGKey(0), sample_shape=(4,))
-        assert isinstance(s, NumericRecordArray)
-        assert tuple(s.template.keys()) == ("grp/sub/force", "grp/mass", "noise")
+        assert isinstance(s, NumericRecordBatch)
+        assert tuple(s.event_template.keys()) == ("grp/sub/force", "grp/mass", "noise")
         assert s["grp/sub/force"].shape == (4,)
 
     def test_batched_nested_flatten_roundtrip(self, nested):
-        from probpipe.core._record_array import NumericRecordArray
-
         s = sample(nested, key=jax.random.PRNGKey(1), sample_shape=(6,))
         leaves = list(nested.event_template.leaf_shapes)
         flat = s.to_vector()
@@ -341,16 +336,15 @@ class TestNestedSampleFlatten:
         for i, leaf in enumerate(leaves):
             np.testing.assert_allclose(flat[:, i], s[leaf], atol=1e-6)
         # Secondary: the columns round-trip back to the same leaves via unflatten.
-        rec = NumericRecordArray.from_vector("nra", nested.event_template, flat)
+        rec = NumericRecordBatch.from_vector("nrb", nested.event_template, flat, level_names="draw")
         for leaf in leaves:
             np.testing.assert_allclose(rec[leaf], s[leaf], atol=1e-6)
 
-    def test_batched_nested_non_numeric_field_is_plain_record_array(self):
+    def test_batched_nested_non_numeric_field_is_a_plain_batch(self):
         # A non-numeric joint (an object-dtype JointEmpirical leaf) makes the
-        # batched nested field a plain RecordArray, not a NumericRecordArray
-        # (the else branch of _sample_nested); such a field is not flattenable.
+        # batched draw a plain RecordBatch, not a NumericRecordBatch; such a
+        # field is not flattenable.
         from probpipe import JointEmpirical
-        from probpipe.core._record_array import NumericRecordArray, RecordArray
 
         je = JointEmpirical(
             labels=np.array(["a", "b", "c"], dtype=object),
@@ -367,9 +361,9 @@ class TestNestedSampleFlatten:
         )
         assert not isinstance(joint, NumericRecordDistribution)
         s = sample(joint, key=jax.random.PRNGKey(0), sample_shape=(4,))
-        assert isinstance(s, RecordArray) and not isinstance(s, NumericRecordArray)
-        assert isinstance(s.at_path("outer"), RecordArray)
-        assert not isinstance(s.at_path("outer"), NumericRecordArray)
+        assert isinstance(s, RecordBatch) and not isinstance(s, NumericRecordBatch)
+        assert isinstance(s["outer"], RecordBatch)
+        assert not isinstance(s["outer"], NumericRecordBatch)
 
 
 # ===========================================================================
@@ -450,8 +444,9 @@ class TestConditionOn:
         cond = condition_on(joint_xy, x=jnp.array(2.0))
         key = jax.random.PRNGKey(20)
         s = sample(cond, key=key, sample_shape=(10,))
-        assert "x" not in s
-        assert "y" in s
+        # A batch is a collection, so its fields are read from the schema.
+        assert "x" not in s.event_template
+        assert "y" in s.event_template
 
     def test_unconditioned_component_still_varies(self, joint_xy):
         cond = condition_on(joint_xy, x=jnp.array(0.0))
@@ -863,7 +858,7 @@ class TestLogProbBatchValues:
         batch_lps = jnp.asarray(log_prob(joint_xy, samples))
 
         for i in range(10):
-            s_i = Record("r", {k: v[i] for k, v in samples.items()})
+            s_i = Record("r", {k: samples[k][i] for k in samples.event_template})
             expected = float(log_prob(normal_x, s_i["x"])) + float(log_prob(normal_y, s_i["y"]))
             np.testing.assert_allclose(float(batch_lps[i]), expected, atol=1e-5)
 
@@ -1093,7 +1088,7 @@ class TestNestedProductDistribution:
     def test_sample_returns_nested_values(self, nested_joint):
         key = jax.random.PRNGKey(1)
         s = sample(nested_joint, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         assert isinstance(s.at_path("physics"), Record)
         assert "force" in s.at_path("physics")
         assert "mass" in s.at_path("physics")
@@ -1160,7 +1155,7 @@ class TestNestedProductDistribution:
     def test_flatten_unflatten_roundtrip(self, nested_joint):
         key = jax.random.PRNGKey(20)
         s = sample(nested_joint, key=key)
-        assert isinstance(s, (Record, RecordArray))
+        assert isinstance(s, Record)
         flat = nested_joint.flatten_value(s)
         assert flat.shape == (3,)
         recovered = nested_joint.unflatten_value(
@@ -1236,12 +1231,11 @@ class TestNestedProductDistribution:
         cond = condition_on(nested_joint, physics={"force": jnp.array(1.0)})
         key = jax.random.PRNGKey(50)
         s = sample(cond, key=key, sample_shape=(5,))
-        assert isinstance(s, (Record, RecordArray))
-        assert "physics" in s
-        assert isinstance(s.at_path("physics"), Record)
-        assert "mass" in s.at_path("physics")
-        assert "force" not in s.at_path("physics")
-        assert "observation" in s
+        assert isinstance(s, RecordBatch)
+        assert isinstance(s["physics"], RecordBatch)
+        assert "physics/mass" in s.event_template
+        assert "physics/force" not in s.event_template
+        assert "observation" in s.event_template
         assert s["physics/mass"].shape == (5,)
         assert s["observation"].shape == (5,)
 
@@ -1402,8 +1396,8 @@ class TestNestedWithMVN:
     def test_sample_and_flatten(self, nested_mvn):
         key = jax.random.PRNGKey(50)
         s = sample(nested_mvn, key=key, sample_shape=(5,))
-        assert isinstance(s, (Record, RecordArray))
-        assert isinstance(s.at_path("group"), Record)
+        assert isinstance(s, RecordBatch)
+        assert isinstance(s["group"], RecordBatch)
         assert s["group/position"].shape == (5, 2)
         assert s["group/scale"].shape == (5,)
         assert s["label"].shape == (5,)

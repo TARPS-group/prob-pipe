@@ -231,9 +231,9 @@ class NumericRecordDistribution(RecordDistribution):
     - **Single-leaf** template → ``_sample(key, sample_shape)`` returns
       a raw ``jax.Array`` of shape ``sample_shape + event_shape``.
     - **Multi-leaf** template → ``_sample(key, sample_shape)`` returns a
-      :class:`~probpipe.NumericRecord` (or
-      :class:`~probpipe.NumericRecordArray` for a non-empty
-      ``sample_shape``) keyed by ``event_template.fields``.
+      :class:`~probpipe.NumericRecord` (or a
+      :class:`~probpipe.NumericRecordBatch` over one ``draw`` level for a
+      non-empty ``sample_shape``) keyed by ``event_template.fields``.
 
     The :attr:`treedef` property locks this invariant by deriving from
     ``event_template``.
@@ -526,17 +526,17 @@ class NumericRecordDistribution(RecordDistribution):
     def flatten_value(value, *, event_shape: tuple[int, ...] = ()) -> Array:
         """Flatten a sample to a flat trailing axis.
 
-        Accepts ``Record`` / ``NumericRecord`` / ``NumericRecordArray``
+        Accepts a ``Record``, a ``NumericRecord``, or a batch of either
         (which already carry their template) or a raw array. Raw-array
         inputs need ``event_shape`` to disambiguate batch axes from
         event axes; without it, the input gets a trailing singleton
         axis (matching the scalar-event default).
         """
         from ._numeric_record import NumericRecord
-        from ._record_array import NumericRecordArray
+        from ._numeric_record_batch import NumericRecordBatch
         from .record import Record
 
-        if isinstance(value, (NumericRecordArray, NumericRecord)):
+        if isinstance(value, (NumericRecordBatch, NumericRecord)):
             return value.to_vector()
         if isinstance(value, Record):
             return value.to_numeric().to_vector()
@@ -549,10 +549,10 @@ class NumericRecordDistribution(RecordDistribution):
 
     @staticmethod
     def unflatten_value(flat, *, template):
-        """Unflatten a flat trailing axis back to event dims, Record, or NumericRecordArray.
+        """Unflatten a flat trailing axis back to event dims, a record, or a batch.
 
         Multi-field templates → ``NumericRecord`` (single sample, i.e.
-        ``flat.ndim == 1``) or ``NumericRecordArray`` (batched). Single-
+        ``flat.ndim == 1``) or ``NumericRecordBatch`` (batched). Single-
         field templates → raw array reshaped to ``(*batch, *event_shape)``
         for ``_log_prob`` compatibility (preserves the original "single-
         leaf returns raw array" contract).
@@ -562,7 +562,7 @@ class NumericRecordDistribution(RecordDistribution):
             from ._numeric_record import _reconstruct_from_vector
 
             # ``_reconstruct_from_vector`` selects single (NumericRecord) vs
-            # batched (NumericRecordArray) from the rank of ``flat``.
+            # batched (NumericRecordBatch) from the rank of ``flat``.
             return _reconstruct_from_vector("value", template, flat, name_is_auto=True)
         # Single-field path
         if template is None or not template.fields:
@@ -813,7 +813,7 @@ class FlatNumericRecordDistribution(NumericRecordDistribution):
 
         Inverse of :meth:`~NumericRecordDistribution.as_flat_distribution`.
         Samples come back as :class:`NumericRecord` /
-        :class:`NumericRecordArray` keyed by ``template.fields``.
+        :class:`NumericRecordBatch` keyed by ``template.fields``.
 
         Parameters
         ----------
@@ -1032,7 +1032,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
     # Imports hoisted once for all closures below (and to avoid
     # circular-import risk at module load time).
     from ._numeric_record import NumericRecord
-    from ._record_array import NumericRecordArray
+    from ._numeric_record_batch import NumericRecordBatch
 
     protocols: set[str] = set()
     if isinstance(base, SupportsSampling):
@@ -1063,7 +1063,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             from ._numeric_record import _reconstruct_from_vector
 
             # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
-            # is 1-D) vs batched (NumericRecordArray, batch_shape ==
+            # is 1-D) vs batched (NumericRecordBatch, batch_shape ==
             # sample_shape) from the rank of ``flat``.
             return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
 
@@ -1073,7 +1073,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         extra_bases.append(SupportsLogProb)
 
         def _log_prob(self, x) -> Array:
-            if isinstance(x, (NumericRecord, NumericRecordArray)):
+            if isinstance(x, (NumericRecord, NumericRecordBatch)):
                 flat = x.to_vector()
             else:
                 flat = jnp.asarray(x)
@@ -1136,7 +1136,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             return_dist: bool | None = None,
         ) -> Any:
             # ``f`` operates on a Record-shaped sample. We can't pass the
-            # batched ``NumericRecordArray`` returned by ``self._sample``
+            # batched ``NumericRecordBatch`` returned by ``self._sample``
             # through ``jax.vmap(f)`` directly — vmap strips the leading
             # axis from each leaf while preserving ``batch_shape`` aux,
             # producing an invariant violation. Instead, sample the base

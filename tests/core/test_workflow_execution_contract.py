@@ -17,7 +17,7 @@ from probpipe import (
     Function,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     TransformedDistribution,
     sample,
     workflow_run,
@@ -42,8 +42,11 @@ def _plan(values, n_broadcast_samples=8):
     return build_stochastic_plan(values, broadcast, n_broadcast_samples)
 
 
-def _record_array():
-    return NumericRecordArray.stack([NumericRecord("row", x=float(value)) for value in range(4)])
+def _record_batch():
+    return NumericRecordBatch.stack(
+        [NumericRecord("row", x=float(value)) for value in range(4)],
+        level_name="draw",
+    )
 
 
 def _add_automatic_noise(row):
@@ -432,9 +435,9 @@ class TestJaxWorkflowGuards:
         rowwise = Function(func=_add_automatic_noise, dispatch="sequential")
 
         with workflow_run(seed=19):
-            auto_result = auto(row=_record_array())
+            auto_result = auto(row=_record_batch())
         with workflow_run(seed=19):
-            rowwise_result = rowwise(row=_record_array())
+            rowwise_result = rowwise(row=_record_batch())
 
         np.testing.assert_array_equal(auto_result["_add_automatic_noise"], rowwise_result)
 
@@ -446,15 +449,15 @@ class TestJaxWorkflowGuards:
             workflow_run(),
             pytest.raises(TypeError, match="workflow-owned randomness"),
         ):
-            workflow(row=_record_array())
+            workflow(row=_record_batch())
 
         urandom.assert_not_called()
 
     def test_caller_keyed_effect_can_trace_and_execute_with_jax(self):
         workflow = Function(func=_add_caller_keyed_noise, dispatch="jax")
 
-        first = workflow(row=_record_array())
-        second = workflow(row=_record_array())
+        first = workflow(row=_record_batch())
+        second = workflow(row=_record_batch())
 
         np.testing.assert_array_equal(first, second)
 

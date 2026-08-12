@@ -13,7 +13,7 @@ import numpy as np
 
 from ._array_backend import _numpy_dtype_of
 from ._distribution_base import Distribution
-from ._record_array import RecordArray
+from ._record_batch import RecordBatch
 from .constraints import _supports_compatible
 from .event_template import (
     ArraySpec,
@@ -267,10 +267,11 @@ def _validate_function_output(
         context=f"Function {function_name!r} output_template",
     )
 
-    # Record and Distribution are schema-carrying result containers. Other
+    # A record, a batch of records, and a distribution are the schema-carrying
+    # result containers. Other
     # tracked terms remain leaf values under the default event-result contract
     # and are validated by their ValueSpec (for example, FunctionSpec).
-    if isinstance(result, (Record, Distribution)):
+    if isinstance(result, (Record, RecordBatch, Distribution)):
         try:
             actual_template = cast(Any, result).event_template
         except (AttributeError, TypeError) as error:
@@ -299,8 +300,8 @@ def _validate_function_output(
             declared_template=concrete,
             actual_template=actual_template,
         )
-        if isinstance(result, RecordArray):
-            _validate_function_record_array_output_values(
+        if isinstance(result, RecordBatch):
+            _validate_batched_function_output_values(
                 function_name=function_name,
                 template=concrete,
                 value=result,
@@ -353,11 +354,11 @@ def _validate_function_output(
     return concrete
 
 
-def _validate_function_record_array_output_values(
+def _validate_batched_function_output_values(
     *,
     function_name: str,
     template: EventTemplate,
-    value: RecordArray,
+    value: RecordBatch,
 ) -> None:
     """Validate batched numeric leaves against their per-element specs."""
     batch_shape = value.batch_shape
@@ -423,6 +424,22 @@ def _validate_function_output_supports(
     value: Any,
 ) -> None:
     """Validate declared ArraySpec supports at an eager execution boundary."""
+    if isinstance(value, RecordBatch):
+        # A batch is a collection, not a named tree: its columns are keyed by leaf
+        # path and each carries the batch axes in front of its event shape, which a
+        # support check reads elementwise. Walking it as a tree would find no
+        # children and take the single-leaf path, which asks a multi-field batch to
+        # convert to one array.
+        for path, spec in template.items():
+            assert isinstance(spec, ValueSpec)
+            _validate_function_output_leaf_support(
+                function_name=function_name,
+                path=path,
+                spec=spec,
+                value=value._raw_column(path),
+            )
+        return
+
     children = getattr(value, "children", None)
     if not isinstance(children, Mapping):
         children = value if isinstance(value, Mapping) else None
@@ -485,11 +502,11 @@ def _wrap_declared_function_output(
 ) -> Record | Distribution:
     """Wrap a validated event result under its authoritative template.
 
-    Schema-carrying Record and Distribution results retain their structure.
-    Other tracked terms are event leaves until #369 supplies an explicit
-    term-result plan.
+    Schema-carrying results — a record, a batch of records, a distribution —
+    retain their structure. Other tracked terms are event leaves until #369
+    supplies an explicit term-result plan.
     """
-    if isinstance(result, (Record, Distribution)):
+    if isinstance(result, (Record, RecordBatch, Distribution)):
         return result
     if isinstance(result, Mapping):
         fields = result

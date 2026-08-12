@@ -509,7 +509,7 @@ class TestScalarParamBroadcasting:
 class TestBackendApproximate:
     """``_from_backend`` propagates ``is_approximate`` from the
     backend rather than hardcoding ``False``. This is forward-
-    compatible with a future ``_RecordArrayBackend`` over an
+    compatible with a future ``_RecordBatchBackend`` over an
     empirical source whose samples are an approximation.
     """
 

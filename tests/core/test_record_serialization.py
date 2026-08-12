@@ -1,7 +1,7 @@
 """Pickle / cloudpickle round-trip tests for the Record family.
 
-These tests ensure that Record, EventTemplate, NumericRecord, RecordArray,
-and NumericRecordArray can survive pickle serialization, which is required for
+These tests ensure that Record, EventTemplate, NumericRecord, RecordBatch,
+and NumericRecordBatch can survive pickle serialization, which is required for
 Ray task distribution (Ray uses cloudpickle to ship arguments to workers).
 
 The core issue was that Record.__setattr__ raises "Record is immutable", so
@@ -17,8 +17,8 @@ import pytest
 
 from probpipe import (
     NumericRecord,
-    NumericRecordArray,
-    RecordArray,
+    NumericRecordBatch,
+    RecordBatch,
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
 from probpipe.core.event_template import (
@@ -143,61 +143,65 @@ def test_numeric_record_cloudpickle_roundtrip():
 
 
 # ---------------------------------------------------------------------------
-# RecordArray
+# RecordBatch
 # ---------------------------------------------------------------------------
 
 
-def test_record_array_pickle_roundtrip():
+def test_record_batch_pickle_roundtrip():
     template = EventTemplate(x=(), y=(3,))
-    ra = RecordArray(
+    ra = RecordBatch(
         {"x": jnp.array([1.0, 2.0]), "y": jnp.ones((2, 3))},
-        batch_shape=(2,),
-        template=template,
+        level_names="draw",
+        axis_groups=((2,),),
+        element_spec=template,
     )
     ra2 = roundtrip(ra)
     assert ra2.batch_shape == (2,)
-    assert ra2.fields == ("x", "y")
+    assert ra2.event_template.fields == ("x", "y")
     assert list(ra2["x"]) == pytest.approx([1.0, 2.0])
 
 
-def test_record_array_template_preserved():
+def test_record_batch_template_preserved():
     template = EventTemplate(x=(), y=(3,))
-    ra = RecordArray(
+    ra = RecordBatch(
         {"x": jnp.array([1.0]), "y": jnp.ones((1, 3))},
-        batch_shape=(1,),
-        template=template,
+        level_names="draw",
+        axis_groups=((1,),),
+        element_spec=template,
     )
     ra2 = roundtrip(ra)
-    assert ra2.template == template
+    assert ra2.event_template == template
 
 
 # ---------------------------------------------------------------------------
-# NumericRecordArray
+# NumericRecordBatch
 # ---------------------------------------------------------------------------
 
 
-def test_numeric_record_array_pickle_roundtrip():
+def test_numeric_record_batch_pickle_roundtrip():
     template = EventTemplate(x=(), y=(2,))
-    nra = NumericRecordArray(
+    nrb = NumericRecordBatch(
         {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.ones((3, 2))},
-        batch_shape=(3,),
-        template=template,
+        level_names="draw",
+        axis_groups=((3,),),
+        element_spec=template,
     )
-    nra2 = roundtrip(nra)
-    assert type(nra2) is NumericRecordArray
+    nra2 = roundtrip(nrb)
+    assert type(nra2) is NumericRecordBatch
     assert nra2.batch_shape == (3,)
     assert list(nra2["x"]) == pytest.approx([1.0, 2.0, 3.0])
 
 
-def test_numeric_record_array_cloudpickle_roundtrip():
+def test_numeric_record_batch_cloudpickle_roundtrip():
     template = EventTemplate(x=())
-    nra = NumericRecordArray(
+    nrb = NumericRecordBatch(
         {"x": jnp.array([1.0, 2.0])},
-        batch_shape=(2,),
-        template=template,
+        level_names="draw",
+        axis_groups=((2,),),
+        element_spec=template,
     )
-    nra2 = cloudpickle_roundtrip(nra)
-    assert type(nra2) is NumericRecordArray
+    nra2 = cloudpickle_roundtrip(nrb)
+    assert type(nra2) is NumericRecordBatch
     assert nra2.batch_shape == (2,)
 
 

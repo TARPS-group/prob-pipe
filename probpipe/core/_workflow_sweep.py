@@ -13,6 +13,7 @@ from itertools import product as cartesian_product
 from typing import Any
 
 import jax
+import numpy as np
 
 try:
     from prefect import flow, task
@@ -29,9 +30,9 @@ from . import (
     _workflow_recipe,
     _workflow_result,
 )
+from ._batch import Batch
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
-from ._record_array import _RecordArrayView
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution
 from .event_template import EventTemplate
@@ -78,7 +79,7 @@ def execute_sweep(
 
     if include_inputs:
         raise NotImplementedError(
-            "include_inputs=True is not supported with RecordArray "
+            "include_inputs=True is not supported with batched-record "
             "broadcasting. The inputs are already available via "
             "provenance on the stacked output."
         )
@@ -99,6 +100,10 @@ def execute_sweep(
         aggregate = _make_stack(
             per_row,
             batch_shape=plan.sweep_batch_shape,
+            # The aggregate mints the levels the sweep ranged over, so it aligns
+            # by name with the batch it swept.
+            level_names=plan.sweep_level_names,
+            axis_groups=plan.sweep_axis_groups,
             name=workflow_name,
             field_name=workflow_name,
             event_template=output_template,
@@ -175,7 +180,7 @@ def slice_sweep_values(
     index: int,
     array_groups: tuple[_workflow_plan.ArrayBroadcastGroup, ...],
 ) -> dict[str, Any]:
-    """Materialize one row-major sweep cell under parent-grouped arrays."""
+    """Materialize one row-major sweep cell under the zip groups."""
     out = dict(values)
     rem = index
     # Highest-index group varies fastest under row-major flattening of
@@ -183,11 +188,20 @@ def slice_sweep_values(
     for group in reversed(array_groups):
         idx = rem % group.size
         rem = rem // group.size
+        # A batch spanning several axes addresses its element by position, one
+        # indexer per axis; a flat index would read the leading axis alone and
+        # run off its end. Positional tuples are used only for Batch values;
+        # other array-like operands retain their flat row-major index.
+        position: Any = idx
+        if len(group.batch_shape) > 1:
+            position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
         replacements: dict[_workflow_call.WorkflowInputRef, Any] = {}
         for ref in group.arg_refs:
             source = _workflow_call.input_ref_value(values, ref)
             if isinstance(source, DistributionArray):
                 replacements[ref] = source._flat_component(idx)
+            elif isinstance(source, Batch):
+                replacements[ref] = source[position]
             else:
                 replacements[ref] = source[idx]
         out = _workflow_call.replace_input_refs(out, replacements)
@@ -211,16 +225,19 @@ def execute_sweep_rows(
     workflow_name: str = "workflow",
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
+    # Zero rows run nothing, so there is no body for a dispatch to trace and no
+    # per-row output for the paths to disagree over: every dispatch takes the
+    # same empty aggregation, which is what keeps the output schema independent
+    # of how the rows would have been executed.
+    if plan.n_sweep == 0:
+        return []
+
     has_dist_array = any(
         isinstance(_workflow_call.input_ref_value(values, ref), DistributionArray)
         for ref in array_args
     )
-    has_view = any(
-        isinstance(_workflow_call.input_ref_value(values, ref), _RecordArrayView)
-        for ref in array_args
-    )
     jax_structure_supported = not (
-        has_dist_array or has_view or len(plan.array_groups) > 1 or len(array_args) > 1
+        has_dist_array or len(plan.array_groups) > 1 or len(array_args) > 1
     )
     jax_contract = _workflow_execution_contract.make_execution_contract(
         evaluator="jax_vmap",
@@ -234,7 +251,7 @@ def execute_sweep_rows(
     )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
-            "dispatch='jax' supports only a single plain RecordArray sweep; "
+            "dispatch='jax' supports only a single plain batched-record sweep; "
             "use dispatch='auto', 'sequential', or 'thread' for this path."
         )
 
@@ -296,7 +313,7 @@ def execute_sweep_rows_jax(
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str = "workflow",
 ) -> Any:
-    """Execute the limited single-RecordArray sweep through ``jax.vmap``."""
+    """Execute the limited single-batch sweep through ``jax.vmap``."""
 
     def single_call(array_slice_leaves):
         replacements = {

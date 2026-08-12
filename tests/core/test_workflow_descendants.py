@@ -18,7 +18,7 @@ from probpipe import (
     Normal,
     NumericEventTemplate,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     Record,
     TransformedDistribution,
@@ -805,8 +805,9 @@ def test_elementwise_transform_of_vector_event_matches_direct_sampling():
 
 @pytest.mark.parametrize("dispatch", ["sequential", "jax"])
 def test_nested_sweep_samples_shared_transform_root_once_per_cell(dispatch):
-    rows = NumericRecordArray.stack(
-        [NumericRecord("row", offset=float(index)) for index in range(3)]
+    rows = NumericRecordBatch.stack(
+        [NumericRecord("row", offset=float(index)) for index in range(3)],
+        level_name="draw",
     )
     calls = []
     root = _RecordingNormal(calls)

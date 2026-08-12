@@ -174,29 +174,32 @@ class JointGaussian(
 
     def _unflatten_flat_vec(self, flat: Array, sample_shape: tuple[int, ...] = ()):
         """Split a flat Gaussian sample vector into per-component arrays."""
-        from ..core._record_array import NumericRecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
 
         result = {}
         for cname in self._component_shapes:
             sl = self._component_slices[cname]
             result[cname] = flat[..., sl]
         if sample_shape:
-            return NumericRecordArray(
+            return NumericRecordBatch(
                 result,
-                batch_shape=sample_shape,
-                template=self.event_template,
+                "draw",
+                element_spec=self.event_template,
+                axis_groups=(sample_shape,),
+                name=self.name,
+                name_is_auto=True,
             )
         return Record(self.name, result, name_is_auto=True)
 
     def _log_prob(self, value) -> Array:
-        from ..core._record_array import RecordArray
+        from ..core._record_batch import RecordBatch
 
-        if not isinstance(value, (Record, RecordArray)):
+        if not isinstance(value, (Record, RecordBatch)):
             value = Record(self.name, value, name_is_auto=True)
         from .multivariate import MultivariateNormal as MVN
 
         full_mvn = MVN(loc=self._mean_vec, cov=self._cov_mat, name="_jg_internal")
-        # ``Record``/``RecordArray`` carry their own structure, so the
+        # A record, and a batch of them, carry their own structure, so the
         # static ``flatten_value`` ignores ``event_shape`` for these
         # inputs — don't ask ``self.event_shape`` (it raises on a
         # multi-field joint).

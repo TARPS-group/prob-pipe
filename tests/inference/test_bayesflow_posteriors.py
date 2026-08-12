@@ -585,7 +585,7 @@ class TestBayesFlowMethods:
         assert 0.8 < np.mean(std_ratios) < 1.25
 
     @pytest.mark.xfail(
-        reason="Nested-prior NPE builds a posterior over a nested NumericRecordArray, "
+        reason="Nested-prior NPE builds a posterior over a nested NumericRecordBatch, "
         "whose leaf-keyed migration was deferred (batch types, #326/#235), so nested "
         "empirical construction raises KeyError. Un-xfail when #340 lands.",
         strict=False,

@@ -204,7 +204,7 @@ class ProvenanceMode(Enum):
     -------
     FULL
         Store live references to parent Distribution / Record /
-        RecordArray objects.  The entire ancestry chain stays in memory
+        RecordBatch objects.  The entire ancestry chain stays in memory
         as long as the final result is alive.  Good for debugging and
         small test workflows where full graph traversal is useful.
     LIGHTWEIGHT

@@ -762,7 +762,7 @@ class TestCoSamplingThroughACall:
         """Enumerated rows stack per argument, and a record row is not an array.
 
         Atoms of a record-valued empirical are ``Record``s, which ``jnp.stack``
-        cannot take; they stack through ``RecordArray.stack`` instead.
+        cannot take; they stack through ``RecordBatch.stack`` instead.
         """
         empirical = RecordEmpiricalDistribution(
             Record("r", x=jnp.array([1.0, 2.0, 3.0]), y=jnp.array([10.0, 20.0, 30.0])),
@@ -799,7 +799,7 @@ class TestCoSamplingThroughACall:
 
         # Every drawn row is one atom of the empirical, and the output is that
         # atom's own ``y`` — the pairing a joint exists to preserve.
-        x, y = np.asarray(drawn["a/x"]), np.asarray(drawn["a/y"])
+        x, y = np.asarray(drawn["a"]["x"]), np.asarray(drawn["a"]["y"])
         np.testing.assert_allclose(y, x * 10)
         np.testing.assert_allclose(np.asarray(drawn["_output"]).ravel(), y)
         assert set(x.tolist()) <= {1.0, 2.0, 3.0}
@@ -824,16 +824,20 @@ class TestCoSamplingThroughACall:
         assert result.num_atoms == 5
         assert np.asarray(result.samples).shape == (5,)
 
-    def test_a_flat_record_that_will_not_stack_is_not_blamed_on_nesting(self):
-        """``stack`` refuses more than nesting, and flattening cannot help here."""
+    def test_a_mixed_record_stacks_with_an_object_column(self):
+        """Columns are leaf-keyed and typed per field, so a record mixing a
+        numeric leaf with an opaque one stacks — the refusal this test used to
+        pin died with the class that refused."""
         rows = [Record("r", x=jnp.array(1.0), tag="a"), Record("r", x=jnp.array(2.0), tag="b")]
 
-        with pytest.raises(TypeError) as raised:
-            _workflow_distribution_broadcast._stack_rows(rows, arg_name="a")
-        assert "nested fields" not in str(raised.value)
+        stacked = _workflow_distribution_broadcast._stack_rows(rows, arg_name="a")
+
+        np.testing.assert_allclose(np.asarray(stacked["x"]), [1.0, 2.0])
+        assert list(stacked._raw_column("tag")) == ["a", "b"]
 
     def test_a_nested_record_valued_law_lifts(self):
-        """Nested record rows retain leaf pairing through lifting and resampling."""
+        """A column is keyed by leaf path, so a nested record batches like a
+        flat one — the case #340 was opened for."""
         empirical = RecordEmpiricalDistribution(
             Record(
                 "r", group={"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.array([10.0, 20.0, 30.0])}
@@ -851,7 +855,7 @@ class TestCoSamplingThroughACall:
         with workflow_run(seed=0):
             drawn = sample(joint, sample_shape=(4,))
         np.testing.assert_allclose(
-            np.asarray(drawn["_output"]).ravel(), np.asarray(drawn["a/group/y"])
+            np.asarray(drawn["_output"]).ravel(), np.asarray(drawn["a"]["group/y"])
         )
 
     def test_a_record_valued_empirical_passed_twice_shares_its_atom(self):

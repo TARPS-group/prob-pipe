@@ -23,7 +23,7 @@ from typing import Any, Self
 import jax
 import numpy as np
 
-from ._batch import Batch, BatchSpec, _axis_size
+from ._batch import Batch, BatchSpec, _axis_groups_for
 from .event_template import ValueSpec
 from .provenance import Provenance
 
@@ -118,6 +118,29 @@ class _ObjectBatch[E](Batch[E]):
             provenance=provenance,
         )
 
+    @classmethod
+    def _over_store(cls, store: np.ndarray, *, spec: BatchSpec, name: str) -> Self:
+        """This batch over *store* as given, without copying or re-checking it.
+
+        The public constructor copies the elements, freezes the copy, and checks
+        every entry against the element spec — each O(batch_size), and each
+        earning its cost against a caller who owns the array and may write to it
+        or have filled it with the wrong thing. A caller holding a store it
+        already froze and already validated has neither to defend against, and
+        entering through ``__init__`` would make presenting one field a walk over
+        the whole batch.
+
+        The store is shared, not copied, so this is a view: it is the caller's
+        responsibility that the buffer is frozen and its entries satisfy *spec*'s
+        element spec.
+        """
+        # ``object.__new__`` for the reason :meth:`_sub_batch_at` gives: a host's
+        # own ``__new__`` may select a class from constructor arguments.
+        batch = object.__new__(cls)
+        object.__setattr__(batch, "_store", store)
+        batch._init_batch(spec, name=name, name_is_auto=True)
+        return batch
+
     # -- the storage seam ---------------------------------------------------
 
     def _element_at(self, index: tuple[int, ...], *, name: str) -> E:
@@ -154,6 +177,27 @@ class _ObjectBatch[E](Batch[E]):
         object.__setattr__(view, "_store", self._store[index])
         view._init_batch(spec, name=name, name_is_auto=True)
         return view
+
+
+def _frozen_object_column(column: np.ndarray) -> np.ndarray:
+    """*column* as an object array nobody can write through.
+
+    A batch holds the columns it validated. An object column is the one kind a
+    caller can still mutate after construction — a JAX array is already immutable
+    and a numpy numeric column follows the aliasing convention the single-record
+    types already set — so it is copied and frozen, for the reason
+    ``_ObjectBatch`` states: a caller keeping a handle on what they passed cannot
+    write a value into the batch that its spec does not admit. Only the pointer
+    array is copied, so the elements stay shared.
+    """
+    frozen = np.array(column, dtype=object, subok=False)
+    frozen.setflags(write=False)
+    return frozen
+
+
+def _is_object_array(column: Any) -> bool:
+    """Whether *column* is a numpy array of objects, the non-array column form."""
+    return isinstance(column, np.ndarray) and column.dtype == object
 
 
 def _as_object_array(elements: np.ndarray | Iterable[Any], *, kind: str) -> np.ndarray:
@@ -225,43 +269,6 @@ def _from_iterable(elements: Iterable[Any], *, kind: str) -> np.ndarray:
     for position, element in enumerate(flat):
         store[position] = element
     return store
-
-
-def _axis_groups_for(
-    shape: tuple[int, ...],
-    names: tuple[str, ...],
-    axis_groups: Iterable[Iterable[int]] | None,
-    *,
-    kind: str,
-) -> tuple[tuple[int, ...], ...]:
-    """The axis groups for *shape*, defaulting to one axis per level.
-
-    A supplied grouping must tile the store's own shape: it says which axes each
-    level holds, and the axes are the ones the elements are actually arranged in.
-    A grouping that disagreed would make every accessor — ``batch_shape``,
-    ``len``, ``repr``, the spec itself — a statement about a shape the storage
-    does not have, and indexing would leave the batch's own bounds check to fail
-    somewhere inside numpy instead.
-    """
-    if axis_groups is None:
-        if len(names) != len(shape):
-            axes = "axis" if len(shape) == 1 else "axes"
-            raise ValueError(
-                f"{kind} places one axis per level unless axis_groups says otherwise, so "
-                f"{len(shape)} {axes} need {len(shape)} level names; "
-                f"got {len(names)}: {list(names)}"
-            )
-        return tuple((size,) for size in shape)
-
-    groups = tuple(tuple(_axis_size(size) for size in group) for group in axis_groups)
-    tiled = tuple(size for group in groups for size in group)
-    if tiled != shape:
-        raise ValueError(
-            f"axis_groups must tile the shape the elements are stored in: {groups} tiles "
-            f"{tiled}, but {kind} was given elements of shape {shape}. Each entry is an axis "
-            f"*size*, and the sizes in order are the store's own shape"
-        )
-    return groups
 
 
 def _check_elements(

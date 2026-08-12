@@ -28,6 +28,7 @@ from ..core._record_distribution import (
     _build_event_template,
     _register_dynamic_subclass,
 )
+from ..core.named_tree import _PATH_SEP
 from ..core.protocols import (
     SupportsConditioning,
     SupportsLogProb,
@@ -269,42 +270,40 @@ class ProductDistribution(
 
         Returns
         -------
-        Record or NumericRecordArray or RecordArray
+        Record or NumericRecordBatch or RecordBatch
             ``Record`` when ``sample_shape == ()``. With a non-empty
-            ``sample_shape``: ``NumericRecordArray`` when every leaf is
-            a :class:`NumericRecordDistribution` (the dynamic mixin
-            case), otherwise a plain :class:`RecordArray`.
+            ``sample_shape``: a batch of draws over one ``draw`` level,
+            :class:`NumericRecordBatch` when every leaf is a
+            :class:`NumericRecordDistribution` (the dynamic mixin case),
+            otherwise a plain :class:`RecordBatch`.
         """
-        from ..core._record_array import NumericRecordArray, RecordArray
+        from ..core._numeric_record_batch import NumericRecordBatch
+        from ..core._record_batch import RecordBatch
+
+        if sample_shape:
+            # A batch stores one column per *field*, so a nested product's draw
+            # is one flat batch over leaf paths rather than a batch per subtree.
+            # NRD mixin → the numeric batch; otherwise the plain one, which does
+            # not require numeric leaves.
+            cls = NumericRecordBatch if isinstance(self, NumericRecordDistribution) else RecordBatch
+            return cls(
+                _sample_columns(self._components, key, sample_shape),
+                "draw",
+                element_spec=self.event_template,
+                axis_groups=(sample_shape,),
+                name=self.name,
+                name_is_auto=True,
+            )
 
         names = list(self._components.keys())
         keys = jax.random.split(key, len(names))
-        numeric = isinstance(self, NumericRecordDistribution)
         fields: dict[str, jnp.ndarray | Record] = {}
         for subkey, name in zip(keys, names):
             comp = self._components[name]
-            if isinstance(comp, dict):
-                # Pass the sub-template so a batched nested draw is a nested
-                # record-array (canonical, flattenable), not a plain Record.
-                sub_template = self.event_template.children[name] if sample_shape else None
-                fields[name] = _sample_nested(
-                    name, comp, subkey, sample_shape, template=sub_template, numeric=numeric
-                )
-            else:
-                fields[name] = comp._sample(subkey, sample_shape)
-        if sample_shape:
-            # NRD mixin → numeric batched container; otherwise the
-            # plain RecordArray which doesn't require numeric leaves.
-            if isinstance(self, NumericRecordDistribution):
-                return NumericRecordArray(
-                    fields,
-                    batch_shape=sample_shape,
-                    template=self.event_template,
-                )
-            return RecordArray(
-                fields,
-                batch_shape=sample_shape,
-                template=self.event_template,
+            fields[name] = (
+                _sample_nested(name, comp, subkey)
+                if isinstance(comp, dict)
+                else comp._sample(subkey, ())
             )
         return Record(self.name, fields, name_is_auto=True)
 
@@ -320,7 +319,8 @@ class ProductDistribution(
         general (non-numeric) case because ``unflatten_value`` isn't
         available there.
         """
-        from ..core._record_array import RecordArray
+        from ..core._record_batch import RecordBatch
+        from ..core.named_tree import _unflatten_paths
 
         if isinstance(value, jnp.ndarray):
             if not isinstance(self, NumericRecordDistribution):
@@ -345,8 +345,10 @@ class ProductDistribution(
             if isinstance(value, jnp.ndarray):
                 (field_name,) = self.event_template.fields
                 value = {field_name: value}
-        if isinstance(value, RecordArray):
-            value = {k: v for k, v in value.items()}
+        if isinstance(value, RecordBatch):
+            # Leaf-keyed columns, re-nested, so the tree map below pairs each
+            # column with the component that declared it.
+            value = _unflatten_paths({path: value[path] for path in value.event_template})
         if isinstance(value, Record):
             value = value.to_dict()
 
@@ -530,34 +532,64 @@ class TFPProductDistribution(ProductDistribution):
 # -- Helpers for nested component pytrees ----------------------------------
 
 
-def _sample_nested(name: str, components: dict, key, sample_shape, template=None, numeric=False):
-    """Recursively sample from nested component dicts.
+def _sample_columns(components: dict, key, sample_shape) -> dict:
+    """One column per leaf of *components*, keyed by its leaf path.
 
-    For an **unbatched** draw (``sample_shape == ()``) returns a plain nested
-    ``Record``. For a **batched** draw returns a nested record-array
-    (``NumericRecordArray`` when ``numeric`` else ``RecordArray``) carrying the
-    sub-``template`` and ``batch_shape``, so the result is canonical and
-    flattenable rather than a plain ``Record`` with batch-shaped leaves.
+    A batch stores a column per field rather than a value per element, so a
+    nested product draws into one flat mapping over ``/``-paths — the keying the
+    batch constructor takes. A component that draws a structured value of its own
+    contributes its leaves under its own path, so a sub-product nests by path
+    rather than by containment.
+
+    Keys are split per level, exactly as the unbatched recursion splits them, so
+    a batched draw and a single draw derive their subkeys the same way.
     """
+    from ..core._record_batch import RecordBatch
+
+    names = list(components.keys())
+    keys = jax.random.split(key, len(names))
+    columns: dict = {}
+    for subkey, field_name in zip(keys, names):
+        comp = components[field_name]
+        if isinstance(comp, dict):
+            columns.update(
+                {
+                    f"{field_name}{_PATH_SEP}{path}": column
+                    for path, column in _sample_columns(comp, subkey, sample_shape).items()
+                }
+            )
+            continue
+        drawn = comp._sample(subkey, sample_shape)
+        if isinstance(drawn, RecordBatch):
+            # Raw columns: a field that is not an array presents as its own object
+            # batch, and what belongs in this batch's storage is the column.
+            columns.update(
+                {
+                    f"{field_name}{_PATH_SEP}{path}": column
+                    for path, column in drawn._raw_columns().items()
+                }
+            )
+        elif isinstance(drawn, Record):
+            columns.update(
+                {f"{field_name}{_PATH_SEP}{path}": drawn[path] for path in drawn.event_template}
+            )
+        else:
+            columns[field_name] = drawn
+    return columns
+
+
+def _sample_nested(name: str, components: dict, key) -> Record:
+    """One single draw from nested component dicts, as a nested ``Record``."""
     names = list(components.keys())
     keys = jax.random.split(key, len(names))
     fields: dict = {}
     for subkey, field_name in zip(keys, names):
         comp = components[field_name]
-        if isinstance(comp, dict):
-            # ``children`` (not ``[]``): the sub-template is an interior node,
-            # and template ``[]`` is leaf-only.
-            sub_template = template.children[field_name] if template is not None else None
-            fields[field_name] = _sample_nested(
-                field_name, comp, subkey, sample_shape, template=sub_template, numeric=numeric
-            )
-        else:
-            fields[field_name] = comp._sample(subkey, sample_shape)
-    if sample_shape and template is not None:
-        from ..core._record_array import NumericRecordArray, RecordArray
-
-        cls = NumericRecordArray if numeric else RecordArray
-        return cls(fields, batch_shape=sample_shape, template=template)
+        fields[field_name] = (
+            _sample_nested(field_name, comp, subkey)
+            if isinstance(comp, dict)
+            else comp._sample(subkey, ())
+        )
     return Record(name, fields, name_is_auto=True)
 
 

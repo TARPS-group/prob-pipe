@@ -14,7 +14,7 @@ from probpipe import (
     Function,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     function,
     workflow_run,
 )
@@ -71,8 +71,9 @@ class TestSequentialLiftingWorkflowRun:
         commit_invocation.assert_not_called()
 
     def test_nested_sources_claim_raw_keys_by_row_major_logical_unit(self):
-        rows = NumericRecordArray.stack(
-            [NumericRecord("row", offset=float(index)) for index in range(3)]
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", offset=float(index)) for index in range(3)],
+            level_name="draw",
         )
 
         @function(n_broadcast_samples=6, dispatch="sequential")

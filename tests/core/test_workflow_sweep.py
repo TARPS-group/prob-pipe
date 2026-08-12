@@ -13,16 +13,19 @@ from probpipe import (
     DistributionArray,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     mean,
 )
 from probpipe.core import _workflow_call, _workflow_execution, _workflow_sweep
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
 
 
-def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
-    return NumericRecordArray.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values]
+def _numeric_record_batch(
+    field: str, values: range, *, level_name: str = "draw"
+) -> NumericRecordBatch:
+    return NumericRecordBatch.stack(
+        [NumericRecord("nr", **{field: float(value)}) for value in values],
+        level_name=level_name,
     )
 
 
@@ -52,10 +55,11 @@ def _require_not_called(*args, **kwargs):
 
 class TestSliceSweepValues:
     def test_views_from_same_parent_zip(self):
-        parent = NumericRecordArray.stack(
-            [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)]
+        parent = NumericRecordBatch.stack(
+            [NumericRecord("nr", x=float(i), y=float(10 + i)) for i in range(3)], level_name="draw"
         )
-        values = {"x": parent.view("x"), "y": parent.view("y")}
+        views = parent.select_all()
+        values = {"x": views["x"], "y": views["y"]}
         plan = _plan(values)
 
         observed = [
@@ -75,8 +79,8 @@ class TestSliceSweepValues:
 
     def test_arrays_from_different_parents_use_row_major_product(self):
         values = {
-            "a": _numeric_record_array("a", range(2)),
-            "b": _numeric_record_array("b", range(3)),
+            "a": _numeric_record_batch("a", range(2), level_name="outer"),
+            "b": _numeric_record_batch("b", range(3), level_name="inner"),
         }
         plan = _plan(values)
 
@@ -128,7 +132,7 @@ class TestSliceSweepValues:
 
 class TestExecuteSweep:
     def test_row_wise_sweep_uses_execution_request(self, monkeypatch):
-        values = {"p": _numeric_record_array("x", range(3))}
+        values = {"p": _numeric_record_batch("x", range(3))}
         plan = _plan(values)
         execution = _workflow_execution.WorkflowExecutionConfig(
             mode="thread",
@@ -177,7 +181,7 @@ class TestExecuteSweep:
         np.testing.assert_allclose(result["double"], jnp.asarray([0.0, 2.0, 4.0]))
 
     def test_include_inputs_is_rejected_for_sweep(self):
-        values = {"p": _numeric_record_array("x", range(1))}
+        values = {"p": _numeric_record_batch("x", range(1))}
         plan = _plan(values)
         execution = _workflow_execution.WorkflowExecutionConfig(
             mode="sequential",
@@ -201,7 +205,7 @@ class TestExecuteSweep:
 
     def test_nested_sweep_calls_distribution_broadcast_and_marginalizes(self):
         values = {
-            "p": _numeric_record_array("x", range(2)),
+            "p": _numeric_record_batch("x", range(2)),
             "noise": Normal(loc=0.0, scale=1.0, name="noise"),
         }
         plan = _plan(values)

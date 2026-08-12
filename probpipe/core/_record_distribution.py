@@ -220,16 +220,20 @@ class _RecordDistributionView(Distribution):
         self._key_path = key_path
         self._template_field = template_field
 
-    # -- Parent identity (mirrors ``_RecordArrayView``) --------------------
+    # -- Parent identity ---------------------------------------------------
 
     @property
     def parent(self) -> Distribution:
         """The :class:`RecordDistribution` this view points at.
 
-        Shared-identity signal for the ``Function`` sweep layer:
-        views with the same ``parent`` co-sample (preserve correlation)
-        when passed as sibling broadcast args to a Function.
-        Matches the ``_RecordArrayView.parent`` surface.
+        Shared-identity signal for the ``Function`` sweep layer: views with
+        the same ``parent`` co-sample (preserve correlation) when passed as
+        sibling broadcast args to a Function.
+
+        A *value* batch needs no such pointer — a field selection off a
+        ``RecordBatch`` is an ordinary batch, and sibling selections align by
+        their shared level names. A distribution view has no level names to align
+        on, so identity is what says two views draw from one law.
         """
         return self._parent
 
@@ -262,7 +266,7 @@ class _RecordDistributionView(Distribution):
         # Nested template / opaque / distribution / function leaf.
         return ()
 
-    # -- Single-field array-like shims (mirrors ``_RecordArrayView``) ------
+    # -- Single-field array-like shims -------------------------------------
 
     @property
     def shape(self) -> tuple[int, ...]:
@@ -285,11 +289,13 @@ class _RecordDistributionView(Distribution):
     # -- Internals ----------------------------------------------------------
 
     def _extract(self, structured: Any) -> Any:
-        """Extract this field from a parent sample (Record, NumericRecordArray, or flat array)."""
-        from ._record_array import RecordArray
+        """Extract this field from a parent record, record batch, or flat array."""
+        from ._record_batch import RecordBatch
 
-        if isinstance(structured, (Record, RecordArray)):
+        if isinstance(structured, Record):
             return structured.at_path(self._key_path)
+        if isinstance(structured, RecordBatch):
+            return structured[self._key_path]
         # Flat array — unflatten via the parent's static unflatten_value.
         # Only numeric parents define unflatten_value; non-numeric Record
         # parents never reach this branch (their samples are Records).
@@ -304,8 +310,10 @@ class _RecordDistributionView(Distribution):
             jnp.asarray(structured),
             template=self._parent.event_template,
         )
-        if isinstance(result, (Record, RecordArray)):
+        if isinstance(result, Record):
             return result.at_path(self._key_path)
+        if isinstance(result, RecordBatch):
+            return result[self._key_path]
         return result
 
     def _field_draws(self) -> Array:
@@ -319,10 +327,10 @@ class _RecordDistributionView(Distribution):
         practice are ``ApproximateDistribution`` subclasses that do
         expose ``draws()``.
         """
-        from ._record_array import RecordArray
+        from ._record_batch import RecordBatch
 
         draws = self._parent.draws()
-        if isinstance(draws, (Record, RecordArray)):
+        if isinstance(draws, (Record, RecordBatch)):
             return jnp.asarray(self._extract(draws))
         from ._numeric_record import _reconstruct_from_vector
 
@@ -473,7 +481,7 @@ class RecordDistribution(Distribution[Record], metaclass=_RecordDistributionMeta
         """Return every component as a view, for splatting into function calls.
 
         Sugar for ``select(*self.fields)``. Matches
-        :meth:`Record.select_all` / :meth:`RecordArray.select_all` so
+        :meth:`Record.select_all` / :meth:`RecordBatch.select_all` so
         the splat-all pattern works uniformly across the three field-
         bearing container types. Preserves cross-field correlation via
         the parent-identity machinery in the ``Function`` sweep

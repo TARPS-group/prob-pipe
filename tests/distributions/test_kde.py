@@ -22,7 +22,7 @@ from probpipe import (
 )
 from probpipe.core._empirical import RecordEmpiricalDistribution
 from probpipe.core._numeric_record import NumericRecord as _NumericRecord
-from probpipe.core._record_array import NumericRecordArray
+from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.distributions.kde import KDEDistribution
 
 # ---------------------------------------------------------------------------
@@ -95,18 +95,18 @@ class TestSampleRoundTrip:
         )
         s = kde._sample(jax.random.PRNGKey(0), ())
         assert isinstance(s, _NumericRecord)
-        assert s.fields == ("intercept", "slope")
+        assert tuple(s.event_template.keys()) == ("intercept", "slope")
 
-    def test_sample_batched_returns_record_array(self, two_field_template, flat_samples):
+    def test_sample_batched_returns_record_batch(self, two_field_template, flat_samples):
         kde = KDEDistribution(
             flat_samples,
             event_template=two_field_template,
             name="post",
         )
         s = kde._sample(jax.random.PRNGKey(1), (8,))
-        assert isinstance(s, NumericRecordArray)
+        assert isinstance(s, NumericRecordBatch)
         assert s.batch_shape == (8,)
-        assert s.fields == ("intercept", "slope")
+        assert tuple(s.event_template.keys()) == ("intercept", "slope")
 
     def test_sample_no_template_returns_raw_array(self, flat_samples):
         """With auto-build single-field template the sample stays a raw
@@ -145,21 +145,21 @@ class TestLogProbDualInput:
         lp = kde._log_prob(rec)
         assert jnp.isfinite(lp)
 
-    def test_batched_record_array(self, two_field_template, flat_samples):
-        """A NumericRecordArray input is flattened to (batch, d) and the
+    def test_batched_record_batch(self, two_field_template, flat_samples):
+        """A NumericRecordBatch input is flattened to (batch, d) and the
         TFP mixture log-prob returns a (batch,) array."""
         kde = KDEDistribution(
             flat_samples,
             event_template=two_field_template,
             name="post",
         )
-        # Build a 3-row NumericRecordArray
-        nra = NumericRecordArray(
+        # Build a 3-row NumericRecordBatch
+        nrb = NumericRecordBatch(
             {"intercept": jnp.array([0.5, 0.6, 0.7]), "slope": jnp.array([-0.3, -0.4, -0.5])},
-            batch_shape=(3,),
-            template=NumericEventTemplate(intercept=(), slope=()),
+            "draw",
+            element_spec=NumericEventTemplate(intercept=(), slope=()),
         )
-        lp = kde._log_prob(nra)
+        lp = kde._log_prob(nrb)
         assert lp.shape == (3,)
         # Matches the flat form
         lp_flat = kde._log_prob(
@@ -195,7 +195,7 @@ class TestFromEmpirical:
         # Samples come back structured
         s = kde._sample(jax.random.PRNGKey(2), ())
         assert isinstance(s, _NumericRecord)
-        assert s.fields == ("intercept", "slope")
+        assert tuple(s.event_template.keys()) == ("intercept", "slope")
 
     def test_single_field_record_empirical(self):
         """Single-field empirical → single-field KDE (no multi-field

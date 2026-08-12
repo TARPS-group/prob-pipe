@@ -103,7 +103,7 @@ def _is_numeric_dtype(dtype: Any) -> bool:
     predicate governs only the duck path, not the registry. Structured
     (record) dtypes are likewise not numeric.
     Every place that decides "is this array numeric?" — template inference,
-    spec validation, and the ``NumericRecord`` / ``NumericRecordArray`` leaf
+    spec validation, and the ``NumericRecord`` / ``NumericRecordBatch`` leaf
     gates — routes through this predicate so the sites cannot drift apart.
     """
     try:

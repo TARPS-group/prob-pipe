@@ -57,8 +57,9 @@ from ._numeric_record_distribution import (
     BootstrapDistribution,
     NumericRecordDistribution,
 )
+from ._record_batch import RecordBatch
 from .constraints import Constraint, real
-from .event_template import EventTemplate
+from .event_template import EventTemplate, NumericEventTemplate, _reshaped_template
 from .protocols import (
     SupportsCovariance,
     SupportsExpectation,
@@ -256,6 +257,10 @@ class EmpiricalDistribution[T](
     ...)`` returns a :class:`RecordEmpiricalDistribution` when
 
     - ``samples`` is a :class:`Record` (each field stacked along axis 0),
+    - ``samples`` is a **numeric** batch of records, whose every batch axis
+      becomes atoms — a ``(2, 3)`` batch is six of them, in the row-major order
+      the batch's own indexing reads — and whose element declaration is kept
+      rather than re-derived,
     - or ``samples`` is a numeric JAX/numpy array and ``name=...`` is
       passed (the array auto-wraps as a single-field record keyed by
       ``name``).
@@ -265,10 +270,11 @@ class EmpiricalDistribution[T](
 
     Parameters
     ----------
-    samples : Record | sequence of T | array-like
+    samples : Record | RecordBatch | sequence of T | array-like
         The support points. Numeric-array inputs require ``name=`` so
         the auto-wrapped Record has a field name; without it construction
-        raises ``ValueError``.
+        raises ``ValueError``. A batch of records contributes every batch axis
+        as atoms.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalised internally). Mutually
         exclusive with *log_weights*. Uniform when neither is given.
@@ -277,10 +283,29 @@ class EmpiricalDistribution[T](
     name : str, optional
         Distribution name. Mandatory when *samples* is a bare numeric
         array.
+
+    Raises
+    ------
+    TypeError
+        If *samples* is a batch of records declaring a field that is not
+        numeric. The record-valued empirical carries numeric shape semantics,
+        which a callable or opaque field has none of.
     """
 
     def __new__(cls, samples=None, *args, **kwargs):
         if cls is EmpiricalDistribution and samples is not None:
+            if isinstance(samples, RecordBatch):
+                # The record-based empirical is a ``NumericRecordDistribution``,
+                # and a batch now admits callable and opaque fields. Routing one
+                # of those here fails inside JAX staging rather than at the door.
+                if not isinstance(samples.event_template, NumericEventTemplate):
+                    raise TypeError(
+                        f"EmpiricalDistribution over a batch of records requires numeric "
+                        f"fields; {samples.name!r} declares {samples.event_template}. The "
+                        f"record-valued empirical carries numeric shape semantics, and an "
+                        f"opaque or callable field has none"
+                    )
+                return object.__new__(RecordEmpiricalDistribution)
             if isinstance(samples, Record):
                 return object.__new__(RecordEmpiricalDistribution)
             if _is_numeric_array(samples):
@@ -440,10 +465,13 @@ class RecordEmpiricalDistribution(
 
     Parameters
     ----------
-    samples : Record | array-like
-        Sample data. A Record's fields each stack along axis 0; a
-        numeric array auto-wraps as a single-field record keyed by
-        ``name``.
+    samples : Record | RecordBatch | array-like
+        Sample data. A Record's fields each stack along axis 0; a numeric array
+        auto-wraps as a single-field record keyed by ``name``. A **numeric**
+        batch of records contributes *every* batch axis as atoms — a ``(2, 3)``
+        batch is six of them, flattened in the row-major order the batch's own
+        indexing reads — and keeps the element declaration it was built with
+        rather than one re-read off the rows.
     weights : array-like, :class:`~probpipe.Weights`, or None
         Non-negative weights (normalised internally). Mutually
         exclusive with *log_weights*.
@@ -475,18 +503,37 @@ class RecordEmpiricalDistribution(
 
     def __init__(
         self,
-        samples: Record | ArrayLike,
+        samples: Record | RecordBatch | ArrayLike,
         weights: ArrayLike | Weights | None = None,
         *,
         log_weights: ArrayLike | Weights | None = None,
         sample_shape: tuple[int, ...] | None = None,
         name: str | None = None,
     ):
+        element_declaration: EventTemplate | None = None
+        if isinstance(samples, RecordBatch):
+            # A batch holds its rows axis in the batch; the empirical stores a
+            # record whose leaves carry it, so peel to that form — raw columns,
+            # since a non-array field presents as its own object batch.
+            #
+            # *Every* batch axis is one row here. An empirical distribution has a
+            # flat list of atoms, so a multi-level batch flattens to one, in the
+            # row-major order its own positional indexing reads; leaving the axes
+            # as they are would take the leading one for the rows and fold the
+            # rest into each atom's event shape, turning a (2, 3) batch of scalars
+            # into two atoms of three values.
+            element_declaration = samples.event_template
+            rows = samples.batch_size
+            columns = {
+                path: column.reshape((rows, *column.shape[len(samples.batch_shape) :]))
+                for path, column in samples._raw_columns().items()
+            }
+            samples = Record(samples.name, columns, name_is_auto=True)
         if not isinstance(samples, Record):
             if not _is_numeric_array(samples):
                 raise TypeError(
                     f"RecordEmpiricalDistribution: samples must be a "
-                    f"Record or a numeric array, got "
+                    f"Record, a batch of records, or a numeric array, got "
                     f"{type(samples).__name__}"
                 )
             samples, name = _wrap_numeric_array_as_record(
@@ -509,7 +556,22 @@ class RecordEmpiricalDistribution(
         # call Distribution.__init__ directly for name registration.
         Distribution.__init__(self, name=name, name_is_auto=name_is_auto)
         self._approximate = True
-        self._event_template = _event_template_from_data(samples)
+        # A batch already declares what one element is, pinned dtypes and all;
+        # re-deriving it from the stacked leaves would lose whatever inference
+        # cannot recover.
+        if element_declaration is None and isinstance(samples, Record):
+            # The samples' own declaration describes the stacked leaves, so one
+            # atom's is that declaration with the rows axis taken off. Reading it
+            # off the values instead answers the shape and loses the rest — a
+            # pinned dtype, a support, an opaque field's meta.
+            element_declaration = _reshaped_template(
+                samples.event_template, lambda shape: shape[1:]
+            )
+        self._event_template = (
+            element_declaration
+            if element_declaration is not None
+            else _event_template_from_data(samples)
+        )
 
     # -- properties ---------------------------------------------------------
 
@@ -656,8 +718,8 @@ class RecordEmpiricalDistribution(
         for field_path in self._record_data:
             arr = jnp.asarray(self._record_data[field_path])
             fields[field_path] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
-        # Return a ``NumericRecord`` rather than a ``NumericRecordArray``
-        # for the batched case. ``NumericRecordArray`` would carry a
+        # Return a ``NumericRecord`` rather than a ``NumericRecordBatch``
+        # for the batched case. ``NumericRecordBatch`` would carry a
         # ``batch_shape`` that ``jax.vmap``'s pytree validation rejects
         # when the empirical's ``_sample`` is wrapped inside a vmap'd
         # callable (the array variant treats its leading axes as
@@ -1166,12 +1228,27 @@ class RecordBootstrapReplicateDistribution(
             name=name,
             source_size=default_replicate_size,
         )
-        # Replicate produces (n, *event_shape) per field; advertise that
-        # via the event_template.
-        self._event_template = _event_template_from_data(
-            self._record_data,
-            leading_shape=(self._replicate_size,),
-        )
+        # A replicate is ``replicate_size`` atoms, so its template is the atom's
+        # with a rows axis in front. Taken from the source's declaration rather
+        # than from the stored data, which would drop what the declaration
+        # carries and inference cannot rebuild.
+        # An empirical source's ``event_template`` is already one atom's; a raw
+        # ``Record`` source's still carries the rows axis its leaves are stacked
+        # along, so that comes off before the replicate axis goes on. Getting this
+        # backwards advertises ``(n, rows, *event)`` where a draw is
+        # ``(n, *event)``.
+        atom = getattr(source, "event_template", None)
+        if isinstance(atom, EventTemplate):
+            if not isinstance(source, EmpiricalDistribution):
+                atom = _reshaped_template(atom, lambda shape: shape[1:])
+            self._event_template = _reshaped_template(
+                atom, lambda shape: (self._replicate_size, *shape)
+            )
+        else:
+            self._event_template = _event_template_from_data(
+                self._record_data,
+                leading_shape=(self._replicate_size,),
+            )
 
     # -- shape ---------------------------------------------------------------
 

@@ -11,7 +11,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import EventTemplate, NumericRecord, NumericRecordArray, Record
+from probpipe import EventTemplate, NumericRecord, NumericRecordBatch, Record
 from probpipe.core.event_template import ArraySpec, NumericEventTemplate, OpaqueSpec
 
 # ---------------------------------------------------------------------------
@@ -405,83 +405,52 @@ class TestBoundaryRules:
 
 
 # ---------------------------------------------------------------------------
-# Batch field-navigation surface (RecordArray): string [] is leaf-only
+# Batch field-navigation surface (RecordBatch): string [] is leaf-only
 # ---------------------------------------------------------------------------
 
 
 class TestBatchFieldNav:
-    def _nested_array(self):
+    """A batch is a collection, not a named tree: fields are read from
+    ``event_template``, an interior node indexes to a sub-batch view, and the
+    structural transforms work — the refusals this class used to pin died with
+    the class that refused. The batch's own contract lives in
+    ``test_record_batch.py``; what stays here is the navigation seam this file
+    covers for every collection."""
+
+    def _nested_batch(self):
         tpl = EventTemplate(outer=EventTemplate(a=(), b=()), m=())
-        return NumericRecordArray.from_vector("nra", tpl, jnp.arange(15.0).reshape(5, 3))
+        return NumericRecordBatch.from_vector(
+            "nrb", tpl, jnp.arange(15.0).reshape(5, 3), level_names="draw"
+        )
 
-    def test_string_index_is_leaf_only(self):
-        nra = self._nested_array()
-        # a partial-path string raises; at_path reaches the sub-batch
-        with pytest.raises(KeyError):
-            nra["outer"]
-        sub = nra.at_path("outer")
-        np.testing.assert_allclose(nra["outer/a"], sub["a"])
+    def test_an_interior_node_indexes_to_a_sub_batch_view(self):
+        batch = self._nested_batch()
 
-    def test_batch_children_and_is_field(self):
-        nra = self._nested_array()
-        assert tuple(nra.children) == ("outer", "m")
-        assert nra.is_field("outer/a") is True
-        assert nra.is_field("outer") is False
+        sub = batch["outer"]
 
-    def test_batch_mapping_surface_is_top_level_transitionally(self):
-        # Pins the documented transitional split (STYLE_GUIDE 1.10): keys /
-        # len / in on a batch are TOP-LEVEL while string [] is leaf-only, so
-        # membership and indexing deliberately disagree on a nested batch
-        # until the batch-axis rework.
-        nra = self._nested_array()
-        assert list(nra.keys()) == ["outer", "m"]
-        assert len(nra) == 2  # top-level field count, not the 3 leaves
-        assert "outer" in nra  # top-level membership...
-        with pytest.raises(KeyError):
-            nra["outer"]  # ...even though [] rejects the interior node
-        assert "outer/a" not in nra  # leaf path is not a member...
-        np.testing.assert_allclose(nra["outer/a"], nra.at_path("outer")["a"])  # ...but indexes
+        assert isinstance(sub, NumericRecordBatch)
+        assert list(sub.event_template) == ["a", "b"]
+        np.testing.assert_allclose(batch["outer/a"], sub["a"])
 
-    def test_view_and_select_all_on_nested_batch(self):
-        # A top-level field that is an interior node can still be viewed /
-        # splatted (view resolves it via template.children, not leaf-only []).
-        nra = self._nested_array()
-        v = nra.view("outer")
-        assert v.field == "outer"
-        selected = nra.select_all()
-        assert set(selected) == {"outer", "m"}
+    def test_fields_are_read_from_the_schema(self):
+        batch = self._nested_batch()
 
-    def test_nested_batch_round_trips_compare_equal(self):
+        assert list(batch.event_template) == ["outer/a", "outer/b", "m"]
+        assert batch.event_template.fields == ("outer", "m")
+        assert "outer/a" in batch.event_template
+
+    def test_a_nested_batch_round_trips_through_pickle(self):
         import pickle
 
-        nra = self._nested_array()
-        tpl = nra.template
-        assert NumericRecordArray.from_vector("nra", tpl, nra.to_vector()) == nra
-        assert pickle.loads(pickle.dumps(nra)) == nra
+        batch = self._nested_batch()
 
-    def test_edits_unsupported_on_batch(self):
-        nra = self._nested_array()
-        with pytest.raises(NotImplementedError):
-            nra.replace(m=jnp.zeros(5))
-        with pytest.raises(NotImplementedError):
-            nra.merge(nra)
-        with pytest.raises(NotImplementedError):
-            nra.without("m")
-        with pytest.raises(NotImplementedError):
-            nra.map(lambda x: x)
-        with pytest.raises(NotImplementedError):
-            nra.map_with_keys(lambda k, x: x)
+        assert pickle.loads(pickle.dumps(batch)) == batch
 
-    def test_stack_nested_records_raises_clearly(self):
-        # Stacking nested records into a batch needs nested-batch construction
-        # (deferred); it fails with a clear TypeError, not a cryptic KeyError.
-        from probpipe.core._record_array import NumericRecordArray
+    def test_the_flat_vector_round_trips_on_a_nested_batch(self):
+        batch = self._nested_batch()
 
-        recs = [
-            NumericRecord(
-                "nr", physics=NumericRecord("nr", force=jnp.zeros(()), mass=jnp.zeros(())), obs=1.0
-            )
-            for _ in range(3)
-        ]
-        with pytest.raises(TypeError, match="nested"):
-            NumericRecordArray.stack(recs)
+        rebuilt = NumericRecordBatch.from_vector(
+            "nrb", batch.event_template, batch.to_vector(), level_names="draw"
+        )
+
+        assert rebuilt == batch

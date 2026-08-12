@@ -39,7 +39,8 @@ probpipe/
 │   ├── _function_batch.py     #   FunctionBatch (III.1)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.1)
 │   ├── _record.py             #   Record, NumericRecord (III.2), RecordSpec (II.2)
-│   └── _record_batch.py       #   RecordBatch, NumericRecordBatch (III.3)
+│   ├── _record_batch.py       #   RecordBatch (III.3)
+│   └── _numeric_record_batch.py  #   NumericRecordBatch (III.3)
 ├── linalg/                    # LinOp, the linear Function subtype (III.4)
 │   ├── _linop.py              #   LinOp: the action, the queries, flags
 │   ├── _structured.py         #   Dense / Diagonal / Triangular / Cholesky / Root …
@@ -128,7 +129,7 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `core/_empirical.py` | `distributions/_empirical.py` |
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
-| `core/record.py`, `core/_record_array.py` | `values/`, one module per III section |
+| `core/record.py`, `core/_record_batch.py`, `core/_numeric_record_batch.py` | `values/`, one module per III section |
 | `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_event_template.py`, `core/_constraints.py` (II.2–II.3) |
 
 ### Open points

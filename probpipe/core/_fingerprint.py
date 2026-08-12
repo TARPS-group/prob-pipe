@@ -159,6 +159,8 @@ def _update(
 
     if isinstance(obj, (_NP_ARRAY_TYPE, _JAX_ARRAY_TYPE)):
         _update_array(h, obj, max_array_bytes, state)
+    elif _is_record_batch(obj):
+        _update_record_batch(h, obj, depth, max_array_bytes, state)
     elif _is_record(obj):
         _update_record(h, obj, depth, max_array_bytes, state)
     elif _is_distribution(obj):
@@ -544,6 +546,52 @@ def _update_tfp_object(
 # ---------------------------------------------------------------------------
 # Record hashing
 # ---------------------------------------------------------------------------
+
+
+def _is_record_batch(obj: Any) -> bool:
+    try:
+        from ._record_batch import RecordBatch
+
+        return isinstance(obj, RecordBatch)
+    except ImportError:
+        return False
+
+
+def _update_record_batch(
+    h: hashlib._Hash,
+    batch: Any,
+    depth: int,
+    max_array_bytes: int | None,
+    state: _FingerprintState,
+) -> None:
+    """Hash a batch by its own type, its levels, and its columns in leaf order.
+
+    A batch is not a record, and is checked before one for that reason: a
+    single-field batch converts to its sole column, so an array-shaped read would
+    hash that column alone and call two batches equal that differ in schema or in
+    how their axes are grouped. The multiplicity is part of a batch's type, so the
+    levels and the element spec are hashed rather than left implicit.
+
+    Columns are read raw. A field that is not an array *presents* as the batch of
+    its element kind, and hashing that would fingerprint a wrapper minted for the
+    read rather than the values stored.
+    """
+    h.update(b"record_batch:")
+    h.update(type(batch).__name__.encode())
+    h.update(b":levels=")
+    for name, group in zip(batch.level_names, batch.axis_groups, strict=True):
+        h.update(name.encode())
+        h.update(b"@")
+        h.update(repr(tuple(group)).encode())
+        h.update(b",")
+    h.update(b":spec=")
+    _update(h, batch.element_spec, depth + 1, max_array_bytes, state)
+    h.update(b":")
+    for path in batch.event_template:
+        h.update(path.encode())
+        h.update(b"=")
+        _update(h, batch._raw_column(path), depth + 1, max_array_bytes, state)
+        h.update(b";")
 
 
 def _is_record(obj: Any) -> bool:

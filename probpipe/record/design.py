@@ -1,9 +1,9 @@
-"""Parameter-sweep Designs — materialised ``RecordArray``s with marginals.
+"""Parameter-sweep Designs — materialised batches of records with marginals.
 
-A :class:`Design` is a :class:`~probpipe.RecordArray` whose rows are
+A :class:`Design` is a :class:`~probpipe.RecordBatch` whose entries are
 materialised from per-field **marginals** — the candidate values for
-each field — combined according to a subclass-specific rule. The
-resulting ``RecordArray`` plugs into the ``Function`` sweep
+each field — combined according to a subclass-specific rule. The batch
+carries a single ``design`` level, and plugs into the ``Function`` sweep
 path as a single array-valued input::
 
     result = fit(p=design)    # one inner call per row of the sweep
@@ -23,10 +23,14 @@ import jax.numpy as jnp
 import numpy as np
 
 from ..core._array_backend import _is_numeric_dtype
-from ..core._record_array import RecordArray
+from ..core._record_batch import RecordBatch
 from ..core.event_template import EventTemplate
 
 __all__ = ["Design", "FullFactorialDesign"]
+
+# The level a design mints: one multiplicity over its own entries, which the
+# sweep layer then zips sibling views on.
+DESIGN_LEVEL = "design"
 
 
 # ---------------------------------------------------------------------------
@@ -77,8 +81,8 @@ def _seq_to_column(
 # ---------------------------------------------------------------------------
 
 
-class Design(RecordArray):
-    """``RecordArray`` that carries its per-field marginals.
+class Design(RecordBatch):
+    """A batch of records that carries its per-field marginals.
 
     A ``Design`` is not meant to be instantiated directly — concrete
     subclasses (:class:`FullFactorialDesign`) assemble the underlying
@@ -95,9 +99,9 @@ class Design(RecordArray):
         def fit(r, K): ...
         result = fit(**design.select_all()) # zip across sibling views
 
-    ``select_all()`` returns one view per field; views that share the
-    Design as their parent zip across rows in the WF sweep layer (so
-    the two shapes above produce identical outputs). For raw columns
+    ``select_all()`` returns one view per field; the views carry this Design's
+    own ``design`` level, and the sweep layer zips arguments that share a level
+    name (so the two shapes above produce identical outputs). For raw columns
     (no sweep — just JAX broadcasting), index with ``design["r"]``.
 
     Attributes
@@ -114,6 +118,16 @@ class Design(RecordArray):
     def marginals(self) -> Mapping[str, Any]:
         """Per-field marginals this design was built from."""
         return dict(self._marginals)
+
+    @property
+    def _view_type(self) -> type:
+        """A view of a design is a plain batch, not a design.
+
+        The marginals are a statement about the whole design; a view over one
+        field holds none of them, so it takes the class that makes no such claim.
+        It keeps the ``design`` level, which is what the sweep layer zips on.
+        """
+        return RecordBatch
 
 
 # ---------------------------------------------------------------------------
@@ -143,7 +157,7 @@ class FullFactorialDesign(Design):
     >>> ff = FullFactorialDesign(r=[1.5, 1.8], K=[60.0, 80.0])
     >>> ff.batch_shape
     (4,)
-    >>> ff.fields
+    >>> tuple(ff.event_template.keys())
     ('r', 'K')
 
     Mixed numeric / categorical marginals are supported — columns fall
@@ -186,11 +200,12 @@ class FullFactorialDesign(Design):
             fields[name] = col
             template_spec[name] = leaf_shape
 
-        RecordArray.__init__(
+        RecordBatch.__init__(
             self,
             fields,
-            batch_shape=(n_total,),
-            template=EventTemplate(template_spec),
+            DESIGN_LEVEL,
+            element_spec=EventTemplate(template_spec),
+            axis_groups=((n_total,),),
             name=f"FullFactorialDesign({','.join(names)})",
         )
         # The name is derived from the marginals, not user-typed.
