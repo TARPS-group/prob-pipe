@@ -16,8 +16,11 @@ import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
+    ArraySpec,
+    EventTemplate,
     GLMLikelihood,
     MultivariateNormal,
+    NumericRecordBatch,
     Record,
     random_unnormalized_log_prob,
 )
@@ -215,39 +218,40 @@ class TestInnerDraw:
         actual = inner._unnormalized_log_prob(theta)
         np.testing.assert_allclose(float(actual), float(expected), rtol=1e-5)
 
-    def test_record_and_recordarray_inputs_equivalent(
+    def test_record_and_record_batch_inputs_equivalent(
         self,
         prior,
         likelihood,
         regression_data,
     ):
-        """``Record`` and ``NumericRecordArray`` data inputs produce
+        """``Record`` and ``NumericRecordBatch`` data inputs produce
         identical log-densities given the same minibatch indices.
 
-        Locks the ``_index_along_leading`` RecordArray-via-Record-subclass
+        Locks the ``_index_along_leading`` RecordBatch-via-Record-subclass
         path: indexing each leaf along the batch axis must give the same
         per-minibatch surrogate regardless of which container type the
         user passes.
         """
-        from probpipe import NumericEventTemplate, NumericRecordArray
+        from probpipe import NumericEventTemplate, NumericRecordBatch
 
         X, y = regression_data
         n = X.shape[0]
         record_data = Record("r", X=X, y=y)
-        recordarray_data = NumericRecordArray(
+        record_batch_data = NumericRecordBatch(
             {"X": jnp.asarray(X), "y": jnp.asarray(y)},
-            batch_shape=(n,),
-            template=NumericEventTemplate(X=(X.shape[1],), y=()),
+            level_names="draw",
+            axis_groups=((n,),),
+            element_spec=NumericEventTemplate(X=(X.shape[1],), y=()),
         )
 
         m_rec = MinibatchedDistribution(prior, likelihood, record_data, batch_size=20)
-        m_ra = MinibatchedDistribution(prior, likelihood, recordarray_data, batch_size=20)
+        m_batch = MinibatchedDistribution(prior, likelihood, record_batch_data, batch_size=20)
 
         # Same key → same minibatch indices → same log-density at theta.
         key = jax.random.PRNGKey(13)
         theta = jnp.array([0.1, -0.1])
         lp_rec = float(m_rec._draw_one(key)._unnormalized_log_prob(theta))
-        lp_ra = float(m_ra._draw_one(key)._unnormalized_log_prob(theta))
+        lp_ra = float(m_batch._draw_one(key)._unnormalized_log_prob(theta))
         np.testing.assert_allclose(lp_rec, lp_ra, rtol=1e-5)
 
     def test_with_replacement_flag(self, prior, likelihood, data_record):
@@ -316,7 +320,7 @@ class TestBareArrayData:
     """Bare ``jnp.ndarray`` data works when the CIL likelihood's
     ``per_datum_log_likelihood`` accepts a scalar datum.
 
-    The canonical container is ``Record`` / ``RecordArray`` (so covariates
+    The canonical container is ``Record`` / ``RecordBatch`` (so covariates
     have named-field provenance), but ``_data_size`` and
     ``_index_along_leading`` also work on a leading-axis-arrayed
     response-only dataset.
@@ -473,3 +477,16 @@ class TestJITTraceability:
         # Re-call to confirm no retracing failure
         grad2 = step(theta + 0.01)
         assert grad2.shape == (2,)
+
+
+def test_a_multi_axis_batch_is_refused_at_construction(prior, likelihood):
+    """Rows are one axis. A grid's trailing axes have no per-datum reading, and
+    the check belongs where the distribution is built — otherwise ``dataset_size``
+    reports the leading axis and the first draw is what raises."""
+    grid = NumericRecordBatch(
+        {"x": jnp.ones((4, 3))},
+        ("n", "k"),
+        element_spec=EventTemplate(x=ArraySpec(shape=())),
+    )
+    with pytest.raises(ValueError, match="rows are one axis"):
+        MinibatchedDistribution(prior, likelihood, grid, batch_size=2)

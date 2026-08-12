@@ -14,17 +14,16 @@ __all__ = ["GLMLikelihood"]
 
 
 def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
-    """Extract a JAX array from a Record, RecordArray, or raw array-like.
+    """Extract a JAX array from a Record, RecordBatch, or raw array-like.
 
     A single-field record, or batch of them: extract the field.
     Multi-field: stack fields into a vector (preserving leading batch dims).
     """
-    from ..core._record_array import RecordArray
     from ..core._record_batch import RecordBatch
 
     if isinstance(x, jnp.ndarray):
         return x
-    if isinstance(x, (Record, RecordArray, RecordBatch)):
+    if isinstance(x, (Record, RecordBatch)):
         # Leaf keys via the template (a record's own keys() is top-level and its
         # [] is leaf-only), so a nested value coerces instead of raising.
         keys = list(x.event_template.keys())

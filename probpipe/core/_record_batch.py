@@ -308,7 +308,7 @@ class RecordBatch(Batch[Record]):
         # ``object.__new__`` for the reason ``TrackedTerm._shallow_copy`` gives: a
         # host's own ``__new__`` may select a class from constructor arguments and
         # must not run again where there are none.
-        view = object.__new__(type(self))
+        view = object.__new__(self._view_type)
         object.__setattr__(
             view, "_columns", {path: column[index] for path, column in self._columns.items()}
         )
@@ -410,7 +410,7 @@ class RecordBatch(Batch[Record]):
             for key, column in self._columns.items()
             if key.startswith(prefix)
         }
-        view = object.__new__(type(self))
+        view = object.__new__(self._view_type)
         object.__setattr__(view, "_columns", columns)
         view._init_batch(
             BatchSpec(_to_record_declaration(template), self.axis_groups, self.level_names),
@@ -427,7 +427,7 @@ class RecordBatch(Batch[Record]):
         an operation aligning operands by level name lines it up with its
         siblings and with the batch it came from.
         """
-        view = object.__new__(type(self))
+        view = object.__new__(self._view_type)
         object.__setattr__(view, "_columns", {key: self._columns[key]})
         view._init_batch(
             BatchSpec(
@@ -1033,10 +1033,8 @@ def _stack_column(values: list[Any], spec: ValueSpec, *, kind: str) -> Any:
     calls for and an element comes back as the object that was put in.
     """
     if isinstance(spec, ArraySpec):
-        # Through ``_to_jax_array``, the one conversion every compute boundary
-        # routes through, so a leaf whose type is registered with an
-        # ``ArrayBackend`` converts by its backend's rule rather than by whatever
-        # the numpy protocol happens to make of it.
+        # Through the array backend, not ``jnp.asarray``: a registered container
+        # converts by its own ``to_jax``, and the duck path cannot see it.
         return jnp.stack([_to_jax_array(value) for value in values])
     store = _from_iterable(values, kind=kind)
     store.setflags(write=False)

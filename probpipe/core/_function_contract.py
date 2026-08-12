@@ -13,7 +13,6 @@ import numpy as np
 
 from ._array_backend import _numpy_dtype_of
 from ._distribution_base import Distribution
-from ._record_array import RecordArray
 from ._record_batch import RecordBatch
 from .constraints import _supports_compatible
 from .event_template import (
@@ -301,7 +300,7 @@ def _validate_function_output(
             declared_template=concrete,
             actual_template=actual_template,
         )
-        if isinstance(result, (RecordArray, RecordBatch)):
+        if isinstance(result, RecordBatch):
             _validate_batched_function_output_values(
                 function_name=function_name,
                 template=concrete,
@@ -359,7 +358,7 @@ def _validate_batched_function_output_values(
     *,
     function_name: str,
     template: EventTemplate,
-    value: RecordArray | RecordBatch,
+    value: RecordBatch,
 ) -> None:
     """Validate batched numeric leaves against their per-element specs."""
     batch_shape = value.batch_shape

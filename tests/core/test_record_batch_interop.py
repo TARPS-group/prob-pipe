@@ -1,7 +1,7 @@
 """Tests that the package's consumers of a batched record accept a `RecordBatch`.
 
 A `RecordBatch` is deliberately not a `Record`, so every consumer that recognised
-a batch by `isinstance(x, Record)` — or by a `RecordArray` subclass check, or by
+a batch by `isinstance(x, Record)` — or by a `RecordBatch` subclass check, or by
 duck-typing on `.fields` — stops recognising one when the batch arrives. Those
 gates do not raise; they take the other branch, which is why widening them needs
 its own tests rather than the producers' own.
@@ -170,16 +170,23 @@ class TestMinibatching:
 
         assert _data_size(_draws(7)) == 7
 
-    def test_indexing_gathers_the_named_columns(self):
+    def test_indexing_gathers_the_named_columns_into_a_batch(self):
+        """A minibatch of records is a collection of them, so gathering rows
+        gives a *batch*. Handing back a plain ``Record`` of gathered columns
+        would state the batch's shape as one element's — the false type a
+        per-datum transform then reads."""
         from probpipe.inference._minibatch import _index_along_leading
 
         batch = _draws(5)
 
         picked = _index_along_leading(batch, jnp.array([0, 2, 4]))
 
-        assert isinstance(picked, Record)
+        assert isinstance(picked, RecordBatch)
+        assert picked.batch_shape == (3,)
         assert list(picked.event_template.keys()) == ["a", "b"]
         assert np.allclose(picked["a"], jnp.array([0.0, 2.0, 4.0]))
+        # The element declaration is the source's, not one re-read off the rows.
+        assert picked.element_spec == batch.element_spec
 
 
 class TestDesignCoercion:
@@ -857,3 +864,123 @@ class TestFunctionValuedColumnsStack:
         assert out.level_names == ("sweep", "inner")
         assert isinstance(out["f"], FunctionBatch)
         assert out._raw_column("f")[2, 1]() == 21
+
+
+class TestAnEmpiricalTakesABatch:
+    def test_a_batch_routes_to_the_record_empirical(self):
+        """An empirical over a batch of records is an empirical over its rows:
+        the batch peels to the leaf-rows form the class stores, raw columns and
+        all, and resampling keeps rows paired."""
+        from probpipe import EmpiricalDistribution, sample
+        from probpipe.core._empirical import RecordEmpiricalDistribution
+
+        data = NumericRecordBatch(
+            {"X": jnp.arange(4.0), "y": jnp.arange(4.0) * 10},
+            "obs",
+            element_spec=EventTemplate(X=(), y=()),
+        )
+
+        empirical = EmpiricalDistribution(data)
+
+        assert isinstance(empirical, RecordEmpiricalDistribution)
+        assert empirical.num_atoms == 4
+        drawn = sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(16,))
+        stored = {(float(i), float(i * 10)) for i in range(4)}
+        seen = set(zip(np.asarray(drawn["X"]).tolist(), np.asarray(drawn["y"]).tolist()))
+        assert seen <= stored
+
+
+class TestBatchValuedRowAggregation:
+    """A swept body returns one kind of row, and the aggregate is not its rows' class."""
+
+    @staticmethod
+    def _rows(n: int = 3):
+        return NumericRecordBatch(
+            {"x": jnp.arange(float(n))}, "row", element_spec=EventTemplate(x=ArraySpec(shape=()))
+        )
+
+    @staticmethod
+    def _inner(n: int, level: str = "inner"):
+        return NumericRecordBatch(
+            {"y": jnp.zeros(n)}, level, element_spec=EventTemplate(y=ArraySpec(shape=()))
+        )
+
+    def test_mixing_batch_and_non_batch_rows_is_refused(self):
+        def body(x):
+            return self._inner(2) if float(x["x"]) < 1.5 else Record("r", y=0.0)
+
+        with pytest.raises(TypeError, match="some rows returned a batch of records"):
+            Function(func=body, dispatch="sequential")(x=self._rows())
+
+    @pytest.mark.parametrize(
+        "second",
+        [
+            pytest.param(lambda s: s._inner(3), id="batch-shape"),
+            pytest.param(lambda s: s._inner(2, level="other"), id="level-names"),
+        ],
+    )
+    def test_rows_disagreeing_on_their_multiplicity_are_refused(self, second):
+        def body(x):
+            return self._inner(2) if float(x["x"]) < 0.5 else second(self)
+
+        with pytest.raises(ValueError, match="returned batches that disagree"):
+            Function(func=body, dispatch="sequential")(x=self._rows())
+
+    def test_rows_disagreeing_on_their_element_spec_are_refused(self):
+        def body(x):
+            if float(x["x"]) < 0.5:
+                return self._inner(2)
+            return NumericRecordBatch(
+                {"z": jnp.zeros(2)}, "inner", element_spec=EventTemplate(z=ArraySpec(shape=()))
+            )
+
+        with pytest.raises(ValueError, match="returned batches that disagree"):
+            Function(func=body, dispatch="sequential")(x=self._rows())
+
+    def test_compatible_batch_rows_stack_with_the_sweep_in_front(self):
+        out = Function(func=lambda x: self._inner(2), dispatch="sequential")(x=self._rows())
+        assert out.batch_shape == (3, 2)
+        assert out.level_names == ("row", "inner")
+
+    def test_a_returned_design_aggregates_as_a_plain_batch(self):
+        """The aggregate is not itself a design: a subclass with its own
+        constructor cannot be rebuilt from columns."""
+        from probpipe.record.design import FullFactorialDesign
+
+        out = Function(func=lambda x: FullFactorialDesign(a=[1.0, 2.0]), dispatch="sequential")(
+            x=self._rows()
+        )
+        assert type(out) is NumericRecordBatch
+        assert out.batch_shape == (3, 2)
+
+
+class TestDeclaredOpaqueOutputAcrossDispatches:
+    """A field the declaration calls opaque holds one value per row, whatever
+    those values look like — on every dispatch.
+
+    Stacking them numerically instead would turn each row's own axes into batch
+    axes the levels never named, and the batch refuses its own output. The
+    sequential and JAX paths build the columns by different routes, so the
+    equivalence is asserted rather than assumed.
+    """
+
+    @pytest.mark.parametrize("dispatch", ["sequential", "jax", "auto"])
+    def test_an_opaque_field_of_arrays_is_one_object_per_row(self, dispatch):
+        rows = NumericRecordBatch.stack(
+            [NumericRecord("row", i=jnp.asarray(1)), NumericRecord("row", i=jnp.asarray(2))],
+            level_name="row",
+        )
+
+        @function(output_template=EventTemplate(y=None), dispatch=dispatch)
+        def make_vector(row):
+            return {"y": jnp.array([row["i"], row["i"] + 1])}
+
+        result = make_vector(row=rows)
+
+        assert result.batch_shape == (2,)
+        assert result.event_template == EventTemplate(y=None)
+        column = result._raw_column("y")
+        assert column.dtype == object
+        assert column.shape == (2,)
+        assert [int(v) for v in result[0]["y"]] == [1, 2]
+        assert [int(v) for v in result[1]["y"]] == [2, 3]

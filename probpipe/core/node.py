@@ -43,7 +43,6 @@ from ._function_contract import (
     _validate_function_templates,
     _wrap_declared_function_output,
 )
-from ._record_array import RecordArray
 from ._record_batch import RecordBatch
 from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
@@ -904,7 +903,7 @@ class Function(Node, TrackedTerm, Annotated):
                     # Batched-record input: take row 0 so the dummy call
                     # sees what an inner sweep iteration will actually
                     # receive.
-                    if isinstance(v, (RecordArray, RecordBatch)):
+                    if isinstance(v, RecordBatch):
                         replacement = v[0]
                         batched_sources[ref] = v
                     else:

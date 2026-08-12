@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed (breaking)
+
+- **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
+  `RecordBatch` / `NumericRecordBatch`.** A batched record was a `Record`
+  subclass, which made `isinstance(x, Record)` true of a collection and put a
+  batch's `len` and iteration in competition with a record's fields. The batch
+  types are `Batch` subclasses now: they hold named levels, `len` and `iter`
+  speak about the collection, and the field structure is read from
+  `event_template` where it belongs. `RecordBatch.stack` replaces
+  `RecordArray.stack`, `NumericRecordBatch.to_vector` / `from_vector` replace
+  their array counterparts, and a producer that returned a `RecordArray` returns
+  a `RecordBatch`.
+
+  `_RecordArrayView` goes with them: a field selection off a batch is an ordinary
+  batch, and sibling selections align by their shared level names rather than by
+  a parent pointer. `Design` and `FullFactorialDesign` are batches.
+
+  The batch types were built alongside the array ones and then took over, so the
+  entries below describe the batch types throughout — this is the only entry that
+  names the classes being removed.
+
 ### Fixed
 
 - **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
@@ -81,10 +102,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assembly read the row count from the samples' `shape`, which a record batch
   refuses unless it holds exactly one leaf; the count now comes from
   `batch_shape`, the one accessor that means the same thing for every batched
-  value. (Not `len`: on a `RecordArray` that is the *field* count, which would
+  value. (Not `len`: on a `RecordBatch` that is the *field* count, which would
   have made `num_atoms` silently wrong.) And enumeration stacked each
   argument's per-row values with `jnp.stack`, which a `Record` row is not; those
-  now stack through `RecordArray.stack`.
+  now stack through `RecordBatch.stack`.
 
   The first of those is what kept `f(d, d["x"])` — a parent alongside its own
   view, the remaining co-sampling case above — from running end to end once its
@@ -101,7 +122,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   one gather that reads the container it is given: an array indexes directly, a
   list of per-row objects gathers positionally, and a record is rebuilt from its
   gathered leaves. The rebuild is deliberate rather than a `jax.tree.map` — a
-  `RecordArray` stores its row count and a `Record` its event template, both in
+  `RecordBatch` stores its row count and a `Record` its event template, both in
   pytree aux data, so mapping over the leaves alone would have produced a batch
   quietly claiming the rows it started with. The same gather covers the output
   side, where a vectorized broadcast over a record-returning function leaves the
@@ -175,7 +196,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   flat dimension last and the levels kept as the leading axes, and `from_vector`
   inverts it, naming the levels it reconstructs so a multi-level batch round-trips
   and casting each field back to its declared dtype, which concatenating promoted.
-  It is a bare array pytree, so it passes through `jit` / `vmap` / `grad` unchanged.
+  Its columns are the leaves `jit` / `vmap` / `grad` traverse; the batch itself
+  is rebuilt only under the transforms the contract below states.
 
   **Raw pytree transformations have a stated contract**, because a batch cannot
   thread its declaration through a round trip the way a `Record` does: `vmap`
@@ -229,7 +251,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   values, which is what keeps an opaque field opaque when its values happen to be
   numeric.
 
-  This is additive: the existing `RecordArray` / `NumericRecordArray` are untouched
+  This was additive: the batch types were built alongside what they replaced
   and still what the library uses, and the new classes are not yet exported.
 
 - **`EventTemplate.with_dims(**sizes)`** binds symbolic dimensions explicitly,
@@ -250,7 +272,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the record side. A `Distribution`'s `event_spec` and a `Function`'s
   `output_spec` follow with their own layers, and the slot moves onto the
   tracked base once every kind carries one. A batched record still subclasses
-  `Record` and is not one record, so `RecordArray.spec` raises rather than
+  `Record` and is not one record, so a batched record's `spec` raised rather than
   reporting an element's spec as the batch's own type: a batch's type specifies
   the collection. That override goes away with the subclassing, when the batch
   types become collections rather than records.
@@ -396,7 +418,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-element planner slots; `Any` on a variadic parameter remains
   non-restrictive rather than suppressing those behaviors. Authoritative nested
   outputs aggregate identically across sequential, threaded, Prefect, and JAX
-  dispatch without changing the public `RecordArray.stack` contract, and
+  dispatch without changing the public stacking contract, and
   declared distribution sweeps expose their concrete schema through
   `DistributionArray.event_template`.
   Callable and private-implementation fingerprints encode frozen signatures
@@ -443,7 +465,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   write-once `provenance` attached via `with_provenance`, plus `with_name` for
   rename-as-copy) and `Annotated` (a free-form `annotations` mapping).
   `Distribution` and `Record` / `NumericRecord` inherit both; the batch types
-  (`RecordArray` / `NumericRecordArray` / `DistributionArray`) are tracked
+  (`RecordBatch` / `NumericRecordBatch` / `DistributionArray`) are tracked
   terms too. `name_is_auto` records whether an object's name was auto-derived
   by the operation that produced it (`True`) or supplied by the user
   (`False`), so later composition can re-derive auto names while preserving
@@ -631,19 +653,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   batch as a named tree found no children and asked a multi-field batch to convert
   to one array, so two valid columns raised.
 
-  `RecordArray` / `NumericRecordArray` still exist and are unchanged for direct
-  use — no producer returns one. `NumericRecordArray.from_vector` keeps returning
-  a `NumericRecordArray`, renesting the batch's flat columns itself, so the class
-  stays coherent while it lasts.
 
 - **A batch of records is recognized wherever a batched record was.** A
   `RecordBatch` is deliberately not a `Record`, so every place that recognized a
-  batched value by `isinstance(x, Record)`, by a `RecordArray` subclass check, or
+  batched value by `isinstance(x, Record)`, by a `RecordBatch` subclass check, or
   by duck-typing on `.fields` stopped recognizing one when a batch arrived. None
   of those gates raise — they take the other branch — so a batch would have been
   re-wrapped as a single opaque field, minibatched by its field count, or read as
   a bare array. Each now admits a batch and does with it what it did with a
-  `RecordArray`:
+  `RecordBatch`:
 
   the `Function` boundary keeps a returned batch as the batch it is and copies it
   into an independent result under the declared output template, validating each
@@ -657,8 +675,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ArviZ bridge finds its variables through `event_template`, which a batch has and
   `.fields` is not.
 
-  Producers still return `RecordArray`, so nothing changes for existing code:
-  these are the gates a batch will arrive at, opened first and on their own. Two
+  These are the gates a batch arrives at. Two
   paths are deliberately left for the cutover, each needing a decision rather than
   a wider gate: stacking a list of batched records from a broadcast, which has to
   name the levels the broadcast grid mints, and
@@ -666,13 +683,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   #340.
 
   Level alignment reads the levels an operand **has**. A batched operand carrying
-  none of its own — a `RecordArray`, or a `DistributionArray`, which is swept by
+  none of its own — a `DistributionArray`, which is swept by
   its `batch_shape` without being a `Batch` — has an anonymous multiplicity: it
   aligns with nothing by name and products with everything. Standing its parameter
   name in for the levels it lacks made a parameter named `draw` collide with a real
   `draw` level on another operand, refusing a call whose two axes are independent,
   over a level neither operand disagreed about. A `DistributionArray` stays
-  levelless past the cutover, so this outlives the `RecordArray` removal.
+  levelless, so this is not tied to any one batched-record class.
 
 - **Renamed, for the storage rule (#381):** `FunctionSpec.output_template` is
   now **`output_spec`**, storing any `ValueSpec` or `None`, and
@@ -705,7 +722,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the called Function as the first parent followed by tracked inputs.
   Resolved ordinary arguments are fingerprinted separately in
   `Provenance.inputs` and do not become ancestry nodes. When an implementation
-  directly returns a `Record`, `RecordArray`, or `Distribution`,
+  directly returns a `Record`, `RecordBatch`, or `Distribution`,
   `Function.__call__` returns a shallow independent result rather than the same
   object, clears the implementation result's provenance, and attaches only the
   current call provenance. Consequently, implementation-domain metadata such
@@ -891,7 +908,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (use `keys()`), `to_leaf_list` (use `list(values())`), `from_leaf_list` (use
   `from_field_values`), and `map_with_names` (use `map_with_keys`). `Record.fields`
   and `Record.to_dict` survive as **temporary** aliases for `children` and
-  `to_nested_dict`. `RecordArray` / `NumericRecordArray` keep a top-level mapping
+  `to_nested_dict`. `RecordBatch` / `NumericRecordBatch` keep a top-level mapping
   for now, pending the batch-axis rework.
 
 - **`EventTemplate` moved to its own module and `Record` now carries an
@@ -908,7 +925,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `Record.to_numeric()`.
   - **Moved** `leaf_shapes` onto `NumericEventTemplate`; `numeric_leaf_shapes`
     is consolidated into `leaf_shapes`. (`to_vector` / `from_vector` are now
-    value-level methods on `NumericRecord` / `NumericRecordArray` — see the
+    value-level methods on `NumericRecord` / `NumericRecordBatch` — see the
     value-model entry above — not template methods.)
   - **Added** leaf-keyed (de)composition: the mapping protocol
     (`keys` / `values` / `items` / `__iter__`) enumerates every leaf by its
@@ -971,7 +988,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   separate PR.)
 
 - **Nested `ProductDistribution` support in the record layer (#262).**
-  `RecordArray` accepts slash-delimited paths in string indexing
+  `RecordBatch` accepts slash-delimited paths in string indexing
   (`arr["outer/a"]`) and integer-indexes a nested array into a nested record
   element; `flatten` / `unflatten` recurse into nested record fields in
   depth-first leaf order; and a batched draw from a nested `ProductDistribution`
@@ -1062,7 +1079,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `dtype.kind`, under which the ml_dtypes extension types JAX registers
   report `"V"` (void) — so a bfloat16 array failed `ArraySpec.is_valid`,
   inferred as an `OpaqueSpec`, and was rejected as a `NumericRecord` /
-  `NumericRecordArray` leaf. All five gates (template inference, spec
+  `NumericRecordBatch` leaf. All five gates (template inference, spec
   validation, the two record-layer leaf checks, the broadcast-template
   builder, and the `Design` marginals probe) now route through one shared
   predicate that also admits ml_dtypes numerics; structured (record)
@@ -1072,7 +1089,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Core container indexing and nested reductions.** `DistributionArray`
   integer indexing now raises `IndexError` for positive overflow and negatives
   past the axis bounds, while 0-d arrays accept only empty-tuple indexing.
-  `NumericRecordArray.mean()` and `.var()` now recurse through nested numeric
+  `NumericRecordBatch.mean()` and `.var()` now recurse through nested numeric
   record fields instead of treating nested records as arrays.
 
 - **Linear-algebra and Gaussian-conditioning edge cases on the algebra bug-fix
@@ -1695,7 +1712,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   ``(k,)``). The PyMC NUTS, PyMC ADVI, and nutpie inference paths all
   thread this through to ``make_posterior``, so ``mean(post)`` returns
   a ``NumericRecord`` keyed by RV name and ``draws()`` returns a
-  ``NumericRecordArray``. Previously, PyMC posteriors had no field
+  ``NumericRecordBatch``. Previously, PyMC posteriors had no field
   structure and ``draws()`` returned a flat ``(n_draws, n_params)``
   array. Models declared with multiple scalar RVs (e.g. separate
   ``intercept`` and ``slope`` ``pm.Normal`` calls) now produce a
@@ -2125,7 +2142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **`Record` field ordering is now insertion-order**, not alphabetical.
   ``Record(z=1, a=2)`` now iterates ``("z", "a")``. Same change applies
-  to ``RecordTemplate``, ``RecordArray``, and every Record-based
+  to ``RecordTemplate``, ``RecordBatch``, and every Record-based
   distribution that derives ``fields`` from the underlying store.
   Previous alphabetical ordering was an accident of
   ``OrderedDict(sorted(...))``.
@@ -2201,24 +2218,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- **`_RecordArrayView`** (`RecordArray.view(field)`) — single-field view of a
-  ``RecordArray`` column that carries its parent as shared-identity metadata.
-  The ``Function`` sweep layer groups sibling views from one parent
-  into a single zip axis; views from different parents product.
-- **Uniform `select_all()`** on ``Record`` / ``RecordArray`` /
+- **Uniform `select_all()`** on ``Record`` / ``RecordBatch`` /
   ``RecordDistribution``. Splatting the result into a
   ``@function`` preserves correlation on the two batched variants
   and plain splats fields on scalar ``Record``.
-- **Public `.parent` / `.field`** properties on both
-  ``_RecordArrayView`` and ``_RecordDistributionView``.
+- **Public `.parent` / `.field`** properties on ``_RecordDistributionView``,
+  which say two views draw from one law.
 - **Single-field `.shape` / `.ndim` shims** on ``RecordDistribution`` and
   ``_RecordDistributionView`` (mirror the existing shims on
-  ``NumericRecord`` / ``NumericRecordArray``). Multi-field distributions
+  ``NumericRecord`` / ``NumericRecordBatch``). Multi-field distributions
   raise ``TypeError``.
 
 ### Changed (breaking)
 
-- **`len(RecordArray)`** now returns the **field count** (matching
+- **`len(RecordBatch)`** now returns the **field count** (matching
   ``len(Record)``) instead of ``prod(batch_shape)``. For the flat batch
   size, use ``prod(ra.batch_shape)``.
 - **`event_shapes`** now always returns ``dict[str, tuple[int, ...]]``.

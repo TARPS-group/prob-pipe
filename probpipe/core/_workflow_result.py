@@ -18,7 +18,6 @@ from ._broadcast_distributions import _make_stack
 from ._distribution_base import Distribution
 from ._function_contract import _wrap_declared_function_output
 from ._numeric_record import _is_numeric_leaf
-from ._record_array import RecordArray
 from ._record_batch import RecordBatch
 from .event_template import EventTemplate, _to_record_declaration
 from .provenance import Provenance
@@ -57,7 +56,7 @@ def _wrap_as_record(
       nested ``dict`` value denotes tree structure and becomes a nested
       subtree (mappings are never leaves), not a single opaque field.
     - Non-empty ``list`` / ``tuple`` → ``_make_stack``: assembles a
-      ``DistributionArray`` / ``RecordArray`` / ``NumericRecordArray``
+      ``DistributionArray`` / ``RecordBatch`` / ``NumericRecordBatch``
       matching the inner element type.
     - Scalar numeric / ``jnp.ndarray`` → a single-field ``NumericRecord``
       named and keyed by the function's own name. Raw
@@ -122,8 +121,8 @@ def _coerce_output(
           records, or ``Distribution`` becomes an independent shallow
           result copy.
         * ``"stack"`` — array-valued broadcast; ``value`` is a stacked
-          aggregate from ``_make_stack`` (``NumericRecordArray`` /
-          ``RecordArray`` / ``DistributionArray``).
+          aggregate from ``_make_stack`` (``NumericRecordBatch`` /
+          ``RecordBatch`` / ``DistributionArray``).
         * ``"nested"`` — array + Distribution broadcast; ``value`` is
           a ``DistributionArray`` of per-row marginals.
     provenance : Provenance or None
@@ -135,7 +134,7 @@ def _coerce_output(
 
     Returns
     -------
-    Record | RecordArray | RecordBatch | Distribution
+    Record | RecordBatch | Distribution
         The value, possibly wrapped or shallow-copied, with the current
         call's ``.provenance`` attached. A copied result does not retain the
         implementation-returned object's prior provenance.
@@ -172,8 +171,6 @@ def _copy_result_term(
             # key on the next unflatten.
             columns = clone._raw_columns()
             object.__setattr__(clone, "_columns", {p: columns[p] for p in output_template})
-        elif isinstance(clone, RecordArray):
-            object.__setattr__(clone, "_template", output_template)
         elif isinstance(clone, Record):
             object.__setattr__(clone, "_spec", _to_record_declaration(output_template))
     object.__setattr__(clone, "_provenance", None)

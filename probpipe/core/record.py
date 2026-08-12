@@ -23,8 +23,8 @@ The ``Record`` family
 ---------------------
 - :class:`Record`: represents a single value, which may contain multiple fields.
 - :class:`~probpipe.NumericRecord`: a subclass in which all fields are numeric, stored in native form (converted to JAX arrays lazily, at the compute boundary).
-- :class:`~probpipe.RecordArray`: batch of ``Record``s sharing one ``EventTemplate``.
-- :class:`~probpipe.NumericRecordArray`: batch of ``NumericRecord``s sharing one ``EventTemplate``.
+- :class:`~probpipe.RecordBatch`: batch of ``Record``s sharing one ``EventTemplate``.
+- :class:`~probpipe.NumericRecordBatch`: batch of ``NumericRecord``s sharing one ``EventTemplate``.
 
 Notes
 -----
@@ -463,9 +463,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 elif (
                     sub_template is not None
                     and isinstance(value, Record)
-                    # A batched child (RecordArray) carries its own template and
+                    # A batched child (RecordBatch) carries its own template and
                     # is stored verbatim; ``batch_shape`` is duck-typed because
-                    # importing RecordArray here would be circular.
+                    # importing RecordBatch here would be circular.
                     and not hasattr(value, "batch_shape")
                 ):
                     if value.event_template is sub_template:
@@ -505,7 +505,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             # Validation above confirmed the key sets match; when the template
             # was inferred the order already matches, so this only reorders a
             # record built with an explicitly out-of-order template — matching
-            # how ``RecordArray`` canonicalizes to its template.
+            # how ``RecordBatch`` canonicalizes to its template.
             if tuple(field_map) != tuple(event_template.children):
                 object.__setattr__(
                     self, "_tree", {k: field_map[k] for k in event_template.children}
@@ -595,9 +595,11 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def spec(self) -> RecordSpec:
         """This record's own :class:`RecordSpec` — the single stored source of its type.
 
-        Set at construction. A declaration given as a bare :class:`EventTemplate`
-        is stored wrapped, so after construction only the spec remains and the
-        declared kind is its class. :attr:`event_template` is a view on it.
+        Fixed at construction and always present. A declaration given as a bare
+        :class:`EventTemplate` is stored wrapped, so after construction only the
+        spec remains and the declared kind is its class. :attr:`event_template`
+        is a view on it.
+
         """
         return self._spec
 

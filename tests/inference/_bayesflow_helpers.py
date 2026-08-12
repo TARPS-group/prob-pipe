@@ -23,7 +23,7 @@ def theta_vec(params: Any) -> Array:
     Parameters
     ----------
     params : Any
-        A per-draw ``NumericRecord`` / ``NumericRecordArray`` (training and
+        A per-draw ``NumericRecord`` / ``NumericRecordBatch`` (training and
         predictive paths) or a flat array-like (the gradient-MCMC path).
 
     Returns

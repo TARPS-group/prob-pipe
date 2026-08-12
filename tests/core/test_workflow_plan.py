@@ -9,9 +9,8 @@ import jax.numpy as jnp
 import pytest
 import tensorflow_probability.substrates.jax.distributions as tfd
 
-from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordArray
+from probpipe import DistributionArray, Normal, NumericRecord, NumericRecordBatch
 from probpipe.core import _workflow_call
-from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._workflow_distribution_normalization import (
     normalize_distribution_values,
 )
@@ -20,9 +19,12 @@ from probpipe.core.distribution import Distribution
 from probpipe.core.protocols import SupportsSampling
 
 
-def _numeric_record_array(field: str, values: range) -> NumericRecordArray:
-    return NumericRecordArray.stack(
-        [NumericRecord("nr", **{field: float(value)}) for value in values]
+def _numeric_record_batch(
+    field: str, values: range, *, level_name: str = "draw"
+) -> NumericRecordBatch:
+    return NumericRecordBatch.stack(
+        [NumericRecord("nr", **{field: float(value)}) for value in values],
+        level_name=level_name,
     )
 
 
@@ -61,8 +63,8 @@ class TestBroadcastRegime:
         assert plan.dist_args == (_ref("x"),)
         assert plan.array_args == ()
 
-    def test_record_array_value_selects_sweep_regime(self):
-        values = {"p": _numeric_record_array("x", range(4))}
+    def test_record_batch_value_selects_sweep_regime(self):
+        values = {"p": _numeric_record_batch("x", range(4))}
 
         plan = _plan(values)
 
@@ -74,7 +76,7 @@ class TestBroadcastRegime:
                 arg_refs=(_ref("p"),),
                 batch_shape=(4,),
                 size=4,
-                level_names=("p",),
+                level_names=("draw",),
                 axis_groups=((4,),),
             ),
         )
@@ -83,7 +85,7 @@ class TestBroadcastRegime:
 
     def test_array_and_distribution_values_select_nested_regime(self):
         values = {
-            "p": _numeric_record_array("x", range(4)),
+            "p": _numeric_record_batch("x", range(4)),
             "noise": Normal(loc=0.0, scale=1.0, name="noise"),
         }
 
@@ -105,7 +107,7 @@ class TestHintClassification:
         assert protocol.regime == "none"
 
     def test_array_hints_skip_array_sweep(self):
-        ra = _numeric_record_array("x", range(4))
+        ra = _numeric_record_batch("x", range(4))
         da = DistributionArray.from_batched_params(
             Normal,
             batch_shape=(2,),
@@ -114,7 +116,7 @@ class TestHintClassification:
             name="d",
         )
 
-        record_plan = _plan({"p": ra}, {"p": NumericRecordArray})
+        record_plan = _plan({"p": ra}, {"p": NumericRecordBatch})
         dist_plan = _plan({"d": da}, {"d": DistributionArray})
         any_plan = _plan({"p": ra}, {"p": Any})
 
@@ -125,11 +127,12 @@ class TestHintClassification:
 
 class TestArrayGrouping:
     def test_sibling_views_zip_into_one_group(self):
-        ra = NumericRecordArray.stack(
-            [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)]
+        ra = NumericRecordBatch.stack(
+            [NumericRecord("nr", x=float(i), y=float(2 * i)) for i in range(4)], level_name="draw"
         )
 
-        plan = _plan({"x": ra.view("x"), "y": ra.view("y")})
+        views = ra.select_all()
+        plan = _plan({"x": views["x"], "y": views["y"]})
 
         assert plan.regime == "sweep"
         assert plan.array_args == (_ref("x"), _ref("y"))
@@ -138,18 +141,20 @@ class TestArrayGrouping:
                 arg_refs=(_ref("x"), _ref("y")),
                 batch_shape=(4,),
                 size=4,
-                level_names=("x",),
+                level_names=("draw",),
                 axis_groups=((4,),),
             ),
         )
         assert plan.sweep_batch_shape == (4,)
         assert plan.n_sweep == 4
 
-    def test_views_from_different_parents_use_product_shape(self):
-        ra_a = _numeric_record_array("a", range(3))
-        ra_b = _numeric_record_array("b", range(2))
+    def test_batches_with_no_level_in_common_form_a_product(self):
+        """Levels align by name, so batches sharing none are independent: each is
+        its own group and the sweep ranges over the grid."""
+        ra_a = _numeric_record_batch("a", range(3), level_name="outer")
+        ra_b = _numeric_record_batch("b", range(2), level_name="inner")
 
-        plan = _plan({"a": ra_a.view("a"), "b": ra_b.view("b")})
+        plan = _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
         assert plan.regime == "sweep"
         assert plan.array_groups == (
@@ -157,19 +162,28 @@ class TestArrayGrouping:
                 arg_refs=(_ref("a"),),
                 batch_shape=(3,),
                 size=3,
-                level_names=("a",),
+                level_names=("outer",),
                 axis_groups=((3,),),
             ),
             ArrayBroadcastGroup(
                 arg_refs=(_ref("b"),),
                 batch_shape=(2,),
                 size=2,
-                level_names=("b",),
+                level_names=("inner",),
                 axis_groups=((2,),),
             ),
         )
         assert plan.sweep_batch_shape == (3, 2)
         assert plan.n_sweep == 6
+
+    def test_one_level_name_at_two_sizes_is_refused(self):
+        """Two batches naming the same level claim to range over the same thing,
+        so disagreeing about its size is a mistake rather than a product."""
+        ra_a = _numeric_record_batch("a", range(3))
+        ra_b = _numeric_record_batch("b", range(2))
+
+        with pytest.raises(ValueError, match="batched differently"):
+            _plan({"a": ra_a.select("a")["a"], "b": ra_b.select("b")["b"]})
 
     def test_distribution_array_uses_sweep_group(self):
         da = DistributionArray.from_batched_params(
@@ -286,20 +300,14 @@ class TestAnnotationDispatch:
 
         assert plan.regime == "none"
 
-    def test_the_other_family_member_does_not_skip_it(self):
+    def test_another_container_class_does_not_skip_it(self):
+        """A batch passed where a DistributionArray was declared is not what the
+        body said it takes whole, so it sweeps."""
         batch = _batch()
-        plan = _plan({"p": batch}, hints={"p": NumericRecordArray})
+        plan = _plan({"p": batch}, hints={"p": DistributionArray})
 
         assert plan.regime == "sweep"
         assert plan.array_args == (_ref("p"),)
-
-    def test_a_record_array_annotated_as_a_batch_is_swept(self):
-        from probpipe.core._record_batch import RecordBatch
-
-        ra = _numeric_record_array("x", range(3))
-        plan = _plan({"p": ra}, hints={"p": RecordBatch})
-
-        assert plan.regime == "sweep"
 
 
 class TestPartialLevelOverlap:

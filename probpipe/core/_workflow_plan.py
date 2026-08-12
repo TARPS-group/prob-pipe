@@ -16,7 +16,6 @@ from typing import Any, Literal, Union, get_args, get_origin
 from . import _workflow_call, _workflow_distribution_normalization
 from ._batch import Batch
 from ._distribution_array import DistributionArray
-from ._record_array import RecordArray
 from ._record_batch import RecordBatch
 from .distribution import Distribution
 
@@ -25,7 +24,13 @@ BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
 
 @dataclass(frozen=True)
 class ArrayBroadcastGroup:
-    """One parent-identity group of array-valued sweep arguments."""
+    """One zip group of array-valued sweep arguments — read along the same axes.
+
+    What puts two arguments in one group depends on what they are: a batch is
+    grouped by its level names, since levels are how batches align; a value with
+    a parent — a distribution view — by that parent, since sibling views of one
+    law have no level names to align on.
+    """
 
     arg_refs: tuple[_workflow_call.WorkflowInputRef, ...]
     batch_shape: tuple[int, ...]
@@ -66,7 +71,7 @@ def build_broadcast_plan(
         value = _workflow_call.input_ref_value(values, ref)
         expected = _workflow_call.input_ref_hint(signature_info, ref)
 
-        is_batched_record = isinstance(value, (RecordArray, RecordBatch))
+        is_batched_record = isinstance(value, RecordBatch)
         is_dist_array = isinstance(value, DistributionArray)
         if (is_batched_record or is_dist_array) and len(value.batch_shape) > 0:
             if _value_matches_hint(value, expected) or expected is Any:
@@ -79,7 +84,7 @@ def build_broadcast_plan(
                 continue
             dist_args.append(ref)
 
-    array_groups = group_array_args_by_parent(values=values, refs=array_args)
+    array_groups = build_array_zip_groups(values=values, refs=array_args)
     sweep_batch_shape = tuple(axis for group in array_groups for axis in group.batch_shape)
     sweep_level_names = tuple(n for group in array_groups for n in group.level_names)
     sweep_axis_groups = tuple(g for group in array_groups for g in group.axis_groups)
@@ -112,8 +117,8 @@ def group_by_alignment(
     function of the call.
 
     A view with a ``parent`` is grouped by a single lookup, which is exact for
-    the view types that carry one: such a view's parent is always a distribution
-    or a record array, never another view. A nested view type would need this
+    the view types that carry one: such a view's parent is always a distribution,
+    never another view. A nested view type would need this
     walked transitively.
 
     A batch has no parent to look up — a view over one is another batch over the
@@ -140,7 +145,7 @@ def group_by_alignment(
     return [(root, tuple(group_refs)) for root, group_refs in groups.values()]
 
 
-def group_array_args_by_parent(
+def build_array_zip_groups(
     *,
     values: Mapping[str, Any],
     refs: Sequence[_workflow_call.WorkflowInputRef],
@@ -239,8 +244,8 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     """Whether the annotation names a batched container the value satisfies.
 
     Both halves are load-bearing. The annotation must be a batched-container
-    class, because an *element* annotation — ``p: Record``, which a record array
-    also satisfies by subclassing — is how a body says it wants one row, and the
+    class, because an *element* annotation — ``p: Record`` — is how a body says
+    it wants one row, and the
     sweep is what delivers rows. And the value must actually satisfy it: a
     parameter annotated with one batched-record class does not accept the other,
     so family membership alone would deliver a batch whole to a body that
@@ -255,7 +260,7 @@ def _value_matches_hint(value: Any, expected: Any) -> bool:
     try:
         return (
             isinstance(base, type)
-            and issubclass(base, (Batch, RecordArray, DistributionArray))
+            and issubclass(base, (Batch, DistributionArray))
             and isinstance(value, base)
         )
     except TypeError:

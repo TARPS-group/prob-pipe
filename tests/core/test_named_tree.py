@@ -178,12 +178,17 @@ class TestWithPathNames:
         renamed = r.with_path_names(a="alpha")
         assert renamed.event_template["alpha"] == spec
 
-    def test_record_array_defers(self):
-        from probpipe import RecordArray
+    def test_record_batch_defers(self):
+        from probpipe import RecordBatch
 
-        ra = RecordArray({"a": jnp.zeros((3,))}, batch_shape=(3,), template=EventTemplate(a=()))
-        with pytest.raises(NotImplementedError):
-            ra.with_path_names(a="b")
+        ra = RecordBatch(
+            {"a": jnp.zeros((3,))},
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
+        )
+        renamed = ra.with_path_names(a="b")
+        assert list(renamed.event_template) == ["b"]
 
 
 # ===========================================================================
@@ -368,14 +373,22 @@ class TestRecordAutoPromotion:
         assert jax.tree_util.tree_structure(back) == treedef
 
     def test_batch_subclasses_unaffected(self):
-        from probpipe import NumericRecordArray, RecordArray
+        from probpipe import NumericRecordBatch, RecordBatch
 
-        ra = RecordArray({"a": jnp.zeros((3,))}, batch_shape=(3,), template=EventTemplate(a=()))
-        assert type(ra) is RecordArray
-        nra = NumericRecordArray(
-            {"a": jnp.zeros((3,))}, batch_shape=(3,), template=EventTemplate(a=())
+        ra = RecordBatch(
+            {"a": jnp.zeros((3,))},
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
         )
-        assert type(nra) is NumericRecordArray
+        assert type(ra) is RecordBatch
+        nrb = NumericRecordBatch(
+            {"a": jnp.zeros((3,))},
+            level_names="draw",
+            axis_groups=((3,),),
+            element_spec=EventTemplate(a=()),
+        )
+        assert type(nrb) is NumericRecordBatch
 
 
 # ===========================================================================

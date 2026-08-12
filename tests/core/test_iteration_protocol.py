@@ -3,8 +3,9 @@ Record family iterates field names (#142).
 
 The rule (codified in STYLE_GUIDE.md §1.11):
 
-* :class:`Record`, :class:`NumericRecord`, :class:`RecordArray`,
-  :class:`NumericRecordArray` iterate field names dict-style.
+* :class:`Record` and :class:`NumericRecord` iterate field names dict-style.
+* :class:`RecordBatch` / :class:`NumericRecordBatch` are collections: they
+  iterate leading-axis views, and fields are read from ``event_template``.
 * :class:`DistributionArray` is positional (access via ``da[i]``);
   ``len(da)`` is the leading-axis size, ``prod(da.batch_shape)`` is
   the total cell count. Not generally treated as an iterable.
@@ -32,10 +33,10 @@ from probpipe import (
     MultivariateNormal,
     Normal,
     NumericRecord,
-    NumericRecordArray,
+    NumericRecordBatch,
     ProductDistribution,
     Record,
-    RecordArray,
+    RecordBatch,
     TransformedDistribution,
 )
 
@@ -178,25 +179,29 @@ def test_numeric_record_iterates_field_names():
     assert list(iter(nr)) == ["a", "b"]
 
 
-def test_record_array_iterates_field_names():
+def test_a_record_batch_iterates_leading_axis_views():
     from probpipe.core.event_template import EventTemplate
 
-    ra = RecordArray(
-        a=jnp.zeros((5,)),
-        b=jnp.zeros((5,)),
-        batch_shape=(5,),
-        template=EventTemplate(a=(), b=()),
+    batch = RecordBatch(
+        {"a": jnp.zeros((5,)), "b": jnp.zeros((5,))},
+        level_names="draw",
+        axis_groups=((5,),),
+        element_spec=EventTemplate(a=(), b=()),
     )
-    assert list(iter(ra)) == ["a", "b"]
+    rows = list(iter(batch))
+    assert len(rows) == 5
+    assert all(tuple(row.keys()) == ("a", "b") for row in rows)
 
 
-def test_numeric_record_array_iterates_field_names():
+def test_a_numeric_record_batch_iterates_leading_axis_views():
     from probpipe.core.event_template import NumericEventTemplate
 
-    nra = NumericRecordArray(
-        a=jnp.zeros((4,)),
-        b=jnp.zeros((4,)),
-        batch_shape=(4,),
-        template=NumericEventTemplate(a=(), b=()),
+    batch = NumericRecordBatch(
+        {"a": jnp.zeros((4,)), "b": jnp.zeros((4,))},
+        level_names="draw",
+        axis_groups=((4,),),
+        element_spec=NumericEventTemplate(a=(), b=()),
     )
-    assert list(iter(nra)) == ["a", "b"]
+    rows = list(iter(batch))
+    assert len(rows) == 4
+    assert all(tuple(row.keys()) == ("a", "b") for row in rows)

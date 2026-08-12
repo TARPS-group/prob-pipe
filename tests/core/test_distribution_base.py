@@ -161,7 +161,7 @@ class TestNoBatchShape:
     """``Distribution`` has no ``batch_shape`` attribute. Pins the
     absence across the public Distribution family so a future
     subclass can't silently reintroduce it as a defensive default.
-    Container types (``DistributionArray``, ``RecordArray``) keep
+    Container types (``DistributionArray``, ``RecordBatch``) keep
     their own ``batch_shape`` — that's a different concept and is
     asserted separately at the bottom.
     """

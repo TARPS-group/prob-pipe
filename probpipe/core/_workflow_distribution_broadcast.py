@@ -517,24 +517,16 @@ def _stack_rows(rows: list[Any], *, arg_name: str) -> Any:
 
     ``jnp.stack`` covers array-valued rows. A record-valued row is not an array
     — a ``Record`` has fields, not a shape — so those stack through
-    ``RecordArray.stack``, giving a batch whose ``batch_shape`` is ``(n,)`` and
-    whose fields are the per-row leaves.
+    ``RecordBatch.stack``, giving a batch of one ``draw`` level over the rows.
+    A nested record needs no special case: a column is keyed by leaf path, so
+    nesting costs the stacking nothing.
     """
-    from ._record_array import RecordArray
+    from ._broadcast_distributions import DRAW_LEVEL
+    from ._record_batch import RecordBatch
     from .record import Record
 
     if rows and isinstance(rows[0], Record):
-        # Checked rather than caught: ``stack`` refuses a nested template, but it
-        # refuses other things too, and attributing every refusal to nesting
-        # would advise flattening a record that is already flat. A leaf path
-        # differs from a child name exactly when the record nests.
-        if tuple(rows[0].keys()) != rows[0].fields:
-            raise TypeError(
-                f"lifting {arg_name!r} would batch a record with nested fields, which a record "
-                f"batch does not represent yet; flatten the law's fields, or pass the nested "
-                f"parts as separate arguments"
-            )
-        return RecordArray.stack(rows)
+        return RecordBatch.stack(rows, level_name=DRAW_LEVEL)
     return jnp.stack(rows)
 
 

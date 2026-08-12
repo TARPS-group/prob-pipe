@@ -297,7 +297,7 @@ class TestNutpieIntegration:
         post_mean = 5.0 * y_bar / (1.0 / 100.0 + 5.0)
         post_sd = np.sqrt(1.0 / (1.0 / 100.0 + 5.0))
         # PyMCModel now provides an event_template (one field per PyMC RV),
-        # so draws() returns a NumericRecordArray keyed by RV name. The
+        # so draws() returns a NumericRecordBatch keyed by RV name. The
         # only parameter is `mu`, with event_shape ().
         draws = result.draws()
         assert draws.event_template.fields == ("mu",)

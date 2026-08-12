@@ -477,7 +477,7 @@ class TestSampleReturnTypeConvention:
 class TestMixtureSamplingDispatch:
     """``_MixtureSampling._sample`` dispatches on component sample type.
 
-    Numeric components → Array; Record components → RecordArray;
+    Numeric components → Array; Record components → RecordBatch;
     incompatible types → clear TypeError.
     """
 
@@ -492,10 +492,9 @@ class TestMixtureSamplingDispatch:
         assert isinstance(s, jnp.ndarray)
         assert s.shape == (4,)
 
-    def test_record_components_stacked_as_record_array(self):
+    def test_record_components_stacked_as_record_batch(self):
         from probpipe import Record
         from probpipe.core._broadcast_distributions import _make_mixture_marginal
-        from probpipe.core._record_array import NumericRecordArray, RecordArray
 
         comps = [
             ProductDistribution(
@@ -504,12 +503,14 @@ class TestMixtureSamplingDispatch:
             )
             for i in range(3)
         ]
+        from probpipe import NumericRecordBatch
+
         mix = _make_mixture_marginal(comps)
-        # Batched → RecordArray
+        # Batched → RecordBatch
         s_batched = mix._sample(jax.random.PRNGKey(0), (5,))
-        assert isinstance(s_batched, (RecordArray, NumericRecordArray))
+        assert isinstance(s_batched, NumericRecordBatch)
         assert s_batched.batch_shape == (5,)
-        # Unbatched → Record (first row of the stacked RecordArray)
+        # Unbatched → Record (first row of the stacked RecordBatch)
         s_one = mix._sample(jax.random.PRNGKey(0), ())
         assert isinstance(s_one, Record)
 

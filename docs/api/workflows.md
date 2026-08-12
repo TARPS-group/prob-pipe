@@ -105,7 +105,7 @@ Authoritative mapping outputs are normalized to the declared `Record` pytree
 before dispatch aggregation. Flat and nested output structures therefore have
 the same value type, data, and concrete template under sequential, threaded,
 Prefect, and JAX execution. This recursive packing is private to the Function
-planner; it does not broaden the public `RecordArray.stack` contract.
+planner; it does not broaden the public `RecordBatch.stack` contract.
 
 Variadic Functions participate fully when no authoritative input template is
 declared. Each `*args` element and `**kwargs` entry is classified, lifted,
@@ -126,7 +126,7 @@ instead creates a shallow independent result item: value data and templates are
 shared by default, the annotations container is copied, prior provenance is
 cleared, and the current Function and tracked inputs become the new direct
 parents. With an authoritative output declaration, this public result copy
-carries the concrete declared template for `Record` and `RecordArray` results
+carries the concrete declared template for `Record` and `RecordBatch` results
 even when the raw implementation result had a weaker inferred template.
 Distribution results instead retain their intrinsic, already-matching
 `event_template`; Function never rewrites it. Value data remains shared and

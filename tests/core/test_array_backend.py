@@ -391,10 +391,10 @@ class TestNativePickle:
 
 class TestEagerBatchBoundary:
     def test_stack_of_native_leaf_records_coerces_columns(self, da):
-        from probpipe import RecordArray
+        from probpipe import RecordBatch
 
         records = [NumericRecord("r", temps=da, x=float(i)) for i in range(3)]
-        ra = RecordArray.stack(records)
+        ra = RecordBatch.stack(records, level_name="draw")
         assert isinstance(ra["temps"], jnp.ndarray)
         assert ra["temps"].shape == (3, 3)
         assert ra.batch_shape == (3,)
@@ -474,11 +474,11 @@ class TestBackendRegistrationEndToEnd:
         assert fingerprint(_FakeTensor([9.0, 2.0])) != same
 
     def test_batch_stack_uses_registered_converter(self, clean_registry):
-        from probpipe import RecordArray
+        from probpipe import RecordBatch
 
         register_array_backend(_FakeTensor, _fake_backend())
         records = [Record("r", t=_FakeTensor([float(i), 2.0])) for i in range(3)]
-        ra = RecordArray.stack(records)
+        ra = RecordBatch.stack(records, level_name="draw")
         assert isinstance(ra["t"], jnp.ndarray)
         assert ra["t"].shape == (3, 2)
         assert all(r["t"].to_jax_calls == 1 for r in records)

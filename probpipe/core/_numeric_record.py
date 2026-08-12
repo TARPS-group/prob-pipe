@@ -379,7 +379,7 @@ class NumericRecord(Record):
         ------
         TypeError
             If *vec* carries leading batch axes — batched reconstruction is
-            the batch type's concern; use :meth:`NumericRecordArray.from_vector`
+            the batch type's concern; use :meth:`NumericRecordBatch.from_vector`
             for a batched matrix.
         ValueError
             If the vector length does not equal ``template.vector_size``.
@@ -389,7 +389,7 @@ class NumericRecord(Record):
             raise TypeError(
                 f"NumericRecord.from_vector expects a 1-D vector (one value); "
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
-                f"NumericRecordArray.from_vector."
+                f"NumericRecordBatch.from_vector."
             )
         return _reconstruct_from_vector(name, template, vec, name_is_auto=False)
 
@@ -485,7 +485,7 @@ class NumericRecord(Record):
 def _value_treedef(template: NumericEventTemplate) -> jax.tree_util.PyTreeDef:
     """PyTreeDef of the value :func:`_reconstruct_from_vector` builds.
 
-    A throwaway ``NumericRecord`` / ``NumericRecordArray`` skeleton mirroring
+    A throwaway ``NumericRecord`` / ``NumericRecordBatch`` skeleton mirroring
     *template*; its structure (field names, nesting, ``batch_shape``, template)
     is all the treedef needs, so the placeholder leaves are cheap zero-stride
     broadcasts. Pairing this treedef with the real ordered leaves in

@@ -117,7 +117,7 @@ class _RecordDrawsPosterior:
 
     def draws(self, *, chain):
         return NumericRecordBatch.from_vector(
-            "nra", self._template, self._chains[chain], level_names="draw"
+            "nrb", self._template, self._chains[chain], level_names="draw"
         )
 
 

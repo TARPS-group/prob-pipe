@@ -57,7 +57,7 @@ When every field is an ``ArraySpec`` the template is all-numeric, and
 specialization describing a value that is a PyTree of arrays. That subclass
 adds the flat-vector layout — ``vector_size`` and :meth:`from_vector`
 reconstruction; the ``to_vector`` serialization is a value method on
-:class:`~probpipe.NumericRecord` / :class:`~probpipe.NumericRecordArray`. See
+:class:`~probpipe.NumericRecord` / :class:`~probpipe.NumericRecordBatch`. See
 its docstring for details.
 """
 
@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import operator
 from abc import ABC, abstractmethod
-from collections.abc import Hashable, Iterable, Mapping
+from collections.abc import Callable, Hashable, Iterable, Mapping
 from dataclasses import dataclass
 from math import prod
 from typing import Any
@@ -522,6 +522,35 @@ def _to_declaration(decl: _OutputDecl) -> ValueSpec:
     if isinstance(decl, EventTemplate):
         return RecordSpec(decl)
     return decl
+
+
+def _reshaped_template(
+    template: EventTemplate, reshape: Callable[[tuple[int, ...]], tuple[int, ...]]
+) -> EventTemplate:
+    """*template* with every array field's shape mapped through *reshape*.
+
+    The template-to-template counterpart of inferring one from data, for the
+    operations that move a leading axis: a batch's rows become one element's, an
+    empirical's atoms become its stacked samples, a replicate prepends its own.
+    Deriving the result from the values instead would answer the shape correctly
+    and lose everything else — ``dtype``, ``support``, an ``OpaqueSpec``'s
+    ``meta``, a nested field's own kinds are exactly what inference cannot
+    recover — so here only the shape moves and the rest rides through.
+
+    A field with no shape to move is carried unchanged, and a nested template is
+    reshaped in turn.
+    """
+    children: dict[str, _FieldSpec] = {}
+    for path, spec in template.children.items():
+        if isinstance(spec, EventTemplate):
+            children[path] = _reshaped_template(spec, reshape)
+        elif isinstance(spec, ArraySpec):
+            children[path] = ArraySpec(
+                tuple(reshape(tuple(spec.shape))), dtype=spec.dtype, support=spec.support
+            )
+        else:
+            children[path] = spec
+    return EventTemplate(children)
 
 
 def _to_record_declaration(decl: _EventDecl) -> RecordSpec:
@@ -1444,7 +1473,7 @@ class NumericEventTemplate(EventTemplate):
 
     # 1-D numeric (de)serialization is a value operation and lives on the
     # value types: ``to_vector`` on :class:`~probpipe.NumericRecord` /
-    # :class:`~probpipe.NumericRecordArray`, and their ``from_vector``
+    # :class:`~probpipe.NumericRecordBatch`, and their ``from_vector``
     # classmethods (which take a template). A template describes structure
     # and does not depend on the value type, so it carries neither.
 
