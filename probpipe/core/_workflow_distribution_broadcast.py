@@ -232,7 +232,7 @@ def _split_empirical_args(
     """
     candidates: list[tuple[EmpiricalDistribution, tuple[_workflow_call.WorkflowInputRef, ...]]] = []
     sample_args: dict[_workflow_call.WorkflowInputRef, Distribution] = {}
-    for root, arg_refs in _workflow_plan.group_by_root(values=values, refs=broadcast_args):
+    for root, arg_refs in _workflow_plan.group_by_alignment(values=values, refs=broadcast_args):
         enumerable = (
             isinstance(root, EmpiricalDistribution)
             and root.num_atoms <= n_broadcast_samples
@@ -306,7 +306,7 @@ def _sample_broadcast_args(
     product of their laws.
     """
     sampled: dict[_workflow_call.WorkflowInputRef, Array] = {}
-    for root, arg_refs in _workflow_plan.group_by_root(values=values, refs=broadcast_args):
+    for root, arg_refs in _workflow_plan.group_by_alignment(values=values, refs=broadcast_args):
         key, subkey = jax.random.split(key)
         drawn = root._sample(subkey, (n,))
         for ref in arg_refs:
