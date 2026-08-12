@@ -884,19 +884,30 @@ class Function(Node, TrackedTerm, Annotated):
         """Return the JAX trace-probe error for the current call, if any.
 
         The probe traces the operation the dispatch is choosing, not merely the
-        body: a sweep runs the body under ``jax.vmap``, and a body can trace
-        cleanly bare yet be impossible under the transform — one that returns a
-        batch, whose added axis no level can name. So a batched-record argument
-        is probed the way ``execute_sweep_rows_jax`` will actually feed it: its
-        leaf columns, mapped over one row, rebuilt into a ``Record`` inside the
-        traced call. A probe failure means sequential dispatch, which is always
-        able to run the call — the two paths agree on results by contract, so
-        falling back costs speed, never correctness.
+        body: a body can trace cleanly bare yet be impossible under the
+        transform its executor applies — one that returns a batch, whose added
+        axis no level can name. So each argument is probed the way the executor
+        that would receive it will actually feed it, and **every executor that
+        maps is probed under a map**:
+
+        - A batched-record argument goes to ``execute_sweep_rows_jax``, which
+          maps over leaf columns and rebuilds a ``Record`` inside the traced
+          call. Probed that way, over one row.
+        - A plain distribution argument goes to ``_broadcast_jax``, which draws
+          ``n`` samples and maps over the draw axis. Probed that way, over one
+          draw.
+
+        A probe that omits its executor's transform is the defect this guards:
+        the body passes and then fails inside the executor, where there is no
+        fallback left to take. A probe failure means sequential dispatch, which
+        is always able to run the call — the two paths agree on results by
+        contract, so falling back costs speed, never correctness.
         """
         try:
             dummy_kw = dict(values)
             broadcast_refs = set(broadcast_args)
             batched_sources: dict[_workflow_call.WorkflowInputRef, Any] = {}
+            drawn_sources: dict[_workflow_call.WorkflowInputRef, tuple[tuple[int, ...], Any]] = {}
             for ref in _workflow_call.iter_input_refs(self._signature_info, values):
                 v = _workflow_call.input_ref_value(values, ref)
                 if ref in broadcast_refs:
@@ -931,6 +942,12 @@ class Function(Node, TrackedTerm, Annotated):
                         # mirrors what the inner function actually sees.
                         dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
                         replacement = jnp.zeros(es, dtype=dt) if es else jnp.zeros((), dtype=dt)
+                        # Every distribution reaching here is one ``_broadcast_jax``
+                        # draws and maps over, including a ``DistributionArray``
+                        # of empty batch shape — the planner routes that to the
+                        # marginalization path, and a batched one takes row-wise
+                        # dispatch before any probe runs.
+                        drawn_sources[ref] = (tuple(es) if es else (), dt)
                     dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
                 else:
                     if isinstance(v, jnp.ndarray):
@@ -968,6 +985,24 @@ class Function(Node, TrackedTerm, Annotated):
                         }
                     )
                 jax.make_jaxpr(jax.vmap(_row_call))(tuple(probe_leaves))
+            elif drawn_sources:
+                refs = list(drawn_sources)
+
+                def _draw_call(draws):
+                    kw = dummy_kw
+                    for draw_ref, draw in zip(refs, draws):
+                        kw = _workflow_call.replace_input_ref(kw, draw_ref, draw)
+                    return func(**kw)
+
+                # One draw, shaped as ``_sample_broadcast_args`` produces them:
+                # the leading axis is the draw axis ``_broadcast_jax`` maps over,
+                # so what the traced call sees is the event-shaped slice the
+                # bare probe used to pass directly.
+                probe_draws = tuple(
+                    jnp.zeros((1, *event_shape), dtype=dtype)
+                    for event_shape, dtype in drawn_sources.values()
+                )
+                jax.make_jaxpr(jax.vmap(_draw_call))(probe_draws)
             else:
                 jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
         except Exception as exc:

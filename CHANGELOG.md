@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A body that returns a batch no longer crashes the marginalization path.**
+  Calling a `Function` whose body returns a `RecordBatch` with a `Distribution`
+  argument raised the pytree rank error out of `jax.vmap` instead of falling
+  back to sequential dispatch.
+
+  The trace probe that gates JAX dispatch models the transform its executor
+  applies, so that a body which traces cleanly bare but cannot survive the
+  transform is caught while a fallback is still available. It did that for the
+  sweep executor and not for `_broadcast_jax`, which also maps — over the draw
+  axis rather than over batch rows — so a batch-returning body passed the probe
+  and then failed inside the executor, where nothing was left to fall back to.
+  Both mapping executors are now probed under a map.
+
 ### Removed (breaking)
 
 - **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
