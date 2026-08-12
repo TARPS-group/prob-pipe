@@ -1190,9 +1190,20 @@ def _unflatten_with(cls: type[RecordBatch]):
                 f"over its columns rather than over the batch"
             )
         if rank == 0:
+            # No batch axis left means the columns *are* one element's values. A
+            # non-array column is still an object array holding it, though, and
+            # handing that to the record would declare a callable field whose
+            # value is a zero-dimensional ndarray — so the single entry comes out
+            # of its storage.
+            element = {
+                path: column.item()
+                if _is_object_array(column) and getattr(column, "ndim", None) == 0
+                else column
+                for path, column in columns.items()
+            }
             return Record(
                 name,
-                columns,
+                element,
                 event_template=element_spec,
                 name_is_auto=name_is_auto,
                 _validate_leaves=False,
