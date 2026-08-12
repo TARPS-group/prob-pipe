@@ -534,7 +534,7 @@ def from_distribution(
     )
 
 
-@workflow_function
+@function
 def kl_divergence(
     p: Distribution,
     q: Distribution,
@@ -549,7 +549,7 @@ def kl_divergence(
     closed-form TFP formula when the pair is registered, or a Monte Carlo
     estimate as a universal fallback.
 
-    As a :class:`~probpipe.core.node.WorkflowFunction`, this broadcasts
+    As a :class:`~probpipe.core.node.Function`, this broadcasts
     elementwise when *p* or *q* is a
     :class:`~probpipe.core._distribution_array.DistributionArray`; the
     registry only ever sees scalar distribution arguments.
