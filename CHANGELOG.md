@@ -51,9 +51,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Reconstruction allocates the resolved class and restores state, so it no longer
   re-runs a constructor: an `EventTemplate` keeps the class its specs were
   resolved to instead of re-deciding the numeric promotion, and a `Record` keeps
-  the exact schema it was written with. `Function` keeps one variant — its
-  constructor assigns normally, so it opens a window over itself and delegates
-  the refusal to the mixin.
+  the exact schema it was written with. `Function` now writes its own state
+  through `object.__setattr__` like every other host, so the `_initializing`
+  window its constructor used to open is gone and one guard covers every case.
 
   **Breaking:** a pickle written by an earlier version does not load. The
   reconstruction entry points it names (`_unpickle_record`,

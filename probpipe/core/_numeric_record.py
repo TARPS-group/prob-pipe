@@ -305,12 +305,25 @@ class NumericRecord(Record):
         val = self._tree[field_name]
         if isinstance(val, jnp.ndarray):
             return val
-        cache = self._jax_cache
+        cache = self._conversion_cache()
         arr = cache.get(field_name)
         if arr is None:
             arr = _to_jax_array(val)
             cache[field_name] = arr
         return arr
+
+    def _conversion_cache(self) -> dict[str, jnp.ndarray]:
+        """The per-leaf conversion memo, created if this instance has none.
+
+        A record that arrives from ``copy`` or ``pickle`` carries no memo — it is
+        derived from the leaves, so it is rebuilt rather than transported — and
+        the first conversion after one lands here.
+        """
+        cache = getattr(self, "_jax_cache", None)
+        if cache is None:
+            cache = {}
+            object.__setattr__(self, "_jax_cache", cache)
+        return cache
 
     def _field_as_jax(self, key: str) -> jnp.ndarray:
         """The converted ``jax.Array`` for the field at *key*, at any depth.
