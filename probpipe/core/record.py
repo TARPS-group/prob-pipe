@@ -630,12 +630,11 @@ class Record(NamedTree[Any], Immutable, TrackedTerm, Annotated):
 
     # -- Immutability -------------------------------------------------------
     #
-    # The assignment guard and the state round-trip come from
-    # :class:`~probpipe.core._immutable.Immutable`. The spec a record carries is
-    # part of that state, so a reconstruction keeps the exact schema it was
-    # written with — an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta``
-    # that ``infer_from`` could not recover — without this class restating what
-    # its state is.
+    # The guard and the state round-trip come from
+    # :class:`~probpipe.core._immutable.Immutable`. A record's spec is part of
+    # that state, so a reconstruction keeps the exact schema it was written with
+    # — an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta`` that
+    # ``infer_from`` could not recover.
 
     # -- Tree structure -----------------------------------------------------
     #

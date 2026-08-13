@@ -1071,11 +1071,10 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
 
     # -- Immutability -------------------------------------------------------
     #
-    # The assignment guard and the state round-trip come from
+    # The guard and the state round-trip come from
     # :class:`~probpipe.core._immutable.Immutable`. Restoring the stored specs
-    # directly also keeps the resolved class: rebuilding through the constructor
-    # would re-run the numeric promotion in ``__new__``, which reads the specs it
-    # is given rather than the class the state came from.
+    # directly keeps the resolved class, where rebuilding through the
+    # constructor would re-run the numeric promotion in ``__new__``.
 
     # -- Tree structure -----------------------------------------------------
     #

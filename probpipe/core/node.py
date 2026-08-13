@@ -548,16 +548,13 @@ class Function(Node, Immutable, TrackedTerm, Annotated):
         object.__setattr__(renamed, "__qualname__", name)
         return renamed
 
-    #: The construction flag is not state: it says where the constructor got to,
-    #: and a reconstruction is past that point.
+    #: Not state: the flag says where the constructor got to.
     _transient_state = ("_initializing",)
 
     def __setattr__(self, name: str, value: Any) -> None:
-        # The one variant on the shared guard: this constructor assigns normally
-        # rather than through ``object.__setattr__``, so it opens a window over
-        # itself. Delegating the refusal keeps the message and the deletion rule
-        # shared. The window closes for good once construction is a guarded
-        # window on every tracked term, which is where the flag goes.
+        # This constructor assigns normally rather than through
+        # ``object.__setattr__``, so it opens a window over itself; the refusal
+        # outside that window is the shared one.
         if getattr(self, "_initializing", False):
             object.__setattr__(self, name, value)
             return
