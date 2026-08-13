@@ -8,6 +8,11 @@ guard and, because an object that refuses assignment cannot be restored the way
 Every tracked term is immutable (``C2 – Functional interface over immutable
 objects``), as is :class:`~probpipe.core.event_template.EventTemplate`, which is
 immutable without being a term.
+
+Interim: the mixin is inherited by ``Record``, ``EventTemplate``, ``Batch``, and
+``Function``, the classes that enforced immutability individually. The rest of
+the tracked terms accept assignment until :class:`TrackedTerm` inherits it, which
+also requires the terms that mutate after construction to stop.
 """
 
 from __future__ import annotations
@@ -33,22 +38,6 @@ def decoupled_container(container: Any) -> Any:
         share.
     """
     return container.copy() if hasattr(container, "copy") else dict(container)
-
-
-def _allocate(cls: type) -> Any:
-    """Allocate an instance of *cls* without running ``__new__`` or ``__init__``.
-
-    The reconstruction callable :meth:`Immutable.__reduce__` names, at module
-    level so a pickle can import it.
-
-    Notes
-    -----
-    ``object.__new__`` rather than ``cls.__new__``, because a host's own
-    ``__new__`` selects a class from constructor arguments — ``Record``
-    promoting to ``NumericRecord``, the dynamic distribution subclasses — and
-    *cls* is already the resolved class the state belongs to.
-    """
-    return object.__new__(cls)
 
 
 class Immutable:
@@ -165,6 +154,14 @@ class Immutable:
         -------
         tuple
             The three-element form ``pickle`` and ``copy`` consume:
-            :func:`_allocate`, the resolved class, and :meth:`__getstate__`.
+            ``object.__new__``, the resolved class, and :meth:`__getstate__`.
+
+        Notes
+        -----
+        ``object.__new__`` rather than the host's own ``__new__``, which selects
+        a class from constructor arguments — ``Record`` promoting to
+        ``NumericRecord``, the dynamic distribution subclasses. The class here is
+        already the resolved one the state belongs to, so that choice must not be
+        made again.
         """
-        return (_allocate, (type(self),), self.__getstate__())
+        return (object.__new__, (type(self),), self.__getstate__())

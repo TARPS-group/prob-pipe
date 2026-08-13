@@ -1069,13 +1069,6 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
         """Subclass hook for stricter spec validation. No-op on the base."""
         return
 
-    # -- Immutability -------------------------------------------------------
-    #
-    # The guard and the state round-trip come from
-    # :class:`~probpipe.core._immutable.Immutable`. Restoring the stored specs
-    # directly keeps the resolved class, where rebuilding through the
-    # constructor would re-run the numeric promotion in ``__new__``.
-
     # -- Tree structure -----------------------------------------------------
     #
     # The mapping and path-navigation methods (``keys`` / ``values`` /

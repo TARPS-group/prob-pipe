@@ -9,6 +9,7 @@ import copy
 import pickle
 
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from probpipe import NumericRecord, NumericRecordBatch, Record, RecordBatch, function
@@ -147,6 +148,37 @@ class TestTransientState:
         # Copied rather than pickled: a class defined in a function body has no
         # importable name, which is a limit of ``pickle`` and not of the mixin.
         assert not hasattr(copy.copy(Sub(1)), "_memo")
+
+
+class TestAMemoIsRebuiltAfterARoundTrip:
+    """A transient memo is left unset, so whatever reads it must rebuild it.
+
+    ``NumericRecord``'s conversion cache is the one in the tree. Only a *native*
+    leaf reaches it — a ``jax`` leaf is returned without conversion — so these
+    use numpy and xarray leaves.
+    """
+
+    @ROUND_TRIPS
+    def test_a_numpy_leaf_still_converts(self, operation):
+        record = NumericRecord("nr", {"x": np.array([1.0, 2.0])})
+        assert operation(record).to_vector().tolist() == [1.0, 2.0]
+
+    @ROUND_TRIPS
+    def test_a_converted_leaf_reconverts(self, operation):
+        # Converting first populates the memo on the original, which the copy
+        # must not depend on.
+        record = NumericRecord("nr", {"x": np.array([1.0, 2.0])})
+        record.to_vector()
+        assert operation(record).to_vector().tolist() == [1.0, 2.0]
+
+    @ROUND_TRIPS
+    def test_a_native_container_leaf_still_converts(self, operation):
+        xr = pytest.importorskip("xarray")
+        leaf = xr.DataArray([1.0, 2.0], dims=["t"], coords={"t": [10, 20]})
+        record = NumericRecord("nr", {"x": leaf})
+        assert operation(record).to_vector().tolist() == [1.0, 2.0]
+        # The native leaf itself survives; only the converted form is rebuilt.
+        assert operation(record)["x"].dims == ("t",)
 
 
 class TestDecoupledState:
