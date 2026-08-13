@@ -373,11 +373,11 @@ class TestPicklePreservesTemplate:
 
 
 class TestRoundTripPreservesAnnotations:
-    """Annotations are written *after* construction — the documented exception
-    to immutability — so no constructor argument carries them and a state list
-    assembled from ``__init__`` misses them. They must survive every
-    reconstruction path (#409), which ``__reduce__`` governs for ``copy`` as
-    well as for ``pickle``.
+    """Annotations survive every reconstruction path.
+
+    They are written *after* construction — the documented exception to
+    immutability — so no constructor argument carries them, and ``__reduce__``
+    governs ``copy`` as well as ``pickle``.
     """
 
     @pytest.fixture(
