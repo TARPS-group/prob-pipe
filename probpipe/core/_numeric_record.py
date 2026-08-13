@@ -41,6 +41,7 @@ from .event_template import (
     _record_declaration_template,
 )
 from .named_tree import _PATH_SEP, _check_no_path_sep, _unflatten_paths
+from .provenance import Provenance
 from .record import Record
 
 # ``_is_numeric_leaf`` is defined in ``_array_backend`` (the shared leaf
@@ -191,6 +192,8 @@ class NumericRecord(Record):
         event_template: EventTemplate | RecordSpec | None = None,
         name_is_auto: bool = False,
         _validate_leaves: bool = True,
+        _provenance: Provenance | None = None,
+        _annotations: Mapping[str, Any] | None = None,
         **fields: ArrayLike | NumericRecord,
     ):
         # Read as a template for the child lookups below. ``event_template``
@@ -233,6 +236,8 @@ class NumericRecord(Record):
             event_template=event_template,
             name_is_auto=name_is_auto,
             _validate_leaves=_validate_leaves,
+            _provenance=_provenance,
+            _annotations=_annotations,
         )
         # Cache vector_size, reading only container metadata (shapes) — a
         # lazy / disk-backed leaf is not materialised here.
@@ -608,9 +613,13 @@ def _unpickle_numeric_record(
     # reconstruction is ordinary validation-without-conversion. The threaded
     # declaration preserves an explicit schema across the round-trip; a pickle
     # written before it or the annotations were serialized still loads.
-    nr = NumericRecord(name, store, event_template=spec)
-    return nr._restore_identity(
-        name_is_auto=name_is_auto, provenance=provenance, annotations=annotations
+    return NumericRecord(
+        name,
+        store,
+        event_template=spec,
+        name_is_auto=name_is_auto,
+        _provenance=provenance,
+        _annotations=annotations,
     )
 
 
@@ -641,13 +650,13 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, s
 def _numeric_record_unflatten(aux: tuple[RecordSpec, str, bool], children: list) -> NumericRecord:
     """Unflatten NumericRecord from JAX pytree traversal, threading the aux spec."""
     spec, name, name_is_auto = aux
-    nr = NumericRecord(
+    return NumericRecord(
         name,
         dict(zip(tuple(spec.event_template.children), children)),
         event_template=spec,
+        name_is_auto=name_is_auto,
         _validate_leaves=False,
     )
-    return nr._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 
 jax.tree_util.register_pytree_node(
