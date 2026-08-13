@@ -131,12 +131,14 @@ mappings.
 
 ## Workflow RNG recipes and replay
 
-A successful workflow-owned stochastic call records its structural RNG root,
-event identities, stochastic plan, execution capability, and strong callable
-anchor in `Provenance.controls`. The recipe records how ProbPipe-owned keys were
-derived; it does not store raw derived keys, worker ownership, retry attempts,
-or runtime ledgers. Deterministic, wholly exact, and exclusively caller-keyed
-operations do not create an RNG recipe.
+The invocation result of a successful workflow-owned stochastic call records
+its structural RNG root, event identities, stochastic plan, execution
+capability, and strong callable anchor in `Provenance.controls`. Per-cell
+distribution results created inside sweep and nested execution do not each
+record a recipe; the enclosing invocation result does. The recipe records how
+ProbPipe-owned keys were derived; it does not store raw derived keys, worker
+ownership, retry attempts, or runtime ledgers. Deterministic, wholly exact, and
+exclusively caller-keyed operations do not create an RNG recipe.
 
 Recipes survive a JSON serialization round-trip and can drive a validated
 re-execution:

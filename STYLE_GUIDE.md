@@ -182,14 +182,6 @@ their own domain API.
 executions inside `with workflow_run(seed=...):`; a wrapped function's own
 parameter named `seed` remains an ordinary domain input.
 
-An omitted key delegates ownership to the active workflow run. Without an
-explicit run, each root automatic-random call receives its own lazy ephemeral
-root. An explicit sampling key or inference `random_seed` remains caller-owned:
-ProbPipe passes it through without allocating or shifting a workflow RNG event.
-Use one joint Function invocation or reuse materialized samples when several
-transformations must share an exact realization; version 1 has no call-local
-common-random-number control.
-
 ### 1.9 The `num_atoms` / `replicate_size` property convention
 
 Finite-sample distribution classes expose a read-only `int` property

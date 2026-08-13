@@ -8,6 +8,14 @@ diagnostics, which assess a single fitted posterior.
 
 ## Predictive checks
 
+When `key` is omitted, `predictive_check` delegates randomness to the workflow
+broker only for the exact built-in `GLMLikelihood`. Custom or otherwise opaque
+generative likelihoods—including `GLMLikelihood` subclasses—must pass an
+explicit `key=`. Inheriting the built-in `generate_data` method is not enough
+to certify that a subclass preserves its stochastic-effect descriptor. The
+same boundary applies to `simulation_based_calibration` and the diagnostic
+helper `add_ppc`.
+
 ::: probpipe.validation.predictive_check
 
 ## Reference posteriors
@@ -21,6 +29,12 @@ reference's high-precision `(mean, cov)`; the sample metrics need reference
 draws; the kernel Stein discrepancy needs only the target score `∇ log π`. All
 return JAX arrays and are jit-compatible; `score_posterior` aggregates a chosen
 set into a scorecard, skipping any whose reference pieces are absent.
+
+When sliced Wasserstein scoring is active, an omitted `score_posterior` key is
+workflow-owned. A bare call therefore receives a fresh ephemeral root instead
+of the fixed key used by earlier releases. Reproducible benchmark scorecards,
+including calls from `probpipe-benchmark`, should use an enclosing
+`workflow_run(seed=...)` or pass `key=` explicitly.
 
 ::: probpipe.validation.standardized_mean_error
 

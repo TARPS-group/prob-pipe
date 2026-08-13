@@ -817,10 +817,14 @@ def replay_run(provenance: Provenance) -> _ReplayRunScope:
     Raises
     ------
     ReplayCompatibilityError
-        If the record, stochastic plan, execution capability, or observed
-        events are incompatible with the replay attempt.
+        Raised by the returned context manager if the record, stochastic plan,
+        execution capability, or observed events are incompatible with the
+        replay attempt. Validation can fail when the scope is entered or while
+        its Function call runs; an absent required call is reported when the
+        scope exits.
     ReplayUnsupportedCallableError
-        If the recorded or supplied callable lacks a strong replay anchor.
+        Raised by the returned context manager if the recorded or supplied
+        callable lacks a strong replay anchor.
 
     Notes
     -----

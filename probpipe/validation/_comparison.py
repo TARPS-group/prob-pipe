@@ -384,6 +384,11 @@ def score_posterior(
     ``score_fn``, or the sample distances without ``draws``) are skipped rather
     than erroring, so one call serves analytic, long-NUTS, and sandwich
     references. Reused by the test suite and the ``probpipe-benchmark`` harness.
+
+    When sliced Wasserstein scoring is active and ``key`` is omitted, randomness
+    belongs to the workflow broker. A bare call therefore receives a fresh
+    ephemeral root. Enclose benchmark scoring in ``workflow_run(seed=...)`` or
+    pass an explicit ``key=`` to keep it reproducible.
     """
     _workflow_context._assert_workflow_admission()
     metric_names = tuple(metrics)

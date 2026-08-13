@@ -30,8 +30,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   through unchanged, and do not advance the workflow stream. A wrapped user
   callable's own `seed` parameter is still an ordinary input.
 
+  `score_posterior(..., key=None)` no longer uses a fixed
+  `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows
+  the same ownership rule: a bare score receives a fresh ephemeral root, while
+  benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
+  explicit `key=`) to remain reproducible.
+
+  Omitted-key `predictive_check`, `simulation_based_calibration`, and `add_ppc`
+  certify only the exact built-in `GLMLikelihood` data generator. Custom or
+  otherwise opaque likelihoods, including subclasses, must pass `key=`
+  explicitly; inheriting `generate_data` does not certify that a subclass's
+  sampling still matches the built-in stochastic-effect descriptor.
+
   Repeated aliases, record views, empirical weights, and the supported closed
   set of transformed descendants now co-sample from one root realization.
+  Exact empirical eligibility likewise follows that recursive root, so calls
+  such as `f(emp["x"], emp["y"])` enumerate and weight the original atoms
+  instead of drawing unweighted rows. Because JAX dispatch does not implement
+  exact enumeration, explicitly requesting `dispatch="jax"` for this case now
+  raises `dispatch='jax' does not support exact empirical enumeration`; use
+  `auto`, `sequential`, or `thread` instead.
+
   Managed thread/Prefect work items preserve logical RNG identity across
   scheduling and retries, while rejecting unmanaged copied concurrent
   contexts. JAX probing cannot consume workflow RNG state.
@@ -153,7 +172,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   draws were shared. Record-valued laws now lift under `auto`, `sequential`, and
   `thread` dispatch, including record-valued empiricals, whether enumerated or
   passed twice. Explicit `dispatch="jax"` reports the usual not-traceable error
-  when the wrapped function indexes a record.
+  when the wrapped function indexes a sampled record; exactly enumerated
+  empirical roots report the exact-enumeration error described above.
 
   **The joint those lifts produce also resamples.** `include_inputs=True` keeps
   every input beside the output, and drawing from that joint gathers the same

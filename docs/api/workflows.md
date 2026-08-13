@@ -107,6 +107,10 @@ and does not shift the next automatic event. Explicit inference
 roots. Arbitrary randomness inside user code or third-party services is
 outside this contract.
 
+When several transformations must share one exact realization, put them in one
+joint `Function` invocation or reuse materialized samples. RNG recipe version 1
+has no call-local common-random-number control.
+
 ### Co-sampling and execution routes
 
 Within one lifted call, repeated references to the same distribution root,

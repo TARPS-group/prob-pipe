@@ -835,7 +835,7 @@ class TestCoSamplingThroughACall:
         np.testing.assert_allclose(np.asarray(stacked["x"]), [1.0, 2.0])
         assert list(stacked._raw_column("tag")) == ["a", "b"]
 
-    def test_a_nested_record_valued_law_lifts(self):
+    def test_a_nested_record_valued_empirical_lifts(self):
         """A column is keyed by leaf path, so a nested record batches like a
         flat one — the case #340 was opened for."""
         empirical = RecordEmpiricalDistribution(
@@ -857,6 +857,42 @@ class TestCoSamplingThroughACall:
         np.testing.assert_allclose(
             np.asarray(drawn["_output"]).ravel(), np.asarray(drawn["a"]["group/y"])
         )
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "thread"])
+    def test_a_sampled_nested_record_valued_law_lifts_rowwise(self, dispatch):
+        """Nested records are supported up to the row-wise dispatch boundary."""
+        nested = ProductDistribution(
+            group={
+                "x": Normal(loc=0.0, scale=1.0, name="x"),
+                "y": Normal(loc=10.0, scale=1.0, name="y"),
+            },
+            name="nested",
+        )
+        lifted = Function(
+            func=lambda a: a["group/y"],
+            dispatch=dispatch,
+            n_broadcast_samples=8,
+        )
+
+        assert np.asarray(self._run(lifted, nested).samples).shape == (8,)
+
+    def test_a_sampled_nested_record_valued_law_refuses_explicit_jax(self):
+        """Explicit JAX remains strict where a nested record cannot be traced."""
+        nested = ProductDistribution(
+            group={
+                "x": Normal(loc=0.0, scale=1.0, name="x"),
+                "y": Normal(loc=10.0, scale=1.0, name="y"),
+            },
+            name="nested",
+        )
+        lifted = Function(
+            func=lambda a: a["group/y"],
+            dispatch="jax",
+            n_broadcast_samples=8,
+        )
+
+        with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
+            self._run(lifted, nested)
 
     def test_a_record_valued_empirical_passed_twice_shares_its_atom(self):
         empirical = RecordEmpiricalDistribution(
