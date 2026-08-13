@@ -420,6 +420,15 @@ class TestRoundTripPreservesAnnotations:
         assert roundtrip(Record("r", {"x": jnp.ones(3)})).annotations is None
         assert roundtrip(ProductDistribution(v=Normal(0.0, 1.0, name="v"))).annotations is None
 
+    def test_the_reconstruction_has_the_same_type(self, term):
+        # A term whose class is chosen from its constructor arguments — a record
+        # promoting to ``NumericRecord``, a product distribution picking up the
+        # mixins its components support — lands on a different class if the
+        # reconstruction lets one of its own keywords be read as data. The state
+        # can look complete while the interface is not.
+        assert type(roundtrip(term)) is type(term)
+        assert type(copy.copy(term)) is type(term)
+
     def test_no_state_is_lost(self, term):
         # The general form of the bug: compare every attribute the object
         # reports, so a field added later cannot go missing silently. The

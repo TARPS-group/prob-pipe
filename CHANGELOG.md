@@ -40,15 +40,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The omission was systematic rather than careless: annotations are the one field
   written *after* construction — the documented exception to immutability — so a
-  state list assembled from constructor arguments misses exactly this one. The
-  three now thread the store, and `TrackedTerm._restore_identity`, the shared
-  tail of every unpickle helper, restores it alongside `name_is_auto` and
-  provenance. Pickles written before this still load.
+  state list assembled from constructor arguments misses exactly this one.
 
-  The restored container is decoupled from the one it was rebuilt from, as
-  `with_name` already does: entries are shared, the container is not, so a write
-  on a copy does not show through on the original. Annotations still do not cross
-  a JAX transform boundary — `tree_unflatten` rebuilds a bare term, unchanged.
+  So the constructors now accept it. `Record`, `NumericRecord`, and
+  `Distribution` take private `_provenance` and `_annotations` arguments
+  (`ProductDistribution` a `_name_is_auto` as well, since it derives that flag
+  rather than accepting it), which reconstruction passes and nothing else does.
+  A rebuilt term is therefore complete when its constructor returns, and
+  `TrackedTerm._restore_identity` — which wrote identity onto an
+  already-constructed object, bypassing both the immutability guard and the
+  write-once provenance rule for any caller who found it — **is deleted**.
+  Pickles written before this still load.
+
+  The container a reconstruction is handed is decoupled from the one it was built
+  from, as `with_name` already does: entries are shared, the container is not, so
+  a write on a copy does not show through on the original. Annotations still do
+  not cross a JAX transform boundary — `tree_unflatten` rebuilds a bare term,
+  unchanged.
 
 - **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
   A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a

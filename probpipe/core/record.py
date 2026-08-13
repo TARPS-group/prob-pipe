@@ -55,6 +55,7 @@ from .event_template import (
     _unify_event_template_with_value,
 )
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
+from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
 
 if TYPE_CHECKING:
@@ -150,6 +151,13 @@ def _canonical_dtype_str(leaf: Any) -> str:
 # ---------------------------------------------------------------------------
 # Record
 # ---------------------------------------------------------------------------
+
+#: Constructor keywords that name a construction option rather than a field, so
+#: the keyword form of ``Record(...)`` does not read them as data. The positional
+#: dict form takes a field of any name, including these.
+_RESERVED_INIT_KWARGS = frozenset(
+    {"event_template", "name_is_auto", "_validate_leaves", "_provenance", "_annotations"}
+)
 
 
 class Record(NamedTree[Any], TrackedTerm, Annotated):
@@ -395,9 +403,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             if len(args) > 1 and args[1] is not None:
                 source: Mapping[str, Any] = args[1]
             else:
-                source = {
-                    k: v for k, v in kwargs.items() if k not in ("event_template", "name_is_auto")
-                }
+                source = {k: v for k, v in kwargs.items() if k not in _RESERVED_INIT_KWARGS}
             # Promote when every field is numeric (the value probe — bare
             # arrays, numeric scalars, and native backend containers alike)
             # and no explicit non-numeric template vetoes it. Leaves are
@@ -424,6 +430,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         event_template: EventTemplate | RecordSpec | None = None,
         name_is_auto: bool = False,
         _validate_leaves: bool = True,
+        _provenance: Provenance | None = None,
+        _annotations: Mapping[str, Any] | None = None,
         **fields: _FieldValue,
     ):
         # Every check below reads structure, so work in templates and keep the
@@ -494,7 +502,13 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
         object.__setattr__(self, "_tree", field_map)
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        # ``_provenance`` and ``_annotations`` carry state a reconstruction
+        # already holds and that construction cannot otherwise reach: provenance
+        # is write-once, and annotations are written after construction, so a
+        # rebuilt record would come back without either. Private, and the
+        # reconstruction paths at the bottom of this module are the only callers.
+        self._init_tracked(name, name_is_auto=name_is_auto, provenance=_provenance)
+        self._init_annotations(_annotations)
         if event_template is None:
             event_template = EventTemplate.infer_from(field_map)
         else:
@@ -1253,9 +1267,13 @@ def _unpickle_record(
     # ``spec`` and ``annotations`` are optional, and construction accepts either
     # declaration form, so a pickle written before either was serialized still
     # loads.
-    r = Record(name, store, event_template=spec)
-    return r._restore_identity(
-        name_is_auto=name_is_auto, provenance=provenance, annotations=annotations
+    return Record(
+        name,
+        store,
+        event_template=spec,
+        name_is_auto=name_is_auto,
+        _provenance=provenance,
+        _annotations=annotations,
     )
 
 
@@ -1300,9 +1318,10 @@ def _record_unflatten(aux: tuple[RecordSpec, str, bool], children: list) -> Reco
         name,
         dict(zip(tuple(spec.event_template.children), children)),
         event_template=spec,
+        name_is_auto=name_is_auto,
         _validate_leaves=False,
     )
-    return r._restore_identity(name_is_auto=name_is_auto, provenance=None)
+    return r
 
 
 jax.tree_util.register_pytree_node(Record, _record_flatten, _record_unflatten)

@@ -279,36 +279,6 @@ class TrackedTerm(metaclass=_TrackedTermMeta):
         object.__setattr__(self, "_provenance", provenance)
         return self
 
-    def _restore_identity(
-        self,
-        *,
-        name_is_auto: bool,
-        provenance: Provenance | None,
-        annotations: Mapping[str, Any] | None = None,
-    ) -> Self:
-        """Restore identity and metadata state on a reconstructed object.
-
-        The shared tail of every unpickle helper: after the constructor has
-        rebuilt the object (setting ``_name`` from the stored name), this
-        re-applies the stored :attr:`name_is_auto` flag and, when present,
-        the stored provenance and annotations — bypassing the write-once guard,
-        since the reconstruction is restoring recorded state rather than
-        rewriting lineage.
-
-        Annotations need restoring here because they are written *after*
-        construction (see :class:`Annotated`), so no constructor argument
-        carries them. The container is decoupled from the one passed in for the
-        reason :meth:`with_name` gives: writers add entries in place, and a
-        shared container would let a write on the reconstruction show through
-        on whatever it was rebuilt from.
-        """
-        object.__setattr__(self, "_name_is_auto", bool(name_is_auto))
-        if provenance is not None:
-            object.__setattr__(self, "_provenance", provenance)
-        if annotations is not None:
-            object.__setattr__(self, "_annotations", _decoupled_annotations(annotations))
-        return self
-
     # -- copying -------------------------------------------------------------
 
     def _shallow_copy(self) -> Self:
@@ -371,6 +341,24 @@ class Annotated:
     """
 
     __slots__ = ()
+
+    def _init_annotations(self, annotations: Mapping[str, Any] | None) -> None:
+        """Attach a starting annotations store (constructor helper for hosts).
+
+        The counterpart to :meth:`TrackedTerm._init_tracked`, for the one case a
+        host is handed annotations up front rather than having them written into
+        it later: reconstructing a term that already carried some. ``None``
+        leaves the store unset, which is what an ordinary construction passes,
+        so :attr:`annotations` stays ``None`` until a writer attaches something.
+
+        The container is decoupled from the one passed in, for the reason
+        :meth:`TrackedTerm.with_name` gives: writers add entries in place, so a
+        shared container would let a write on this object show through on
+        whatever it was built from. Writes go through ``object.__setattr__`` so
+        an immutable host can call this from its constructor.
+        """
+        if annotations is not None:
+            object.__setattr__(self, "_annotations", _decoupled_annotations(annotations))
 
     @property
     def annotations(self) -> Mapping[str, Any] | None:
