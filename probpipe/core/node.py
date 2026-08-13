@@ -979,13 +979,14 @@ class Function(Node, TrackedTerm, Annotated):
                         kw = _workflow_call.replace_input_ref(kw, draw_ref, draw)
                     return func(**kw)
 
-                # Leading axis is the draw axis, so the traced call sees the
-                # event-shaped slice.
-                probe_draws = tuple(
-                    jnp.zeros((1, *event_shape), dtype=dtype)
-                    for event_shape, dtype in drawn_sources.values()
+                # Drawn the executor's own way rather than synthesized from an
+                # event shape: a record-valued law draws a batch of records, and
+                # mapping it hands the body a record where zeros of its event
+                # shape would hand it an array. One draw, so the map has an axis.
+                sampled = _workflow_distribution_broadcast._sample_broadcast_args(
+                    values, refs, 1, jax.random.PRNGKey(0)
                 )
-                jax.make_jaxpr(jax.vmap(_draw_call))(probe_draws)
+                jax.make_jaxpr(jax.vmap(_draw_call))(tuple(sampled[ref] for ref in refs))
             else:
                 jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
         except Exception as exc:

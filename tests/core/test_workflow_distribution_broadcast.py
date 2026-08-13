@@ -808,3 +808,20 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert result is not None
         assert any("not JAX-traceable" in record.message for record in caplog.records)
+
+    def test_a_one_field_record_law_is_probed_as_the_record_it_draws(self):
+        """The dummy is drawn, not synthesized from an event shape.
+
+        A one-field ``ProductDistribution`` draws a batch of records, so mapping
+        it hands the body a record; zeros of the law's event shape would hand it
+        an array, and a body that fails on the record would pass such a probe.
+        """
+        law = ProductDistribution(Normal(loc=0.0, scale=1.0, name="x"))
+        doubles = Function(func=lambda x: x * 2, n_broadcast_samples=8, seed=0)
+        sequential = Function(
+            func=lambda x: x * 2, dispatch="sequential", n_broadcast_samples=8, seed=0
+        )
+
+        np.testing.assert_array_equal(
+            np.asarray(doubles(law).samples), np.asarray(sequential(law).samples)
+        )
