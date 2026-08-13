@@ -171,6 +171,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A sweep whose body returns a batch now vectorizes (#405).** Such a body used
+  to fail the JAX trace probe and drop to row-wise dispatch: `vmap` inserts an
+  output axis and re-enters `RecordBatch`'s unflatten hook, which has no name to
+  give the new level and refuses rather than guess — the pytree contract carries
+  neither `in_axes` nor `out_axes`, so *a shape is not a provenance*.
+
+  The refusal stands; the executor no longer routes through it. A body's
+  returned batch is taken apart into raw columns for the crossing and rebuilt on
+  the far side by the executor, which holds the level names the hook lacked. The
+  result carries the sweep's levels followed by the body's, and equals what
+  row-wise dispatch produced. The input side already worked this way, rebuilding
+  each row's record from raw columns inside the traced call; this is the same
+  move on the output side.
+
+  A raw `jax.vmap` over a batch is refused exactly as before. Only an operation
+  that knows which axis it added may name the level, which is what the executor
+  knows and a bare transform does not.
+
 - **`RecordBatch` / `NumericRecordBatch` — a batch of records, stored columnar.**
   A batch of records that all conform to one `EventTemplate`: the batched value a
   `Function` produces and consumes, such as the many draws a `sample` yields. It
