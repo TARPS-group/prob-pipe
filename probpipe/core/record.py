@@ -645,6 +645,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 self._name_is_auto,
                 self._provenance,
                 self._spec,
+                self.annotations,
             ),
         )
 
@@ -1245,11 +1246,16 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance, spec=None) -> Record:
+def _unpickle_record(
+    store: dict, name: str, name_is_auto: bool, provenance, spec=None, annotations=None
+) -> Record:
     # ``spec`` is optional, and construction accepts either form, so a pickle
     # written before the declaration was serialized still loads.
     r = Record(name, store, event_template=spec)
-    return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    if annotations is not None:
+        object.__setattr__(r, "_annotations", annotations)
+    return r
 
 
 # ---------------------------------------------------------------------------

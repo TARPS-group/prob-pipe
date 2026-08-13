@@ -30,6 +30,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Copying and pickling records and product distributions now preserve annotations (#409).**
+  `Record`, `NumericRecord`, and `ProductDistribution` previously omitted their
+  post-construction annotation store from their custom serialization state, so
+  `copy`, `deepcopy`, and pickle silently discarded diagnostic and backend metadata.
+
 - **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
   A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
   `DistributionSpec`'s event declaration, a `FunctionSpec`'s either side — was

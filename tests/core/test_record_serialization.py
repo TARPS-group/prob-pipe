@@ -10,14 +10,17 @@ The fix adds __reduce__ to each class, delegating reconstruction to the normal
 constructor.
 """
 
+import copy
 import pickle
 
 import jax.numpy as jnp
 import pytest
 
 from probpipe import (
+    Normal,
     NumericRecord,
     NumericRecordBatch,
+    ProductDistribution,
     RecordBatch,
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
@@ -41,6 +44,46 @@ def roundtrip(obj):
 def cloudpickle_roundtrip(obj):
     cloudpickle = pytest.importorskip("cloudpickle")
     return pickle.loads(cloudpickle.dumps(obj))
+
+
+def state_keys(obj):
+    state = object.__getstate__(obj)
+    instance_dict, slots = state if isinstance(state, tuple) else (state, None)
+    return set(instance_dict or {}) | set(slots or {})
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(lambda: Record("r", value="opaque"), id="record"),
+        pytest.param(lambda: NumericRecord("nr", value=jnp.array([1.0, 2.0])), id="numeric-record"),
+        pytest.param(
+            lambda: ProductDistribution(value=Normal(0.0, 1.0, name="value"), name="joint"),
+            id="product-distribution",
+        ),
+    ]
+)
+def annotated_term(request):
+    term = request.param()
+    object.__setattr__(term, "_annotations", {"diagnostics": {"status": "complete"}})
+    return term
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        pytest.param(copy.copy, id="copy"),
+        pytest.param(copy.deepcopy, id="deepcopy"),
+        pytest.param(roundtrip, id="pickle"),
+    ],
+)
+def test_annotated_term_roundtrip_preserves_annotations_and_state(annotated_term, operation):
+    before = state_keys(annotated_term)
+
+    restored = operation(annotated_term)
+
+    assert restored.annotations == annotated_term.annotations
+    transient = {"_jax_cache"} if isinstance(annotated_term, NumericRecord) else set()
+    assert before - transient == state_keys(restored) - transient
 
 
 # ---------------------------------------------------------------------------

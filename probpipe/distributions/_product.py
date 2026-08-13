@@ -253,7 +253,13 @@ class ProductDistribution(
     def __reduce__(self):
         return (
             _unpickle_product_distribution,
-            (dict(self._components), self._name, self._name_is_auto, self._provenance),
+            (
+                dict(self._components),
+                self._name,
+                self._name_is_auto,
+                self._provenance,
+                self.annotations,
+            ),
         )
 
     # -- Sampling (returns Record) ------------------------------------------
@@ -453,10 +459,13 @@ class ProductDistribution(
         return f"ProductDistribution({comp_str}{name_str})"
 
 
-def _unpickle_product_distribution(components, name, name_is_auto, provenance):
+def _unpickle_product_distribution(components, name, name_is_auto, provenance, annotations=None):
     """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
     p = ProductDistribution(**components, name=name)
-    return p._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    p._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    if annotations is not None:
+        p._annotations = annotations
+    return p
 
 
 # ---------------------------------------------------------------------------

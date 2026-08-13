@@ -414,6 +414,7 @@ class NumericRecord(Record):
                 self._name_is_auto,
                 self._provenance,
                 self._spec,
+                self.annotations,
             ),
         )
 
@@ -600,14 +601,17 @@ def _reconstruct_from_vector(
 
 
 def _unpickle_numeric_record(
-    store: dict, name: str, name_is_auto: bool, provenance, spec=None
+    store: dict, name: str, name_is_auto: bool, provenance, spec=None, annotations=None
 ) -> NumericRecord:
     # ``store`` holds the native leaves verbatim (they pickle themselves), so
     # reconstruction is ordinary validation-without-conversion. The threaded
     # declaration preserves an explicit schema across the round-trip; a pickle
     # written before it was serialized still loads.
     nr = NumericRecord(name, store, event_template=spec)
-    return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    if annotations is not None:
+        object.__setattr__(nr, "_annotations", annotations)
+    return nr
 
 
 # ---------------------------------------------------------------------------
