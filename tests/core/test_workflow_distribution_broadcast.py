@@ -648,10 +648,8 @@ class TestIndexSampleHelper:
 class TestTheProbeModelsItsExecutorsTransform:
     """``_broadcast_jax`` maps over draws, so the probe that gates it must too.
 
-    A body can trace cleanly bare and be impossible under ``jax.vmap`` — one
-    returning a batch, whose added axis no level can name. Probing such a body
-    without the transform passes it to an executor that then fails inside the
-    transform, where no fallback is left to take.
+    Probing without the transform passes a body to an executor that then fails
+    inside it, where no fallback is left to take.
     """
 
     @staticmethod
@@ -715,12 +713,9 @@ class TestTheProbeModelsItsExecutorsTransform:
     def test_the_mapped_probe_covers_several_distribution_arguments(self):
         """The probe builds a tuple of draws, one per broadcast argument.
 
-        This covers the multiple-reference path rather than isolating the second
-        argument: ``jax.make_jaxpr`` abstracts every argument it is given, so
-        the bare probe already sees a tracer wherever the mapped one does, and
-        no body distinguishes "mapped" from "traced" by its own arguments. What
-        distinguishes them is output reconstruction — hence a batch-returning
-        body here, as in the single-argument case.
+        Covers the multiple-reference path without isolating the second
+        argument: ``jax.make_jaxpr`` abstracts everything it is given, so no
+        body can tell "mapped" from "traced" by its arguments alone.
         """
 
         def body(x, y):
@@ -742,9 +737,9 @@ class TestTheProbeModelsItsExecutorsTransform:
     def test_the_mapped_slice_carries_the_declared_event_shape(self, caplog):
         """The slice is event-shaped, as the bare probe's dummy was.
 
-        ``v[2]`` is rank-sensitive where a reduction would not be: a dummy of
-        the wrong shape fails to trace and the call silently leaves the JAX
-        path, so staying on it is the assertion.
+        ``v[2]`` is rank-sensitive where a reduction would not be, and a dummy
+        of the wrong shape silently leaves the JAX path — so staying on it is
+        the assertion.
         """
         vector = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
         third = Function(func=lambda v: v[2], n_broadcast_samples=8, seed=0)
@@ -761,10 +756,10 @@ class TestTheProbeModelsItsExecutorsTransform:
         )
 
     def test_an_aliased_argument_still_reads_as_one_variable(self):
-        """Co-sampling is the sampler's, not the probe's.
+        """Co-sampling is the sampler's, not the probe's: ``f(d, d)`` is ``X - X``.
 
-        The probe draws an independent dummy per reference, which must not be
-        mistaken for the executor's grouping: ``f(d, d)`` is still ``X - X``.
+        The probe's independent dummy per reference must not be mistaken for
+        the executor's grouping.
         """
         dist = Normal(loc=0.0, scale=1.0, name="x")
         difference = Function(func=lambda a, b: a - b, n_broadcast_samples=8, seed=0)
@@ -774,8 +769,8 @@ class TestTheProbeModelsItsExecutorsTransform:
     def test_a_record_valued_distribution_argument_still_falls_back(self):
         """A multi-field law has no single event-shaped dummy, so it never probes.
 
-        That path raises before the draw sources are collected; it must keep
-        reaching row-wise dispatch rather than the new mapped branch.
+        It raises before the draw sources are collected, and must keep reaching
+        row-wise dispatch rather than the mapped branch.
         """
         law = ProductDistribution(
             Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=1.0, scale=1.0, name="b")
@@ -792,10 +787,8 @@ class TestTheProbeModelsItsExecutorsTransform:
     def test_a_batch_returning_body_survives_the_nested_regime(self, caplog):
         """A sweep crossed with a law still produces a result.
 
-        Verified by spying on the executor: ``_broadcast_jax`` is not reached in
-        this regime at all — the per-row marginalization resolves to the
-        row-wise sampler — so this pins the composition rather than the
-        mapped-draw probe, which the other tests here cover directly.
+        ``_broadcast_jax`` is not reached in this regime at all, so this pins
+        the composition rather than the mapped-draw probe.
         """
 
         def body(p, x):
@@ -815,3 +808,20 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert result is not None
         assert any("not JAX-traceable" in record.message for record in caplog.records)
+
+    def test_a_one_field_record_law_is_probed_as_the_record_it_draws(self):
+        """The dummy is drawn, not synthesized from an event shape.
+
+        A one-field ``ProductDistribution`` draws a batch of records, so mapping
+        it hands the body a record; zeros of the law's event shape would hand it
+        an array, and a body that fails on the record would pass such a probe.
+        """
+        law = ProductDistribution(Normal(loc=0.0, scale=1.0, name="x"))
+        doubles = Function(func=lambda x: x * 2, n_broadcast_samples=8, seed=0)
+        sequential = Function(
+            func=lambda x: x * 2, dispatch="sequential", n_broadcast_samples=8, seed=0
+        )
+
+        np.testing.assert_array_equal(
+            np.asarray(doubles(law).samples), np.asarray(sequential(law).samples)
+        )
