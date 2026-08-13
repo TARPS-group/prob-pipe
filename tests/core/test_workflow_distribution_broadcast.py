@@ -712,11 +712,15 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         assert not any("not JAX-traceable" in record.message for record in caplog.records)
 
-    def test_several_distribution_arguments_are_all_mapped(self):
-        """The probe maps a tuple of draws, one per broadcast argument.
+    def test_the_mapped_probe_covers_several_distribution_arguments(self):
+        """The probe builds a tuple of draws, one per broadcast argument.
 
-        One argument exercises the loop's first iteration only; a body reading
-        two would trace under a probe that mapped just the first.
+        This covers the multiple-reference path rather than isolating the second
+        argument: ``jax.make_jaxpr`` abstracts every argument it is given, so
+        the bare probe already sees a tracer wherever the mapped one does, and
+        no body distinguishes "mapped" from "traced" by its own arguments. What
+        distinguishes them is output reconstruction — hence a batch-returning
+        body here, as in the single-argument case.
         """
 
         def body(x, y):
@@ -735,37 +739,25 @@ class TestTheProbeModelsItsExecutorsTransform:
             np.asarray(sequential(first, second).samples),
         )
 
-    def test_a_nonscalar_event_shape_is_probed_at_its_own_shape(self):
-        """The mapped slice is event-shaped, as the bare probe's dummy was.
+    def test_the_mapped_slice_carries_the_declared_event_shape(self, caplog):
+        """The slice is event-shaped, as the bare probe's dummy was.
 
-        A leading draw axis prepended to the wrong slice shape would trace a
-        body that indexes or reduces over the event axes against the wrong rank.
+        ``v[2]`` is rank-sensitive where a reduction would not be: a dummy of
+        the wrong shape fails to trace and the call silently leaves the JAX
+        path, so staying on it is the assertion.
         """
-
-        def body(v):
-            return RecordBatch.stack(
-                [Record("r", {"s": jnp.sum(v) * k}, name_is_auto=True) for k in (1.0, 2.0)],
-                level_name="k",
-            )
-
         vector = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
-        broadcast = Function(func=body, n_broadcast_samples=8, seed=0)
-        sequential = Function(func=body, dispatch="sequential", n_broadcast_samples=8, seed=0)
-
-        np.testing.assert_array_equal(
-            np.asarray(broadcast(vector).samples), np.asarray(sequential(vector).samples)
-        )
-
-    def test_a_nonscalar_event_shape_still_vectorizes_when_the_body_allows(self):
-        """The added transform did not cost the vectorized path its shapes."""
-        vector = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
-        total = Function(func=lambda v: jnp.sum(v), n_broadcast_samples=8, seed=0)
+        third = Function(func=lambda v: v[2], n_broadcast_samples=8, seed=0)
         sequential = Function(
-            func=lambda v: jnp.sum(v), dispatch="sequential", n_broadcast_samples=8, seed=0
+            func=lambda v: v[2], dispatch="sequential", n_broadcast_samples=8, seed=0
         )
 
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            mapped = third(vector)
+
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
         np.testing.assert_allclose(
-            np.asarray(total(vector).samples), np.asarray(sequential(vector).samples), rtol=1e-6
+            np.asarray(mapped.samples), np.asarray(sequential(vector).samples), rtol=1e-6
         )
 
     def test_an_aliased_argument_still_reads_as_one_variable(self):
@@ -798,12 +790,12 @@ class TestTheProbeModelsItsExecutorsTransform:
         )
 
     def test_a_batch_returning_body_survives_the_nested_regime(self, caplog):
-        """A sweep crossed with a law composes the two fallbacks.
+        """A sweep crossed with a law still produces a result.
 
-        The sweep's own probe already refuses this body, so the outer path falls
-        back before the per-row marginalization is reached — this pins that the
-        composition still produces a result, not that the mapped-draw probe is
-        what caught it.
+        Verified by spying on the executor: ``_broadcast_jax`` is not reached in
+        this regime at all — the per-row marginalization resolves to the
+        row-wise sampler — so this pins the composition rather than the
+        mapped-draw probe, which the other tests here cover directly.
         """
 
         def body(p, x):
