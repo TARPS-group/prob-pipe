@@ -628,14 +628,6 @@ class Record(NamedTree[Any], Immutable, TrackedTerm, Annotated):
         """
         return self._spec.event_template
 
-    # -- Immutability -------------------------------------------------------
-    #
-    # The guard and the state round-trip come from
-    # :class:`~probpipe.core._immutable.Immutable`. A record's spec is part of
-    # that state, so a reconstruction keeps the exact schema it was written with
-    # — an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta`` that
-    # ``infer_from`` could not recover.
-
     # -- Tree structure -----------------------------------------------------
     #
     # The mapping and path-navigation methods (``keys`` / ``values`` /
