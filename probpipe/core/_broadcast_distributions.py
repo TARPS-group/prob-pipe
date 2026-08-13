@@ -26,7 +26,7 @@ from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
-from ._immutable import constructing
+from ._immutable import constructing, transient_memo
 from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
@@ -1183,6 +1183,11 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         Distribution name for provenance.
     """
 
+    #: The memo is not state: a copy recomputes rather than inheriting one. It
+    #: matters for more than size here, since a memoised value can carry the
+    #: provenance of the term that computed it.
+    _transient_state = ("_memo",)
+
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
@@ -1283,7 +1288,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         so the lineage is preserved without a direct reference to the
         ``BroadcastDistribution``.
         """
-        marginal = self._memo.get("marginal")
+        marginal = transient_memo(self).get("marginal")
         if marginal is None:
             marginal = _make_marginal(
                 self._output_samples,
@@ -1293,7 +1298,7 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
             )
             if self.provenance is not None and isinstance(marginal, Distribution):
                 marginal.with_provenance(self.provenance)
-            self._memo["marginal"] = marginal
+            transient_memo(self)["marginal"] = marginal
         return marginal
 
     @property

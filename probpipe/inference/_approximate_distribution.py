@@ -11,6 +11,7 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from .._weights import Weights
+from ..core._immutable import transient_memo
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
 from ..core.event_template import ArraySpec, EventTemplate, NumericEventTemplate, OpaqueSpec
 from ..core.provenance import Provenance
@@ -161,6 +162,11 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
     per-chain samples.
     """
 
+    #: The memo is not state: a copy recomputes rather than inheriting one. It
+    #: matters for more than size here, since a memoised value can carry the
+    #: provenance of the term that computed it.
+    _transient_state = ("_memo",)
+
     def __init__(
         self,
         chains: list[Array],
@@ -207,7 +213,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     )
             if len(event_template.fields) > 1:
                 self._chains = [c[..., perm] for c in self._chains]
-                self._memo.pop("concatenated", None)
+                transient_memo(self).pop("concatenated", None)
 
         flat = self._concat_chains()
         # Track whether the user explicitly supplied a template; we use
@@ -279,10 +285,10 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     def _concat_chains(self) -> Array:
         """Lazily concatenated view of all chains."""
-        concatenated = self._memo.get("concatenated")
+        concatenated = transient_memo(self).get("concatenated")
         if concatenated is None:
             concatenated = jnp.concatenate(self._chains, axis=0)
-            self._memo["concatenated"] = concatenated
+            transient_memo(self)["concatenated"] = concatenated
         return concatenated
 
     # -- Chain access ---------------------------------------------------------

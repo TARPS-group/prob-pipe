@@ -319,20 +319,13 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         which exists to *select* a class from constructor arguments and may
         require them — must not run again here.
 
-        What to copy comes from :meth:`object.__getstate__` rather than from a
-        walk over ``__slots__``. That walk is easy to get subtly wrong, and
-        wrong here is silent: ``__slots__`` may be a bare string naming one
-        slot, which iterates into characters rather than into that name, so a
-        host declaring ``__slots__ = "_store"`` would be cloned without its
-        storage and nothing would raise.
+        The copy goes through the same state round-trip as ``copy`` and
+        ``pickle``, so a rename honours what a class declares about its state: a
+        memo is not carried into the copy, and a store written in place is not
+        shared with it. All three copy paths therefore agree.
         """
         clone = object.__new__(type(self))
-        state = object.__getstate__(self)
-        instance_dict, slots = state if isinstance(state, tuple) else (state, None)
-        for attribute, value in (instance_dict or {}).items():
-            object.__setattr__(clone, attribute, value)
-        for slot, value in (slots or {}).items():
-            object.__setattr__(clone, slot, value)
+        clone.__setstate__(self.__getstate__())
         return clone
 
 

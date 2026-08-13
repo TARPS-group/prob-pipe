@@ -111,3 +111,51 @@ class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.
         assert set(joint.components) == {"z", "x"}
+
+
+class TestACopyDoesNotInheritAMemo:
+    """A memo is per term, because what it holds can be per term.
+
+    ``marginalize`` stamps the distribution's own provenance onto the marginal it
+    builds, so a renamed copy sharing one memo with its original would hand
+    whichever of them asked second the other's lineage — and which that is
+    depends only on query order.
+    """
+
+    @staticmethod
+    def _broadcast() -> BroadcastDistribution:
+        return BroadcastDistribution(
+            input_samples={"x": jnp.ones((5, 1))},
+            output_samples=jnp.zeros((5, 2)),
+            weights=None,
+            broadcast_args=["x"],
+        )
+
+    def test_the_rename_does_not_share_the_original_s_memo(self):
+        original = self._broadcast()
+        renamed = original.with_name("renamed")
+        assert getattr(renamed, "_memo", None) is not getattr(original, "_memo", None)
+
+    def test_lineage_does_not_depend_on_which_is_marginalized_first(self):
+        renamed_first = self._broadcast()
+        renamed = renamed_first.with_name("renamed")
+        from_rename = renamed.marginalize()
+        from_original = renamed_first.marginalize()
+
+        original_first = self._broadcast()
+        also_from_original = original_first.marginalize()
+        also_from_rename = original_first.with_name("renamed").marginalize()
+
+        # The original's marginal carries the original's lineage in both orders,
+        # and the rename's carries the rename's.
+        assert from_original.provenance is None
+        assert also_from_original.provenance is None
+        assert from_rename.provenance.operation == "with_name"
+        assert also_from_rename.provenance.operation == "with_name"
+        assert from_original is not from_rename
+
+    def test_each_still_memoises_its_own(self):
+        original = self._broadcast()
+        renamed = original.with_name("renamed")
+        assert original.marginalize() is original.marginalize()
+        assert renamed.marginalize() is renamed.marginalize()

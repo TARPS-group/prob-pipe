@@ -49,6 +49,7 @@ import numpy as np
 
 from .._array_utils import _slice_leading_axes
 from ._distribution_base import Distribution
+from ._immutable import transient_memo
 from .event_template import EventTemplate
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
@@ -123,6 +124,11 @@ class DistributionArray[T](Distribution[T]):
       fail at op-dispatch on the first non-supporting cell, rather
       than rejecting at construction.
     """
+
+    #: The memo is not state: a copy recomputes rather than inheriting one. It
+    #: matters for more than size here, since a memoised value can carry the
+    #: provenance of the term that computed it.
+    _transient_state = ("_memo",)
 
     # Storage slots. ``_components`` is ``None`` for backend-delegated
     # arrays until :attr:`components` materialises the eager tuple
@@ -384,11 +390,11 @@ class DistributionArray[T](Distribution[T]):
         if self._components is not None:
             return self._components
         assert self._backend is not None  # invariant
-        cells = self._memo.get("components")
+        cells = transient_memo(self).get("components")
         if cells is None:
             n = prod(self._batch_shape)
             cells = tuple(self._backend.cell(i) for i in range(n))
-            self._memo["components"] = cells
+            transient_memo(self)["components"] = cells
         return cells
 
     @property
