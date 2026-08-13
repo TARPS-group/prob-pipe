@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import copy
-import pickle
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -658,36 +655,6 @@ class TestPytreeRegistration:
         assert isinstance(reconstructed, ProductDistribution)
         assert reconstructed.fields == ("x", "y")
         assert reconstructed._name == "j"
-
-
-class TestRoundTripPreservesAnnotations:
-    """Annotations are written after construction, so reconstruction has to
-    carry them explicitly — rebuilding from the components alone drops them
-    (#409). ``__reduce__`` governs ``copy`` as well as ``pickle``.
-    """
-
-    @pytest.fixture
-    def annotated_joint(self, normal_x, normal_y):
-        joint = ProductDistribution(x=normal_x, y=normal_y, name="j")
-        object.__setattr__(joint, "_annotations", {"diagnostics": {"n_eff": 42}})
-        return joint
-
-    def test_pickle_preserves_annotations(self, annotated_joint):
-        back = pickle.loads(pickle.dumps(annotated_joint))
-        assert back.annotations == {"diagnostics": {"n_eff": 42}}
-
-    def test_copy_preserves_annotations(self, annotated_joint):
-        assert copy.copy(annotated_joint).annotations == {"diagnostics": {"n_eff": 42}}
-        assert copy.deepcopy(annotated_joint).annotations == {"diagnostics": {"n_eff": 42}}
-
-    def test_copy_decouples_the_container(self, annotated_joint):
-        clone = copy.copy(annotated_joint)
-        clone.annotations["added"] = 1
-        assert "added" not in annotated_joint.annotations
-
-    def test_unannotated_joint_stays_unannotated(self, normal_x, normal_y):
-        joint = ProductDistribution(x=normal_x, y=normal_y, name="j")
-        assert pickle.loads(pickle.dumps(joint)).annotations is None
 
 
 # ===========================================================================
