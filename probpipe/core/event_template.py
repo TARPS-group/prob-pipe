@@ -74,6 +74,7 @@ import numpy as np
 import numpy.typing as npt
 
 from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+from ._immutable import Immutable
 from .constraints import Constraint
 from .named_tree import (
     _PATH_SEP,
@@ -905,7 +906,7 @@ def _full_array_shape_or_none(val: Any) -> tuple[int, ...] | None:
 # ---------------------------------------------------------------------------
 
 
-class EventTemplate(NamedTree[ValueSpec]):
+class EventTemplate(NamedTree[ValueSpec], Immutable):
     """Structural description of a value: its named, possibly-nested leaf structure.
 
     An ``EventTemplate`` describes the **structure** of a value as a **named
@@ -1069,15 +1070,12 @@ class EventTemplate(NamedTree[ValueSpec]):
         return
 
     # -- Immutability -------------------------------------------------------
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError("EventTemplate is immutable")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError("EventTemplate is immutable")
-
-    def __reduce__(self):
-        return (_unpickle_event_template, (dict(self._tree),))
+    #
+    # The assignment guard and the state round-trip come from
+    # :class:`~probpipe.core._immutable.Immutable`. Restoring the stored specs
+    # directly also keeps the resolved class: rebuilding through the constructor
+    # would re-run the numeric promotion in ``__new__``, which reads the specs it
+    # is given rather than the class the state came from.
 
     # -- Tree structure -----------------------------------------------------
     #
@@ -1750,8 +1748,3 @@ def _replace_template_dimensions(
         else:
             children[name] = spec.with_bound_dims(bindings)
     return EventTemplate(children)
-
-
-def _unpickle_event_template(specs: dict) -> EventTemplate:
-    """Rebuild an EventTemplate during unpickling."""
-    return EventTemplate(specs)

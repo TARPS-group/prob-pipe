@@ -43,6 +43,7 @@ from ._function_contract import (
     _validate_function_templates,
     _wrap_declared_function_output,
 )
+from ._immutable import Immutable
 from ._record_batch import RecordBatch
 from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
@@ -185,7 +186,7 @@ class Node(ABC):  # noqa: B024
         return self._inputs
 
 
-class Function(Node, TrackedTerm, Annotated):
+class Function(Node, Immutable, TrackedTerm, Annotated):
     """
     An immutable, tracked executable DAG node wrapping one implementation.
 
@@ -548,14 +549,20 @@ class Function(Node, TrackedTerm, Annotated):
         object.__setattr__(renamed, "__qualname__", name)
         return renamed
 
+    #: The construction flag is not state: it says where the constructor got to,
+    #: and a reconstruction is past that point.
+    _transient_state = ("_initializing",)
+
     def __setattr__(self, name: str, value: Any) -> None:
+        # The one variant on the shared guard: this constructor assigns normally
+        # rather than through ``object.__setattr__``, so it opens a window over
+        # itself. Delegating the refusal keeps the message and the deletion rule
+        # shared. The window closes for good once construction is a guarded
+        # window on every tracked term, which is where the flag goes.
         if getattr(self, "_initializing", False):
             object.__setattr__(self, name, value)
             return
-        raise AttributeError("Function is immutable")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError("Function is immutable")
+        super().__setattr__(name, value)
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:

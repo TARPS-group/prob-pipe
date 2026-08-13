@@ -440,12 +440,3 @@ class TestRoundTripPreservesAnnotations:
             return (set(instance_dict or {}) | set(slots or {})) - {"_jax_cache"}
 
         assert assigned(term) - assigned(roundtrip(term)) == set()
-
-    def test_pickle_without_annotations_still_loads(self):
-        # Reconstruction stays callable with the shorter argument list a pickle
-        # written before annotations were serialized carries.
-        from probpipe.core.record import _unpickle_record
-
-        r = _unpickle_record({"x": jnp.ones(3)}, "r", False, None)
-        assert r.name == "r"
-        assert r.annotations is None

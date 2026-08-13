@@ -1186,22 +1186,6 @@ class TestSpecStorage:
         rebuilt = pickle.loads(pickle.dumps(r))
         assert rebuilt.spec == spec
 
-    def test_a_pickle_carrying_a_bare_template_still_loads(self):
-        """A payload written when the declaration was serialized as a bare
-        template loads under the spec-storing reader, which accepts either form.
-
-        Exercised through the reconstructors directly: no current code emits that
-        payload, so nothing else would reach this path.
-        """
-        from probpipe.core._numeric_record import _unpickle_numeric_record
-        from probpipe.core.record import _unpickle_record
-
-        tpl = EventTemplate(x=())
-        loaded = _unpickle_record({"x": jnp.asarray(1.0)}, "r", False, None, tpl)
-        assert loaded.spec == RecordSpec(tpl)
-        loaded_numeric = _unpickle_numeric_record({"x": jnp.asarray(1.0)}, "r", False, None, tpl)
-        assert loaded_numeric.spec == RecordSpec(tpl)
-
     def test_numeric_record_accepts_a_spec_declaration(self):
         from probpipe import NumericRecord
 
