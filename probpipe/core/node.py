@@ -941,11 +941,11 @@ class Function(Node, TrackedTerm, Annotated):
                         # mirrors what the inner function actually sees.
                         dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
                         replacement = jnp.zeros(es, dtype=dt) if es else jnp.zeros((), dtype=dt)
-                        # Every distribution reaching here is one ``_broadcast_jax``
-                        # draws and maps over, including a ``DistributionArray``
-                        # of empty batch shape — the planner routes that to the
-                        # marginalization path, and a batched one takes row-wise
-                        # dispatch before any probe runs.
+                        # Whatever reaches here is what ``_broadcast_jax`` will
+                        # map over, so all of it is probed under a map. A
+                        # batched ``DistributionArray`` never arrives: a sweep
+                        # carrying one takes row-wise dispatch before any probe
+                        # runs.
                         drawn_sources[ref] = (tuple(es) if es else (), dt)
                     dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
                 else:
