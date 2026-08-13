@@ -34,7 +34,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NumericRecord`, and `ProductDistribution` each reconstruct through a
   `__reduce__` that listed its state by hand, and none of them listed
   `_annotations`, so a copied or unpickled term came back with its annotations
-  gone and nothing raised. `__reduce__` governs `copy.copy` and `copy.deepcopy`
+  gone — the diagnostics and inference-backend payloads written into that store
+  among them — and nothing raised. `__reduce__` governs `copy.copy` and `copy.deepcopy`
   as well as `pickle`, so all three paths lost them.
 
   The omission was systematic rather than careless: annotations are the one field

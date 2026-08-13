@@ -1,8 +1,10 @@
-"""Pickle / cloudpickle round-trip tests for the Record family.
+"""Round-trip tests for the terms that reconstruct through their own ``__reduce__``.
 
 These tests ensure that Record, EventTemplate, NumericRecord, RecordBatch,
-and NumericRecordBatch can survive pickle serialization, which is required for
-Ray task distribution (Ray uses cloudpickle to ship arguments to workers).
+NumericRecordBatch, and ProductDistribution can survive pickle serialization,
+which is required for Ray task distribution (Ray uses cloudpickle to ship
+arguments to workers), and that a copy or an unpickle preserves everything the
+term was carrying.
 
 The core issue was that Record.__setattr__ raises "Record is immutable", so
 pickle's default restore mechanism (create empty instance + __setattr__) failed.
@@ -17,8 +19,10 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
+    Normal,
     NumericRecord,
     NumericRecordBatch,
+    ProductDistribution,
     RecordBatch,
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
@@ -376,18 +380,24 @@ class TestRoundTripPreservesAnnotations:
     well as for ``pickle``.
     """
 
-    @staticmethod
-    def annotated(record):
-        # The store is written through ``object.__setattr__``, as the library's
-        # own writers do: the immutability guard refuses plain assignment.
-        object.__setattr__(record, "_annotations", {"diagnostics": {"n_eff": 42}})
-        return record
-
-    @pytest.fixture(params=["record", "numeric_record"])
+    @pytest.fixture(
+        params=[
+            # An opaque leaf keeps this one a plain ``Record`` rather than
+            # promoting it, so both classes in the family are covered.
+            pytest.param(lambda: Record("r", {"x": jnp.ones(3), "tag": "meters"}), id="record"),
+            pytest.param(lambda: NumericRecord("nr", {"x": jnp.ones(3)}), id="numeric-record"),
+            pytest.param(
+                lambda: ProductDistribution(value=Normal(0.0, 1.0, name="value"), name="joint"),
+                id="product-distribution",
+            ),
+        ]
+    )
     def term(self, request):
-        if request.param == "record":
-            return self.annotated(Record("r", {"x": jnp.ones(3), "tag": "meters"}))
-        return self.annotated(NumericRecord("nr", {"x": jnp.ones(3)}))
+        term = request.param()
+        # The store is written through ``object.__setattr__``, as the library's
+        # own writers do: an immutability guard refuses plain assignment.
+        object.__setattr__(term, "_annotations", {"diagnostics": {"n_eff": 42}})
+        return term
 
     def test_pickle_preserves_annotations(self, term):
         assert roundtrip(term).annotations == {"diagnostics": {"n_eff": 42}}
@@ -408,6 +418,7 @@ class TestRoundTripPreservesAnnotations:
 
     def test_unannotated_term_stays_unannotated(self):
         assert roundtrip(Record("r", {"x": jnp.ones(3)})).annotations is None
+        assert roundtrip(ProductDistribution(v=Normal(0.0, 1.0, name="v"))).annotations is None
 
     def test_no_state_is_lost(self, term):
         # The general form of the bug: compare every attribute the object
