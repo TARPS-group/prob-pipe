@@ -5,21 +5,94 @@ instances cannot be modified after construction. It supplies the assignment
 guard and, because an object that refuses assignment cannot be restored the way
 ``pickle`` and ``copy`` restore an ordinary one, the state round-trip those need.
 
-Every tracked term is immutable (``C2 – Functional interface over immutable
-objects``), as is :class:`~probpipe.core.event_template.EventTemplate`, which is
+:class:`~probpipe.core.tracked.TrackedTerm` inherits it, so a term is immutable by
+being one (``C2 – Functional interface over immutable objects``);
+:class:`~probpipe.core.event_template.EventTemplate` mixes it in directly, being
 immutable without being a term.
 
-Interim: the mixin is inherited by ``Record``, ``EventTemplate``, ``Batch``, and
-``Function``, the classes that enforced immutability individually. The rest of
-the tracked terms accept assignment until :class:`TrackedTerm` inherits it, which
-also requires the terms that mutate after construction to stop.
+One layer is exempt for now:
+:class:`~probpipe.core._distribution_base.Distribution` permits assignment, since
+the documented way to build an emulator is to subclass a random function and
+train it in place, and fitting has no contract yet that returns a new term
+instead. Deleting that one method turns the guard on for the layer.
+
+A constructor still has to write, so construction runs inside
+:func:`constructing`, a per-instance window in which assignment is allowed.
+``TrackedTerm``'s metaclass opens it around every construction; code that
+allocates with ``object.__new__`` and calls a constructor by hand opens it
+itself.
 """
 
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any, ClassVar
 
-__all__ = ["Immutable"]
+__all__ = ["Immutable", "constructing", "declared_state_names"]
+
+
+def declared_state_names(cls: type, declaration: str) -> frozenset[str]:
+    """The union of a state declaration over every class in *cls*'s MRO.
+
+    Parameters
+    ----------
+    cls : type
+        The class whose hierarchy is read.
+    declaration : str
+        ``"_transient_state"`` or ``"_decoupled_state"``.
+
+    Returns
+    -------
+    frozenset of str
+        Every attribute name any class in the hierarchy declares, so a subclass
+        adds to its base's entries rather than restating them.
+
+    Notes
+    -----
+    At module level rather than on :class:`Immutable` because the declarations
+    describe how a class *copies*, which holds whether or not it also refuses
+    assignment: :meth:`__getstate__` reads them, and so may any other copy path.
+    """
+    return frozenset(name for klass in cls.__mro__ for name in klass.__dict__.get(declaration, ()))
+
+
+# Instances whose constructor is running on this thread, keyed by ``id``. The
+# instance is the value, not just the key: holding it keeps the id from being
+# reused by another object while the constructor is still on the stack.
+_under_construction = threading.local()
+
+
+def _constructing_now() -> dict[int, Any]:
+    registry = getattr(_under_construction, "registry", None)
+    if registry is None:
+        registry = {}
+        _under_construction.registry = registry
+    return registry
+
+
+@contextmanager
+def constructing(instance: Any) -> Iterator[Any]:
+    """Allow attribute assignment on *instance* for the duration of the block.
+
+    The window construction runs in: an immutable object is built by assigning to
+    it, and it belongs to nobody until its constructor returns. Opened per
+    instance and per thread, and closed even if the constructor raises, so a
+    half-built object left behind by a failure is as immutable as a finished one.
+
+    :class:`~probpipe.core.tracked.TrackedTerm`'s metaclass opens this around
+    every construction, so a term's ``__init__`` assigns normally. Code that
+    allocates with ``object.__new__`` and then calls a constructor by hand has to
+    open it itself.
+    """
+    registry = _constructing_now()
+    key = id(instance)
+    registry[key] = instance
+    try:
+        yield instance
+    finally:
+        registry.pop(key, None)
 
 
 def decoupled_container(container: Any) -> Any:
@@ -44,8 +117,10 @@ class Immutable:
     """Mixin declaring that instances cannot be modified after construction.
 
     Assignment and deletion raise :exc:`AttributeError`, naming the class of the
-    object that was touched. A constructor writes through
-    ``object.__setattr__``, which the guard does not intercept.
+    object that was touched — except inside :func:`constructing`, the window an
+    object is built in, which a host's constructor may assign freely within.
+    Writing through ``object.__setattr__`` also goes around the guard, and is
+    what code outside a constructor uses when it has to.
 
     ``copy.copy``, ``copy.deepcopy``, and ``pickle`` return an object of the same
     class holding the same state: every attribute the original has assigned,
@@ -93,6 +168,9 @@ class Immutable:
     # -- The guard -----------------------------------------------------------
 
     def __setattr__(self, name: str, value: Any) -> None:
+        if id(self) in _constructing_now():
+            object.__setattr__(self, name, value)
+            return
         raise AttributeError(f"{type(self).__name__} is immutable")
 
     def __delattr__(self, name: str) -> None:

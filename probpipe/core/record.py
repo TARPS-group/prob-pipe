@@ -45,7 +45,6 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
-from ._immutable import Immutable
 from .event_template import (
     EventTemplate,
     NumericEventTemplate,
@@ -158,7 +157,7 @@ def _canonical_dtype_str(leaf: Any) -> str:
 _RESERVED_INIT_KWARGS = frozenset({"event_template", "name_is_auto", "_validate_leaves"})
 
 
-class Record(NamedTree[Any], Immutable, TrackedTerm, Annotated):
+class Record(NamedTree[Any], TrackedTerm, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection

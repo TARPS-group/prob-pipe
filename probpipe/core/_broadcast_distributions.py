@@ -26,6 +26,7 @@ from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
+from ._immutable import constructing
 from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array
 from ._record_batch import RecordBatch, _batch_class_for
@@ -287,13 +288,16 @@ def _make_mixture_marginal(
 
     cls = _mixture_class_cache[cache_key]
     obj = object.__new__(cls)
-    _MixtureMarginal.__init__(
-        obj,
-        components,
-        weights,
-        name=name,
-        event_template=event_template,
-    )
+    # Allocated here rather than through the class, so the construction window
+    # the metaclass would have opened is opened explicitly.
+    with constructing(obj):
+        _MixtureMarginal.__init__(
+            obj,
+            components,
+            weights,
+            name=name,
+            event_template=event_template,
+        )
     return obj
 
 

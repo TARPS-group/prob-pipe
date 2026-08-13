@@ -251,3 +251,128 @@ class TestTheHostsInTheTree:
 
         assert double(2.0) is not None
         assert not getattr(double, "_initializing", False)
+
+
+class TestEveryTrackedTermIsImmutable:
+    """The guarantee, over every tracked term the package defines.
+
+    Discovered rather than listed: a term added later is covered without anyone
+    remembering to add it here, which is what keeps the rule from decaying back
+    into the per-class opt-in it replaced.
+    """
+
+    @staticmethod
+    def every_tracked_class() -> list[type]:
+        import importlib
+        import pkgutil
+
+        import probpipe
+        from probpipe.core.tracked import TrackedTerm
+
+        for module in pkgutil.walk_packages(probpipe.__path__, "probpipe."):
+            try:
+                importlib.import_module(module.name)
+            except ImportError:
+                continue  # an optional backend that is not installed
+
+        seen: set[type] = set()
+
+        def collect(cls: type) -> None:
+            for subclass in cls.__subclasses__():
+                if subclass not in seen:
+                    seen.add(subclass)
+                    collect(subclass)
+
+        collect(TrackedTerm)
+        return sorted(seen, key=lambda c: c.__name__)
+
+    def test_the_mixin_is_in_every_tracked_term_s_mro(self):
+        offenders = [c.__name__ for c in self.every_tracked_class() if not issubclass(c, Immutable)]
+        assert offenders == []
+
+    def test_the_only_exemption_is_the_distribution_layer(self):
+        # A class defining its own ``__setattr__`` is back to the per-class rule,
+        # and free to disagree with the message or the exception. Exactly one
+        # does, deliberately and temporarily, and this is what stops a second
+        # from appearing quietly.
+        from probpipe.core._distribution_base import Distribution
+
+        exempt = [
+            c.__name__
+            for c in self.every_tracked_class()
+            if "__setattr__" in c.__dict__ or "__delattr__" in c.__dict__
+        ]
+        assert exempt == [Distribution.__name__]
+
+    def test_a_distribution_still_accepts_assignment(self):
+        # The interim exemption, asserted rather than assumed: training an
+        # emulator in place is the documented pattern until fitting has a
+        # contract that returns a new term instead.
+        from probpipe import Normal
+
+        term = Normal(0.0, 1.0, name="x")
+        term._trained = True
+        assert term._trained is True
+
+    def test_a_term_outside_that_layer_refuses_assignment_and_names_itself(self):
+        term = RecordBatch.stack(
+            [Record("r", {"x": jnp.ones(2)}, name_is_auto=True)] * 2, level_name="draw"
+        )
+        with pytest.raises(AttributeError, match="RecordBatch is immutable"):
+            term.attribute = 1
+
+
+class TestTheConstructionWindow:
+    def test_it_closes_when_the_constructor_returns(self):
+        term = Record("r", {"x": jnp.ones(2)})
+        with pytest.raises(AttributeError):
+            term.attribute = 1
+
+    def test_an_init_that_returns_a_value_is_refused(self):
+        # ``type.__call__`` raises on this, and splitting it must not lose that.
+        from probpipe.core.tracked import TrackedTerm
+
+        class Returning(TrackedTerm):
+            def __init__(self):
+                self._init_tracked("t")
+                return "oops"
+
+        with pytest.raises(TypeError, match="should return None"):
+            Returning()
+
+    def test_it_closes_when_the_constructor_raises(self):
+        from probpipe.core._immutable import _constructing_now
+
+        class Failing(Immutable):
+            __slots__ = ("value",)
+
+            def __init__(self):
+                object.__setattr__(self, "value", 1)
+                raise ValueError("no")
+
+        from probpipe.core._immutable import constructing
+
+        instance = object.__new__(Failing)
+        with pytest.raises(ValueError), constructing(instance):
+            instance.__init__()
+        assert _constructing_now() == {}
+        with pytest.raises(AttributeError, match="Failing is immutable"):
+            instance.value = 2
+
+    def test_it_covers_one_instance_and_not_another(self):
+        from probpipe.core._immutable import constructing
+
+        inner = object.__new__(Slotted)
+        outer = object.__new__(Slotted)
+        with constructing(outer):
+            outer.left = 1  # the window is open on this one
+            with pytest.raises(AttributeError, match="Slotted is immutable"):
+                inner.left = 1  # and on this one it is not
+
+    def test_a_nested_construction_leaves_the_outer_window_open(self):
+        from probpipe import Normal, ProductDistribution
+
+        # The joint's constructor builds nothing itself, but component
+        # construction runs inside it, and its window must survive theirs.
+        joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="j")
+        assert joint.name == "j"
