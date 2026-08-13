@@ -355,9 +355,7 @@ def _broadcast_jax(
         key,
     )
 
-    def single_call(broadcast_slice):
-        replacements = dict(zip(broadcast_args, broadcast_slice))
-        return func(**_workflow_call.replace_input_refs(values, replacements))
+    single_call = mapped_draw_body(func=func, values=values, broadcast_args=broadcast_args)
 
     batch = tuple(sampled[ref] for ref in broadcast_args)
 
@@ -530,6 +528,26 @@ def _stack_rows(rows: list[Any], *, arg_name: str) -> Any:
     return jnp.stack(rows)
 
 
+def _present_draw(drawn: Any) -> Any:
+    """How one draw is presented to the wrapped function.
+
+    A single-field draw presents as its bare leaf. Design II.4 leaves the choice
+    open — it rides on the single-value-coercion question ``Record`` poses — so
+    what matters here is that every dispatch make the *same* one: the record
+    shim is deliberately narrow, carrying conversions but no arithmetic, so a
+    body written for the value would work under one dispatch and fail under
+    another if they disagreed. Every path presenting a draw goes through here.
+    """
+    from ._record_batch import RecordBatch
+    from .record import Record
+
+    if isinstance(drawn, (Record, RecordBatch)):
+        leaf_paths = tuple(drawn.event_template.keys())
+        if len(leaf_paths) == 1:
+            return drawn[leaf_paths[0]]
+    return drawn
+
+
 def _index_sample(s: Any, i: int) -> Any:
     """Index row ``i`` of a per-argument sample batch."""
     from ._record_batch import RecordBatch
@@ -544,3 +562,26 @@ def _index_sample(s: Any, i: int) -> Any:
             return s[leaf_paths[0]][i]
         return Record(s.name, {p: s[p][i] for p in leaf_paths}, name_is_auto=True)
     return s[i]
+
+
+def mapped_draw_body(
+    *,
+    func: Callable[..., Any],
+    values: dict[str, Any],
+    broadcast_args: Sequence[_workflow_call.WorkflowInputRef],
+) -> Callable[[Any], Any]:
+    """The body ``jax.vmap`` runs for one draw, and the probe traces.
+
+    Shared so the probe traces exactly what the executor runs, which two
+    separately maintained functions cannot promise. Mapping a batch of records
+    yields a record per draw, which :func:`_present_draw` then presents the same
+    way the row-wise paths do.
+    """
+
+    def one_draw(broadcast_slice):
+        replacements = {
+            ref: _present_draw(drawn) for ref, drawn in zip(broadcast_args, broadcast_slice)
+        }
+        return func(**_workflow_call.replace_input_refs(values, replacements))
+
+    return one_draw

@@ -970,17 +970,14 @@ class Function(Node, TrackedTerm, Annotated):
                 jax.make_jaxpr(jax.vmap(_row_call))(tuple(probe_leaves))
             elif drawn_sources:
                 refs = list(drawn_sources)
-
-                def _draw_call(draws):
-                    kw = dummy_kw
-                    for draw_ref, draw in zip(refs, draws):
-                        kw = _workflow_call.replace_input_ref(kw, draw_ref, draw)
-                    return func(**kw)
-
-                # Drawn the executor's own way rather than synthesized from an
-                # event shape: a record-valued law draws a batch of records, and
-                # mapping it hands the body a record where zeros of its event
-                # shape would hand it an array. One draw, so the map has an axis.
+                # The executor's own body and the executor's own draw, so the
+                # probe traces the value the body will actually receive: a
+                # record-valued law draws a batch of records, which zeros of its
+                # event shape would not have modelled. One draw, so the map has
+                # an axis.
+                _draw_call = _workflow_distribution_broadcast.mapped_draw_body(
+                    func=func, values=dummy_kw, broadcast_args=refs
+                )
                 sampled = _workflow_distribution_broadcast._sample_broadcast_args(
                     values, refs, 1, jax.random.PRNGKey(0)
                 )

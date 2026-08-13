@@ -809,12 +809,13 @@ class TestTheProbeModelsItsExecutorsTransform:
         assert result is not None
         assert any("not JAX-traceable" in record.message for record in caplog.records)
 
-    def test_a_one_field_record_law_is_probed_as_the_record_it_draws(self):
-        """The dummy is drawn, not synthesized from an event shape.
+    def test_a_one_field_record_law_presents_the_same_value_to_every_dispatch(self, caplog):
+        """A one-field draw presents as its bare leaf, whichever dispatch runs.
 
-        A one-field ``ProductDistribution`` draws a batch of records, so mapping
-        it hands the body a record; zeros of the law's event shape would hand it
-        an array, and a body that fails on the record would pass such a probe.
+        The law draws a batch of records, so mapping it yields a record where
+        the row-wise paths hand over the column. The record shim carries no
+        arithmetic, so ``x * 2`` distinguishes the two: it used to crash under
+        the mapped executor and succeed row-wise.
         """
         law = ProductDistribution(Normal(loc=0.0, scale=1.0, name="x"))
         doubles = Function(func=lambda x: x * 2, n_broadcast_samples=8, seed=0)
@@ -822,6 +823,11 @@ class TestTheProbeModelsItsExecutorsTransform:
             func=lambda x: x * 2, dispatch="sequential", n_broadcast_samples=8, seed=0
         )
 
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            mapped = doubles(law)
+
+        # Consistent *and* still vectorized, rather than consistent by retreat.
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
         np.testing.assert_array_equal(
-            np.asarray(doubles(law).samples), np.asarray(sequential(law).samples)
+            np.asarray(mapped.samples), np.asarray(sequential(law).samples)
         )

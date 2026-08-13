@@ -30,6 +30,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every dispatch presents a one-field draw the same way.** A one-field
+  record-valued law — a `ProductDistribution` over a single distribution, say —
+  draws a batch of records. The row-wise paths presented each draw as its bare
+  leaf; the `vmap` path presented the record. Since the record shim carries
+  conversions but deliberately no arithmetic, a body as ordinary as `x * 2`
+  succeeded under `dispatch="sequential"` and crashed under the mapped
+  executor. All four paths now present a draw through one rule.
+
+  Design II.4 leaves the choice itself open, riding on the single-value
+  coercion question `Record` poses. What it does not leave open is that the
+  dispatches agree, which is what this restores; the bare-leaf presentation is
+  the one three of the four paths already made.
+
 - **A body that returns a batch no longer crashes the marginalization path.**
   Calling a `Function` whose body returns a `RecordBatch` with a `Distribution`
   argument raised the pytree rank error out of `jax.vmap` instead of falling
