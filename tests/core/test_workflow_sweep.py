@@ -281,8 +281,8 @@ class TestASweptBodyThatReturnsABatch:
     ``vmap`` adds an output axis that ``RecordBatch``'s unflatten hook cannot
     name — *a shape is not a provenance* — so the executor hands the transform
     raw columns and rebuilds the batch itself afterwards, from the levels it
-    swept. The sequential path is the oracle throughout: it always produced the
-    right answer, only slowly.
+    swept. The sequential path is the oracle throughout: it builds the same
+    aggregate one row at a time.
     """
 
     @staticmethod
@@ -300,7 +300,12 @@ class TestASweptBodyThatReturnsABatch:
         )
 
     def test_the_sweep_takes_the_mapped_path(self, monkeypatch):
-        """The point of the exercise: this used to fail the probe and fall back."""
+        """The mapped executor runs, with no fall back to row-wise dispatch.
+
+        The discriminating assertion: every other test in this class passes on
+        the sequential path too, so only this one distinguishes vectorizing from
+        agreeing with the oracle.
+        """
         reached = []
         real = _workflow_sweep.execute_sweep_rows_jax
 
@@ -337,11 +342,12 @@ class TestASweptBodyThatReturnsABatch:
         np.testing.assert_allclose(np.asarray(mapped["y"]), np.asarray(sequential["y"]))
 
     def test_a_multi_axis_sweep_keeps_the_groups_apart(self):
-        """Group structure, not only flat shape: ((2, 3), (2,)) is not ((2,), (3, 2)).
+        """Two zip groups sweep as a product, so the aggregate carries both sweep
+        levels before the body's own.
 
-        Two zip groups sweep as a product, so the aggregate carries two sweep
-        levels before the body's own — the case a reshape to a flat leading axis
-        would silently get wrong.
+        Group structure, not only total size: collapsing the sweep onto one flat
+        leading axis agrees on ``batch_size`` and loses which axis belongs to
+        which level.
         """
 
         def body(p, q):
@@ -391,11 +397,11 @@ class TestASweptBodyThatReturnsABatch:
         assert isinstance(out, RecordBatch)
 
     def test_a_raw_vmap_returning_a_batch_is_still_refused(self):
-        """The hook is routed around, not softened — issue 406 rests on it.
+        """The hook is routed around, not softened.
 
-        Only the executor, which knows the level it swept, may rebuild across an
-        added axis. A raw ``vmap`` still has no name to give one and still says
-        so.
+        Only a caller that knows which axis it added, and what to call the level
+        it stands for, may rebuild across one. The executor knows both; a raw
+        ``vmap`` knows neither, and is refused.
         """
         with pytest.raises(ValueError, match="belongs to no level"):
             jax.vmap(

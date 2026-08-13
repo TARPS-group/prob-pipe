@@ -255,8 +255,8 @@ def mapped_row_body(
     """The body ``jax.vmap`` runs for one sweep row, and the probe traces.
 
     Both callers use this rather than each building its own: the probe's job is
-    to trace what the executor runs, and two functions kept alike by a comment
-    is how they came apart before.
+    to trace exactly what the executor runs, which two separately maintained
+    functions cannot promise.
 
     A row's batched-record argument is rebuilt from raw leaf columns inside the
     traced call, so nothing infers a batch axis on the way in. On the way out, a
