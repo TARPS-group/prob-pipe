@@ -157,12 +157,14 @@ def transport_for_execution_mode(mode: str) -> WorkflowTransport:
 def transport_for_workflow_kind(kind: WorkflowKind) -> WorkflowTransport:
     """Map a JAX evaluator's orchestration mode to canonical transport."""
     match kind:
+        case WorkflowKind.OFF:
+            return "local_inline"
         case WorkflowKind.TASK:
             return "prefect_task"
         case WorkflowKind.FLOW:
             return "prefect_flow"
         case _:
-            return "local_inline"
+            raise ValueError(f"transport requires a resolved workflow kind; got {kind!r}")
 
 
 def _stochastic_plan_abis(

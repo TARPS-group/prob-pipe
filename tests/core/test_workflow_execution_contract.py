@@ -31,6 +31,7 @@ from probpipe.core import (
     _workflow_execution_contract,
 )
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
+from probpipe.core.config import WorkflowKind
 
 
 def _plan(values, n_broadcast_samples=8):
@@ -63,6 +64,22 @@ def _add_caller_keyed_noise(row):
 
 
 class TestExecutionContract:
+    def test_workflow_kind_transport_requires_a_resolved_kind(self):
+        assert (
+            _workflow_execution_contract.transport_for_workflow_kind(WorkflowKind.OFF)
+            == "local_inline"
+        )
+        assert (
+            _workflow_execution_contract.transport_for_workflow_kind(WorkflowKind.TASK)
+            == "prefect_task"
+        )
+        assert (
+            _workflow_execution_contract.transport_for_workflow_kind(WorkflowKind.FLOW)
+            == "prefect_flow"
+        )
+        with pytest.raises(ValueError, match="resolved workflow kind"):
+            _workflow_execution_contract.transport_for_workflow_kind(WorkflowKind.DEFAULT)
+
     def test_contract_is_frozen_and_uses_the_fixed_abi(self):
         plan = _plan({"x": Normal(loc=0.0, scale=1.0, name="x")})
         contract = _workflow_execution_contract.make_execution_contract(

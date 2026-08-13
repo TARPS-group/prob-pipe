@@ -241,7 +241,6 @@ class ConverterRegistry:
                     source,
                     target_type,
                     kwargs,
-                    validate_declared_sample=key is None,
                 )
                 if key is None and plan.execution_mode == "sampled":
                     if not plan.automatic_key_certified:
@@ -291,8 +290,6 @@ class ConverterRegistry:
         source: Any,
         target_type: type,
         kwargs: dict[str, Any],
-        *,
-        validate_declared_sample: bool,
     ) -> _ConversionExecutionPlan:
         """Resolve one converter's private execution contract exactly once."""
         planner = getattr(converter, "_workflow_plan_conversion", None)
@@ -306,15 +303,8 @@ class ConverterRegistry:
             return plan
 
         if info.method is ConversionMethod.SAMPLE:
-            if validate_declared_sample:
-                return _sampled_conversion_plan(
-                    kwargs.get("num_samples", 1024),
-                    provider_abi=_DECLARED_CONVERTER_ABI,
-                    automatic_key_certified=False,
-                )
-            return _ConversionExecutionPlan(
-                execution_mode="sampled",
-                sample_shape=None,
+            return _sampled_conversion_plan(
+                kwargs.get("num_samples", 1024),
                 provider_abi=_DECLARED_CONVERTER_ABI,
                 automatic_key_certified=False,
             )

@@ -259,11 +259,19 @@ def _ppc_op(
     if not planned_test_fns:
         raise ValueError("test_fns must contain at least one callable")
     planned_tests: list[tuple[Callable, Any]] = []
+    planned_names: set[Any] = set()
     for index, fn in enumerate(planned_test_fns):
         if not callable(fn):
             raise TypeError(f"test_fns[{index}] must be callable; got {type(fn).__name__}")
         name = getattr(fn, "__name__", None)
-        planned_tests.append((fn, name if name is not None else repr(fn)))
+        resolved_name = name if name is not None else repr(fn)
+        if resolved_name in planned_names:
+            raise ValueError(
+                "test_fns must have unique names; duplicate name "
+                f"{resolved_name!r}. Use named functions with distinct names."
+            )
+        planned_names.add(resolved_name)
+        planned_tests.append((fn, resolved_name))
 
     if num_observations is None:
         if observed_data is None:
@@ -479,6 +487,12 @@ def add_ppc(
         Number of replicated datasets.
     key : PRNGKey or None
         JAX PRNG key.
+
+    Raises
+    ------
+    ValueError
+        If two test functions have the same name. Use distinct named functions
+        instead of multiple lambdas so result keys cannot collide.
     """
     payload = _ppc_op(
         posterior,

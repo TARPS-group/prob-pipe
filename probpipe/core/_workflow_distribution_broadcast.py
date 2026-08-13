@@ -368,6 +368,11 @@ def _broadcast_enumerate(
         dist = binding.root
         if not isinstance(dist, EmpiricalDistribution):  # pragma: no cover - plan contract guard
             raise RuntimeError("exact stochastic source is not an EmpiricalDistribution")
+        if group.exact_size is None or dist.num_atoms != group.exact_size:
+            raise RuntimeError(
+                "exact empirical size changed after planning: "
+                f"planned {group.exact_size}, found {dist.num_atoms}"
+            )
         exact_entries.append(
             (
                 group,

@@ -435,7 +435,10 @@ def score_posterior(
                 out[name] = std_ratios(approx, reference)
             elif name == "sliced_wasserstein":
                 if sliced_inputs is not None:
-                    assert key is not None
+                    if key is None:
+                        raise RuntimeError(
+                            "sliced Wasserstein scoring did not receive a resolved PRNG key"
+                        )
                     out[name] = sliced_wasserstein(*sliced_inputs, key=key)
             elif name == "mmd":
                 if reference.draws is not None:

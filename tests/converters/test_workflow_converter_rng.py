@@ -466,6 +466,43 @@ class TestConverterCertification:
         registry.convert(Source(), Normal, key=explicit)
         assert seen == [explicit]
 
+    @pytest.mark.parametrize("num_samples", [True, 0, -1, 1.5])
+    def test_explicit_key_does_not_bypass_declared_sample_count_validation(
+        self,
+        num_samples,
+    ):
+        seen = []
+
+        class Source:
+            pass
+
+        class SamplingConverter(Converter):
+            def source_types(self):
+                return (Source,)
+
+            def target_types(self):
+                return (Normal,)
+
+            def check(self, source, target_type):
+                return ConversionInfo(feasible=True, method=ConversionMethod.SAMPLE)
+
+            def convert(self, source, target_type, *, key=None, **kwargs):
+                seen.append((key, kwargs))
+                return Normal(loc=0.0, scale=1.0, name="x")
+
+        registry = ConverterRegistry()
+        registry.register(SamplingConverter())
+
+        with pytest.raises((TypeError, ValueError), match="num_samples"):
+            registry.convert(
+                Source(),
+                Normal,
+                key=jax.random.key(13),
+                num_samples=num_samples,
+            )
+
+        assert seen == []
+
 
 class TestExternalProviderAdapters:
     def test_unknown_tfp_sampling_is_seeded(self):

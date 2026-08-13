@@ -38,6 +38,25 @@ def _certified_likelihood():
 
 
 class TestPpcDiagnosticBroker:
+    def test_duplicate_test_function_names_fail_before_randomness(self, posterior):
+        with (
+            patch("probpipe.diagnostics._ppc_spc._predictive_check_batched") as sample,
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            workflow_run(seed=17),
+            pytest.raises(ValueError, match=r"unique names.*'<lambda>'"),
+        ):
+            add_ppc(
+                posterior,
+                [lambda values: jnp.mean(values), lambda values: jnp.max(values)],
+                observed_data=np.zeros(4),
+                generative_likelihood=_certified_likelihood(),
+                n_replications=3,
+            )
+
+        sample.assert_not_called()
+        commit.assert_not_called()
+        assert posterior._annotations is None
+
     def test_seeded_multi_test_ppc_claims_stable_ordered_events(self, posterior):
         claims = []
         key_words = []

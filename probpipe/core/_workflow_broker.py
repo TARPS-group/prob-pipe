@@ -653,18 +653,6 @@ class _AutomaticKeyBroker:
                         "managed workflow request exited before all work items joined"
                     )
 
-    def assert_all_managed_items_joined(self) -> None:
-        """Prevent the parent Function broker from releasing active ownership."""
-        with self._managed_claims.lock:
-            if any(
-                state.active_attempt is not None
-                or state.status not in {_ManagedUnitStatus.JOINED, _ManagedUnitStatus.CANCELLED}
-                for state in self._managed_claims.by_unit.values()
-            ):
-                raise RuntimeError(
-                    "a Function workflow scope cannot exit before all managed work items join"
-                )
-
     def _begin_finalization(self) -> tuple[ManagedEffectClaim, ...]:
         """Join-check, freeze successful effects, and enter finalization."""
         with self._managed_claims.lock:
@@ -1309,7 +1297,7 @@ def _remote_managed_work_item_stochastic_scope(
     frame = _workflow_context._capture_active_workflow_frame()
     if frame is None:
         raise RuntimeError("remote managed randomness requires a transported frame")
-    _workflow_context._assert_transported_root_authority(frame, envelope.root_words)
+    _workflow_context._assert_transported_frame_consistency(frame, envelope.root_words)
     parent = _RemoteManagedParent(
         envelope=envelope,
         attempt=attempt,
@@ -1331,9 +1319,6 @@ def _remote_managed_work_item_stochastic_scope(
             attempt,
         ):
             yield parent
-    except BaseException:
-        raise
-    else:
         state.publish_successful_effects()
     finally:
         _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
@@ -1371,9 +1356,6 @@ def _managed_work_item_stochastic_scope(
         attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(state)
         broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
         yield attempt
-    except BaseException:
-        raise
-    else:
         state.publish_successful_effects()
     finally:
         try:

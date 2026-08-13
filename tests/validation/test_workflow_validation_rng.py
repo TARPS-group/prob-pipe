@@ -465,3 +465,22 @@ class TestPosteriorScoreBroker:
 
         assert metric.call_args.kwargs["key"] is explicit
         commit.assert_not_called()
+
+    def test_missing_resolved_sliced_wasserstein_key_is_an_internal_error(self):
+        approx, reference = self._inputs()
+
+        with (
+            patch(
+                "probpipe.validation._comparison._resolve_validation_key",
+                return_value=None,
+            ),
+            patch("probpipe.validation._comparison.sliced_wasserstein") as metric,
+            pytest.raises(RuntimeError, match="resolved PRNG key"),
+        ):
+            score_posterior(
+                approx,
+                reference,
+                metrics=("sliced_wasserstein",),
+            )
+
+        metric.assert_not_called()

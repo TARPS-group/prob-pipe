@@ -467,11 +467,14 @@ def _find_remote_coordination_observation(
     return None
 
 
-def _assert_transported_root_authority(
+def _assert_transported_frame_consistency(
     frame: _WorkflowFrame,
     root_words: tuple[int, int],
 ) -> None:
-    """Require a worker frame to hold exactly its transported parent authority."""
+    """Check that an installed worker frame matches its transport envelope.
+
+    This is an internal wiring invariant, not payload authentication.
+    """
     _assert_workflow_admission(frame)
     with frame.state.lock:
         matches = (
@@ -483,9 +486,7 @@ def _assert_transported_root_authority(
             and frame.state.managed_unit_segment is None
         )
     if not matches:
-        raise RuntimeError(
-            "remote managed workflow frame does not hold its envelope root authority"
-        )
+        raise RuntimeError("remote managed workflow frame does not match its transport envelope")
 
 
 @contextmanager

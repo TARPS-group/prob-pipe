@@ -722,19 +722,6 @@ class Function(Node, TrackedTerm, Annotated):
             options=options,
         )
 
-        def get_key(event: _workflow_plan.PlannedRandomEvent):
-            return _workflow_broker._resolve_automatic_key(
-                None,
-                _workflow_broker.StochasticEffectPlan(
-                    operation_kind="function_lifting",
-                    execution_mode="sampled",
-                    event=event,
-                    sample_shape=stochastic_plan.sample_shape if stochastic_plan else None,
-                    sampling_abi="probpipe.distribution_sampling/v1",
-                    provider_abi="probpipe.distribution/v1",
-                ),
-            )
-
         values = _workflow_distribution_normalization.normalize_distribution_values(
             values=call.values,
             signature_info=self._signature_info,
@@ -748,6 +735,21 @@ class Function(Node, TrackedTerm, Annotated):
             broadcast_plan,
             call.overrides.n_broadcast_samples,
         )
+        stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
+
+        def get_key(event: _workflow_plan.PlannedRandomEvent):
+            return _workflow_broker._resolve_automatic_key(
+                None,
+                _workflow_broker.StochasticEffectPlan(
+                    operation_kind="function_lifting",
+                    execution_mode="sampled",
+                    event=event,
+                    sample_shape=stochastic_sample_shape,
+                    sampling_abi="probpipe.distribution_sampling/v1",
+                    provider_abi="probpipe.distribution/v1",
+                ),
+            )
+
         workflow_kind = self.effective_workflow_kind
         _workflow_broker._record_active_requested_execution(
             self._dispatch,

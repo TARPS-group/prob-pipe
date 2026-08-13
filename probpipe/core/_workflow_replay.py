@@ -963,9 +963,6 @@ def _remote_replay_claim_scope(
     token = _REMOTE_REPLAY_CLAIMS.set(registry)
     try:
         yield
-    except BaseException:
-        raise
-    else:
         registry.assert_all_claimed()
     finally:
         _REMOTE_REPLAY_CLAIMS.reset(token)

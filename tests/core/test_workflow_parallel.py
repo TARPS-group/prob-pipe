@@ -1373,7 +1373,7 @@ class TestManagedRetryClaims:
 
 
 class TestRemoteReportTransactions:
-    def test_worker_rejects_mismatched_transported_root_authority(self):
+    def test_worker_rejects_a_transported_frame_root_mismatch(self):
         frame = make_managed_frame()
         attempt = make_managed_attempt()
         envelope = managed_mod.ManagedParentEnvelope(
@@ -1385,7 +1385,7 @@ class TestRemoteReportTransactions:
 
         with (
             context_mod._transported_workflow_frame((0, 99)),
-            pytest.raises(RuntimeError, match="root authority"),
+            pytest.raises(RuntimeError, match="transport envelope"),
             broker_mod._remote_managed_work_item_stochastic_scope(envelope, attempt),
         ):
             pass

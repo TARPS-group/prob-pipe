@@ -271,14 +271,20 @@ class TestWorkflowAdmission:
             workflow_run(seed=7),
             ThreadPoolExecutor(max_workers=1) as pool,
         ):
+            parent_frame = _workflow_context._capture_active_workflow_frame()
+            assert parent_frame is not None
+            parent_root = _workflow_context._resolve_root_words(parent_frame)
 
             def claim_in_fresh_context():
                 with _ephemeral_workflow_run():
-                    return _claim_key_words()
+                    child_frame = _workflow_context._capture_active_workflow_frame()
+                    assert child_frame is not None
+                    return _workflow_context._resolve_root_words(child_frame)
 
-            words = pool.submit(claim_in_fresh_context).result()
+            child_root = pool.submit(claim_in_fresh_context).result()
 
-        assert words
+        assert child_root == (0x01234567, 0x89ABCDEF)
+        assert child_root != parent_root
         urandom.assert_called_once_with(8)
 
     def test_managed_thread_work_item_can_enter_the_parent_run(self):

@@ -355,6 +355,28 @@ class TestExecuteDistributionBroadcast:
             atol=1e-6,
         )
 
+    def test_exact_empirical_size_must_match_the_frozen_plan(self):
+        empirical = EmpiricalDistribution([1.0, 2.0, 3.0], name="x")
+        values = {"x": empirical}
+        plan = _stochastic_plan(values, 8)
+        empirical._samples = np.asarray([1.0, 2.0], dtype=object)
+
+        with pytest.raises(RuntimeError, match="exact empirical size changed after planning"):
+            _workflow_distribution_broadcast.execute_distribution_broadcast(
+                func=lambda x: x,
+                values=values,
+                stochastic_plan=plan,
+                logical_unit=plan.logical_units[0],
+                include_inputs=False,
+                get_key=_require_not_called,
+                make_execution_config=lambda: _execution_config(name="identity"),
+                requested_dispatch="sequential",
+                resolve_dispatch=_resolve_to("sequential"),
+                require_jax_traceable=_require_not_called,
+                workflow_name="identity",
+                workflow_kind=WorkflowKind.OFF,
+            )
+
     def test_jax_path_vectorizes_samples_and_outputs(self):
         values = {"x": Normal(loc=1.0, scale=0.5, name="x")}
         seen = {"required": False}
