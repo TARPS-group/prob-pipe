@@ -87,6 +87,21 @@ class TestWorkflowRunBoundary:
 
         urandom.assert_called_once_with(8)
 
+    def test_rootless_transported_frame_refuses_os_entropy(self):
+        with (
+            patch(
+                "probpipe.core._workflow_context._os_urandom",
+                return_value=bytes.fromhex("0123456789abcdef"),
+            ) as urandom,
+            _workflow_context._transported_workflow_frame(None),
+        ):
+            frame = _workflow_context._capture_active_workflow_frame()
+            assert frame is not None
+            with pytest.raises(RuntimeError, match="parent RNG authority"):
+                _workflow_context._resolve_root_words(frame)
+
+        urandom.assert_not_called()
+
     def test_independent_ephemeral_runs_receive_independent_roots(self):
         with patch(
             "probpipe.core._workflow_context._os_urandom",

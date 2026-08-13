@@ -7,7 +7,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import Enum
-from threading import Lock
+from threading import Event, Lock
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from ..custom_types import PRNGKey
@@ -337,10 +337,7 @@ class _AutomaticKeyBroker:
             record_path=plan.record_path,
             descendant_descriptor=plan.descendant_descriptor,
         )
-        coordination_probe = _REMOTE_COORDINATION_PROBE.get()
-        if coordination_probe is not None:
-            coordination_probe.effect_observed = True
-            raise _ManagedCoordinationRequired
+        _guard_remote_coordination(self._frame)
         _workflow_context._guard_automatic_key_request()
         self.validate_replay_effect_plan(plan)
         with self._lock:
@@ -778,6 +775,7 @@ class _AutomaticKeyBroker:
         retry_effects: tuple[ManagedEffectClaim, ...],
     ) -> ManagedParentEnvelope:
         """Materialize authority for an already-reserved remote attempt."""
+        _guard_remote_coordination(self._frame)
         parent_invocation = self._ensure_parent_invocation()
         from . import _workflow_replay
 
@@ -992,17 +990,31 @@ class _RemoteCoordinationObservation:
     """Attempt-local observation that survives caught probe exceptions."""
 
     attempt: ManagedAttemptState
-    effect_observed: bool = False
+    _effect_observed: Event = field(default_factory=Event, repr=False)
 
+    @property
+    def effect_observed(self) -> bool:
+        """Return whether any thread requested workflow-owned randomness."""
+        return self._effect_observed.is_set()
 
-_REMOTE_COORDINATION_PROBE: ContextVar[_RemoteCoordinationObservation | None] = ContextVar(
-    "probpipe_remote_coordination_probe",
-    default=None,
-)
+    def observe_effect(self) -> None:
+        """Record a workflow-owned effect from any managed worker thread."""
+        self._effect_observed.set()
 
 
 class _ManagedCoordinationRequired(RuntimeError):
     """Signal that a remote work item needs parent RNG authority."""
+
+
+def _guard_remote_coordination(
+    frame: _workflow_context._WorkflowFrame | None,
+) -> None:
+    """Require parent authority before a rootless remote effect can commit."""
+    observation = _workflow_context._find_remote_coordination_observation(frame)
+    if observation is None:
+        return
+    observation.observe_effect()
+    raise _ManagedCoordinationRequired
 
 
 @dataclass(slots=True)
@@ -1248,15 +1260,38 @@ def _remote_coordination_probe_scope(
 ) -> Generator[_RemoteCoordinationObservation, None, None]:
     """Run a remote item without permitting automatic stochastic commit."""
     observation = _RemoteCoordinationObservation(attempt)
-    probe_token = _REMOTE_COORDINATION_PROBE.set(observation)
+    frame = _workflow_context._capture_active_workflow_frame()
+    if frame is None:
+        raise RuntimeError("remote coordination requires a transported workflow frame")
+    with frame.state.lock:
+        is_rootless_transport = (
+            frame.kind == "managed"
+            and frame.seed_words is None
+            and frame.parent is None
+            and frame.state.path_prefix == ()
+            and frame.state.root_words is None
+            and frame.state.managed_unit_segment is None
+        )
+        if not is_rootless_transport:
+            raise RuntimeError("remote coordination requires a rootless transported frame")
+        if frame.state.remote_coordination_observation is not None:
+            raise RuntimeError("remote coordination observation is already installed")
+        frame.state.remote_coordination_observation = observation
     attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(None)
     broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
     try:
         yield observation
     finally:
-        _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
-        _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)
-        _REMOTE_COORDINATION_PROBE.reset(probe_token)
+        try:
+            with frame.state.lock:
+                if frame.state.remote_coordination_observation is not observation:
+                    raise RuntimeError(
+                        "remote coordination observations must exit in nesting order"
+                    )
+                frame.state.remote_coordination_observation = None
+        finally:
+            _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)
+            _ACTIVE_MANAGED_ATTEMPT.reset(attempt_token)
 
 
 @contextmanager

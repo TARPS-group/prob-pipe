@@ -16,7 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 import pytest
 
-from probpipe import Normal, WorkflowKind, workflow_run
+from probpipe import Normal, WorkflowKind, sample, workflow_run
 from probpipe.core.node import Function
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
@@ -63,6 +63,22 @@ def double_it(x: jnp.ndarray) -> jnp.ndarray:
 
 def sum_xy(x: jnp.ndarray, y: jnp.ndarray) -> jnp.ndarray:
     return x + y
+
+
+def _draw_standard_normal():
+    return sample(Normal(loc=0.0, scale=1.0, name="x"))
+
+
+_THREADED_DRAW = Function(
+    func=_draw_standard_normal,
+    dispatch="thread",
+    max_workers=1,
+    name="threaded_draw",
+)
+
+
+def _call_threaded_draw():
+    return _THREADED_DRAW()
 
 
 # ---------------------------------------------------------------------------
@@ -231,6 +247,44 @@ class TestPrefectFlowJax:
 
 class TestPrefectProvenance:
     """Verify provenance includes orchestration info."""
+
+    def test_rootless_task_coordinates_nested_managed_thread(self):
+        local = Function(
+            func=_call_threaded_draw,
+            workflow_kind=WorkflowKind.OFF,
+            dispatch="sequential",
+            name="nested_thread_owner",
+        )
+        remote = Function(
+            func=_call_threaded_draw,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+            name="nested_thread_owner",
+        )
+
+        with workflow_run(seed=17):
+            local_result = local()
+        with workflow_run(seed=17):
+            remote_result = remote()
+
+        np.testing.assert_array_equal(
+            remote_result["sample"],
+            local_result["sample"],
+        )
+        assert remote_result.provenance is not None
+        randomness = remote_result.provenance.controls["randomness"]
+        replay = remote_result.provenance.controls["replay"]
+        rng_origin = remote_result.provenance.diagnostics["rng_origin"]
+        assert randomness["root_words"] == [0, 17]
+        assert replay["standalone"] == {
+            "eligibility": "nested_workflow_rng_execution",
+            "restriction": "nested_automatic_function",
+        }
+        assert rng_origin == {
+            "context_kind": "seeded_run",
+            "root_source": "user_seed",
+            "supplied_seed": 17,
+        }
 
     def test_task_provenance(self, normal_dist):
         wf = Function(

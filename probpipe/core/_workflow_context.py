@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from os import urandom as _os_urandom
 from threading import Lock
 from types import TracebackType
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from ..custom_types import PRNGKey
 from ._workflow_errors import UnmanagedConcurrentWorkflowEntryError
@@ -26,6 +26,9 @@ from ._workflow_rng import (
     jax_key_from_words,
     seed_to_root_words,
 )
+
+if TYPE_CHECKING:
+    from ._workflow_broker import _RemoteCoordinationObservation
 
 _WorkflowContextKind = Literal[
     "seeded",
@@ -80,6 +83,7 @@ class _WorkflowFrameState:
     path_prefix: _RandomEventPath | None = None
     managed_unit_segment: _RandomEventPath | None = None
     root_words: tuple[int, int] | None = None
+    remote_coordination_observation: _RemoteCoordinationObservation | None = None
     closed: bool = False
     lock: Any = field(default_factory=Lock, repr=False)
 
@@ -449,6 +453,20 @@ def _capture_active_workflow_frame() -> _WorkflowFrame | None:
     return frame
 
 
+def _find_remote_coordination_observation(
+    frame: _WorkflowFrame | None,
+) -> _RemoteCoordinationObservation | None:
+    """Find an attempt observation carried by this managed frame chain."""
+    cursor = frame
+    while cursor is not None:
+        with cursor.state.lock:
+            observation = cursor.state.remote_coordination_observation
+        if observation is not None:
+            return observation
+        cursor = cursor.parent
+    return None
+
+
 def _assert_transported_root_authority(
     frame: _WorkflowFrame,
     root_words: tuple[int, int],
@@ -552,6 +570,13 @@ def _resolve_root_words(frame: _WorkflowFrame) -> tuple[int, int]:
             elif frame.parent is not None:
                 frame.state.root_words = _resolve_root_words(frame.parent)
             else:
+                if frame.kind == "managed":
+                    observation = frame.state.remote_coordination_observation
+                    if observation is not None:
+                        observation.observe_effect()
+                    raise RuntimeError(
+                        "rootless managed workflow frame requires transported parent RNG authority"
+                    )
                 entropy = _os_urandom(8)
                 if len(entropy) != 8:  # pragma: no cover - OS contract guard
                     raise RuntimeError("OS entropy provider did not return 8 bytes")

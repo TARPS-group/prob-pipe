@@ -2216,6 +2216,41 @@ class TestPrefectMapping:
         urandom.assert_called_once_with(8)
         assert FakeMappedTask.map_calls == 2
 
+    def test_prefect_probe_survives_nested_managed_thread(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        threaded_claim = Function(
+            func=_claim_automatic_scalar,
+            dispatch="thread",
+            max_workers=1,
+            name="threaded_claim",
+        )
+
+        def claim_in_managed_thread():
+            return threaded_claim()
+
+        request = make_request(
+            mode="prefect_task",
+            calls=[{}],
+            func=claim_in_managed_thread,
+        )
+        with (
+            patch(
+                "probpipe.core._workflow_context._os_urandom",
+                return_value=bytes.fromhex("0123456789abcdef"),
+            ) as urandom,
+            workflow_run(seed=17),
+            broker_mod._function_stochastic_scope() as parent,
+        ):
+            result = execution_mod.execute_many(request)[0]
+            state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+
+        assert result is not None
+        assert len(parent._effects_by_identity) == 1
+        assert len(state.seen_attempts) == 2
+        assert FakeMappedTask.map_calls == 2
+        urandom.assert_not_called()
+
     @pytest.mark.parametrize(
         "handler",
         [
