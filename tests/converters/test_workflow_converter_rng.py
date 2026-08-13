@@ -111,10 +111,12 @@ class TestBuiltInConversionPlanning:
 
         first, first_commits = run(8)
         second, second_commits = run(8)
+        numpy_count, numpy_commits = run(np.int64(8))
         larger, larger_commits = run(32)
 
         np.testing.assert_array_equal(first, second)
-        assert first_commits == second_commits == larger_commits
+        np.testing.assert_array_equal(numpy_count, first)
+        assert first_commits == second_commits == numpy_commits == larger_commits
         assert len(first_commits) == 1
         assert first_commits[0].args == ("operation",)
         assert larger.shape == (32, 1)

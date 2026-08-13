@@ -91,6 +91,27 @@ class TestAutomaticSample:
         assert result.shape == (4, 5)
         assert claims == [(("source-group", 0), ("singleton",))]
 
+    @pytest.mark.parametrize(
+        "sample_shape",
+        [
+            pytest.param(np.int64(4), id="numpy-scalar"),
+            pytest.param((np.int64(4),), id="numpy-tuple"),
+            pytest.param(jnp.int32(4), id="jax-scalar"),
+            pytest.param((jnp.int32(4),), id="jax-tuple"),
+        ],
+    )
+    def test_integer_protocol_sample_shapes_match_python_ints(self, sample_shape):
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+
+        def run(shape):
+            with workflow_run(seed=7):
+                return sample(dist, sample_shape=shape)
+
+        expected = run((4,))
+        actual = run(sample_shape)
+
+        np.testing.assert_array_equal(actual, expected)
+
     @pytest.mark.parametrize("sample_shape", [True, -1, (2, -1), (2, 1.5), [2]])
     def test_invalid_sample_shape_fails_before_event_commit(self, sample_shape):
         with (

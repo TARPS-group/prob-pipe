@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import operator
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
@@ -35,11 +36,15 @@ class _ConversionExecutionPlan:
 
 def _validate_conversion_sample_count(value: Any) -> int:
     """Validate and return a conversion sample count before RNG commit."""
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool):
         raise TypeError(f"num_samples must be an integer; got {value!r}")
-    if value <= 0:
+    try:
+        count = operator.index(value)
+    except TypeError:
+        raise TypeError(f"num_samples must be an integer; got {value!r}") from None
+    if count <= 0:
         raise ValueError(f"num_samples must be positive; got {value!r}")
-    return value
+    return count
 
 
 def _sampled_conversion_plan(

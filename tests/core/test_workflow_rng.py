@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import probpipe.core._workflow_rng as workflow_rng
@@ -61,7 +62,17 @@ class TestCanonicalEventEncoding:
         with pytest.raises(TypeError, match="identity must be a RandomEventIdentity"):
             encode_random_event(("invocation", 0))
 
-    @pytest.mark.parametrize("invalid", [True, -1, 2**64, 1.5, ["scope", 0]])
+    @pytest.mark.parametrize(
+        "invalid",
+        [
+            True,
+            -1,
+            2**64,
+            1.5,
+            pytest.param(np.int64(1), id="numpy-integer"),
+            ["scope", 0],
+        ],
+    )
     def test_encoding_rejects_values_outside_the_canonical_algebra(self, invalid):
         identity = RandomEventIdentity(
             occurrence_path=("invocation", 0),

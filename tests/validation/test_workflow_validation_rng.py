@@ -116,6 +116,20 @@ class TestPredictiveCheckBroker:
         assert len(calls) == 1
         explicit_commit.assert_not_called()
 
+    def test_numpy_integer_counts_are_normalized_before_event_commit(self):
+        prior, likelihood = _glm_validation_setup()
+
+        with workflow_run(seed=7):
+            result = predictive_check(
+                prior,
+                likelihood,
+                test_fn=jnp.mean,
+                num_observations=np.int64(6),
+                num_replications=np.int64(3),
+            )
+
+        assert result["replicated_statistics"].num_atoms == 3
+
     @pytest.mark.parametrize(
         ("argument", "value"),
         [
@@ -251,6 +265,35 @@ class TestSimulationBasedCalibrationBroker:
                 key=jax.random.key(11),
             )
         explicit_commit.assert_not_called()
+
+    def test_numpy_integer_counts_are_normalized_before_event_commit(self, monkeypatch):
+        def fake_condition_on(
+            model,
+            data,
+            *,
+            num_results,
+            **kwargs,
+        ):
+            del model, data, kwargs
+            return RecordEmpiricalDistribution(
+                jnp.zeros((num_results, 1)),
+                name="beta",
+            )
+
+        monkeypatch.setattr(
+            "probpipe.validation._calibration.condition_on",
+            fake_condition_on,
+        )
+
+        result = simulation_based_calibration(
+            self._model(),
+            num_simulations=np.int64(2),
+            num_posterior_draws=np.int64(4),
+            num_observations=np.int64(3),
+            key=jax.random.key(11),
+        )
+
+        assert result.ranks.shape == (2, 1)
 
     @pytest.mark.parametrize(
         ("argument", "value"),

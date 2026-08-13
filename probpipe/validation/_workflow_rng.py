@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import operator
 from typing import Any
 
 from ..core import _workflow_broker
@@ -16,11 +17,15 @@ _CERTIFIED_GLM_GENERATE_DATA = GLMLikelihood.generate_data
 
 def _validate_positive_int(name: str, value: Any) -> int:
     """Validate a positive integer control before stochastic commit."""
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool):
         raise TypeError(f"{name} must be an integer; got {value!r}")
-    if value <= 0:
+    try:
+        count = operator.index(value)
+    except TypeError:
+        raise TypeError(f"{name} must be an integer; got {value!r}") from None
+    if count <= 0:
         raise ValueError(f"{name} must be a positive integer; got {value!r}")
-    return value
+    return count
 
 
 def _certified_generative_provider_abi(provider: Any) -> str | None:

@@ -12,15 +12,18 @@ Uses ``prefect_test_harness()`` for an in-process temporary server.
 
 from __future__ import annotations
 
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
 
+import probpipe.core._workflow_broker as broker_mod
 from probpipe import Normal, WorkflowKind, sample, workflow_run
 from probpipe.core.node import Function
 
 prefect_testing = pytest.importorskip("prefect.testing.utilities")
 prefect_test_harness = prefect_testing.prefect_test_harness
+prefect_settings = pytest.importorskip("prefect.settings")
 
 
 @pytest.fixture(scope="module", autouse=True)
@@ -79,6 +82,119 @@ _THREADED_DRAW = Function(
 
 def _call_threaded_draw():
     return _THREADED_DRAW()
+
+
+def _draw_under_nested_seed():
+    with workflow_run(seed=91):
+        return _draw_standard_normal()
+
+
+_PREFECT_RETRY_KEY_WORDS: list[tuple[int, int]] = []
+
+
+def _claim_key_and_fail_once():
+    key = broker_mod._resolve_automatic_key(
+        None,
+        broker_mod._singleton_effect_plan(
+            operation_kind="prefect-retry-conformance",
+            execution_mode="sampled",
+            sample_shape=(),
+        ),
+    )
+    words = tuple(int(word) for word in jax.random.key_data(key))
+    _PREFECT_RETRY_KEY_WORDS.append(words)
+    if len(_PREFECT_RETRY_KEY_WORDS) == 1:
+        raise RuntimeError("retry conformance failure")
+    return words
+
+
+# ---------------------------------------------------------------------------
+# Cross-route RNG conformance
+# ---------------------------------------------------------------------------
+
+
+class TestPrefectRngConformance:
+    def test_lifted_samples_match_local_thread_and_real_prefect(self, normal_dist):
+        workflows = (
+            Function(
+                func=add_one,
+                workflow_kind=WorkflowKind.OFF,
+                dispatch="sequential",
+                n_broadcast_samples=6,
+            ),
+            Function(
+                func=add_one,
+                workflow_kind=WorkflowKind.OFF,
+                dispatch="thread",
+                max_workers=2,
+                n_broadcast_samples=6,
+            ),
+            Function(
+                func=add_one,
+                workflow_kind=WorkflowKind.TASK,
+                dispatch="sequential",
+                n_broadcast_samples=6,
+            ),
+        )
+
+        samples = []
+        for workflow in workflows:
+            with workflow_run(seed=17):
+                result = workflow(x=normal_dist)
+            samples.append(np.asarray(result.samples))
+
+        np.testing.assert_array_equal(samples[1], samples[0])
+        np.testing.assert_array_equal(samples[2], samples[0])
+
+    def test_nested_seed_matches_local_and_real_prefect_for_any_outer_seed(self):
+        local = Function(
+            func=_draw_under_nested_seed,
+            workflow_kind=WorkflowKind.OFF,
+            dispatch="sequential",
+        )
+        remote = Function(
+            func=_draw_under_nested_seed,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+        )
+
+        results = []
+        for workflow, outer_seed in (
+            (local, 1),
+            (local, 2),
+            (remote, 1),
+            (remote, 2),
+        ):
+            with workflow_run(seed=outer_seed):
+                results.append(np.asarray(workflow()))
+
+        for result in results[1:]:
+            np.testing.assert_array_equal(result, results[0])
+
+    def test_real_prefect_retry_reuses_key_and_commits_one_effect(self):
+        _PREFECT_RETRY_KEY_WORDS.clear()
+        workflow = Function(
+            func=_claim_key_and_fail_once,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+        )
+
+        with (
+            prefect_settings.temporary_settings(
+                updates={
+                    prefect_settings.PREFECT_TASKS_DEFAULT_RETRIES: 1,
+                    prefect_settings.PREFECT_TASKS_DEFAULT_RETRY_DELAY_SECONDS: 0,
+                }
+            ),
+            workflow_run(seed=17),
+        ):
+            result = workflow()
+
+        assert len(_PREFECT_RETRY_KEY_WORDS) == 2
+        assert _PREFECT_RETRY_KEY_WORDS[0] == _PREFECT_RETRY_KEY_WORDS[1]
+        randomness = result.provenance.controls["randomness"]
+        assert randomness["expected_event_count"] == 1
+        assert len(randomness["events"]) == 1
 
 
 # ---------------------------------------------------------------------------

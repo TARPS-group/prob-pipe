@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 from probpipe import (
@@ -15,10 +16,13 @@ from probpipe import (
     Normal,
     NumericRecord,
     NumericRecordBatch,
+    NumericRecordDistribution,
+    SupportsSampling,
     function,
     workflow_run,
 )
 from probpipe.core import _workflow_context, _workflow_plan
+from probpipe.core.constraints import real
 
 
 class _RecordingNormal(Normal):
@@ -32,7 +36,51 @@ class _RecordingNormal(Normal):
         return super()._sample(key, sample_shape)
 
 
+class _GoldenBitsDistribution(NumericRecordDistribution, SupportsSampling):
+    _sampling_cost = "low"
+    _preferred_orchestration = None
+
+    def __init__(self, sample_calls):
+        self.sample_calls = sample_calls
+        super().__init__(name="bits")
+
+    @property
+    def event_shape(self):
+        return ()
+
+    @property
+    def dtypes(self):
+        return self._per_field_dict(jnp.dtype("float32"))
+
+    @property
+    def supports(self):
+        return self._per_field_dict(real)
+
+    def _sample(self, key, sample_shape=()):
+        words = tuple(int(word) for word in jax.random.key_data(key))
+        self.sample_calls.append((words, tuple(sample_shape)))
+        bits = jax.random.bits(key, shape=sample_shape, dtype=jnp.uint16)
+        return bits.astype(jnp.float32)
+
+
 class TestSequentialLiftingWorkflowRun:
+    def test_lifted_key_and_sample_match_v1_end_to_end_golden(self):
+        sample_calls = []
+        dist = _GoldenBitsDistribution(sample_calls)
+
+        @function(n_broadcast_samples=5, dispatch="sequential")
+        def identity(value):
+            return value
+
+        with workflow_run(seed=17):
+            result = identity(dist)
+
+        assert sample_calls == [((3974922193, 721833970), (5,))]
+        np.testing.assert_array_equal(
+            np.asarray(result.samples),
+            np.asarray([6783, 11879, 26960, 21029, 10625], dtype=np.float32),
+        )
+
     def test_function_builds_one_stochastic_plan_for_a_lifted_call(self):
         @function(n_broadcast_samples=8, dispatch="sequential")
         def identity(x):

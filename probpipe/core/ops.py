@@ -18,6 +18,7 @@ Usage::
 
 from __future__ import annotations
 
+import operator
 from typing import Any
 
 import jax
@@ -90,12 +91,13 @@ def sample(
         )
     if isinstance(sample_shape, bool):
         raise TypeError("sample_shape must be an integer or tuple of integers, not bool")
-    if isinstance(sample_shape, int):
-        sample_shape = (sample_shape,)
-    elif not isinstance(sample_shape, tuple) or any(
-        isinstance(axis, bool) or not isinstance(axis, int) for axis in sample_shape
-    ):
+    axes = sample_shape if isinstance(sample_shape, tuple) else (sample_shape,)
+    if any(isinstance(axis, bool) for axis in axes):
         raise TypeError("sample_shape must be an integer or tuple of integers")
+    try:
+        sample_shape = tuple(operator.index(axis) for axis in axes)
+    except TypeError:
+        raise TypeError("sample_shape must be an integer or tuple of integers") from None
     if any(axis < 0 for axis in sample_shape):
         raise ValueError(f"sample_shape dimensions must be non-negative; got {sample_shape!r}")
     if key is None:
