@@ -637,6 +637,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **Immutability is a property of being a tracked term (#395).** `TrackedTerm`
+  inherits `Immutable`, so assignment and deletion raise on a record, a batch, a
+  function, or a template once its constructor has returned — the design's `C2`
+  and the §V.1 promise that an implementer's object is never modified, enforced
+  rather than documented. Four classes enforced it individually before.
+
+  **The distribution layer is exempt for now.** `Distribution` permits
+  assignment, because the documented way to build an emulator is to subclass a
+  random function and train it in place, and fitting has no contract yet that
+  returns a new term instead. That is one method with one docstring, and deleting
+  it turns the guard on for the other seventy-two classes; a test asserts it is
+  the *only* exemption, so a second cannot appear quietly.
+
+  Construction is unaffected: it runs inside a per-instance window the
+  `TrackedTerm` metaclass opens, so a host's `__init__` assigns normally and no
+  constructor needed converting. The window closes when `__init__` returns, and
+  also when it raises, so a half-built term left behind by a failure is as
+  immutable as a finished one. Code that allocates with `object.__new__` and then
+  calls a constructor by hand opens the window itself — three sites in the
+  package do.
+
+  Nothing changes for a caller: the classes that refuse assignment are the same
+  four families as before, and a distribution still accepts it. What changes is
+  where the rule lives — in the term hierarchy rather than in four class bodies —
+  and that turning it on for the rest is now a deletion.
+
+### Changed
+
 - **Immutability is one mixin, and a term reconstructs from its state (#395).**
   Four classes spelled out the same guard — three of them hardcoding a class name,
   so `NumericRecord` reported `Record` and `NumericEventTemplate` reported

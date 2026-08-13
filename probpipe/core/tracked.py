@@ -31,7 +31,7 @@ from collections.abc import Mapping
 # exposes; the conflict-avoidance constraint itself doesn't change.
 from typing import Any, Self, _ProtocolMeta
 
-from ._immutable import decoupled_container
+from ._immutable import Immutable, constructing, decoupled_container
 from .provenance import Provenance
 
 __all__ = ["Annotated", "TrackedTerm", "auto_name"]
@@ -77,8 +77,13 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
 
 
 class _TrackedTermMeta(_ProtocolMeta):
-    """Metaclass enforcing that every ``TrackedTerm`` instance has a
-    non-empty ``name`` set by the time construction returns.
+    """Metaclass running construction in a window, and enforcing a non-empty name.
+
+    A tracked term is immutable, so it can only be built by assigning to it
+    before anyone holds it. This runs ``__init__`` inside
+    :func:`~probpipe.core._immutable.constructing`, which is what lets a
+    constructor assign normally while assignment anywhere else raises. The window
+    is per instance and per thread, and closes even when ``__init__`` raises.
 
     The check runs after ``__init__`` so it covers every construction
     path: classes that call ``super().__init__(name=...)``, classes that
@@ -95,7 +100,19 @@ class _TrackedTermMeta(_ProtocolMeta):
     """
 
     def __call__(cls, *args: Any, **kwargs: Any) -> Any:
-        instance = super().__call__(*args, **kwargs)
+        # ``type.__call__``, split so the window can be opened between the two
+        # halves: allocation first, then ``__init__`` inside it. A host's
+        # ``__new__`` may resolve to a subclass, and as ``type.__call__`` does,
+        # ``__init__`` runs only when it returns an instance of *cls*.
+        if cls.__new__ is object.__new__:
+            instance = cls.__new__(cls)
+        else:
+            instance = cls.__new__(cls, *args, **kwargs)
+        if isinstance(instance, cls):
+            with constructing(instance):
+                returned = instance.__init__(*args, **kwargs)
+            if returned is not None:
+                raise TypeError(f"__init__() should return None, not {type(returned).__name__!r}")
         name = getattr(instance, "_name", None)
         if not isinstance(name, str) or not name:
             raise TypeError(
@@ -107,7 +124,7 @@ class _TrackedTermMeta(_ProtocolMeta):
         return instance
 
 
-class TrackedTerm(metaclass=_TrackedTermMeta):
+class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     """Identity mixin: a :attr:`name` and a write-once :attr:`provenance`.
 
     A ``TrackedTerm`` object carries, alongside its mathematical content, the two
@@ -130,6 +147,13 @@ class TrackedTerm(metaclass=_TrackedTermMeta):
     :meth:`with_provenance`, and a subsequent attempt raises. Transformations
     that build a new object attach fresh provenance to the result instead of
     rewriting the input's.
+
+    A tracked term is **immutable**
+    (:class:`~probpipe.core._immutable.Immutable`): assignment and deletion raise
+    once its constructor has returned, and an operation that changes anything
+    returns a new term. Construction assigns inside the window the metaclass
+    opens, so a host's ``__init__`` is written normally. The distribution layer
+    is exempt for now, for the reason its ``__setattr__`` gives.
 
     Attributes
     ----------
