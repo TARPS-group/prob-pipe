@@ -62,6 +62,19 @@ def auto_name(name: str | None, default: str) -> tuple[str, bool]:
     return name, False
 
 
+def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return a shallow copy of an annotations container.
+
+    Entries are shared, the container is not, so a write on one object does not
+    show through on the object it was copied or rebuilt from — the annotations
+    channel is written in place (see :class:`Annotated`), which is what makes a
+    shared container observable. Any mapping type is accepted: an
+    ``xarray.DataTree`` and the like copy themselves, and anything else is
+    rebuilt as a ``dict``.
+    """
+    return annotations.copy() if hasattr(annotations, "copy") else dict(annotations)
+
+
 class _TrackedTermMeta(_ProtocolMeta):
     """Metaclass enforcing that every ``TrackedTerm`` instance has a
     non-empty ``name`` set by the time construction returns.
@@ -218,14 +231,9 @@ class TrackedTerm(metaclass=_TrackedTermMeta):
         object.__setattr__(clone, "_name", name)
         object.__setattr__(clone, "_name_is_auto", False)
         object.__setattr__(clone, "_provenance", None)
-        # Decouple the annotations container: writers add entries in place
-        # (the documented append-only channel), and a shared container would
-        # let a post-rename write show through on the original. A shallow
-        # container copy shares the entry values but not the container.
         annotations = getattr(clone, "_annotations", None)
         if annotations is not None:
-            copied = annotations.copy() if hasattr(annotations, "copy") else dict(annotations)
-            object.__setattr__(clone, "_annotations", copied)
+            object.__setattr__(clone, "_annotations", _decoupled_annotations(annotations))
         clone.with_provenance(
             Provenance.create(
                 "with_name",
@@ -271,19 +279,34 @@ class TrackedTerm(metaclass=_TrackedTermMeta):
         object.__setattr__(self, "_provenance", provenance)
         return self
 
-    def _restore_identity(self, *, name_is_auto: bool, provenance: Provenance | None) -> Self:
-        """Restore identity state on a reconstructed object, returning it.
+    def _restore_identity(
+        self,
+        *,
+        name_is_auto: bool,
+        provenance: Provenance | None,
+        annotations: Mapping[str, Any] | None = None,
+    ) -> Self:
+        """Restore identity and metadata state on a reconstructed object.
 
         The shared tail of every unpickle helper: after the constructor has
         rebuilt the object (setting ``_name`` from the stored name), this
         re-applies the stored :attr:`name_is_auto` flag and, when present,
-        the stored provenance — bypassing the write-once guard, since the
-        reconstruction is restoring recorded state rather than rewriting
-        lineage.
+        the stored provenance and annotations — bypassing the write-once guard,
+        since the reconstruction is restoring recorded state rather than
+        rewriting lineage.
+
+        Annotations need restoring here because they are written *after*
+        construction (see :class:`Annotated`), so no constructor argument
+        carries them. The container is decoupled from the one passed in for the
+        reason :meth:`with_name` gives: writers add entries in place, and a
+        shared container would let a write on the reconstruction show through
+        on whatever it was rebuilt from.
         """
         object.__setattr__(self, "_name_is_auto", bool(name_is_auto))
         if provenance is not None:
             object.__setattr__(self, "_provenance", provenance)
+        if annotations is not None:
+            object.__setattr__(self, "_annotations", _decoupled_annotations(annotations))
         return self
 
     # -- copying -------------------------------------------------------------

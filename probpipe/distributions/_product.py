@@ -251,9 +251,17 @@ class ProductDistribution(
         self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
+        # Annotations are threaded explicitly: they are written after
+        # construction, so rebuilding from the components alone would drop them.
         return (
             _unpickle_product_distribution,
-            (dict(self._components), self._name, self._name_is_auto, self._provenance),
+            (
+                dict(self._components),
+                self._name,
+                self._name_is_auto,
+                self._provenance,
+                getattr(self, "_annotations", None),
+            ),
         )
 
     # -- Sampling (returns Record) ------------------------------------------
@@ -453,10 +461,16 @@ class ProductDistribution(
         return f"ProductDistribution({comp_str}{name_str})"
 
 
-def _unpickle_product_distribution(components, name, name_is_auto, provenance):
-    """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
+def _unpickle_product_distribution(components, name, name_is_auto, provenance, annotations=None):
+    """Reconstruct a ProductDistribution (or dynamic subclass) from its components.
+
+    ``annotations`` is optional so a pickle written before they were serialized
+    still loads.
+    """
     p = ProductDistribution(**components, name=name)
-    return p._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    return p._restore_identity(
+        name_is_auto=name_is_auto, provenance=provenance, annotations=annotations
+    )
 
 
 # ---------------------------------------------------------------------------

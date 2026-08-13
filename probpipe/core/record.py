@@ -636,7 +636,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         # Serialize the authoritative spec so a pickled record keeps its exact
         # schema (and equality) instead of re-inferring a weaker one on load —
         # an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta`` is not
-        # recoverable by ``infer_from``.
+        # recoverable by ``infer_from``. Annotations ride along too: they are
+        # written after construction, so no constructor argument carries them.
         return (
             _unpickle_record,
             (
@@ -645,6 +646,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 self._name_is_auto,
                 self._provenance,
                 self._spec,
+                getattr(self, "_annotations", None),
             ),
         )
 
@@ -1245,11 +1247,16 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance, spec=None) -> Record:
-    # ``spec`` is optional, and construction accepts either form, so a pickle
-    # written before the declaration was serialized still loads.
+def _unpickle_record(
+    store: dict, name: str, name_is_auto: bool, provenance, spec=None, annotations=None
+) -> Record:
+    # ``spec`` and ``annotations`` are optional, and construction accepts either
+    # declaration form, so a pickle written before either was serialized still
+    # loads.
     r = Record(name, store, event_template=spec)
-    return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+    return r._restore_identity(
+        name_is_auto=name_is_auto, provenance=provenance, annotations=annotations
+    )
 
 
 # ---------------------------------------------------------------------------
