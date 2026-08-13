@@ -31,6 +31,7 @@ from collections.abc import Mapping
 # exposes; the conflict-avoidance constraint itself doesn't change.
 from typing import Any, Self, _ProtocolMeta
 
+from ._immutable import decoupled_container
 from .provenance import Provenance
 
 __all__ = ["Annotated", "TrackedTerm", "auto_name"]
@@ -68,11 +69,11 @@ def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
     Entries are shared, the container is not, so a write on one object does not
     show through on the object it was copied or rebuilt from — the annotations
     channel is written in place (see :class:`Annotated`), which is what makes a
-    shared container observable. Any mapping type is accepted: an
-    ``xarray.DataTree`` and the like copy themselves, and anything else is
-    rebuilt as a ``dict``.
+    shared container observable. The rule itself lives with the state round-trip
+    that also applies it (:func:`~probpipe.core._immutable.decoupled_container`),
+    so a rename and a reconstruction decouple the same way.
     """
-    return annotations.copy() if hasattr(annotations, "copy") else dict(annotations)
+    return decoupled_container(annotations)
 
 
 class _TrackedTermMeta(_ProtocolMeta):
@@ -341,6 +342,10 @@ class Annotated:
     """
 
     __slots__ = ()
+
+    #: The annotations store is written in place, so a copy or a reconstruction
+    #: takes its own container (see ``Immutable._decoupled_state``).
+    _decoupled_state = ("_annotations",)
 
     def _init_annotations(self, annotations: Mapping[str, Any] | None) -> None:
         """Attach a starting annotations store (constructor helper for hosts).
