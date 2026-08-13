@@ -386,22 +386,26 @@ class _AutomaticKeyBroker:
         """Register every issued unit token before request submission."""
         with self._managed_claims.lock:
             self._assert_broker_open_unlocked()
+            by_unit = dict(self._managed_claims.by_unit)
+            by_token = dict(self._managed_claims.by_token)
             for item in items:
                 unit = item.frame.unit_segment
-                existing = self._managed_claims.by_unit.get(unit)
+                existing = by_unit.get(unit)
                 if existing is not None and existing.frame.token != item.frame.token:
                     raise RuntimeError(
                         "a managed workflow unit cannot be reused with a different token"
                     )
-                token_owner = self._managed_claims.by_token.get(item.frame.token)
+                token_owner = by_token.get(item.frame.token)
                 if token_owner is not None and token_owner.frame.unit_segment != unit:
                     raise RuntimeError(
                         "a managed work-item token cannot own multiple logical units"
                     )
                 if existing is None:
                     existing = _ManagedUnitClaimState(frame=item.frame)
-                    self._managed_claims.by_unit[unit] = existing
-                    self._managed_claims.by_token[item.frame.token] = existing
+                    by_unit[unit] = existing
+                    by_token[item.frame.token] = existing
+            self._managed_claims.by_unit = by_unit
+            self._managed_claims.by_token = by_token
 
     def record_execution_contract(self, contract: WorkflowRngExecutionContract) -> None:
         """Record one distinct capability-checked route for later diagnostics."""

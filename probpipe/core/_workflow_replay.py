@@ -37,6 +37,86 @@ _CALLABLE_DEFINITION_ABI = "probpipe.callable_definition/v1"
 _PROBPIPE_REPLAY_ABI = "probpipe.replay/v1"
 _MANAGED_CHILD_POLICY_ABI = "probpipe.managed_child/v1"
 
+_CONTROLS_FIELDS = frozenset({"randomness", "replay"})
+_RANDOMNESS_FIELDS = frozenset(
+    {
+        "schema",
+        "rng_abi",
+        "root_words",
+        "occurrence_path",
+        "events",
+        "expected_event_count",
+    }
+)
+_REPLAY_FIELDS = frozenset({"schema", "standalone", "callable", "plan", "compatibility"})
+_STANDALONE_FIELDS = frozenset({"eligibility", "restriction"})
+_SUPPORTED_CALLABLE_FIELDS = frozenset(
+    {
+        "supported",
+        "module",
+        "qualname",
+        "definition_abi",
+        "sha256",
+        "signature_and_templates",
+        "python_replay_abi",
+        "probpipe_replay_abi",
+    }
+)
+_UNSUPPORTED_CALLABLE_FIELDS = frozenset(
+    {"supported", "module", "qualname", "definition_abi", "form"}
+)
+_CALLABLE_SIGNATURE_FIELDS = frozenset(
+    {"parameters", "return_annotation", "input_template", "output_template"}
+)
+_CALLABLE_PARAMETER_FIELDS = frozenset({"name", "kind", "default", "annotation"})
+_PLAN_FIELDS = frozenset({"schema", "canonical_fields", "expected_effects"})
+_CANONICAL_PLAN_FIELDS = frozenset(
+    {
+        "kind",
+        "evaluation_mode",
+        "arg_refs",
+        "source_groups",
+        "logical_units",
+        "n_broadcast_samples",
+        "sample_shape",
+        "exact_group_order",
+        "exact_combination_order",
+        "repetitions_per_combination",
+        "n_evaluations",
+        "managed_child_policy",
+        "key_ownership",
+    }
+)
+_ARG_REF_FIELDS = frozenset({"parameter_name", "subscript", "label"})
+_SOURCE_GROUP_FIELDS = frozenset(
+    {"index", "source_id", "execution_mode", "exact_size", "consumers"}
+)
+_CONSUMER_FIELDS = frozenset({"arg_ref", "record_path", "descendant_descriptor"})
+_LOGICAL_UNIT_FIELDS = frozenset({"layout", "flat_index", "coordinates", "logical_unit_id"})
+_RANDOM_EVENT_FIELDS = frozenset(
+    {"occurrence_path", "occurrence_kind", "source", "unit", "key_ownership"}
+)
+_EFFECT_FIELDS = frozenset(
+    {
+        "operation_kind",
+        "execution_mode",
+        "sample_shape",
+        "sampling_abi",
+        "provider_abi",
+        "record_path",
+        "descendant_descriptor",
+    }
+)
+_COMPATIBILITY_FIELDS = frozenset(
+    {
+        "execution_contract",
+        "sampling_abi",
+        "provider_abi",
+        "descendant_adapter_abi",
+        "key_adapter_abi",
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class _ExpectedReplayEvent:
@@ -891,6 +971,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     if not isinstance(provenance, Provenance):
         raise ReplayCompatibilityError("replay_run requires a Provenance RNG recipe")
     controls = provenance.controls
+    _validate_version_one_structure(controls)
     randomness = _mapping(controls.get("randomness"), "randomness RNG recipe")
     replay = _mapping(controls.get("replay"), "replay anchor")
     if randomness.get("schema") != _RNG_RECIPE_ABI:
@@ -908,6 +989,17 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     _validate_function_occurrence_path(occurrence_path)
     standalone = _mapping(replay.get("standalone"), "replay.standalone")
     eligibility = standalone.get("eligibility")
+    restriction = standalone.get("restriction")
+    if eligibility == "supported" and restriction is not None:
+        raise ReplayCompatibilityError(
+            "recorded standalone replay restriction does not match its eligibility"
+        )
+    if eligibility == "nested_workflow_rng_execution" and (
+        restriction != "nested_automatic_function"
+    ):
+        raise ReplayCompatibilityError(
+            "recorded standalone replay restriction does not match its eligibility"
+        )
     if eligibility != "supported":
         if eligibility == "nested_workflow_rng_execution":
             raise ReplayCompatibilityError(
@@ -964,14 +1056,7 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     )
 
     compatibility = _mapping(replay.get("compatibility"), "replay.compatibility")
-    expected_compatibility_fields = {
-        "execution_contract",
-        "sampling_abi",
-        "provider_abi",
-        "descendant_adapter_abi",
-        "key_adapter_abi",
-    }
-    if set(compatibility) != expected_compatibility_fields:
+    if set(compatibility) != _COMPATIBILITY_FIELDS:
         raise ReplayCompatibilityError(
             "recorded replay compatibility fields do not match the version-1 schema"
         )
@@ -1038,6 +1123,143 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     )
 
 
+def _validate_version_one_structure(controls: Mapping[str, Any]) -> None:
+    """Require exact fields for every record owned by the replay-v1 schema."""
+    _require_version_one_fields(
+        controls,
+        _CONTROLS_FIELDS,
+        "workflow RNG recipe controls",
+    )
+    randomness = _version_one_record(
+        controls.get("randomness"),
+        _RANDOMNESS_FIELDS,
+        "randomness recipe",
+    )
+    replay = _version_one_record(
+        controls.get("replay"),
+        _REPLAY_FIELDS,
+        "replay anchor",
+    )
+    _version_one_record(
+        replay.get("standalone"),
+        _STANDALONE_FIELDS,
+        "replay.standalone",
+    )
+
+    callable_anchor = _mapping(replay.get("callable"), "replay.callable")
+    callable_fields = (
+        _UNSUPPORTED_CALLABLE_FIELDS
+        if callable_anchor.get("supported") is False
+        else _SUPPORTED_CALLABLE_FIELDS
+    )
+    _require_version_one_fields(callable_anchor, callable_fields, "replay.callable")
+    if callable_anchor.get("supported") is not False:
+        signature = _version_one_record(
+            callable_anchor.get("signature_and_templates"),
+            _CALLABLE_SIGNATURE_FIELDS,
+            "replay.callable.signature_and_templates",
+        )
+        for index, parameter in enumerate(
+            _list(
+                signature.get("parameters"),
+                "replay.callable.signature_and_templates.parameters",
+            )
+        ):
+            _version_one_record(
+                parameter,
+                _CALLABLE_PARAMETER_FIELDS,
+                f"replay.callable.signature_and_templates.parameters[{index}]",
+            )
+
+    plan = _version_one_record(replay.get("plan"), _PLAN_FIELDS, "replay.plan")
+    canonical_plan = _version_one_record(
+        plan.get("canonical_fields"),
+        _CANONICAL_PLAN_FIELDS,
+        "replay.plan.canonical_fields",
+    )
+    for index, arg_ref in enumerate(
+        _list(canonical_plan.get("arg_refs"), "replay.plan.canonical_fields.arg_refs")
+    ):
+        _validate_arg_ref_structure(arg_ref, f"replay.plan.canonical_fields.arg_refs[{index}]")
+    for group_index, source_group in enumerate(
+        _list(
+            canonical_plan.get("source_groups"),
+            "replay.plan.canonical_fields.source_groups",
+        )
+    ):
+        group_name = f"replay.plan.canonical_fields.source_groups[{group_index}]"
+        group = _version_one_record(source_group, _SOURCE_GROUP_FIELDS, group_name)
+        for consumer_index, consumer_raw in enumerate(
+            _list(group.get("consumers"), f"{group_name}.consumers")
+        ):
+            consumer_name = f"{group_name}.consumers[{consumer_index}]"
+            consumer = _version_one_record(
+                consumer_raw,
+                _CONSUMER_FIELDS,
+                consumer_name,
+            )
+            _validate_arg_ref_structure(
+                consumer.get("arg_ref"),
+                f"{consumer_name}.arg_ref",
+            )
+    for index, logical_unit in enumerate(
+        _list(
+            canonical_plan.get("logical_units"),
+            "replay.plan.canonical_fields.logical_units",
+        )
+    ):
+        _version_one_record(
+            logical_unit,
+            _LOGICAL_UNIT_FIELDS,
+            f"replay.plan.canonical_fields.logical_units[{index}]",
+        )
+
+    for index, event in enumerate(_list(randomness.get("events"), "randomness.events")):
+        _version_one_record(
+            event,
+            _RANDOM_EVENT_FIELDS,
+            f"randomness.events[{index}]",
+        )
+    for index, effect in enumerate(
+        _list(plan.get("expected_effects"), "replay.plan.expected_effects")
+    ):
+        effect_record = _mapping(effect, f"replay.plan.expected_effects[{index}]")
+        if set(effect_record) != _EFFECT_FIELDS:
+            raise ReplayCompatibilityError(
+                f"recorded replay effect {index} has incompatible fields for the version-1 schema"
+            )
+    compatibility = _mapping(replay.get("compatibility"), "replay.compatibility")
+    if set(compatibility) != _COMPATIBILITY_FIELDS:
+        raise ReplayCompatibilityError(
+            "recorded replay compatibility fields do not match the version-1 schema"
+        )
+
+
+def _validate_arg_ref_structure(value: Any, field_name: str) -> None:
+    _version_one_record(value, _ARG_REF_FIELDS, field_name)
+
+
+def _version_one_record(
+    value: Any,
+    expected_fields: frozenset[str],
+    field_name: str,
+) -> Mapping[str, Any]:
+    record = _mapping(value, field_name)
+    _require_version_one_fields(record, expected_fields, field_name)
+    return record
+
+
+def _require_version_one_fields(
+    record: Mapping[str, Any],
+    expected_fields: frozenset[str],
+    field_name: str,
+) -> None:
+    if set(record) != expected_fields:
+        raise ReplayCompatibilityError(
+            f"recorded {field_name} fields do not match the version-1 schema"
+        )
+
+
 def _expected_events(
     events: list[Any],
     effects: list[Any],
@@ -1097,17 +1319,10 @@ def _expected_events(
 
 
 def _validate_effect(effect: dict[str, Any], *, index: int) -> None:
-    expected_fields = {
-        "operation_kind",
-        "execution_mode",
-        "sample_shape",
-        "sampling_abi",
-        "provider_abi",
-        "record_path",
-        "descendant_descriptor",
-    }
-    if set(effect) != expected_fields:
-        raise ReplayCompatibilityError(f"recorded replay effect {index} has incompatible fields")
+    if set(effect) != _EFFECT_FIELDS:
+        raise ReplayCompatibilityError(
+            f"recorded replay effect {index} has incompatible fields for the version-1 schema"
+        )
     for field_name in (
         "operation_kind",
         "execution_mode",

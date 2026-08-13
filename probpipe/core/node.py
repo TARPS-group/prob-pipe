@@ -17,7 +17,7 @@ try:
 except ImportError:
     task = flow = None
 
-from .config import WorkflowKind, prefect_config
+from .config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 
 try:
     from graphviz import Digraph
@@ -692,10 +692,11 @@ class Function(Node, TrackedTerm, Annotated):
                     occurrence_path=occurrence_path
                 ) as broker,
             ):
-                anchor = _workflow_callable.capture_function_anchor(self)
-                broker.set_callable_anchor(anchor)
-                if replay_call is not None:
-                    replay_call.validate_callable(anchor)
+                if replay_call is not None or provenance_config.mode is not ProvenanceMode.OFF:
+                    anchor = _workflow_callable.capture_function_anchor(self)
+                    broker.set_callable_anchor(anchor)
+                    if replay_call is not None:
+                        replay_call.validate_callable(anchor)
                 return self._call_with_options_in_context(
                     args,
                     call_inputs,

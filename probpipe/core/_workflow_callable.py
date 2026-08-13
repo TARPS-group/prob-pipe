@@ -87,16 +87,9 @@ def capture_function_anchor(function: Any) -> CallableAnchor:
     if not isinstance(implementation, _CallableFunctionImplementation):
         return _unsupported_anchor(function, None, "private_function_implementation")
     candidate = implementation.callable
-    source_location, source_digest = _source_artifact(candidate)
     form = _callable_form(candidate)
     if form != "python_function":
-        return _unsupported_anchor(
-            function,
-            candidate,
-            form,
-            source_location=source_location,
-            source_artifact_digest=source_digest,
-        )
+        return _unsupported_anchor(function, candidate, form)
 
     module_name = getattr(candidate, "__module__", None)
     qualname = getattr(candidate, "__qualname__", None)
@@ -124,10 +117,9 @@ def capture_function_anchor(function: Any) -> CallableAnchor:
             function,
             candidate,
             "unsupported_definition_state",
-            source_location=source_location,
-            source_artifact_digest=source_digest,
         )
 
+    source_location, source_digest = _source_artifact(candidate)
     return CallableAnchor(
         supported=True,
         form="python_function",

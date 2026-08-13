@@ -4,6 +4,7 @@ import pickle
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields, replace
 from threading import Barrier, Event
+from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import Mock, patch
 
@@ -297,6 +298,36 @@ class TestExecutionRequestShape:
 
         func.assert_not_called()
         record.assert_not_called()
+
+    def test_managed_registration_failure_is_transactional_and_preserves_cause(self):
+        func = Mock(return_value=1)
+        request = make_request(func=func)
+        duplicate_token = replace(
+            request.work_items[1],
+            frame=replace(
+                request.work_items[1].frame,
+                token=request.work_items[0].frame.token,
+            ),
+        )
+        request = replace(
+            request,
+            work_items=(request.work_items[0], duplicate_token),
+        )
+
+        with (
+            workflow_run(seed=17),
+            pytest.raises(
+                RuntimeError,
+                match="managed work-item token cannot own multiple logical units",
+            ),
+            broker_mod._function_stochastic_scope() as parent,
+        ):
+            execution_mod.execute_many(request)
+
+        func.assert_not_called()
+        assert parent._managed_claims.by_unit == {}
+        assert parent._managed_claims.by_token == {}
+        assert parent._lifecycle is broker_mod._BrokerLifecycle.SEALED
 
 
 class TestManagedPayloadValidation:
@@ -2338,6 +2369,93 @@ class TestPrefectMapping:
         assert len(snapshot.effects) == 1
         assert len(claim_state.seen_attempts) == 3
         assert FakeMappedTask.map_calls == 3
+
+    @pytest.mark.parametrize(
+        ("configured", "expected"),
+        [
+            pytest.param(None, (), id="none"),
+            pytest.param([], (), id="empty"),
+            pytest.param(0.25, (0.25,), id="scalar"),
+            pytest.param([0.1, 0.2], (0.1, 0.2), id="sequence"),
+        ],
+    )
+    def test_prefect_retry_policy_normalizes_delay_schedule(
+        self,
+        configured,
+        expected,
+        monkeypatch,
+    ):
+        settings = SimpleNamespace(
+            tasks=SimpleNamespace(
+                default_retries=3,
+                default_retry_delay_seconds=configured,
+            )
+        )
+        monkeypatch.setattr("prefect.settings.get_current_settings", lambda: settings)
+
+        assert execution_mod._prefect_retry_policy() == (3, expected)
+
+    @pytest.mark.parametrize(
+        "configured",
+        [
+            pytest.param("0.1", id="string"),
+            pytest.param([0.1, "0.2"], id="invalid-list-item"),
+            pytest.param(True, id="boolean"),
+        ],
+    )
+    def test_prefect_retry_policy_rejects_invalid_delay_type(
+        self,
+        configured,
+        monkeypatch,
+    ):
+        settings = SimpleNamespace(
+            tasks=SimpleNamespace(
+                default_retries=3,
+                default_retry_delay_seconds=configured,
+            )
+        )
+        monkeypatch.setattr("prefect.settings.get_current_settings", lambda: settings)
+
+        with pytest.raises(TypeError, match="default_retry_delay_seconds"):
+            execution_mod._prefect_retry_policy()
+
+    def test_prefect_retry_delay_list_follows_retry_ordinal(self, monkeypatch):
+        monkeypatch.setattr(execution_mod, "task", fake_task)
+        monkeypatch.setattr(execution_mod, "flow", fake_flow)
+        settings = SimpleNamespace(
+            tasks=SimpleNamespace(
+                default_retries=3,
+                default_retry_delay_seconds=[0.1, 0.2],
+            )
+        )
+        monkeypatch.setattr("prefect.settings.get_current_settings", lambda: settings)
+        seen = []
+
+        def fail_three_times_after_claim():
+            words = _claim_automatic_words()
+            seen.append(words)
+            if len(seen) < 4:
+                raise RuntimeError("retry me")
+            return words
+
+        request = make_request(
+            mode="prefect_task",
+            calls=[{}],
+            func=fail_three_times_after_claim,
+        )
+        with (
+            patch.object(execution_mod, "sleep") as sleep,
+            workflow_run(seed=17),
+            broker_mod._function_stochastic_scope() as parent,
+        ):
+            result = execution_mod.execute_many(request)[0]
+            claim_state = parent._managed_claims.by_token[request.work_items[0].frame.token]
+
+        assert seen == [result] * 4
+        assert len(parent._effects_by_identity) == 1
+        assert len(claim_state.seen_attempts) == 5
+        assert FakeMappedTask.map_calls == 5
+        assert [call.args[0] for call in sleep.call_args_list] == [0.1, 0.2, 0.2]
 
     def test_deterministic_prefect_retry_does_not_materialize_root(self, monkeypatch):
         monkeypatch.setattr(execution_mod, "task", fake_task)

@@ -50,6 +50,16 @@ def _draw(seed: int = 7):
         return sample(Normal(loc=0.0, scale=1.0, name="value"))
 
 
+def _lifted_draw(seed: int = 7):
+    workflow = Function(
+        func=replayable_identity,
+        dispatch="sequential",
+        n_broadcast_samples=5,
+    )
+    with workflow_run(seed=seed):
+        return workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+
 def _sample_value(result):
     return np.asarray(result["sample"])
 
@@ -274,6 +284,197 @@ class TestReplayAdmission:
             pass
 
     @pytest.mark.parametrize(
+        "mapping_path",
+        [
+            pytest.param((), id="controls"),
+            pytest.param(("randomness",), id="randomness"),
+            pytest.param(("replay",), id="replay"),
+            pytest.param(("replay", "standalone"), id="standalone"),
+            pytest.param(("replay", "callable"), id="callable"),
+            pytest.param(
+                ("replay", "callable", "signature_and_templates"),
+                id="callable-signature",
+            ),
+            pytest.param(
+                ("replay", "callable", "signature_and_templates", "parameters", 0),
+                id="callable-parameter",
+            ),
+            pytest.param(("replay", "plan"), id="plan"),
+            pytest.param(
+                ("replay", "plan", "canonical_fields"),
+                id="canonical-plan",
+            ),
+            pytest.param(
+                ("replay", "plan", "canonical_fields", "arg_refs", 0),
+                id="plan-arg-ref",
+            ),
+            pytest.param(
+                ("replay", "plan", "canonical_fields", "source_groups", 0),
+                id="plan-source-group",
+            ),
+            pytest.param(
+                (
+                    "replay",
+                    "plan",
+                    "canonical_fields",
+                    "source_groups",
+                    0,
+                    "consumers",
+                    0,
+                ),
+                id="plan-consumer",
+            ),
+            pytest.param(
+                ("replay", "plan", "canonical_fields", "logical_units", 0),
+                id="plan-logical-unit",
+            ),
+            pytest.param(("randomness", "events", 0), id="random-event"),
+            pytest.param(("replay", "compatibility"), id="compatibility"),
+            pytest.param(
+                ("replay", "plan", "expected_effects", 0),
+                id="expected-effect",
+            ),
+        ],
+    )
+    def test_unknown_version_one_fields_fail_at_replay_entry(self, mapping_path):
+        payload = _lifted_draw().provenance.to_dict()
+        target = payload["controls"]
+        for segment in mapping_path:
+            target = target[segment]
+        target["unknown_field_v2"] = 1
+        changed = Provenance.from_dict(payload)
+
+        with (
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ) as derive_key,
+            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
+            replay_run(changed),
+        ):
+            raise AssertionError("replay admission accepted unknown structure")
+
+        derive_key.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("mapping_path", "field_name"),
+        [
+            pytest.param((), "randomness", id="controls"),
+            pytest.param(("randomness",), "schema", id="randomness"),
+            pytest.param(("replay",), "schema", id="replay"),
+            pytest.param(("replay", "standalone"), "restriction", id="standalone"),
+            pytest.param(("replay", "callable"), "sha256", id="callable"),
+            pytest.param(
+                ("replay", "callable", "signature_and_templates"),
+                "output_template",
+                id="callable-signature",
+            ),
+            pytest.param(
+                ("replay", "callable", "signature_and_templates", "parameters", 0),
+                "annotation",
+                id="callable-parameter",
+            ),
+            pytest.param(("replay", "plan"), "schema", id="plan"),
+            pytest.param(
+                ("replay", "plan", "canonical_fields"),
+                "exact_group_order",
+                id="canonical-plan",
+            ),
+            pytest.param(
+                ("replay", "plan", "canonical_fields", "arg_refs", 0),
+                "label",
+                id="plan-arg-ref",
+            ),
+            pytest.param(
+                ("replay", "plan", "canonical_fields", "source_groups", 0),
+                "exact_size",
+                id="plan-source-group",
+            ),
+            pytest.param(
+                (
+                    "replay",
+                    "plan",
+                    "canonical_fields",
+                    "source_groups",
+                    0,
+                    "consumers",
+                    0,
+                ),
+                "record_path",
+                id="plan-consumer",
+            ),
+            pytest.param(
+                ("replay", "plan", "canonical_fields", "logical_units", 0),
+                "flat_index",
+                id="plan-logical-unit",
+            ),
+            pytest.param(("randomness", "events", 0), "unit", id="random-event"),
+            pytest.param(
+                ("replay", "compatibility"),
+                "provider_abi",
+                id="compatibility",
+            ),
+            pytest.param(
+                ("replay", "plan", "expected_effects", 0),
+                "provider_abi",
+                id="expected-effect",
+            ),
+        ],
+    )
+    def test_missing_version_one_fields_fail_at_replay_entry(
+        self,
+        mapping_path,
+        field_name,
+    ):
+        payload = _lifted_draw().provenance.to_dict()
+        target = payload["controls"]
+        for segment in mapping_path:
+            target = target[segment]
+        del target[field_name]
+        changed = Provenance.from_dict(payload)
+
+        with (
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ) as derive_key,
+            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
+            replay_run(changed),
+        ):
+            raise AssertionError("replay admission accepted missing structure")
+
+        derive_key.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("eligibility", "restriction"),
+        [
+            pytest.param("supported", "nested_automatic_function", id="supported"),
+            pytest.param("nested_workflow_rng_execution", None, id="nested"),
+            pytest.param(
+                "nested_workflow_rng_execution",
+                "unknown_restriction_v2",
+                id="unknown",
+            ),
+        ],
+    )
+    def test_standalone_restriction_must_match_eligibility(
+        self,
+        eligibility,
+        restriction,
+    ):
+        payload = _draw().provenance.to_dict()
+        payload["controls"]["replay"]["standalone"] = {
+            "eligibility": eligibility,
+            "restriction": restriction,
+        }
+
+        with (
+            pytest.raises(ReplayCompatibilityError, match="standalone replay restriction"),
+            replay_run(Provenance.from_dict(payload)),
+        ):
+            raise AssertionError("replay admission accepted a mismatched restriction")
+
+    @pytest.mark.parametrize(
         ("path", "value", "match"),
         [
             pytest.param(
@@ -483,6 +684,18 @@ class TestReplayAdmission:
             replay_run(Provenance.from_dict(payload)),
         ):
             pass
+
+    def test_extended_diagnostics_remain_replayable(self):
+        original = _draw()
+        payload = original.provenance.to_dict()
+        payload["diagnostics"]["future_observation"] = {"version": 2}
+        payload["diagnostics"]["callable_source"]["future_observation"] = True
+        payload["diagnostics"]["execution"][0]["future_observation"] = "worker"
+
+        with replay_run(Provenance.from_dict(payload)):
+            replayed = sample(Normal(loc=0.0, scale=1.0, name="value"))
+
+        np.testing.assert_array_equal(_sample_value(replayed), _sample_value(original))
 
     @pytest.mark.parametrize(
         "occurrence_path",

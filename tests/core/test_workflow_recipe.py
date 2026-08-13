@@ -24,6 +24,7 @@ from probpipe import (
     ProvenanceMode,
     ReplayCompatibilityError,
     TransformedDistribution,
+    replay_run,
     sample,
     workflow_run,
 )
@@ -406,6 +407,102 @@ class TestWorkflowRecipeRecording:
 
 
 class TestWorkflowCallableAnchor:
+    def test_provenance_off_skips_callable_anchor_capture(self):
+        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        workflow = Function(func=replayable_identity)
+
+        with patch.object(
+            _workflow_callable,
+            "capture_function_anchor",
+            side_effect=AssertionError("captured callable anchor"),
+        ) as capture:
+            result = workflow(value=1.0)
+
+        assert result.provenance is None
+        capture.assert_not_called()
+
+    def test_replay_still_captures_anchor_when_provenance_is_off(self):
+        workflow = Function(func=replayable_identity, n_broadcast_samples=5)
+        with workflow_run(seed=17):
+            original = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        probpipe.provenance_config.mode = ProvenanceMode.OFF
+        with (
+            patch.object(
+                _workflow_callable,
+                "capture_function_anchor",
+                wraps=_workflow_callable.capture_function_anchor,
+            ) as capture,
+            replay_run(original.provenance),
+        ):
+            replayed = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        assert jnp.array_equal(
+            replayed.samples["marginal"],
+            original.samples["marginal"],
+        )
+        assert replayed.provenance is None
+        capture.assert_called_once_with(workflow)
+
+    @pytest.mark.parametrize(
+        "factory",
+        [
+            pytest.param(lambda: lambda value: value, id="lambda"),
+            pytest.param(lambda: _local_function(), id="local-function"),
+            pytest.param(lambda: _closure(), id="closure"),
+        ],
+    )
+    def test_unsupported_callable_form_does_not_read_source_artifact(
+        self,
+        factory,
+    ):
+        workflow = Function(func=factory())
+
+        with patch.object(
+            _workflow_callable,
+            "_source_artifact",
+            side_effect=AssertionError("read source artifact"),
+        ) as source_artifact:
+            anchor = _workflow_callable.capture_function_anchor(workflow)
+
+        assert anchor.supported is False
+        source_artifact.assert_not_called()
+
+    def test_supported_callable_still_records_source_artifact(self):
+        workflow = Function(func=replayable_identity)
+
+        with patch.object(
+            _workflow_callable,
+            "_source_artifact",
+            wraps=_workflow_callable._source_artifact,
+        ) as source_artifact:
+            anchor = _workflow_callable.capture_function_anchor(workflow)
+
+        assert anchor.supported is True
+        assert anchor.source_artifact_digest is not None
+        source_artifact.assert_called_once_with(replayable_identity)
+
+    def test_unsupported_definition_state_does_not_read_source_artifact(self):
+        workflow = Function(func=replayable_identity)
+
+        with (
+            patch.object(
+                _workflow_callable,
+                "_signature_and_templates",
+                side_effect=_workflow_callable._UnsupportedDefinition("unsupported"),
+            ),
+            patch.object(
+                _workflow_callable,
+                "_source_artifact",
+                side_effect=AssertionError("read source artifact"),
+            ) as source_artifact,
+        ):
+            anchor = _workflow_callable.capture_function_anchor(workflow)
+
+        assert anchor.supported is False
+        assert anchor.form == "unsupported_definition_state"
+        source_artifact.assert_not_called()
+
     def test_module_level_definition_has_hard_coded_golden_digest(self):
         workflow = Function(func=replayable_affine, n_broadcast_samples=5)
 

@@ -357,7 +357,7 @@ def _retry_prefect_failures(
     parent_broker: _workflow_broker._AutomaticKeyBroker | None,
 ) -> list[ManagedExecutionOutcome]:
     """Coordinate configured retries while preserving work-item ownership."""
-    max_retries, retry_delay = _prefect_retry_policy()
+    max_retries, retry_delays = _prefect_retry_policy()
     retries_by_index = dict.fromkeys(payloads_by_index, 0)
 
     while True:
@@ -385,6 +385,8 @@ def _retry_prefect_failures(
             payloads_by_index[outcome.index] = payload
             retry_payloads.append(payload)
 
+        retry_ordinal = max(retries_by_index[outcome.index] for outcome in retryable)
+        retry_delay = _retry_delay_for_ordinal(retry_delays, retry_ordinal)
         if retry_delay > 0:
             sleep(retry_delay)
         retried = _run_prefect_payloads(run_func, retry_payloads)
@@ -419,18 +421,49 @@ def _accept_prefect_claim_report(
     parent_broker.accept_remote_claim_report(outcome.report)
 
 
-def _prefect_retry_policy() -> tuple[int, float]:
+def _prefect_retry_policy() -> tuple[int, tuple[float, ...]]:
     """Return Prefect's configured default task retry policy."""
     try:
         from prefect.settings import get_current_settings
     except ImportError:
-        return 0, 0.0
+        return 0, ()
 
     task_settings = get_current_settings().tasks
     return (
         task_settings.default_retries,
-        task_settings.default_retry_delay_seconds,
+        _normalize_prefect_retry_delays(task_settings.default_retry_delay_seconds),
     )
+
+
+def _normalize_prefect_retry_delays(value: Any) -> tuple[float, ...]:
+    """Normalize Prefect's scalar-or-list retry delay into one schedule."""
+    if value is None:
+        return ()
+    if isinstance(value, bool):
+        raise TypeError(
+            "Prefect default_retry_delay_seconds must be a number, a list of numbers, or None"
+        )
+    if isinstance(value, (int, float)):
+        return (float(value),)
+    if not isinstance(value, list):
+        raise TypeError(
+            "Prefect default_retry_delay_seconds must be a number, a list of numbers, or None"
+        )
+    delays = []
+    for index, delay in enumerate(value):
+        if isinstance(delay, bool) or not isinstance(delay, (int, float)):
+            raise TypeError(
+                f"Prefect default_retry_delay_seconds list item {index} must be a number"
+            )
+        delays.append(float(delay))
+    return tuple(delays)
+
+
+def _retry_delay_for_ordinal(delays: tuple[float, ...], ordinal: int) -> float:
+    """Return a one-based retry delay, repeating the final configured value."""
+    if not delays:
+        return 0.0
+    return delays[min(ordinal - 1, len(delays) - 1)]
 
 
 def execute_many_prefect_task(
