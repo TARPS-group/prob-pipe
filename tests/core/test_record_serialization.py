@@ -10,6 +10,7 @@ The fix adds __reduce__ to each class, delegating reconstruction to the normal
 constructor.
 """
 
+import copy
 import pickle
 
 import jax.numpy as jnp
@@ -360,3 +361,71 @@ class TestPicklePreservesTemplate:
         back = roundtrip(nr)
         assert [float(v) for v in back["x"]] == [1.0, 2.0]
         assert float(back["y"]) == pytest.approx(3.0)
+
+
+# ---------------------------------------------------------------------------
+# Pickle preserves annotations
+# ---------------------------------------------------------------------------
+
+
+class TestRoundTripPreservesAnnotations:
+    """Annotations are written *after* construction — the documented exception
+    to immutability — so no constructor argument carries them and a state list
+    assembled from ``__init__`` misses them. They must survive every
+    reconstruction path (#409), which ``__reduce__`` governs for ``copy`` as
+    well as for ``pickle``.
+    """
+
+    @staticmethod
+    def annotated(record):
+        # The store is written through ``object.__setattr__``, as the library's
+        # own writers do: the immutability guard refuses plain assignment.
+        object.__setattr__(record, "_annotations", {"diagnostics": {"n_eff": 42}})
+        return record
+
+    @pytest.fixture(params=["record", "numeric_record"])
+    def term(self, request):
+        if request.param == "record":
+            return self.annotated(Record("r", {"x": jnp.ones(3), "tag": "meters"}))
+        return self.annotated(NumericRecord("nr", {"x": jnp.ones(3)}))
+
+    def test_pickle_preserves_annotations(self, term):
+        assert roundtrip(term).annotations == {"diagnostics": {"n_eff": 42}}
+
+    def test_cloudpickle_preserves_annotations(self, term):
+        assert cloudpickle_roundtrip(term).annotations == {"diagnostics": {"n_eff": 42}}
+
+    def test_copy_preserves_annotations(self, term):
+        assert copy.copy(term).annotations == {"diagnostics": {"n_eff": 42}}
+        assert copy.deepcopy(term).annotations == {"diagnostics": {"n_eff": 42}}
+
+    def test_copy_decouples_the_container(self, term):
+        # Writers add entries in place, so a shared container would let a write
+        # on the copy show through on the original.
+        clone = copy.copy(term)
+        clone.annotations["added"] = 1
+        assert "added" not in term.annotations
+
+    def test_unannotated_term_stays_unannotated(self):
+        assert roundtrip(Record("r", {"x": jnp.ones(3)})).annotations is None
+
+    def test_no_state_is_lost(self, term):
+        # The general form of the bug: compare every attribute the object
+        # reports, so a field added later cannot go missing silently. The
+        # conversion cache is the one documented exclusion — a memo, rebuilt on
+        # demand.
+        def assigned(obj):
+            state = object.__getstate__(obj)
+            instance_dict, slots = state if isinstance(state, tuple) else (state, {})
+            return (set(instance_dict or {}) | set(slots or {})) - {"_jax_cache"}
+
+        assert assigned(term) - assigned(roundtrip(term)) == set()
+
+    def test_pickle_without_annotations_still_loads(self):
+        # Reconstruction stays callable with the shorter argument list a pickle
+        # written before annotations were serialized carries.
+        from probpipe.core.record import _unpickle_record
+
+        r = _unpickle_record({"x": jnp.ones(3)}, "r", False, None)
+        assert r.name == "r"
+        assert r.annotations is None
