@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import inspect
 from collections.abc import Callable
+from functools import partial
 from types import MappingProxyType
 
 import jax
@@ -490,23 +491,32 @@ class SequentialJointDistribution(
         }
         result_cls = _sequential_class_for_components(unconditioned_pre)
         result = result_cls.__new__(result_cls)
-        result._raw_components = dict(self._raw_components)  # originals unchanged
-        result._name = self._name
-        result._proto_components = dict(self._proto_components)
-        result._callable_parents = self._callable_parents
-        result._conditioned_names = all_conditioned
-        result._conditioned_values = {
-            **self._conditioned_values,
-            **{k: jnp.asarray(v) for k, v in observed.items()},
-        }
-        result._sampleable_error = self._compute_sampleable_error(
-            result._conditioned_names,
-            result._callable_parents,
+        # Allocate-then-populate stands in for a constructor here, so the fields
+        # are written the way a constructor writes them.
+        set_attribute = partial(object.__setattr__, result)
+        set_attribute("_raw_components", dict(self._raw_components))  # originals unchanged
+        set_attribute("_name", self._name)
+        set_attribute("_proto_components", dict(self._proto_components))
+        set_attribute("_callable_parents", self._callable_parents)
+        set_attribute("_conditioned_names", all_conditioned)
+        set_attribute(
+            "_conditioned_values",
+            {
+                **self._conditioned_values,
+                **{k: jnp.asarray(v) for k, v in observed.items()},
+            },
+        )
+        set_attribute(
+            "_sampleable_error",
+            self._compute_sampleable_error(
+                result._conditioned_names,
+                result._callable_parents,
+            ),
         )
 
         # Expose only unconditioned components
-        result._components = unconditioned_pre
-        result._event_template = _build_event_template(unconditioned_pre)
+        set_attribute("_components", unconditioned_pre)
+        set_attribute("_event_template", _build_event_template(unconditioned_pre))
 
         result.with_provenance(
             Provenance.create(

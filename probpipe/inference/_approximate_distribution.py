@@ -174,7 +174,10 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             raise ValueError("Must provide at least one chain")
 
         self._chains = [jnp.asarray(c) for c in chains]
-        self._concatenated: Array | None = None
+        # A memo, filled on first read: a container assigned once here rather
+        # than an attribute assigned later, so reading it does not modify the
+        # distribution.
+        self._memo: dict[str, Array] = {}
 
         # When the caller's chain columns are laid out in a different
         # field order than the template — e.g. a backend whose trace
@@ -204,7 +207,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     )
             if len(event_template.fields) > 1:
                 self._chains = [c[..., perm] for c in self._chains]
-                self._concatenated = None
+                self._memo.pop("concatenated", None)
 
         flat = self._concat_chains()
         # Track whether the user explicitly supplied a template; we use
@@ -276,9 +279,11 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
 
     def _concat_chains(self) -> Array:
         """Lazily concatenated view of all chains."""
-        if self._concatenated is None:
-            self._concatenated = jnp.concatenate(self._chains, axis=0)
-        return self._concatenated
+        concatenated = self._memo.get("concatenated")
+        if concatenated is None:
+            concatenated = jnp.concatenate(self._chains, axis=0)
+            self._memo["concatenated"] = concatenated
+        return concatenated
 
     # -- Chain access ---------------------------------------------------------
 
@@ -500,7 +505,7 @@ def make_posterior(
             clean = group_path.lstrip("/")
             ds = node.to_dataset() if isinstance(node, xr.DataTree) else node
             dicto[f"arviz/{clean}"] = ds
-        result._annotations = xr.DataTree.from_dict(dicto)
+        result._init_annotations(xr.DataTree.from_dict(dicto))
 
     result.with_provenance(
         Provenance.create(

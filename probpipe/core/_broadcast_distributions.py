@@ -1210,7 +1210,10 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         name, name_is_auto = auto_name(name, "broadcast")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
-        self._marginal_cache: MarginalizedBroadcastDistribution | None = None
+        # A memo, filled on first read. It is a container assigned once here
+        # rather than an attribute assigned later, so reading it does not modify
+        # the distribution.
+        self._memo: dict[str, MarginalizedBroadcastDistribution] = {}
 
     # -- basic properties ---------------------------------------------------
 
@@ -1280,16 +1283,18 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         so the lineage is preserved without a direct reference to the
         ``BroadcastDistribution``.
         """
-        if self._marginal_cache is None:
-            self._marginal_cache = _make_marginal(
+        marginal = self._memo.get("marginal")
+        if marginal is None:
+            marginal = _make_marginal(
                 self._output_samples,
                 self._w,
                 output_distributions=self._output_distributions,
                 event_template=self._output_template,
             )
-            if self.provenance is not None and isinstance(self._marginal_cache, Distribution):
-                self._marginal_cache.with_provenance(self.provenance)
-        return self._marginal_cache
+            if self.provenance is not None and isinstance(marginal, Distribution):
+                marginal.with_provenance(self.provenance)
+            self._memo["marginal"] = marginal
+        return marginal
 
     @property
     def output(self) -> MarginalizedBroadcastDistribution:

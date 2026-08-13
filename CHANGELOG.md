@@ -30,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reading a distribution no longer modifies it.** `BroadcastDistribution`
+  assigned its marginal on the first `marginalize()`, and a backend-delegated
+  `DistributionArray` assigned its components on the first read, so a query
+  changed the object a caller was holding — against `C2` and the §V.1 promise
+  that an implementer's object is never modified. Each now fills a memo container
+  assigned at construction, so the result is still computed once and the term's
+  own fields stay as they were built. Both remain lazy.
+
 - **Every dispatch presents a one-field draw the same way.** A one-field
   record-valued law — a `ProductDistribution` over a single distribution, say —
   draws a batch of records. The row-wise paths presented each draw as its bare
@@ -636,6 +644,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **Terms that build a result write it before handing it over.**
+  `DistributionArray._from_backend`, `_make_distribution_array`,
+  `TFPProductDistribution`'s combined-view build, `make_posterior`'s annotations
+  store, and `SequentialJointDistribution`'s conditioning all populated a term
+  after allocating it, using plain attribute assignment. They now write through
+  `object.__setattr__`, the way a constructor does. No behavior changes — each
+  wrote before the object reached a caller — but an assignment guard on every
+  tracked term would refuse the old form, and `ApproximateDistribution`'s chain
+  concatenation moves to the same memo container as the two lazy reads above.
 
 - **Immutability is a property of being a tracked term (#395).** `TrackedTerm`
   inherits `Immutable`, so assignment and deletion raise on a record, a batch, a

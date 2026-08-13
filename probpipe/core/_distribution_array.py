@@ -40,6 +40,7 @@ to pull out the i-th element of a **batch** → ``DistributionArray``.
 
 from __future__ import annotations
 
+from functools import partial
 from math import prod
 from typing import TYPE_CHECKING
 
@@ -349,10 +350,12 @@ class DistributionArray[T](Distribution[T]):
         # eager component list. Initialise fields the same way
         # __init__ would, but without per-component validation (the
         # backend already vouched for shape consistency).
-        instance._components = None
-        instance._batch_shape = tuple(backend.batch_shape)
-        instance._backend = backend
-        instance._event_template = None
+        set_attribute = partial(object.__setattr__, instance)
+        set_attribute("_components", None)
+        set_attribute("_memo", {})
+        set_attribute("_batch_shape", tuple(backend.batch_shape))
+        set_attribute("_backend", backend)
+        set_attribute("_event_template", None)
         name, name_is_auto = auto_name(name, "distribution_array")
         Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
         # Approximation status flows from the backend. TFP-backed
@@ -360,7 +363,7 @@ class DistributionArray[T](Distribution[T]):
         # ``RecordEmpiricalDistribution``) will report
         # ``is_approximate=True`` on its own samples and the array
         # picks that up here.
-        instance._approximate = bool(getattr(backend, "is_approximate", False))
+        set_attribute("_approximate", bool(getattr(backend, "is_approximate", False)))
         return instance
 
     # -- structure -----------------------------------------------------------
@@ -378,11 +381,15 @@ class DistributionArray[T](Distribution[T]):
         :meth:`__getitem__` / :meth:`_flat_component` always returns a
         fresh scalar.
         """
-        if self._components is None:
-            assert self._backend is not None  # invariant
+        if self._components is not None:
+            return self._components
+        assert self._backend is not None  # invariant
+        cells = self._memo.get("components")
+        if cells is None:
             n = prod(self._batch_shape)
-            self._components = tuple(self._backend.cell(i) for i in range(n))
-        return self._components
+            cells = tuple(self._backend.cell(i) for i in range(n))
+            self._memo["components"] = cells
+        return cells
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -710,7 +717,7 @@ def _make_distribution_array(
                     f"DistributionArray component {index} event_template {actual!r} "
                     f"does not match declared template {event_template!r}"
                 )
-        array._event_template = event_template
+        object.__setattr__(array, "_event_template", event_template)
     if name_is_auto is not None:
         object.__setattr__(array, "_name_is_auto", bool(name_is_auto))
     return array

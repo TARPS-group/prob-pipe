@@ -693,8 +693,10 @@ class TestBackendDelegatedStorage:
         assert len(c1) == 3
         # Cached: same tuple identity returned.
         assert c1 is c2
-        # And now _components is populated.
-        assert da._components is c1
+        # The memo holds it; the literal-components slot stays empty, which is
+        # what marks this array as backend-delegated.
+        assert da._memo["components"] is c1
+        assert da._components is None
 
     def test_slice_indexing_materialises_components(self):
         from probpipe import DistributionArray
@@ -703,7 +705,7 @@ class TestBackendDelegatedStorage:
         da = DistributionArray._from_backend(backend, name="x")
         sub = da[1:4]
         # Slicing forces materialisation (rare path).
-        assert da._components is not None
+        assert da._memo["components"] is not None
         assert isinstance(sub, DistributionArray)
         assert len(sub) == 3
 
