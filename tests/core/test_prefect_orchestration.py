@@ -171,6 +171,44 @@ class TestPrefectRngConformance:
         for result in results[1:]:
             np.testing.assert_array_equal(result, results[0])
 
+    def test_rootless_task_coordinates_nested_managed_thread(self):
+        local = Function(
+            func=_call_threaded_draw,
+            workflow_kind=WorkflowKind.OFF,
+            dispatch="sequential",
+            name="nested_thread_owner",
+        )
+        remote = Function(
+            func=_call_threaded_draw,
+            workflow_kind=WorkflowKind.TASK,
+            dispatch="sequential",
+            name="nested_thread_owner",
+        )
+
+        with workflow_run(seed=17):
+            local_result = local()
+        with workflow_run(seed=17):
+            remote_result = remote()
+
+        np.testing.assert_array_equal(
+            remote_result["sample"],
+            local_result["sample"],
+        )
+        assert remote_result.provenance is not None
+        randomness = remote_result.provenance.controls["randomness"]
+        replay = remote_result.provenance.controls["replay"]
+        rng_origin = remote_result.provenance.diagnostics["rng_origin"]
+        assert randomness["root_words"] == [0, 17]
+        assert replay["standalone"] == {
+            "eligibility": "nested_workflow_rng_execution",
+            "restriction": "nested_automatic_function",
+        }
+        assert rng_origin == {
+            "context_kind": "seeded_run",
+            "root_source": "user_seed",
+            "supplied_seed": 17,
+        }
+
     def test_real_prefect_retry_reuses_key_and_commits_one_effect(self):
         _PREFECT_RETRY_KEY_WORDS.clear()
         workflow = Function(
@@ -363,44 +401,6 @@ class TestPrefectFlowJax:
 
 class TestPrefectProvenance:
     """Verify provenance includes orchestration info."""
-
-    def test_rootless_task_coordinates_nested_managed_thread(self):
-        local = Function(
-            func=_call_threaded_draw,
-            workflow_kind=WorkflowKind.OFF,
-            dispatch="sequential",
-            name="nested_thread_owner",
-        )
-        remote = Function(
-            func=_call_threaded_draw,
-            workflow_kind=WorkflowKind.TASK,
-            dispatch="sequential",
-            name="nested_thread_owner",
-        )
-
-        with workflow_run(seed=17):
-            local_result = local()
-        with workflow_run(seed=17):
-            remote_result = remote()
-
-        np.testing.assert_array_equal(
-            remote_result["sample"],
-            local_result["sample"],
-        )
-        assert remote_result.provenance is not None
-        randomness = remote_result.provenance.controls["randomness"]
-        replay = remote_result.provenance.controls["replay"]
-        rng_origin = remote_result.provenance.diagnostics["rng_origin"]
-        assert randomness["root_words"] == [0, 17]
-        assert replay["standalone"] == {
-            "eligibility": "nested_workflow_rng_execution",
-            "restriction": "nested_automatic_function",
-        }
-        assert rng_origin == {
-            "context_kind": "seeded_run",
-            "root_source": "user_seed",
-            "supplied_seed": 17,
-        }
 
     def test_task_provenance(self, normal_dist):
         wf = Function(
