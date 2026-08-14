@@ -376,3 +376,74 @@ class TestTheConstructionWindow:
         # construction runs inside it, and its window must survive theirs.
         joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="j")
         assert joint.name == "j"
+
+
+class TestAClassBuiltAtRuntime:
+    """What the round-trip does for a class that has no importable name.
+
+    Some distribution families build a subclass per capability set, so the class
+    an instance reports exists only in memory. ``pickle`` stores a class by name
+    and therefore cannot store these; the mixin does not change that, since the
+    default protocol names the class too. These pin the behavior so a change to
+    it is deliberate.
+    """
+
+    @staticmethod
+    def _sequential_joint():
+        from probpipe import Normal, SequentialJointDistribution
+
+        return SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+        )
+
+    @staticmethod
+    def _flattened_view():
+        from probpipe import Normal, ProductDistribution
+
+        joint = ProductDistribution(
+            a=Normal(0.0, 1.0, name="a"), b=Normal(1.0, 2.0, name="b"), name="j"
+        )
+        return joint.as_flat_distribution()
+
+    @pytest.fixture(
+        params=[
+            pytest.param("_sequential_joint", id="sequential-joint"),
+            pytest.param("_flattened_view", id="flattened-view"),
+        ]
+    )
+    def runtime_classed(self, request):
+        return getattr(self, request.param)()
+
+    def test_its_class_is_not_importable_by_name(self, runtime_classed):
+        import importlib
+
+        cls = type(runtime_classed)
+        module = importlib.import_module(cls.__module__)
+        assert getattr(module, cls.__qualname__, None) is not cls
+
+    def test_standard_pickle_refuses_it(self, runtime_classed):
+        with pytest.raises(pickle.PicklingError):
+            pickle.dumps(runtime_classed)
+
+    def test_copy_and_deepcopy_still_work(self, runtime_classed):
+        # They hold the class object rather than its name.
+        assert type(copy.copy(runtime_classed)) is type(runtime_classed)
+        assert type(copy.deepcopy(runtime_classed)) is type(runtime_classed)
+
+    def test_cloudpickle_handles_it(self, runtime_classed):
+        # It serializes the class by value, which is what the Ray and Prefect
+        # paths rely on.
+        cloudpickle = pytest.importorskip("cloudpickle")
+        restored = pickle.loads(cloudpickle.dumps(runtime_classed))
+        assert type(restored).__name__ == type(runtime_classed).__name__
+
+    def test_a_family_that_reconstructs_through_a_factory_pickles(self):
+        # ``ProductDistribution`` keeps its own ``__reduce__`` naming a
+        # module-level rebuild, so its runtime class is never named in a pickle.
+        from probpipe import Normal, ProductDistribution
+
+        joint = ProductDistribution(
+            a=Normal(0.0, 1.0, name="a"), b=Normal(1.0, 2.0, name="b"), name="j"
+        )
+        assert type(pickle.loads(pickle.dumps(joint))).__name__ == type(joint).__name__

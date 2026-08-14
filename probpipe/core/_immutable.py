@@ -131,6 +131,16 @@ class Immutable:
     left out and unset on the copy; those named in :attr:`_decoupled_state` are
     restored into a container of their own.
 
+    ``pickle`` additionally requires the object's class to be **importable by
+    name**, since that is what a pickle stores. A class built at runtime — the
+    per-capability subclasses some distribution families generate — is not, and
+    pickling an instance of one raises :exc:`pickle.PicklingError`. This is a
+    property of the class, not of this mixin: the default protocol names the
+    class too, so such an object was already unpicklable. ``copy`` and
+    ``deepcopy`` hold the class object itself rather than its name and are
+    unaffected; ``cloudpickle``, which serializes a class by value, also handles
+    them.
+
     Attributes
     ----------
     _transient_state : tuple of str
