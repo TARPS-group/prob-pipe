@@ -101,6 +101,7 @@ if it were user-guide reference text.
 | `FunctionBatch` / `OpaqueBatch` (the batch forms that *store* their elements, over shared object-array storage) | docstrings in `probpipe/core/_function_batch.py`, `_opaque_batch.py` (storage in `_object_batch.py`); #235 Chapter 2 |
 | `Function` & ops (`sample`, `log_prob`, …) | docstrings in `core/node.py`, `core/ops.py`, `_workflow_result.py`; #235 Chapter 3 |
 | Naming / provenance / annotations (`TrackedTerm` / `Annotated` mixins) | docstrings in `probpipe/core/tracked.py` (and `provenance.py` for `Provenance` / `ParentInfo`); the naming contract in #235 Chapter 5 |
+| Immutability (`Immutable` mixin: the assignment guard, and the `copy` / `pickle` state round-trip it forces) | docstrings in `probpipe/core/_immutable.py`; `design/02-shared-abstractions.md` §II.4 |
 
 ## Canonical variable names (use these; don't invent synonyms)
 | Concept | Name |
@@ -118,6 +119,8 @@ if it were user-guide reference text.
 | PRNG key | `key` |
 | a tracked object's own identity name (the required first arg of `Record` / a distribution) | `name` |
 | a field key within a tree / the name being assigned to a field | `field_name` / `key` |
+| attributes an immutable class keeps out of its state round-trip (memos) | `_transient_state` |
+| attributes an immutable class restores into their own container (stores written in place) | `_decoupled_state` |
 *(Extend this table whenever a new contract introduces a recurring parameter.)*
 
 ## Per-PR checklist (copy into the PR description)

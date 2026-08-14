@@ -82,15 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   written *after* construction — the documented exception to immutability — so a
   state list assembled from constructor arguments misses exactly this one.
 
-  So the constructors now accept it. `Record`, `NumericRecord`, and
-  `Distribution` take private `_provenance` and `_annotations` arguments
-  (`ProductDistribution` a `_name_is_auto` as well, since it derives that flag
-  rather than accepting it), which reconstruction passes and nothing else does.
-  A rebuilt term is therefore complete when its constructor returns, and
-  `TrackedTerm._restore_identity` — which wrote identity onto an
-  already-constructed object, bypassing both the immutability guard and the
-  write-once provenance rule for any caller who found it — **is deleted**.
-  Pickles written before this still load.
+  So reconstruction reads the term's own state instead of a list: nothing has to
+  name a field for it to survive, and `TrackedTerm._restore_identity` — which
+  wrote identity onto an already-constructed object, bypassing both the
+  immutability guard and the write-once provenance rule for any caller who found
+  it — **is deleted**.
 
   The container a reconstruction is handed is decoupled from the one it was built
   from, as `with_name` already does: entries are shared, the container is not, so
@@ -640,6 +636,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **Immutability is one mixin, and a term reconstructs from its state (#395).**
+  Four classes spelled out the same guard — three of them hardcoding a class name,
+  so `NumericRecord` reported `Record` and `NumericEventTemplate` reported
+  `EventTemplate` — and answered the round-trip that immutability forces in five
+  different ways. `Record`, `EventTemplate`, `Batch`, and `Function` now mix in
+  one `Immutable`, which owns the guard (naming the class the caller touched) and
+  the state round-trip.
+
+  What the round-trip carries comes from the attributes the object holds, not
+  from a list each class writes out: every assigned slot declared anywhere in the
+  hierarchy, a bare-string `__slots__`, and a subclass's instance dictionary
+  alike. That is what made the annotations bug (#409) possible — a hand-written
+  list cannot name a field written after construction — and it is now impossible
+  by construction rather than fixed once. A class names its memos in
+  `_transient_state` to keep a cache out of the payload (`NumericRecord`'s lazy
+  conversion cache), and a store written in place in `_decoupled_state` so a copy
+  takes its own container (the annotations channel).
+
+  Reconstruction allocates the resolved class and restores state, so it no longer
+  re-runs a constructor: an `EventTemplate` keeps the class its specs were
+  resolved to instead of re-deciding the numeric promotion, and a `Record` keeps
+  the exact schema it was written with. `Function` now writes its own state
+  through `object.__setattr__` like every other host, so the `_initializing`
+  window its constructor used to open is gone and one guard covers every case.
+
+  **Breaking:** a pickle written by an earlier version does not load. The
+  reconstruction entry points it names (`_unpickle_record`,
+  `_unpickle_numeric_record`, `_unpickle_event_template`) are gone, state being
+  restored directly now. Re-generate any persisted records, templates, or
+  batches.
 
 - **A joint law draws a `RecordBatch`.** `_sample` on the four joint laws —
   product, sequential, Gaussian, and empirical — returns a `NumericRecordBatch`

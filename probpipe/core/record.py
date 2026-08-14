@@ -45,6 +45,7 @@ import numpy as np
 
 from ..custom_types import ArrayLike
 from ._array_backend import _metadata_of, _numpy_dtype_of, _to_numpy_array, array_backend_for
+from ._immutable import Immutable
 from .event_template import (
     EventTemplate,
     NumericEventTemplate,
@@ -55,7 +56,6 @@ from .event_template import (
     _unify_event_template_with_value,
 )
 from .named_tree import _PATH_SEP, NamedTree, _check_no_path_sep, _unflatten_paths
-from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
 
 if TYPE_CHECKING:
@@ -155,12 +155,10 @@ def _canonical_dtype_str(leaf: Any) -> str:
 #: Constructor keywords that name a construction option rather than a field, so
 #: the keyword form of ``Record(...)`` does not read them as data. The positional
 #: dict form takes a field of any name, including these.
-_RESERVED_INIT_KWARGS = frozenset(
-    {"event_template", "name_is_auto", "_validate_leaves", "_provenance", "_annotations"}
-)
+_RESERVED_INIT_KWARGS = frozenset({"event_template", "name_is_auto", "_validate_leaves"})
 
 
-class Record(NamedTree[Any], TrackedTerm, Annotated):
+class Record(NamedTree[Any], Immutable, TrackedTerm, Annotated):
     """A single structured value with metadata.
 
     A ``Record`` holds a single concrete value: an ordered, named collection
@@ -430,8 +428,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         event_template: EventTemplate | RecordSpec | None = None,
         name_is_auto: bool = False,
         _validate_leaves: bool = True,
-        _provenance: Provenance | None = None,
-        _annotations: Mapping[str, Any] | None = None,
         **fields: _FieldValue,
     ):
         # Every check below reads structure, so work in templates and keep the
@@ -502,13 +498,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
         object.__setattr__(self, "_tree", field_map)
-        # ``_provenance`` and ``_annotations`` carry state a reconstruction
-        # already holds and that construction cannot otherwise reach: provenance
-        # is write-once, and annotations are written after construction, so a
-        # rebuilt record would come back without either. Private, and the
-        # reconstruction paths at the bottom of this module are the only callers.
-        self._init_tracked(name, name_is_auto=name_is_auto, provenance=_provenance)
-        self._init_annotations(_annotations)
+        self._init_tracked(name, name_is_auto=name_is_auto)
         if event_template is None:
             event_template = EventTemplate.infer_from(field_map)
         else:
@@ -637,32 +627,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         ``pickle.loads`` carries this same structure.
         """
         return self._spec.event_template
-
-    # -- Immutability -------------------------------------------------------
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError("Record is immutable")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError("Record is immutable")
-
-    def __reduce__(self):
-        # Serialize the authoritative spec so a pickled record keeps its exact
-        # schema (and equality) instead of re-inferring a weaker one on load —
-        # an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta`` is not
-        # recoverable by ``infer_from``. Annotations ride along too: they are
-        # written after construction, so no constructor argument carries them.
-        return (
-            _unpickle_record,
-            (
-                dict(self._tree),
-                self._name,
-                self._name_is_auto,
-                self._provenance,
-                self._spec,
-                getattr(self, "_annotations", None),
-            ),
-        )
 
     # -- Tree structure -----------------------------------------------------
     #
@@ -1259,22 +1223,6 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 # Pickle helpers
 # ---------------------------------------------------------------------------
-
-
-def _unpickle_record(
-    store: dict, name: str, name_is_auto: bool, provenance, spec=None, annotations=None
-) -> Record:
-    # ``spec`` and ``annotations`` are optional, and construction accepts either
-    # declaration form, so a pickle written before either was serialized still
-    # loads.
-    return Record(
-        name,
-        store,
-        event_template=spec,
-        name_is_auto=name_is_auto,
-        _provenance=provenance,
-        _annotations=annotations,
-    )
 
 
 # ---------------------------------------------------------------------------

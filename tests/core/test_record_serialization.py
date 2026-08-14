@@ -373,11 +373,11 @@ class TestPicklePreservesTemplate:
 
 
 class TestRoundTripPreservesAnnotations:
-    """Annotations are written *after* construction — the documented exception
-    to immutability — so no constructor argument carries them and a state list
-    assembled from ``__init__`` misses them. They must survive every
-    reconstruction path (#409), which ``__reduce__`` governs for ``copy`` as
-    well as for ``pickle``.
+    """Annotations survive every reconstruction path.
+
+    They are written *after* construction — the documented exception to
+    immutability — so no constructor argument carries them, and ``__reduce__``
+    governs ``copy`` as well as ``pickle``.
     """
 
     @pytest.fixture(
@@ -440,12 +440,3 @@ class TestRoundTripPreservesAnnotations:
             return (set(instance_dict or {}) | set(slots or {})) - {"_jax_cache"}
 
         assert assigned(term) - assigned(roundtrip(term)) == set()
-
-    def test_pickle_without_annotations_still_loads(self):
-        # Reconstruction stays callable with the shorter argument list a pickle
-        # written before annotations were serialized carries.
-        from probpipe.core.record import _unpickle_record
-
-        r = _unpickle_record({"x": jnp.ones(3)}, "r", False, None)
-        assert r.name == "r"
-        assert r.annotations is None
