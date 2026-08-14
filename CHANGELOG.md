@@ -30,6 +30,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every dispatch presents a one-field draw the same way.** A one-field
+  record-valued law — a `ProductDistribution` over a single distribution, say —
+  draws a batch of records. The row-wise paths presented each draw as its bare
+  leaf; the `vmap` path presented the record. Since the record shim carries
+  conversions but deliberately no arithmetic, a body as ordinary as `x * 2`
+  succeeded under `dispatch="sequential"` and crashed under the mapped
+  executor. All four paths now present a draw through one rule.
+
+  Design II.4 leaves the choice itself open, riding on the single-value
+  coercion question `Record` poses. What it does not leave open is that the
+  dispatches agree, which is what this restores; the bare-leaf presentation is
+  the one three of the four paths already made.
+
+- **A law that cannot report its `dtype` is probed rather than refused.** The
+  trace probe read `event_shape` and `dtype` to size a synthetic dummy. Reading
+  `dtype` was itself the refusal: `getattr(law, "dtype", None)` swallows only
+  `AttributeError`, so a law raising anything else — a
+  `SequentialJointDistribution` view raises `NotImplementedError` — failed the
+  probe and was sent to row-wise dispatch for want of a placeholder. The probe
+  now draws a sample instead, and the draw carries both.
+
+  `dispatch="jax"` consequently accepts cases it used to reject, those views
+  above all. They build each component from a Python callable, which is indeed
+  not traceable, but that runs while sampling, before the map, so only the body
+  is traced; the mapped result matches the row-wise one exactly. An empirical
+  law is unaffected, still enumerated so its exact weights are preserved.
+
+- **A body that returns a batch no longer crashes the marginalization path.**
+  Calling a `Function` whose body returns a `RecordBatch` with a `Distribution`
+  argument raised the pytree rank error out of `jax.vmap` instead of falling
+  back to sequential dispatch.
+
+  The trace probe that gates JAX dispatch models the transform its executor
+  applies, so that a body which traces cleanly bare but cannot survive the
+  transform is caught while a fallback is still available. It did that for the
+  sweep executor and not for `_broadcast_jax`, which also maps — over the draw
+  axis rather than over batch rows — so a batch-returning body passed the probe
+  and then failed inside the executor, where nothing was left to fall back to.
+  Both mapping executors are now probed under a map.
+
 - **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
   A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
   `DistributionSpec`'s event declaration, a `FunctionSpec`'s either side — was
