@@ -37,6 +37,7 @@ from . import (
     _workflow_recipe,
     _workflow_replay,
     _workflow_result,
+    _workflow_rng,
     _workflow_sweep,
 )
 from ._function_contract import (
@@ -52,7 +53,6 @@ from ._function_contract import (
 from ._record_batch import RecordBatch
 from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
-from .record import Record
 from .tracked import Annotated, TrackedTerm, auto_name
 
 logger = logging.getLogger(__name__)
@@ -825,6 +825,7 @@ class Function(Node, TrackedTerm, Annotated):
                     broadcast_args,
                     jax_supported=jax_supported,
                     func=invoke_point,
+                    stochastic_plan=stochastic_plan,
                 )
             if resolved_dispatch is None:
                 resolved_dispatch = self._resolve_dispatch(
@@ -832,6 +833,7 @@ class Function(Node, TrackedTerm, Annotated):
                     broadcast_args,
                     jax_supported=True,
                     func=invoke_point,
+                    stochastic_plan=stochastic_plan,
                 )
             return resolved_dispatch
 
@@ -843,6 +845,7 @@ class Function(Node, TrackedTerm, Annotated):
                 dispatch_values,
                 broadcast_args,
                 func=invoke_point,
+                stochastic_plan=stochastic_plan,
             )
 
         def execute_distribution_broadcast(
@@ -959,23 +962,25 @@ class Function(Node, TrackedTerm, Annotated):
         broadcast_args: list[_workflow_call.WorkflowInputRef],
         *,
         func: Callable[..., Any],
+        stochastic_plan: _workflow_plan.StochasticPlan | None,
     ) -> Exception | None:
         """Return the JAX trace-probe error for the current call, if any.
 
         The probe traces the operation the dispatch is choosing, not merely the
-        body: a sweep runs the body under ``jax.vmap``, and a body can trace
-        cleanly bare yet be impossible under the transform — one that returns a
-        batch, whose added axis no level can name. So a batched-record argument
-        is probed the way ``execute_sweep_rows_jax`` will actually feed it: its
-        leaf columns, mapped over one row, rebuilt into a ``Record`` inside the
-        traced call. A probe failure means sequential dispatch, which is always
-        able to run the call — the two paths agree on results by contract, so
-        falling back costs speed, never correctness.
+        body: a body can trace cleanly bare yet be impossible under the
+        transform its executor applies — one that returns a batch, whose added
+        axis no level can name. So every executor that maps is probed under a
+        map, each argument fed the way its own executor will feed it: a
+        batched-record argument over one row, a distribution over one draw. A
+        probe failure means sequential dispatch, which is always able to run the
+        call — the two paths agree on results by contract, so falling back costs
+        speed, never correctness.
         """
         try:
             dummy_kw = dict(values)
             broadcast_refs = set(broadcast_args)
             batched_sources: dict[_workflow_call.WorkflowInputRef, Any] = {}
+            drawn_refs: list[_workflow_call.WorkflowInputRef] = []
             for ref in _workflow_call.iter_input_refs(self._signature_info, values):
                 v = _workflow_call.input_ref_value(values, ref)
                 if ref in broadcast_refs:
@@ -983,34 +988,14 @@ class Function(Node, TrackedTerm, Annotated):
                     # sees what an inner sweep iteration will actually
                     # receive.
                     if isinstance(v, RecordBatch):
-                        replacement = v[0]
                         batched_sources[ref] = v
+                        dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, v[0])
                     else:
-                        dist = v
-                        # ``event_shape`` raises on multi-field NRDs
-                        # (``NotImplementedError`` on the base or
-                        # ``TypeError`` via ``_single_field_name``) —
-                        # those distributions don't have a single
-                        # array-shaped placeholder, so the probe can't
-                        # produce a dummy. Falling out to the outer
-                        # ``except Exception`` triggers row-wise dispatch,
-                        # which is the right default for multi-field
-                        # record-valued inputs.
-                        try:
-                            es = dist.event_shape
-                        except (TypeError, NotImplementedError) as exc:
-                            raise NotImplementedError(
-                                f"Cannot probe JAX traceability for "
-                                f"{type(dist).__name__} broadcast arg "
-                                f"{ref.label!r}: no single ``event_shape`` "
-                                f"(multi-field or abstract). "
-                                f"Falling back to row-wise dispatch."
-                            ) from exc
-                        # Match the distribution's own dtype so the probe
-                        # mirrors what the inner function actually sees.
-                        dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
-                        replacement = jnp.zeros(es, dtype=dt) if es else jnp.zeros((), dtype=dt)
-                    dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
+                        # Nothing to synthesize: the draw itself supplies the
+                        # structure and dtype below, which is what lets a
+                        # multi-field law be probed at all — it has no single
+                        # event shape to stand in for one.
+                        drawn_refs.append(ref)
                 else:
                     if isinstance(v, jnp.ndarray):
                         replacement = v
@@ -1022,14 +1007,11 @@ class Function(Node, TrackedTerm, Annotated):
             with _workflow_context._workflow_probe():
                 if batched_sources:
                     refs = list(batched_sources)
-
-                    def _row_call(rows_leaves):
-                        kw = dummy_kw
-                        for row_ref, leaves in zip(refs, rows_leaves):
-                            kw = _workflow_call.replace_input_ref(
-                                kw, row_ref, Record(row_ref.label, leaves, name_is_auto=True)
-                            )
-                        return func(**kw)
+                    # The executor's own body, not a copy maintained in the
+                    # probe. ``dummy_kw`` already carries non-batched inputs.
+                    _row_call = _workflow_sweep.mapped_row_body(
+                        func=func, values=dummy_kw, array_args=refs
+                    )
 
                     probe_leaves = []
                     for source in batched_sources.values():
@@ -1048,6 +1030,28 @@ class Function(Node, TrackedTerm, Annotated):
                             }
                         )
                     jax.make_jaxpr(jax.vmap(_row_call))(tuple(probe_leaves))
+                elif drawn_refs:
+                    if stochastic_plan is None:  # pragma: no cover - planner contract guard
+                        raise RuntimeError("distribution probe is missing its stochastic plan")
+                    refs = drawn_refs
+                    _draw_call = _workflow_distribution_broadcast.mapped_draw_body(
+                        func=func, values=dummy_kw, broadcast_args=refs
+                    )
+                    probe_key = _workflow_rng.jax_key_from_words((0, 0))
+
+                    def get_probe_key(_event: _workflow_plan.PlannedRandomEvent):
+                        nonlocal probe_key
+                        probe_key, subkey = jax.random.split(probe_key)
+                        return subkey
+
+                    sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
+                        stochastic_plan,
+                        stochastic_plan.source_groups,
+                        (1,),
+                        stochastic_plan.logical_units[0],
+                        get_probe_key,
+                    )
+                    jax.make_jaxpr(jax.vmap(_draw_call))(tuple(sampled[ref] for ref in refs))
                 else:
                     jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
         except Exception as exc:
@@ -1060,6 +1064,7 @@ class Function(Node, TrackedTerm, Annotated):
         broadcast_args: list[_workflow_call.WorkflowInputRef],
         *,
         func: Callable[..., Any],
+        stochastic_plan: _workflow_plan.StochasticPlan | None,
     ) -> None:
         """Raise a clear error if explicit JAX dispatch cannot trace."""
         if self._output_template is not None and any(
@@ -1070,7 +1075,12 @@ class Function(Node, TrackedTerm, Annotated):
                 "dispatch='jax' cannot validate output_template support constraints "
                 "during JAX tracing; use dispatch='auto', 'sequential', or 'thread'."
             )
-        trace_error = self._jax_traceability_error(values, broadcast_args, func=func)
+        trace_error = self._jax_traceability_error(
+            values,
+            broadcast_args,
+            func=func,
+            stochastic_plan=stochastic_plan,
+        )
         if trace_error is None:
             return
         if isinstance(trace_error, _workflow_context._StochasticProbeSignal):
@@ -1092,6 +1102,7 @@ class Function(Node, TrackedTerm, Annotated):
         *,
         jax_supported: bool = True,
         func: Callable[..., Any],
+        stochastic_plan: _workflow_plan.StochasticPlan | None,
     ) -> str:
         """Resolve the dispatch strategy, caching JAX traceability detection.
 
@@ -1105,7 +1116,15 @@ class Function(Node, TrackedTerm, Annotated):
         if not jax_supported:
             return "sequential"
 
-        if self._jax_traceability_error(values, broadcast_args, func=func) is None:
+        if (
+            self._jax_traceability_error(
+                values,
+                broadcast_args,
+                func=func,
+                stochastic_plan=stochastic_plan,
+            )
+            is None
+        ):
             return "jax"
         else:
             logger.info(

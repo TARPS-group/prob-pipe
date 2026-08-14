@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import logging
 from dataclasses import replace
 
 import jax
@@ -14,9 +15,11 @@ from probpipe import (
     BroadcastDistribution,
     EmpiricalDistribution,
     Function,
+    MultivariateNormal,
     Normal,
     ProductDistribution,
     Record,
+    RecordBatch,
     RecordEmpiricalDistribution,
     sample,
     workflow_run,
@@ -24,6 +27,7 @@ from probpipe import (
 from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.core.config import WorkflowKind
+from probpipe.distributions import SequentialJointDistribution
 
 
 def _execution_config(
@@ -898,8 +902,8 @@ class TestCoSamplingThroughACall:
 
         assert np.asarray(self._run(lifted, nested).samples).shape == (8,)
 
-    def test_a_sampled_nested_record_valued_law_refuses_explicit_jax(self):
-        """Explicit JAX remains strict where a nested record cannot be traced."""
+    def test_a_sampled_nested_record_valued_law_matches_sequential_under_jax(self):
+        """The draw supplies nested record structure before either body is mapped."""
         nested = ProductDistribution(
             group={
                 "x": Normal(loc=0.0, scale=1.0, name="x"),
@@ -907,14 +911,21 @@ class TestCoSamplingThroughACall:
             },
             name="nested",
         )
-        lifted = Function(
+        mapped = Function(
             func=lambda a: a["group/y"],
             dispatch="jax",
             n_broadcast_samples=8,
         )
+        sequential = Function(
+            func=lambda a: a["group/y"],
+            dispatch="sequential",
+            n_broadcast_samples=8,
+        )
 
-        with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
-            self._run(lifted, nested)
+        np.testing.assert_array_equal(
+            np.asarray(self._run(mapped, nested).samples),
+            np.asarray(self._run(sequential, nested).samples),
+        )
 
     def test_a_record_valued_empirical_passed_twice_shares_its_atom(self):
         empirical = RecordEmpiricalDistribution(
@@ -996,3 +1007,243 @@ class TestIndexSampleHelper:
         assert isinstance(row, NumericRecord)
         assert float(row["scalar"]) == 1.0
         np.testing.assert_array_equal(row["vec"], jnp.array([3.0, 4.0, 5.0]))
+
+
+class TestTheProbeModelsItsExecutorsTransform:
+    """``_broadcast_jax`` maps over draws, so the probe that gates it must too.
+
+    Probing without the transform passes a body to an executor that then fails
+    inside it, where no fallback is left to take.
+    """
+
+    @staticmethod
+    def _run(workflow, *args, **kwargs):
+        with workflow_run(seed=0):
+            return workflow(*args, **kwargs)
+
+    @staticmethod
+    def _returns_a_batch(**controls):
+        def body(x):
+            return RecordBatch.stack(
+                [Record("r", {"y": x * k}, name_is_auto=True) for k in (1.0, 2.0, 3.0)],
+                level_name="k",
+            )
+
+        return Function(
+            func=body,
+            dispatch=controls.pop("dispatch", "auto"),
+            n_broadcast_samples=controls.pop("n_broadcast_samples", 8),
+            **controls,
+        )
+
+    def test_a_batch_returning_body_falls_back_rather_than_failing_in_the_executor(self):
+        """The regression: this raised the pytree rank error out of ``vmap``."""
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+
+        result = self._run(self._returns_a_batch(), dist)
+
+        assert result is not None
+
+    def test_the_fallback_is_what_ran(self, caplog):
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            self._run(self._returns_a_batch(), dist)
+
+        assert any("not JAX-traceable" in record.message for record in caplog.records)
+
+    def test_the_fallback_agrees_with_explicit_sequential(self):
+        """Falling back costs speed, never the answer."""
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+
+        fell_back = self._run(self._returns_a_batch(dispatch="auto"), dist)
+        sequential = self._run(self._returns_a_batch(dispatch="sequential"), dist)
+
+        np.testing.assert_array_equal(np.asarray(fell_back.samples), np.asarray(sequential.samples))
+
+    def test_requesting_jax_reports_the_dispatch_rather_than_the_pytree(self):
+        """The refusal names the choice the caller made and can change."""
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+
+        with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
+            self._run(self._returns_a_batch(dispatch="jax"), dist)
+
+    def test_a_body_that_survives_the_transform_still_takes_jax(self, caplog):
+        """The probe gained a transform, not a blanket refusal."""
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        doubles = Function(func=lambda x: x * 2.0, n_broadcast_samples=8)
+
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            self._run(doubles, dist)
+
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
+
+    def test_the_mapped_probe_covers_several_distribution_arguments(self):
+        """The probe builds a tuple of draws, one per broadcast argument.
+
+        Covers the multiple-reference path without isolating the second
+        argument: ``jax.make_jaxpr`` abstracts everything it is given, so no
+        body can tell "mapped" from "traced" by its arguments alone.
+        """
+
+        def body(x, y):
+            return RecordBatch.stack(
+                [Record("r", {"z": x * k + y}, name_is_auto=True) for k in (1.0, 2.0)],
+                level_name="k",
+            )
+
+        broadcast = Function(func=body, n_broadcast_samples=8)
+        sequential = Function(func=body, dispatch="sequential", n_broadcast_samples=8)
+        first = Normal(loc=0.0, scale=1.0, name="x")
+        second = Normal(loc=3.0, scale=1.0, name="y")
+
+        np.testing.assert_array_equal(
+            np.asarray(self._run(broadcast, first, second).samples),
+            np.asarray(self._run(sequential, first, second).samples),
+        )
+
+    def test_the_mapped_slice_carries_the_declared_event_shape(self, caplog):
+        """The slice is event-shaped, as the bare probe's dummy was.
+
+        ``v[2]`` is rank-sensitive where a reduction would not be, and a dummy
+        of the wrong shape silently leaves the JAX path — so staying on it is
+        the assertion.
+        """
+        vector = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
+        third = Function(func=lambda v: v[2], n_broadcast_samples=8)
+        sequential = Function(func=lambda v: v[2], dispatch="sequential", n_broadcast_samples=8)
+
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            mapped = self._run(third, vector)
+
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
+        np.testing.assert_allclose(
+            np.asarray(mapped.samples),
+            np.asarray(self._run(sequential, vector).samples),
+            rtol=1e-6,
+        )
+
+    def test_an_aliased_argument_still_reads_as_one_variable(self):
+        """Co-sampling is the sampler's, not the probe's: ``f(d, d)`` is ``X - X``.
+
+        The probe's independent dummy per reference must not be mistaken for
+        the executor's grouping.
+        """
+        dist = Normal(loc=0.0, scale=1.0, name="x")
+        difference = Function(func=lambda a, b: a - b, n_broadcast_samples=8)
+
+        np.testing.assert_array_equal(
+            np.asarray(self._run(difference, dist, dist).samples),
+            np.zeros(8),
+        )
+
+    def test_a_law_that_cannot_answer_dtype_is_still_probed(self, caplog):
+        """The draw carries structure and dtype, so neither is asked for first.
+
+        The regression: a ``SequentialJointDistribution`` view raises
+        ``NotImplementedError`` for ``dtype``, which the probe used to read to
+        size its dummy — and which ``getattr(..., None)`` does not swallow, so
+        the law was refused a dispatch it can take.
+        """
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.01, name="x"),
+        )
+        difference = Function(func=lambda a, b: a - b, n_broadcast_samples=8)
+        sequential = Function(func=lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=8)
+
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            mapped = self._run(difference, a=joint["z"], b=joint["x"])
+
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
+        np.testing.assert_allclose(
+            np.asarray(mapped.samples),
+            np.asarray(self._run(sequential, a=joint["z"], b=joint["x"]).samples),
+        )
+
+    def test_a_multi_field_law_vectorizes(self, caplog):
+        """A guard, not a regression: this law answers both, so it always could.
+
+        Kept because the draw-based probe must not narrow what it accepts.
+        """
+        law = ProductDistribution(
+            Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=1.0, scale=1.0, name="b")
+        )
+        totals = Function(func=lambda r: r["a"] + r["b"], n_broadcast_samples=8)
+        sequential = Function(
+            func=lambda r: r["a"] + r["b"], dispatch="sequential", n_broadcast_samples=8
+        )
+
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            mapped = self._run(totals, law)
+
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
+        np.testing.assert_array_equal(
+            np.asarray(mapped.samples), np.asarray(self._run(sequential, law).samples)
+        )
+
+    def test_an_empirical_law_is_enumerated_rather_than_mapped(self):
+        """Not the probe's doing: enumeration preserves exact weights.
+
+        A record-valued empirical law takes the enumeration path whatever the
+        probe would say, so its agreeing with sequential dispatch is a property
+        of that path rather than of the mapped one.
+        """
+        law = RecordEmpiricalDistribution(
+            Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0}, name_is_auto=True)
+        )
+        totals = Function(func=lambda r: r["a"] + r["b"], n_broadcast_samples=6)
+        sequential = Function(
+            func=lambda r: r["a"] + r["b"], dispatch="sequential", n_broadcast_samples=6
+        )
+
+        np.testing.assert_allclose(
+            np.asarray(self._run(totals, law).samples),
+            np.asarray(self._run(sequential, law).samples),
+        )
+
+    def test_a_batch_returning_body_survives_the_nested_regime(self, caplog):
+        """A sweep crossed with a law still produces a result.
+
+        ``_broadcast_jax`` is not reached in this regime at all, so this pins
+        the composition rather than the mapped-draw probe.
+        """
+
+        def body(p, x):
+            return RecordBatch.stack(
+                [Record("r", {"y": p["a"] * x * k}, name_is_auto=True) for k in (1.0, 2.0)],
+                level_name="k",
+            )
+
+        rows = RecordBatch.stack(
+            [Record("p", {"a": jnp.asarray(float(i))}, name_is_auto=True) for i in range(3)],
+            level_name="row",
+        )
+        nested = Function(func=body, n_broadcast_samples=8)
+
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            result = self._run(nested, rows, Normal(loc=0.0, scale=1.0, name="x"))
+
+        assert result is not None
+        assert any("not JAX-traceable" in record.message for record in caplog.records)
+
+    def test_a_one_field_record_law_presents_the_same_value_to_every_dispatch(self, caplog):
+        """A one-field draw presents as its bare leaf, whichever dispatch runs.
+
+        The law draws a batch of records, so mapping it yields a record where
+        the row-wise paths hand over the column. The record shim carries no
+        arithmetic, so ``x * 2`` distinguishes the two: it used to crash under
+        the mapped executor and succeed row-wise.
+        """
+        law = ProductDistribution(Normal(loc=0.0, scale=1.0, name="x"))
+        doubles = Function(func=lambda x: x * 2, n_broadcast_samples=8)
+        sequential = Function(func=lambda x: x * 2, dispatch="sequential", n_broadcast_samples=8)
+
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            mapped = self._run(doubles, law)
+
+        # Consistent *and* still vectorized, rather than consistent by retreat.
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
+        np.testing.assert_array_equal(
+            np.asarray(mapped.samples), np.asarray(self._run(sequential, law).samples)
+        )
