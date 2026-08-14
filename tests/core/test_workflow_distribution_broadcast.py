@@ -766,11 +766,11 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         np.testing.assert_array_equal(np.asarray(difference(dist, dist).samples), np.zeros(8))
 
-    def test_a_record_valued_distribution_argument_still_falls_back(self):
-        """A multi-field law has no single event-shaped dummy, so it never probes.
+    def test_a_multi_field_law_is_probed_by_its_draw(self, caplog):
+        """A multi-field law has no single event shape to synthesize a dummy from.
 
-        It raises before the draw sources are collected, and must keep reaching
-        row-wise dispatch rather than the mapped branch.
+        The draw supplies the structure instead, so such a law is probed rather
+        than refused for want of a placeholder, and vectorizes.
         """
         law = ProductDistribution(
             Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=1.0, scale=1.0, name="b")
@@ -780,7 +780,30 @@ class TestTheProbeModelsItsExecutorsTransform:
             func=lambda r: r["a"] + r["b"], dispatch="sequential", n_broadcast_samples=8, seed=0
         )
 
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            mapped = totals(law)
+
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
         np.testing.assert_array_equal(
+            np.asarray(mapped.samples), np.asarray(sequential(law).samples)
+        )
+
+    def test_an_empirical_law_is_enumerated_rather_than_mapped(self):
+        """Not the probe's doing: enumeration preserves exact weights.
+
+        A record-valued empirical law takes the enumeration path whatever the
+        probe would say, so its agreeing with sequential dispatch is a property
+        of that path rather than of the mapped one.
+        """
+        law = RecordEmpiricalDistribution(
+            Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0}, name_is_auto=True)
+        )
+        totals = Function(func=lambda r: r["a"] + r["b"], n_broadcast_samples=6, seed=0)
+        sequential = Function(
+            func=lambda r: r["a"] + r["b"], dispatch="sequential", n_broadcast_samples=6, seed=0
+        )
+
+        np.testing.assert_allclose(
             np.asarray(totals(law).samples), np.asarray(sequential(law).samples)
         )
 

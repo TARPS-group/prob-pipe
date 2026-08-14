@@ -463,17 +463,14 @@ class TestBroadcastingReconnection:
         # z and x are jointly sampled, x ≈ z, so a - b ≈ 0
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=0.15)
 
-    def test_views_from_sequential_joint_reject_jax(self):
-        """Explicit ``dispatch="jax"`` is rejected for sequential-joint views.
+    def test_views_from_sequential_joint_accept_jax(self):
+        """Explicit ``dispatch="jax"`` runs for sequential-joint views.
 
-        A ``SequentialJointDistribution`` constructs each downstream
-        component from a Python callable (``x=lambda z: Normal(loc=z,
-        ...)``), building a fresh distribution object per draw — which
-        is not JAX-traceable. ``dispatch="jax"`` is strict (it does not
-        silently fall back), so it raises a clear error pointing the
-        user at the ``auto`` / ``sequential`` paths. The ``_loop``
-        companion above exercises the correct joint-sampled result via
-        ``dispatch="sequential"``.
+        A ``SequentialJointDistribution`` builds each downstream component from
+        a Python callable, which is indeed not traceable — but that
+        construction happens in ``_sample_broadcast_args``, concretely, before
+        the map. Only the body is traced, and ``a - b`` traces fine, so the
+        views co-sample and the mapped result matches the row-wise one.
         """
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
@@ -483,22 +480,25 @@ class TestBroadcastingReconnection:
         def subtract(a: float, b: float) -> float:
             return a - b
 
-        wf = Function(
-            func=subtract,
-            dispatch="jax",
-            n_broadcast_samples=30,
-            seed=55,
-        )
-        with pytest.raises(ValueError, match="dispatch='jax' failed while tracing"):
-            wf(a=joint["z"], b=joint["x"])
+        def run(dispatch):
+            return Function(
+                func=subtract,
+                dispatch=dispatch,
+                n_broadcast_samples=30,
+                seed=55,
+            )(a=joint["z"], b=joint["x"])
 
-    def test_views_from_sequential_joint_auto_falls_back(self):
-        """``dispatch="auto"`` falls back to sequential and reconnects views.
+        mapped = run("jax")
 
-        Auto-detection probes JAX-traceability, finds the lambda-based
-        sequential joint isn't traceable, and falls back to sequential
-        dispatch — producing the same correct joint-sampled result as
-        the explicit ``_loop`` test (``x ≈ z`` so ``a - b ≈ 0``).
+        np.testing.assert_allclose(np.array(mapped.samples), 0.0, atol=0.15)
+        np.testing.assert_allclose(np.array(mapped.samples), np.array(run("sequential").samples))
+
+    def test_views_from_sequential_joint_reconnect_under_auto(self):
+        """``dispatch="auto"`` reconnects the views whichever path it picks.
+
+        The views co-sample through their shared root, so ``x ≈ z`` and
+        ``a - b ≈ 0`` — a property of the sampler rather than of the dispatch,
+        which is why this holds without pinning which one auto resolves to.
         """
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),

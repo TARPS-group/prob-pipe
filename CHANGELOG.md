@@ -43,6 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatches agree, which is what this restores; the bare-leaf presentation is
   the one three of the four paths already made.
 
+- **A law with no single event shape is probed rather than refused.** The
+  trace probe used to synthesize its dummy from `event_shape` and `dtype`, so a
+  law that has neither — a multi-field record-valued one — could not be probed
+  and was refused a JAX dispatch it can in fact take. The probe now draws
+  instead, and the draw supplies the structure.
+
+  `dispatch="jax"` consequently accepts cases it used to reject, including
+  views of a `SequentialJointDistribution`: those build each component from a
+  Python callable, but that happens concretely while sampling, before the map,
+  so only the body is traced. The mapped result matches the row-wise one
+  exactly. An empirical law is unaffected, still enumerated so its exact
+  weights are preserved.
+
 - **A body that returns a batch no longer crashes the marginalization path.**
   Calling a `Function` whose body returns a `RecordBatch` with a `Distribution`
   argument raised the pytree rank error out of `jax.vmap` instead of falling
