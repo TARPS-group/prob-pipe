@@ -897,7 +897,7 @@ class Function(Node, TrackedTerm, Annotated):
             dummy_kw = dict(values)
             broadcast_refs = set(broadcast_args)
             batched_sources: dict[_workflow_call.WorkflowInputRef, Any] = {}
-            drawn_sources: dict[_workflow_call.WorkflowInputRef, tuple[tuple[int, ...], Any]] = {}
+            drawn_refs: list[_workflow_call.WorkflowInputRef] = []
             for ref in _workflow_call.iter_input_refs(self._signature_info, values):
                 v = _workflow_call.input_ref_value(values, ref)
                 if ref in broadcast_refs:
@@ -905,35 +905,14 @@ class Function(Node, TrackedTerm, Annotated):
                     # sees what an inner sweep iteration will actually
                     # receive.
                     if isinstance(v, RecordBatch):
-                        replacement = v[0]
                         batched_sources[ref] = v
+                        dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, v[0])
                     else:
-                        dist = v
-                        # ``event_shape`` raises on multi-field NRDs
-                        # (``NotImplementedError`` on the base or
-                        # ``TypeError`` via ``_single_field_name``) —
-                        # those distributions don't have a single
-                        # array-shaped placeholder, so the probe can't
-                        # produce a dummy. Falling out to the outer
-                        # ``except Exception`` triggers row-wise dispatch,
-                        # which is the right default for multi-field
-                        # record-valued inputs.
-                        try:
-                            es = dist.event_shape
-                        except (TypeError, NotImplementedError) as exc:
-                            raise NotImplementedError(
-                                f"Cannot probe JAX traceability for "
-                                f"{type(dist).__name__} broadcast arg "
-                                f"{ref.label!r}: no single ``event_shape`` "
-                                f"(multi-field or abstract). "
-                                f"Falling back to row-wise dispatch."
-                            ) from exc
-                        # Match the distribution's own dtype so the probe
-                        # mirrors what the inner function actually sees.
-                        dt = getattr(dist, "dtype", None) or jnp.zeros((), dtype=float).dtype
-                        replacement = jnp.zeros(es, dtype=dt) if es else jnp.zeros((), dtype=dt)
-                        drawn_sources[ref] = (tuple(es) if es else (), dt)
-                    dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
+                        # Nothing to synthesize: the draw itself supplies the
+                        # structure and dtype below, which is what lets a
+                        # multi-field law be probed at all — it has no single
+                        # event shape to stand in for one.
+                        drawn_refs.append(ref)
                 else:
                     if isinstance(v, jnp.ndarray):
                         replacement = v
@@ -970,8 +949,8 @@ class Function(Node, TrackedTerm, Annotated):
                         }
                     )
                 jax.make_jaxpr(jax.vmap(_row_call))(tuple(probe_leaves))
-            elif drawn_sources:
-                refs = list(drawn_sources)
+            elif drawn_refs:
+                refs = drawn_refs
                 # The executor's own body and the executor's own draw, so the
                 # probe traces the value the body will actually receive: a
                 # record-valued law draws a batch of records, which zeros of its
