@@ -24,7 +24,7 @@ from probpipe import (
     TransformedDistribution,
     workflow_run,
 )
-from probpipe.core import _workflow_call, _workflow_descendants
+from probpipe.core import _workflow_call, _workflow_context, _workflow_descendants
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
 
 
@@ -43,7 +43,8 @@ class _RecordingNormal(Normal):
         super().__init__(loc=0.0, scale=1.0, name=name)
 
     def _sample(self, key, sample_shape=()):
-        self.calls.append((key, tuple(sample_shape)))
+        if not _workflow_context._workflow_side_effects_forbidden():
+            self.calls.append((key, tuple(sample_shape)))
         return super()._sample(key, sample_shape)
 
 
@@ -53,7 +54,8 @@ class _RecordingMultivariateNormal(MultivariateNormal):
         super().__init__(loc=jnp.zeros(2), cov=jnp.eye(2), name="base")
 
     def _sample(self, key, sample_shape=()):
-        self.calls.append((key, tuple(sample_shape)))
+        if not _workflow_context._workflow_side_effects_forbidden():
+            self.calls.append((key, tuple(sample_shape)))
         return super()._sample(key, sample_shape)
 
 
