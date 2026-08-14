@@ -23,6 +23,7 @@ from probpipe import (
 )
 from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
 from probpipe.core.config import WorkflowKind
+from probpipe.distributions import SequentialJointDistribution
 
 
 def _execution_config(
@@ -766,11 +767,36 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         np.testing.assert_array_equal(np.asarray(difference(dist, dist).samples), np.zeros(8))
 
-    def test_a_multi_field_law_is_probed_by_its_draw(self, caplog):
-        """A multi-field law has no single event shape to synthesize a dummy from.
+    def test_a_law_that_cannot_answer_dtype_is_still_probed(self, caplog):
+        """The draw carries structure and dtype, so neither is asked for first.
 
-        The draw supplies the structure instead, so such a law is probed rather
-        than refused for want of a placeholder, and vectorizes.
+        The regression: a ``SequentialJointDistribution`` view raises
+        ``NotImplementedError`` for ``dtype``, which the probe used to read to
+        size its dummy — and which ``getattr(..., None)`` does not swallow, so
+        the law was refused a dispatch it can take.
+        """
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.01, name="x"),
+        )
+        difference = Function(func=lambda a, b: a - b, n_broadcast_samples=8, seed=0)
+        sequential = Function(
+            func=lambda a, b: a - b, dispatch="sequential", n_broadcast_samples=8, seed=0
+        )
+
+        with caplog.at_level(logging.INFO, logger="probpipe.core.node"):
+            mapped = difference(a=joint["z"], b=joint["x"])
+
+        assert not any("not JAX-traceable" in record.message for record in caplog.records)
+        np.testing.assert_allclose(
+            np.asarray(mapped.samples),
+            np.asarray(sequential(a=joint["z"], b=joint["x"]).samples),
+        )
+
+    def test_a_multi_field_law_vectorizes(self, caplog):
+        """A guard, not a regression: this law answers both, so it always could.
+
+        Kept because the draw-based probe must not narrow what it accepts.
         """
         law = ProductDistribution(
             Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=1.0, scale=1.0, name="b")
