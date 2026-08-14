@@ -28,7 +28,7 @@ from ._empirical import (
 )
 from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array
-from ._record_batch import RecordBatch, _batch_class_for
+from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from .event_template import (
     ArraySpec,
     EventTemplate,
@@ -619,6 +619,36 @@ def _make_marginal(
 DRAW_LEVEL = "draw"
 
 
+def _batch_over_swept_columns(
+    columns: dict[str, Any],
+    *,
+    batch_shape: tuple[int, ...],
+    sweep_level_names: tuple[str, ...],
+    sweep_groups: tuple[tuple[int, ...], ...],
+    element_spec: Any,
+    inner_level_names: tuple[str, ...],
+    inner_axis_groups: tuple[tuple[int, ...], ...],
+    name: str,
+) -> RecordBatch:
+    """Build the aggregate for a sweep whose rows each held a batch.
+
+    *columns* arrive stacked on a single leading axis of ``prod(batch_shape)``,
+    which the sweep's own axes replace; the levels are the sweep's followed by
+    the rows'. Both dispatches land here — the row-wise one after stacking the
+    rows itself, the mapped one with the transform's output axis already in
+    place — so the two agree by construction rather than by being maintained in
+    parallel.
+    """
+    return _batch_class_for(element_spec)(
+        {path: column.reshape(batch_shape + column.shape[1:]) for path, column in columns.items()},
+        (*sweep_level_names, *inner_level_names),
+        element_spec=element_spec,
+        axis_groups=(*sweep_groups, *inner_axis_groups),
+        name=name,
+        name_is_auto=True,
+    )
+
+
 def _make_stack(
     inner_outputs: Any,
     *,
@@ -696,6 +726,22 @@ def _make_stack(
         raise ValueError(
             f"_make_stack mints one level per group of axes: {len(sweep_groups)} groups "
             f"{sweep_groups} against {len(level_names)} names {list(level_names)}"
+        )
+
+    # --- Mapped batch-returning body -----------------------------------
+    # Before the generic pytree handling below, which would read the inner batch
+    # axis as an event axis and drop the level names with it — the same reason
+    # the batch-of-batches case precedes the Record case on the list path.
+    if isinstance(inner_outputs, _MappedBatchColumns):
+        return _batch_over_swept_columns(
+            inner_outputs.columns,
+            batch_shape=batch_shape,
+            sweep_level_names=level_names,
+            sweep_groups=sweep_groups,
+            element_spec=inner_outputs.element_spec,
+            inner_level_names=inner_outputs.level_names,
+            inner_axis_groups=inner_outputs.axis_groups,
+            name=name or field_name,
         )
 
     # --- List-of-X path (Python-loop execution) -------------------------
@@ -780,17 +826,18 @@ def _make_stack(
             for path in first.event_template:
                 cols = [o._raw_column(path) for o in outs]
                 if any(_is_object_array(c) for c in cols):
-                    stacked = np.stack(cols, axis=0)
+                    columns[path] = np.stack(cols, axis=0)
                 else:
-                    stacked = jnp.stack(cols, axis=0)
-                columns[path] = stacked.reshape(batch_shape + stacked.shape[1:])
-            return _batch_class_for(first.element_spec)(
+                    columns[path] = jnp.stack(cols, axis=0)
+            return _batch_over_swept_columns(
                 columns,
-                (*level_names, *first.level_names),
+                batch_shape=batch_shape,
+                sweep_level_names=level_names,
+                sweep_groups=sweep_groups,
                 element_spec=first.element_spec,
-                axis_groups=(*sweep_groups, *first.axis_groups),
+                inner_level_names=tuple(first.level_names),
+                inner_axis_groups=tuple(first.axis_groups),
                 name=name or field_name,
-                name_is_auto=True,
             )
 
         # All (scalar) Records → stack into one batch. NumericRecordBatch if

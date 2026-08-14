@@ -1350,3 +1350,90 @@ def _surviving_batch_shape(columns: dict[str, Any], rank: int) -> tuple[int, ...
 
 
 jax.tree_util.register_pytree_node(RecordBatch, _record_batch_flatten, _unflatten_with(RecordBatch))
+
+
+# ---------------------------------------------------------------------------
+# Carrying a batch across a transform that adds an axis
+# ---------------------------------------------------------------------------
+
+
+class _MappedBatchColumns:
+    """A batch taken apart into raw columns, to cross a mapping transform.
+
+    ``_unflatten_with`` refuses an added axis because it has no name to give the
+    level, and no reading of the arriving shapes recovers one — *a shape is not
+    a provenance*. That refusal is right for a raw transform, and this does not
+    weaken it. It is the other half of the same rule: an operation that knows
+    which axis it added, and what to call the level, does not have to guess, and
+    should not route its reconstruction through a hook that must.
+
+    So a mapping executor hands the transform this instead of the batch. It is
+    an inert carrier — its unflatten rebuilds it verbatim, checking nothing —
+    which is exactly what lets it survive a rank change that ``RecordBatch``
+    cannot. The executor holds the missing name and rebuilds the batch itself,
+    on the far side.
+
+    Private, and short-lived by construction: an executor wraps its body's
+    return and unwraps it in the same call, so this never reaches a caller.
+    """
+
+    __slots__ = ("axis_groups", "columns", "element_spec", "level_names", "name", "name_is_auto")
+
+    def __init__(
+        self,
+        columns: dict[str, Any],
+        *,
+        element_spec: RecordSpec,
+        level_names: tuple[str, ...],
+        axis_groups: tuple[tuple[int, ...], ...],
+        name: str,
+        name_is_auto: bool,
+    ):
+        self.columns = columns
+        self.element_spec = element_spec
+        self.level_names = level_names
+        self.axis_groups = axis_groups
+        self.name = name
+        self.name_is_auto = name_is_auto
+
+    @classmethod
+    def of(cls, batch: RecordBatch) -> _MappedBatchColumns:
+        """Take *batch* apart, keeping what unflattening could not have inferred."""
+        return cls(
+            {path: batch._raw_column(path) for path in batch.event_template},
+            element_spec=batch.element_spec,
+            level_names=tuple(batch.level_names),
+            axis_groups=tuple(batch.axis_groups),
+            name=batch._name,
+            name_is_auto=batch._name_is_auto,
+        )
+
+
+def _mapped_batch_columns_flatten(carried: _MappedBatchColumns):
+    return list(carried.columns.values()), (
+        tuple(carried.columns),
+        carried.element_spec,
+        carried.level_names,
+        carried.axis_groups,
+        carried.name,
+        carried.name_is_auto,
+    )
+
+
+def _mapped_batch_columns_unflatten(aux, children) -> _MappedBatchColumns:
+    paths, element_spec, level_names, axis_groups, name, name_is_auto = aux
+    # No rank check, deliberately: the added axis is the point, and the caller
+    # that added it is the one that can name it.
+    return _MappedBatchColumns(
+        dict(zip(paths, children, strict=True)),
+        element_spec=element_spec,
+        level_names=level_names,
+        axis_groups=axis_groups,
+        name=name,
+        name_is_auto=name_is_auto,
+    )
+
+
+jax.tree_util.register_pytree_node(
+    _MappedBatchColumns, _mapped_batch_columns_flatten, _mapped_batch_columns_unflatten
+)

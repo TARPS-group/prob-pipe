@@ -8,7 +8,7 @@ outer sweep layer of nested array + distribution broadcasts.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import jax
@@ -18,6 +18,7 @@ from . import _workflow_call, _workflow_execution, _workflow_plan, _workflow_res
 from ._batch import Batch
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
+from ._record_batch import RecordBatch, _MappedBatchColumns
 from .distribution import BroadcastDistribution, Distribution
 from .event_template import EventTemplate
 from .provenance import Provenance
@@ -245,6 +246,38 @@ def execute_sweep_rows(
     return _workflow_execution.execute_many(request)
 
 
+def mapped_row_body(
+    *,
+    func: Callable[..., Any],
+    values: dict[str, Any],
+    array_args: Sequence[_workflow_call.WorkflowInputRef],
+) -> Callable[[Any], Any]:
+    """The body ``jax.vmap`` runs for one sweep row, and the probe traces.
+
+    Both callers use this rather than each building its own: the probe's job is
+    to trace exactly what the executor runs, which two separately maintained
+    functions cannot promise.
+
+    A row's batched-record argument is rebuilt from raw leaf columns inside the
+    traced call, so nothing infers a batch axis on the way in. On the way out, a
+    returned :class:`Batch` is taken apart into :class:`_MappedBatchColumns`,
+    because the map is about to add an axis that the batch's own unflatten hook
+    could not name — the executor names it afterwards, from the sweep's levels.
+    """
+
+    def one_row(array_slice_leaves):
+        replacements = {
+            ref: Record(ref.label, leaves, name_is_auto=True)
+            for ref, leaves in zip(array_args, array_slice_leaves)
+        }
+        out = func(**_workflow_call.replace_input_refs(values, replacements))
+        if isinstance(out, RecordBatch):
+            return _MappedBatchColumns.of(out)
+        return out
+
+    return one_row
+
+
 def execute_sweep_rows_jax(
     *,
     func: Callable[..., Any],
@@ -253,13 +286,7 @@ def execute_sweep_rows_jax(
     n_total: int,
 ) -> Any:
     """Execute the limited single-batch sweep through ``jax.vmap``."""
-
-    def single_call(array_slice_leaves):
-        replacements = {
-            ref: Record(ref.label, leaves, name_is_auto=True)
-            for ref, leaves in zip(array_args, array_slice_leaves)
-        }
-        return func(**_workflow_call.replace_input_refs(values, replacements))
+    single_call = mapped_row_body(func=func, values=values, array_args=array_args)
 
     vmap_input = []
     for ref in array_args:

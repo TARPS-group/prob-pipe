@@ -46,7 +46,6 @@ from ._function_contract import (
 from ._record_batch import RecordBatch
 from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
-from .record import Record
 from .tracked import Annotated, TrackedTerm, auto_name
 
 logger = logging.getLogger(__name__)
@@ -923,14 +922,13 @@ class Function(Node, TrackedTerm, Annotated):
                     dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
             if batched_sources:
                 refs = list(batched_sources)
-
-                def _row_call(rows_leaves):
-                    kw = dummy_kw
-                    for row_ref, leaves in zip(refs, rows_leaves):
-                        kw = _workflow_call.replace_input_ref(
-                            kw, row_ref, Record(row_ref.label, leaves, name_is_auto=True)
-                        )
-                    return func(**kw)
+                # The executor's own body, not a copy of it: what the probe
+                # traces and what runs must not be two things kept alike by
+                # hand. ``dummy_kw`` already carries the non-batched arguments,
+                # so the wrapper only has the batched refs left to replace.
+                _row_call = _workflow_sweep.mapped_row_body(
+                    func=func, values=dummy_kw, array_args=refs
+                )
 
                 probe_leaves = []
                 for source in batched_sources.values():
