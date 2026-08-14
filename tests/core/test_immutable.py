@@ -369,13 +369,33 @@ class TestTheConstructionWindow:
             with pytest.raises(AttributeError, match="Slotted is immutable"):
                 inner.left = 1  # and on this one it is not
 
-    def test_a_nested_construction_leaves_the_outer_window_open(self):
+    def test_a_window_on_one_instance_nests(self):
+        # An inner block must leave the outer one open: what closes a window is
+        # the last exit, not the first. Reached whenever a constructor that
+        # already runs in a window opens one on itself — through a helper that
+        # allocates and initializes, say.
+        from probpipe.core._immutable import _constructing_now, constructing
+
+        instance = object.__new__(Slotted)
+        with constructing(instance):
+            with constructing(instance):
+                instance.left = 1
+            instance.right = 2  # still inside the outer window
+        assert (instance.left, instance.right) == (1, 2)
+        assert _constructing_now() == {}
+        with pytest.raises(AttributeError, match="Slotted is immutable"):
+            instance.left = 3
+
+    def test_constructing_a_term_inside_another_leaves_both_correct(self):
         from probpipe import Normal, ProductDistribution
 
-        # The joint's constructor builds nothing itself, but component
-        # construction runs inside it, and its window must survive theirs.
+        # Different instances rather than one nested in itself: the components
+        # are built first, and the joint's own window is unaffected by theirs.
+        # (A distribution accepts assignment either way — see the exemption
+        # above — so what is asserted is that both terms came out intact.)
         joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="j")
         assert joint.name == "j"
+        assert joint.components["a"].name == "a"
 
 
 class TestAClassBuiltAtRuntime:

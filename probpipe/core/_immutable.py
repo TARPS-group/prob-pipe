@@ -58,13 +58,14 @@ def declared_state_names(cls: type, declaration: str) -> frozenset[str]:
     return frozenset(name for klass in cls.__mro__ for name in klass.__dict__.get(declaration, ()))
 
 
-# Instances whose constructor is running on this thread, keyed by ``id``. The
-# instance is the value, not just the key: holding it keeps the id from being
-# reused by another object while the constructor is still on the stack.
+# Instances whose constructor is running on this thread, keyed by ``id``, each
+# with the number of windows open on it. The instance is held rather than just
+# its id, which keeps the id from being reused by another object while the
+# constructor is still on the stack; the count is what makes a window nest.
 _under_construction = threading.local()
 
 
-def _constructing_now() -> dict[int, Any]:
+def _constructing_now() -> dict[int, tuple[Any, int]]:
     registry = getattr(_under_construction, "registry", None)
     if registry is None:
         registry = {}
@@ -81,6 +82,9 @@ def constructing(instance: Any) -> Iterator[Any]:
     instance and per thread, and closed even if the constructor raises, so a
     half-built object left behind by a failure is as immutable as a finished one.
 
+    Windows on one instance nest: an inner block leaves the outer one open, since
+    what closes a window is the last exit rather than the first.
+
     :class:`~probpipe.core.tracked.TrackedTerm`'s metaclass opens this around
     every construction, so a term's ``__init__`` assigns normally. Code that
     allocates with ``object.__new__`` and then calls a constructor by hand has to
@@ -88,11 +92,16 @@ def constructing(instance: Any) -> Iterator[Any]:
     """
     registry = _constructing_now()
     key = id(instance)
-    registry[key] = instance
+    _, depth = registry.get(key, (instance, 0))
+    registry[key] = (instance, depth + 1)
     try:
         yield instance
     finally:
-        registry.pop(key, None)
+        held, depth = registry[key]
+        if depth > 1:
+            registry[key] = (held, depth - 1)
+        else:
+            del registry[key]
 
 
 def decoupled_container(container: Any) -> Any:
