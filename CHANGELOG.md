@@ -70,6 +70,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and then failed inside the executor, where nothing was left to fall back to.
   Both mapping executors are now probed under a map.
 
+- **`copy` and `pickle` no longer drop a term's annotations (#409).** `Record`,
+  `NumericRecord`, and `ProductDistribution` each reconstruct through a
+  `__reduce__` that listed its state by hand, and none of them listed
+  `_annotations`, so a copied or unpickled term came back with its annotations
+  gone — the diagnostics and inference-backend payloads written into that store
+  among them — and nothing raised. `__reduce__` governs `copy.copy` and `copy.deepcopy`
+  as well as `pickle`, so all three paths lost them.
+
+  The omission was systematic rather than careless: annotations are the one field
+  written *after* construction — the documented exception to immutability — so a
+  state list assembled from constructor arguments misses exactly this one.
+
+  So the constructors now accept it. `Record`, `NumericRecord`, and
+  `Distribution` take private `_provenance` and `_annotations` arguments
+  (`ProductDistribution` a `_name_is_auto` as well, since it derives that flag
+  rather than accepting it), which reconstruction passes and nothing else does.
+  A rebuilt term is therefore complete when its constructor returns, and
+  `TrackedTerm._restore_identity` — which wrote identity onto an
+  already-constructed object, bypassing both the immutability guard and the
+  write-once provenance rule for any caller who found it — **is deleted**.
+  Pickles written before this still load.
+
+  The container a reconstruction is handed is decoupled from the one it was built
+  from, as `with_name` already does: entries are shared, the container is not, so
+  a write on a copy does not show through on the original. Annotations still do
+  not cross a JAX transform boundary — `tree_unflatten` rebuilds a bare term,
+  unchanged.
+
 - **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
   A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
   `DistributionSpec`'s event declaration, a `FunctionSpec`'s either side — was

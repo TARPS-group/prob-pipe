@@ -12,6 +12,7 @@ Provides:
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from types import MappingProxyType
 from typing import Any
 
@@ -217,14 +218,33 @@ class ProductDistribution(
     _sampling_cost = "low"
     _preferred_orchestration = None
 
-    def __new__(cls, *positional, name: str | None = None, **components):
+    def __new__(
+        cls,
+        *positional,
+        name: str | None = None,
+        _name_is_auto: bool | None = None,
+        _provenance: Provenance | None = None,
+        _annotations: Mapping[str, Any] | None = None,
+        **components,
+    ):
+        # ``__new__`` binds the same keywords as ``__init__``, reconstruction's
+        # included: anything left in ``**components`` is read as a component, and
+        # a stray one changes which class the probe below selects.
         components = _merge_positional_and_keyword(positional, components)
         if not components:
             return object.__new__(cls)
         actual_cls = _product_class_for_components(components)
         return object.__new__(actual_cls)
 
-    def __init__(self, *positional, name: str | None = None, **components):
+    def __init__(
+        self,
+        *positional,
+        name: str | None = None,
+        _name_is_auto: bool | None = None,
+        _provenance: Provenance | None = None,
+        _annotations: Mapping[str, Any] | None = None,
+        **components,
+    ):
         components = _merge_positional_and_keyword(positional, components)
         if not components:
             raise ValueError("ProductDistribution requires at least one component.")
@@ -247,13 +267,32 @@ class ProductDistribution(
                 )
         self._components = resolved
         name, name_is_auto = auto_name(name, "product(" + ",".join(resolved.keys()) + ")")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        # A reconstruction passes the stored flag: it always supplies *name*, so
+        # the derivation above would call a once-auto-derived name user-given.
+        # The three underscore-prefixed keywords are the reconstruction's only,
+        # and are documented on ``Distribution.__init__``.
+        if _name_is_auto is not None:
+            name_is_auto = _name_is_auto
+        super().__init__(
+            name=name,
+            name_is_auto=name_is_auto,
+            _provenance=_provenance,
+            _annotations=_annotations,
+        )
         self._event_template = _build_event_template(self._components)
 
     def __reduce__(self):
+        # Annotations are threaded explicitly: they are written after
+        # construction, so rebuilding from the components alone would drop them.
         return (
             _unpickle_product_distribution,
-            (dict(self._components), self._name, self._name_is_auto, self._provenance),
+            (
+                dict(self._components),
+                self._name,
+                self._name_is_auto,
+                self._provenance,
+                getattr(self, "_annotations", None),
+            ),
         )
 
     # -- Sampling (returns Record) ------------------------------------------
@@ -453,10 +492,19 @@ class ProductDistribution(
         return f"ProductDistribution({comp_str}{name_str})"
 
 
-def _unpickle_product_distribution(components, name, name_is_auto, provenance):
-    """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
-    p = ProductDistribution(**components, name=name)
-    return p._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
+def _unpickle_product_distribution(components, name, name_is_auto, provenance, annotations=None):
+    """Reconstruct a ProductDistribution (or dynamic subclass) from its components.
+
+    ``annotations`` is optional so a pickle written before they were serialized
+    still loads.
+    """
+    return ProductDistribution(
+        **components,
+        name=name,
+        _name_is_auto=name_is_auto,
+        _provenance=provenance,
+        _annotations=annotations,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -476,8 +524,11 @@ class TFPProductDistribution(ProductDistribution):
     for interop with SBI and other TFP-dependent subsystems.
     """
 
-    def __init__(self, *positional, name: str | None = None, **components):
-        super().__init__(*positional, name=name, **components)
+    def __init__(self, *positional, **kwargs):
+        # Forwarded wholesale rather than restated: the base's keywords include
+        # the reconstruction ones, and a signature repeated here would silently
+        # swallow any it missed into ``**components``.
+        super().__init__(*positional, **kwargs)
         self._build_tfp_dist()
 
     def _build_tfp_dist(self):

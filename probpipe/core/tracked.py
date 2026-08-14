@@ -62,6 +62,19 @@ def auto_name(name: str | None, default: str) -> tuple[str, bool]:
     return name, False
 
 
+def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
+    """Return a shallow copy of an annotations container.
+
+    Entries are shared, the container is not, so a write on one object does not
+    show through on the object it was copied or rebuilt from — the annotations
+    channel is written in place (see :class:`Annotated`), which is what makes a
+    shared container observable. Any mapping type is accepted: an
+    ``xarray.DataTree`` and the like copy themselves, and anything else is
+    rebuilt as a ``dict``.
+    """
+    return annotations.copy() if hasattr(annotations, "copy") else dict(annotations)
+
+
 class _TrackedTermMeta(_ProtocolMeta):
     """Metaclass enforcing that every ``TrackedTerm`` instance has a
     non-empty ``name`` set by the time construction returns.
@@ -218,14 +231,9 @@ class TrackedTerm(metaclass=_TrackedTermMeta):
         object.__setattr__(clone, "_name", name)
         object.__setattr__(clone, "_name_is_auto", False)
         object.__setattr__(clone, "_provenance", None)
-        # Decouple the annotations container: writers add entries in place
-        # (the documented append-only channel), and a shared container would
-        # let a post-rename write show through on the original. A shallow
-        # container copy shares the entry values but not the container.
         annotations = getattr(clone, "_annotations", None)
         if annotations is not None:
-            copied = annotations.copy() if hasattr(annotations, "copy") else dict(annotations)
-            object.__setattr__(clone, "_annotations", copied)
+            object.__setattr__(clone, "_annotations", _decoupled_annotations(annotations))
         clone.with_provenance(
             Provenance.create(
                 "with_name",
@@ -269,21 +277,6 @@ class TrackedTerm(metaclass=_TrackedTermMeta):
         if getattr(self, "_provenance", None) is not None:
             raise RuntimeError(f"Provenance already set on {self!r}. Provenance is write-once.")
         object.__setattr__(self, "_provenance", provenance)
-        return self
-
-    def _restore_identity(self, *, name_is_auto: bool, provenance: Provenance | None) -> Self:
-        """Restore identity state on a reconstructed object, returning it.
-
-        The shared tail of every unpickle helper: after the constructor has
-        rebuilt the object (setting ``_name`` from the stored name), this
-        re-applies the stored :attr:`name_is_auto` flag and, when present,
-        the stored provenance — bypassing the write-once guard, since the
-        reconstruction is restoring recorded state rather than rewriting
-        lineage.
-        """
-        object.__setattr__(self, "_name_is_auto", bool(name_is_auto))
-        if provenance is not None:
-            object.__setattr__(self, "_provenance", provenance)
         return self
 
     # -- copying -------------------------------------------------------------
@@ -348,6 +341,24 @@ class Annotated:
     """
 
     __slots__ = ()
+
+    def _init_annotations(self, annotations: Mapping[str, Any] | None) -> None:
+        """Attach a starting annotations store (constructor helper for hosts).
+
+        The counterpart to :meth:`TrackedTerm._init_tracked`, for the one case a
+        host is handed annotations up front rather than having them written into
+        it later: reconstructing a term that already carried some. ``None``
+        leaves the store unset, which is what an ordinary construction passes,
+        so :attr:`annotations` stays ``None`` until a writer attaches something.
+
+        The container is decoupled from the one passed in, for the reason
+        :meth:`TrackedTerm.with_name` gives: writers add entries in place, so a
+        shared container would let a write on this object show through on
+        whatever it was built from. Writes go through ``object.__setattr__`` so
+        an immutable host can call this from its constructor.
+        """
+        if annotations is not None:
+            object.__setattr__(self, "_annotations", _decoupled_annotations(annotations))
 
     @property
     def annotations(self) -> Mapping[str, Any] | None:
