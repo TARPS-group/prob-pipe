@@ -12,6 +12,7 @@ import pytest
 from probpipe import (
     BroadcastDistribution,
     DistributionArray,
+    EventTemplate,
     Function,
     Normal,
     NumericRecord,
@@ -341,13 +342,49 @@ class TestASweptBodyThatReturnsABatch:
         assert mapped.axis_groups == sequential.axis_groups
         np.testing.assert_allclose(np.asarray(mapped["y"]), np.asarray(sequential["y"]))
 
-    def test_a_multi_axis_sweep_keeps_the_groups_apart(self):
-        """Two zip groups sweep as a product, so the aggregate carries both sweep
-        levels before the body's own.
+    def test_a_multi_axis_level_reshapes_on_the_mapped_path(self, monkeypatch):
+        """One level spanning two axes, swept under the map.
+
+        The mapped executor flattens the sweep to a single axis of
+        ``prod(batch_shape)`` and the carrier restores its shape afterwards, so
+        a sweep of rank greater than one is what exercises that reshape. It
+        takes a single argument on purpose: two array arguments make two zip
+        groups, which sets ``jax_supported`` false and would quietly measure
+        row-wise dispatch instead.
+        """
+        reached = []
+        real = _workflow_sweep.execute_sweep_rows_jax
+
+        def spy(**kwargs):
+            reached.append(1)
+            return real(**kwargs)
+
+        monkeypatch.setattr(_workflow_sweep, "execute_sweep_rows_jax", spy)
+
+        grid = RecordBatch(
+            {"x": jnp.arange(6.0).reshape(2, 3)},
+            "cell",
+            element_spec=EventTemplate(x=()),
+            axis_groups=((2, 3),),
+        )
+
+        mapped = Function(func=self._body, name="swept")(grid)
+        sequential = Function(func=self._body, name="swept", dispatch="sequential")(grid)
+
+        assert reached == [1]
+        assert mapped.level_names == ("cell", "k")
+        assert mapped.axis_groups == ((2, 3), (3,))
+        assert mapped.batch_shape == (2, 3, 3)
+        assert np.shape(mapped._raw_column("y")) == (2, 3, 3)
+        np.testing.assert_allclose(np.asarray(mapped["y"]), np.asarray(sequential["y"]))
+
+    def test_two_zip_groups_sweep_as_a_product(self):
+        """Two groups product, so the aggregate carries both sweep levels first.
 
         Group structure, not only total size: collapsing the sweep onto one flat
         leading axis agrees on ``batch_size`` and loses which axis belongs to
-        which level.
+        which level. Two array arguments take row-wise dispatch, so this pins
+        the aggregation rather than the mapped path.
         """
 
         def body(p, q):
