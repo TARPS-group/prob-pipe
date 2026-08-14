@@ -43,18 +43,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dispatches agree, which is what this restores; the bare-leaf presentation is
   the one three of the four paths already made.
 
-- **A law with no single event shape is probed rather than refused.** The
-  trace probe used to synthesize its dummy from `event_shape` and `dtype`, so a
-  law that has neither — a multi-field record-valued one — could not be probed
-  and was refused a JAX dispatch it can in fact take. The probe now draws
-  instead, and the draw supplies the structure.
+- **A law that cannot report its `dtype` is probed rather than refused.** The
+  trace probe read `event_shape` and `dtype` to size a synthetic dummy. Reading
+  `dtype` was itself the refusal: `getattr(law, "dtype", None)` swallows only
+  `AttributeError`, so a law raising anything else — a
+  `SequentialJointDistribution` view raises `NotImplementedError` — failed the
+  probe and was sent to row-wise dispatch for want of a placeholder. The probe
+  now draws a sample instead, and the draw carries both.
 
-  `dispatch="jax"` consequently accepts cases it used to reject, including
-  views of a `SequentialJointDistribution`: those build each component from a
-  Python callable, but that happens concretely while sampling, before the map,
-  so only the body is traced. The mapped result matches the row-wise one
-  exactly. An empirical law is unaffected, still enumerated so its exact
-  weights are preserved.
+  `dispatch="jax"` consequently accepts cases it used to reject, those views
+  above all. They build each component from a Python callable, which is indeed
+  not traceable, but that runs while sampling, before the map, so only the body
+  is traced; the mapped result matches the row-wise one exactly. An empirical
+  law is unaffected, still enumerated so its exact weights are preserved.
 
 - **A body that returns a batch no longer crashes the marginalization path.**
   Calling a `Function` whose body returns a `RecordBatch` with a `Distribution`
