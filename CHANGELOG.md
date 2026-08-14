@@ -663,8 +663,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   where the rule lives — in the term hierarchy rather than in four class bodies —
   and that turning it on for the rest is now a deletion.
 
-### Changed
-
 - **Immutability is one mixin, and a term reconstructs from its state (#395).**
   Four classes spelled out the same guard — three of them hardcoding a class name,
   so `NumericRecord` reported `Record` and `NumericEventTemplate` reported
