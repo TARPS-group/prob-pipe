@@ -13,6 +13,8 @@ name. The tests keep watch on all of them, since the difference is invisible fro
 outside and easy to lose.
 """
 
+from collections.abc import Mapping
+
 import jax.numpy as jnp
 import numpy as np
 
@@ -26,16 +28,35 @@ from probpipe import (
 from probpipe.core._broadcast_distributions import BroadcastDistribution
 
 
-def assigned_attributes(term) -> dict:
-    """The term's attributes, as a name -> id map; memo containers excluded.
+def assigned_state(term) -> dict:
+    """What the term holds, in the two ways a read could change it.
 
-    Identity rather than value: a lazily filled memo mutates its container in
-    place, which is invisible here, while assigning any attribute is not.
+    Each attribute maps to its value's identity — which catches an attribute
+    being *rebound* — paired with a shallow census of that value where the value
+    is a container, which catches one being edited *in place*. Identity alone
+    misses the second, and it is the likelier of the two: a lazy read that fills
+    a dictionary it already holds rebinds nothing.
+
+    The census is deliberately shallow and structural: keys and element
+    identities, not values. A distribution's leaves are jax arrays and other
+    terms, which have no cheap value equality, so this asserts that the
+    *arrangement* is untouched rather than that the numbers are.
+
+    ``_memo`` is excluded, being the one store a read is meant to fill.
     """
     state = object.__getstate__(term)
     instance_dict, slots = state if isinstance(state, tuple) else (state, {})
     both = {**(instance_dict or {}), **(slots or {})}
-    return {name: id(value) for name, value in both.items() if name != "_memo"}
+    return {name: (id(value), _census(value)) for name, value in both.items() if name != "_memo"}
+
+
+def _census(value):
+    """A shallow, structural snapshot of a container, or ``None`` for a leaf."""
+    if isinstance(value, Mapping):
+        return ("mapping", tuple(value), tuple(id(v) for v in value.values()))
+    if isinstance(value, (list, tuple)) and not isinstance(value, str):
+        return ("sequence", len(value), tuple(id(v) for v in value))
+    return None
 
 
 class _ScalarBackend:
@@ -50,6 +71,40 @@ class _ScalarBackend:
         return Normal(float(index), 1.0, name=f"c{index}")
 
 
+class TestTheCheckItself:
+    """The helper has to catch the kind of mutation these tests are about.
+
+    A lazy read that fills a container the term already holds rebinds nothing,
+    so a check comparing attribute identities alone passes straight through it.
+    """
+
+    def test_it_catches_an_edit_that_rebinds_nothing(self):
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+        )
+        name, container = next((n, v) for n, v in vars(joint).items() if isinstance(v, dict) and v)
+        before = assigned_state(joint)
+        container["injected"] = object()  # same dict object, new entry
+        assert assigned_state(joint) != before, f"an in-place edit to {name} went unseen"
+
+    def test_it_catches_a_rebound_attribute(self):
+        joint = SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+        )
+        before = assigned_state(joint)
+        object.__setattr__(joint, "_conditioned_names", ("z",))
+        assert assigned_state(joint) != before
+
+    def test_it_ignores_the_memo(self):
+        # The one store a read is meant to fill.
+        array = DistributionArray._from_backend(_ScalarBackend(3), name="x")
+        before = assigned_state(array)
+        assert array.components  # fills the memo
+        assert assigned_state(array) == before
+
+
 class TestAQueryLeavesTheTermUnchanged:
     def test_marginalizing_a_broadcast_distribution(self):
         broadcast = BroadcastDistribution(
@@ -58,9 +113,9 @@ class TestAQueryLeavesTheTermUnchanged:
             weights=None,
             broadcast_args=["x"],
         )
-        before = assigned_attributes(broadcast)
+        before = assigned_state(broadcast)
         first = broadcast.marginalize()
-        assert assigned_attributes(broadcast) == before
+        assert assigned_state(broadcast) == before
         # Still memoised: the second read returns the first result.
         assert broadcast.marginalize() is first
 
@@ -68,9 +123,9 @@ class TestAQueryLeavesTheTermUnchanged:
         # The backend-delegated array is the one that materialises on read; an
         # array built from a literal component list has them from the start.
         array = DistributionArray._from_backend(_ScalarBackend(3), name="x")
-        before = assigned_attributes(array)
+        before = assigned_state(array)
         first = array.components
-        assert assigned_attributes(array) == before
+        assert assigned_state(array) == before
         assert array.components is first
 
     def test_an_approximate_distribution_concatenates_at_construction(self):
@@ -79,9 +134,9 @@ class TestAQueryLeavesTheTermUnchanged:
         from probpipe.inference._approximate_distribution import ApproximateDistribution
 
         posterior = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], name="p")
-        before = assigned_attributes(posterior)
+        before = assigned_state(posterior)
         first = posterior._concat_chains()
-        assert assigned_attributes(posterior) == before
+        assert assigned_state(posterior) == before
         assert posterior._concat_chains() is first
 
     def test_a_tfp_product_distribution_builds_its_tfp_view_at_construction(self):
@@ -91,9 +146,9 @@ class TestAQueryLeavesTheTermUnchanged:
             a=Normal(0.0, 1.0, name="a"), b=Normal(1.0, 2.0, name="b"), name="j"
         )
         assert hasattr(joint, "_tfp_dist")
-        before = assigned_attributes(joint)
+        before = assigned_state(joint)
         _ = joint.event_shape
-        assert assigned_attributes(joint) == before
+        assert assigned_state(joint) == before
 
 
 class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
@@ -105,9 +160,9 @@ class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
         conditioned = condition_on(joint, z=jnp.asarray(2.0))
         # The result is complete when it is returned, and conditioning again
         # builds another result rather than editing this one.
-        before = assigned_attributes(conditioned)
+        before = assigned_state(conditioned)
         again = condition_on(joint, z=jnp.asarray(3.0))
-        assert assigned_attributes(conditioned) == before
+        assert assigned_state(conditioned) == before
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.
         assert set(joint.components) == {"z", "x"}

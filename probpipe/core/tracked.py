@@ -228,9 +228,10 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         rename is always a user choice). The copy's :attr:`provenance`
         records the rename, with the original as parent, so the lineage
         chain is preserved. On an ``Annotated`` host the annotations
-        *container* is copied (its entries are shared), so annotations
-        written after the rename land on one object without appearing on
-        the other.
+        *container* is its own (its entries are shared), so annotations
+        written after the rename land on one object without appearing on the
+        other — :meth:`_shallow_copy` does that, from the host's own
+        ``_decoupled_state`` declaration.
 
         This renames the object *itself*. To rename the named fields inside a
         structured object, use ``with_path_names`` on the named-tree types.
@@ -256,9 +257,6 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         object.__setattr__(clone, "_name", name)
         object.__setattr__(clone, "_name_is_auto", False)
         object.__setattr__(clone, "_provenance", None)
-        annotations = getattr(clone, "_annotations", None)
-        if annotations is not None:
-            object.__setattr__(clone, "_annotations", _decoupled_annotations(annotations))
         clone.with_provenance(
             Provenance.create(
                 "with_name",

@@ -174,8 +174,6 @@ def _copy_result_term(
         elif isinstance(clone, Record):
             object.__setattr__(clone, "_spec", _to_record_declaration(output_template))
     object.__setattr__(clone, "_provenance", None)
-    annotations = getattr(clone, "_annotations", None)
-    if annotations is not None:
-        copied = annotations.copy() if hasattr(annotations, "copy") else dict(annotations)
-        object.__setattr__(clone, "_annotations", copied)
+    # The annotations container is already the clone's own: ``_shallow_copy``
+    # decouples what the host declares in ``_decoupled_state``.
     return clone
