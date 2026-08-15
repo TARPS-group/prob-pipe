@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 
 from probpipe import ApproximateDistribution
-from probpipe.core.event_template import ArraySpec
+from probpipe.core.event_template import NumericArraySpec
 from probpipe.modeling import PyMCModel
 
 
@@ -297,8 +297,8 @@ class TestEventTemplate:
 
         tpl = PyMCModel(model_fn).event_template
         assert tpl.fields == ("intercept", "slope")
-        assert tpl["intercept"] == ArraySpec(())
-        assert tpl["slope"] == ArraySpec((3,))
+        assert tpl["intercept"] == NumericArraySpec(())
+        assert tpl["slope"] == NumericArraySpec((3,))
 
     def test_observed_rvs_excluded(self):
         """Observed variables are not part of the parameter template."""
@@ -330,8 +330,8 @@ class TestEventTemplate:
         # Declared (no-data) property: sentinel (1,) for alpha.
         tpl = model.event_template
         assert tpl.fields == ("intercept", "alpha")
-        assert tpl["intercept"] == ArraySpec(())
-        assert tpl["alpha"] == ArraySpec((1,))
+        assert tpl["intercept"] == NumericArraySpec(())
+        assert tpl["alpha"] == NumericArraySpec((1,))
         assert model.event_shape == (1 + 1,)
 
         # Template built from a data-conditioned build picks up the real
@@ -346,10 +346,10 @@ class TestEventTemplate:
         names = model._conditioned_param_names(conditioned)
         tpl_c = model._event_template_for(conditioned, names)
         assert tpl_c.fields == ("intercept", "alpha")
-        assert tpl_c["alpha"] == ArraySpec((N,))
+        assert tpl_c["alpha"] == NumericArraySpec((N,))
         assert not hasattr(model, "_last_conditioned_model")
         # Property still reports the declared shape (no hidden mutation).
-        assert model.event_template["alpha"] == ArraySpec((1,))
+        assert model.event_template["alpha"] == NumericArraySpec((1,))
 
     def test_data_dependent_shape_inference_recovers_correct_layout(self):
         """End-to-end: NUTS with a per-observation effect produces a

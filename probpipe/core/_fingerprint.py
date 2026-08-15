@@ -362,9 +362,9 @@ def _update_value_spec(
     """Hash a built-in ValueSpec by the declaration fields that define it."""
     from ._batch import BatchSpec
     from .event_template import (
-        ArraySpec,
         DistributionSpec,
         FunctionSpec,
+        NumericArraySpec,
         OpaqueSpec,
         RecordSpec,
     )
@@ -375,7 +375,7 @@ def _update_value_spec(
     h.update(b".")
     h.update(spec_type.__qualname__.encode())
     h.update(b":")
-    if isinstance(spec, ArraySpec):
+    if isinstance(spec, NumericArraySpec):
         _update(h, spec.shape, depth + 1, max_array_bytes, state)
         h.update(b":dtype=")
         _update(

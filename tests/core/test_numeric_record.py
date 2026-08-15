@@ -199,10 +199,11 @@ class TestConstruction:
         # common float across the mixed-dtype fields, and from_vector casts each
         # block back to its declared dtype. Before the cast + skeleton fix, the
         # int32 template made from_vector raise on the float32 placeholder.
-        from probpipe.core.event_template import ArraySpec, EventTemplate
+        from probpipe.core.event_template import EventTemplate, NumericArraySpec
 
         tpl = EventTemplate(
-            k=ArraySpec(shape=(3,), dtype=jnp.int32), x=ArraySpec(shape=(2,), dtype=jnp.float32)
+            k=NumericArraySpec(shape=(3,), dtype=jnp.int32),
+            x=NumericArraySpec(shape=(2,), dtype=jnp.float32),
         )
         nr = NumericRecord(
             "nr", k=jnp.array([1, 2, 3], dtype=jnp.int32), x=jnp.zeros(2), event_template=tpl

@@ -371,7 +371,7 @@ class NumericRecord(Record):
         """Reconstruct a single record from its dense 1-D vector.
 
         The value-level inverse of :meth:`to_vector`: splits *vec* into the
-        template's per-field blocks, reshapes each to its ``ArraySpec`` shape
+        template's per-field blocks, reshapes each to its ``NumericArraySpec`` shape
         in canonical leaf order, and returns a ``NumericRecord`` carrying
         *template* as its authoritative schema under the user-given *name*.
         The reconstructed leaves are bare ``jax.Array``\\ s — a flat vector
