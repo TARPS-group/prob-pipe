@@ -12,7 +12,7 @@ import jax.numpy as jnp
 
 from .._weights import Weights
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
-from ..core.event_template import ArraySpec, EventTemplate, NumericEventTemplate, OpaqueSpec
+from ..core.event_template import EventTemplate, NumericArraySpec, NumericEventTemplate, OpaqueSpec
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
@@ -20,13 +20,13 @@ from ..custom_types import Array, ArrayLike
 __all__ = ["ApproximateDistribution", "make_posterior"]
 
 
-def _spec_size(spec: ArraySpec | EventTemplate) -> int:
+def _spec_size(spec: NumericArraySpec | EventTemplate) -> int:
     """Number of scalar elements one field contributes to a flat vector.
 
     Given the spec of a single field of an :class:`EventTemplate`, return how
     many scalars that field occupies in the dense 1-D vector layout (see
     :meth:`~probpipe.NumericRecord.to_vector`): ``prod(shape)`` for an
-    :class:`ArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
+    :class:`NumericArraySpec`, or :attr:`~NumericEventTemplate.vector_size` for a
     nested :class:`NumericEventTemplate`. Summing this over a template's fields
     gives the template's own ``vector_size``; it is used here to size each
     field's contiguous column block when splitting a flat chain.
@@ -51,11 +51,11 @@ def _spec_size(spec: ArraySpec | EventTemplate) -> int:
             f"nested {type(spec).__name__} contains non-numeric leaves; "
             f"a flat size requires a NumericEventTemplate."
         )
-    if isinstance(spec, ArraySpec):
+    if isinstance(spec, NumericArraySpec):
         return prod(spec.shape) if spec.shape else 1
     raise TypeError(
         f"template field ({type(spec).__name__}) has no flat size; only numeric "
-        f"(ArraySpec) fields and nested NumericEventTemplate fields do."
+        f"(NumericArraySpec) fields and nested NumericEventTemplate fields do."
     )
 
 
@@ -252,8 +252,8 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     # ``(*sample_shape, nested_vector_size)``.
                     fields[field_name] = chunk
                 else:
-                    # ArraySpec leaf (opaque rejected above, nested handled).
-                    assert isinstance(spec, ArraySpec)
+                    # NumericArraySpec leaf (opaque rejected above, nested handled).
+                    assert isinstance(spec, NumericArraySpec)
                     shape = spec.shape
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size

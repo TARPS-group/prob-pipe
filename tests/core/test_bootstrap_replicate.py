@@ -18,7 +18,7 @@ from probpipe import (
     expectation,
     sample,
 )
-from probpipe.core.event_template import ArraySpec
+from probpipe.core.event_template import NumericArraySpec
 
 # ---------------------------------------------------------------------------
 # Construction
@@ -502,8 +502,8 @@ class TestValuesEmpiricalDistribution:
         emp = EmpiricalDistribution(values_data, name="x")
         tpl = emp.event_template
         assert tpl is not None
-        assert tpl["X"] == ArraySpec((3,))
-        assert tpl["y"] == ArraySpec(())
+        assert tpl["X"] == NumericArraySpec((3,))
+        assert tpl["y"] == NumericArraySpec(())
 
     def test_fields(self, values_data):
         emp = EmpiricalDistribution(values_data, name="x")
@@ -595,8 +595,8 @@ class TestValuesBootstrapReplicateDistribution:
     def test_event_template(self, bootstrap):
         tpl = bootstrap.event_template
         assert tpl is not None
-        assert tpl["X"] == ArraySpec((20, 3))
-        assert tpl["y"] == ArraySpec((20,))
+        assert tpl["X"] == NumericArraySpec((20, 3))
+        assert tpl["y"] == NumericArraySpec((20,))
 
     def test_fields(self, bootstrap):
         assert bootstrap.fields == ("X", "y")

@@ -85,10 +85,10 @@ from probpipe.core.distribution import (
     set_return_approx_dist,
 )
 from probpipe.core.event_template import (
-    ArraySpec,
     DistributionSpec,
     EventTemplate,
     FunctionSpec,
+    NumericArraySpec,
     NumericEventTemplate,
     OpaqueSpec,
     RecordSpec,
@@ -206,7 +206,6 @@ __all__ = [
     "ApproximateDistribution",
     "ArrayBackend",
     "ArrayRandomFunction",
-    "ArraySpec",
     "Batch",
     "BatchSpec",
     # Array-backend registry
@@ -270,6 +269,7 @@ __all__ = [
     "NegativeBinomial",
     # Continuous
     "Normal",
+    "NumericArraySpec",
     "NumericEventTemplate",
     "NumericJointEmpirical",
     "NumericRandomMeasure",

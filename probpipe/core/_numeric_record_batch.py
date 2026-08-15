@@ -37,7 +37,7 @@ from ._record_batch import (
     _record_element_spec,
     _unflatten_with,
 )
-from .event_template import ArraySpec, EventTemplate, NumericEventTemplate, RecordSpec
+from .event_template import EventTemplate, NumericArraySpec, NumericEventTemplate, RecordSpec
 from .provenance import Provenance
 
 __all__ = ["NumericRecordBatch"]
@@ -104,7 +104,7 @@ class NumericRecordBatch(RecordBatch):
         return template
 
     # ``_check_columns`` is not overridden: every field of a numeric template is
-    # an ``ArraySpec``, so the base already checks each column for a numeric
+    # an ``NumericArraySpec``, so the base already checks each column for a numeric
     # dtype the declaration admits.
 
     # -- single-field coercion ----------------------------------------------
@@ -268,7 +268,7 @@ class NumericRecordBatch(RecordBatch):
             # declares its own is cast back to it — otherwise the reconstruction
             # contradicts the very template it was rebuilt from.
             declared = template[key]
-            if isinstance(declared, ArraySpec) and declared.dtype is not None:
+            if isinstance(declared, NumericArraySpec) and declared.dtype is not None:
                 block = block.astype(declared.dtype)
             columns[key] = block
             offset += size

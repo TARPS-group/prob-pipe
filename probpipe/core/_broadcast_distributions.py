@@ -30,8 +30,8 @@ from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from .event_template import (
-    ArraySpec,
     EventTemplate,
+    NumericArraySpec,
     NumericEventTemplate,
     _full_array_shape_or_none,
 )
@@ -389,7 +389,7 @@ def _stack_declared_columns(
             # of two objects, not a numeric column whose second axis is another
             # multiplicity — reading it off the runtime shape states a batch
             # geometry the levels never described.
-            if isinstance(template[path], ArraySpec):
+            if isinstance(template[path], NumericArraySpec):
                 batched = jnp.stack(
                     [
                         _to_jax_array(value)
@@ -407,7 +407,7 @@ def _stack_declared_columns(
             # shape its values happened to have. The declared kind decides here
             # too, or that shape is read as a second multiplicity.
             batched = records[path]
-            if not isinstance(template[path], ArraySpec):
+            if not isinstance(template[path], NumericArraySpec):
                 batched = _packed_object_column(list(batched))
 
         shape = getattr(batched, "shape", ())
@@ -446,7 +446,7 @@ def _empty_declared_stack(
     """
     columns: dict[str, Any] = {}
     for path, spec in template.items():
-        if isinstance(spec, ArraySpec) and all(isinstance(size, int) for size in spec.shape):
+        if isinstance(spec, NumericArraySpec) and all(isinstance(size, int) for size in spec.shape):
             dtype = spec.dtype if spec.dtype is not None else jnp.zeros(()).dtype
             columns[path] = jnp.zeros((*batch_shape, *spec.shape), dtype=dtype)
         else:

@@ -93,7 +93,7 @@ keeps its dims / coords / attrs, a `pandas` object its index / columns /
 dtypes) and converts to `jax.Array` lazily at the compute boundary.
 Containers speaking the numpy protocol need no registration; registering an
 `ArrayBackend` makes any other container type a first-class numeric leaf —
-recognised by template inference and `ArraySpec.is_valid`, promoted,
+recognised by template inference and `NumericArraySpec.is_valid`, promoted,
 converted at the boundary, and fingerprinted by content.
 
 ::: probpipe.register_array_backend

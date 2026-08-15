@@ -20,10 +20,10 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ArraySpec,
     EventTemplate,
     Function,
     Normal,
+    NumericArraySpec,
     NumericRecord,
     OpaqueBatch,
     ProductDistribution,
@@ -96,7 +96,7 @@ class TestFunctionBoundary:
 
     def test_a_declared_output_template_checks_a_batch_column(self):
         batch = _draws()
-        declared = EventTemplate(a=ArraySpec((), dtype=jnp.int32), b=(2,))
+        declared = EventTemplate(a=NumericArraySpec((), dtype=jnp.int32), b=(2,))
 
         f = Function(func=lambda: batch, output_template=declared)
 
@@ -796,7 +796,7 @@ class TestATransformCannotRetypeTheElement:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(3, dtype=jnp.float32)},
             "draw",
-            element_spec=EventTemplate(x=ArraySpec((), dtype=jnp.float32)),
+            element_spec=EventTemplate(x=NumericArraySpec((), dtype=jnp.float32)),
         )
 
         with pytest.raises(TypeError, match="does not admit"):
@@ -808,7 +808,7 @@ class TestATransformCannotRetypeTheElement:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(3, dtype=jnp.float16)},
             "draw",
-            element_spec=EventTemplate(x=ArraySpec((), dtype=jnp.float32)),
+            element_spec=EventTemplate(x=NumericArraySpec((), dtype=jnp.float32)),
         )
 
         widened = jax.tree.map(lambda leaf: leaf.astype(jnp.float32), batch)
@@ -896,13 +896,15 @@ class TestBatchValuedRowAggregation:
     @staticmethod
     def _rows(n: int = 3):
         return NumericRecordBatch(
-            {"x": jnp.arange(float(n))}, "row", element_spec=EventTemplate(x=ArraySpec(shape=()))
+            {"x": jnp.arange(float(n))},
+            "row",
+            element_spec=EventTemplate(x=NumericArraySpec(shape=())),
         )
 
     @staticmethod
     def _inner(n: int, level: str = "inner"):
         return NumericRecordBatch(
-            {"y": jnp.zeros(n)}, level, element_spec=EventTemplate(y=ArraySpec(shape=()))
+            {"y": jnp.zeros(n)}, level, element_spec=EventTemplate(y=NumericArraySpec(shape=()))
         )
 
     def test_mixing_batch_and_non_batch_rows_is_refused(self):
@@ -931,7 +933,9 @@ class TestBatchValuedRowAggregation:
             if float(x["x"]) < 0.5:
                 return self._inner(2)
             return NumericRecordBatch(
-                {"z": jnp.zeros(2)}, "inner", element_spec=EventTemplate(z=ArraySpec(shape=()))
+                {"z": jnp.zeros(2)},
+                "inner",
+                element_spec=EventTemplate(z=NumericArraySpec(shape=())),
             )
 
         with pytest.raises(ValueError, match="returned batches that disagree"):

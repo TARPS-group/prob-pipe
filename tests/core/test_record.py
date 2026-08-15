@@ -363,15 +363,15 @@ class TestStorage:
         assert v.replace(z=jnp.array(2.0))["y"] is da
 
     def test_backend_leaf_gives_numeric_template(self):
-        # A native backend leaf infers an ArraySpec, so the template is
+        # A native backend leaf infers an NumericArraySpec, so the template is
         # numeric and stays in step with the record's promoted class.
-        from probpipe.core.event_template import ArraySpec, NumericEventTemplate
+        from probpipe.core.event_template import NumericArraySpec, NumericEventTemplate
 
         xr = pytest.importorskip("xarray")
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"])
         v = Record("r", y=da)
         assert isinstance(v.event_template, NumericEventTemplate)
-        assert v.event_template["y"] == ArraySpec((3,))
+        assert v.event_template["y"] == NumericArraySpec((3,))
 
 
 class TestNumericAPIOnRecord:
@@ -1177,11 +1177,11 @@ class TestSpecStorage:
     def test_the_spec_survives_a_pickle_roundtrip(self):
         import pickle
 
-        from probpipe.core.event_template import ArraySpec
+        from probpipe.core.event_template import NumericArraySpec
 
         # An explicit dtype is not recoverable by inference, so the spec must
         # be the thing that was serialized.
-        spec = RecordSpec(EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float32)))
+        spec = RecordSpec(EventTemplate(x=NumericArraySpec(shape=(), dtype=jnp.float32)))
         r = Record("r", {"x": jnp.asarray(1.0, dtype=jnp.float32)}, event_template=spec)
         rebuilt = pickle.loads(pickle.dumps(r))
         assert rebuilt.spec == spec
@@ -1214,9 +1214,9 @@ class TestEventTemplateStorage:
         assert r.event_template is r.event_template
 
     def test_explicit_template_returned_verbatim(self):
-        from probpipe.core.event_template import ArraySpec, EventTemplate
+        from probpipe.core.event_template import EventTemplate, NumericArraySpec
 
-        tpl = EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float32))
+        tpl = EventTemplate(x=NumericArraySpec(shape=(), dtype=jnp.float32))
         r = Record("r", {"x": jnp.asarray(1.0)}, event_template=tpl)
         assert r.event_template is tpl
 
@@ -1238,24 +1238,28 @@ class TestEventTemplateStorage:
         assert vec.shape[0] == nr.event_template.vector_size
 
     def test_equality_distinguishes_structurally_different_templates(self):
-        from probpipe.core.event_template import ArraySpec, EventTemplate
+        from probpipe.core.event_template import EventTemplate, NumericArraySpec
 
         # float32 data is same-kind valid against both a float32 spec (exact)
         # and a float64 spec (a widening), so both records construct; their
         # templates differ, so the records are unequal despite identical data.
         data = {"x": jnp.asarray(1.0, dtype=jnp.float32)}
         r_f32 = Record(
-            "r", dict(data), event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float32))
+            "r",
+            dict(data),
+            event_template=EventTemplate(x=NumericArraySpec(shape=(), dtype=jnp.float32)),
         )
         r_f64 = Record(
-            "r", dict(data), event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float64))
+            "r",
+            dict(data),
+            event_template=EventTemplate(x=NumericArraySpec(shape=(), dtype=jnp.float64)),
         )
         assert r_f32 != r_f64
         # Same data, both inferred -> equal templates -> equal records.
         assert Record("r", x=jnp.asarray(1.0)) == Record("r", x=jnp.asarray(1.0))
 
     def test_construction_enforces_leaf_shape_and_dtype(self):
-        from probpipe.core.event_template import ArraySpec, EventTemplate
+        from probpipe.core.event_template import EventTemplate, NumericArraySpec
 
         # A cross-kind dtype (a float value against an int-dtype spec) fails the
         # spec's is_valid -> construction raises.
@@ -1263,17 +1267,21 @@ class TestEventTemplateStorage:
             Record(
                 "r",
                 {"x": jnp.asarray(1.0, dtype=jnp.float32)},
-                event_template=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32)),
+                event_template=EventTemplate(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
             )
         # A shape mismatch also raises.
         with pytest.raises(ValueError, match="does not conform"):
-            Record("r", {"x": jnp.zeros(3)}, event_template=EventTemplate(x=ArraySpec(shape=(2,))))
+            Record(
+                "r",
+                {"x": jnp.zeros(3)},
+                event_template=EventTemplate(x=NumericArraySpec(shape=(2,))),
+            )
         # A same-kind cast (int value against a float spec) satisfies is_valid,
         # so construction succeeds.
         Record(
             "r",
             {"x": jnp.ones(2, dtype=jnp.int32)},
-            event_template=EventTemplate(x=ArraySpec(shape=(2,), dtype=jnp.float32)),
+            event_template=EventTemplate(x=NumericArraySpec(shape=(2,), dtype=jnp.float32)),
         )
 
     def test_pytree_roundtrip_threads_the_declaration(self):

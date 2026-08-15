@@ -14,7 +14,7 @@ from probpipe import (
     RecordEmpiricalDistribution,
     TransformedDistribution,
 )
-from probpipe.core.event_template import ArraySpec
+from probpipe.core.event_template import NumericArraySpec
 from probpipe.core.provenance import Provenance, provenance_ancestors
 from probpipe.distributions.kde import KDEDistribution
 
@@ -152,9 +152,9 @@ class TestWithNameEventTemplate:
 
     def test_template_shape_preserved(self):
         mvn = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="a")
-        assert mvn.event_template["a"] == ArraySpec((3,))
+        assert mvn.event_template["a"] == NumericArraySpec((3,))
         b = mvn.with_name("b")
-        assert b.event_template["b"] == ArraySpec((3,))
+        assert b.event_template["b"] == NumericArraySpec((3,))
 
 
 class TestNoBatchShape:

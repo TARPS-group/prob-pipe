@@ -46,7 +46,7 @@ from ._function_contract import (
 )
 from ._immutable import Immutable
 from ._record_batch import RecordBatch
-from .event_template import ArraySpec, EventTemplate, _concretize_event_template
+from .event_template import EventTemplate, NumericArraySpec, _concretize_event_template
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm, auto_name
 
@@ -973,7 +973,7 @@ class Function(Node, Immutable, TrackedTerm, Annotated):
     ) -> None:
         """Raise a clear error if explicit JAX dispatch cannot trace."""
         if self._output_template is not None and any(
-            isinstance(spec, ArraySpec) and spec.support is not None
+            isinstance(spec, NumericArraySpec) and spec.support is not None
             for spec in self._output_template.values()
         ):
             raise ValueError(

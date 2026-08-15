@@ -21,7 +21,7 @@ import jax.numpy as jnp
 
 from ..custom_types import Array, PRNGKey
 from ._distribution_base import Distribution
-from .event_template import ArraySpec, EventTemplate
+from .event_template import EventTemplate, NumericArraySpec
 from .protocols import (
     SupportsCovariance,
     SupportsLogProb,
@@ -38,7 +38,7 @@ __all__ = ["RecordDistribution", "_RecordDistributionView"]
 def _field_event_shape(template: EventTemplate, name: str) -> tuple[int, ...]:
     """Event shape of one top-level field of *template*.
 
-    An :class:`ArraySpec` field returns its array ``shape``; a nested
+    An :class:`NumericArraySpec` field returns its array ``shape``; a nested
     sub-structure or non-array (opaque / distribution / function) field has no
     single event shape and returns ``()``. This is a *distribution-side* view —
     "what is the per-field event shape of one draw?" — kept here rather than on
@@ -46,7 +46,7 @@ def _field_event_shape(template: EventTemplate, name: str) -> tuple[int, ...]:
     (:attr:`~probpipe.NumericEventTemplate.leaf_shapes`).
     """
     spec = template.children[name]
-    return spec.shape if isinstance(spec, ArraySpec) else ()
+    return spec.shape if isinstance(spec, NumericArraySpec) else ()
 
 
 # ---------------------------------------------------------------------------
@@ -233,7 +233,7 @@ class _RecordDistributionView(Distribution):
     @property
     def event_shape(self) -> tuple[int, ...]:
         f = self._template_field
-        if isinstance(f, ArraySpec):
+        if isinstance(f, NumericArraySpec):
             # Numeric array leaf — its event shape is the spec shape.
             return f.shape
         # Nested template / opaque / distribution / function leaf.

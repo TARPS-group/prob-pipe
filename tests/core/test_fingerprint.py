@@ -13,11 +13,11 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ArraySpec,
     DistributionSpec,
     EventTemplate,
     FunctionSpec,
     Normal,
+    NumericArraySpec,
     OpaqueSpec,
     Record,
     RecordSpec,
@@ -951,7 +951,7 @@ class TestValueSpecFingerprints:
     def test_every_spec_kind_is_reachable_by_the_hasher(self, tau):
         """Each kind hashes by declaration; none falls through to identity."""
         for spec in (
-            ArraySpec(()),
+            NumericArraySpec(()),
             OpaqueSpec(),
             RecordSpec(tau),
             DistributionSpec(tau),
