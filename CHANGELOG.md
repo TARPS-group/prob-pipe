@@ -659,7 +659,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   package do.
 
   Nothing changes for a caller: the classes that refuse assignment are the same
-  four families as before, and a distribution still accepts it. What changes is
+  four families as before, and a distribution still accepts assignment *and*
+  deletion, the exemption covering both. What changes is
   where the rule lives — in the term hierarchy rather than in four class bodies —
   and that turning it on for the rest is now a deletion.
 

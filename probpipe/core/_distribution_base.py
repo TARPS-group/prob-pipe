@@ -86,6 +86,10 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
 
     # -- Immutability: deferred for this layer ------------------------------
 
+    def __delattr__(self, name: str) -> None:
+        """Permit deletion, for the reason :meth:`__setattr__` gives."""
+        object.__delattr__(self, name)
+
     def __setattr__(self, name: str, value: Any) -> None:
         """Permit assignment, which :class:`TrackedTerm` otherwise refuses.
 

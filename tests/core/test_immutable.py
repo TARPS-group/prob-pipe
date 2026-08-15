@@ -304,15 +304,26 @@ class TestEveryTrackedTermIsImmutable:
         ]
         assert exempt == [Distribution.__name__]
 
-    def test_a_distribution_still_accepts_assignment(self):
+    def test_a_distribution_still_accepts_assignment_and_deletion(self):
         # The interim exemption, asserted rather than assumed: training an
         # emulator in place is the documented pattern until fitting has a
-        # contract that returns a new term instead.
+        # contract that returns a new term instead. Both operations, since an
+        # exemption covering only assignment would still break a trainer that
+        # clears what it fitted.
         from probpipe import Normal
 
         term = Normal(0.0, 1.0, name="x")
         term._trained = True
         assert term._trained is True
+        del term._trained
+        assert not hasattr(term, "_trained")
+
+    def test_a_term_outside_that_layer_refuses_both(self):
+        term = Record("r", {"x": jnp.ones(2)})
+        with pytest.raises(AttributeError, match="Record is immutable"):
+            term.attribute = 1
+        with pytest.raises(AttributeError, match="Record is immutable"):
+            del term._name
 
     def test_a_term_outside_that_layer_refuses_assignment_and_names_itself(self):
         term = RecordBatch.stack(
@@ -340,24 +351,35 @@ class TestTheConstructionWindow:
         with pytest.raises(TypeError, match="should return None"):
             Returning()
 
-    def test_it_closes_when_the_constructor_raises(self):
+    def test_it_closes_when_a_constructor_raises(self):
+        # Through the metaclass rather than by opening the window by hand: what
+        # is under test is that ``_TrackedTermMeta.__call__`` closes the window
+        # on the way out of a failing ``__init__``. The half-built object is
+        # kept from ``__new__``, since the failed call returns nothing.
         from probpipe.core._immutable import _constructing_now
+        from probpipe.core.tracked import TrackedTerm
 
-        class Failing(Immutable):
-            __slots__ = ("value",)
+        built = []
+
+        class Failing(TrackedTerm):
+            def __new__(cls):
+                instance = super().__new__(cls)
+                built.append(instance)
+                return instance
 
             def __init__(self):
-                object.__setattr__(self, "value", 1)
+                self._init_tracked("failing")
+                self.partial = 1
                 raise ValueError("no")
 
-        from probpipe.core._immutable import constructing
+        with pytest.raises(ValueError, match="no"):
+            Failing()
 
-        instance = object.__new__(Failing)
-        with pytest.raises(ValueError), constructing(instance):
-            instance.__init__()
+        (half_built,) = built
+        assert half_built.partial == 1  # the constructor got that far
         assert _constructing_now() == {}
         with pytest.raises(AttributeError, match="Failing is immutable"):
-            instance.value = 2
+            half_built.partial = 2
 
     def test_it_covers_one_instance_and_not_another(self):
         from probpipe.core._immutable import constructing
