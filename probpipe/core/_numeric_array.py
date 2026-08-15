@@ -8,6 +8,7 @@ from __future__ import annotations
 import operator
 from typing import Any
 
+import jax
 import numpy as np
 
 from ._array_backend import _to_jax_array
@@ -236,3 +237,32 @@ _install_array_operators()
 # ``__eq__`` is elementwise, so the inherited ``__hash__`` would be a false
 # promise: two values comparing "equal" produce an array, not a bool.
 NumericArray.__hash__ = None  # type: ignore[assignment]
+
+
+# ---------------------------------------------------------------------------
+# JAX PyTree registration
+# ---------------------------------------------------------------------------
+
+
+def _numeric_array_flatten(value: NumericArray) -> tuple[list, tuple[str, bool, Any]]:
+    """Flatten for JAX traversal: the array, keyed by the identity and support.
+
+    The **shape and dtype are not aux**, unlike a ``Record``'s template. A
+    ``NumericArray``'s spec is exactly its array's shape and dtype, so a
+    transform that changes either leaves the spec re-derivable from what
+    arrives — an exact reading, not the guess the record types must refuse.
+    What cannot be re-derived is the declared ``support``, which rides along.
+    """
+    return [value._value], (value._name, value._name_is_auto, value._spec.support)
+
+
+def _numeric_array_unflatten(aux: tuple[str, bool, Any], children: list) -> NumericArray:
+    name, name_is_auto, support = aux
+    (array,) = children
+    spec = None
+    if support is not None and hasattr(array, "shape") and hasattr(array, "dtype"):
+        spec = NumericArraySpec(shape=tuple(array.shape), dtype=array.dtype, support=support)
+    return NumericArray(array, name=name, name_is_auto=name_is_auto, spec=spec)
+
+
+jax.tree_util.register_pytree_node(NumericArray, _numeric_array_flatten, _numeric_array_unflatten)
