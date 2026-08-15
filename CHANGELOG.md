@@ -25,8 +25,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   dtype state it exactly.
 
   `NumericArrayBatch` stores one array with the batch axes leading and splits
-  them from the event axes by its element spec. Selection yields a `NumericArray`
-  under the derived name, as `RecordBatch` yields a `Record`.
+  them from the event axes by its element spec, which it validates the stored
+  dtype against at construction — the batch asserts that spec of every element.
+  Selection yields a `NumericArray` under the derived name, as `RecordBatch`
+  yields a `Record`.
+
+- **`ArrayBackend.take` — positional selection for a native container.** `[]` is
+  positional on a numpy-protocol container and reads *labels* on a `pandas` one,
+  so a batch stored as a `DataFrame` could not address its own elements. Backends
+  now declare how to select by position, defaulting to `obj[index]`; the built-in
+  `pandas` backends select through `.iloc`.
 
 ### Changed
 
