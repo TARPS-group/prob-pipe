@@ -104,7 +104,7 @@ class NumericRecordBatch(RecordBatch):
         return template
 
     # ``_check_columns`` is not overridden: every field of a numeric template is
-    # an ``NumericArraySpec``, so the base already checks each column for a numeric
+    # a ``NumericArraySpec``, so the base already checks each column for a numeric
     # dtype the declaration admits.
 
     # -- single-field coercion ----------------------------------------------

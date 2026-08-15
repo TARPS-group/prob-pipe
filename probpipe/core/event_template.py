@@ -52,7 +52,7 @@ class is a term spec therefore names a kind. The concrete specs are as follows:
 Numeric vs. Mixed
 -----------------
 
-When every field is an ``NumericArraySpec`` the template is all-numeric, and
+When every field is a ``NumericArraySpec`` the template is all-numeric, and
 ``EventTemplate(...)`` auto-promotes to :class:`NumericEventTemplate` — the
 specialization describing a value that is a PyTree of arrays. That subclass
 adds the flat-vector layout — ``vector_size`` and :meth:`from_vector`
@@ -700,7 +700,7 @@ class FunctionSpec(TermSpec):
     meaningful, matching :class:`DistributionSpec`.
 
     The output declaration is any value specification, so a callable may
-    declare a raw-value result as well as a term: an ``NumericArraySpec`` output
+    declare a raw-value result as well as a term: a ``NumericArraySpec`` output
     declares one array. A term declaration names its kind by its class, while a
     raw-value declaration types the value the wrap boundary then places in a
     single-field ``Record``, keyed by the ``Function``'s name.
@@ -1420,7 +1420,7 @@ class NumericEventTemplate(EventTemplate):
                 for sub_name, sub_shape in spec.leaf_shapes.items():
                     result[f"{name}{_PATH_SEP}{sub_name}"] = sub_shape
             else:
-                # ``_post_validate`` guarantees a non-nested spec is an NumericArraySpec.
+                # ``_post_validate`` guarantees a non-nested spec is a NumericArraySpec.
                 result[name] = spec.shape
         return result
 
@@ -1433,7 +1433,7 @@ class NumericEventTemplate(EventTemplate):
             if isinstance(spec, NumericEventTemplate):
                 total += spec.vector_size
             else:
-                # spec is an NumericArraySpec — validated by ``_post_validate``.
+                # spec is a NumericArraySpec — validated by ``_post_validate``.
                 total += prod(spec.shape) if spec.shape else 1
         return total
 
