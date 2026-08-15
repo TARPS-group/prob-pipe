@@ -361,11 +361,11 @@ def _update_value_spec(
 ) -> None:
     """Hash a built-in ValueSpec by the declaration fields that define it."""
     from ._batch import BatchSpec
+    from ._opaque import OpaqueSpec
     from .event_template import (
         DistributionSpec,
         FunctionSpec,
         NumericArraySpec,
-        OpaqueSpec,
         RecordSpec,
     )
 

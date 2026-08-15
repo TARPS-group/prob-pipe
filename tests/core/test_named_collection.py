@@ -12,7 +12,8 @@ import numpy as np
 import pytest
 
 from probpipe import EventTemplate, NumericRecord, NumericRecordBatch, Record
-from probpipe.core.event_template import NumericArraySpec, NumericEventTemplate, OpaqueSpec
+from probpipe.core._opaque import OpaqueSpec
+from probpipe.core.event_template import NumericArraySpec, NumericEventTemplate
 
 # ---------------------------------------------------------------------------
 # Construction: path-keyed unflattening and its error cases
