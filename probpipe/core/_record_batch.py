@@ -42,13 +42,13 @@ from ._array_backend import _is_numeric_dtype, _to_jax_array
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._function_batch import FunctionBatch
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
+from ._opaque import OpaqueSpec
 from ._opaque_batch import OpaqueBatch
 from .event_template import (
     EventTemplate,
     FunctionSpec,
     NumericArraySpec,
     NumericEventTemplate,
-    OpaqueSpec,
     RecordSpec,
     ValueSpec,
     _record_declaration_template,

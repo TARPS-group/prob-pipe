@@ -44,7 +44,7 @@ from probpipe.core._numeric_array import NumericArray
 from probpipe.core._numeric_array_batch import NumericArrayBatch
 from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
-from probpipe.core._opaque import Opaque
+from probpipe.core._opaque import Opaque, OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core._workflow_context import workflow_run
@@ -100,7 +100,6 @@ from probpipe.core.event_template import (
     FunctionSpec,
     NumericArraySpec,
     NumericEventTemplate,
-    OpaqueSpec,
     RecordSpec,
     TermSpec,
     ValueSpec,
