@@ -643,12 +643,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and the §V.1 promise that an implementer's object is never modified, enforced
   rather than documented. Four classes enforced it individually before.
 
-  **The distribution layer is exempt for now.** `Distribution` permits
-  assignment, because the documented way to build an emulator is to subclass a
+  **The distribution layer is exempt for now.** `Distribution` permits assignment
+  and deletion, because the documented way to build an emulator is to subclass a
   random function and train it in place, and fitting has no contract yet that
-  returns a new term instead. That is one method with one docstring, and deleting
-  it turns the guard on for the other seventy-two classes; a test asserts it is
-  the *only* exemption, so a second cannot appear quietly.
+  returns a new term instead. That is two overrides — `__setattr__` and
+  `__delattr__` — and removing both turns the guard on for the other
+  seventy-two classes; removing one would leave half an exemption. A test
+  asserts `Distribution` is the *only* exempt class, so a second cannot appear
+  quietly.
 
   Construction is unaffected: it runs inside a per-instance window the
   `TrackedTerm` metaclass opens, so a host's `__init__` assigns normally and no

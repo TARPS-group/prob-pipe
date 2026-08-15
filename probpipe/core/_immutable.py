@@ -11,10 +11,12 @@ being one (``C2 – Functional interface over immutable objects``);
 immutable without being a term.
 
 One layer is exempt for now:
-:class:`~probpipe.core._distribution_base.Distribution` permits assignment, since
-the documented way to build an emulator is to subclass a random function and
-train it in place, and fitting has no contract yet that returns a new term
-instead. Deleting that one method turns the guard on for the layer.
+:class:`~probpipe.core._distribution_base.Distribution` permits assignment and
+deletion, since the documented way to build an emulator is to subclass a random
+function and train it in place, and fitting has no contract yet that returns a
+new term instead. Deleting **both** of its overrides — ``__setattr__`` and
+``__delattr__`` — turns the guard on for the layer; dropping one leaves half an
+exemption, which is how it was first written.
 
 A constructor still has to write, so construction runs inside
 :func:`constructing`, a per-instance window in which assignment is allowed.
