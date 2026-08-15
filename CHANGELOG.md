@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Design: every value spec has a tracked class (#398).** `ArraySpec` gains
+  `NumericArray` and `NumericArrayBatch`, `OpaqueSpec` gains `Opaque` beside its
+  existing `OpaqueBatch`, so every value spec has one tracked class and one batch
+  form and no kind is presented by wrapping it in another. An array-valued result
+  is a `NumericArray` rather than a single-field `Record`.
+
+  `ArraySpec` is renamed **`NumericArraySpec`** so the spec and its class agree,
+  as `RecordSpec`/`Record` and `OpaqueSpec`/`Opaque` do. In the design only for
+  now: `ArraySpec` is public API, so the code rename lands with the class it
+  names.
+
+  Documentation only — no code changes. Amends II.2, III.1, III.2, III.5, IV.2,
+  and V.2, closes IV.2's *Single-value presentation* open point, and retires
+  III.2's single-field coercion shim.
+
 ### Removed (breaking)
 
 - **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
