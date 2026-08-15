@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Self
 
-from ._array_backend import _to_jax_array
+from ._array_backend import _event_shape_of, _is_numeric_leaf
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._numeric_array import NumericArray
 from .event_template import NumericArraySpec
@@ -28,6 +28,8 @@ class NumericArrayBatch(Batch[NumericArray]):
     ----------
     values : array-like
         One array holding every element, shaped ``(*batch_shape, *event_shape)``.
+        Stored verbatim in its native form, as a :class:`NumericArray`'s value
+        is, so a lazy or disk-backed column is not materialised to be batched.
     level_names : str or iterable of str
         One name per level, outermost first; a single string names one level.
     element_spec : NumericArraySpec
@@ -87,14 +89,11 @@ class NumericArrayBatch(Batch[NumericArray]):
                 f"a symbolic dimension gives the event shape no size to split the stored "
                 f"axes by; bind {element_spec.shape} with with_dims before batching"
             )
-        try:
-            array = _to_jax_array(values)
-        except Exception as exc:
+        if not _is_numeric_leaf(values):
             raise TypeError(
-                f"NumericArrayBatch stores one array; {type(values).__name__} does not convert"
-            ) from exc
-
-        stored = tuple(array.shape)
+                f"NumericArrayBatch stores one array; {type(values).__name__} is not a numeric leaf"
+            )
+        stored = _event_shape_of(values)
         n_event = len(event_shape)
         if n_event and stored[len(stored) - n_event :] != event_shape:
             raise ValueError(
@@ -113,7 +112,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         groups = _axis_groups_for(batch_shape, names, axis_groups, kind="NumericArrayBatch")
         if name is None:
             name, name_is_auto = "numericarraybatch", True
-        object.__setattr__(self, "_values", array)
+        object.__setattr__(self, "_values", values)
         self._init_batch(
             BatchSpec(element_spec, groups, names),
             name=name,
@@ -132,12 +131,12 @@ class NumericArrayBatch(Batch[NumericArray]):
 
     @property
     def values(self) -> Any:
-        """The stored array, batch axes leading. Untracked."""
+        """The stored array, batch axes leading, in native form. Untracked."""
         return self._values
 
     @property
     def dtype(self) -> Any:
-        return self._values.dtype
+        return self.element_spec.dtype
 
     def __repr__(self) -> str:
         return (
@@ -174,7 +173,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         are already decided, and re-deriving them from the view's own shape
         would lose the levels a dropped axis came from.
         """
-        view = object.__new__(type(self))
+        view = object.__new__(self._view_type)
         object.__setattr__(view, "_values", self._values[index])
         view._init_batch(spec, name=name, name_is_auto=True)
         return view

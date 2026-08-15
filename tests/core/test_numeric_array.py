@@ -45,6 +45,51 @@ class TestNumericArrayHoldsOneValue:
             NumericArray(jnp.arange(3.0), spec="not a spec")
 
 
+class TestNumericArrayStoresNativeForm:
+    """Construction validates without converting, as `NumericRecord` does.
+
+    A lazy or disk-backed value is not materialised merely to be named, and a
+    container's own metadata is not discarded.
+    """
+
+    def test_an_array_is_stored_verbatim(self):
+        raw = np.arange(3.0)
+
+        assert NumericArray(raw).value is raw
+
+    def test_a_container_keeps_its_own_metadata(self):
+        xr = pytest.importorskip("xarray")
+        data = xr.DataArray(np.arange(3.0), dims=["t"], coords={"t": [10, 20, 30]})
+
+        stored = NumericArray(data).value
+
+        assert isinstance(stored, xr.DataArray)
+        assert list(stored.coords) == ["t"]
+
+    def test_the_spec_is_read_from_metadata(self):
+        assert NumericArray(np.arange(3.0)).shape == (3,)
+
+    def test_a_bare_scalar_is_normalised(self):
+        """It carries no metadata to read, so it is the one thing converted."""
+        assert isinstance(NumericArray(2.5).value, jax.Array)
+
+    def test_conversion_happens_once_and_is_memoised(self):
+        value = NumericArray(np.arange(3.0))
+
+        assert isinstance(value.as_jax(), jax.Array)
+        assert value.as_jax() is value.as_jax()
+
+    def test_the_pytree_boundary_presents_a_bare_array(self):
+        """One of the compute boundaries native form converts at."""
+        (leaf,) = jax.tree_util.tree_leaves(NumericArray(np.arange(3.0)))
+
+        assert isinstance(leaf, jax.Array)
+
+    def test_a_non_numeric_value_is_refused(self):
+        with pytest.raises(TypeError, match="is not a numeric leaf"):
+            NumericArray("not numeric")
+
+
 class TestNumericArrayCarriesIdentity:
     def test_a_name_is_kept_and_marked_user_given(self):
         value = NumericArray(jnp.arange(3.0), name="draw")
@@ -98,6 +143,13 @@ class TestNumericArrayComputesAsAnArray:
 
         assert not isinstance(result, NumericArray)
         assert isinstance(result, jax.Array)
+
+    def test_arithmetic_returns_the_stored_types_own_result(self):
+        """The operators forward to the value, so a numpy-backed one stays numpy."""
+        result = NumericArray(np.arange(3.0)) + 1
+
+        assert isinstance(result, np.ndarray)
+        assert not isinstance(result, jax.Array)
 
     def test_it_computes_the_same_values_as_the_array_it_holds(self):
         raw = jnp.arange(3.0)
@@ -220,6 +272,28 @@ class TestNumericArrayBatchSelection:
     def test_an_element_carries_the_batch_element_spec(self):
         assert _batch()[1].spec == _batch().element_spec
 
+    def test_a_sub_batch_takes_the_declared_view_type(self):
+        """`Batch._view_type` is the hook a subclass overrides to shed its state.
+
+        Reaching for ``type(self)`` instead would hand such a subclass a view
+        claiming to answer for state the view never received.
+        """
+
+        class _Derived(NumericArrayBatch):
+            __slots__ = ()
+
+            @property
+            def _view_type(self) -> type:
+                return NumericArrayBatch
+
+        derived = _Derived(
+            jnp.arange(12.0).reshape(4, 3),
+            "draw",
+            element_spec=NumericArraySpec(shape=(3,), dtype=jnp.float32),
+        )
+
+        assert type(derived[1:3]) is NumericArrayBatch
+
     def test_a_slice_is_a_sub_batch(self):
         sub = _batch(name="posterior")[1:3]
 
@@ -311,6 +385,27 @@ class TestNumericArrayIsAPyTree:
         rebuilt = jax.tree_util.tree_map(lambda x: x, value)
 
         assert rebuilt.spec.support == positive
+
+    def test_a_skeleton_rebuilds_rather_than_raising(self):
+        """JAX unflattens with whatever it carries, which is not always an array.
+
+        Mapping a tree to ``None`` builds a skeleton, and internal traversals
+        pass sentinels. Constructing here would convert and validate, so both
+        would raise instead of rebuilding.
+        """
+        value = NumericArray(jnp.arange(3.0), name="draw")
+
+        skeleton = jax.tree_util.tree_map(lambda x: None, value)
+
+        assert isinstance(skeleton, NumericArray)
+        assert skeleton.name == "draw"
+
+    def test_a_sentinel_child_rebuilds(self):
+        _, treedef = jax.tree_util.tree_flatten(NumericArray(jnp.arange(3.0)))
+
+        rebuilt = jax.tree_util.tree_unflatten(treedef, [object()])
+
+        assert isinstance(rebuilt, NumericArray)
 
     def test_provenance_does_not_survive_the_boundary(self):
         """As for `Record`: lineage rides on the function layer, not the treedef."""
