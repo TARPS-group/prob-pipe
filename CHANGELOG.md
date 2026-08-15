@@ -95,11 +95,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   later change.
 
   `NumericArray` holds one array and carries no batch axes, so its `shape` is the
-  event shape. It carries the full array surface, and **arithmetic on it yields a
-  bare array** — identity is attached by operations, and arithmetic is not one.
-  It is a registered pytree, which is what lets it cross a `jit` or `vmap`
-  boundary; its spec is re-derived from the array that arrives, since a shape and
-  a dtype state it exactly.
+  event shape. Construction **validates without converting** — the value is stored
+  in its native form and materialises at most once, at the compute boundary — the
+  rule `NumericRecord` already follows for its leaves. It carries the full array
+  surface, and **arithmetic yields a bare value of the stored type**: identity is
+  attached by operations, and arithmetic is not one. It is a registered pytree,
+  which is what lets it cross a `jit` or `vmap` boundary; the boundary presents a
+  bare array, and its spec is re-derived from what arrives, since a shape and a
+  dtype state it exactly.
 
   `NumericArrayBatch` stores one array with the batch axes leading and splits
   them from the event axes by its element spec. Selection yields a `NumericArray`
