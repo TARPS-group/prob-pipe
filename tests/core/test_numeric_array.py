@@ -85,6 +85,20 @@ class TestNumericArrayStoresNativeForm:
 
         assert isinstance(leaf, jax.Array)
 
+    def test_dtype_reports_the_value_not_the_declaration(self):
+        """The shim stands in for an array, and an array's dtype is its data's.
+
+        ``is_valid`` admits a same-kind cast, so the two can differ; the
+        declaration stays reachable as ``.spec``.
+        """
+        value = NumericArray(
+            jnp.zeros(3, dtype=jnp.float32),
+            spec=NumericArraySpec(shape=(3,), dtype=jnp.float64),
+        )
+
+        assert value.dtype == jnp.float32
+        assert value.spec.dtype == jnp.float64
+
     def test_a_non_numeric_value_is_refused(self):
         with pytest.raises(TypeError, match="is not a numeric leaf"):
             NumericArray("not numeric")
@@ -305,6 +319,47 @@ class TestNumericArrayBatchSelection:
         assert [type(e) for e in _batch()] == [NumericArray] * 4
 
 
+class TestNumericArrayBatchOverNativeContainers:
+    """Selection is positional, which `[]` is not on every container."""
+
+    @staticmethod
+    def _frame():
+        pd = pytest.importorskip("pandas")
+        return pd.DataFrame(np.arange(12.0).reshape(4, 3))
+
+    def test_an_element_selects_by_position_not_by_label(self):
+        """``df[0]`` is a column; the element is the row at position 0."""
+        batch = NumericArrayBatch(
+            self._frame(), "draw", element_spec=NumericArraySpec(shape=(3,), dtype=np.float64)
+        )
+
+        element = batch[1]
+
+        assert isinstance(element, NumericArray)
+        assert element.shape == (3,)
+        np.testing.assert_array_equal(np.asarray(element), np.array([3.0, 4.0, 5.0]))
+
+    def test_a_sub_batch_selects_by_position(self):
+        batch = NumericArrayBatch(
+            self._frame(), "draw", element_spec=NumericArraySpec(shape=(3,), dtype=np.float64)
+        )
+
+        sub = batch[1:3]
+
+        assert isinstance(sub, NumericArrayBatch)
+        assert sub.batch_shape == (2,)
+
+    def test_the_container_is_still_stored_verbatim(self):
+        pd = pytest.importorskip("pandas")
+        frame = self._frame()
+
+        batch = NumericArrayBatch(
+            frame, "draw", element_spec=NumericArraySpec(shape=(3,), dtype=np.float64)
+        )
+
+        assert isinstance(batch.values, pd.DataFrame)
+
+
 class TestNumericArrayBatchRefusals:
     def test_a_stored_array_with_no_batch_axis_is_refused(self):
         """One value is a NumericArray; a batch has at least one batch axis."""
@@ -335,6 +390,29 @@ class TestNumericArrayBatchRefusals:
             NumericArrayBatch(
                 object(), "draw", element_spec=NumericArraySpec(shape=(), dtype=jnp.float32)
             )
+
+    def test_a_dtype_the_declaration_does_not_admit_is_refused(self):
+        """The batch asserts the spec of every element, so it checks at build.
+
+        Left to the first selection, ``NumericArray`` raises one layer too late
+        to name the batch that made the false claim.
+        """
+        with pytest.raises(TypeError, match="does not admit"):
+            NumericArrayBatch(
+                jnp.zeros((2, 3), dtype=jnp.float32),
+                "draw",
+                element_spec=NumericArraySpec(shape=(3,), dtype=jnp.int32),
+            )
+
+    def test_a_same_kind_dtype_is_admitted(self):
+        """A widening or within-kind narrowing passes, as it does for a record."""
+        batch = NumericArrayBatch(
+            jnp.zeros((2, 3), dtype=jnp.float32),
+            "draw",
+            element_spec=NumericArraySpec(shape=(3,), dtype=jnp.float64),
+        )
+
+        assert batch.batch_shape == (2,)
 
     def test_an_element_spec_of_another_kind_is_refused(self):
         with pytest.raises(TypeError, match="must be a NumericArraySpec"):
