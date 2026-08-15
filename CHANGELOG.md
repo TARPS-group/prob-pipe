@@ -106,7 +106,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `NumericArrayBatch` stores one array with the batch axes leading and splits
   them from the event axes by its element spec, which it validates the stored
-  dtype against at construction — the batch asserts that spec of every element.
+  dtype against at construction — the batch asserts that spec of every element,
+  so a store that reports no single dtype cannot carry a pinned one either.
   Selection yields a `NumericArray` under the derived name, as `RecordBatch`
   yields a `Record`.
 

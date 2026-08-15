@@ -18,7 +18,6 @@ from ._array_backend import (
     _to_jax_array,
     _to_numpy_array,
 )
-from ._immutable import Immutable
 from .event_template import NumericArraySpec
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm, auto_name
@@ -26,7 +25,7 @@ from .tracked import Annotated, TrackedTerm, auto_name
 __all__ = ["NumericArray"]
 
 
-class NumericArray(Immutable, TrackedTerm, Annotated):
+class NumericArray(TrackedTerm, Annotated):
     """One numeric array value, with identity.
 
     The tracked class of the numeric-array kind, as :class:`~probpipe.Record` is
@@ -38,11 +37,10 @@ class NumericArray(Immutable, TrackedTerm, Annotated):
     Parameters
     ----------
     value : array-like
-        The array this names. **Stored verbatim in its native form** — a bare
-        array, an ``xarray`` / ``pandas`` container, or any registered backend —
-        so a lazy or disk-backed value is not materialised to be named. A bare
-        Python scalar carries no metadata and is normalised to a 0-d
-        ``jax.Array``.
+        The array this names, stored verbatim in its native form: a bare array,
+        an ``xarray`` / ``pandas`` container, or any registered backend, so a
+        lazy or disk-backed value stays lazy. A bare Python scalar carries no
+        metadata to read and is normalised to a 0-d ``jax.Array``.
     name : str, optional
         The value's name. Defaults to ``"numericarray"``, marked auto-derived.
     name_is_auto : bool, default False
@@ -64,21 +62,16 @@ class NumericArray(Immutable, TrackedTerm, Annotated):
 
     Notes
     -----
-    Construction **validates without converting**, reading container metadata
-    only. Conversion to ``jax.Array`` happens at the compute boundary — the
-    pytree flatten that ``jit`` / ``vmap`` / ``grad`` traverse, and the explicit
-    conversion hooks — through a set-once cache, so the value materialises at
-    most once per instance. This is the storage rule
+    Construction validates against metadata alone, so the value materialises at
+    most once per instance and only at a compute boundary — the storage rule
     :class:`~probpipe.NumericRecord` follows for its leaves.
 
-    **Arithmetic yields a bare array**, not a ``NumericArray``. Identity is
-    attached by operations, and arithmetic is not one: a ``NumericArray`` is
-    what an operation hands back and what a caller computes *from*. The full
-    array surface is here — arithmetic, comparison, and the conversion hooks —
-    because with no fields and no field count ``arr + 1`` has exactly one
-    meaning, which is what lets :class:`~probpipe.Record` stay a container and
-    carry none of it. The operators forward to the stored value, so they return
-    **its** type: arithmetic on a numpy-backed one yields ``numpy``.
+    It carries the full array surface: arithmetic, comparison, and the
+    conversion hooks. With one value and no fields, ``arr + 1`` has a single
+    meaning, which is what lets :class:`~probpipe.Record` stay a container.
+    The operators forward to the stored value and return what it returns, so
+    arithmetic on a numpy-backed one yields ``numpy``, and identity stays with
+    the operations that attach it.
 
     Examples
     --------
@@ -147,9 +140,9 @@ class NumericArray(Immutable, TrackedTerm, Annotated):
     def as_jax(self) -> Any:
         """The value as a ``jax.Array`` — the single conversion point.
 
-        A value already stored as one (a tracer inside a transform included)
-        passes through; a native container converts through its registered
-        backend exactly once, memoised for this instance.
+        A value already stored as one passes through, tracers included; a
+        native container converts through its registered backend once and is
+        memoised for this instance.
         """
         if isinstance(self._value, jax.Array):
             return self._value
@@ -173,13 +166,10 @@ class NumericArray(Immutable, TrackedTerm, Annotated):
     def dtype(self) -> Any:
         """The stored value's dtype, or ``None`` when it has no single one.
 
-        The **value's**, not the declaration's, as for a single-field
-        ``NumericRecord``. These two can differ: ``is_valid`` admits a same-kind
-        cast, so a float32 value satisfies a float64 declaration. This shim
-        exists so a ``NumericArray`` can stand in for an array, and on an array
-        ``.dtype`` describes the data — a caller sizing a buffer or branching on
-        it must not be told the declaration instead. The declaration is
-        :attr:`spec`, and comparing the two is what makes the tolerance visible.
+        The value's rather than the declaration's, as for a single-field
+        ``NumericRecord``: a caller sizing a buffer or branching on the dtype is
+        asking about the data. The two can differ, since ``is_valid`` admits a
+        same-kind cast; :attr:`spec` carries the declaration.
         """
         return _numpy_dtype_of(self._value)
 
@@ -194,21 +184,14 @@ class NumericArray(Immutable, TrackedTerm, Annotated):
         return f"NumericArray({self._value!r}, name={self.name!r})"
 
     # -- the array surface --------------------------------------------------
-    #
-    # Every operator returns what the underlying array returns, which is a bare
-    # array. ``_unwrap`` lets a NumericArray appear on either side.
-
-    @staticmethod
-    def _unwrap(other: Any) -> Any:
-        return other._value if isinstance(other, NumericArray) else other
 
     def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
         arr = _to_numpy_array(self._value)
         arr = np.asarray(arr, dtype=dtype) if dtype is not None else arr
         return arr.copy() if copy else arr
 
-    # JAX reads ``__jax_array__`` for ``jnp.asarray``; without it the numpy
-    # hook above would win and tracing support would be lost.
+    # JAX reads this for ``jnp.asarray``; the numpy hook above would win
+    # otherwise and drop tracing.
     def __jax_array__(self) -> Any:
         return self.as_jax()
 
@@ -231,14 +214,16 @@ class NumericArray(Immutable, TrackedTerm, Annotated):
         return iter(self._value)
 
 
+def _unwrap(other: Any) -> Any:
+    """The array inside a ``NumericArray``, or *other* unchanged."""
+    return other._value if isinstance(other, NumericArray) else other
+
+
 def _install_array_operators() -> None:
     """Forward the array operators to the held array, returning what it returns.
 
-    Written once rather than spelled out per operator: there are some forty of
-    them, they all do the same thing, and a hand-written list is where one gets
-    forgotten. The reflected and in-place forms come from the same table — an
-    in-place operator on an immutable term is the out-of-place one, and returns
-    a bare array like the rest.
+    Installed from a table so the forty of them stay one rule. An in-place
+    operator on an immutable term is the out-of-place one.
     """
     binary = [
         "add", "sub", "mul", "matmul", "truediv", "floordiv", "mod", "divmod",
@@ -249,14 +234,14 @@ def _install_array_operators() -> None:
 
     def _binary(name: str):
         def method(self: NumericArray, other: Any) -> Any:
-            return getattr(self._value, f"__{name}__")(NumericArray._unwrap(other))
+            return getattr(self._value, f"__{name}__")(_unwrap(other))
 
         method.__name__ = f"__{name}__"
         return method
 
     def _reflected(name: str):
         def method(self: NumericArray, other: Any) -> Any:
-            return getattr(self._value, f"__r{name}__")(NumericArray._unwrap(other))
+            return getattr(self._value, f"__r{name}__")(_unwrap(other))
 
         method.__name__ = f"__r{name}__"
         return method
@@ -271,8 +256,6 @@ def _install_array_operators() -> None:
     for op in binary:
         setattr(NumericArray, f"__{op}__", _binary(op))
         setattr(NumericArray, f"__r{op}__", _reflected(op))
-        # An in-place operator rebinds the caller's name to the bare result; the
-        # term itself is immutable and unchanged.
         setattr(NumericArray, f"__i{op}__", _binary(op))
     for op in comparison:
         setattr(NumericArray, f"__{op}__", _binary(op))
@@ -282,8 +265,7 @@ def _install_array_operators() -> None:
 
 _install_array_operators()
 
-# ``__eq__`` is elementwise, so the inherited ``__hash__`` would be a false
-# promise: two values comparing "equal" produce an array, not a bool.
+# ``__eq__`` is elementwise, so a hash would promise more than it can keep.
 NumericArray.__hash__ = None  # type: ignore[assignment]
 
 
@@ -292,40 +274,35 @@ NumericArray.__hash__ = None  # type: ignore[assignment]
 # ---------------------------------------------------------------------------
 
 
-def _numeric_array_flatten(value: NumericArray) -> tuple[list, tuple[str, bool, Any]]:
-    """Flatten for JAX traversal: the array, keyed by the identity and support.
+def _numeric_array_flatten(
+    value: NumericArray,
+) -> tuple[list, tuple[NumericArraySpec, str, bool]]:
+    """Flatten for JAX traversal: the array, keyed by the declaration and identity.
 
-    The **shape and dtype are not aux**, unlike a ``Record``'s template. A
-    ``NumericArray``'s spec is exactly its array's shape and dtype, so a
-    transform that changes either leaves the spec re-derivable from what
-    arrives — an exact reading, not the guess the record types must refuse.
-    What cannot be re-derived is the declared ``support``, which rides along.
+    The aux triple every tracked class flattens to. The declaration rides along
+    rather than being re-read off the child, because it is not recoverable from
+    one: ``is_valid`` admits a same-kind cast, so a float32 value under a
+    float64 declaration would come back declaring float32.
     """
     # The boundary presents a bare array, as a ``NumericRecord``'s does: this
     # is one of the compute boundaries native form converts at.
-    return [value.as_jax()], (value._name, value._name_is_auto, value._spec.support)
+    return [value.as_jax()], (value._spec, value._name, value._name_is_auto)
 
 
-def _numeric_array_unflatten(aux: tuple[str, bool, Any], children: list) -> NumericArray:
+def _numeric_array_unflatten(
+    aux: tuple[NumericArraySpec, str, bool], children: list
+) -> NumericArray:
     """Rebuild without converting or validating the child.
 
-    JAX unflattens with whatever it is carrying, which is not always an array:
-    ``tree_map(lambda x: None, value)`` builds a skeleton, and internal
-    traversals pass sentinel objects. Running the constructor here would convert
-    and validate, so those raise instead of rebuilding — the reason ``Record``
-    and ``RecordBatch`` take ``_validate_leaves=False`` on this same path. The
-    spec is derived only when the child can state one, and is left to the
-    constructor's own rule otherwise.
+    JAX unflattens with whatever it carries, and a skeleton from
+    ``tree_map(lambda x: None, value)`` or an internal sentinel is not an array
+    — the reason ``Record`` and ``RecordBatch`` take ``_validate_leaves=False``
+    on this path. A transform may also have resized the value, which is why the
+    spec a rebuilt value carries is the one it was declared with rather than one
+    read off the child: on this path a shape is transform-relative.
     """
-    name, name_is_auto, support = aux
+    spec, name, name_is_auto = aux
     (array,) = children
-    shape = getattr(array, "shape", None)
-    dtype = getattr(array, "dtype", None)
-    if shape is None or dtype is None:
-        # Not an array: a skeleton or a sentinel, which carries no spec to state.
-        spec = None
-    else:
-        spec = NumericArraySpec(shape=tuple(shape), dtype=dtype, support=support)
     value = object.__new__(NumericArray)
     object.__setattr__(value, "_value", array)
     object.__setattr__(value, "_spec", spec)
