@@ -39,6 +39,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unchanged; it still hands back the object the caller put in rather than
   wrapping it.
 
+  The name is the required first argument, as a `Record`'s is: an opaque value
+  exposes nothing else that says what it is, so a default would name every one
+  of them alike. `OpaqueSpec` moves to the same module as the class it types;
+  the public import path is unchanged.
+
 - **`ArrayBackend.take` — positional selection for a native container.** `[]` is
   positional on a numpy-protocol container and reads *labels* on a `pandas` one,
   so a batch stored as a `DataFrame` could not address its own elements. Backends

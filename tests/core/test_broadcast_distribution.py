@@ -878,7 +878,8 @@ class TestMakeStack:
         being mislabeled opaque (#343)."""
         from probpipe import Record, RecordBatch
         from probpipe.core._broadcast_distributions import _make_stack
-        from probpipe.core.event_template import NumericArraySpec, OpaqueSpec
+        from probpipe.core._opaque import OpaqueSpec
+        from probpipe.core.event_template import NumericArraySpec
 
         records = [Record("r", x=jnp.ones(2, dtype=jnp.bfloat16), label=f"r{i}") for i in range(3)]
         out = _make_stack(records, n=3, field_name="demo", level_names=("sweep",))

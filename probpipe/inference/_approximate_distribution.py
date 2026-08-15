@@ -11,8 +11,9 @@ if TYPE_CHECKING:
 import jax.numpy as jnp
 
 from .._weights import Weights
+from ..core._opaque import OpaqueSpec
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
-from ..core.event_template import EventTemplate, NumericArraySpec, NumericEventTemplate, OpaqueSpec
+from ..core.event_template import EventTemplate, NumericArraySpec, NumericEventTemplate
 from ..core.provenance import Provenance
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike
