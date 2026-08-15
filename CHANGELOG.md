@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`NumericArray` and `NumericArrayBatch` (#398).** The tracked class of the
+  numeric-array kind and its batch form, so `NumericArraySpec` has the pair every
+  other value spec has. Nothing returns them yet; the operations switch over in a
+  later change.
+
+  `NumericArray` holds one array and carries no batch axes, so its `shape` is the
+  event shape. It carries the full array surface, and **arithmetic on it yields a
+  bare array** — identity is attached by operations, and arithmetic is not one.
+  It is a registered pytree, which is what lets it cross a `jit` or `vmap`
+  boundary; its spec is re-derived from the array that arrives, since a shape and
+  a dtype state it exactly.
+
+  `NumericArrayBatch` stores one array with the batch axes leading and splits
+  them from the event axes by its element spec. Selection yields a `NumericArray`
+  under the derived name, as `RecordBatch` yields a `Record`.
+
+### Changed
+
+- **`ArraySpec` is renamed `NumericArraySpec` (#398).** The spec now agrees with
+  the class it names, as `RecordSpec`/`Record` does. `Array` remains the type
+  alias for a bare backend array.
+
 ### Changed
 
 - **Design: every value spec has a tracked class (#398).** `ArraySpec` gains
