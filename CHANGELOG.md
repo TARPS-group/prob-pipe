@@ -111,6 +111,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Selection yields a `NumericArray` under the derived name, as `RecordBatch`
   yields a `Record`.
 
+- **`Opaque` — the tracked class of the opaque kind (#398).** What an operation
+  returns when its declared kind is an `OpaqueSpec`, completing the pair with the
+  `OpaqueBatch` that already existed. It adds identity and nothing else: no
+  attribute forwarding, no `__call__`, no operators — the wrapped value is
+  reached through `.value`, explicitly. `OpaqueBatch`'s element contract is
+  unchanged; it still hands back the object the caller put in rather than
+  wrapping it.
+
 - **`ArrayBackend.take` — positional selection for a native container.** `[]` is
   positional on a numpy-protocol container and reads *labels* on a `pandas` one,
   so a batch stored as a `DataFrame` could not address its own elements. Backends
