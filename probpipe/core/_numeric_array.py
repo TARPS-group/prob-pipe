@@ -166,16 +166,26 @@ class NumericArray(Immutable, TrackedTerm, Annotated):
 
     @property
     def shape(self) -> tuple[int, ...]:
-        """The event shape, read from metadata. No batch axes are carried."""
-        return tuple(self._spec.shape)
+        """The event shape, read from the value's metadata. No batch axes."""
+        return _event_shape_of(self._value)
 
     @property
     def dtype(self) -> Any:
-        return self._spec.dtype
+        """The stored value's dtype, or ``None`` when it has no single one.
+
+        The **value's**, not the declaration's, as for a single-field
+        ``NumericRecord``. These two can differ: ``is_valid`` admits a same-kind
+        cast, so a float32 value satisfies a float64 declaration. This shim
+        exists so a ``NumericArray`` can stand in for an array, and on an array
+        ``.dtype`` describes the data — a caller sizing a buffer or branching on
+        it must not be told the declaration instead. The declaration is
+        :attr:`spec`, and comparing the two is what makes the tolerance visible.
+        """
+        return _numpy_dtype_of(self._value)
 
     @property
     def ndim(self) -> int:
-        return len(self._spec.shape)
+        return len(self.shape)
 
     def __len__(self) -> int:
         return len(self._value)

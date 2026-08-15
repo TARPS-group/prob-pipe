@@ -8,7 +8,9 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Self
 
-from ._array_backend import _event_shape_of, _is_numeric_leaf
+import numpy as np
+
+from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of, _take_at
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._numeric_array import NumericArray
 from .event_template import NumericArraySpec
@@ -50,6 +52,9 @@ class NumericArrayBatch(Batch[NumericArray]):
     TypeError
         If *element_spec* is not a :class:`NumericArraySpec`, or *values* does
         not convert to an array.
+    TypeError
+        Also if the stored array's dtype is one the declared element does not
+        admit — a cross-kind conversion.
     ValueError
         If *values* has fewer axes than the event shape it must end with, which
         would leave no batch axis; if its trailing axes are not that event
@@ -100,6 +105,18 @@ class NumericArrayBatch(Batch[NumericArray]):
                 f"the stored array ends with {stored[len(stored) - n_event :]} where its "
                 f"elements declare the event shape {event_shape}"
             )
+        # The batch asserts *element_spec* of every element, so a column whose
+        # dtype the declaration does not admit makes that assertion false. Caught
+        # here rather than at the first selection, which is where NumericArray
+        # would otherwise raise — one layer too late to name the batch.
+        dtype = _numpy_dtype_of(values)
+        if element_spec.dtype is not None and dtype is not None:
+            if not np.can_cast(dtype, element_spec.dtype, casting="same_kind"):
+                raise TypeError(
+                    f"the stored array has dtype {dtype}, which the declared element "
+                    f"{np.dtype(element_spec.dtype)} does not admit; a widening or a "
+                    f"within-kind narrowing passes, a cross-kind conversion does not"
+                )
         batch_shape = stored[: len(stored) - n_event] if n_event else stored
         if not batch_shape:
             raise ValueError(
@@ -149,6 +166,9 @@ class NumericArrayBatch(Batch[NumericArray]):
     def _element_at(self, index: tuple[int, ...], *, name: str) -> NumericArray:
         """The array at a fully-integer positional *index*, as a `NumericArray`.
 
+        Selection is positional and goes through the value's backend, since
+        ``[]`` reads labels rather than positions on a ``pandas`` container.
+
         Indexing a stored array does not produce the element on its own — the
         element is the *tracked* value around it — so this is the materializing
         side of both rules :meth:`~probpipe.core._batch.Batch._element_at`
@@ -157,7 +177,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         """
         return self._inherit_provenance(
             NumericArray(
-                self._values[index],
+                _take_at(self._values, index),
                 name=name,
                 name_is_auto=True,
                 spec=self.element_spec,
@@ -168,12 +188,13 @@ class NumericArrayBatch(Batch[NumericArray]):
         """A view over the same array, indexed on the batch axes as given.
 
         *index* addresses the leading axes only, so the event axes are untouched
-        and array indexing yields a view rather than a copy. Built without
+        and selection yields a view rather than a copy. It goes through the
+        value's backend, since ``[]`` is not positional on every container. Built without
         ``__init__`` for the reason ``RecordBatch`` gives: the spec and the name
         are already decided, and re-deriving them from the view's own shape
         would lose the levels a dropped axis came from.
         """
         view = object.__new__(self._view_type)
-        object.__setattr__(view, "_values", self._values[index])
+        object.__setattr__(view, "_values", _take_at(self._values, index))
         view._init_batch(spec, name=name, name_is_auto=True)
         return view
