@@ -874,7 +874,7 @@ class TestMakeStack:
 
     def test_bfloat16_field_inferred_numeric_not_opaque(self):
         """The broadcast-template builder shares the numeric-dtype gate, so an
-        ml_dtypes (bfloat16) field stacks into an NumericArraySpec column rather than
+        ml_dtypes (bfloat16) field stacks into a NumericArraySpec column rather than
         being mislabeled opaque (#343)."""
         from probpipe import Record, RecordBatch
         from probpipe.core._broadcast_distributions import _make_stack

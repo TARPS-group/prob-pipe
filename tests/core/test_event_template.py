@@ -1075,7 +1075,7 @@ class TestConstructionSpecs:
 
 
 # ---------------------------------------------------------------------------
-# Auto-promotion to NumericEventTemplate (iff every leaf is an NumericArraySpec)
+# Auto-promotion to NumericEventTemplate (iff every leaf is a NumericArraySpec)
 # ---------------------------------------------------------------------------
 
 

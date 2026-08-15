@@ -40,10 +40,15 @@ class NumericArrayBatch(Batch[NumericArray]):
     axis_groups : iterable of iterable of int, optional
         The axis sizes each level holds, in order, tiling ``batch_shape``.
         Defaults to one axis per level.
-    name : str, optional
-        The batch's name; defaults to ``"numericarraybatch"``, marked auto.
+    name : str
+        The batch's name, **required**, as a :class:`~probpipe.Record`'s and an
+        :class:`~probpipe.Opaque`'s are. A batch is what an operation hands back,
+        and the name is what says which one it is; a class-name default would name
+        every batch in a pipeline alike. A caller that derives one says so with
+        *name_is_auto*.
     name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given.
+        Whether *name* is auto-derived rather than user-given — set by an
+        operation that derives one, as a view does for a selected sub-batch.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -54,7 +59,9 @@ class NumericArrayBatch(Batch[NumericArray]):
         not convert to an array.
     TypeError
         Also if the stored array's dtype is one the declared element does not
-        admit — a cross-kind conversion.
+        admit — a cross-kind conversion — or if the store reports no single
+        dtype while the element declares one, which leaves the claim
+        unsubstantiated.
     ValueError
         If *values* has fewer axes than the event shape it must end with, which
         would leave no batch axis; if its trailing axes are not that event
@@ -79,7 +86,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         *,
         element_spec: NumericArraySpec,
         axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str | None = None,
+        name: str,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
@@ -105,12 +112,18 @@ class NumericArrayBatch(Batch[NumericArray]):
                 f"the stored array ends with {stored[len(stored) - n_event :]} where its "
                 f"elements declare the event shape {event_shape}"
             )
-        # The batch asserts *element_spec* of every element, so a column whose
-        # dtype the declaration does not admit makes that assertion false. Caught
-        # here rather than at the first selection, which is where NumericArray
-        # would otherwise raise — one layer too late to name the batch.
+        # The batch asserts *element_spec* of every element, so the store's own
+        # dtype has to satisfy it.
         dtype = _numpy_dtype_of(values)
-        if element_spec.dtype is not None and dtype is not None:
+        if element_spec.dtype is not None:
+            if dtype is None:
+                # A heterogeneous store has no single dtype to check a pinned
+                # one against, so the claim is unsupportable either way.
+                raise TypeError(
+                    f"the stored array reports no single dtype, so the declared element "
+                    f"{np.dtype(element_spec.dtype)} cannot be shown to hold of it; declare "
+                    f"no dtype, or store a container that has one"
+                )
             if not np.can_cast(dtype, element_spec.dtype, casting="same_kind"):
                 raise TypeError(
                     f"the stored array has dtype {dtype}, which the declared element "
@@ -127,8 +140,6 @@ class NumericArrayBatch(Batch[NumericArray]):
 
         names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
         groups = _axis_groups_for(batch_shape, names, axis_groups, kind="NumericArrayBatch")
-        if name is None:
-            name, name_is_auto = "numericarraybatch", True
         object.__setattr__(self, "_values", values)
         self._init_batch(
             BatchSpec(element_spec, groups, names),
@@ -166,14 +177,11 @@ class NumericArrayBatch(Batch[NumericArray]):
     def _element_at(self, index: tuple[int, ...], *, name: str) -> NumericArray:
         """The array at a fully-integer positional *index*, as a `NumericArray`.
 
-        Selection is positional and goes through the value's backend, since
-        ``[]`` reads labels rather than positions on a ``pandas`` container.
-
-        Indexing a stored array does not produce the element on its own — the
-        element is the *tracked* value around it — so this is the materializing
-        side of both rules :meth:`~probpipe.core._batch.Batch._element_at`
-        states: it takes the derived *name*, marked auto, and inherits this
-        batch's provenance.
+        The materializing side of both rules
+        :meth:`~probpipe.core._batch.Batch._element_at` states: the element
+        takes the derived *name*, marked auto, and inherits this batch's
+        provenance. Selection goes through the backend, since ``[]`` is
+        positional only on a numpy-protocol container.
         """
         return self._inherit_provenance(
             NumericArray(

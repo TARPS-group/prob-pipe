@@ -1096,7 +1096,7 @@ class TestStack:
             NumericRecord("r", {"x": jnp.zeros(2)}, event_template=EventTemplate(x=(2,))),
             NumericRecord("r", {"x": jnp.zeros(3)}, event_template=EventTemplate(x=(3,))),
         ]
-        # Declared an NumericArraySpec, so it stacks natively and the shapes must agree —
+        # Declared a NumericArraySpec, so it stacks natively and the shapes must agree —
         # it is not quietly demoted to an object column.
         with pytest.raises((TypeError, ValueError)):
             NumericRecordBatch.stack(records, level_name="draw", element_spec=EventTemplate(x=(2,)))
