@@ -25,6 +25,7 @@ from probpipe import (
     MinibatchedDistribution,
     MultivariateNormal,
     Normal,
+    NumericArrayBatch,
     NumericRecord,
     NumericRecordBatch,
     ProductDistribution,
@@ -66,10 +67,10 @@ class TestKwargFormScalar:
 
         result = log_prob(d, x=rows.select("x")["x"])
 
-        assert isinstance(result, NumericRecordBatch)
+        assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (3,)
         expected = jnp.stack([log_prob.apply(d, float(value)) for value in range(3)])
-        np.testing.assert_allclose(result["log_prob"], expected)
+        np.testing.assert_allclose(result.values, expected)
 
 
 class TestKwargFormRecord:

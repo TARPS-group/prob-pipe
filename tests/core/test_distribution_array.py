@@ -21,6 +21,7 @@ import pytest
 from probpipe import (
     EventTemplate,
     Normal,
+    NumericArrayBatch,
     NumericRecordBatch,
     ProductDistribution,
     Provenance,
@@ -422,28 +423,31 @@ class TestZeroDDispatch:
 class TestSampleViaSweep:
     """``sample(da)`` vectorizes over the DistArray's batch_shape.
 
-    Each cell is a scalar Distribution; ``sample(component, sample_shape)``
-    returns a leaf-shaped array; ``_make_stack`` assembles them into a
-    ``NumericRecordBatch`` with ``batch_shape = da.batch_shape`` and
-    per-field leaf shape equal to ``sample_shape + event_shape``.
+    Each cell is a scalar Distribution, so each row's draw is a
+    ``NumericArrayBatch``; the sweep stacks them into one, its own level in
+    front of the rows' ``draw``.
     """
 
     def test_scalar_components_no_sample_shape(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         s = sample(da)
-        assert isinstance(s, NumericRecordBatch)
-        assert s.batch_shape == (4,)
-        assert s["sample"].shape == (4,)
+        assert isinstance(s, NumericArrayBatch)
+        assert (s.batch_shape, s.level_names) == ((4,), ("dist",))
+        assert s.values.shape == (4,)
 
     def test_scalar_components_with_sample_shape(self):
+        """The rows' draw level survives the sweep rather than becoming shape.
+
+        A drawn axis read as event shape would state that each cell holds one
+        7-vector, where it holds seven draws.
+        """
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         s = sample(da, sample_shape=(7,))
-        assert isinstance(s, NumericRecordBatch)
-        # batch_shape is the DistArray's own shape; sample_shape is leaf.
-        assert s.batch_shape == (4,)
-        assert s["sample"].shape == (4, 7)
+        assert isinstance(s, NumericArrayBatch)
+        assert (s.batch_shape, s.level_names) == ((4, 7), ("dist", "sample"))
+        assert tuple(s.element_spec.shape) == ()
 
     def test_components_drive_samples(self):
         """Per-cell mean of the 1000-sample draw concentrates at each
@@ -451,16 +455,17 @@ class TestSampleViaSweep:
         comps = [Normal(loc=float(i) * 100, scale=1e-3, name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
         s = sample(da, sample_shape=(1000,))
-        # batch_shape (3,), leaf (1000,) → field shape (3, 1000).
-        means = s["sample"].mean(axis=-1)
+        # Levels (dist, draw) over (3, 1000): the draw axis is the trailing one.
+        means = s.values.mean(axis=-1)
         np.testing.assert_allclose(means, jnp.array([0.0, 100.0, 200.0]), atol=0.2)
 
     def test_multi_d_batch_shape(self):
+        """A multi-axis sweep keeps its own axes in front of the draw level."""
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(6)]
         da = _make_distribution_array(comps, batch_shape=(2, 3))
         s = sample(da, sample_shape=(5,))
-        assert s.batch_shape == (2, 3)
-        assert s["sample"].shape == (2, 3, 5)
+        assert (s.batch_shape, s.level_names) == ((2, 3, 5), ("dist", "sample"))
+        assert s.values.shape == (2, 3, 5)
 
     def test_record_valued_components_scalar_sample(self):
         comps = [
@@ -512,17 +517,16 @@ class TestMeanVianSweep:
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(4)]
         da = _make_distribution_array(comps)
         m = mean(da)
-        assert isinstance(m, NumericRecordBatch)
+        assert isinstance(m, NumericArrayBatch)
         assert m.batch_shape == (4,)
-        assert m["mean"].shape == (4,)
-        np.testing.assert_allclose(m["mean"], [0.0, 1.0, 2.0, 3.0])
+        np.testing.assert_allclose(m.values, [0.0, 1.0, 2.0, 3.0])
 
     def test_multi_d_mean_shape(self):
         comps = [Normal(loc=float(i), scale=1.0, name=f"d{i}") for i in range(6)]
         da = _make_distribution_array(comps, batch_shape=(3, 2))
         m = mean(da)
         assert m.batch_shape == (3, 2)
-        assert m["mean"].shape == (3, 2)
+        assert m.values.shape == (3, 2)
 
     def test_record_components_mean_is_record_batch(self):
         comps = [
@@ -547,10 +551,9 @@ class TestVarianceViaSweep:
         comps = [Normal(loc=0.0, scale=float(i + 1), name=f"d{i}") for i in range(3)]
         da = _make_distribution_array(comps)
         v = variance(da)
-        assert isinstance(v, NumericRecordBatch)
+        assert isinstance(v, NumericArrayBatch)
         assert v.batch_shape == (3,)
-        assert v["variance"].shape == (3,)
-        np.testing.assert_allclose(v["variance"], [1.0, 4.0, 9.0])
+        np.testing.assert_allclose(v.values, [1.0, 4.0, 9.0])
 
 
 class TestLogProbViaSweep:
@@ -568,14 +571,14 @@ class TestLogProbViaSweep:
         # Single scalar value broadcasts to every cell.
         value = jnp.asarray(0.0)
         lp = log_prob(da, value=value)
-        assert isinstance(lp, NumericRecordBatch)
+        assert isinstance(lp, NumericArrayBatch)
         assert lp.batch_shape == (3,)
         # Cell i evaluates Normal(i, 1) at 0 → gaussian log-density at
         # distance ``i`` from the mean.
         expected = jnp.array(
             [Normal(loc=float(i), scale=1.0, name=f"d{i}")._log_prob(0.0) for i in range(3)]
         )
-        np.testing.assert_allclose(lp["log_prob"], expected, rtol=1e-5)
+        np.testing.assert_allclose(lp.values, expected, rtol=1e-5)
 
 
 # ---------------------------------------------------------------------------

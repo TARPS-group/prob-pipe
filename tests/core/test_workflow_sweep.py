@@ -184,7 +184,7 @@ class TestExecuteSweep:
             1.0,
             2.0,
         ]
-        np.testing.assert_allclose(result["double"], jnp.asarray([0.0, 2.0, 4.0]))
+        np.testing.assert_allclose(result.values, jnp.asarray([0.0, 2.0, 4.0]))
 
     def test_include_inputs_is_rejected_for_sweep(self):
         values = {"p": _numeric_record_batch("x", range(1))}
