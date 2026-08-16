@@ -186,7 +186,7 @@ class _MixtureSampling:
         if all(isinstance(r, Record) for r in results):
             template = results[0].event_template
             cls = _batch_class_for(template)
-            stacked = cls.stack(results, level_name=DRAW_LEVEL)
+            stacked = cls.stack(results, level_name=SAMPLE_LEVEL)
             if sample_shape == ():
                 return stacked[0]
             # Reshape the leading axis to sample_shape: one draw level over
@@ -197,7 +197,7 @@ class _MixtureSampling:
             }
             return cls(
                 columns,
-                DRAW_LEVEL,
+                SAMPLE_LEVEL,
                 element_spec=stacked.element_spec,
                 axis_groups=(sample_shape,),
             )
@@ -617,9 +617,14 @@ def _make_marginal(
 # ---------------------------------------------------------------------------
 
 
-# The level a draw mints, which the design names (05-operations, ``sample``). A
-# broadcast has no name of its own to give: the level it mints is the one it
-# swept, so the caller supplies that name rather than this module inventing one.
+# An operation names the level it mints after itself, as ``quantile`` does
+# (05-operations, V.9), so the draws of a law sit on a level named ``sample``.
+SAMPLE_LEVEL = "sample"
+
+# The axis an *enumerated* argument ranges over, which no operation mints: the
+# broadcast walks an empirical's atoms, and the level says only that they are
+# draws. Naming it for the distribution enumerated, one level per co-sampling
+# group, is issue #427.
 DRAW_LEVEL = "draw"
 
 
