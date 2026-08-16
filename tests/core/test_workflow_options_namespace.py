@@ -101,8 +101,8 @@ def test_bare_decorator_forms_wrap_functions():
 
     assert isinstance(bare, Function)
     assert isinstance(bare_parentheses, Function)
-    assert bare(1.0)["bare"] == 1.0
-    assert bare_parentheses(2.0)["bare_parentheses"] == 2.0
+    assert float(bare(1.0)) == 1.0
+    assert float(bare_parentheses(2.0)) == 2.0
 
 
 def test_with_options_controls_sample_count_and_include_inputs():
@@ -191,7 +191,7 @@ def test_workflow_control_names_are_user_parameters():
         dispatch="local",
     )
 
-    assert result["collect"] == "1:2:True:model:local"
+    assert result.value == "1:2:True:model:local"
 
 
 def test_var_keyword_receives_workflow_control_names():

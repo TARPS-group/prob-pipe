@@ -253,8 +253,8 @@ class TestPrefectRngConformance:
             remote_result = remote()
 
         np.testing.assert_array_equal(
-            remote_result["sample"],
-            local_result["sample"],
+            remote_result,
+            local_result,
         )
         assert remote_result.provenance is not None
         randomness = remote_result.provenance.controls["randomness"]
