@@ -1292,7 +1292,7 @@ class TestVariadicPlanning:
         result = wrapped(rows, 2.0)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["<lambda>"], np.arange(3.0) + 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) + 2)
 
     def test_record_batch_in_any_varargs_is_swept(self):
         rows = NumericRecordBatch.stack(
@@ -1305,7 +1305,7 @@ class TestVariadicPlanning:
         result = Function(func=double)(rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
 
     def test_record_batch_in_any_varkwargs_is_swept(self):
         rows = NumericRecordBatch.stack(
@@ -1318,7 +1318,7 @@ class TestVariadicPlanning:
         result = Function(func=double)(rows=rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
 
     def test_tracked_varargs_are_provenance_parents(self, full_provenance_mode):
         first = NumericRecord("first", value=1.0)
