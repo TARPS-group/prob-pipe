@@ -228,7 +228,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
         )
         return cls(
             rows,
-            "draw",
+            "sample",
             element_spec=self.event_template,
             axis_groups=(sample_shape,),
             name=self.name,

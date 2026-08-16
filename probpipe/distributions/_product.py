@@ -327,7 +327,7 @@ class ProductDistribution(
             cls = NumericRecordBatch if isinstance(self, NumericRecordDistribution) else RecordBatch
             return cls(
                 _sample_columns(self._components, key, sample_shape),
-                "draw",
+                "sample",
                 element_spec=self.event_template,
                 axis_groups=(sample_shape,),
                 name=self.name,
