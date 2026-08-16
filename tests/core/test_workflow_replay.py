@@ -61,7 +61,7 @@ def _lifted_draw(seed: int = 7):
 
 
 def _sample_value(result):
-    return np.asarray(result["sample"])
+    return np.asarray(result)
 
 
 def _marginal_values(result):
@@ -156,7 +156,7 @@ class TestReplayScope:
         def outer(value):
             result = sample(Normal(loc=value, scale=1.0, name="value"))
             captured.append(result)
-            return result["sample"]
+            return result
 
         workflow = Function(func=outer, dispatch="sequential")
         with workflow_run(seed=17):
@@ -850,12 +850,12 @@ class TestReplayAdmission:
             pass
 
         inner = Function(
-            func=lambda value: sample(Normal(loc=value, scale=1.0, name="inner"))["sample"],
+            func=lambda value: sample(Normal(loc=value, scale=1.0, name="inner")),
             dispatch="sequential",
         )
 
         def nested(value):
-            return inner(value=value)["<lambda>"]
+            return inner(value=value)
 
         outer = Function(func=nested, dispatch="sequential")
         with workflow_run(seed=8):

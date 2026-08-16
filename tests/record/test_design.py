@@ -12,6 +12,7 @@ import pytest
 
 from probpipe import (
     FullFactorialDesign,
+    NumericArray,
     NumericRecord,
     NumericRecordBatch,
     Record,
@@ -209,10 +210,10 @@ class TestDesignAsSweep:
         # hints they're passed to the body wholesale and JAX broadcasts
         # the arithmetic to a (6,)-array; WF wraps as NumericRecord.
         out = product(r=ff["r"], K=ff["K"])
-        # Confirm the output is a single Record with the arithmetic
-        # result, not a swept NumericRecordBatch.
-        assert isinstance(out, NumericRecord)
-        assert out["product"].shape == (6,)
+        # Confirm the output is a single value carrying the arithmetic
+        # result, not a swept NumericArrayBatch.
+        assert isinstance(out, NumericArray)
+        assert out.shape == (6,)
 
     def test_mixed_field_sweep_uses_record_arg_pattern(self):
         """Categorical fields can't ride JAX broadcasting — the single
