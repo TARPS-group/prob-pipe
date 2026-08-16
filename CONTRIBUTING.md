@@ -540,9 +540,8 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `Function.apply` is the raw boundary: it performs the same Python binding
    and schema checks, but preserves the implementation return object's identity
    and provenance.
-   Other tracked terms, including a `Function`, remain event payloads under
-   this default boundary; returning them directly requires the explicit
-   term-result planning reserved for #369.
+   Every tracked term an operation returns keeps its kind, `Function` included:
+   a term is never re-wrapped and never buried inside another.
    Authoritative nested output templates use a private recursive aggregate
    packer across sequential and JAX dispatch; the public
    `RecordBatch.stack` contract remains unchanged. The field name for inferred

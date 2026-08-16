@@ -78,6 +78,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call, retain the resulting joint distribution, or materialize and reuse
   samples explicitly when a shared realization is required.
 
+- **An operation returns the tracked term of its declared kind (#398).** The
+  `Function` output boundary wrapped every raw array in a single-field
+  `NumericRecord` keyed by the function's own name, and every other raw value in
+  a single-field `Record`. It now wraps each into its **own** kind:
+
+  | raw return | before | now |
+  | --- | --- | --- |
+  | numeric scalar / array | single-field `NumericRecord` | `NumericArray` |
+  | mapping | `Record` | `Record` |
+  | callable | single-field `Record` | `Function` |
+  | anything else | single-field `Record` | `Opaque` |
+
+  So `log_prob`, `mean`, `variance`, `quantile`, `expectation`, and a scalar
+  law's `sample` all return a `NumericArray`. **A result is no longer indexable
+  by the function's name** — `result["my_func"]` becomes `result` itself, and an
+  opaque result is read through `.value`.
+
+  A callable result is callable because it *is* the function kind, rather than
+  because a single-field record forwards `__call__`.
+
+  **Every tracked term keeps its kind**, uniformly: a body returning a
+  `Function`, `NumericArray`, or `Opaque` gets it back as itself, as a `Record`,
+  `Distribution`, or `Batch` always did. A declared `output_template` still
+  shapes the result, being a caller's declaration rather than a default.
+
 ### Added
 
 - **`NumericArray` and `NumericArrayBatch` (#398).** The tracked class of the
