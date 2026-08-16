@@ -518,7 +518,7 @@ def _reconstruct_from_vector(
     vec: Array,
     *,
     name_is_auto: bool,
-    level_names: str | Iterable[str] = "draw",
+    level_names: str | Iterable[str] = "sample",
 ) -> NumericRecord | Any:
     """Reconstruct a numeric value from its flat vector, under *name*.
 

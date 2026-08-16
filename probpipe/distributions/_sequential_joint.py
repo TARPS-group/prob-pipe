@@ -334,7 +334,7 @@ class SequentialJointDistribution(
         if sample_shape:
             return NumericRecordBatch(
                 fields,
-                "draw",
+                "sample",
                 element_spec=self.event_template,
                 axis_groups=(sample_shape,),
                 name=self.name,

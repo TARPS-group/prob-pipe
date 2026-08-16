@@ -424,7 +424,7 @@ class TestObjectValuedDrawsAreBatches:
         drawn = je._sample(jax.random.PRNGKey(0), (4,))
 
         assert type(drawn) is RecordBatch
-        assert drawn.level_names == ("draw",)
+        assert drawn.level_names == ("sample",)
         assert drawn.batch_shape == (4,)
         assert set(drawn.event_template) == {"labels", "y"}
 

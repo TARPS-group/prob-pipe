@@ -499,7 +499,7 @@ class TestSampleViaSweep:
         assert isinstance(s, NumericRecordBatch)
         # The sweep mints the level it swept — here the argument's own name,
         # the distribution array carrying no levels of its own yet.
-        assert s.level_names == ("dist", "draw")
+        assert s.level_names == ("dist", "sample")
         # sweep (3,) + inner batch (5,) → (3, 5); fields carry no leaf
         # (scalar Normals inside the Product).
         assert s.batch_shape == (3, 5)
