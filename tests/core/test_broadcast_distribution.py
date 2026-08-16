@@ -829,25 +829,28 @@ class TestMakeStack:
     shape-(n,) aggregate. Every case is a parameter-sweep-like scenario
     where row identity must survive; there is no marginalisation."""
 
-    def test_list_of_scalars_wraps_as_numeric_record_batch(self):
-        from probpipe import NumericRecordBatch
+    def test_list_of_scalars_wraps_as_numeric_array_batch(self):
+        """Numeric rows aggregate at their own kind, with no field to address."""
+        from probpipe import NumericArrayBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
         out = _make_stack([1.0, 2.0, 3.0, 4.0], n=4, field_name="demo", level_names=("sweep",))
-        assert isinstance(out, NumericRecordBatch)
-        assert out.batch_shape == (4,)
-        assert out.event_template.fields == ("demo",)
-        np.testing.assert_allclose(out["demo"], [1.0, 2.0, 3.0, 4.0])
+        assert isinstance(out, NumericArrayBatch)
+        assert (out.batch_shape, out.level_names) == ((4,), ("sweep",))
+        assert tuple(out.element_spec.shape) == ()
+        np.testing.assert_allclose(out.values, [1.0, 2.0, 3.0, 4.0])
 
     def test_list_of_arrays_preserves_event_shape(self):
-        from probpipe import NumericRecordBatch
+        """The rows' own shape is the element's; only the sweep axis is a level."""
+        from probpipe import NumericArrayBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
         values = [jnp.arange(3.0) + 10.0 * i for i in range(4)]
         out = _make_stack(values, n=4, field_name="demo", level_names=("sweep",))
-        assert isinstance(out, NumericRecordBatch)
+        assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
-        assert out["demo"].shape == (4, 3)
+        assert tuple(out.element_spec.shape) == (3,)
+        assert out.values.shape == (4, 3)
 
     def test_list_of_numeric_records_promotes_to_numeric_array(self):
         from probpipe import NumericRecord, NumericRecordBatch
@@ -919,17 +922,22 @@ class TestMakeStack:
         np.testing.assert_allclose(out["x"][0], [0, 1, 2, 3])
         np.testing.assert_allclose(out["x"][2], [20, 21, 22, 23])
 
-    def test_vmap_ndarray_wraps_as_numeric_record_batch(self):
+    def test_vmap_ndarray_wraps_as_numeric_array_batch(self):
         """A bare ``jnp.ndarray`` with leading axis n (typical ``jax.vmap``
-        output for scalar-returning fns) wraps without unstacking."""
-        from probpipe import NumericRecordBatch
+        output for scalar-returning fns) wraps without unstacking.
+
+        The mapped path agrees with the row-wise one above: same kind, same
+        split of the sweep axis from the element's.
+        """
+        from probpipe import NumericArrayBatch
         from probpipe.core._broadcast_distributions import _make_stack
 
         arr = jnp.arange(12.0).reshape(4, 3)
         out = _make_stack(arr, n=4, field_name="demo", level_names=("sweep",))
-        assert isinstance(out, NumericRecordBatch)
+        assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (4,)
-        assert out["demo"].shape == (4, 3)
+        assert tuple(out.element_spec.shape) == (3,)
+        assert out.values.shape == (4, 3)
 
     def test_declared_vmap_array_requires_single_leaf_template(self):
         from probpipe import EventTemplate

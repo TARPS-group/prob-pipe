@@ -27,6 +27,7 @@ from ._empirical import (
     RecordEmpiricalDistribution,
 )
 from ._immutable import constructing, transient_memo
+from ._numeric_array_batch import NumericArrayBatch
 from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
@@ -604,7 +605,7 @@ def _make_marginal(
 # sweep), the n inner outputs are independent scenarios indexed by
 # input row — *not* MC draws. The wrapper must preserve row identity:
 #
-#   numeric → NumericRecordBatch(result=..., one sweep level of (n,))
+#   numeric → NumericArrayBatch, one sweep level of (n,)
 #   Record → RecordBatch.stack (NumericRecordBatch when all leaves numeric)
 #   Distribution → DistributionArray
 #   a batch per row (each (m,)) → one batch, levels (sweep, …) over (n, m)
@@ -656,6 +657,44 @@ def _batch_over_swept_columns(
         name=name,
         name_is_auto=True,
     )
+
+
+def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
+    """The first row, once every row is a batch that agrees with it.
+
+    A batch row is all-or-nothing. Falling through on a mixture, or on rows that
+    disagree, reaches the generic handlers — which would read a row's own batch
+    axis as an event axis and discard its level names with it. Matching the
+    shape alone would take the first row's schema for all of them, dropping a
+    field the others have and misnaming their axes.
+    """
+    first = outs[0]
+    # The family, not the exact class: a RecordBatch and a NumericRecordBatch
+    # row hold the same thing, and only one of them says so in its name.
+    family = NumericArrayBatch if isinstance(first, NumericArrayBatch) else RecordBatch
+    if not all(isinstance(o, family) for o in outs):
+        kinds = sorted({type(o).__name__ for o in outs})
+        raise TypeError(
+            f"{field_name}: some rows returned a batch of records and some did not "
+            f"({', '.join(kinds)}). A swept body returns one kind for every row, since "
+            f"the aggregate has one schema; return a batch from every row or from none"
+        )
+    for other in outs[1:]:
+        if (
+            other.element_spec == first.element_spec
+            and other.batch_shape == first.batch_shape
+            and other.level_names == first.level_names
+            and other.axis_groups == first.axis_groups
+        ):
+            continue
+        raise ValueError(
+            f"{field_name}: the rows returned batches that disagree — "
+            f"{first.level_names} over {first.batch_shape} against "
+            f"{other.level_names} over {other.batch_shape}. Rows stack into one batch, "
+            f"which states one element spec and one multiplicity for all of them, so "
+            f"every row must return the same schema on the same levels"
+        )
+    return first
 
 
 def _make_stack(
@@ -792,40 +831,23 @@ def _make_stack(
         # rows' own levels. Checked before the Record branch below, which would
         # otherwise claim a batch of records and collapse its
         # inner batch axis.
-        if outs and any(isinstance(o, RecordBatch) for o in outs):
-            # A batch row is all-or-nothing. Falling through on a mixture, or on
-            # rows that disagree, reaches the generic handlers — which would take a
-            # single-field numeric batch for an array, read its inner batch axis as
-            # an event axis, and discard the level names with it. There is no
-            # aggregate to build from rows that do not agree on what they hold, so
-            # this says so where the disagreement is visible.
-            if not all(isinstance(o, RecordBatch) for o in outs):
-                kinds = sorted({type(o).__name__ for o in outs})
-                raise TypeError(
-                    f"{field_name}: some rows returned a batch of records and some did not "
-                    f"({', '.join(kinds)}). A swept body returns one kind for every row, since "
-                    f"the aggregate has one schema; return a batch from every row or from none"
-                )
-            first = outs[0]
-            # Every row must agree on what it holds and on which axes hold it.
-            # Matching the shape alone would take the first row's schema and level
-            # names for all of them, dropping a field the others have and
-            # misnaming their axes — a batch whose spec is a false statement about
-            # its own columns.
-            for other in outs[1:]:
-                if (
-                    other.element_spec == first.element_spec
-                    and other.batch_shape == first.batch_shape
-                    and other.level_names == first.level_names
-                    and other.axis_groups == first.axis_groups
-                ):
-                    continue
-                raise ValueError(
-                    f"{field_name}: the rows returned batches that disagree — "
-                    f"{first.level_names} over {first.batch_shape} against "
-                    f"{other.level_names} over {other.batch_shape}. Rows stack into one batch, "
-                    f"which states one element spec and one multiplicity for all of them, so "
-                    f"every row must return the same schema on the same levels"
+        # Both batch kinds a swept body can return; each keeps its own kind
+        # through the sweep, as a scalar row does.
+        stackable = (RecordBatch, NumericArrayBatch)
+        if outs and any(isinstance(o, stackable) for o in outs):
+            first = _agreeing_batch_rows(outs, field_name=field_name)
+            if isinstance(first, NumericArrayBatch):
+                # One store rather than columns, so the rows stack directly —
+                # through the array backend, as the columns below do, since a
+                # row's store is in native form.
+                store = jnp.stack([_to_jax_array(o.values) for o in outs], axis=0)
+                return NumericArrayBatch(
+                    store.reshape(batch_shape + store.shape[1:]),
+                    (*level_names, *first.level_names),
+                    element_spec=first.element_spec,
+                    axis_groups=(*sweep_groups, *first.axis_groups),
+                    name=name or field_name,
+                    name_is_auto=name is None,
                 )
             # Columns are leaf-keyed, so a nested element needs no special
             # case — and they are read raw: a field that is not an array
@@ -914,9 +936,8 @@ def _make_stack(
                 event_template=event_template,
             )
 
-        # Numeric scalars / arrays → wrap in a NumericRecordBatch with
-        # the single "result" field carrying the stacked values,
-        # reshape leading axis to batch_shape.
+        # Numeric scalars / arrays → the batch form of their own kind, with the
+        # leading axis re-cut to batch_shape.
         try:
             stacked = jnp.stack(
                 [jnp.asarray(o) for o in outs],
@@ -927,12 +948,13 @@ def _make_stack(
 
         if stacked is not None:
             event_shape = tuple(stacked.shape[1:])
-            reshaped = stacked.reshape(batch_shape + event_shape)
-            return NumericRecordBatch(
-                {field_name: reshaped},
+            return NumericArrayBatch(
+                stacked.reshape(batch_shape + event_shape),
                 level_names,
-                element_spec=EventTemplate(**{field_name: event_shape}),
+                element_spec=NumericArraySpec(event_shape, dtype=stacked.dtype),
                 axis_groups=sweep_groups,
+                name=name or field_name,
+                name_is_auto=name is None,
             )
 
         # Last-ditch: wrap as a RecordBatch whose single field holds a
@@ -985,11 +1007,13 @@ def _make_stack(
                 template=event_template,
                 name=name or field_name,
             )
-        return NumericRecordBatch(
-            {field_name: inner_outputs.reshape(batch_shape + event_shape)},
+        return NumericArrayBatch(
+            inner_outputs.reshape(batch_shape + event_shape),
             level_names,
-            element_spec=EventTemplate(**{field_name: event_shape}),
+            element_spec=NumericArraySpec(event_shape, dtype=inner_outputs.dtype),
             axis_groups=sweep_groups,
+            name=name or field_name,
+            name_is_auto=name is None,
         )
 
     # vmap of a Record-returning function produces a Record with batched leaves

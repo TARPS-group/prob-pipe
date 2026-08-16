@@ -87,6 +87,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call, retain the resulting joint distribution, or materialize and reuse
   samples explicitly when a shared realization is required.
 
+- **A sweep over numeric rows aggregates as a `NumericArrayBatch` (#398).** A
+  `Function` swept over a batch collected numeric rows into a single-field
+  `NumericRecordBatch` keyed by the function's own name, so `out["my_func"]`
+  reached the column. The aggregate is now the batch form of the rows' own kind,
+  read through `.values`.
+
+  A row that is itself a batch keeps its levels either way. Only `RecordBatch`
+  rows did before, so once a scalar law's `sample` began returning a
+  `NumericArrayBatch`, a swept `sample(dist_array, sample_shape=(7,))` read the
+  rows' `draw` axis as event shape and dropped the level. It now gives
+  `batch_shape == (n, 7)` on levels `("dist", "sample")`, as the record-valued
+  case already did.
+
 - **A non-empty `sample_shape` puts the draws on a `sample` level (#398).**
   `sample(law, sample_shape=(5,))` for an array-valued law gives a
   `NumericArrayBatch` whose `batch_shape` is the sample shape, on one level named
