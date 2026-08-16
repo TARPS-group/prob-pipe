@@ -13,6 +13,7 @@ import pytest
 from probpipe import (
     FullFactorialDesign,
     NumericArray,
+    NumericArrayBatch,
     NumericRecord,
     NumericRecordBatch,
     Record,
@@ -145,11 +146,11 @@ class TestDesignAsSweep:
 
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
         out = fit(p=ff)
-        assert isinstance(out, NumericRecordBatch)
+        assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (6,)
         # Insertion order: r outer, K inner.
         np.testing.assert_allclose(
-            np.asarray(out["fit"]),
+            out.values,
             [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
@@ -157,8 +158,8 @@ class TestDesignAsSweep:
         """Splatting ``**design.select_all()`` yields sibling views of
         the same Design. The WF sweep layer groups them by parent
         identity and iterates in lockstep — one inner call per row —
-        producing a ``NumericRecordBatch`` identical to the single
-        Record-arg pattern (``fit(p=design)``)."""
+        producing an aggregate identical to the single Record-arg pattern
+        (``fit(p=design)``)."""
 
         @function
         def product(r, K):
@@ -166,11 +167,11 @@ class TestDesignAsSweep:
 
         ff = FullFactorialDesign(r=[1.5, 1.8, 2.0], K=[60.0, 80.0])
         out = product(**ff.select_all())
-        assert isinstance(out, NumericRecordBatch)
+        assert isinstance(out, NumericArrayBatch)
         assert out.batch_shape == (6,)
         # Insertion order: r outer, K inner.
         np.testing.assert_allclose(
-            np.asarray(out["product"]),
+            out.values,
             [1.5 * 60, 1.5 * 80, 1.8 * 60, 1.8 * 80, 2.0 * 60, 2.0 * 80],
         )
 
@@ -190,10 +191,7 @@ class TestDesignAsSweep:
         out_a = fit_a(p=ff)
         out_b = fit_b(**ff.select_all())
         assert out_a.batch_shape == out_b.batch_shape == (6,)
-        np.testing.assert_allclose(
-            np.asarray(out_a["fit_a"]),
-            np.asarray(out_b["fit_b"]),
-        )
+        np.testing.assert_allclose(out_a.values, out_b.values)
 
     def test_raw_fields_still_cartesian_product(self):
         """Passing raw columns (``design["r"]``, ``design["K"]``) gives
