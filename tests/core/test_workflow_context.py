@@ -53,7 +53,7 @@ def _nested_draw(value):
 
 def _nested_seeded_draw(value):
     with workflow_run(seed=42):
-        return sample(Normal(loc=value, scale=1.0, name="draw"))["sample"]
+        return sample(Normal(loc=value, scale=1.0, name="draw"))
 
 
 class TestWorkflowRunBoundary:
@@ -292,7 +292,7 @@ class TestWorkflowAdmission:
         def run_once():
             workflow = Function(func=_nested_draw, dispatch="thread")
             with workflow_run(seed=7):
-                return float(workflow(1.0)["sample"])
+                return float(workflow(1.0))
 
         assert run_once() == run_once()
 
@@ -413,7 +413,7 @@ class TestWorkflowOccurrences:
         ):
             for outer_seed in (1, 2):
                 with workflow_run(seed=outer_seed):
-                    values.append(float(workflow(0.0)["_nested_seeded_draw"]))
+                    values.append(float(workflow(0.0)))
 
         assert values[0] == values[1]
         assert len(occurrence_paths) == 2

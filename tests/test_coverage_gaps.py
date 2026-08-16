@@ -24,7 +24,7 @@ from probpipe import (
     BootstrapDistribution,
     EmpiricalDistribution,
     Normal,
-    NumericRecord,
+    NumericArray,
     RecordEmpiricalDistribution,
     TransformedDistribution,
     cov,
@@ -123,7 +123,7 @@ class TestBootstrapDistributionCoverage:
         bd = BootstrapDistribution(evals)
         key = jax.random.PRNGKey(0)
         result = expectation(bd, lambda x: x, key=key, num_evaluations=100, return_dist=False)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 3.0, atol=0.5)
 
     def test_multidimensional_evaluations(self):
@@ -163,7 +163,7 @@ class TestEmpiricalSubsampling:
         ed = EmpiricalDistribution(samples, weights=weights, name="x")
         key = jax.random.PRNGKey(1)
         result = expectation(ed, lambda x: x, key=key, num_evaluations=10, return_dist=False)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
         assert jnp.isfinite(jnp.asarray(result))
 
     def test_weighted_cov(self):
