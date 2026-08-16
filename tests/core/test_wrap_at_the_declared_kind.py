@@ -134,3 +134,70 @@ class TestTheOperationsReturnTheirDeclaredKind:
         assert float(log_prob(law, 0.0) * 2) == pytest.approx(
             float(np.asarray(log_prob(law, 0.0))) * 2
         )
+
+
+class TestASampleShapeGetsADrawLevel:
+    """Design V.2: the leading dimensions go on a level named `draw`."""
+
+    def test_no_sample_shape_is_one_value(self):
+        drawn = sample(Normal(loc=0.0, scale=1.0, name="x"), key=jax.random.PRNGKey(0))
+
+        assert isinstance(drawn, NumericArray)
+
+    @pytest.mark.parametrize("sample_shape", [(5,), (2, 3)])
+    def test_draws_land_on_one_draw_level(self, sample_shape):
+        from probpipe import NumericArrayBatch
+
+        drawn = sample(
+            Normal(loc=0.0, scale=1.0, name="x"),
+            sample_shape=sample_shape,
+            key=jax.random.PRNGKey(0),
+        )
+
+        assert isinstance(drawn, NumericArrayBatch)
+        assert drawn.batch_shape == sample_shape
+        assert drawn.level_names == ("draw",)
+
+    def test_the_event_shape_is_kept_out_of_the_draw_level(self):
+        """A vector law draws vectors, so its event axes stay with the element."""
+        from probpipe import MultivariateNormal, NumericArrayBatch
+
+        law = MultivariateNormal(loc=jnp.zeros(3), cov=jnp.eye(3), name="v")
+
+        drawn = sample(law, sample_shape=(5,), key=jax.random.PRNGKey(0))
+
+        assert isinstance(drawn, NumericArrayBatch)
+        assert drawn.batch_shape == (5,)
+        assert tuple(drawn.element_spec.shape) == (3,)
+        assert drawn.shape == (5, 3)
+
+    def test_an_element_is_one_draw(self):
+        drawn = sample(
+            Normal(loc=0.0, scale=1.0, name="x"), sample_shape=(5,), key=jax.random.PRNGKey(0)
+        )
+
+        assert isinstance(drawn[2], NumericArray)
+        assert drawn[2].shape == ()
+
+    def test_a_record_law_still_draws_its_own_batch(self):
+        """A record law builds its own batch."""
+        from probpipe import NumericRecordBatch, ProductDistribution
+
+        law = ProductDistribution(
+            Normal(loc=0.0, scale=1.0, name="a"), Normal(loc=1.0, scale=1.0, name="b")
+        )
+
+        drawn = sample(law, sample_shape=(5,), key=jax.random.PRNGKey(0))
+
+        assert isinstance(drawn, NumericRecordBatch)
+
+    def test_a_law_that_does_not_prepend_its_draws_is_left_alone(self):
+        """Rather than mis-splitting axes the law never laid out that way."""
+        from probpipe.core.ops import _drawn_at_its_batch_form
+
+        # Leading axes that are not the requested sample_shape: nothing here can
+        # say which axes are draws, so the value is handed back untouched.
+        drawn = _drawn_at_its_batch_form(jnp.zeros((2, 7)), (5,), name="law")
+
+        assert not isinstance(drawn, NumericArray)
+        assert drawn.shape == (2, 7)

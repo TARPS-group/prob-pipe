@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A non-empty `sample_shape` puts the draws on a `draw` level (#398).**
+  `sample(law, sample_shape=(5,))` for an array-valued law gives a
+  `NumericArrayBatch` whose `batch_shape` is the sample shape, on one level named
+  `draw`, with the event axes left to the element. Design V.2 states this; the
+  record-drawing laws implemented it and the array-drawing ones returned a flat
+  array, leaving the level algebra unavailable for the most common law kind.
+
+  `NumericArrayBatch` gains the array shim its `NumericRecordBatch` sibling
+  carries — `shape` (the whole store), `dtype`, `ndim`, and both conversion
+  hooks — and is a registered pytree under the two-transformation contract
+  `RecordBatch` states: every batch axis preserved, or every one removed.
+
 - **An operation returns the tracked term of its declared kind (#398).** The
   `Function` output boundary wrapped every raw array in a single-field
   `NumericRecord` keyed by the function's own name, and every other raw value in

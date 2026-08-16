@@ -92,7 +92,42 @@ def sample(
         sample_shape = (sample_shape,)
     if key is None:
         key = _auto_key()
-    return dist._sample(key, sample_shape)
+    return _drawn_at_its_batch_form(dist._sample(key, sample_shape), sample_shape, name=dist.name)
+
+
+def _drawn_at_its_batch_form(drawn: Any, sample_shape: tuple[int, ...], *, name: str) -> Any:
+    """Give a multi-draw result the batch form of the draw's kind.
+
+    A non-empty ``sample_shape`` puts those leading dimensions on one level
+    named ``draw`` (design V.2). A record- or term-drawing law builds its own
+    batch, so a raw array is the case assembled here.
+
+    The event shape is read off the drawn array, which stays exact for a law
+    whose event shape is symbolic until a draw binds it. The batch takes the
+    law's own *name*, since the draws are that law's.
+    """
+    from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+    from ._broadcast_distributions import DRAW_LEVEL
+    from ._numeric_array_batch import NumericArrayBatch
+    from .event_template import NumericArraySpec
+    from .tracked import TrackedTerm
+
+    if not sample_shape or isinstance(drawn, TrackedTerm) or not _is_numeric_leaf(drawn):
+        return drawn
+    shape = _event_shape_of(drawn)
+    if shape[: len(sample_shape)] != tuple(sample_shape):
+        # The draws are not where the contract puts them, so there is no split
+        # to make.
+        return drawn
+    return NumericArrayBatch(
+        drawn,
+        DRAW_LEVEL,
+        element_spec=NumericArraySpec(
+            shape=shape[len(sample_shape) :], dtype=_numpy_dtype_of(drawn)
+        ),
+        axis_groups=(tuple(sample_shape),),
+        name=name,
+    )
 
 
 # -- keyword value form shared by the density ops ---------------------------

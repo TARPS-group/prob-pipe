@@ -578,3 +578,78 @@ class TestABatchIsNamed:
         sub = _batch(name="posterior")[1:3]
 
         assert (sub.name, sub.name_is_auto) == ("posterior[draw=1:3]", True)
+
+
+class TestNumericArrayBatchIsAPyTree:
+    """The two-transformation contract `RecordBatch` states, over one column.
+
+    Registration is what lets a batch reach a traced function.
+    """
+
+    def test_it_round_trips_unchanged(self):
+        batch = _batch(name="posterior")
+
+        rebuilt = jax.tree_util.tree_map(lambda x: x, batch)
+
+        assert isinstance(rebuilt, NumericArrayBatch)
+        assert rebuilt.batch_shape == (4,)
+        assert rebuilt.level_names == ("draw",)
+
+    def test_removing_every_batch_axis_yields_the_element(self):
+        """The value is one element, so it comes back as one.
+
+        Observed through ``tree_map``: a ``vmap`` restacks, so the removal is
+        visible only on the way in, inside the trace.
+        """
+        out = jax.tree_util.tree_map(lambda x: x[0], _batch())
+
+        assert isinstance(out, NumericArray)
+        assert out.shape == (3,)
+
+    def test_a_vmap_hands_the_body_an_element_and_stacks_what_it_returns(self):
+        """Which is why the batch's own levels are read rather than inferred.
+
+        Unflattening a slice removes every batch axis, so the body receives a
+        `NumericArray`, and returning it stacks into one with the mapped axis
+        prepended. That value carries no levels, so its spec re-derives exactly
+        from the arriving shape.
+        """
+        out = jax.vmap(lambda element: element)(_batch())
+
+        assert isinstance(out, NumericArray)
+        assert out.shape == (4, 3)
+
+    def test_a_partial_or_resized_rank_is_refused(self):
+        """A shape is not a provenance: no reading says which level survived."""
+        with pytest.raises(ValueError, match="belongs to no level"):
+            jax.tree_util.tree_map(lambda x: jnp.stack([x, x]), _batch())
+
+    def test_a_skeleton_rebuilds_rather_than_raising(self):
+        skeleton = jax.tree_util.tree_map(lambda x: None, _batch())
+
+        assert isinstance(skeleton, NumericArrayBatch)
+
+    def test_it_reaches_a_traced_function(self):
+        total = jax.jit(lambda b: jnp.sum(b))(_batch())
+
+        assert float(total) == float(jnp.sum(jnp.arange(12.0)))
+
+
+class TestNumericArrayBatchArrayShim:
+    """Single-column, so it forwards from its store."""
+
+    def test_shape_is_the_whole_store(self):
+        batch = _batch()
+
+        assert batch.shape == (4, 3)
+        assert batch.ndim == 2
+        assert batch.batch_shape == (4,)
+
+    def test_it_converts_through_both_hooks(self):
+        batch = _batch()
+
+        assert np.asarray(batch).shape == (4, 3)
+        assert isinstance(jnp.asarray(batch), jax.Array)
+
+    def test_dtype_reports_the_store(self):
+        assert _batch().dtype == jnp.float32

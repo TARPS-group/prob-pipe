@@ -8,9 +8,17 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Self
 
+import jax
 import numpy as np
 
-from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of, _take_at
+from ._array_backend import (
+    _event_shape_of,
+    _is_numeric_leaf,
+    _numpy_dtype_of,
+    _take_at,
+    _to_jax_array,
+    _to_numpy_array,
+)
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._numeric_array import NumericArray
 from .event_template import NumericArraySpec
@@ -162,9 +170,31 @@ class NumericArrayBatch(Batch[NumericArray]):
         """The stored array, batch axes leading, in native form. Untracked."""
         return self._values
 
+    # -- the array shim, as ``NumericRecordBatch`` carries from its sole field.
+    # ``batch_shape`` / ``batch_size`` stay the names for the batch axes alone.
+
+    @property
+    def shape(self) -> tuple[int, ...]:
+        """The store's full shape, ``(*batch_shape, *event_shape)``."""
+        return tuple(_event_shape_of(self._values))
+
     @property
     def dtype(self) -> Any:
-        return self.element_spec.dtype
+        """The store's dtype — the value's, as a :class:`NumericArray`'s is."""
+        return _numpy_dtype_of(self._values)
+
+    @property
+    def ndim(self) -> int:
+        """The rank of the store, batch axes included."""
+        return len(self.shape)
+
+    def __array__(self, dtype: Any = None, copy: bool | None = None) -> np.ndarray:
+        arr = _to_numpy_array(self._values)
+        arr = np.asarray(arr, dtype=dtype) if dtype is not None else arr
+        return arr.copy() if copy else arr
+
+    def __jax_array__(self) -> Any:
+        return _to_jax_array(self._values)
 
     def __repr__(self) -> str:
         return (
@@ -206,3 +236,57 @@ class NumericArrayBatch(Batch[NumericArray]):
         object.__setattr__(view, "_values", _take_at(self._values, index))
         view._init_batch(spec, name=name, name_is_auto=True)
         return view
+
+
+# ---------------------------------------------------------------------------
+# JAX PyTree registration
+# ---------------------------------------------------------------------------
+
+
+def _numeric_array_batch_flatten(batch: NumericArrayBatch):
+    """Flatten for JAX traversal: the store, keyed by the aux spec."""
+    return [batch._values], (batch._spec, batch._name, batch._name_is_auto)
+
+
+def _numeric_array_batch_unflatten(aux, children):
+    """Rebuild over the transformations a batch can state honestly.
+
+    The contract ``RecordBatch`` states, over one column instead of many. A
+    treedef carries neither ``in_axes`` nor ``out_axes``, so which level a
+    transform consumed is unrecoverable — *a shape is not a provenance* — and
+    two transformations are supported:
+
+    - **Every batch axis preserved**, the ordinary round trip, reusing the spec.
+    - **Every batch axis removed**: the value is one element, so a
+      :class:`NumericArray` is returned.
+    """
+    spec, name, name_is_auto = aux
+    (values,) = children
+    element_spec = spec.element_spec
+    event_rank = len(element_spec.shape)
+    shape = getattr(values, "shape", None)
+    if shape is None:
+        # A skeleton or sentinel has no shape to measure; rebuilt verbatim.
+        view = object.__new__(NumericArrayBatch)
+        object.__setattr__(view, "_values", values)
+        view._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        return view
+    surviving = tuple(shape)[: len(shape) - event_rank] if event_rank else tuple(shape)
+    if surviving == tuple(spec.batch_shape):
+        view = object.__new__(NumericArrayBatch)
+        object.__setattr__(view, "_values", values)
+        view._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        return view
+    if not surviving:
+        return NumericArray(values, name=name, name_is_auto=name_is_auto, spec=element_spec)
+    raise ValueError(
+        f"a transform left this NumericArrayBatch over {surviving} where its levels account "
+        f"for {tuple(spec.batch_shape)}. A batch keeps every batch axis or removes all of "
+        f"them, since an added or resized axis belongs to no level and unflattening has no "
+        f"name to give one; build the batch where the axis is added, or map over its store"
+    )
+
+
+jax.tree_util.register_pytree_node(
+    NumericArrayBatch, _numeric_array_batch_flatten, _numeric_array_batch_unflatten
+)
