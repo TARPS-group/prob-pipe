@@ -18,6 +18,7 @@ from probpipe import (
     Exponential,
     Gamma,
     Normal,
+    NumericArray,
     NumericRecord,
     RecordEmpiricalDistribution,
     TransformedDistribution,
@@ -100,26 +101,26 @@ class TestExpectationReturnsDist:
         d = Normal(loc=3.0, scale=1.0, name="x")
         key = jax.random.PRNGKey(0)
         result = expectation(d, lambda x: x, key=key, num_evaluations=1000, return_dist=False)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
         assert isinstance(jnp.asarray(result), jnp.ndarray)
 
     def test_bernoulli_exact_returns_array(self):
         """Finite-support exact expectations always return Array."""
         d = Bernoulli(probs=0.7, name="x")
         result = expectation(d, lambda x: x)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 0.7, atol=1e-6)
 
     def test_categorical_exact_returns_array(self):
         d = Categorical(probs=[0.1, 0.2, 0.3, 0.4], name="x")
         result = expectation(d, lambda x: x)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
 
     def test_empirical_exact_returns_array(self):
         """EmpiricalDistribution with num_evaluations=None is exact → Array."""
         d = EmpiricalDistribution(jnp.array([1.0, 2.0, 3.0]), name="x")
         result = expectation(d, lambda x: x)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
 
     def test_empirical_subsample_returns_bootstrap(self):
         """EmpiricalDistribution with num_evaluations < n is approximate → Bootstrap."""
@@ -288,7 +289,7 @@ class TestExpectationEmpirical:
         d = EmpiricalDistribution(samples, name="x")
         key = jax.random.PRNGKey(0)
         result = expectation(d, lambda x: x, key=key, num_evaluations=10, return_dist=False)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
 
     def test_matches_mean_method(self):
         samples = jnp.array([1.0, 3.0, 5.0, 7.0])
@@ -334,13 +335,13 @@ class TestMCFallbackMethods:
         """mean(TFPDistribution) returns exact Array, not BootstrapDistribution."""
         d = Normal(loc=3.0, scale=1.0, name="x")
         result = mean(d)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 3.0, atol=1e-6)
 
     def test_tfp_variance_still_exact(self):
         d = Normal(loc=0.0, scale=2.0, name="x")
         result = variance(d)
-        assert isinstance(result, NumericRecord)
+        assert isinstance(result, NumericArray)
         np.testing.assert_allclose(float(result), 4.0, atol=1e-6)
 
     def test_empirical_mean_still_exact(self):
@@ -424,7 +425,7 @@ class TestGlobalDefaults:
             assert dist_mod.RETURN_APPROX_DIST is False
             d = Normal(loc=0.0, scale=1.0, name="x")
             result = expectation(d, lambda x: x, num_evaluations=100)
-            assert isinstance(result, NumericRecord)
+            assert isinstance(result, NumericArray)
         finally:
             # Restore via the setter — see ``test_set_default_num_evaluations``.
             set_return_approx_dist(old)

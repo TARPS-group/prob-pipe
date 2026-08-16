@@ -12,10 +12,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import Any, Literal
 
-import jax.numpy as jnp
-
 from ._broadcast_distributions import _make_stack
-from ._distribution_base import Distribution
 from ._function_contract import _wrap_declared_function_output
 from ._numeric_record import _is_numeric_leaf
 from ._record_batch import RecordBatch
@@ -36,35 +33,29 @@ BROADCAST_STACK: BroadcastMode = "stack"
 BROADCAST_NESTED: BroadcastMode = "nested"
 
 
-def _wrap_as_record(
+def _wrap_as_term(
     value: Any,
     field_name: str,
     output_template: EventTemplate | None = None,
 ) -> Any:
-    """Coerce a raw return into the record / batch / distribution contract.
+    """Wrap a raw return as the tracked term of its own kind.
 
-    Uniform rule applied at the Function boundary:
+    A tracked term is returned as it is, every kind alike (design V.0). A raw
+    host takes the tracked class of its own kind.
 
-    - Already-structured values (a record, a batch of records, or a
-      ``Distribution``) retain their structure here. ``_coerce_output``
-      copies a directly returned tracked value before attaching call
-      provenance.
-    - Other ``TrackedTerm`` values are event payloads, not direct term results.
-      They follow the ordinary wrapping rules until an explicit term-result
-      plan selects their atom and aggregate families (#369).
-    - ``dict`` (non-empty) → a ``Record`` keyed by the caller's keys; a
-      nested ``dict`` value denotes tree structure and becomes a nested
-      subtree (mappings are never leaves), not a single opaque field.
-    - Non-empty ``list`` / ``tuple`` → ``_make_stack``: assembles a
-      ``DistributionArray`` / ``RecordBatch`` / ``NumericRecordBatch``
-      matching the inner element type.
-    - Scalar numeric / ``jnp.ndarray`` → a single-field ``NumericRecord``
-      named and keyed by the function's own name. Raw
-      numeric access round-trips via the single-field shim:
-      ``float(x)``, ``jnp.array(x)``, and (for callable-valued fields)
-      ``x(args)`` call-forwarding.
-    - Anything else (opaque Python object) → a single-field plain
-      ``Record`` named and keyed by the function's own name.
+    The kinds, most specific first, each named after the function that produced
+    it:
+
+    - ``dict`` (non-empty) → a ``Record`` keyed by the caller's keys, a nested
+      ``dict`` becoming a subtree since a mapping is a tree rather than a leaf.
+    - non-empty ``list`` / ``tuple`` → ``_make_stack``, which assembles the
+      batch matching the inner element type.
+    - numeric scalar or array → a ``NumericArray``.
+    - a callable → a ``Function``.
+    - anything else → an ``Opaque``.
+
+    They are ordered rather than disjoint: a callable is also a non-mapping
+    value, and ``Opaque`` is the fallback.
     """
     if output_template is not None:
         return _wrap_declared_function_output(
@@ -72,8 +63,12 @@ def _wrap_as_record(
             function_name=field_name,
             output_template=output_template,
         )
-    if isinstance(value, (Distribution, Record, RecordBatch)):
+
+    # -- already a term ----------------------------------------------------
+    if isinstance(value, TrackedTerm):
         return value
+
+    # -- a raw host, wrapped into its own kind -----------------------------
     if isinstance(value, dict) and value:
         return Record(field_name, value, name_is_auto=True)
     if isinstance(value, (list, tuple)) and value:
@@ -85,14 +80,19 @@ def _wrap_as_record(
             )
         except (TypeError, ValueError):
             pass
-    # Numeric scalar / array → NumericRecord with the function's
-    # name as the single field; the wrap adds no batch_shape of its
-    # own (batching comes from sweeps). ``_is_numeric_leaf`` excludes
-    # opaque duck-typed objects (``unittest.mock.MagicMock`` etc.)
-    # whose attribute probing would recurse inside ``jnp.asarray``.
+    # ``_is_numeric_leaf`` excludes duck-typed objects (``MagicMock`` and the
+    # like) whose attribute probing recurses inside ``jnp.asarray``.
     if _is_numeric_leaf(value):
-        return Record(field_name, {field_name: jnp.asarray(value)}, name_is_auto=True)
-    return Record(field_name, {field_name: value}, name_is_auto=True)
+        from ._numeric_array import NumericArray
+
+        return NumericArray(value, name=field_name, name_is_auto=True)
+    if callable(value):
+        from .node import Function
+
+        return Function(func=value, name=field_name, name_is_auto=True)
+    from ._opaque import Opaque
+
+    return Opaque(field_name, value, name_is_auto=True)
 
 
 def _coerce_output(
@@ -115,11 +115,9 @@ def _coerce_output(
         How the value was produced:
 
         * ``"wrap"`` — non-broadcast call; ``value`` is whatever the
-          user's function returned. Scalars / arrays become
-          a single-field record named after the function; dict / list / tuple
-          promote via ``_wrap_as_record``; an existing record, batch of
-          records, or ``Distribution`` becomes an independent shallow
-          result copy.
+          user's function returned. ``_wrap_as_term`` gives it the tracked
+          class of its own kind, and a term it already is becomes an
+          independent shallow result copy.
         * ``"stack"`` — array-valued broadcast; ``value`` is a stacked
           aggregate from ``_make_stack`` (``NumericRecordBatch`` /
           ``RecordBatch`` / ``DistributionArray``).
@@ -134,16 +132,17 @@ def _coerce_output(
 
     Returns
     -------
-    Record | RecordBatch | Distribution
-        The value, possibly wrapped or shallow-copied, with the current
+    TrackedTerm
+        The value as the tracked term of its kind, possibly wrapped or
+        shallow-copied, with the current
         call's ``.provenance`` attached. A copied result does not retain the
         implementation-returned object's prior provenance.
     """
     if broadcast_mode == BROADCAST_WRAP:
         raw_value = value
-        value = _wrap_as_record(value, field_name, output_template)
+        value = _wrap_as_term(value, field_name, output_template)
         # Only the schema-carrying event/result containers retained by
-        # _wrap_as_record reach this identity branch. Arbitrary tracked terms
+        # _wrap_as_term reach this identity branch. Arbitrary tracked terms
         # were wrapped as event payloads above.
         if value is raw_value and isinstance(value, TrackedTerm):
             value = _copy_result_term(value, output_template=output_template)

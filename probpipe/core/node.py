@@ -228,6 +228,11 @@ class Function(Node, Immutable, TrackedTerm, Annotated):
         orchestration.
     name : str or None
         Display name; defaults to ``func.__name__``.
+    name_is_auto : bool
+        Whether *name* is auto-derived rather than user-given. An omitted name is
+        auto-derived regardless; this states it for a caller that derives one, as
+        the output boundary does when it names a returned callable after the
+        function that produced it.
     bind : dict or None
         Construction-time keyword bindings (defaults / config).
     module : Module or None
@@ -293,6 +298,7 @@ class Function(Node, Immutable, TrackedTerm, Annotated):
         func: Callable,
         workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
         name: str | None = None,
+        name_is_auto: bool = False,
         bind: dict[str, Any] | None = None,  # construction-time bindings (defaults/config)
         module: Any | None = None,  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,  # default number of samples for broadcasting
@@ -308,7 +314,7 @@ class Function(Node, Immutable, TrackedTerm, Annotated):
             raise TypeError(f"func must be callable, got {type(func).__name__}")
         signature_info = _workflow_call.make_signature_info(func)
         implementation = _CallableFunctionImplementation(func)
-        resolved_name, name_is_auto = auto_name(
+        resolved_name, resolved_is_auto = auto_name(
             name, getattr(func, "__name__", self.__class__.__name__)
         )
         self._initialize(
@@ -316,7 +322,7 @@ class Function(Node, Immutable, TrackedTerm, Annotated):
             signature_info=signature_info,
             workflow_kind=workflow_kind,
             name=resolved_name,
-            name_is_auto=name_is_auto,
+            name_is_auto=name_is_auto or resolved_is_auto,
             bind=bind,
             module=module,
             n_broadcast_samples=n_broadcast_samples,

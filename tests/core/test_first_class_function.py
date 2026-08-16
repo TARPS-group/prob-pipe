@@ -509,7 +509,13 @@ class TestApplyContract:
                 output_template=matching.event_template,
             ).apply(1)
 
-    def test_function_return_remains_event_payload_without_template(self, full_provenance_mode):
+    def test_a_returned_function_keeps_its_kind(self, full_provenance_mode):
+        """A term an operation returns is never buried inside another kind.
+
+        ``apply`` hands back the implementer's object itself; the default call
+        derives a result term from it — the same kind under the call's own
+        provenance.
+        """
         learned = Function(func=lambda x: x + 1, name="learned")
         wrapped = Function(func=lambda: learned, name="fit_like")
 
@@ -517,8 +523,9 @@ class TestApplyContract:
 
         result = wrapped()
 
-        assert isinstance(result, Record)
-        assert result["fit_like"] is learned
+        assert isinstance(result, Function)
+        assert result is not learned
+        assert float(result(1.0)) == 2.0
         assert result.provenance.parents[0].parent is wrapped
 
     def test_function_spec_return_remains_authoritative_event_payload(self, full_provenance_mode):
