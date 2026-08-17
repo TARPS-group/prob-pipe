@@ -16,6 +16,7 @@ from probpipe import (
     NumericArrayBatch,
     NumericRecord,
     NumericRecordBatch,
+    OpaqueBatch,
     Record,
     RecordBatch,
     function,
@@ -227,9 +228,11 @@ class TestDesignAsSweep:
             scale=[0.5, 1.0],
         )
         out = label(p=ff)
-        assert isinstance(out, RecordBatch)
+        # A string row is an opaque value, so the rows batch at that kind and
+        # the elements are reached by position rather than by a field name.
+        assert isinstance(out, OpaqueBatch)
         assert out.batch_shape == (4,)
-        assert list(out["label"]) == [
+        assert [out[i] for i in range(4)] == [
             "nutpie-0.5",
             "nutpie-1.0",
             "pymc-0.5",

@@ -241,3 +241,39 @@ class TestAnEmptyReturnKeepsItsHostsKind:
 
         assert isinstance(result, NumericArray)
         assert result.shape == (0,)
+
+
+class TestASequenceAggregatesAtItsRowsKind:
+    """The multiplicity side of the same table: rows batch at their own kind.
+
+    Numeric rows had a batch form and opaque or callable ones did not, so they
+    fell to a single-field `RecordBatch` keyed by the function's name — the
+    burial this boundary otherwise stopped doing.
+    """
+
+    @staticmethod
+    def _returned(value):
+        return Function(func=lambda: value, name="f")()
+
+    def test_numeric_rows_batch_as_arrays(self):
+        from probpipe import NumericArrayBatch
+
+        assert isinstance(self._returned([1.0, 2.0]), NumericArrayBatch)
+
+    def test_opaque_rows_batch_as_opaque(self):
+        from probpipe import OpaqueBatch
+
+        result = self._returned(["a", "b"])
+
+        assert isinstance(result, OpaqueBatch)
+        assert [result[0], result[1]] == ["a", "b"]
+
+    def test_callable_rows_batch_as_functions(self):
+        from probpipe import FunctionBatch
+
+        assert isinstance(self._returned([lambda: 1, lambda: 2]), FunctionBatch)
+
+    def test_every_kind_takes_the_functions_name(self):
+        """The last-ditch branch alone used to leave the aggregate auto-named."""
+        for value in ([1.0, 2.0], ["a", "b"], [lambda: 1], []):
+            assert self._returned(value).name == "f"
