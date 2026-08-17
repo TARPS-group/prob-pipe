@@ -180,9 +180,9 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             raise ValueError("Must provide at least one chain")
 
         self._chains = [jnp.asarray(c) for c in chains]
-        # A memo, filled on first read: a container assigned once here rather
-        # than an attribute assigned later, so reading it does not modify the
-        # distribution.
+        # A memo, filled on first read. Reading fills it in place, which leaves
+        # the term's own attributes as construction set them — what the
+        # immutability guard sees, and what a copy drops rather than inherits.
         self._memo: dict[str, Array] = {}
 
         # When the caller's chain columns are laid out in a different

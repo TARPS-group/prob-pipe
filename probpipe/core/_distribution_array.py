@@ -130,8 +130,10 @@ class DistributionArray[T](Distribution[T]):
     #: provenance of the term that computed it.
     _transient_state = ("_memo",)
 
-    # Storage slots. ``_components`` is ``None`` for backend-delegated
-    # arrays until :attr:`components` materialises the eager tuple
+    # Storage slots. ``_components`` holds the literal tuple an eagerly built
+    # array was given, and stays ``None`` for a backend-delegated one — which is
+    # what marks it as backend-delegated. :attr:`components` materialises that
+    # array's cells on first read into the memo rather than into this slot
     # lazily; the literal-array constructor sets it directly.
     # ``_backend`` is ``None`` for the literal path and set by
     # :meth:`_from_backend`.

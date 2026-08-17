@@ -1215,9 +1215,9 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         name, name_is_auto = auto_name(name, "broadcast")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
-        # A memo, filled on first read. It is a container assigned once here
-        # rather than an attribute assigned later, so reading it does not modify
-        # the distribution.
+        # A memo, filled on first read. Reading fills it in place, which leaves
+        # the term's own attributes as construction set them — what the
+        # immutability guard sees, and what a copy drops rather than inherits.
         self._memo: dict[str, MarginalizedBroadcastDistribution] = {}
 
     # -- basic properties ---------------------------------------------------

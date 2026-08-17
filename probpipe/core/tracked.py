@@ -305,22 +305,24 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     # -- copying -------------------------------------------------------------
 
     def _shallow_copy(self) -> Self:
-        """Return a shallow copy sharing all internal state.
+        """Return a shallow copy holding the same state, entries shared.
 
-        Copies the instance ``__dict__`` (when present) and every assigned
-        slot across the class hierarchy via ``object.__setattr__``, bypassing
-        both ``__init__`` and any immutability guard on ``__setattr__``. Used
-        by :meth:`with_name`; host classes with exotic storage may override.
+        Copies through the state round-trip — :meth:`__getstate__` into
+        :meth:`__setstate__` — so the copy carries every attribute the original
+        has assigned **except** what the class declares transient, and a store
+        the class declares decoupled arrives in a container of its own. Writes
+        bypass both ``__init__`` and the immutability guard, as construction
+        does. Used by :meth:`with_name`; host classes with exotic storage may
+        override.
 
         Allocation uses ``object.__new__`` directly: ``type(self)`` is
         already the resolved concrete class, so a host's own ``__new__`` —
         which exists to *select* a class from constructor arguments and may
         require them — must not run again here.
 
-        The copy goes through the same state round-trip as ``copy`` and
-        ``pickle``, so a rename honours what a class declares about its state: a
-        memo is not carried into the copy, and a store written in place is not
-        shared with it. All three copy paths therefore agree.
+        Going through the round-trip rather than around it is what makes a
+        rename, a ``copy.copy``, and an unpickle agree: a memo is dropped by all
+        three, and an in-place store is decoupled by all three.
         """
         clone = object.__new__(type(self))
         clone.__setstate__(self.__getstate__())

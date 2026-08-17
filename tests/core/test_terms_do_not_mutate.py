@@ -13,10 +13,13 @@ name. The tests keep watch on all of them, since the difference is invisible fro
 outside and easy to lose.
 """
 
+import copy
+import pickle
 from collections.abc import Mapping
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from probpipe import (
     DistributionArray,
@@ -166,6 +169,78 @@ class TestAnOperationDoesNotMutateItsResultAfterBuildingIt:
         assert again is not conditioned
         # The operand is untouched, which is what §V.1 promises.
         assert set(joint.components) == {"z", "x"}
+
+
+class TestEveryMemoHolderDropsItsMemoOnACopy:
+    """Each memo-holding term, across each way of copying one.
+
+    The mixin's own tests cover the mechanism; these cover the three classes
+    that opt into it, so dropping `_transient_state` from one of them, or
+    breaking its rebuild path, fails here rather than passing quietly.
+
+    Each case gives a term, a read that fills its memo, and what that read
+    returns, so the assertions can check both halves: the copy does not inherit
+    the memo, and it can still rebuild the value.
+    """
+
+    @staticmethod
+    def _broadcast():
+        term = BroadcastDistribution(
+            input_samples={"x": jnp.ones((5, 1))},
+            output_samples=jnp.zeros((5, 2)),
+            weights=None,
+            broadcast_args=["x"],
+        )
+        return term, lambda d: d.marginalize()
+
+    @staticmethod
+    def _backend_array():
+        term = DistributionArray._from_backend(_ScalarBackend(3), name="x")
+        return term, lambda d: d.components
+
+    @staticmethod
+    def _approximate():
+        from probpipe.inference._approximate_distribution import ApproximateDistribution
+
+        term = ApproximateDistribution([np.zeros((4, 1)), np.ones((4, 1))], name="p")
+        return term, lambda d: d._concat_chains()
+
+    @pytest.fixture(
+        params=[
+            pytest.param("_broadcast", id="broadcast-marginal"),
+            pytest.param("_backend_array", id="backend-array-components"),
+            pytest.param("_approximate", id="approximate-chains"),
+        ]
+    )
+    def case(self, request):
+        return getattr(self, request.param)()
+
+    @pytest.fixture(
+        params=[
+            pytest.param(lambda t: t.with_name("renamed"), id="with_name"),
+            pytest.param(copy.copy, id="copy"),
+            pytest.param(copy.deepcopy, id="deepcopy"),
+            pytest.param(lambda t: pickle.loads(pickle.dumps(t)), id="pickle"),
+        ]
+    )
+    def copied(self, request):
+        return request.param
+
+    def test_the_copy_does_not_inherit_the_memo(self, case, copied):
+        term, read = case
+        read(term)  # fill it on the original
+        assert getattr(copied(term), "_memo", {}) == {}
+
+    def test_the_copy_still_rebuilds_the_value(self, case, copied):
+        term, read = case
+        read(term)
+        assert read(copied(term)) is not None
+
+    def test_the_memo_is_declared_transient(self, case):
+        from probpipe.core._immutable import declared_state_names
+
+        term, _ = case
+        assert "_memo" in declared_state_names(type(term), "_transient_state")
 
 
 class TestACopyDoesNotInheritAMemo:
