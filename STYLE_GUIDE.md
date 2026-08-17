@@ -801,7 +801,9 @@ do not add assignment to a distribution outside its constructor. The exemption
 lifts by removing both overrides, once fitting has that contract; removing one
 would leave a trainer that clears what it fitted still raising.
 
-**The one carve-out is the `annotations` store** (`_annotations`, provided
+Two stores are carved out of that rule, both written after construction.
+
+**The first is the `annotations` store** (`_annotations`, provided
 by the `Annotated` mixin in `probpipe.core.tracked` and carried by
 `Distribution` and `Record`): a string-keyed mapping — typically an
 `xarray.DataTree` — whose job is to collect post-construction metadata
@@ -811,6 +813,16 @@ alternative — returning a renamed clone for every diagnostic — would
 break the provenance/identity tracking that downstream code relies on.
 Treat it as append-only and never use it as a back-channel for mutating
 parameter-like state.
+
+**The second, narrower, is a memo**: a term that computes something
+lazily holds a `_memo` dictionary, assigned by its constructor and filled in
+place by the read that needs it (`BroadcastDistribution.marginalize`, a
+backend-delegated `DistributionArray.components`,
+`ApproximateDistribution._concat_chains`). Filling it leaves the term's own
+attributes as construction set them, which is what the immutability guard sees.
+A class holding one declares it in `_transient_state` so no copy inherits it —
+each copy rebuilds — and whatever reads it must tolerate its absence, since a
+copy or an unpickle arrives without one.
 
 ### 9.3 Error messages
 

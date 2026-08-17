@@ -26,7 +26,7 @@ from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
-from ._immutable import constructing
+from ._immutable import constructing, transient_memo
 from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
@@ -1183,6 +1183,11 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         Distribution name for provenance.
     """
 
+    #: The memo is not state: a copy recomputes rather than inheriting one. It
+    #: matters for more than size here, since a memoised value can carry the
+    #: provenance of the term that computed it.
+    _transient_state = ("_memo",)
+
     _sampling_cost: str = "low"
     _preferred_orchestration: str | None = None
 
@@ -1210,7 +1215,10 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         name, name_is_auto = auto_name(name, "broadcast")
         super().__init__(name=name, name_is_auto=name_is_auto)
         self._approximate = True
-        self._marginal_cache: MarginalizedBroadcastDistribution | None = None
+        # A memo, filled on first read. Reading fills it in place, which leaves
+        # the term's own attributes as construction set them — what the
+        # immutability guard sees, and what a copy drops rather than inherits.
+        self._memo: dict[str, MarginalizedBroadcastDistribution] = {}
 
     # -- basic properties ---------------------------------------------------
 
@@ -1280,16 +1288,18 @@ class BroadcastDistribution(Distribution[dict], SupportsSampling):
         so the lineage is preserved without a direct reference to the
         ``BroadcastDistribution``.
         """
-        if self._marginal_cache is None:
-            self._marginal_cache = _make_marginal(
+        marginal = transient_memo(self).get("marginal")
+        if marginal is None:
+            marginal = _make_marginal(
                 self._output_samples,
                 self._w,
                 output_distributions=self._output_distributions,
                 event_template=self._output_template,
             )
-            if self.provenance is not None and isinstance(self._marginal_cache, Distribution):
-                self._marginal_cache.with_provenance(self.provenance)
-        return self._marginal_cache
+            if self.provenance is not None and isinstance(marginal, Distribution):
+                marginal.with_provenance(self.provenance)
+            transient_memo(self)["marginal"] = marginal
+        return marginal
 
     @property
     def output(self) -> MarginalizedBroadcastDistribution:

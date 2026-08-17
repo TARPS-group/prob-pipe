@@ -32,7 +32,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import Any, ClassVar
 
-__all__ = ["Immutable", "constructing", "declared_state_names"]
+__all__ = ["Immutable", "constructing", "declared_state_names", "transient_memo"]
 
 
 def declared_state_names(cls: type, declaration: str) -> frozenset[str]:
@@ -104,6 +104,34 @@ def constructing(instance: Any) -> Iterator[Any]:
             registry[key] = (held, depth - 1)
         else:
             del registry[key]
+
+
+def transient_memo(host: Any) -> dict[str, Any]:
+    """The host's ``_memo`` dictionary, created if it has none.
+
+    Parameters
+    ----------
+    host : object
+        A term holding its lazily computed values in a ``_memo`` dictionary
+        declared in :attr:`Immutable._transient_state`.
+
+    Returns
+    -------
+    dict
+        The memo, empty if this host has not got one yet.
+
+    Notes
+    -----
+    A transient memo is not carried across a copy or a pickle, so a term that
+    arrives by either route has none and whatever reads it must rebuild rather
+    than assume. Written through ``object.__setattr__`` so an immutable host can
+    call it from a read path.
+    """
+    memo = getattr(host, "_memo", None)
+    if memo is None:
+        memo = {}
+        object.__setattr__(host, "_memo", memo)
+    return memo
 
 
 def decoupled_container(container: Any) -> Any:
@@ -199,13 +227,6 @@ class Immutable:
 
     # -- The state round-trip ------------------------------------------------
 
-    @classmethod
-    def _declared_state_names(cls, declaration: str) -> frozenset[str]:
-        """The union of the *declaration* tuple over every class in the MRO."""
-        return frozenset(
-            name for klass in cls.__mro__ for name in klass.__dict__.get(declaration, ())
-        )
-
     def __getstate__(self) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
         """Return this object's state, minus the attributes declared transient.
 
@@ -217,7 +238,7 @@ class Immutable:
         """
         state = object.__getstate__(self)
         instance_dict, slots = state if isinstance(state, tuple) else (state, None)
-        transient = self._declared_state_names("_transient_state")
+        transient = declared_state_names(type(self), "_transient_state")
         if transient:
             instance_dict = {k: v for k, v in (instance_dict or {}).items() if k not in transient}
             slots = {k: v for k, v in (slots or {}).items() if k not in transient}
@@ -240,7 +261,7 @@ class Immutable:
         writing to one container.
         """
         instance_dict, slots = state if isinstance(state, tuple) else (state, None)
-        decoupled = self._declared_state_names("_decoupled_state")
+        decoupled = declared_state_names(type(self), "_decoupled_state")
         for attribute, value in ((instance_dict or {}) | (slots or {})).items():
             if attribute in decoupled and value is not None:
                 value = decoupled_container(value)

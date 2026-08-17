@@ -40,6 +40,7 @@ to pull out the i-th element of a **batch** → ``DistributionArray``.
 
 from __future__ import annotations
 
+from functools import partial
 from math import prod
 from typing import TYPE_CHECKING
 
@@ -48,6 +49,7 @@ import numpy as np
 
 from .._array_utils import _slice_leading_axes
 from ._distribution_base import Distribution
+from ._immutable import transient_memo
 from .event_template import EventTemplate
 from .protocols import SupportsArrayBackend
 from .tracked import auto_name
@@ -123,8 +125,15 @@ class DistributionArray[T](Distribution[T]):
       than rejecting at construction.
     """
 
-    # Storage slots. ``_components`` is ``None`` for backend-delegated
-    # arrays until :attr:`components` materialises the eager tuple
+    #: The memo is not state: a copy recomputes rather than inheriting one. It
+    #: matters for more than size here, since a memoised value can carry the
+    #: provenance of the term that computed it.
+    _transient_state = ("_memo",)
+
+    # Storage slots. ``_components`` holds the literal tuple an eagerly built
+    # array was given, and stays ``None`` for a backend-delegated one — which is
+    # what marks it as backend-delegated. :attr:`components` materialises that
+    # array's cells on first read into the memo rather than into this slot
     # lazily; the literal-array constructor sets it directly.
     # ``_backend`` is ``None`` for the literal path and set by
     # :meth:`_from_backend`.
@@ -349,10 +358,12 @@ class DistributionArray[T](Distribution[T]):
         # eager component list. Initialise fields the same way
         # __init__ would, but without per-component validation (the
         # backend already vouched for shape consistency).
-        instance._components = None
-        instance._batch_shape = tuple(backend.batch_shape)
-        instance._backend = backend
-        instance._event_template = None
+        set_attribute = partial(object.__setattr__, instance)
+        set_attribute("_components", None)
+        set_attribute("_memo", {})
+        set_attribute("_batch_shape", tuple(backend.batch_shape))
+        set_attribute("_backend", backend)
+        set_attribute("_event_template", None)
         name, name_is_auto = auto_name(name, "distribution_array")
         Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
         # Approximation status flows from the backend. TFP-backed
@@ -360,7 +371,7 @@ class DistributionArray[T](Distribution[T]):
         # ``RecordEmpiricalDistribution``) will report
         # ``is_approximate=True`` on its own samples and the array
         # picks that up here.
-        instance._approximate = bool(getattr(backend, "is_approximate", False))
+        set_attribute("_approximate", bool(getattr(backend, "is_approximate", False)))
         return instance
 
     # -- structure -----------------------------------------------------------
@@ -378,11 +389,15 @@ class DistributionArray[T](Distribution[T]):
         :meth:`__getitem__` / :meth:`_flat_component` always returns a
         fresh scalar.
         """
-        if self._components is None:
-            assert self._backend is not None  # invariant
+        if self._components is not None:
+            return self._components
+        assert self._backend is not None  # invariant
+        cells = transient_memo(self).get("components")
+        if cells is None:
             n = prod(self._batch_shape)
-            self._components = tuple(self._backend.cell(i) for i in range(n))
-        return self._components
+            cells = tuple(self._backend.cell(i) for i in range(n))
+            transient_memo(self)["components"] = cells
+        return cells
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
@@ -710,7 +725,7 @@ def _make_distribution_array(
                     f"DistributionArray component {index} event_template {actual!r} "
                     f"does not match declared template {event_template!r}"
                 )
-        array._event_template = event_template
+        object.__setattr__(array, "_event_template", event_template)
     if name_is_auto is not None:
         object.__setattr__(array, "_name_is_auto", bool(name_is_auto))
     return array

@@ -228,9 +228,10 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         rename is always a user choice). The copy's :attr:`provenance`
         records the rename, with the original as parent, so the lineage
         chain is preserved. On an ``Annotated`` host the annotations
-        *container* is copied (its entries are shared), so annotations
-        written after the rename land on one object without appearing on
-        the other.
+        *container* is its own (its entries are shared), so annotations
+        written after the rename land on one object without appearing on the
+        other — :meth:`_shallow_copy` does that, from the host's own
+        ``_decoupled_state`` declaration.
 
         This renames the object *itself*. To rename the named fields inside a
         structured object, use ``with_path_names`` on the named-tree types.
@@ -256,9 +257,6 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         object.__setattr__(clone, "_name", name)
         object.__setattr__(clone, "_name_is_auto", False)
         object.__setattr__(clone, "_provenance", None)
-        annotations = getattr(clone, "_annotations", None)
-        if annotations is not None:
-            object.__setattr__(clone, "_annotations", _decoupled_annotations(annotations))
         clone.with_provenance(
             Provenance.create(
                 "with_name",
@@ -307,32 +305,27 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     # -- copying -------------------------------------------------------------
 
     def _shallow_copy(self) -> Self:
-        """Return a shallow copy sharing all internal state.
+        """Return a shallow copy holding the same state, entries shared.
 
-        Copies the instance ``__dict__`` (when present) and every assigned
-        slot across the class hierarchy via ``object.__setattr__``, bypassing
-        both ``__init__`` and any immutability guard on ``__setattr__``. Used
-        by :meth:`with_name`; host classes with exotic storage may override.
+        Copies through the state round-trip — :meth:`__getstate__` into
+        :meth:`__setstate__` — so the copy carries every attribute the original
+        has assigned **except** what the class declares transient, and a store
+        the class declares decoupled arrives in a container of its own. Writes
+        bypass both ``__init__`` and the immutability guard, as construction
+        does. Used by :meth:`with_name`; host classes with exotic storage may
+        override.
 
         Allocation uses ``object.__new__`` directly: ``type(self)`` is
         already the resolved concrete class, so a host's own ``__new__`` —
         which exists to *select* a class from constructor arguments and may
         require them — must not run again here.
 
-        What to copy comes from :meth:`object.__getstate__` rather than from a
-        walk over ``__slots__``. That walk is easy to get subtly wrong, and
-        wrong here is silent: ``__slots__`` may be a bare string naming one
-        slot, which iterates into characters rather than into that name, so a
-        host declaring ``__slots__ = "_store"`` would be cloned without its
-        storage and nothing would raise.
+        Going through the round-trip rather than around it is what makes a
+        rename, a ``copy.copy``, and an unpickle agree: a memo is dropped by all
+        three, and an in-place store is decoupled by all three.
         """
         clone = object.__new__(type(self))
-        state = object.__getstate__(self)
-        instance_dict, slots = state if isinstance(state, tuple) else (state, None)
-        for attribute, value in (instance_dict or {}).items():
-            object.__setattr__(clone, attribute, value)
-        for slot, value in (slots or {}).items():
-            object.__setattr__(clone, slot, value)
+        clone.__setstate__(self.__getstate__())
         return clone
 
 

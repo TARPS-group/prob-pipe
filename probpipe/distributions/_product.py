@@ -534,6 +534,9 @@ class TFPProductDistribution(ProductDistribution):
     def _build_tfp_dist(self):
         """Construct a combined TFP distribution from the components.
 
+        Called from ``__init__`` only, so it writes ``_tfp_dist`` through
+        ``object.__setattr__`` as the rest of construction does.
+
         Collects component TFP distributions in field-insertion order
         (matching the ``Record`` layout).  For the common case of
         same-family scalar distributions, stacks parameters into a
@@ -562,12 +565,13 @@ class TFPProductDistribution(ProductDistribution):
                 vals = [d.parameters[pname] for d in tfp_dists]
                 if all(v is not None for v in vals):
                     stacked_params[pname] = jnp.stack(vals)
-            self._tfp_dist = tfd.Independent(
+            combined = tfd.Independent(
                 type(exemplar)(**stacked_params),
                 reinterpreted_batch_ndims=1,
             )
         else:
-            self._tfp_dist = tfd.Blockwise(tfp_dists)
+            combined = tfd.Blockwise(tfp_dists)
+        object.__setattr__(self, "_tfp_dist", combined)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
