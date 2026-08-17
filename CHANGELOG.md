@@ -87,6 +87,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call, retain the resulting joint distribution, or materialize and reuse
   samples explicitly when a shared realization is required.
 
+- **A sweep of opaque or callable rows aggregates at its own kind (#398).** Rows
+  that do not stack numerically fell to a single-field `RecordBatch` keyed by the
+  function's name — the burial the output boundary otherwise stopped doing — and
+  it was the one aggregation that left the result auto-named. Opaque rows now give
+  an `OpaqueBatch` and callable rows a `FunctionBatch`, both named for the
+  function as every other aggregation already was.
+
 - **An empty return keeps its host's kind (#398).** A `Function` returning `{}`
   raised, and `[]` / `()` became an `Opaque`, because `Record`, `EventTemplate`,
   and the object batches each required at least one entry. The kind now follows

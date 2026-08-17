@@ -26,10 +26,12 @@ from ._empirical import (
     EmpiricalDistribution,
     RecordEmpiricalDistribution,
 )
+from ._function_batch import FunctionBatch
 from ._immutable import constructing, transient_memo
 from ._numeric_array_batch import NumericArrayBatch
 from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array
+from ._opaque_batch import OpaqueBatch
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from .event_template import (
     EventTemplate,
@@ -957,16 +959,22 @@ def _make_stack(
                 name_is_auto=name is None,
             )
 
-        # Last-ditch: wrap as a RecordBatch whose single field holds a
-        # numpy object-dtype array of the opaque outputs.
+        # Rows that do not stack take the batch form of their own kind, which is
+        # the multiplicity side of the table ``_wrap_as_term`` states for one
+        # value: a callable batches as a FunctionBatch and anything else as an
+        # OpaqueBatch. Both store their elements, so nothing has to stack.
         try:
-            object_array = np.asarray(outs, dtype=object).reshape(batch_shape)
-            return RecordBatch(
-                {field_name: object_array},
-                level_names,
-                element_spec=EventTemplate(**{field_name: None}),
-                axis_groups=sweep_groups,
-            )
+            object_array = _from_iterable(outs, kind="_make_stack").reshape(batch_shape)
+            shared = {
+                "axis_groups": sweep_groups,
+                "name": name or field_name,
+                "name_is_auto": name is None,
+            }
+            # ``outs`` first: every row of none is vacuously callable, and no row
+            # is a reason to claim the function kind over the fallback.
+            if outs and all(callable(o) for o in outs):
+                return FunctionBatch(object_array, level_names, **shared)
+            return OpaqueBatch(object_array, level_names, **shared)
         except (TypeError, ValueError) as exc:
             types_seen = sorted({type(o).__name__ for o in outs})
             raise TypeError(
