@@ -141,9 +141,17 @@ class TestConstructionRefusals:
         with pytest.raises(TypeError, match=r"element at \(1, 0\)"):
             cls(store, ["chain", "draw"])
 
-    def test_no_elements_is_refused(self):
-        with pytest.raises(ValueError, match="at least one element"):
-            OpaqueBatch([], "site")
+    def test_no_elements_is_a_batch_of_none(self):
+        """A multiplicity of zero is a multiplicity; a *missing axis* is not.
+
+        The element count is what the level measures, so zero is an answer. The
+        refusal below is the real distinction: an object with no axis at all has
+        no level to count along.
+        """
+        batch = OpaqueBatch([], "site")
+
+        assert (batch.batch_shape, batch.level_names) == ((0,), ("site",))
+        assert len(batch) == 0
 
     def test_a_single_object_is_not_a_batch(self):
         with pytest.raises(ValueError, match="at least one batch axis"):

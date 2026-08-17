@@ -829,6 +829,28 @@ class TestMakeStack:
     shape-(n,) aggregate. Every case is a parameter-sweep-like scenario
     where row identity must survive; there is no marginalisation."""
 
+    def test_the_shape_is_given_exactly_once(self):
+        """``batch_shape`` and ``n`` are two spellings of one thing."""
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        with pytest.raises(TypeError, match="requires either batch_shape or n"):
+            _make_stack([1.0], field_name="demo", level_names=("sweep",))
+        with pytest.raises(TypeError, match="batch_shape OR n, not both"):
+            _make_stack([1.0], batch_shape=(1,), n=1, field_name="demo", level_names=("sweep",))
+
+    def test_one_level_name_per_group_of_axes(self):
+        """A level name that names no group would name nothing."""
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        with pytest.raises(ValueError, match="mints one level per group"):
+            _make_stack(
+                [1.0, 2.0, 3.0, 4.0],
+                batch_shape=(2, 2),
+                axis_groups=((2,), (2,)),
+                field_name="demo",
+                level_names=("only_one",),
+            )
+
     def test_list_of_scalars_wraps_as_numeric_array_batch(self):
         """Numeric rows aggregate at their own kind, with no field to address."""
         from probpipe import NumericArrayBatch
