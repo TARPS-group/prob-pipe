@@ -801,7 +801,9 @@ do not add assignment to a distribution outside its constructor. The exemption
 lifts by removing both overrides, once fitting has that contract; removing one
 would leave a trainer that clears what it fitted still raising.
 
-**The one carve-out is the `annotations` store** (`_annotations`, provided
+Two stores are carved out of that rule, both written after construction.
+
+**The first is the `annotations` store** (`_annotations`, provided
 by the `Annotated` mixin in `probpipe.core.tracked` and carried by
 `Distribution` and `Record`): a string-keyed mapping — typically an
 `xarray.DataTree` — whose job is to collect post-construction metadata
@@ -812,7 +814,7 @@ break the provenance/identity tracking that downstream code relies on.
 Treat it as append-only and never use it as a back-channel for mutating
 parameter-like state.
 
-A second, narrower carve-out is a **memo**: a term that computes something
+**The second, narrower, is a memo**: a term that computes something
 lazily holds a `_memo` dictionary, assigned by its constructor and filled in
 place by the read that needs it (`BroadcastDistribution.marginalize`, a
 backend-delegated `DistributionArray.components`,
