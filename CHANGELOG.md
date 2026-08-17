@@ -84,7 +84,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it was the one aggregation that left the result auto-named. Opaque rows now give
   an `OpaqueBatch` and callable rows a `FunctionBatch`, both named for the
   function as every other aggregation already was.
-
 - **An empty return keeps its host's kind (#398).** A `Function` returning `{}`
   raised, and `[]` / `()` became an `Opaque`, because `Record`, `EventTemplate`,
   and the object batches each required at least one entry. The kind now follows
@@ -96,6 +95,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result. A *batch* of empty records is not: a batch reads its multiplicity off
   a column, and a zero-field element supplies none, so `RecordBatch` still
   requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:
+
+  result. An empty template is **not** promoted to `NumericEventTemplate`:
   vacuously every leaf is numeric, which is not a reason to claim it. A batch
   still requires a batch *axis* — a single object with no axis is refused as
   before.
