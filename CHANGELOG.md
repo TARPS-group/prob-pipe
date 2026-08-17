@@ -78,6 +78,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call, retain the resulting joint distribution, or materialize and reuse
   samples explicitly when a shared realization is required.
 
+- **An empty return keeps its host's kind (#398).** A `Function` returning `{}`
+  raised, and `[]` / `()` became an `Opaque`, because `Record`, `EventTemplate`,
+  and the object batches each required at least one entry. The kind now follows
+  the host's *type* whether or not anything is in it: `{}` is an empty `Record`,
+  and `[]` / `()` an `OpaqueBatch` of `batch_shape == (0,)` — no element can say
+  what kind it holds, and every element spec holds vacuously of none.
+
+  `Record()`, `EventTemplate()`, and `OpaqueBatch([], level)` are legal as a
+  result. An empty template is **not** promoted to `NumericEventTemplate`:
+  vacuously every leaf is numeric, which is not a reason to claim it. A batch
+  still requires a batch *axis* — a single object with no axis is refused as
+  before.
+
 - **A sweep over numeric rows aggregates as a `NumericArrayBatch` (#398).** A
   `Function` swept over a batch collected numeric rows into a single-field
   `NumericRecordBatch` keyed by the function's own name, so `out["my_func"]`

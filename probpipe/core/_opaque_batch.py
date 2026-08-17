@@ -45,8 +45,8 @@ class OpaqueBatch(_ObjectBatch[Any]):
         mapping, or an array that is not ``dtype=object`` — each iterates into
         something other than its elements — or is not iterable at all.
     ValueError
-        If ``elements`` is empty, or is a zero-dimensional array (one object with
-        no batch axis); if ``axis_groups`` does not tile the shape the elements are
+        If ``elements`` is a zero-dimensional array (one object, with no batch
+        axis to count along); if ``axis_groups`` does not tile the shape the elements are
         stored in; or if ``axis_groups`` is omitted and the number of level names
         does not match the number of axes.
 

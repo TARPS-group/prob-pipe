@@ -69,9 +69,18 @@ def _wrap_as_term(
         return value
 
     # -- a raw host, wrapped into its own kind -----------------------------
-    if isinstance(value, dict) and value:
+    # The kind follows the host's *type*, empty or not: a mapping is a tree and a
+    # sequence a multiplicity, and having no entries does not change which.
+    if isinstance(value, dict):
         return Record(field_name, value, name_is_auto=True)
-    if isinstance(value, (list, tuple)) and value:
+    if isinstance(value, (list, tuple)):
+        if not value:
+            # No element to read a kind off, and every element spec holds
+            # vacuously of none, so the batch makes the least specific claim it
+            # can. Its own kind is still a batch, which is what the host says.
+            from ._opaque_batch import OpaqueBatch
+
+            return OpaqueBatch([], field_name, name=field_name, name_is_auto=True)
         try:
             # A returned sequence ranges over nothing the call named, so the
             # level takes the function's own name.

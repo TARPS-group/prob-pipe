@@ -192,6 +192,34 @@ class TestNumericArrayComputesAsAnArray:
         assert not isinstance(pair, NumericArray)
         np.testing.assert_array_equal(np.asarray(pair), np.asarray(jnp.arange(1.0, 4.0)))
 
+    def test_the_reflected_operators_agree_with_the_forward_ones(self):
+        """`1.0 - arr` is `arr`'s subtraction seen from the other side.
+
+        Operand order is not a semantic distinction, so an array-like that
+        computes one way and refuses the other would be a trap rather than a
+        simplification.
+        """
+        value = NumericArray(jnp.arange(3.0))
+
+        np.testing.assert_array_equal(np.asarray(1.0 - value), np.asarray(1.0 - jnp.arange(3.0)))
+        np.testing.assert_array_equal(np.asarray(2.0 * value), np.asarray(value * 2.0))
+
+    def test_an_in_place_operator_rebinds_to_a_bare_array(self):
+        """An in-place operator on an immutable term is the out-of-place one.
+
+        The name is rebound to the *result*, which is a bare array like any other
+        arithmetic result — the term is not mutated, and does not survive.
+        """
+        value = NumericArray(jnp.arange(3.0), name="kept")
+        original = value
+
+        value += 1.0
+
+        assert not isinstance(value, NumericArray)
+        assert isinstance(original, NumericArray)
+        assert original.name == "kept"
+        np.testing.assert_array_equal(np.asarray(value), np.arange(1.0, 4.0))
+
     def test_comparison_is_elementwise(self):
         np.testing.assert_array_equal(
             np.asarray(NumericArray(jnp.arange(3.0), name="v") == 1.0),
