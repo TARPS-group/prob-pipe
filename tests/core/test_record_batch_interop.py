@@ -838,9 +838,9 @@ class TestZeroRowsAgreeAcrossDispatch:
         }
 
         types = {type(r).__name__ for r in results.values()}
-        templates = {repr(r.event_template) for r in results.values()}
+        specs = {repr(r.element_spec) for r in results.values()}
         assert len(types) == 1
-        assert len(templates) == 1
+        assert len(specs) == 1
 
 
 class TestFunctionValuedColumnsStack:
