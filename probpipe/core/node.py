@@ -44,7 +44,6 @@ from ._function_contract import (
     _validate_function_templates,
     _wrap_declared_function_output,
 )
-from ._immutable import Immutable
 from ._record_batch import RecordBatch
 from .event_template import ArraySpec, EventTemplate, _concretize_event_template
 from .provenance import Provenance
@@ -188,7 +187,7 @@ class Node(ABC):  # noqa: B024
         return self._inputs
 
 
-class Function(Node, Immutable, TrackedTerm, Annotated):
+class Function(Node, TrackedTerm, Annotated):
     """
     An immutable, tracked executable DAG node wrapping one implementation.
 

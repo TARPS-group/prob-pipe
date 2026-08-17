@@ -251,3 +251,241 @@ class TestTheHostsInTheTree:
 
         assert double(2.0) is not None
         assert not getattr(double, "_initializing", False)
+
+
+class TestEveryTrackedTermIsImmutable:
+    """The guarantee, over every tracked term the package defines.
+
+    Discovered rather than listed: a term added later is covered without anyone
+    remembering to add it here, which is what keeps the rule from decaying back
+    into the per-class opt-in it replaced.
+    """
+
+    @staticmethod
+    def every_tracked_class() -> list[type]:
+        import importlib
+        import pkgutil
+
+        import probpipe
+        from probpipe.core.tracked import TrackedTerm
+
+        for module in pkgutil.walk_packages(probpipe.__path__, "probpipe."):
+            try:
+                importlib.import_module(module.name)
+            except ImportError:
+                continue  # an optional backend that is not installed
+
+        seen: set[type] = set()
+
+        def collect(cls: type) -> None:
+            for subclass in cls.__subclasses__():
+                if subclass not in seen:
+                    seen.add(subclass)
+                    collect(subclass)
+
+        collect(TrackedTerm)
+        return sorted(seen, key=lambda c: c.__name__)
+
+    def test_the_mixin_is_in_every_tracked_term_s_mro(self):
+        offenders = [c.__name__ for c in self.every_tracked_class() if not issubclass(c, Immutable)]
+        assert offenders == []
+
+    def test_the_only_exemption_is_the_distribution_layer(self):
+        # A class defining its own ``__setattr__`` is back to the per-class rule,
+        # and free to disagree with the message or the exception. Exactly one
+        # does, deliberately and temporarily, and this is what stops a second
+        # from appearing quietly.
+        from probpipe.core._distribution_base import Distribution
+
+        exempt = [
+            c.__name__
+            for c in self.every_tracked_class()
+            if "__setattr__" in c.__dict__ or "__delattr__" in c.__dict__
+        ]
+        assert exempt == [Distribution.__name__]
+
+    def test_a_distribution_still_accepts_assignment_and_deletion(self):
+        # The interim exemption, asserted rather than assumed: training an
+        # emulator in place is the documented pattern until fitting has a
+        # contract that returns a new term instead. Both operations, since an
+        # exemption covering only assignment would still break a trainer that
+        # clears what it fitted.
+        from probpipe import Normal
+
+        term = Normal(0.0, 1.0, name="x")
+        term._trained = True
+        assert term._trained is True
+        del term._trained
+        assert not hasattr(term, "_trained")
+
+    def test_a_term_outside_that_layer_refuses_both(self):
+        term = Record("r", {"x": jnp.ones(2)})
+        with pytest.raises(AttributeError, match="Record is immutable"):
+            term.attribute = 1
+        with pytest.raises(AttributeError, match="Record is immutable"):
+            del term._name
+
+    def test_a_term_outside_that_layer_refuses_assignment_and_names_itself(self):
+        term = RecordBatch.stack(
+            [Record("r", {"x": jnp.ones(2)}, name_is_auto=True)] * 2, level_name="draw"
+        )
+        with pytest.raises(AttributeError, match="RecordBatch is immutable"):
+            term.attribute = 1
+
+
+class TestTheConstructionWindow:
+    def test_it_closes_when_the_constructor_returns(self):
+        term = Record("r", {"x": jnp.ones(2)})
+        with pytest.raises(AttributeError):
+            term.attribute = 1
+
+    def test_an_init_that_returns_a_value_is_refused(self):
+        # ``type.__call__`` raises on this, and splitting it must not lose that.
+        from probpipe.core.tracked import TrackedTerm
+
+        class Returning(TrackedTerm):
+            def __init__(self):
+                self._init_tracked("t")
+                return "oops"
+
+        with pytest.raises(TypeError, match="should return None"):
+            Returning()
+
+    def test_it_closes_when_a_constructor_raises(self):
+        # Through the metaclass rather than by opening the window by hand: what
+        # is under test is that ``_TrackedTermMeta.__call__`` closes the window
+        # on the way out of a failing ``__init__``. The half-built object is
+        # kept from ``__new__``, since the failed call returns nothing.
+        from probpipe.core._immutable import _constructing_now
+        from probpipe.core.tracked import TrackedTerm
+
+        built = []
+
+        class Failing(TrackedTerm):
+            def __new__(cls):
+                instance = super().__new__(cls)
+                built.append(instance)
+                return instance
+
+            def __init__(self):
+                self._init_tracked("failing")
+                self.partial = 1
+                raise ValueError("no")
+
+        with pytest.raises(ValueError, match="no"):
+            Failing()
+
+        (half_built,) = built
+        assert half_built.partial == 1  # the constructor got that far
+        assert _constructing_now() == {}
+        with pytest.raises(AttributeError, match="Failing is immutable"):
+            half_built.partial = 2
+
+    def test_it_covers_one_instance_and_not_another(self):
+        from probpipe.core._immutable import constructing
+
+        inner = object.__new__(Slotted)
+        outer = object.__new__(Slotted)
+        with constructing(outer):
+            outer.left = 1  # the window is open on this one
+            with pytest.raises(AttributeError, match="Slotted is immutable"):
+                inner.left = 1  # and on this one it is not
+
+    def test_a_window_on_one_instance_nests(self):
+        # An inner block must leave the outer one open: what closes a window is
+        # the last exit, not the first. Reached whenever a constructor that
+        # already runs in a window opens one on itself — through a helper that
+        # allocates and initializes, say.
+        from probpipe.core._immutable import _constructing_now, constructing
+
+        instance = object.__new__(Slotted)
+        with constructing(instance):
+            with constructing(instance):
+                instance.left = 1
+            instance.right = 2  # still inside the outer window
+        assert (instance.left, instance.right) == (1, 2)
+        assert _constructing_now() == {}
+        with pytest.raises(AttributeError, match="Slotted is immutable"):
+            instance.left = 3
+
+    def test_constructing_a_term_inside_another_leaves_both_correct(self):
+        from probpipe import Normal, ProductDistribution
+
+        # Different instances rather than one nested in itself: the components
+        # are built first, and the joint's own window is unaffected by theirs.
+        # (A distribution accepts assignment either way — see the exemption
+        # above — so what is asserted is that both terms came out intact.)
+        joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="j")
+        assert joint.name == "j"
+        assert joint.components["a"].name == "a"
+
+
+class TestAClassBuiltAtRuntime:
+    """What the round-trip does for a class that has no importable name.
+
+    Some distribution families build a subclass per capability set, so the class
+    an instance reports exists only in memory. ``pickle`` stores a class by name
+    and therefore cannot store these; the mixin does not change that, since the
+    default protocol names the class too. These pin the behavior so a change to
+    it is deliberate.
+    """
+
+    @staticmethod
+    def _sequential_joint():
+        from probpipe import Normal, SequentialJointDistribution
+
+        return SequentialJointDistribution(
+            z=Normal(loc=0.0, scale=1.0, name="z"),
+            x=lambda z: Normal(loc=z, scale=0.5, name="x"),
+        )
+
+    @staticmethod
+    def _flattened_view():
+        from probpipe import Normal, ProductDistribution
+
+        joint = ProductDistribution(
+            a=Normal(0.0, 1.0, name="a"), b=Normal(1.0, 2.0, name="b"), name="j"
+        )
+        return joint.as_flat_distribution()
+
+    @pytest.fixture(
+        params=[
+            pytest.param("_sequential_joint", id="sequential-joint"),
+            pytest.param("_flattened_view", id="flattened-view"),
+        ]
+    )
+    def runtime_classed(self, request):
+        return getattr(self, request.param)()
+
+    def test_its_class_is_not_importable_by_name(self, runtime_classed):
+        import importlib
+
+        cls = type(runtime_classed)
+        module = importlib.import_module(cls.__module__)
+        assert getattr(module, cls.__qualname__, None) is not cls
+
+    def test_standard_pickle_refuses_it(self, runtime_classed):
+        with pytest.raises(pickle.PicklingError):
+            pickle.dumps(runtime_classed)
+
+    def test_copy_and_deepcopy_still_work(self, runtime_classed):
+        # They hold the class object rather than its name.
+        assert type(copy.copy(runtime_classed)) is type(runtime_classed)
+        assert type(copy.deepcopy(runtime_classed)) is type(runtime_classed)
+
+    def test_cloudpickle_handles_it(self, runtime_classed):
+        # It serializes the class by value, which is what the Ray and Prefect
+        # paths rely on.
+        cloudpickle = pytest.importorskip("cloudpickle")
+        restored = pickle.loads(cloudpickle.dumps(runtime_classed))
+        assert type(restored).__name__ == type(runtime_classed).__name__
+
+    def test_a_family_that_reconstructs_through_a_factory_pickles(self):
+        # ``ProductDistribution`` keeps its own ``__reduce__`` naming a
+        # module-level rebuild, so its runtime class is never named in a pickle.
+        from probpipe import Normal, ProductDistribution
+
+        joint = ProductDistribution(
+            a=Normal(0.0, 1.0, name="a"), b=Normal(1.0, 2.0, name="b"), name="j"
+        )
+        assert type(pickle.loads(pickle.dumps(joint))).__name__ == type(joint).__name__

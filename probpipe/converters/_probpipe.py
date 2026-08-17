@@ -687,9 +687,11 @@ class ProbPipeConverter(Converter):
                 with contextlib.suppress(AttributeError):
                     check(source)
 
-        # Mark approximate if source is approximate or conversion used sampling
+        # Mark approximate if source is approximate or conversion used sampling.
+        # Written through ``object.__setattr__``: the result is a tracked term,
+        # and this is the conversion finishing it rather than a later edit.
         if source.is_approximate or not isinstance(source, target_type):
-            result._approximate = True
+            object.__setattr__(result, "_approximate", True)
 
         return result
 

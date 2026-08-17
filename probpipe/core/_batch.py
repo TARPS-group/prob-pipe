@@ -68,7 +68,6 @@ from dataclasses import dataclass, replace
 from math import prod
 from typing import Any, Self, cast
 
-from ._immutable import Immutable
 from .event_template import (
     TermSpec,
     ValueSpec,
@@ -343,7 +342,7 @@ class BatchSpec(TermSpec):
         return spec == self
 
 
-class Batch[E](Immutable, TrackedTerm, ABC):
+class Batch[E](TrackedTerm, ABC):
     """A tracked nd collection of elements of a common type.
 
     The batch axes are grouped into named **levels**, and indexing them returns a

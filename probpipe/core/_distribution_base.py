@@ -84,6 +84,31 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
         If *name* is not a non-empty string.
     """
 
+    # -- Immutability: deferred for this layer ------------------------------
+
+    def __delattr__(self, name: str) -> None:
+        """Permit deletion, for the reason :meth:`__setattr__` gives.
+
+        Goes with that method: removing the exemption means removing both.
+        """
+        object.__delattr__(self, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Permit assignment, which :class:`TrackedTerm` otherwise refuses.
+
+        Interim, and the only exemption from the rule that a tracked term is
+        immutable. It stands because the contract for a *fitted* mapping is not
+        settled: the documented way to build an emulator is to subclass a random
+        function and train it in place, and until fitting has a contract that
+        produces a new term instead, enforcing immutability here would break that
+        pattern without offering a replacement.
+
+        Deleting this method **and** :meth:`__delattr__` turns the guard on for
+        the whole distribution layer. Both, or the layer keeps half an
+        exemption: a trainer that clears what it fitted would still raise.
+        """
+        object.__setattr__(self, name, value)
+
     def __init__(
         self,
         *,

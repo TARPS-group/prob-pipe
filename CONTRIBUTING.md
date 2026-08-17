@@ -435,7 +435,12 @@ uv build packaging/probpipe   # probpipe (metapackage)
 ### Design principles
 
 1. **Distributions are immutable** — parameters fixed at construction;
-   operations return new distributions. The one documented exception
+   operations return new distributions. Records, batches, functions, and
+   templates enforce this (assignment and deletion raise); `Distribution`
+   permits both for now, because the documented emulator pattern trains a
+   subclassed random function in place and fitting has no contract yet that
+   returns a new fitted term. Treat the rule as binding when writing new code
+   either way. The one documented exception
    is the `annotations` store (`_annotations`, provided by the
    `Annotated` mixin in `probpipe.core.tracked`; a string-keyed
    mapping, typically an `xarray.DataTree`, of post-construction
