@@ -6,10 +6,15 @@ import base64
 import json
 from typing import Any
 
-from . import _workflow_broker, _workflow_execution_contract, _workflow_plan
+from . import (
+    _workflow_broker,
+    _workflow_context,
+    _workflow_execution_contract,
+    _workflow_plan,
+)
 from ._workflow_managed import ManagedEffectClaim
 from ._workflow_rng import RandomEventIdentity, encode_random_event
-from .config import ProvenanceMode, provenance_config
+from .config import ProvenanceMode
 
 _RNG_RECIPE_ABI = "probpipe.rng_recipe/v1"
 _REPLAY_ANCHOR_ABI = "probpipe.replay_anchor/v1"
@@ -21,7 +26,7 @@ def provenance_recipe_fields(
     stochastic_plan: _workflow_plan.StochasticPlan | None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Return exact controls/diagnostics for one successful active invocation."""
-    if provenance_config.mode is ProvenanceMode.OFF:
+    if _workflow_context._active_provenance_mode() is ProvenanceMode.OFF:
         return {}, {}
     snapshot = _workflow_broker._snapshot_active_recipe_state()
     if snapshot is None:
@@ -61,17 +66,9 @@ def provenance_recipe_fields(
         for contract in snapshot.execution_contracts
     ]
     anchor = snapshot.callable_anchor
-    callable_controls = (
-        anchor.controls()
-        if anchor is not None
-        else {
-            "supported": False,
-            "module": None,
-            "qualname": None,
-            "definition_abi": "probpipe.callable_definition/v1",
-            "form": "missing_function_anchor",
-        }
-    )
+    if anchor is None:
+        raise RuntimeError("workflow RNG recipe state is missing its callable anchor")
+    callable_controls = anchor.controls()
     random_recipe = {
         "schema": _RNG_RECIPE_ABI,
         "rng_abi": "ProbPipe-RNG-v1",

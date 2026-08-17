@@ -40,7 +40,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   certify only the exact built-in `GLMLikelihood` data generator. Custom or
   otherwise opaque likelihoods, including subclasses, must pass `key=`
   explicitly; inheriting `generate_data` does not certify that a subclass's
-  sampling still matches the built-in stochastic-effect descriptor.
+  sampling still matches the built-in stochastic-effect descriptor. The
+  omitted-key route also requires that exact likelihood to carry its stored
+  design matrix.
+
+  PPC test functions must have unique `__name__` values because those names
+  label the returned statistics; use distinct named functions instead of
+  multiple lambdas or same-named methods.
 
   Repeated aliases, record views, empirical weights, and the supported closed
   set of transformed descendants now co-sample from one root realization.
@@ -62,6 +68,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   guessed. The new public failures are
   `UnmanagedConcurrentWorkflowEntryError`, `ReplayCompatibilityError`, and
   `ReplayUnsupportedCallableError`.
+
+  A top-level workflow snapshots `provenance_config.mode` on entry. Nested
+  scopes and managed workers inherit that value, and configuration changes
+  made during execution apply only to the next top-level workflow.
 
   RNG ABI v1 has no call-local replacement that recreates the old exact
   sibling-realization behavior. Put related quantities in one joint Function

@@ -16,6 +16,11 @@ to certify that a subclass preserves its stochastic-effect descriptor. The
 same boundary applies to `simulation_based_calibration` and the diagnostic
 helper `add_ppc`.
 
+The omitted-key route also requires the exact `GLMLikelihood` to carry its
+stored design matrix. Construct the likelihood with `x=` before using these
+generative checks; `GLMLikelihood.generate_data` itself requires that matrix
+regardless of key ownership.
+
 ::: probpipe.validation.predictive_check
 
 ## Reference posteriors
@@ -31,10 +36,9 @@ return JAX arrays and are jit-compatible; `score_posterior` aggregates a chosen
 set into a scorecard, skipping any whose reference pieces are absent.
 
 When sliced Wasserstein scoring is active, an omitted `score_posterior` key is
-workflow-owned. A bare call therefore receives a fresh ephemeral root instead
-of the fixed key used by earlier releases. Reproducible benchmark scorecards,
-including calls from `probpipe-benchmark`, should use an enclosing
-`workflow_run(seed=...)` or pass `key=` explicitly.
+workflow-owned. A bare call therefore receives a fresh ephemeral root.
+Reproducible benchmark scorecards, including calls from `probpipe-benchmark`,
+should use an enclosing `workflow_run(seed=...)` or pass `key=` explicitly.
 
 ::: probpipe.validation.standardized_mean_error
 

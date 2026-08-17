@@ -972,15 +972,15 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     if not isinstance(provenance, Provenance):
         raise ReplayCompatibilityError("replay_run requires a Provenance RNG recipe")
     controls = provenance.controls
-    _validate_version_one_structure(controls)
     randomness = _mapping(controls.get("randomness"), "randomness RNG recipe")
     replay = _mapping(controls.get("replay"), "replay anchor")
     if randomness.get("schema") != _RNG_RECIPE_ABI:
         raise ReplayCompatibilityError("unknown or missing workflow RNG recipe schema")
-    if randomness.get("rng_abi") != _RNG_ABI:
-        raise ReplayCompatibilityError("recorded workflow RNG ABI is incompatible")
     if replay.get("schema") != _REPLAY_ANCHOR_ABI:
         raise ReplayCompatibilityError("recorded replay anchor schema is incompatible")
+    _validate_version_one_structure(controls)
+    if randomness.get("rng_abi") != _RNG_ABI:
+        raise ReplayCompatibilityError("recorded workflow RNG ABI is incompatible")
 
     root_words = _root_words(randomness.get("root_words"))
     occurrence_path = _structural_tuple(
@@ -1057,10 +1057,6 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
     )
 
     compatibility = _mapping(replay.get("compatibility"), "replay.compatibility")
-    if set(compatibility) != _COMPATIBILITY_FIELDS:
-        raise ReplayCompatibilityError(
-            "recorded replay compatibility fields do not match the version-1 schema"
-        )
     execution_contract_abi = compatibility.get("execution_contract")
     if execution_contract_abi != _workflow_execution_contract.execution_contract_abi():
         raise ReplayCompatibilityError("recorded workflow RNG execution contract is incompatible")
@@ -1320,10 +1316,6 @@ def _expected_events(
 
 
 def _validate_effect(effect: dict[str, Any], *, index: int) -> None:
-    if set(effect) != _EFFECT_FIELDS:
-        raise ReplayCompatibilityError(
-            f"recorded replay effect {index} has incompatible fields for the version-1 schema"
-        )
     for field_name in (
         "operation_kind",
         "execution_mode",

@@ -981,7 +981,6 @@ _ACTIVE_MANAGED_ATTEMPT: ContextVar[_ManagedAttemptContext | None] = ContextVar(
 class _RemoteCoordinationObservation:
     """Attempt-local observation that survives caught probe exceptions."""
 
-    attempt: ManagedAttemptState
     _effect_observed: Event = field(default_factory=Event, repr=False)
 
     @property
@@ -1247,11 +1246,9 @@ def _snapshot_active_recipe_state() -> _BrokerRecipeSnapshot | None:
 
 
 @contextmanager
-def _remote_coordination_probe_scope(
-    attempt: ManagedAttemptState,
-) -> Generator[_RemoteCoordinationObservation, None, None]:
+def _remote_coordination_probe_scope() -> Generator[_RemoteCoordinationObservation, None, None]:
     """Run a remote item without permitting automatic stochastic commit."""
-    observation = _RemoteCoordinationObservation(attempt)
+    observation = _RemoteCoordinationObservation()
     frame = _workflow_context._capture_active_workflow_frame()
     if frame is None:
         raise RuntimeError("remote coordination requires a transported workflow frame")
@@ -1266,7 +1263,9 @@ def _remote_coordination_probe_scope(
         )
         if not is_rootless_transport:
             raise RuntimeError("remote coordination requires a rootless transported frame")
-        if frame.state.remote_coordination_observation is not None:
+        if frame.state.remote_coordination_observation is not None:  # pragma: no cover
+            # Each transported payload owns a fresh frame; this only guards
+            # incorrect private context-manager nesting.
             raise RuntimeError("remote coordination observation is already installed")
         frame.state.remote_coordination_observation = observation
     attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(None)
@@ -1276,7 +1275,11 @@ def _remote_coordination_probe_scope(
     finally:
         try:
             with frame.state.lock:
-                if frame.state.remote_coordination_observation is not observation:
+                if (
+                    frame.state.remote_coordination_observation is not observation
+                ):  # pragma: no cover
+                    # A mismatch requires private frame state to be replaced
+                    # while this context manager is active.
                     raise RuntimeError(
                         "remote coordination observations must exit in nesting order"
                     )

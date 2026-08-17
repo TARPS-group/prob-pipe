@@ -285,15 +285,22 @@ class TestSimulationBasedCalibrationBroker:
             fake_condition_on,
         )
 
-        result = simulation_based_calibration(
-            self._model(),
-            num_simulations=np.int64(2),
-            num_posterior_draws=np.int64(4),
-            num_observations=np.int64(3),
-            key=jax.random.key(11),
-        )
+        with (
+            patch(
+                "probpipe.core._workflow_context._commit_stochastic_invocation",
+                wraps=_workflow_context._commit_stochastic_invocation,
+            ) as commit,
+            workflow_run(seed=11),
+        ):
+            result = simulation_based_calibration(
+                self._model(),
+                num_simulations=np.int64(2),
+                num_posterior_draws=np.int64(4),
+                num_observations=np.int64(3),
+            )
 
         assert result.ranks.shape == (2, 1)
+        commit.assert_called_once_with("operation")
 
     @pytest.mark.parametrize(
         ("argument", "value"),

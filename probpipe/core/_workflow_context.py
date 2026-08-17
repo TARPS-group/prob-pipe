@@ -26,6 +26,7 @@ from ._workflow_rng import (
     jax_key_from_words,
     seed_to_root_words,
 )
+from .config import ProvenanceMode, provenance_config
 
 if TYPE_CHECKING:
     from ._workflow_broker import _RemoteCoordinationObservation
@@ -55,6 +56,7 @@ class _WorkflowFrame:
 
     kind: _WorkflowContextKind
     seed_words: tuple[int, int] | None
+    provenance_mode: ProvenanceMode
     parent: _WorkflowFrame | None
     owner: _WorkflowOwner
     ledger: _StochasticLedger = field(default_factory=lambda: _StochasticLedger())
@@ -134,6 +136,12 @@ _ACTIVE_WORKFLOW_FRAME: ContextVar[_WorkflowFrame | None] = ContextVar(
 )
 
 
+def _active_provenance_mode() -> ProvenanceMode:
+    """Return the provenance mode fixed for the active workflow run."""
+    frame = _ACTIVE_WORKFLOW_FRAME.get()
+    return provenance_config.mode if frame is None else frame.provenance_mode
+
+
 @dataclass(slots=True)
 class _StochasticProbeState:
     """Observable stochastic effects reached during one route probe."""
@@ -189,6 +197,7 @@ class _WorkflowRunScope:
         frame = _WorkflowFrame(
             kind=kind,
             seed_words=seed_words,
+            provenance_mode=(provenance_config.mode if parent is None else parent.provenance_mode),
             parent=parent,
             owner=_current_workflow_owner(),
             state=_WorkflowFrameState(path_prefix=() if parent is None else None),
@@ -499,6 +508,7 @@ def _managed_work_item_scope(
     frame = _WorkflowFrame(
         kind="managed",
         seed_words=None,
+        provenance_mode=parent.provenance_mode,
         parent=parent,
         owner=_current_workflow_owner(),
         state=_WorkflowFrameState(managed_unit_segment=unit_segment),
@@ -516,11 +526,13 @@ def _managed_work_item_scope(
 @contextmanager
 def _transported_workflow_frame(
     root_words: tuple[int, int] | None,
+    provenance_mode: ProvenanceMode,
 ) -> Generator[None, None, None]:
     """Install a standalone worker frame from serializable parent authority."""
     frame = _WorkflowFrame(
         kind="managed",
         seed_words=None,
+        provenance_mode=provenance_mode,
         parent=None,
         owner=_current_workflow_owner(),
         state=_WorkflowFrameState(
@@ -544,6 +556,7 @@ def _replay_workflow_frame(root_words: tuple[int, int]) -> Generator[None, None,
     frame = _WorkflowFrame(
         kind="replay",
         seed_words=None,
+        provenance_mode=provenance_config.mode,
         parent=None,
         owner=_current_workflow_owner(),
         state=_WorkflowFrameState(path_prefix=(), root_words=root_words),

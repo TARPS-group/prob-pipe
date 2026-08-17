@@ -357,6 +357,47 @@ class TestReplayAdmission:
         derive_key.assert_not_called()
 
     @pytest.mark.parametrize(
+        ("record_name", "schema", "message"),
+        [
+            pytest.param(
+                "randomness",
+                "probpipe.rng_recipe/v2",
+                "unknown or missing workflow RNG recipe schema",
+                id="randomness",
+            ),
+            pytest.param(
+                "replay",
+                "probpipe.replay_anchor/v2",
+                "recorded replay anchor schema is incompatible",
+                id="replay",
+            ),
+        ],
+    )
+    def test_unknown_schema_precedes_version_one_field_validation(
+        self,
+        record_name,
+        schema,
+        message,
+    ):
+        payload = _lifted_draw().provenance.to_dict()
+        record = payload["controls"][record_name]
+        record["schema"] = schema
+        record["future_field"] = 1
+        changed = Provenance.from_dict(payload)
+
+        with (
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ) as derive_key,
+            pytest.raises(ReplayCompatibilityError, match=message),
+            replay_run(changed),
+        ):
+            raise AssertionError("replay admission accepted an unknown schema")
+
+        derive_key.assert_not_called()
+
+    @pytest.mark.parametrize(
         ("mapping_path", "field_name"),
         [
             pytest.param((), "randomness", id="controls"),
@@ -432,13 +473,19 @@ class TestReplayAdmission:
             target = target[segment]
         del target[field_name]
         changed = Provenance.from_dict(payload)
+        if mapping_path == () and field_name == "randomness":
+            expected_error = "randomness RNG recipe must be a mapping"
+        elif field_name == "schema":
+            expected_error = "schema"
+        else:
+            expected_error = "version-1 schema"
 
         with (
             patch(
                 "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
                 side_effect=AssertionError("derived key"),
             ) as derive_key,
-            pytest.raises(ReplayCompatibilityError, match="version-1 schema"),
+            pytest.raises(ReplayCompatibilityError, match=expected_error),
             replay_run(changed),
         ):
             raise AssertionError("replay admission accepted missing structure")

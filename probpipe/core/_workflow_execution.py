@@ -300,7 +300,12 @@ def _make_prefect_payload(
         )
     elif parent_authority:
         raise RuntimeError("remote workflow randomness requires an active parent Function broker")
-    return ManagedPrefectPayload(item=item, attempt=attempt, parent=parent)
+    return ManagedPrefectPayload(
+        item=item,
+        attempt=attempt,
+        provenance_mode=_workflow_context._active_provenance_mode(),
+        parent=parent,
+    )
 
 
 def _abort_prefect_payloads(
@@ -559,8 +564,11 @@ def _execute_prefect_payload(
     attempt = payload.attempt
     if payload.parent is None:
         with (
-            _workflow_context._transported_workflow_frame(None),
-            _workflow_broker._remote_coordination_probe_scope(attempt) as observation,
+            _workflow_context._transported_workflow_frame(
+                None,
+                payload.provenance_mode,
+            ),
+            _workflow_broker._remote_coordination_probe_scope() as observation,
         ):
             value = None
             execution_error = None
@@ -586,7 +594,10 @@ def _execute_prefect_payload(
             report=ManagedClaimReport(item.frame, attempt, 0),
         )
 
-    with _workflow_context._transported_workflow_frame(payload.parent.root_words):
+    with _workflow_context._transported_workflow_frame(
+        payload.parent.root_words,
+        payload.provenance_mode,
+    ):
         remote_parent = None
         try:
             with _workflow_broker._remote_managed_work_item_stochastic_scope(

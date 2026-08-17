@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from .config import ProvenanceMode, provenance_config
+from .config import ProvenanceMode
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ class Provenance:
         controls: Mapping[str, Any] | None = None,
         diagnostics: Mapping[str, Any] | None = None,
     ) -> Provenance | None:
-        """Build provenance respecting the global :attr:`~probpipe.provenance_config` mode.
+        """Build provenance respecting the active workflow's provenance mode.
 
         Returns ``None`` when the mode is :attr:`ProvenanceMode.OFF` so that
         call sites can pass the result directly to ``with_provenance()``
@@ -234,10 +234,11 @@ class Provenance:
         diagnostics:
             Exact JSON-native non-semantic execution observations.
         """
-        mode = provenance_config.mode
+        from . import _workflow_context
+
+        mode = _workflow_context._active_provenance_mode()
         if mode is ProvenanceMode.OFF:
             return None
-        from . import _workflow_context
 
         if _workflow_context._workflow_side_effects_forbidden():
             return None

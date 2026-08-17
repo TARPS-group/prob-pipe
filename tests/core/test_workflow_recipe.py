@@ -58,6 +58,16 @@ def _identity(value):
     return value
 
 
+def _switch_to_full(value):
+    probpipe.provenance_config.mode = ProvenanceMode.FULL
+    return value
+
+
+def _switch_to_off(value):
+    probpipe.provenance_config.mode = ProvenanceMode.OFF
+    return value
+
+
 def _difference(left, right):
     return right - left
 
@@ -321,7 +331,7 @@ class TestWorkflowRecipeRecording:
             execution_contracts=(),
             requested_dispatch="thread",
             requested_workflow_kind="off",
-            callable_anchor=None,
+            callable_anchor=_workflow_callable.capture_function_anchor(Function(func=_identity)),
         )
 
         with patch.object(
@@ -335,6 +345,44 @@ class TestWorkflowRecipeRecording:
             0,
             1,
         ]
+
+    def test_recipe_refuses_effects_without_a_callable_anchor(self):
+        occurrence_path = (("invocation", 0),)
+        effect = ManagedEffectClaim(
+            occurrence_path=occurrence_path,
+            occurrence_kind="invocation",
+            stochastic_source_id=("source-group", 0),
+            logical_unit_id=("singleton",),
+            operation_kind="sample",
+            execution_mode="sampled",
+            sample_shape=(),
+            sampling_abi="probpipe.distribution_sampling/v1",
+            provider_abi="probpipe.distribution/v1",
+        )
+        snapshot = _workflow_broker._BrokerRecipeSnapshot(
+            root_words=(0, 17),
+            occurrence_path=occurrence_path,
+            rng_origin={
+                "context_kind": "seeded_run",
+                "root_source": "user_seed",
+                "supplied_seed": 17,
+            },
+            effects=(effect,),
+            execution_contracts=(),
+            requested_dispatch="sequential",
+            requested_workflow_kind="off",
+            callable_anchor=None,
+        )
+
+        with (
+            patch.object(
+                _workflow_broker,
+                "_snapshot_active_recipe_state",
+                return_value=snapshot,
+            ),
+            pytest.raises(RuntimeError, match="missing its callable anchor"),
+        ):
+            _workflow_recipe.provenance_recipe_fields(None)
 
     def test_nested_automatic_function_is_marked_non_standalone(self):
         workflow = Function(func=_nested_automatic, dispatch="thread")
@@ -394,6 +442,45 @@ class TestWorkflowRecipeRecording:
 
         assert result.provenance is None
 
+    @pytest.mark.parametrize(
+        ("initial_mode", "implementation", "expect_provenance"),
+        [
+            (ProvenanceMode.OFF, _switch_to_full, False),
+            (ProvenanceMode.FULL, _switch_to_off, True),
+        ],
+    )
+    def test_workflow_run_snapshots_provenance_mode(
+        self,
+        initial_mode,
+        implementation,
+        expect_provenance,
+    ):
+        probpipe.provenance_config.mode = initial_mode
+        workflow = Function(
+            func=implementation,
+            dispatch="sequential",
+            n_broadcast_samples=5,
+        )
+
+        with workflow_run(seed=7):
+            result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        assert (result.provenance is not None) is expect_provenance
+        if result.provenance is not None:
+            assert result.provenance.controls["replay"]["callable"]["supported"] is True
+
+    def test_nested_workflow_inherits_outer_provenance_mode(self):
+        probpipe.provenance_config.mode = ProvenanceMode.FULL
+        workflow = Function(func=_identity, n_broadcast_samples=5)
+
+        with workflow_run(seed=7):
+            probpipe.provenance_config.mode = ProvenanceMode.OFF
+            with workflow_run(seed=8):
+                result = workflow(value=Normal(loc=0.0, scale=1.0, name="value"))
+
+        assert result.provenance is not None
+        assert result.provenance.controls["replay"]["callable"]["supported"] is True
+
     def test_full_and_lightweight_modes_record_equivalent_controls(self):
         workflow = Function(func=_identity, dispatch="sequential", n_broadcast_samples=8)
 
@@ -407,6 +494,10 @@ class TestWorkflowRecipeRecording:
 
 
 class TestWorkflowCallableAnchor:
+    def test_callable_canonical_json_rejects_non_finite_values(self):
+        with pytest.raises(ValueError, match="Out of range float values"):
+            _workflow_callable._canonical_json({"value": float("nan")})
+
     def test_provenance_off_skips_callable_anchor_capture(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         workflow = Function(func=replayable_identity)

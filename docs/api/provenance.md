@@ -49,7 +49,7 @@ How much history is retained is controlled by a global `ProvenanceMode`:
 | `FULL` | The same controls and diagnostics, plus a live reference to each tracked parent or plain input via `.parent` | Higher — full ancestry and call inputs stay in memory |
 | `OFF` | Nothing — `dist.provenance` is `None`, including no RNG recipe | Zero |
 
-Set the mode once at startup:
+Configure the mode before entering a top-level workflow:
 
 ```python
 import probpipe
@@ -58,6 +58,11 @@ from probpipe import ProvenanceMode
 probpipe.provenance_config.mode = ProvenanceMode.FULL   # for debugging
 probpipe.provenance_config.mode = ProvenanceMode.OFF    # for production without lineage
 ```
+
+Each top-level `workflow_run` (including the ephemeral scope of a bare
+`Function` call) snapshots the current mode. Nested scopes and managed workers
+inherit that snapshot, so changing the global setting during a run affects
+only the next top-level run.
 
 ## Accessing ancestors
 

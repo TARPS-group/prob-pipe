@@ -65,6 +65,9 @@ class _GoldenBitsDistribution(NumericRecordDistribution, SupportsSampling):
 
 class TestSequentialLiftingWorkflowRun:
     def test_lifted_key_and_sample_match_v1_end_to_end_golden(self):
+        # These values pin ProbPipe RNG v1 through the explicit Threefry key
+        # adapter and random-bits sampling. Do not regenerate them for a JAX
+        # upgrade without reviewing the intended RNG compatibility contract.
         sample_calls = []
         dist = _GoldenBitsDistribution(sample_calls)
 

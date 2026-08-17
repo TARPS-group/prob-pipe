@@ -1,7 +1,7 @@
 """Tests for Prefect orchestration in Function.
 
 Exercises all Prefect dispatch paths:
-- workflow_kind=WorkflowKind.TASK with sequential and JAX dispatch
+- workflow_kind=WorkflowKind.TASK with sequential, thread-option, and JAX dispatch
 - workflow_kind=WorkflowKind.FLOW with sequential and JAX dispatch
 - Import guard when Prefect is unavailable
 - Provenance metadata includes orchestration info
@@ -11,6 +11,8 @@ Uses ``prefect_test_harness()`` for an in-process temporary server.
 """
 
 from __future__ import annotations
+
+from contextlib import nullcontext
 
 import jax
 import jax.numpy as jnp
@@ -116,35 +118,68 @@ def _claim_key_and_fail_once():
 class TestPrefectRngConformance:
     def test_lifted_samples_match_local_thread_and_real_prefect(self, normal_dist):
         workflows = (
-            Function(
-                func=add_one,
-                workflow_kind=WorkflowKind.OFF,
-                dispatch="sequential",
-                n_broadcast_samples=6,
+            (
+                Function(
+                    func=add_one,
+                    workflow_kind=WorkflowKind.OFF,
+                    dispatch="sequential",
+                    n_broadcast_samples=6,
+                ),
+                False,
             ),
-            Function(
-                func=add_one,
-                workflow_kind=WorkflowKind.OFF,
-                dispatch="thread",
-                max_workers=2,
-                n_broadcast_samples=6,
+            (
+                Function(
+                    func=add_one,
+                    workflow_kind=WorkflowKind.OFF,
+                    dispatch="thread",
+                    max_workers=2,
+                    n_broadcast_samples=6,
+                ),
+                False,
             ),
-            Function(
-                func=add_one,
-                workflow_kind=WorkflowKind.TASK,
-                dispatch="sequential",
-                n_broadcast_samples=6,
+            (
+                Function(
+                    func=add_one,
+                    workflow_kind=WorkflowKind.TASK,
+                    dispatch="sequential",
+                    n_broadcast_samples=6,
+                ),
+                False,
+            ),
+            (
+                Function(
+                    func=add_one,
+                    workflow_kind=WorkflowKind.TASK,
+                    dispatch="thread",
+                    max_workers=2,
+                    n_broadcast_samples=6,
+                ),
+                True,
+            ),
+            (
+                Function(
+                    func=add_one,
+                    workflow_kind=WorkflowKind.FLOW,
+                    dispatch="sequential",
+                    n_broadcast_samples=6,
+                ),
+                False,
             ),
         )
 
         samples = []
-        for workflow in workflows:
-            with workflow_run(seed=17):
+        for workflow, warns_about_local_controls in workflows:
+            warning_context = (
+                pytest.warns(UserWarning, match="do not control Prefect scheduling")
+                if warns_about_local_controls
+                else nullcontext()
+            )
+            with warning_context, workflow_run(seed=17):
                 result = workflow(x=normal_dist)
             samples.append(np.asarray(result.samples))
 
-        np.testing.assert_array_equal(samples[1], samples[0])
-        np.testing.assert_array_equal(samples[2], samples[0])
+        for sample_values in samples[1:]:
+            np.testing.assert_array_equal(sample_values, samples[0])
 
     def test_nested_seed_matches_local_and_real_prefect_for_any_outer_seed(self):
         local = Function(

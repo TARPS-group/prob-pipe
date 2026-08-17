@@ -156,9 +156,6 @@ def _unsupported_anchor(
     function: Any,
     candidate: Any,
     form: str,
-    *,
-    source_location: str | None = None,
-    source_artifact_digest: str | None = None,
 ) -> CallableAnchor:
     module = getattr(candidate, "__module__", None) or getattr(function, "__module__", None)
     qualname = getattr(candidate, "__qualname__", None) or getattr(function, "__qualname__", None)
@@ -167,8 +164,6 @@ def _unsupported_anchor(
         form=form,
         module=module if isinstance(module, str) else None,
         qualname=qualname if isinstance(qualname, str) else None,
-        source_location=source_location,
-        source_artifact_digest=source_artifact_digest,
     )
 
 
@@ -396,6 +391,7 @@ def _canonical_json(value: Any) -> bytes:
         sort_keys=True,
         separators=(",", ":"),
         ensure_ascii=False,
+        allow_nan=False,
     ).encode("utf-8")
 
 

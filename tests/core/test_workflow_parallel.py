@@ -25,7 +25,7 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.core.config import WorkflowKind, prefect_config
+from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config
 from probpipe.core.node import Function
 
 
@@ -512,6 +512,7 @@ class TestManagedPayloadValidation:
                         work_item_token=managed_mod.ManagedWorkItemToken(b"z" * 16),
                         attempt_token=b"a" * 16,
                     ),
+                    provenance_mode=ProvenanceMode.FULL,
                 ),
                 ValueError,
                 "attempt must own its work item",
@@ -1384,7 +1385,7 @@ class TestRemoteReportTransactions:
         )
 
         with (
-            context_mod._transported_workflow_frame((0, 99)),
+            context_mod._transported_workflow_frame((0, 99), ProvenanceMode.FULL),
             pytest.raises(RuntimeError, match="transport envelope"),
             broker_mod._remote_managed_work_item_stochastic_scope(envelope, attempt),
         ):
@@ -2016,12 +2017,45 @@ class TestPrefectMapping:
         payload = managed_mod.ManagedPrefectPayload(
             item=item,
             attempt=managed_mod.ManagedAttemptState.create(item.frame.token),
+            provenance_mode=ProvenanceMode.FULL,
         )
         object.__setattr__(item, "values", (("x", 1), ("x", 2)))
         transported = pickle.loads(pickle.dumps(payload))
         func = Mock(return_value=2)
 
         with pytest.raises(ValueError, match="duplicate parameter names"):
+            execution_mod._execute_prefect_payload(func, transported)
+
+        func.assert_not_called()
+
+    def test_prefect_worker_uses_transported_provenance_mode(self):
+        item = make_request(calls=[{}], func=lambda: None).work_items[0]
+        payload = managed_mod.ManagedPrefectPayload(
+            item=item,
+            attempt=managed_mod.ManagedAttemptState.create(item.frame.token),
+            provenance_mode=ProvenanceMode.OFF,
+        )
+
+        outcome = execution_mod._execute_prefect_payload(
+            context_mod._active_provenance_mode,
+            pickle.loads(pickle.dumps(payload)),
+        )
+
+        assert outcome.error is None
+        assert outcome.value is ProvenanceMode.OFF
+
+    def test_prefect_worker_rejects_invalid_transported_provenance_mode(self):
+        item = make_request(calls=[{}], func=lambda: None).work_items[0]
+        payload = managed_mod.ManagedPrefectPayload(
+            item=item,
+            attempt=managed_mod.ManagedAttemptState.create(item.frame.token),
+            provenance_mode=ProvenanceMode.FULL,
+        )
+        object.__setattr__(payload, "provenance_mode", "full")
+        transported = pickle.loads(pickle.dumps(payload))
+        func = Mock(return_value=None)
+
+        with pytest.raises(TypeError, match="require a provenance mode"):
             execution_mod._execute_prefect_payload(func, transported)
 
         func.assert_not_called()
@@ -2033,6 +2067,7 @@ class TestPrefectMapping:
         payload = managed_mod.ManagedPrefectPayload(
             item=item,
             attempt=attempt,
+            provenance_mode=ProvenanceMode.FULL,
             parent=managed_mod.ManagedParentEnvelope(
                 root_words=(0, 17),
                 parent_occurrence_path=(("invocation", 0),),
@@ -2085,6 +2120,7 @@ class TestPrefectMapping:
             payload = managed_mod.ManagedPrefectPayload(
                 item=item,
                 attempt=attempt,
+                provenance_mode=ProvenanceMode.FULL,
                 parent=envelope,
             )
             report = managed_mod.ManagedClaimReport(item.frame, attempt, 0)
@@ -2531,6 +2567,7 @@ class TestPrefectMapping:
             payload = managed_mod.ManagedPrefectPayload(
                 item=item,
                 attempt=attempt,
+                provenance_mode=ProvenanceMode.FULL,
                 parent=envelope,
             )
             parent.abort_remote_managed_attempt(attempt)
