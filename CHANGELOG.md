@@ -91,6 +91,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Reading a distribution no longer modifies it.** `BroadcastDistribution`
+  assigned its marginal on the first `marginalize()`, and a backend-delegated
+  `DistributionArray` assigned its components on the first read, so a query
+  changed the object a caller was holding — against `C2` and the §V.1 promise
+  that an implementer's object is never modified. Each now fills a memo container
+  assigned at construction, so the result is still computed once and the term's
+  own fields stay as they were built. Both remain lazy.
+
 - **Every dispatch presents a one-field draw the same way.** A one-field
   record-valued law — a `ProductDistribution` over a single distribution, say —
   draws a batch of records. The row-wise paths presented each draw as its bare
@@ -130,6 +138,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   axis rather than over batch rows — so a batch-returning body passed the probe
   and then failed inside the executor, where nothing was left to fall back to.
   Both mapping executors are now probed under a map.
+
+- **`copy` and `pickle` no longer drop a term's annotations (#409).** `Record`,
+  `NumericRecord`, and `ProductDistribution` each reconstruct through a
+  `__reduce__` that listed its state by hand, and none of them listed
+  `_annotations`, so a copied or unpickled term came back with its annotations
+  gone — the diagnostics and inference-backend payloads written into that store
+  among them — and nothing raised. `__reduce__` governs `copy.copy` and `copy.deepcopy`
+  as well as `pickle`, so all three paths lost them.
+
+  The omission was systematic rather than careless: annotations are the one field
+  written *after* construction — the documented exception to immutability — so a
+  state list assembled from constructor arguments misses exactly this one.
+
+  So reconstruction reads the term's own state instead of a list: nothing has to
+  name a field for it to survive, and `TrackedTerm._restore_identity` — which
+  wrote identity onto an already-constructed object, bypassing both the
+  immutability guard and the write-once provenance rule for any caller who found
+  it — **is deleted**.
+
+  The container a reconstruction is handed is decoupled from the one it was built
+  from, as `with_name` already does: entries are shared, the container is not, so
+  a write on a copy does not show through on the original. Annotations still do
+  not cross a JAX transform boundary — `tree_unflatten` rebuilds a bare term,
+  unchanged.
 
 - **`is_concrete` no longer reports a polymorphic template as concrete (#390).**
   A symbolic dimension declared inside a term spec — a `RecordSpec`'s schema, a
@@ -659,6 +691,76 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   uniform everywhere.
 
 ### Changed
+
+- **Terms that build a result write it before handing it over.**
+  `DistributionArray._from_backend`, `_make_distribution_array`,
+  `TFPProductDistribution`'s combined-view build, `make_posterior`'s annotations
+  store, and `SequentialJointDistribution`'s conditioning all populated a term
+  after allocating it, using plain attribute assignment. They now write through
+  `object.__setattr__`, the way a constructor does. No behavior changes — each
+  wrote before the object reached a caller — but an assignment guard on every
+  tracked term would refuse the old form, and `ApproximateDistribution`'s chain
+  concatenation moves to the same memo container as the two lazy reads above.
+
+- **Immutability is a property of being a tracked term (#395).** `TrackedTerm`
+  inherits `Immutable`, so assignment and deletion raise on a record, a batch, a
+  function, or a template once its constructor has returned — the design's `C2`
+  and the §V.1 promise that an implementer's object is never modified, enforced
+  rather than documented. Four classes enforced it individually before.
+
+  **The distribution layer is exempt for now.** `Distribution` permits assignment
+  and deletion, because the documented way to build an emulator is to subclass a
+  random function and train it in place, and fitting has no contract yet that
+  returns a new term instead. That is two overrides — `__setattr__` and
+  `__delattr__` — and removing both turns the guard on for the other
+  seventy-two classes; removing one would leave half an exemption. A test
+  asserts `Distribution` is the *only* exempt class, so a second cannot appear
+  quietly.
+
+  Construction is unaffected: it runs inside a per-instance window the
+  `TrackedTerm` metaclass opens, so a host's `__init__` assigns normally and no
+  constructor needed converting. The window closes when `__init__` returns, and
+  also when it raises, so a half-built term left behind by a failure is as
+  immutable as a finished one. Code that allocates with `object.__new__` and then
+  calls a constructor by hand opens the window itself — three sites in the
+  package do.
+
+  Nothing changes for a caller: the classes that refuse assignment are the same
+  four families as before, and a distribution still accepts assignment *and*
+  deletion, the exemption covering both. What changes is
+  where the rule lives — in the term hierarchy rather than in four class bodies —
+  and that turning it on for the rest is now a deletion.
+
+- **Immutability is one mixin, and a term reconstructs from its state (#395).**
+  Four classes spelled out the same guard — three of them hardcoding a class name,
+  so `NumericRecord` reported `Record` and `NumericEventTemplate` reported
+  `EventTemplate` — and answered the round-trip that immutability forces in five
+  different ways. `Record`, `EventTemplate`, `Batch`, and `Function` now mix in
+  one `Immutable`, which owns the guard (naming the class the caller touched) and
+  the state round-trip.
+
+  What the round-trip carries comes from the attributes the object holds, not
+  from a list each class writes out: every assigned slot declared anywhere in the
+  hierarchy, a bare-string `__slots__`, and a subclass's instance dictionary
+  alike. That is what made the annotations bug (#409) possible — a hand-written
+  list cannot name a field written after construction — and it is now impossible
+  by construction rather than fixed once. A class names its memos in
+  `_transient_state` to keep a cache out of the payload (`NumericRecord`'s lazy
+  conversion cache), and a store written in place in `_decoupled_state` so a copy
+  takes its own container (the annotations channel).
+
+  Reconstruction allocates the resolved class and restores state, so it no longer
+  re-runs a constructor: an `EventTemplate` keeps the class its specs were
+  resolved to instead of re-deciding the numeric promotion, and a `Record` keeps
+  the exact schema it was written with. `Function` now writes its own state
+  through `object.__setattr__` like every other host, so the `_initializing`
+  window its constructor used to open is gone and one guard covers every case.
+
+  **Breaking:** a pickle written by an earlier version does not load. The
+  reconstruction entry points it names (`_unpickle_record`,
+  `_unpickle_numeric_record`, `_unpickle_event_template`) are gone, state being
+  restored directly now. Re-generate any persisted records, templates, or
+  batches.
 
 - **A joint law draws a `RecordBatch`.** `_sample` on the four joint laws —
   product, sequential, Gaussian, and empirical — returns a `NumericRecordBatch`

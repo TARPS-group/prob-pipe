@@ -8,12 +8,14 @@ Provides:
 from __future__ import annotations
 
 from abc import ABC
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..diagnostics.views import DiagnosticsView
     from ._distribution_array import DistributionArray
 
+from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm
 
 # ---------------------------------------------------------------------------
@@ -81,10 +83,48 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
         If *name* is not a non-empty string.
     """
 
-    def __init__(self, *, name: str, name_is_auto: bool = False):
+    # -- Immutability: deferred for this layer ------------------------------
+
+    def __delattr__(self, name: str) -> None:
+        """Permit deletion, for the reason :meth:`__setattr__` gives.
+
+        Goes with that method: removing the exemption means removing both.
+        """
+        object.__delattr__(self, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Permit assignment, which :class:`TrackedTerm` otherwise refuses.
+
+        Interim, and the only exemption from the rule that a tracked term is
+        immutable. It stands because the contract for a *fitted* mapping is not
+        settled: the documented way to build an emulator is to subclass a random
+        function and train it in place, and until fitting has a contract that
+        produces a new term instead, enforcing immutability here would break that
+        pattern without offering a replacement.
+
+        Deleting this method **and** :meth:`__delattr__` turns the guard on for
+        the whole distribution layer. Both, or the layer keeps half an
+        exemption: a trainer that clears what it fitted would still raise.
+        """
+        object.__setattr__(self, name, value)
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        name_is_auto: bool = False,
+        _provenance: Provenance | None = None,
+        _annotations: Mapping[str, Any] | None = None,
+    ):
         if not isinstance(name, str) or not name:
             raise TypeError(f"{type(self).__name__} requires a non-empty name= argument")
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        # ``_provenance`` and ``_annotations`` carry state a reconstruction
+        # already holds and that construction cannot otherwise reach: provenance
+        # is write-once, and annotations are written after construction, so a
+        # rebuilt distribution would come back without either. Private, and the
+        # reconstruction paths are the only callers.
+        self._init_tracked(name, name_is_auto=name_is_auto, provenance=_provenance)
+        self._init_annotations(_annotations)
 
     # -- keyword-form value construction ------------------------------------
 

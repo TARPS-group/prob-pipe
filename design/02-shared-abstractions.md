@@ -226,7 +226,13 @@ As the *type layer*, an `EventTemplate` is the explicit structure that travels w
 
 Identity, type & metadata is the cross-cutting layer that lets any object carry, alongside its raw representation, four things: a **name** (what the object is called), a **spec** (the declaration of its type, II.2), a **provenance** (how it was produced), and free-form **annotations** (auxiliary information supplied by the user or an algorithm). The structure is provided by two mixins: `TrackedTerm` (name, spec, and provenance) and `Annotated` (annotations). Every first-class object, the kind an operation consumes and produces, must be a `TrackedTerm`, while structural helpers such as templates and specs are not. We call any such object a **tracked term**: a value, distribution, conditional distribution, linear operator, or batch that carries a name, its spec, and provenance.
 
-Annotation metadata is a free-form mapping:
+Annotation metadata is a free-form mapping, and the **one exception to
+immutability**: the store is written after construction by inference backends,
+validators, and diagnostic operations, and mutated in place, so the channel is
+append-only by convention — a writer adds under its own key and never overwrites
+mathematical state or another writer's entries. Being written in place is also
+why a copy takes its own container: otherwise a write on one term would show
+through on the term it was copied from.
 
 ```python
 class Annotated:
@@ -237,6 +243,8 @@ A tracked term's name must be provided by the user when constructed explicitly (
 
 The `spec` slot is the term's type, stored once (II.2). Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
+**A tracked term is immutable, and that is a property of being one** (`C2 – Functional interface over immutable objects`): assignment and deletion raise, naming the class the caller touched, and every transformation returns a new term. `TrackedTerm` therefore carries the immutability itself rather than each kind opting in — one guard, so a subclass cannot report a different rule than its base. Immutability obliges a second thing, since `pickle` and `copy` restore an object by assigning its state back: a term reconstructs by allocating its resolved class and restoring the state it actually holds, rather than by rebuilding through its constructor. So a reconstruction cannot re-derive a schema an explicit declaration had pinned, cannot re-decide a class from arguments the state no longer carries, and cannot omit a field — including one written after construction, which no constructor argument names. A term declares any *memo* it holds as transient, keeping a cache out of the round-trip, and any *store written in place* as decoupled, so a copy takes its own container rather than sharing one. Annotations are the one such store (below).
+
 ```python
 class TrackedTerm:
     name:         str
@@ -245,6 +253,8 @@ class TrackedTerm:
     provenance:   Provenance | None              # write-once via with_provenance(...)
     def with_name(self, name: str) -> Self: ...  # shallow copy with name_is_auto = False
     def with_provenance(self, p: Provenance) -> Self: ...
+    # immutable: __setattr__ / __delattr__ raise; state round-trips through the
+    # attributes the term holds, so copy and pickle need nothing from the class
 
 class Provenance:
     operation: str                       # the operation that produced the object

@@ -379,8 +379,9 @@ class Batch[E](TrackedTerm, ABC):
     ``shape`` / ``size`` because a bare name would ambiguously cover both the
     batch axes and the content of one element.
 
-    A batch is immutable: assignment and deletion raise, and ``pickle`` / ``copy``
-    restore the slots around that guard.
+    A batch is immutable, by :class:`~probpipe.core._immutable.Immutable`:
+    assignment and deletion raise, and ``pickle`` / ``copy`` restore its state
+    around that guard.
     """
 
     __slots__ = (
@@ -408,47 +409,6 @@ class Batch[E](TrackedTerm, ABC):
     # refuses — and every site that composes or renders a selection would carry a
     # branch for it. :meth:`with_name` re-roots a view: a user-given name replaces
     # the derivation and discards the selection accumulated before it.
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError(f"{type(self).__name__} is immutable")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError(f"{type(self).__name__} is immutable")
-
-    def __getstate__(self) -> Any:
-        """This batch's whole state, for ``pickle`` and ``copy``.
-
-        Delegates to :meth:`object.__getstate__`, which reports every assigned
-        slot declared anywhere in the class hierarchy — a subclass's storage
-        included, without it having to say so — together with an instance
-        dictionary if the subclass has one.
-
-        Notes
-        -----
-        Only :meth:`__setstate__` needs overriding here; ``__getstate__`` is
-        defined alongside it so that the pair reads as one, and so that walking
-        the hierarchy by hand is not reintroduced. That walk is easy to get
-        subtly wrong: ``__slots__`` may be a bare string naming one slot, which
-        iterates into characters rather than into that name, and a subclass that
-        declares no ``__slots__`` keeps its attributes in a dictionary that no
-        walk over ``__slots__`` would find. Either would drop state silently,
-        since a missing attribute is indistinguishable from an unassigned slot.
-        """
-        return object.__getstate__(self)
-
-    def __setstate__(self, state: Any) -> None:
-        """Restore *state* through ``object.__setattr__``.
-
-        ``pickle`` and ``copy`` restore state by assignment, which the
-        immutability guard refuses, so the write has to go around it exactly as
-        construction does. Both halves of the state are restored: the instance
-        dictionary, where a subclass has one, and the slots.
-        """
-        instance_dict, slots = state if isinstance(state, tuple) else (state, None)
-        for attribute, value in (instance_dict or {}).items():
-            object.__setattr__(self, attribute, value)
-        for slot, value in (slots or {}).items():
-            object.__setattr__(self, slot, value)
 
     # -- construction -------------------------------------------------------
 

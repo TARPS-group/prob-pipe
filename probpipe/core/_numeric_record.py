@@ -182,6 +182,11 @@ class NumericRecord(Record):
 
     __slots__ = ("_jax_cache", "_vector_size")
 
+    #: The lazy conversion cache is a memo over the stored leaves, so it is
+    #: rebuilt on demand rather than carried through ``copy`` and ``pickle`` —
+    #: carrying it would duplicate every converted array in the payload.
+    _transient_state = ("_jax_cache",)
+
     def __init__(
         self,
         name: str,
@@ -300,12 +305,25 @@ class NumericRecord(Record):
         val = self._tree[field_name]
         if isinstance(val, jnp.ndarray):
             return val
-        cache = self._jax_cache
+        cache = self._conversion_cache()
         arr = cache.get(field_name)
         if arr is None:
             arr = _to_jax_array(val)
             cache[field_name] = arr
         return arr
+
+    def _conversion_cache(self) -> dict[str, jnp.ndarray]:
+        """The per-leaf conversion memo, created if this instance has none.
+
+        A record that arrives from ``copy`` or ``pickle`` carries no memo — it is
+        derived from the leaves, so it is rebuilt rather than transported — and
+        the first conversion after one lands here.
+        """
+        cache = getattr(self, "_jax_cache", None)
+        if cache is None:
+            cache = {}
+            object.__setattr__(self, "_jax_cache", cache)
+        return cache
 
     def _field_as_jax(self, key: str) -> jnp.ndarray:
         """The converted ``jax.Array`` for the field at *key*, at any depth.
@@ -398,24 +416,6 @@ class NumericRecord(Record):
         return self
 
     # -- Single-field scalar-like coercion ---------------------------------
-
-    def __reduce__(self):
-        # Native leaves pickle themselves, so one branch suffices: the stored
-        # field dict round-trips with native types intact at every nesting
-        # level, and the authoritative template is threaded back so an
-        # explicit (non-inferred) schema survives rather than being
-        # re-inferred. The conversion cache is deliberately not serialized —
-        # it is a memo, rebuilt on demand.
-        return (
-            _unpickle_numeric_record,
-            (
-                dict(self._tree),
-                self._name,
-                self._name_is_auto,
-                self._provenance,
-                self._spec,
-            ),
-        )
 
     def _single_numeric_field(self) -> str:
         """Return the sole numeric field's name, or raise ``TypeError``."""
@@ -599,17 +599,6 @@ def _reconstruct_from_vector(
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_numeric_record(
-    store: dict, name: str, name_is_auto: bool, provenance, spec=None
-) -> NumericRecord:
-    # ``store`` holds the native leaves verbatim (they pickle themselves), so
-    # reconstruction is ordinary validation-without-conversion. The threaded
-    # declaration preserves an explicit schema across the round-trip; a pickle
-    # written before it was serialized still loads.
-    nr = NumericRecord(name, store, event_template=spec)
-    return nr._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
-
-
 # ---------------------------------------------------------------------------
 # JAX PyTree registration — converting flatten, custom unflatten
 # ---------------------------------------------------------------------------
@@ -637,13 +626,13 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, s
 def _numeric_record_unflatten(aux: tuple[RecordSpec, str, bool], children: list) -> NumericRecord:
     """Unflatten NumericRecord from JAX pytree traversal, threading the aux spec."""
     spec, name, name_is_auto = aux
-    nr = NumericRecord(
+    return NumericRecord(
         name,
         dict(zip(tuple(spec.event_template.children), children)),
         event_template=spec,
+        name_is_auto=name_is_auto,
         _validate_leaves=False,
     )
-    return nr._restore_identity(name_is_auto=name_is_auto, provenance=None)
 
 
 jax.tree_util.register_pytree_node(

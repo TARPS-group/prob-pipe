@@ -435,8 +435,13 @@ uv build packaging/probpipe   # probpipe (metapackage)
 ### Design principles
 
 1. **Distributions are immutable** — parameters fixed at construction;
-   operations return new distributions. The one documented exception
-   is the `annotations` store (`_annotations`, provided by the
+   operations return new distributions. Records, batches, functions, and
+   templates enforce this (assignment and deletion raise); `Distribution`
+   permits both for now, because the documented emulator pattern trains a
+   subclassed random function in place and fitting has no contract yet that
+   returns a new fitted term. Treat the rule as binding when writing new code
+   either way. Two stores are documented exceptions, both written after
+   construction. The first is the `annotations` store (`_annotations`, provided by the
    `Annotated` mixin in `probpipe.core.tracked`; a string-keyed
    mapping, typically an `xarray.DataTree`, of post-construction
    metadata): validators and diagnostic ops (e.g.,
@@ -445,8 +450,15 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `annotations["loo"]`, ...). This is a deliberate carve-out — the
    alternative of returning a renamed clone for every diagnostic would
    break the provenance/identity tracking that downstream code relies
-   on. Treat `_annotations` as append-only; never mutate other state
-   post-construction.
+   on. Treat `_annotations` as append-only.
+
+   The second, narrower, is a lazily computed value: it lives in a
+   `_memo` dictionary the constructor assigns and the read fills in place,
+   declared in `_transient_state` so a copy rebuilds it rather than
+   inheriting it. Whatever reads one must tolerate its absence, since a
+   copy or an unpickle arrives without it.
+
+   Those two aside, never mutate a term's state after construction.
 2. **Operations are standalone Functions** — `sample()`, `mean()`,
    `log_prob()`, `condition_on()` are `Function` instances in
    `probpipe/core/ops.py`.

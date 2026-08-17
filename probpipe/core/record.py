@@ -151,6 +151,11 @@ def _canonical_dtype_str(leaf: Any) -> str:
 # Record
 # ---------------------------------------------------------------------------
 
+#: Constructor keywords that name a construction option rather than a field, so
+#: the keyword form of ``Record(...)`` does not read them as data. The positional
+#: dict form takes a field of any name, including these.
+_RESERVED_INIT_KWARGS = frozenset({"event_template", "name_is_auto", "_validate_leaves"})
+
 
 class Record(NamedTree[Any], TrackedTerm, Annotated):
     """A single structured value with metadata.
@@ -395,9 +400,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             if len(args) > 1 and args[1] is not None:
                 source: Mapping[str, Any] = args[1]
             else:
-                source = {
-                    k: v for k, v in kwargs.items() if k not in ("event_template", "name_is_auto")
-                }
+                source = {k: v for k, v in kwargs.items() if k not in _RESERVED_INIT_KWARGS}
             # Promote when every field is numeric (the value probe — bare
             # arrays, numeric scalars, and native backend containers alike)
             # and no explicit non-numeric template vetoes it. Leaves are
@@ -623,30 +626,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         ``pickle.loads`` carries this same structure.
         """
         return self._spec.event_template
-
-    # -- Immutability -------------------------------------------------------
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        raise AttributeError("Record is immutable")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError("Record is immutable")
-
-    def __reduce__(self):
-        # Serialize the authoritative spec so a pickled record keeps its exact
-        # schema (and equality) instead of re-inferring a weaker one on load —
-        # an explicit ``support`` / ``dtype`` / ``OpaqueSpec.meta`` is not
-        # recoverable by ``infer_from``.
-        return (
-            _unpickle_record,
-            (
-                dict(self._tree),
-                self._name,
-                self._name_is_auto,
-                self._provenance,
-                self._spec,
-            ),
-        )
 
     # -- Tree structure -----------------------------------------------------
     #
@@ -1245,13 +1224,6 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 
 
-def _unpickle_record(store: dict, name: str, name_is_auto: bool, provenance, spec=None) -> Record:
-    # ``spec`` is optional, and construction accepts either form, so a pickle
-    # written before the declaration was serialized still loads.
-    r = Record(name, store, event_template=spec)
-    return r._restore_identity(name_is_auto=name_is_auto, provenance=provenance)
-
-
 # ---------------------------------------------------------------------------
 # JAX PyTree registration
 # ---------------------------------------------------------------------------
@@ -1293,9 +1265,10 @@ def _record_unflatten(aux: tuple[RecordSpec, str, bool], children: list) -> Reco
         name,
         dict(zip(tuple(spec.event_template.children), children)),
         event_template=spec,
+        name_is_auto=name_is_auto,
         _validate_leaves=False,
     )
-    return r._restore_identity(name_is_auto=name_is_auto, provenance=None)
+    return r
 
 
 jax.tree_util.register_pytree_node(Record, _record_flatten, _record_unflatten)

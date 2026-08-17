@@ -6,6 +6,7 @@ import math
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
+from functools import partial
 from types import MappingProxyType
 from typing import Any, Literal, cast, get_args, overload
 
@@ -178,9 +179,11 @@ class Node(ABC):  # noqa: B024
             else:
                 inputs[k] = v
 
-        # Freeze internal state (read-only)
-        self._child_nodes = MappingProxyType(child_nodes)
-        self._inputs = MappingProxyType(inputs)
+        # Freeze internal state (read-only). Written through
+        # ``object.__setattr__`` so this also serves an immutable subclass, whose
+        # guard refuses assignment even from its own constructor.
+        object.__setattr__(self, "_child_nodes", MappingProxyType(child_nodes))
+        object.__setattr__(self, "_inputs", MappingProxyType(inputs))
 
     @property
     def child_nodes(self) -> Mapping[str, Node]:
@@ -429,38 +432,40 @@ class Function(Node, TrackedTerm, Annotated):
             construction_bindings=construction_bindings,
         )
 
-        object.__setattr__(self, "_initializing", True)
+        set_attribute = partial(object.__setattr__, self)
         self._init_tracked(name, name_is_auto=name_is_auto)
-        object.__setattr__(self, "_annotations", {})
-        self._implementation = implementation
-        self._signature_info = signature_info
-        self._workflow_kind_raw = workflow_kind
+        set_attribute("_annotations", {})
+        set_attribute("_implementation", implementation)
+        set_attribute("_signature_info", signature_info)
+        set_attribute("_workflow_kind_raw", workflow_kind)
 
         # Expose wrapped function's metadata for introspection (help(),
         # inspect.signature(), IDE tooltips, mkdocstrings).  We skip
         # __wrapped__ to prevent inspect.unwrap() from bypassing __call__.
-        self.__doc__ = getattr(metadata_source, "__doc__", None)
-        self.__name__ = self._name
-        self.__qualname__ = getattr(metadata_source, "__qualname__", self._name)
-        self.__signature__ = self._signature_info.signature
-        self.__module__ = getattr(metadata_source, "__module__", None) or type(self).__module__
-        self._module = module
-        self._n_broadcast_samples = (
+        set_attribute("__doc__", getattr(metadata_source, "__doc__", None))
+        set_attribute("__name__", self._name)
+        set_attribute("__qualname__", getattr(metadata_source, "__qualname__", self._name))
+        set_attribute("__signature__", signature_info.signature)
+        set_attribute(
+            "__module__", getattr(metadata_source, "__module__", None) or type(self).__module__
+        )
+        set_attribute("_module", module)
+        set_attribute(
+            "_n_broadcast_samples",
             n_broadcast_samples
             if n_broadcast_samples is not None
-            else self.DEFAULT_N_BROADCAST_SAMPLES
+            else self.DEFAULT_N_BROADCAST_SAMPLES,
         )
-        self._dispatch = dispatch
-        self._max_workers = max_workers
-        self._include_inputs = include_inputs
-        self._input_template = input_template
-        self._output_template = output_template
+        set_attribute("_dispatch", dispatch)
+        set_attribute("_max_workers", max_workers)
+        set_attribute("_include_inputs", include_inputs)
+        set_attribute("_input_template", input_template)
+        set_attribute("_output_template", output_template)
 
         # bind = "construction-time inputs" (defaults/config). kwargs are also treated as bind.
-        self._bind = MappingProxyType(construction_bindings)
+        set_attribute("_bind", MappingProxyType(construction_bindings))
 
         super().__init__()
-        object.__setattr__(self, "_initializing", False)
 
     @property
     def signature(self) -> inspect.Signature:
@@ -563,15 +568,6 @@ class Function(Node, TrackedTerm, Annotated):
         object.__setattr__(renamed, "__name__", name)
         object.__setattr__(renamed, "__qualname__", name)
         return renamed
-
-    def __setattr__(self, name: str, value: Any) -> None:
-        if getattr(self, "_initializing", False):
-            object.__setattr__(self, name, value)
-            return
-        raise AttributeError("Function is immutable")
-
-    def __delattr__(self, name: str) -> None:
-        raise AttributeError("Function is immutable")
 
     @property
     def effective_workflow_kind(self) -> WorkflowKind:
