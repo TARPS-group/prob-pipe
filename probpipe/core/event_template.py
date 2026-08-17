@@ -1014,8 +1014,6 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
             for name in field_specs:
                 _check_no_path_sep(name)
             nested = dict(field_specs)
-        if not nested:
-            raise ValueError(f"{type(self).__name__} requires at least one field")
         specs: dict[str, _FieldSpec] = {}
         for name, spec in nested.items():
             if isinstance(spec, Mapping):
