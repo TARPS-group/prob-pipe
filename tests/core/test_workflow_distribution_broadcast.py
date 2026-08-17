@@ -24,7 +24,12 @@ from probpipe import (
     sample,
     workflow_run,
 )
-from probpipe.core import _workflow_call, _workflow_distribution_broadcast, _workflow_execution
+from probpipe.core import (
+    _workflow_call,
+    _workflow_context,
+    _workflow_distribution_broadcast,
+    _workflow_execution,
+)
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
 from probpipe.core.config import WorkflowKind
 from probpipe.distributions import SequentialJointDistribution
@@ -88,6 +93,10 @@ class _RecordingNormal(Normal):
     def _sample(self, key, sample_shape=()):
         self.sample_calls.append((key, tuple(sample_shape)))
         return super()._sample(key, sample_shape)
+
+
+def _identity(value):
+    return value
 
 
 class TestExecuteDistributionBroadcast:
@@ -435,6 +444,48 @@ class TestExecuteDistributionBroadcast:
                 workflow_name="identity",
                 workflow_kind=WorkflowKind.TASK,
             )
+
+    @pytest.mark.parametrize(
+        ("dispatch", "workflow_kind", "route_module"),
+        [
+            pytest.param("sequential", WorkflowKind.TASK, _workflow_execution, id="row-wise"),
+            pytest.param("jax", WorkflowKind.FLOW, _workflow_distribution_broadcast, id="jax"),
+        ],
+    )
+    def test_prefect_route_failure_precedes_sampling_and_commit(
+        self,
+        monkeypatch,
+        dispatch,
+        workflow_kind,
+        route_module,
+    ):
+        sample_calls = []
+        commits = []
+        source = _RecordingNormal(sample_calls, name="x")
+        workflow = Function(
+            func=_identity,
+            name="identity",
+            dispatch=dispatch,
+            workflow_kind=workflow_kind,
+            n_broadcast_samples=5,
+        )
+        commit_invocation = _workflow_context._commit_stochastic_invocation
+
+        def record_commit(occurrence_kind="invocation"):
+            commits.append(occurrence_kind)
+            return commit_invocation(occurrence_kind)
+
+        def reject_route(*args, **kwargs):
+            raise ValueError("invalid Prefect route")
+
+        monkeypatch.setattr(_workflow_context, "_commit_stochastic_invocation", record_commit)
+        monkeypatch.setattr(route_module, "flow", reject_route)
+
+        with workflow_run(seed=7), pytest.raises(ValueError, match="invalid Prefect route"):
+            workflow(source)
+
+        assert sample_calls == []
+        assert commits == []
 
     def test_same_parent_views_share_parent_sample(self):
         joint = ProductDistribution(
@@ -1138,13 +1189,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         )
 
     def test_a_law_that_cannot_answer_dtype_is_still_probed(self, caplog):
-        """The draw carries structure and dtype, so neither is asked for first.
-
-        The regression: a ``SequentialJointDistribution`` view raises
-        ``NotImplementedError`` for ``dtype``, which the probe used to read to
-        size its dummy — and which ``getattr(..., None)`` does not swallow, so
-        the law was refused a dispatch it can take.
-        """
+        """The root's resolved component metadata supplies the probe dtypes."""
         joint = SequentialJointDistribution(
             z=Normal(loc=0.0, scale=1.0, name="z"),
             x=lambda z: Normal(loc=z, scale=0.01, name="x"),

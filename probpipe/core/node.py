@@ -38,7 +38,6 @@ from . import (
     _workflow_recipe,
     _workflow_replay,
     _workflow_result,
-    _workflow_rng,
     _workflow_sweep,
 )
 from ._function_contract import (
@@ -51,8 +50,15 @@ from ._function_contract import (
     _validate_function_templates,
     _wrap_declared_function_output,
 )
+from ._numeric_record_batch import NumericRecordBatch
 from ._record_batch import RecordBatch
-from .event_template import ArraySpec, EventTemplate, _concretize_event_template
+from ._record_distribution import RecordDistribution
+from .event_template import (
+    ArraySpec,
+    EventTemplate,
+    NumericEventTemplate,
+    _concretize_event_template,
+)
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm, auto_name
 
@@ -1036,21 +1042,70 @@ class Function(Node, TrackedTerm, Annotated):
                     _draw_call = _workflow_distribution_broadcast.mapped_draw_body(
                         func=func, values=dummy_kw, broadcast_args=refs
                     )
-                    probe_key = _workflow_rng.jax_key_from_words((0, 0))
-
-                    def get_probe_key(_event: _workflow_plan.PlannedRandomEvent):
-                        nonlocal probe_key
-                        probe_key, subkey = jax.random.split(probe_key)
-                        return subkey
-
-                    sampled = _workflow_distribution_broadcast._sample_planned_source_groups(
-                        stochastic_plan,
-                        stochastic_plan.source_groups,
-                        (1,),
-                        stochastic_plan.logical_units[0],
-                        get_probe_key,
+                    sampled_groups = tuple(
+                        group
+                        for group in stochastic_plan.source_groups
+                        if group.execution_mode == "sampled"
                     )
-                    jax.make_jaxpr(jax.vmap(_draw_call))(tuple(sampled[ref] for ref in refs))
+                    root_probes = []
+                    for group in sampled_groups:
+                        binding = stochastic_plan.runtime_bindings[group.index]
+                        root = binding.root
+                        template = root.event_template
+                        if (
+                            not isinstance(template, NumericEventTemplate)
+                            or not template.is_concrete
+                        ):
+                            raise TypeError(
+                                f"{type(root).__name__} does not declare a concrete numeric "
+                                "event template for side-effect-free JAX probing"
+                            )
+                        try:
+                            dtypes = root.dtypes
+                        except (AttributeError, NotImplementedError) as error:
+                            raise TypeError(
+                                f"{type(root).__name__} does not declare field dtypes for "
+                                "side-effect-free JAX probing"
+                            ) from error
+                        columns = {}
+                        for path in template:
+                            dtype = dtypes.get(path)
+                            if dtype is None:
+                                dtype = dtypes[path.split("/", 1)[0]]
+                            columns[path] = jax.ShapeDtypeStruct(
+                                (1, *template[path].shape),
+                                dtype,
+                            )
+                        if isinstance(root, RecordDistribution):
+                            root_probe = NumericRecordBatch(
+                                columns,
+                                "draw",
+                                element_spec=template,
+                                axis_groups=((1,),),
+                                name=root.name,
+                                name_is_auto=True,
+                            )
+                        else:
+                            root_probe = next(iter(columns.values()))
+                        root_probes.append(root_probe)
+
+                    def probe_draw(root_values):
+                        sampled = {}
+                        for group, root_value in zip(
+                            sampled_groups,
+                            root_values,
+                            strict=True,
+                        ):
+                            binding = stochastic_plan.runtime_bindings[group.index]
+                            for consumer, evaluate in zip(
+                                group.consumers,
+                                binding.consumer_evaluators,
+                                strict=True,
+                            ):
+                                sampled[consumer.arg_ref] = evaluate(root_value)
+                        return _draw_call(tuple(sampled[ref] for ref in refs))
+
+                    jax.make_jaxpr(jax.vmap(probe_draw))(tuple(root_probes))
                 else:
                     jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
         except Exception as exc:

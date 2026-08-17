@@ -70,6 +70,31 @@ class WorkflowExecutionRequest:
     stochastic_plan: _workflow_plan.StochasticPlan | None = None
 
 
+def _preflight_execution_config(execution: WorkflowExecutionConfig) -> None:
+    """Validate a row-wise execution route before stochastic work starts."""
+    match execution.mode:
+        case "sequential":
+            return
+        case "thread":
+            _validate_max_workers(execution.max_workers)
+        case "prefect_task" | "prefect_flow":
+            _ensure_prefect_available()
+            runner = execution.prefect_task_runner
+            flow_name = (
+                f"{execution.name}_map" if execution.mode == "prefect_task" else execution.name
+            )
+            task_name = (
+                execution.name if execution.mode == "prefect_task" else f"{execution.name}_run"
+            )
+            flow(
+                name=flow_name,
+                **({"task_runner": runner} if runner is not None else {}),
+            )(lambda: None)
+            task(name=task_name, retries=0)(lambda payload: payload)
+        case unknown:
+            raise ValueError(f"Unknown workflow execution mode: {unknown!r}")
+
+
 def execute_many(request: WorkflowExecutionRequest) -> list[Any]:
     """Execute all call dictionaries using the configured dispatch mode."""
     if not request.work_items:

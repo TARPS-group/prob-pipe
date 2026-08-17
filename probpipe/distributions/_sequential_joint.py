@@ -284,6 +284,11 @@ class SequentialJointDistribution(
         """Read-only view of the component distributions."""
         return MappingProxyType(self._components)
 
+    @property
+    def dtypes(self) -> dict[str, jnp.dtype]:
+        """Per-component dtypes from the resolved prototype distributions."""
+        return {name: component.dtype for name, component in self._components.items()}
+
     def _sample_sequential(
         self,
         key: PRNGKey,

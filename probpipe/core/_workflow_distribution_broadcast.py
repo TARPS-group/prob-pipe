@@ -303,17 +303,8 @@ def _broadcast_jax(
     if sample_shape is None:  # pragma: no cover - planner/dispatch contract guard
         raise RuntimeError("sampled stochastic plan is missing sample_shape")
     broadcast_args = list(stochastic_plan.arg_refs)
-    sampled = _sample_planned_source_groups(
-        stochastic_plan,
-        stochastic_plan.source_groups,
-        sample_shape,
-        logical_unit,
-        get_key,
-    )
-
     single_call = mapped_draw_body(func=func, values=values, broadcast_args=broadcast_args)
-
-    batch = tuple(sampled[ref] for ref in broadcast_args)
+    batch: tuple[Any, ...] = ()
 
     def run_vmap():
         with _workflow_context._workflow_jax_runtime_guard():
@@ -329,6 +320,14 @@ def _broadcast_jax(
                 **({"task_runner": runner} if runner is not None else {}),
             )(run_vmap)
 
+    sampled = _sample_planned_source_groups(
+        stochastic_plan,
+        stochastic_plan.source_groups,
+        sample_shape,
+        logical_unit,
+        get_key,
+    )
+    batch = tuple(sampled[ref] for ref in broadcast_args)
     results = run_vmap()
     return BroadcastDistribution(
         input_samples={ref.label: sampled[ref] for ref in broadcast_args},
@@ -353,6 +352,8 @@ def _broadcast_enumerate(
     output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
     """Execute the plan's exact combinations and sampled repetitions."""
+    execution = make_execution_config()
+    _workflow_execution._preflight_execution_config(execution)
     exact_entries: list[
         tuple[
             _workflow_plan.StochasticSourceGroup,
@@ -421,7 +422,6 @@ def _broadcast_enumerate(
             call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
             sample_idx += 1
 
-    execution = make_execution_config()
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
         work_items=_workflow_execution.make_managed_work_items(
@@ -475,6 +475,8 @@ def _broadcast_sample(
     output_template: EventTemplate | None,
 ) -> BroadcastDistribution:
     """Sample distribution arguments and execute one function call per sample."""
+    execution = make_execution_config()
+    _workflow_execution._preflight_execution_config(execution)
     sample_shape = stochastic_plan.sample_shape
     if sample_shape is None:  # pragma: no cover - planner contract guard
         raise RuntimeError("sampled stochastic plan is missing sample_shape")
@@ -492,7 +494,6 @@ def _broadcast_sample(
         replacements = {ref: _index_sample(samples_per_arg[ref], i) for ref in broadcast_args}
         call_value_list.append(_workflow_call.replace_input_refs(values, replacements))
 
-    execution = make_execution_config()
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
         work_items=_workflow_execution.make_managed_work_items(
