@@ -65,8 +65,8 @@ class _ObjectBatch[E](Batch[E]):
         which iterates into something other than its elements — if it is not
         iterable at all, or if an ndarray of elements is not ``dtype=object``.
     ValueError
-        If ``elements`` is empty, or is a zero-dimensional array (one object with
-        no batch axis), if ``axis_groups`` does not tile the stored shape, or if
+        If ``elements`` is a zero-dimensional array (one object, with no batch
+        axis to count along), if ``axis_groups`` does not tile the stored shape, or if
         ``axis_groups`` is omitted and the number of names does not match the
         number of axes.
 
@@ -78,11 +78,11 @@ class _ObjectBatch[E](Batch[E]):
     :class:`~probpipe.core._batch.Batch` refuses to resolve a clash by
     suffixing. The caller that mints a level knows what it means.
 
-    Construction requires at least one element, while *selecting* none is
-    allowed: ``batch[0:0]`` is a batch of nothing, as the level algebra intends.
-    The asymmetry is deliberate — an empty literal at construction is almost
-    always a mistake, and a shape cannot be inferred from it — so an empty batch
-    is reached by selecting one rather than by building one.
+    Construction admits no elements, as selection always did: ``batch[0:0]`` and
+    ``OpaqueBatch([], "draw")`` are both a batch of nothing. Zero is a count the
+    level can carry, and an object array of no elements still reports the shape
+    ``(0,)`` to read it from. What is refused is a missing *axis*: a
+    zero-dimensional store is one object, with no level to count along.
     """
 
     _store: np.ndarray
@@ -226,8 +226,6 @@ def _as_object_array(elements: np.ndarray | Iterable[Any], *, kind: str) -> np.n
         _refuse_container(elements, kind=kind)
         store = _from_iterable(elements, kind=kind)
 
-    if store.size == 0:
-        raise ValueError(f"{kind} requires at least one element")
     if store.ndim == 0:
         raise ValueError(f"{kind} requires at least one batch axis; got a single object")
     store.setflags(write=False)

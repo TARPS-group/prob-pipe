@@ -201,3 +201,43 @@ class TestASampleShapeGetsADrawLevel:
 
         assert not isinstance(drawn, NumericArray)
         assert drawn.shape == (2, 7)
+
+
+class TestAnEmptyReturnKeepsItsHostsKind:
+    """The kind follows the host's type, and having no entries does not change it.
+
+    A mapping is a tree and a sequence a multiplicity whether or not anything is
+    in it. Reading the kind off the *cardinality* instead would give a function
+    returning a dict a result type that varies with its data.
+    """
+
+    @staticmethod
+    def _returned(value):
+        return Function(func=lambda: value, name="f")()
+
+    def test_an_empty_mapping_is_an_empty_record(self):
+        result = self._returned({})
+
+        assert isinstance(result, Record)
+        assert list(result.event_template) == []
+
+    @pytest.mark.parametrize("sequence", [[], ()], ids=["list", "tuple"])
+    def test_an_empty_sequence_is_a_batch_of_no_elements(self, sequence):
+        """No element to read a kind off, so the batch claims the least it can.
+
+        Every element spec holds vacuously of no elements, which is why the
+        opaque one is not a narrowing here.
+        """
+        from probpipe import OpaqueBatch
+
+        result = self._returned(sequence)
+
+        assert isinstance(result, OpaqueBatch)
+        assert (result.batch_shape, result.level_names) == ((0,), ("f",))
+
+    def test_an_empty_array_is_still_an_array(self):
+        """Distinct from an empty container: the kind was never in doubt."""
+        result = self._returned(jnp.array([]))
+
+        assert isinstance(result, NumericArray)
+        assert result.shape == (0,)
