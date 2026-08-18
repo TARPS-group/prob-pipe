@@ -277,3 +277,58 @@ class TestASequenceAggregatesAtItsRowsKind:
         """The last-ditch branch alone used to leave the aggregate auto-named."""
         for value in ([1.0, 2.0], ["a", "b"], [lambda: 1], []):
             assert self._returned(value).name == "f"
+
+
+class TestEachSweptRowTakesItsOwnKind:
+    """A row is one call's return, so the rule that names a single return's kind
+    is the rule that names a row's.
+
+    Rows reached the aggregation raw, so the branches there read them as whatever
+    they happened to stack as: a mapping row was an unstackable object, and a
+    sequence row's multiplicity became event shape.
+    """
+
+    @staticmethod
+    def _rows(n: int = 3):
+        from probpipe import NumericRecordBatch
+        from probpipe.core.event_template import NumericEventTemplate
+
+        return NumericRecordBatch(
+            {"x": jnp.arange(float(n))},
+            "row",
+            element_spec=NumericEventTemplate(x=()),
+            name="rows",
+        )
+
+    def _swept(self, body):
+        return Function(func=body, name="f", dispatch="sequential")(v=self._rows())
+
+    def test_a_mapping_row_gives_a_batch_of_records(self):
+        out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2})
+
+        assert list(out.event_template) == ["y"]
+        assert (out.batch_shape, out.level_names) == ((3,), ("row",))
+
+    def test_any_mapping_counts_not_only_dict(self):
+        from collections import OrderedDict
+
+        out = self._swept(lambda v: OrderedDict(y=jnp.asarray(v["x"])))
+
+        assert list(out.event_template) == ["y"]
+
+    def test_a_sequence_row_keeps_its_own_level(self):
+        """The row's multiplicity is a level, not part of the element's shape."""
+        out = self._swept(lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])])
+
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "f"))
+
+    def test_rows_of_differing_numeric_shape_are_refused(self):
+        """An object column would record the disagreement as if it were the answer."""
+        with pytest.raises(ValueError, match="differing shapes"):
+            self._swept(lambda v: jnp.ones(int(jnp.asarray(v["x"])) + 1))
+
+    def test_a_disagreement_inside_a_returned_sequence_is_not_swallowed(self):
+        """The stack has a batch form for every element kind, so what raises here
+        is the rows disagreeing — which the caller should see."""
+        with pytest.raises(ValueError, match="differing shapes"):
+            Function(func=lambda: [jnp.ones(1), jnp.ones(2)], name="g")()
