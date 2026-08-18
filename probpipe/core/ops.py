@@ -166,6 +166,44 @@ def _drawn_at_its_batch_form(
     )
 
 
+def _at_the_operands_levels(computed: Any, operand: Any) -> Any:
+    """Give *computed* the levels *operand* carried, when it is a batch.
+
+    An operation whose value parameter is ``Any``-hinted receives a batch whole
+    and evaluates it in one vectorized call rather than row by row. That is the
+    fused implementation design V.9 allows to register above the elementwise map
+    — but V.9 also says the batch axes are *preserved*, and a bare array does not
+    preserve them. So the levels the operand stated are restated on the result.
+
+    Only the axes the operand accounted for are levels; anything the operation
+    added beyond them belongs to the element, which is why the split is by the
+    operand's rank rather than by the result's.
+    """
+    from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+    from ._batch import Batch
+    from ._numeric_array_batch import NumericArrayBatch
+    from .event_template import NumericArraySpec
+
+    if not isinstance(operand, Batch) or not _is_numeric_leaf(computed):
+        return computed
+    batch_shape = tuple(operand.batch_shape)
+    shape = tuple(_event_shape_of(computed))
+    if shape[: len(batch_shape)] != batch_shape:
+        # The operation did not lay its result out over the operand's axes, so
+        # there is no correspondence to restate.
+        return computed
+    return NumericArrayBatch(
+        computed,
+        tuple(operand.level_names),
+        element_spec=NumericArraySpec(
+            shape=shape[len(batch_shape) :], dtype=_numpy_dtype_of(computed)
+        ),
+        axis_groups=tuple(operand.axis_groups),
+        name=operand.name,
+        name_is_auto=operand.name_is_auto,
+    )
+
+
 # -- keyword value form shared by the density ops ---------------------------
 #
 # Each density op accepts either a positional ``value`` or named field kwargs
@@ -222,7 +260,8 @@ def log_prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> A
     """
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(f"{type(dist).__name__} does not support log_prob")
-    return dist._log_prob(_resolve_value("log_prob", dist, value, field_kwargs))
+    resolved = _resolve_value("log_prob", dist, value, field_kwargs)
+    return _at_the_operands_levels(dist._log_prob(resolved), resolved)
 
 
 @function

@@ -276,3 +276,39 @@ class TestLevelsAreNamedForWhatMintsThem:
         result = Function(func=lambda: [1.0, 2.0], name="myfunc")()
 
         assert result.level_names == ("myfunc",)
+
+
+class TestABatchOperandKeepsItsLevelsThroughAnOperation:
+    """Design V.9: `log_prob` maps elementwise "with the batch axes preserved".
+
+    An operation whose value parameter is `Any`-hinted takes the batch whole and
+    evaluates it in one vectorized call — the fused implementation V.9 allows.
+    That is not licence to hand back a bare array: the axes the operand accounted
+    for are levels, and a result that drops them says the draws were one value.
+    """
+
+    LAW = Normal(0.0, 1.0, name="height")
+
+    def test_log_prob_of_a_batch_of_draws_keeps_the_sample_level(self):
+        drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
+
+        scored = log_prob(self.LAW, drawn)
+
+        assert (scored.batch_shape, scored.level_names) == ((3,), ("sample",))
+
+    def test_the_result_is_named_for_the_operand_it_scored(self):
+        drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
+
+        assert log_prob(self.LAW, drawn).name == drawn.name
+
+    def test_a_single_draw_is_still_a_single_value(self):
+        """No operand levels to restate, so nothing is invented."""
+        scored = log_prob(self.LAW, sample(self.LAW, key=KEY))
+
+        assert not isinstance(scored, NumericArrayBatch)
+
+    def test_a_raw_array_operand_is_left_alone(self):
+        """A bare array states no levels, so the result carries none."""
+        scored = log_prob(self.LAW, jnp.zeros(3))
+
+        assert not isinstance(scored, NumericArrayBatch)
