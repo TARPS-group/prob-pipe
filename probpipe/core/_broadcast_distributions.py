@@ -611,20 +611,16 @@ def _make_marginal(
 # _make_stack — stacked sibling of _make_marginal for batched broadcasts
 # ---------------------------------------------------------------------------
 #
-# When a Function broadcasts over a batch of records (parameter
-# sweep), the n inner outputs are independent scenarios indexed by
-# input row — *not* MC draws. The wrapper must preserve row identity:
+# A sweep's rows are independent scenarios indexed by input row, not MC draws,
+# so the aggregate keeps row identity. Each row is first given the kind of the
+# host it is, then the rows aggregate at that kind:
 #
-#   numeric → NumericArrayBatch, one sweep level of (n,)
-#   Record → RecordBatch.stack (NumericRecordBatch when all leaves numeric)
-#   Distribution → DistributionArray
-#   a batch per row (each (m,)) → one batch, levels (sweep, …) over (n, m)
+#   numeric   → NumericArrayBatch          Record       → RecordBatch
+#   opaque    → OpaqueBatch                Distribution → DistributionArray
+#   callable  → FunctionBatch
 #
-# Opaque Python values (e.g. strings) that can't be stacked fall
-# through to a plain-list wrapping with a clear error if even that
-# fails.
-#
-# Caller attaches ``.with_provenance(...)`` externally via ``_coerce_output``.
+# A row that is itself a batch stacks into one batch, the sweep's levels in
+# front of the rows' own. Provenance is attached by ``_coerce_output``.
 # ---------------------------------------------------------------------------
 
 
