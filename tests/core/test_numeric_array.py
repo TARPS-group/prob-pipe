@@ -199,7 +199,7 @@ class TestNumericArrayComputesAsAnArray:
         computes one way and refuses the other would be a trap rather than a
         simplification.
         """
-        value = NumericArray(jnp.arange(3.0))
+        value = NumericArray(jnp.arange(3.0), name="v")
 
         np.testing.assert_array_equal(np.asarray(1.0 - value), np.asarray(1.0 - jnp.arange(3.0)))
         np.testing.assert_array_equal(np.asarray(2.0 * value), np.asarray(value * 2.0))

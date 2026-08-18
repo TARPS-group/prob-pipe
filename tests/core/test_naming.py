@@ -114,10 +114,11 @@ class TestWhichKindsRequireAName:
         with pytest.raises(TypeError):
             build()
 
-    def test_a_numeric_array_auto_names_itself(self):
-        value = NumericArray(jnp.arange(3.0))
-
-        assert (value.name, value.name_is_auto) == ("numericarray", True)
+    def test_a_numeric_array_requires_a_name(self):
+        """It carries no fields to describe it, so a class-name default would
+        name every array in a pipeline alike."""
+        with pytest.raises(TypeError, match="name"):
+            NumericArray(jnp.arange(3.0))
 
     def test_a_function_takes_its_callables_name(self):
         def predict():
