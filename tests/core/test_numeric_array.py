@@ -700,3 +700,74 @@ class TestNumericArrayBatchArrayShim:
 
     def test_dtype_reports_the_store(self):
         assert _batch().dtype == jnp.float32
+
+
+class TestANativeBackedBatchCrossesJax:
+    """The compute boundary converts, as it does for a single value.
+
+    Flatten handed JAX the native container, which fails abstractification before
+    `__jax_array__` is ever consulted — so a pandas- or xarray-backed batch could
+    not enter a trace at all.
+    """
+
+    @staticmethod
+    def _pandas_backed():
+        pd = pytest.importorskip("pandas")
+        return NumericArrayBatch(
+            pd.Series([1.0, 2.0, 3.0]),
+            "row",
+            element_spec=NumericArraySpec(shape=()),
+            name="b",
+        )
+
+    def test_a_native_store_reaches_a_trace(self):
+        batch = self._pandas_backed()
+
+        out = jax.jit(lambda x: x)(batch)
+
+        assert isinstance(out, NumericArrayBatch)
+        assert out.level_names == ("row",)
+
+    def test_the_original_keeps_its_native_store(self):
+        """Converting at the boundary does not materialise the batch itself."""
+        pd = pytest.importorskip("pandas")
+        batch = self._pandas_backed()
+
+        jax.jit(lambda x: x)(batch)
+
+        assert isinstance(batch.values, pd.Series)
+
+    def test_conversion_happens_once_and_is_memoised(self):
+        batch = self._pandas_backed()
+
+        assert batch.as_jax() is batch.as_jax()
+
+
+class TestUnflattenChecksTheElementItRebuilds:
+    """A rank check alone admits a store the element spec is false about."""
+
+    @staticmethod
+    def _batch():
+        return NumericArrayBatch(
+            jnp.zeros((4, 3)), "row", element_spec=NumericArraySpec(shape=(3,)), name="b"
+        )
+
+    def test_a_changed_event_shape_is_refused(self):
+        """The element's own axes are not the transform's to change; the batch
+        would otherwise build and fail at the first selection instead."""
+        _, treedef = jax.tree_util.tree_flatten(self._batch())
+
+        with pytest.raises(ValueError, match="not the event shape"):
+            jax.tree_util.tree_unflatten(treedef, [jnp.zeros((4, 5))])
+
+    def test_an_unchanged_store_round_trips(self):
+        leaves, treedef = jax.tree_util.tree_flatten(self._batch())
+
+        rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
+
+        assert (rebuilt.batch_shape, rebuilt.level_names) == ((4,), ("row",))
+
+    def test_removing_every_batch_axis_still_yields_the_element(self):
+        _, treedef = jax.tree_util.tree_flatten(self._batch())
+
+        assert isinstance(jax.tree_util.tree_unflatten(treedef, [jnp.zeros((3,))]), NumericArray)
