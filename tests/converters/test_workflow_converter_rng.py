@@ -25,8 +25,9 @@ from probpipe import (
     from_distribution,
     workflow_run,
 )
-from probpipe.converters import ConverterRegistry
+from probpipe.converters import ConverterRegistry, _probpipe, _scipy, _tfp
 from probpipe.converters._probpipe import ProbPipeConverter
+from probpipe.converters._tfp import TFPConverter
 from probpipe.core import _workflow_context
 from probpipe.core.distribution import Distribution
 
@@ -307,6 +308,11 @@ class TestBuiltInConversionPlanning:
                 wraps=_workflow_context._commit_stochastic_invocation,
             ) as commit,
             patch.object(
+                _probpipe,
+                "_sampled_moment_plan",
+                wraps=_probpipe._sampled_moment_plan,
+            ) as planner,
+            patch.object(
                 _workflow_context._WorkflowInvocation,
                 "key_for",
                 autospec=True,
@@ -323,6 +329,7 @@ class TestBuiltInConversionPlanning:
 
         assert plan.execution_mode == "sampled"
         assert plan.sample_shape == (16,)
+        planner.assert_called_once()
         commit.assert_called_once_with("operation")
         assert key_for.call_count == 1
         assert [shape for _key, shape in calls] == [(16,)]
@@ -505,6 +512,46 @@ class TestConverterCertification:
 
 
 class TestExternalProviderAdapters:
+    def test_unknown_tfp_registry_conversion_plans_once(self):
+        source = tfd.VonMises(loc=0.0, concentration=1.0)
+
+        with (
+            patch.object(
+                _tfp,
+                "_sampled_conversion_plan",
+                wraps=_tfp._sampled_conversion_plan,
+            ) as planner,
+            workflow_run(seed=7),
+        ):
+            result = converter_registry.convert(
+                source,
+                RecordEmpiricalDistribution,
+                num_samples=16,
+            )
+
+        assert result.num_atoms == 16
+        planner.assert_called_once()
+
+    def test_unknown_tfp_direct_conversion_plans_once(self):
+        source = tfd.VonMises(loc=0.0, concentration=1.0)
+
+        with (
+            patch.object(
+                _tfp,
+                "_sampled_conversion_plan",
+                wraps=_tfp._sampled_conversion_plan,
+            ) as planner,
+            workflow_run(seed=7),
+        ):
+            result = TFPConverter().convert(
+                source,
+                RecordEmpiricalDistribution,
+                num_samples=16,
+            )
+
+        assert result.num_atoms == 16
+        planner.assert_called_once()
+
     def test_unknown_tfp_sampling_is_seeded(self):
         source = tfd.VonMises(loc=0.0, concentration=1.0)
 
@@ -531,3 +578,24 @@ class TestExternalProviderAdapters:
                 )
 
         np.testing.assert_array_equal(_flat_samples(run()), _flat_samples(run()))
+
+    def test_unknown_scipy_registry_conversion_plans_once(self):
+        scipy_stats = pytest.importorskip("scipy.stats")
+        source = scipy_stats.chi2(df=3)
+
+        with (
+            patch.object(
+                _scipy,
+                "_sampled_conversion_plan",
+                wraps=_scipy._sampled_conversion_plan,
+            ) as planner,
+            workflow_run(seed=7),
+        ):
+            result = converter_registry.convert(
+                source,
+                RecordEmpiricalDistribution,
+                num_samples=16,
+            )
+
+        assert result.num_atoms == 16
+        planner.assert_called_once()

@@ -731,8 +731,7 @@ class TestDispatchConsistency:
             )
 
     def test_mixed_empirical_and_parametric_count_all_modes(self):
-        """Mixed empirical + continuous: total evaluations (k combos x reps)
-        must match across backends even though the sampled values differ."""
+        """Mixed empirical and continuous inputs preserve row-wise results."""
 
         def add_them(a, b):
             return a + b
@@ -740,12 +739,17 @@ class TestDispatchConsistency:
         ed = EmpiricalDistribution(jnp.array([[1.0], [2.0], [3.0]]), name="x")
         g = Normal(loc=0.0, scale=1.0, name="b")
 
+        samples = []
         for mode in self.ROWWISE_DISPATCH_MODES:
             with workflow_run(seed=0):
                 r = self._run(mode, add_them, a=ed, b=g, n_broadcast_samples=30)
             # 3 empirical combos x 10 reps each = 30 evaluations.
             assert r.num_atoms == 30, f"{mode}: expected n=30, got {r.num_atoms}"
             np.testing.assert_allclose(float(r.weights.sum()), 1.0, atol=1e-5)
+            samples.append(np.asarray(r.samples))
+
+        for sample_values in samples[1:]:
+            np.testing.assert_array_equal(sample_values, samples[0])
 
     def test_over_budget_empirical_falls_to_sampling_all_modes(self):
         """When a single empirical exceeds the sample budget, every
@@ -762,19 +766,22 @@ class TestDispatchConsistency:
             assert r.num_atoms == 20, f"{mode}: expected n=20, got {r.num_atoms}"
 
     def test_no_empiricals_all_modes_same_count(self):
-        """Without empirical inputs every backend samples the full
-        budget (values differ - different RNG paths - but count is
-        identical)."""
+        """Without empirical inputs every backend preserves sampled rows."""
 
         def add_them(a, b):
             return a + b
 
         n1 = Normal(loc=0.0, scale=1.0, name="a")
         n2 = Normal(loc=5.0, scale=1.0, name="b")
+        samples = []
         for mode in self.SAMPLE_DISPATCH_MODES:
             with workflow_run(seed=0):
                 r = self._run(mode, add_them, a=n1, b=n2, n_broadcast_samples=50)
             assert r.num_atoms == 50, f"{mode}: expected n=50, got {r.num_atoms}"
+            samples.append(np.asarray(r.samples))
+
+        for sample_values in samples[1:]:
+            np.testing.assert_array_equal(sample_values, samples[0])
 
     def test_jax_dispatch_rejects_exact_empirical_enumeration(self):
         def identity(x):

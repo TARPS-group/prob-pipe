@@ -6,6 +6,7 @@ import base64
 import binascii
 import copy
 import json
+import math
 import sys
 from collections.abc import Generator, Mapping
 from contextlib import contextmanager
@@ -183,14 +184,11 @@ class _ReplaySuccessMutation:
 class _ReplayState:
     """One validated standalone replay scope."""
 
-    provenance: Provenance
     root_words: tuple[int, int]
     occurrence_path: tuple[Any, ...]
     callable_anchor: dict[str, Any]
     canonical_plan: dict[str, Any]
     execution_contract_abi: str
-    sampling_abis: tuple[str, ...]
-    provider_abis: tuple[str, ...]
     descendant_adapter_abis: tuple[str, ...]
     key_adapter_abi: str
     expected_events: tuple[_ExpectedReplayEvent, ...]
@@ -198,7 +196,6 @@ class _ReplayState:
     recorded_execution: tuple[dict[str, Any], ...]
     root_started: bool = False
     root_completed: bool = False
-    root_failed: bool = False
     source_artifact_drift: bool = False
     source_location_drift: bool = False
     requested_dispatch: str | None = None
@@ -865,15 +862,7 @@ def _function_replay_scope() -> Generator[_ReplayFunctionCall | None, None, None
     token = _REPLAY_FUNCTION_DEPTH.set(1)
     try:
         yield _ReplayFunctionCall(state)
-    except BaseException:
-        state.root_failed = True
-        raise
-    else:
-        try:
-            state.assert_all_events_claimed()
-        except BaseException:
-            state.root_failed = True
-            raise
+        state.assert_all_events_claimed()
         state.root_completed = True
     finally:
         _REPLAY_FUNCTION_DEPTH.reset(token)
@@ -1104,14 +1093,11 @@ def _validate_provenance(provenance: Provenance) -> _ReplayState:
         for item in _list_or_empty(diagnostics.get("execution"), "execution")
     )
     return _ReplayState(
-        provenance=provenance,
         root_words=root_words,
         occurrence_path=occurrence_path,
         callable_anchor=callable_anchor,
         canonical_plan=canonical_plan,
         execution_contract_abi=execution_contract_abi,
-        sampling_abis=sampling_abis,
-        provider_abis=provider_abis,
         descendant_adapter_abis=descendant_adapter_abis,
         key_adapter_abi=key_adapter_abi,
         expected_events=expected_events,
@@ -1440,6 +1426,8 @@ def _validate_descriptor_value(value: Any, *, index: int) -> None:
     def validate(item: Any) -> bool:
         if isinstance(item, list):
             return all(validate(child) for child in item)
+        if isinstance(item, float) and not math.isfinite(item):
+            return False
         return item is None or isinstance(item, (str, bool, int, float))
 
     if not validate(value):
@@ -1645,13 +1633,18 @@ def _ordered_unique(values: list[str]) -> tuple[str, ...]:
 
 def _canonical_json(value: Any) -> bytes:
     """Encode finite JSON-native replay authority with type-exact scalars."""
-    return json.dumps(
-        value,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError) as exc:
+        raise ReplayCompatibilityError(
+            "replay authority must contain finite JSON-native values"
+        ) from exc
 
 
 def _iter_named_abi(value: Any, field_name: str):

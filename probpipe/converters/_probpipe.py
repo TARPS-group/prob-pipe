@@ -42,6 +42,7 @@ from ._registry import (
 DEFAULT_NUM_SAMPLES = 1024
 
 _SAMPLED_MOMENT_BATCH_KWARG = "_sampled_moment_batch"
+_EXECUTION_PLAN_KWARG = "_workflow_execution_plan"
 _MOMENT_MATCH_TARGETS = frozenset(
     {
         "Normal",
@@ -152,6 +153,20 @@ def _sampled_moment_plan(
             f"from a non-{target_name} source."
         )
     return _probpipe_sampled_plan(kwargs.get("num_samples", DEFAULT_NUM_SAMPLES))
+
+
+def _sample_with_execution_plan(
+    source: Any,
+    key: Any | None,
+    kwargs: dict[str, Any],
+) -> Any:
+    """Sample with the conversion plan prepared before execution."""
+    kwargs.pop("num_samples", None)
+    return _sample_probpipe_conversion_source(
+        source,
+        key,
+        kwargs.pop(_EXECUTION_PLAN_KWARG),
+    )
 
 
 def _probpipe_nonrandom_plan(
@@ -372,12 +387,7 @@ def _convert_to_halfcauchy(source, key, **kw):
 
     if isinstance(source, HalfCauchy):
         return source
-    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    samples = _sample_probpipe_conversion_source(
-        source,
-        key,
-        _probpipe_sampled_plan(num_samples),
-    )
+    samples = _sample_with_execution_plan(source, key, kw)
     med = jnp.median(samples)
     r = HalfCauchy(loc=0.0, scale=jnp.maximum(med, 0.01), name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
@@ -389,12 +399,7 @@ def _convert_to_pareto(source, key, **kw):
 
     if isinstance(source, Pareto):
         return source
-    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    samples = _sample_probpipe_conversion_source(
-        source,
-        key,
-        _probpipe_sampled_plan(num_samples),
-    )
+    samples = _sample_with_execution_plan(source, key, kw)
     n = samples.shape[0]
     scale = jnp.maximum(jnp.min(samples), 1e-6)
     conc = jnp.maximum(n / jnp.sum(jnp.log(samples / scale)), 0.01)
@@ -408,14 +413,14 @@ def _convert_to_truncatednormal(source, key, **kw):
 
     if isinstance(source, TruncatedNormal):
         return source
-    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    plan = _probpipe_sampled_plan(num_samples)
     batch = _sampled_moment_batch(kw)
     m_raw, v_raw = _source_mean(source, kw), _source_variance(source, kw)
     m, v = _point_estimate(m_raw), _point_estimate(v_raw)
-    samples = (
-        _sample_probpipe_conversion_source(source, key, plan) if batch is None else batch.samples
-    )
+    if batch is None:
+        samples = _sample_with_execution_plan(source, key, kw)
+    else:
+        kw.pop("num_samples", None)
+        samples = batch.samples
     r = TruncatedNormal(
         loc=m,
         scale=jnp.sqrt(v),
@@ -474,12 +479,7 @@ def _convert_to_categorical(source, key, **kw):
 
     if isinstance(source, Categorical):
         return source
-    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    samples = _sample_probpipe_conversion_source(
-        source,
-        key,
-        _probpipe_sampled_plan(num_samples),
-    )
+    samples = _sample_with_execution_plan(source, key, kw)
     n_cat = int(jnp.max(samples)) + 1
     counts = jnp.array([(samples == k).sum() for k in range(n_cat)])
     probs = counts / counts.sum()
@@ -512,7 +512,7 @@ def _convert_to_negativebinomial(source, key, **kw):
 def _convert_to_multivariatenormal(source, key, **kw):
     from ..distributions.multivariate import MultivariateNormal
 
-    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
+    kw.pop("num_samples", None)
     name = kw.get("name") or source.name
     if isinstance(source, MultivariateNormal):
         return source
@@ -529,13 +529,9 @@ def _convert_to_multivariatenormal(source, key, **kw):
         cov_mat = _source_covariance(source, kw)
     except (NotImplementedError, AttributeError):
         # Fallback to sample-based covariance
-        samples = _sample_probpipe_conversion_source(
-            source,
-            key,
-            _conditional_conversion_plan(num_samples),
-        )
+        samples = _sample_with_execution_plan(source, key, kw)
         diff = samples - loc
-        cov_mat = jnp.einsum("ni,nj->ij", diff, diff) / num_samples
+        cov_mat = jnp.einsum("ni,nj->ij", diff, diff) / samples.shape[0]
     cov_mat = 0.5 * (cov_mat + cov_mat.T)
     cov_mat = cov_mat + 1e-6 * jnp.eye(cov_mat.shape[0])
     r = MultivariateNormal(loc=loc, cov=cov_mat, name=name)
@@ -584,12 +580,7 @@ def _convert_to_wishart(source, key, **kw):
 
     if isinstance(source, Wishart):
         return source
-    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    samples = _sample_probpipe_conversion_source(
-        source,
-        key,
-        _probpipe_sampled_plan(num_samples),
-    )
+    samples = _sample_with_execution_plan(source, key, kw)
     mean_mat = jnp.mean(samples, axis=0)
     d = mean_mat.shape[-1]
     df = d + 2.0
@@ -627,12 +618,7 @@ def _convert_to_empirical(source, key, **kw):
     """Convert any distribution to RecordEmpiricalDistribution by sampling."""
     if isinstance(source, RecordEmpiricalDistribution):
         return source
-    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    samples = _sample_probpipe_conversion_source(
-        source,
-        key,
-        _probpipe_sampled_plan(num_samples),
-    )
+    samples = _sample_with_execution_plan(source, key, kw)
     r = RecordEmpiricalDistribution(samples, name=kw.get("name") or source.name)
     r.with_provenance(_mm_provenance(source))
     return r
@@ -683,12 +669,7 @@ def _convert_to_kde(source, key, **kw):
             f"RecordEmpiricalDistribution or supply a numeric source."
         )
 
-    num_samples = kw.pop("num_samples", DEFAULT_NUM_SAMPLES)
-    samples = _sample_probpipe_conversion_source(
-        source,
-        key,
-        _probpipe_sampled_plan(num_samples),
-    )
+    samples = _sample_with_execution_plan(source, key, kw)
     r = KDEDistribution(samples, bandwidth=bandwidth, name=name)
     r.with_provenance(_mm_provenance(source))
     return r
@@ -843,18 +824,38 @@ class ProbPipeConverter(Converter):
     def convert(
         self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
     ) -> Distribution:
+        plan = self._workflow_plan_conversion(source, target_type, dict(kwargs))
+        return self._workflow_execute_conversion(
+            source,
+            target_type,
+            plan,
+            key=key,
+            **kwargs,
+        )
+
+    def _workflow_execute_conversion(
+        self,
+        source: Any,
+        target_type: type,
+        plan: _ConversionExecutionPlan,
+        *,
+        key: Any | None = None,
+        **kwargs: Any,
+    ) -> Distribution:
+        """Execute a conversion from its already validated private plan."""
         target_name = target_type.__name__
         fn = self._table.get(target_name)
         if fn is None:
             raise TypeError(f"ProbPipeConverter: no conversion for target {target_name}")
 
         check_support = kwargs.pop("check_support", True)
-        sampled_moment_plan = _sampled_moment_plan(source, target_name, kwargs)
-        if sampled_moment_plan is not None:
-            samples = _sample_probpipe_conversion_source(source, key, sampled_moment_plan)
+        if _requires_sampled_moments(source, target_name):
+            samples = _sample_probpipe_conversion_source(source, key, plan)
             kwargs[_SAMPLED_MOMENT_BATCH_KWARG] = _SampledMomentBatch(
                 jnp.asarray(_point_estimate(samples))
             )
+        else:
+            kwargs[_EXECUTION_PLAN_KWARG] = plan
 
         # Some converters (e.g., ``_convert_to_normal``) fabricate
         # TFP-backed scalars from a source's ``_mean`` / ``_variance``.

@@ -246,6 +246,25 @@ class TFPConverter(Converter):
     def convert(
         self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
     ) -> Any:
+        plan = self._workflow_plan_conversion(source, target_type, dict(kwargs))
+        return self._workflow_execute_conversion(
+            source,
+            target_type,
+            plan,
+            key=key,
+            **kwargs,
+        )
+
+    def _workflow_execute_conversion(
+        self,
+        source: Any,
+        target_type: type,
+        plan: _ConversionExecutionPlan,
+        *,
+        key: Any | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute a conversion from its already validated private plan."""
         # Case 1: TFP -> ProbPipe
         if isinstance(source, tfd.Distribution) and not isinstance(
             source, NumericRecordDistribution
@@ -266,12 +285,11 @@ class TFPConverter(Converter):
                     return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
                 # Unknown TFP: sample -> RecordEmpiricalDistribution
-                n = kwargs.pop("num_samples", 1024)
-                key = _resolve_conversion_key(
-                    key,
-                    _sampled_conversion_plan(n, provider_abi=_TFP_PROVIDER_ABI),
-                )
-                samples = source.sample(seed=key, sample_shape=(n,))
+                kwargs.pop("num_samples", None)
+                sample_shape = plan.sample_shape
+                assert sample_shape is not None
+                key = _resolve_conversion_key(key, plan)
+                samples = source.sample(seed=key, sample_shape=sample_shape)
                 emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
                 emp = RecordEmpiricalDistribution(samples, name=emp_name)
                 emp.with_provenance(Provenance.create("convert_from_tfp", parents=[]))

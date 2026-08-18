@@ -253,6 +253,15 @@ class ConverterRegistry:
                 # pre-sampling boundary. This lets conditional converters defer
                 # their event and lets ProbPipe descendants validate/capture the
                 # closed root graph before committing workflow randomness.
+                executor = getattr(conv, "_workflow_execute_conversion", None)
+                if executor is not None:
+                    return executor(
+                        source,
+                        target_type,
+                        plan,
+                        key=key,
+                        **kwargs,
+                    )
                 return conv.convert(source, target_type, key=key, **kwargs)
         raise TypeError(
             f"No converter registered for {type(source).__name__} -> {target_type.__name__}"

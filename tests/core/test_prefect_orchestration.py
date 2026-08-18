@@ -131,6 +131,15 @@ class TestPrefectRngConformance:
                 Function(
                     func=add_one,
                     workflow_kind=WorkflowKind.OFF,
+                    dispatch="jax",
+                    n_broadcast_samples=6,
+                ),
+                False,
+            ),
+            (
+                Function(
+                    func=add_one,
+                    workflow_kind=WorkflowKind.OFF,
                     dispatch="thread",
                     max_workers=2,
                     n_broadcast_samples=6,
@@ -142,6 +151,15 @@ class TestPrefectRngConformance:
                     func=add_one,
                     workflow_kind=WorkflowKind.TASK,
                     dispatch="sequential",
+                    n_broadcast_samples=6,
+                ),
+                False,
+            ),
+            (
+                Function(
+                    func=add_one,
+                    workflow_kind=WorkflowKind.TASK,
+                    dispatch="jax",
                     n_broadcast_samples=6,
                 ),
                 False,
@@ -161,6 +179,15 @@ class TestPrefectRngConformance:
                     func=add_one,
                     workflow_kind=WorkflowKind.FLOW,
                     dispatch="sequential",
+                    n_broadcast_samples=6,
+                ),
+                False,
+            ),
+            (
+                Function(
+                    func=add_one,
+                    workflow_kind=WorkflowKind.FLOW,
+                    dispatch="jax",
                     n_broadcast_samples=6,
                 ),
                 False,
@@ -350,78 +377,6 @@ class TestPrefectFlowRowWise:
         with workflow_run(seed=11):
             result = wf(x=normal_dist)
         # Mean should be ~2.0 (1.0 * 2)
-        np.testing.assert_allclose(
-            float(jnp.mean(result.samples)),
-            2.0,
-            atol=0.15,
-        )
-
-
-# ---------------------------------------------------------------------------
-# workflow_kind=WorkflowKind.TASK with JAX dispatch
-# ---------------------------------------------------------------------------
-
-
-class TestPrefectTaskJax:
-    """Exercises the Prefect-wrapped distribution-broadcast JAX path."""
-
-    def test_returns_empirical_distribution(self, normal_dist):
-        wf = Function(
-            func=add_one,
-            workflow_kind=WorkflowKind.TASK,
-            dispatch="jax",
-            n_broadcast_samples=30,
-        )
-        with workflow_run(seed=20):
-            result = wf(x=normal_dist)
-        assert hasattr(result, "samples")
-        assert result.num_atoms == 30
-
-    def test_output_values_correct(self, normal_dist):
-        wf = Function(
-            func=add_one,
-            workflow_kind=WorkflowKind.TASK,
-            dispatch="jax",
-            n_broadcast_samples=200,
-        )
-        with workflow_run(seed=21):
-            result = wf(x=normal_dist)
-        np.testing.assert_allclose(
-            float(jnp.mean(result.samples)),
-            2.0,
-            atol=0.15,
-        )
-
-
-# ---------------------------------------------------------------------------
-# workflow_kind=WorkflowKind.FLOW with JAX dispatch
-# ---------------------------------------------------------------------------
-
-
-class TestPrefectFlowJax:
-    """Exercises Prefect flow-wrapped jax.vmap path."""
-
-    def test_returns_empirical_distribution(self, normal_dist):
-        wf = Function(
-            func=double_it,
-            workflow_kind=WorkflowKind.FLOW,
-            dispatch="jax",
-            n_broadcast_samples=25,
-        )
-        with workflow_run(seed=30):
-            result = wf(x=normal_dist)
-        assert hasattr(result, "samples")
-        assert result.num_atoms == 25
-
-    def test_output_values_correct(self, normal_dist):
-        wf = Function(
-            func=double_it,
-            workflow_kind=WorkflowKind.FLOW,
-            dispatch="jax",
-            n_broadcast_samples=200,
-        )
-        with workflow_run(seed=31):
-            result = wf(x=normal_dist)
         np.testing.assert_allclose(
             float(jnp.mean(result.samples)),
             2.0,

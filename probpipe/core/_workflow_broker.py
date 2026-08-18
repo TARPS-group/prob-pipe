@@ -1263,10 +1263,6 @@ def _remote_coordination_probe_scope() -> Generator[_RemoteCoordinationObservati
         )
         if not is_rootless_transport:
             raise RuntimeError("remote coordination requires a rootless transported frame")
-        if frame.state.remote_coordination_observation is not None:  # pragma: no cover
-            # Each transported payload owns a fresh frame; this only guards
-            # incorrect private context-manager nesting.
-            raise RuntimeError("remote coordination observation is already installed")
         frame.state.remote_coordination_observation = observation
     attempt_token = _ACTIVE_MANAGED_ATTEMPT.set(None)
     broker_token = _ACTIVE_AUTOMATIC_KEY_BROKER.set(None)
@@ -1275,14 +1271,6 @@ def _remote_coordination_probe_scope() -> Generator[_RemoteCoordinationObservati
     finally:
         try:
             with frame.state.lock:
-                if (
-                    frame.state.remote_coordination_observation is not observation
-                ):  # pragma: no cover
-                    # A mismatch requires private frame state to be replaced
-                    # while this context manager is active.
-                    raise RuntimeError(
-                        "remote coordination observations must exit in nesting order"
-                    )
                 frame.state.remote_coordination_observation = None
         finally:
             _ACTIVE_AUTOMATIC_KEY_BROKER.reset(broker_token)

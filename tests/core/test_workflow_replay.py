@@ -710,6 +710,42 @@ class TestReplayAdmission:
 
         derive_key.assert_not_called()
 
+    @pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+    def test_mutated_nonfinite_descriptor_fails_at_entry_before_key_derivation(
+        self,
+        value,
+    ):
+        changed = Provenance.from_dict(_draw().provenance.to_dict())
+        changed.controls["replay"]["plan"]["expected_effects"][0]["descendant_descriptor"] = [value]
+
+        with (
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ) as derive_key,
+            pytest.raises(ReplayCompatibilityError, match="invalid descendant_descriptor"),
+            replay_run(changed),
+        ):
+            pass
+
+        derive_key.assert_not_called()
+
+    def test_mutated_nonfinite_plan_fails_at_entry_before_key_derivation(self):
+        changed = Provenance.from_dict(_draw().provenance.to_dict())
+        changed.controls["replay"]["plan"]["canonical_fields"]["n_evaluations"] = float("nan")
+
+        with (
+            patch(
+                "probpipe.core._workflow_context.derive_event_key_words_from_encoded",
+                side_effect=AssertionError("derived key"),
+            ) as derive_key,
+            pytest.raises(ReplayCompatibilityError, match="finite JSON-native values"),
+            replay_run(changed),
+        ):
+            pass
+
+        derive_key.assert_not_called()
+
     def test_missing_optional_diagnostics_remain_replayable(self):
         original = _draw()
         payload = original.provenance.to_dict()

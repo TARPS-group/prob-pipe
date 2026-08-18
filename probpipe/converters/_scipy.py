@@ -252,6 +252,25 @@ class ScipyConverter(Converter):
     def convert(
         self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
     ) -> Any:
+        plan = self._workflow_plan_conversion(source, target_type, dict(kwargs))
+        return self._workflow_execute_conversion(
+            source,
+            target_type,
+            plan,
+            key=key,
+            **kwargs,
+        )
+
+    def _workflow_execute_conversion(
+        self,
+        source: Any,
+        target_type: type,
+        plan: _ConversionExecutionPlan,
+        *,
+        key: Any | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute a conversion from its already validated private plan."""
         if not _HAS_SCIPY:
             raise TypeError("scipy is not installed")
 
@@ -271,12 +290,16 @@ class ScipyConverter(Converter):
                 return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
             # Unknown scipy: sample -> RecordEmpiricalDistribution
-            n = kwargs.pop("num_samples", 1024)
-            key = _resolve_conversion_key(
-                key,
-                _sampled_conversion_plan(n, provider_abi=_SCIPY_PROVIDER_ABI),
+            kwargs.pop("num_samples", None)
+            sample_shape = plan.sample_shape
+            assert sample_shape is not None
+            key = _resolve_conversion_key(key, plan)
+            samples = jnp.asarray(
+                source.rvs(
+                    size=sample_shape[0],
+                    random_state=_scipy_generator_from_key(key),
+                )
             )
-            samples = jnp.asarray(source.rvs(size=n, random_state=_scipy_generator_from_key(key)))
             emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
             emp = RecordEmpiricalDistribution(samples, name=emp_name)
             emp.with_provenance(Provenance.create("convert_from_scipy", parents=[]))

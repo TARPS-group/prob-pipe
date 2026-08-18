@@ -1,5 +1,7 @@
 """Public errors raised by managed workflow execution and replay."""
 
+from __future__ import annotations
+
 
 class UnmanagedConcurrentWorkflowEntryError(RuntimeError):
     """An unmanaged thread or task attempted to enter a copied workflow context.
