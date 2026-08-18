@@ -1,10 +1,12 @@
-"""Default event-result contract helpers for Function calls.
+"""The output boundary: what a Function call hands back.
 
-This private module owns the boundary rule that raw workflow returns
-become a record, a batch of records, or a distribution, and receive
-provenance when appropriate. Other tracked terms remain event payloads under
-this default contract; returning one directly requires the explicit term-result
-planning reserved for #369.
+This private module owns one rule. A raw return becomes the tracked term of the
+kind it already is — a numeric value a ``NumericArray``, a mapping a ``Record``,
+a callable a ``Function``, and anything else an ``Opaque`` — named for the
+function that produced it. A term the body already produced is returned as it
+is, every kind alike. Provenance is attached here.
+
+See design V.0.
 """
 
 from __future__ import annotations
@@ -155,9 +157,9 @@ def _coerce_output(
     if broadcast_mode == BROADCAST_WRAP:
         raw_value = value
         value = _wrap_as_term(value, field_name, output_template)
-        # Only the schema-carrying event/result containers retained by
-        # _wrap_as_term reach this identity branch. Arbitrary tracked terms
-        # were wrapped as event payloads above.
+        # A term the body produced is returned as it is, so it arrives here
+        # unchanged and becomes an independent result rather than the caller's
+        # own object carrying this call's provenance.
         if value is raw_value and isinstance(value, TrackedTerm):
             value = _copy_result_term(value, output_template=output_template)
     elif isinstance(value, TrackedTerm) and value.provenance is not None:

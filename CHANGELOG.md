@@ -220,8 +220,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the class it names, as `RecordSpec`/`Record` does. `Array` remains the type
   alias for a bare backend array.
 
-### Changed
-
 - **Design: every value spec has a tracked class (#398).** `ArraySpec` gains
   `NumericArray` and `NumericArrayBatch`, `OpaqueSpec` gains `Opaque` beside its
   existing `OpaqueBatch`, so every value spec has one tracked class and one batch
