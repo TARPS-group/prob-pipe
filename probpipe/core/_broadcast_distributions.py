@@ -28,7 +28,7 @@ from ._empirical import (
 )
 from ._function_batch import FunctionBatch
 from ._immutable import constructing, transient_memo
-from ._numeric_array_batch import NumericArrayBatch
+from ._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array
 from ._opaque_batch import OpaqueBatch
@@ -782,6 +782,18 @@ def _make_stack(
     # Before the generic pytree handling below, which would read the inner batch
     # axis as an event axis and drop the level names with it — the same reason
     # the batch-of-batches case precedes the Record case on the list path.
+    if isinstance(inner_outputs, _MappedBatchStore):
+        # One store rather than columns: the sweep's axes replace the leading one
+        # the transform produced, and the levels are the sweep's then the rows'.
+        store = inner_outputs.store
+        return NumericArrayBatch(
+            store.reshape(batch_shape + store.shape[1:]),
+            (*level_names, *inner_outputs.level_names),
+            element_spec=inner_outputs.element_spec,
+            axis_groups=(*sweep_groups, *inner_outputs.axis_groups),
+            name=name or field_name,
+            name_is_auto=name is None,
+        )
     if isinstance(inner_outputs, _MappedBatchColumns):
         return _batch_over_swept_columns(
             inner_outputs.columns,
