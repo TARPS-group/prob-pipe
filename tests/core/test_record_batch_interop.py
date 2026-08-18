@@ -22,7 +22,9 @@ import pytest
 from probpipe import (
     EventTemplate,
     Function,
+    FunctionBatch,
     Normal,
+    NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
@@ -1048,3 +1050,56 @@ class TestDeclaredOpaqueOutputAcrossDispatches:
         assert column.shape == (2,)
         assert [int(v) for v in result[0]["y"]] == [1, 2]
         assert [int(v) for v in result[1]["y"]] == [2, 3]
+
+
+class TestEveryBatchIsAnOperand:
+    """A batch is swept because it holds a multiplicity, not because it holds records.
+
+    The planner recognised only `RecordBatch` and `DistributionArray`, so the
+    other batch kinds were handed to a body whole. A body written for one element
+    then saw the whole collection, and the levels collapsed into the value's
+    shape on the way out.
+    """
+
+    @staticmethod
+    def _numeric(n: int = 3):
+        return NumericArrayBatch(
+            jnp.arange(float(n)), "row", element_spec=NumericArraySpec(shape=()), name="rows"
+        )
+
+    def test_a_numeric_array_batch_reaches_the_body_as_an_element(self):
+        seen: list = []
+
+        Function(func=lambda v: (seen.append(v), 0.0)[1], name="f", dispatch="sequential")(
+            v=self._numeric()
+        )
+
+        assert seen
+        assert all(isinstance(row, NumericArray) for row in seen)
+        assert not any(isinstance(row, NumericArrayBatch) for row in seen)
+
+    def test_sweeping_a_numeric_array_batch_keeps_its_level(self):
+        out = Function(func=lambda v: jnp.asarray(v) * 2.0, name="double", dispatch="sequential")(
+            v=self._numeric()
+        )
+
+        assert (out.batch_shape, out.level_names) == ((3,), ("row",))
+
+    def test_an_opaque_batch_hands_the_body_its_stored_element(self):
+        """`OpaqueBatch` stores rather than materializes, so the body sees the
+        caller's own object."""
+        seen: list = []
+
+        Function(func=lambda v: (seen.append(v), 0.0)[1], name="f", dispatch="sequential")(
+            v=OpaqueBatch(["a", "b"], "row", name="rows")
+        )
+
+        assert seen == ["a", "b"]
+
+    def test_a_function_batch_is_swept_too(self):
+        out = Function(func=lambda f: float(f()), name="call", dispatch="sequential")(
+            f=FunctionBatch([lambda: 1.0, lambda: 2.0], "row", name="rows")
+        )
+
+        assert (out.batch_shape, out.level_names) == ((2,), ("row",))
+        np.testing.assert_allclose(out.values, [1.0, 2.0])
