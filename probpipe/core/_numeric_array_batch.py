@@ -86,7 +86,10 @@ class NumericArrayBatch(Batch[NumericArray]):
 
     _values: Any
 
-    __slots__ = ("_values",)
+    __slots__ = ("_jax_cache", "_values")
+
+    #: Derived from the store rather than transported, as for ``NumericArray``.
+    _transient_state = ("_jax_cache",)
 
     def __init__(
         self,
@@ -194,8 +197,23 @@ class NumericArrayBatch(Batch[NumericArray]):
         arr = np.asarray(arr, dtype=dtype) if dtype is not None else arr
         return arr.copy() if copy else arr
 
+    def as_jax(self) -> Any:
+        """The store as a ``jax.Array`` — the single conversion point.
+
+        A store already held as one passes through, tracers included; a native
+        container converts through its registered backend once and is memoised
+        for this instance, as a :class:`NumericArray`'s value is.
+        """
+        if isinstance(self._values, jax.Array):
+            return self._values
+        cached = getattr(self, "_jax_cache", None)
+        if cached is None:
+            cached = _to_jax_array(self._values)
+            object.__setattr__(self, "_jax_cache", cached)
+        return cached
+
     def __jax_array__(self) -> Any:
-        return _to_jax_array(self._values)
+        return self.as_jax()
 
     def __repr__(self) -> str:
         return (
@@ -245,8 +263,14 @@ class NumericArrayBatch(Batch[NumericArray]):
 
 
 def _numeric_array_batch_flatten(batch: NumericArrayBatch):
-    """Flatten for JAX traversal: the store, keyed by the aux spec."""
-    return [batch._values], (batch._spec, batch._name, batch._name_is_auto)
+    """Flatten for JAX traversal: the store, keyed by the aux spec.
+
+    The boundary presents a bare array, as a ``NumericArray``'s flatten does.
+    Handing the native container to JAX instead fails abstractification before
+    ``__jax_array__`` is ever consulted, so a pandas- or xarray-backed batch
+    could not enter a trace at all.
+    """
+    return [batch.as_jax()], (batch._spec, batch._name, batch._name_is_auto)
 
 
 def _numeric_array_batch_unflatten(aux, children):
@@ -272,6 +296,18 @@ def _numeric_array_batch_unflatten(aux, children):
         object.__setattr__(view, "_values", values)
         view._init_batch(spec, name=name, name_is_auto=name_is_auto)
         return view
+    # The element's own axes are not the transform's to change. A rank check
+    # alone would admit a store whose trailing axes no longer match what the
+    # element declares, and the batch would build with a spec that is a false
+    # statement about its own store — surfacing only at the first selection.
+    event_shape = tuple(element_spec.shape)
+    if event_rank and tuple(shape)[len(shape) - event_rank :] != event_shape:
+        raise ValueError(
+            f"a transform left this NumericArrayBatch over a store of {tuple(shape)}, whose "
+            f"trailing axes are not the event shape {event_shape} its elements declare. A "
+            f"transform maps the elements; changing what one *is* rebuilds the batch where "
+            f"the new element spec is known"
+        )
     surviving = tuple(shape)[: len(shape) - event_rank] if event_rank else tuple(shape)
     if surviving == tuple(spec.batch_shape):
         view = object.__new__(NumericArrayBatch)
