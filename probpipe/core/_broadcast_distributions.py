@@ -20,7 +20,7 @@ import numpy as np
 
 from .._weights import Weights
 from ..custom_types import Array
-from ._array_backend import _to_jax_array
+from ._array_backend import _event_shape_of, _is_numeric_leaf, _to_jax_array
 from ._distribution_base import Distribution
 from ._empirical import (
     EmpiricalDistribution,
@@ -699,6 +699,29 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
     return first
 
 
+def _row_at_its_kind(row: Any, field_name: str) -> Any:
+    """One swept row as the tracked term of its own kind.
+
+    Only the two *structural* hosts are converted here. A numeric, opaque, or
+    callable row already reaches a branch below that batches it at its kind, and
+    converting it early would cost the vectorized path for no gain.
+
+    - a ``Mapping`` is a tree, so it becomes a ``Record`` and the rows stack into
+      a batch of records;
+    - a non-empty sequence is a multiplicity, so it becomes a batch of its own and
+      the rows stack with that level inside the sweep's.
+    """
+    from collections.abc import Mapping
+
+    from .record import Record
+
+    if isinstance(row, Mapping):
+        return Record(field_name, dict(row), name_is_auto=True)
+    if isinstance(row, (list, tuple)) and row:
+        return _make_stack(list(row), n=len(row), level_names=(field_name,), field_name=field_name)
+    return row
+
+
 def _make_stack(
     inner_outputs: Any,
     *,
@@ -840,6 +863,13 @@ def _make_stack(
                 )
                 for output in outs
             ]
+        else:
+            # Each row takes the kind of the host it is, before the branches
+            # below read what the rows are. A row is one call's return, and the
+            # boundary that names a *single* return's kind (V.0) is the same rule
+            # — reading a mapping row as an unstackable object, or a sequence row
+            # as event shape, states something the row never said.
+            outs = [_row_at_its_kind(output, field_name) for output in outs]
 
         # A batch per row stacks into one batch with the sweep in front of the
         # rows' own levels. Checked before the Record branch below, which would
@@ -969,6 +999,18 @@ def _make_stack(
                 axis_groups=sweep_groups,
                 name=name or field_name,
                 name_is_auto=name is None,
+            )
+
+        # Numeric rows that do not stack disagree on their shape, and an object
+        # column would record that disagreement as though it were the answer. The
+        # rows say what they are; the aggregate says so too.
+        if outs and all(_is_numeric_leaf(o) for o in outs):
+            shapes = sorted({tuple(_event_shape_of(o)) for o in outs})
+            raise ValueError(
+                f"{field_name}: the rows returned numeric values of differing shapes "
+                f"{shapes}, so they do not stack into one batch. Every row of a sweep "
+                f"contributes one element of one shape; pad the rows, or return a batch "
+                f"from each and let the levels record the difference"
             )
 
         # Rows that do not stack take the batch form of their own kind, which is
