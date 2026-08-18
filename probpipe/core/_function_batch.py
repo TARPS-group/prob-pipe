@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable
 
 import numpy as np
 
+from ._kinds import register_kind
 from ._object_batch import _ObjectBatch
 from .event_template import FunctionSpec
 from .provenance import Provenance
@@ -109,3 +110,6 @@ class FunctionBatch(_ObjectBatch[Callable]):
         spec = self._spec.element_spec
         assert isinstance(spec, FunctionSpec)  # narrowed at construction
         return spec
+
+
+register_kind(FunctionSpec, batch_class=FunctionBatch)

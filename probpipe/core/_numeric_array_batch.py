@@ -20,6 +20,7 @@ from ._array_backend import (
     _to_numpy_array,
 )
 from ._batch import Batch, BatchSpec, _axis_groups_for
+from ._kinds import register_kind
 from ._numeric_array import NumericArray
 from .event_template import NumericArraySpec
 from .provenance import Provenance
@@ -290,3 +291,6 @@ def _numeric_array_batch_unflatten(aux, children):
 jax.tree_util.register_pytree_node(
     NumericArrayBatch, _numeric_array_batch_flatten, _numeric_array_batch_unflatten
 )
+
+# The numeric-array kind: its spec, its tracked class, and this batch form.
+register_kind(NumericArraySpec, term_class=NumericArray, batch_class=NumericArrayBatch)
