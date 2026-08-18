@@ -432,6 +432,7 @@ def _stack_declared_columns(
         element_spec=template,
         axis_groups=axis_groups,
         name=name,
+        name_is_auto=True,
     )
 
 
@@ -459,7 +460,14 @@ def _empty_declared_stack(
         else:
             columns[path] = np.empty(batch_shape, dtype=object)
     cls = _batch_class_for(template)
-    return cls(columns, level_names, element_spec=template, axis_groups=axis_groups, name=name)
+    return cls(
+        columns,
+        level_names,
+        element_spec=template,
+        axis_groups=axis_groups,
+        name=name,
+        name_is_auto=True,
+    )
 
 
 def _make_marginal(
@@ -815,7 +823,7 @@ def _make_stack(
             element_spec=inner_outputs.element_spec,
             axis_groups=(*sweep_groups, *inner_outputs.axis_groups),
             name=name or field_name,
-            name_is_auto=name is None,
+            name_is_auto=True,
         )
     if isinstance(inner_outputs, _MappedBatchColumns):
         return _batch_over_swept_columns(
@@ -891,7 +899,7 @@ def _make_stack(
                     element_spec=first.element_spec,
                     axis_groups=(*sweep_groups, *first.axis_groups),
                     name=name or field_name,
-                    name_is_auto=name is None,
+                    name_is_auto=True,
                 )
             # Columns are leaf-keyed, so a nested element needs no special
             # case — and they are read raw: a field that is not an array
@@ -935,8 +943,10 @@ def _make_stack(
             except (TypeError, ValueError):
                 flat = None
             if flat is not None:
-                if batch_shape == (n_total,):
-                    return flat
+                # No early return for the one-level case: the reshape below is
+                # an identity there, and ``stack`` named the batch after its own
+                # class, where every aggregation names it for the function that
+                # produced the rows.
                 n_cur = len(flat.batch_shape)
                 return NumericRecordBatch(
                     {
@@ -946,6 +956,8 @@ def _make_stack(
                     level_names,
                     element_spec=flat.element_spec,
                     axis_groups=sweep_groups,
+                    name=name or field_name,
+                    name_is_auto=True,
                 )
             # No declared template, so the element structure is inferred from the
             # rows. ``RecordBatch.stack`` is what infers it: columns are keyed by
@@ -967,6 +979,8 @@ def _make_stack(
                 level_names,
                 element_spec=flat.element_spec,
                 axis_groups=sweep_groups,
+                name=name or field_name,
+                name_is_auto=True,
             )
 
         # All Distributions → stacked DistributionArray, shaped to
@@ -998,7 +1012,7 @@ def _make_stack(
                 element_spec=NumericArraySpec(event_shape, dtype=stacked.dtype),
                 axis_groups=sweep_groups,
                 name=name or field_name,
-                name_is_auto=name is None,
+                name_is_auto=True,
             )
 
         # Numeric rows that do not stack disagree on their shape, and an object
@@ -1022,7 +1036,7 @@ def _make_stack(
             shared = {
                 "axis_groups": sweep_groups,
                 "name": name or field_name,
-                "name_is_auto": name is None,
+                "name_is_auto": True,
             }
             # ``outs`` first: every row of none is vacuously callable, and no row
             # is a reason to claim the function kind over the fallback.
@@ -1075,7 +1089,7 @@ def _make_stack(
             element_spec=NumericArraySpec(event_shape, dtype=inner_outputs.dtype),
             axis_groups=sweep_groups,
             name=name or field_name,
-            name_is_auto=name is None,
+            name_is_auto=True,
         )
 
     # vmap of a Record-returning function produces a Record with batched leaves
