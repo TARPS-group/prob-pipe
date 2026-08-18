@@ -10,8 +10,9 @@ from typing import Any
 
 import numpy as np
 
+from ._kinds import register_kind
 from ._object_batch import _ObjectBatch
-from ._opaque import OpaqueSpec
+from ._opaque import Opaque, OpaqueSpec
 from .provenance import Provenance
 
 __all__ = ["OpaqueBatch"]
@@ -111,3 +112,6 @@ class OpaqueBatch(_ObjectBatch[Any]):
         spec = self._spec.element_spec
         assert isinstance(spec, OpaqueSpec)  # narrowed at construction
         return spec
+
+
+register_kind(OpaqueSpec, term_class=Opaque, batch_class=OpaqueBatch)
