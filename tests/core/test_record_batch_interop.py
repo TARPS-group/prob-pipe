@@ -1103,3 +1103,37 @@ class TestEveryBatchIsAnOperand:
 
         assert (out.batch_shape, out.level_names) == ((2,), ("row",))
         np.testing.assert_allclose(out.values, [1.0, 2.0])
+
+
+class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
+    """A row that returns a single-store batch keeps its levels, as a record row does."""
+
+    @staticmethod
+    def _rows(n: int = 3):
+        return NumericArrayBatch(
+            jnp.arange(float(n)), "row", element_spec=NumericArraySpec(shape=()), name="rows"
+        )
+
+    @staticmethod
+    def _inner(v):
+        return NumericArrayBatch(
+            jnp.stack([jnp.asarray(v), jnp.asarray(v)]),
+            "inner",
+            element_spec=NumericArraySpec(shape=()),
+            name="i",
+        )
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
+    def test_the_rows_own_level_survives(self, dispatch):
+        out = Function(func=self._inner, name="f", dispatch=dispatch)(v=self._rows())
+
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
+
+    def test_explicit_jax_says_what_it_cannot_do(self):
+        """The probe builds one leaf per field, which a single-store batch lacks.
+
+        Declining beats mis-reading it as a law: `auto` sweeps it correctly, and
+        an explicit `jax` should not silently differ from that.
+        """
+        with pytest.raises(TypeError, match="cannot vectorize over NumericArrayBatch"):
+            Function(func=self._inner, name="f", dispatch="jax")(v=self._rows())

@@ -294,3 +294,79 @@ jax.tree_util.register_pytree_node(
 
 # The numeric-array kind: its spec, its tracked class, and this batch form.
 register_kind(NumericArraySpec, term_class=NumericArray, batch_class=NumericArrayBatch)
+
+
+class _MappedBatchStore:
+    """A single-store batch taken apart, to cross a mapping transform.
+
+    The counterpart of :class:`~probpipe.core._record_batch._MappedBatchColumns`
+    for a batch that holds one store rather than a column per field. The reason
+    is the same: unflattening refuses an added axis because it has no name to
+    give the level, which is right for a raw transform and wrong for an executor
+    that knows both. So the executor hands the transform this inert carrier —
+    its unflatten rebuilds it verbatim, checking nothing — and rebuilds the batch
+    on the far side, where the level name is in hand.
+
+    Private and short-lived: wrapped and unwrapped within one call.
+    """
+
+    __slots__ = ("axis_groups", "element_spec", "level_names", "name", "name_is_auto", "store")
+
+    def __init__(
+        self,
+        store: Any,
+        *,
+        element_spec: NumericArraySpec,
+        level_names: tuple[str, ...],
+        axis_groups: tuple[tuple[int, ...], ...],
+        name: str,
+        name_is_auto: bool,
+    ):
+        self.store = store
+        self.element_spec = element_spec
+        self.level_names = level_names
+        self.axis_groups = axis_groups
+        self.name = name
+        self.name_is_auto = name_is_auto
+
+    @classmethod
+    def of(cls, batch: NumericArrayBatch) -> _MappedBatchStore:
+        """Take *batch* apart, keeping what unflattening could not have inferred."""
+        return cls(
+            batch.values,
+            element_spec=batch.element_spec,
+            level_names=tuple(batch.level_names),
+            axis_groups=tuple(batch.axis_groups),
+            name=batch._name,
+            name_is_auto=batch._name_is_auto,
+        )
+
+
+def _mapped_batch_store_flatten(carried: _MappedBatchStore):
+    return [carried.store], (
+        carried.element_spec,
+        carried.level_names,
+        carried.axis_groups,
+        carried.name,
+        carried.name_is_auto,
+    )
+
+
+def _mapped_batch_store_unflatten(aux, children) -> _MappedBatchStore:
+    element_spec, level_names, axis_groups, name, name_is_auto = aux
+    (store,) = children
+    # No rank check, deliberately: the added axis is the point, and the caller
+    # that added it is the one that can name it.
+    return _MappedBatchStore(
+        store,
+        element_spec=element_spec,
+        level_names=level_names,
+        axis_groups=axis_groups,
+        name=name,
+        name_is_auto=name_is_auto,
+    )
+
+
+jax.tree_util.register_pytree_node(
+    _MappedBatchStore, _mapped_batch_store_flatten, _mapped_batch_store_unflatten
+)
