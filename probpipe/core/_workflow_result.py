@@ -11,6 +11,7 @@ See design V.0.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any, Literal
 
@@ -73,8 +74,12 @@ def _wrap_as_term(
     # -- a raw host, wrapped into its own kind -----------------------------
     # The kind follows the host's *type*, empty or not: a mapping is a tree and a
     # sequence a multiplicity, and having no entries does not change which.
-    if isinstance(value, dict):
-        return Record(field_name, value, name_is_auto=True)
+    if isinstance(value, Mapping):
+        # Any mapping, not only ``dict``: the value layer reads a mapping as a
+        # tree, and an ``OrderedDict`` or a ``Mapping`` subclass is one. Falling
+        # through would reach ``Opaque``, which refuses mappings, so the return
+        # would raise rather than be wrapped.
+        return Record(field_name, dict(value), name_is_auto=True)
     if isinstance(value, (list, tuple)):
         if not value:
             # No element to read a kind off, and every element spec holds
@@ -83,14 +88,14 @@ def _wrap_as_term(
             from ._opaque_batch import OpaqueBatch
 
             return OpaqueBatch([], field_name, name=field_name, name_is_auto=True)
-        try:
-            # A returned sequence ranges over nothing the call named, so the
-            # level takes the function's own name.
-            return _make_stack(
-                list(value), n=len(value), level_names=(field_name,), field_name=field_name
-            )
-        except (TypeError, ValueError):
-            pass
+        # A returned sequence ranges over nothing the call named, so the level
+        # takes the function's own name. Errors are not caught here: the stack
+        # has a batch form for every element kind, so what reaches this and
+        # raises is the rows disagreeing — which is the caller's to see, not
+        # something to record as one opaque value.
+        return _make_stack(
+            list(value), n=len(value), level_names=(field_name,), field_name=field_name
+        )
     # ``_is_numeric_leaf`` excludes duck-typed objects (``MagicMock`` and the
     # like) whose attribute probing recurses inside ``jnp.asarray``.
     if _is_numeric_leaf(value):
