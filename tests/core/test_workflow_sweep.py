@@ -371,6 +371,7 @@ class TestASweptBodyThatReturnsABatch:
             "cell",
             element_spec=EventTemplate(x=()),
             axis_groups=((2, 3),),
+            name="batch",
         )
 
         mapped = Function(func=self._body, name="swept")(grid)

@@ -99,7 +99,7 @@ class _ObjectBatch[E](Batch[E]):
         *,
         element_spec: ValueSpec,
         axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str | None = None,
+        name: str,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
@@ -113,8 +113,8 @@ class _ObjectBatch[E](Batch[E]):
         )
         self._init_batch(
             BatchSpec(element_spec, groups, names),
-            name=name if name is not None else type(self).__name__.lower(),
-            name_is_auto=name is None or name_is_auto,
+            name=name,
+            name_is_auto=name_is_auto,
             provenance=provenance,
         )
 

@@ -167,7 +167,7 @@ class RecordBatch(Batch[Record]):
         *,
         element_spec: RecordSpec | EventTemplate,
         axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str | None = None,
+        name: str,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
@@ -188,7 +188,7 @@ class RecordBatch(Batch[Record]):
         object.__setattr__(self, "_columns", store)
         self._init_batch(
             BatchSpec(spec, groups, names),
-            name=name if name is not None else kind.lower(),
+            name=name,
             name_is_auto=name is None or name_is_auto,
             provenance=provenance,
         )
@@ -653,16 +653,19 @@ class RecordBatch(Batch[Record]):
         numeric is a ``NumericRecordBatch``, so an edit that removes the last
         non-numeric field promotes and one that introduces a non-numeric field
         demotes — which also makes a mixed ``merge`` give the same answer whichever
-        way round it is written. The **name** is preserved when the caller gave it
-        and left to the constructor to re-derive when it was auto, since the old one
-        described the pre-edit fields.
+        way round it is written. The **name** is carried over with the flag that
+        says where it came from. It used to be dropped when auto, for the
+        constructor to re-derive — but there is no class-name default to re-derive
+        from now, and an auto name is one something derived from real content
+        rather than a placeholder, so carrying it is better than having none.
         """
         return _batch_class_for(template)(
             dict(columns),
             self.level_names,
             element_spec=template,
             axis_groups=self.axis_groups,
-            name=None if self.name_is_auto else self.name,
+            name=self.name,
+            name_is_auto=self.name_is_auto,
         )
 
     # -- construction from elements -----------------------------------------
@@ -674,6 +677,7 @@ class RecordBatch(Batch[Record]):
         *,
         level_name: str,
         element_spec: RecordSpec | EventTemplate | None = None,
+        name: str | None = None,
     ) -> Self:
         """Stack records into a batch with one level of ``(len(records),)``.
 
@@ -688,6 +692,11 @@ class RecordBatch(Batch[Record]):
             What every element satisfies. Taken from the first record when
             omitted, which is exact whenever the records were built against a
             shared declaration.
+        name : str, optional
+            The batch's name. Taken from the first record when omitted and marked
+            auto — a batch of ``draw`` records is about ``draw``, so the name is
+            derived from what is being stacked rather than invented. A caller with
+            a better name passes one.
 
         Returns
         -------
@@ -735,7 +744,13 @@ class RecordBatch(Batch[Record]):
             key: _stack_column([record[key] for record in records], template[key], kind=kind)
             for key in fields
         }
-        return cls(columns, (level_name,), element_spec=spec)
+        return cls(
+            columns,
+            (level_name,),
+            element_spec=spec,
+            name=name if name is not None else records[0].name,
+            name_is_auto=name is None,
+        )
 
     # -- equality -----------------------------------------------------------
 
