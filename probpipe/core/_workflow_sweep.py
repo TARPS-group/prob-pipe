@@ -33,6 +33,7 @@ from . import (
 from ._batch import Batch
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
+from ._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ._record_batch import RecordBatch, _MappedBatchColumns
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution
@@ -332,6 +333,8 @@ def mapped_row_body(
         out = func(**_workflow_call.replace_input_refs(values, replacements))
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)
+        if isinstance(out, NumericArrayBatch):
+            return _MappedBatchStore.of(out)
         return out
 
     return one_row
