@@ -17,7 +17,6 @@ from typing import Any, Literal, Union, get_args, get_origin
 from . import _workflow_call, _workflow_descendants, _workflow_distribution_normalization
 from ._batch import Batch
 from ._distribution_array import DistributionArray
-from ._record_batch import RecordBatch
 from .distribution import Distribution, EmpiricalDistribution
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
@@ -194,9 +193,13 @@ def build_broadcast_plan(
         value = _workflow_call.input_ref_value(values, ref)
         expected = _workflow_call.input_ref_hint(signature_info, ref)
 
-        is_batched_record = isinstance(value, RecordBatch)
+        # Any Batch is an operand: what makes a value sweepable is that it holds
+        # a multiplicity on named levels, which is the Batch contract rather than
+        # anything specific to records. A DistributionArray is a Distribution, not
+        # a Batch, so it stays a separate test.
+        is_batch = isinstance(value, Batch)
         is_dist_array = isinstance(value, DistributionArray)
-        if (is_batched_record or is_dist_array) and len(value.batch_shape) > 0:
+        if (is_batch or is_dist_array) and len(value.batch_shape) > 0:
             if _value_matches_hint(value, expected) or expected is Any:
                 continue
             array_args.append(ref)
