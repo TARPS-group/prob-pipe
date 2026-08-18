@@ -56,6 +56,7 @@ class TestMixinMembership:
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
+            name="batch",
         )
         assert isinstance(ra, TrackedTerm)
 
@@ -122,12 +123,15 @@ class TestNameIsAuto:
         assert r.name == "sample"
         assert r.name_is_auto is True
 
-    def test_unnamed_record_batch_is_auto(self):
+    def test_a_derived_batch_name_is_auto(self):
+        """A caller that derives a name says so; there is no unnamed batch."""
         ra = RecordBatch(
             {"a": jnp.zeros((3,))},
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
+            name="derived",
+            name_is_auto=True,
         )
         assert ra.name_is_auto is True
         named = RecordBatch(
@@ -298,6 +302,8 @@ class TestWithNameOnBatchTypes:
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
+            name="derived",
+            name_is_auto=True,
         )
         ra2 = ra.with_name("mine")
         assert ra2 is not ra

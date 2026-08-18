@@ -2008,7 +2008,7 @@ class TestMultiplicityBindsFromAValue:
 
     @staticmethod
     def _batch(size=3, level="item"):
-        return OpaqueBatch([object() for _ in range(size)], level)
+        return OpaqueBatch([object() for _ in range(size)], level, name="batch")
 
     @staticmethod
     def _grid(shape, level_names="grid", axis_groups=None):
@@ -2016,7 +2016,9 @@ class TestMultiplicityBindsFromAValue:
         store = np.empty(shape, dtype=object)
         for index in np.ndindex(shape):
             store[index] = object()
-        return OpaqueBatch(store, level_names, axis_groups=axis_groups if axis_groups else [shape])
+        return OpaqueBatch(
+            store, level_names, axis_groups=axis_groups if axis_groups else [shape], name="batch"
+        )
 
     @staticmethod
     def _declared(axis="n", field=None):
