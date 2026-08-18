@@ -277,3 +277,28 @@ class TestASequenceAggregatesAtItsRowsKind:
         """The last-ditch branch alone used to leave the aggregate auto-named."""
         for value in ([1.0, 2.0], ["a", "b"], [lambda: 1], []):
             assert self._returned(value).name == "f"
+
+
+class TestAnEmptyRecordHasNoBatch:
+    """An empty record is legal; a batch of them is not, and that is not an accident.
+
+    A batch derives its `batch_shape` from a column, and a zero-field element
+    supplies none — there is nothing to read the multiplicity from. Representing
+    one would need a second source of truth for the shape, so the refusal stands
+    and is stated here rather than left to be discovered.
+    """
+
+    def test_an_empty_record_is_legal(self):
+        assert list(Record("r").event_template) == []
+
+    def test_stacking_empty_records_is_refused(self):
+        from probpipe import RecordBatch
+
+        with pytest.raises(ValueError, match="at least one field"):
+            RecordBatch.stack([Record("r"), Record("r")], level_name="x")
+
+    def test_a_zero_column_batch_is_refused(self):
+        from probpipe import EventTemplate, RecordBatch
+
+        with pytest.raises(ValueError, match="at least one field"):
+            RecordBatch({}, "x", element_spec=EventTemplate())
