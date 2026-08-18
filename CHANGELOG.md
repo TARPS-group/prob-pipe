@@ -19,6 +19,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `drawn["field"]` on such a result now reads a column of a batch rather than a
   field of a record, and `"field" in drawn` is now
   `"field" in drawn.event_template`. A single draw is unchanged.
+- **Every batch requires a name (#398).** `RecordBatch`, `NumericRecordBatch`,
+  `OpaqueBatch`, and `FunctionBatch` defaulted to their own lowercased class name,
+  so a pipeline full of them read `recordbatch` / `opaquebatch` — a name that says
+  what the object *is*, which its type already says, and nothing about which one it
+  is. `NumericArray` and `NumericArrayBatch` require one for the same reason.
+
+  A name is now given, or derived from something that carries meaning. `stack`
+  derives one from the records it stacks, so no call site has to invent it, and a
+  structural transform carries the name forward with the flag saying where it came
+  from rather than dropping it for a default that no longer exists.
+
+  The distribution-side placeholders (`DistributionArray`, `EmpiricalDistribution`,
+  the marginal and bootstrap names) are deliberately untouched — those classes are
+  being reworked, and changing their naming now would collide with that.
 
 - **Workflow-scoped structural RNG, co-sampling, and validated replay (#389).**
   Function-owned RNG controls—`Function(..., seed=...)`, the former reserved

@@ -130,7 +130,7 @@ class TestOpaqueAndItsBatch:
         """Its elements are stored, so a batch hands back the caller's object."""
         payloads = [_Payload("a"), _Payload("b")]
 
-        batch = OpaqueBatch(payloads, "draw")
+        batch = OpaqueBatch(payloads, "draw", name="batch")
 
         assert batch[0] is payloads[0]
 
@@ -138,7 +138,7 @@ class TestOpaqueAndItsBatch:
         """An `Opaque` is itself a non-mapping value."""
         terms = [Opaque("first", _Payload("a")), Opaque("second", _Payload("b"))]
 
-        batch = OpaqueBatch(terms, "draw")
+        batch = OpaqueBatch(terms, "draw", name="batch")
 
         assert batch[1] is terms[1]
         assert batch[1].name == "second"
