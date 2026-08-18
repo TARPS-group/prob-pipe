@@ -20,7 +20,7 @@ from ._array_backend import (
 )
 from .event_template import NumericArraySpec
 from .provenance import Provenance
-from .tracked import Annotated, TrackedTerm, auto_name
+from .tracked import Annotated, TrackedTerm
 
 __all__ = ["NumericArray"]
 
@@ -41,11 +41,16 @@ class NumericArray(TrackedTerm, Annotated):
         an ``xarray`` / ``pandas`` container, or any registered backend, so a
         lazy or disk-backed value stays lazy. A bare Python scalar carries no
         metadata to read and is normalised to a 0-d ``jax.Array``.
-    name : str, optional
-        The value's name. Defaults to ``"numericarray"``, marked auto-derived.
+    name : str
+        The value's name, **required**, as a :class:`~probpipe.Record`'s and an
+        :class:`~probpipe.Opaque`'s are. A value carries no fields to describe it,
+        so the name is what says which one it is; a class-name default would name
+        every array in a pipeline alike. A caller that derives one says so with
+        *name_is_auto*.
     name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given. A value left
-        unnamed is auto-named regardless.
+        Whether *name* is auto-derived rather than user-given — set by an
+        operation that derives one, as the output boundary does when it names a
+        result after the function that produced it.
     spec : NumericArraySpec, optional
         What this value satisfies. Derived from the array's shape and dtype when
         omitted, with an unconstrained support.
@@ -100,7 +105,7 @@ class NumericArray(TrackedTerm, Annotated):
         self,
         value: Any,
         *,
-        name: str | None = None,
+        name: str,
         name_is_auto: bool = False,
         spec: NumericArraySpec | None = None,
         provenance: Provenance | None = None,
@@ -124,8 +129,6 @@ class NumericArray(TrackedTerm, Annotated):
                 f"the array does not satisfy its declaration: shape {shape} and "
                 f"dtype {dtype} against {spec}"
             )
-        if name is None:
-            name, name_is_auto = auto_name(name, "numericarray")
         object.__setattr__(self, "_value", stored)
         object.__setattr__(self, "_spec", spec)
         self._init_tracked(name, name_is_auto=name_is_auto, provenance=provenance)

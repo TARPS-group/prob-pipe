@@ -132,12 +132,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **`ArraySpec` is renamed `NumericArraySpec` (#398).** The spec now agrees with
-  the class it names, as `RecordSpec`/`Record` does. `Array` remains the type
-  alias for a bare backend array.
-
-### Changed
-
 ### Removed (breaking)
 
 - **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
