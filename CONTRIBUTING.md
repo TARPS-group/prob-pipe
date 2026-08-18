@@ -517,15 +517,14 @@ uv build packaging/probpipe   # probpipe (metapackage)
    `name_is_auto=True` so later composition can re-derive it. A nested
    record stored as a field is renamed to its field key (also flagged
    auto-derived).
-7. **Uniform output wrap at the Function boundary** — every
-   `@function` return is coerced into the
-   `Record | RecordBatch | Distribution` contract before it
-   reaches the caller.  Scalars and `jnp.ndarray`s become a single-field auto-named
-   `NumericRecord` with field `fn_name` (no sweep) or
-   `NumericRecordBatch({fn_name: arr}, <swept levels>)`
-   (swept); `dict` / `list` / `tuple` promote via `_make_stack`;
-   existing `Record` / `RecordBatch` / `Distribution` values
-   preserve their structure and backing data but `Function.__call__` returns a shallow copy
+7. **Every return is wrapped at its own kind** — a `@function` return becomes
+   the tracked term of the kind it already is, named for the function and
+   marked auto. A numeric value becomes a `NumericArray`, a mapping a `Record`,
+   a callable a `Function`, and anything else an `Opaque`; a sequence, or a
+   sweep, aggregates at the rows' kind through `_make_stack`. The kind follows
+   the host's *type*, so an empty mapping is still a `Record`.
+   A tracked term the body produced is returned as it is, every kind alike,
+   but `Function.__call__` returns a shallow copy
    as an independent result term. The copy gets a fresh annotations container,
    discards the returned object's prior provenance, and records the called
    Function followed by tracked inputs as its direct parents. All resolved

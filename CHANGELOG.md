@@ -102,7 +102,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   what kind it holds, and every element spec holds vacuously of none.
 
   `Record()`, `EventTemplate()`, and `OpaqueBatch([], level)` are legal as a
-  result. An empty template is **not** promoted to `NumericEventTemplate`:
+  result. A *batch* of empty records is not: a batch reads its multiplicity off
+  a column, and a zero-field element supplies none, so `RecordBatch` still
+  requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:
   vacuously every leaf is numeric, which is not a reason to claim it. A batch
   still requires a batch *axis* — a single object with no axis is refused as
   before.
