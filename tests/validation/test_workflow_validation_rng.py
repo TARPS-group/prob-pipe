@@ -173,6 +173,50 @@ class TestPredictiveCheckBroker:
 
         commit.assert_not_called()
 
+    def test_glm_subclass_is_not_certified(self):
+        class DerivedGLMLikelihood(GLMLikelihood):
+            pass
+
+        prior, _ = _glm_validation_setup()
+        likelihood = DerivedGLMLikelihood(
+            tfp_glm.Normal(),
+            x=jnp.linspace(-1.0, 1.0, 6)[:, None],
+        )
+
+        with (
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            workflow_run(seed=7),
+            pytest.raises(TypeError, match="explicit key"),
+        ):
+            predictive_check(
+                prior,
+                likelihood,
+                test_fn=jnp.mean,
+                num_observations=6,
+                num_replications=3,
+            )
+
+        commit.assert_not_called()
+
+    def test_class_method_override_is_not_certified(self, monkeypatch):
+        prior, likelihood = _glm_validation_setup()
+        monkeypatch.setattr(GLMLikelihood, "generate_data", _OpaqueLikelihood.generate_data)
+
+        with (
+            patch("probpipe.core._workflow_context._commit_stochastic_invocation") as commit,
+            workflow_run(seed=7),
+            pytest.raises(TypeError, match="explicit key"),
+        ):
+            predictive_check(
+                prior,
+                likelihood,
+                test_fn=jnp.mean,
+                num_observations=6,
+                num_replications=3,
+            )
+
+        commit.assert_not_called()
+
     def test_glm_without_design_matrix_fails_before_event_commit(self):
         prior = MultivariateNormal(loc=jnp.zeros(2), cov=jnp.eye(2), name="beta")
         likelihood = GLMLikelihood(tfp_glm.Normal())

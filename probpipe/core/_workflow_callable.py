@@ -395,12 +395,19 @@ def _canonical_json(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+@functools.lru_cache(maxsize=128)
+def _source_artifact_digest(path: Path, mtime_ns: int, size: int) -> str:
+    """Hash one source file version, reusing unchanged artifact reads."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def _source_artifact(candidate: Any) -> tuple[str | None, str | None]:
     try:
         source = inspect.getsourcefile(candidate)
         if source is None:
             return None, None
         path = Path(os.path.abspath(source))
-        return str(path), hashlib.sha256(path.read_bytes()).hexdigest()
+        stat = path.stat()
+        return str(path), _source_artifact_digest(path, stat.st_mtime_ns, stat.st_size)
     except (OSError, TypeError, ValueError):
         return None, None

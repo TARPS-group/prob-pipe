@@ -6,13 +6,11 @@ import operator
 from typing import Any
 
 from ..core import _workflow_broker
+from ..core.protocols import _WorkflowGenerativeProviderCertificate
 from ..custom_types import PRNGKey
-from ..modeling._glm import GLMLikelihood
 
 _VALIDATION_SAMPLING_ABI = "probpipe.validation/v1"
-_GLM_GENERATIVE_PROVIDER_ABI = "probpipe.modeling.GLMLikelihood.generate_data/v1"
 _SLICED_WASSERSTEIN_PROVIDER_ABI = "probpipe.validation.sliced_wasserstein/v1"
-_CERTIFIED_GLM_GENERATE_DATA = GLMLikelihood.generate_data
 
 
 def _validate_positive_int(name: str, value: Any) -> int:
@@ -28,31 +26,33 @@ def _validate_positive_int(name: str, value: Any) -> int:
     return count
 
 
-def _certified_generative_provider_abi(provider: Any) -> str | None:
-    """Return the closed GLM provider ABI, or ``None`` for opaque providers."""
-    if type(provider) is not GLMLikelihood:
+def _certified_generative_provider(
+    provider: Any,
+) -> _WorkflowGenerativeProviderCertificate | None:
+    """Return exact private provider authority, or ``None`` when opaque."""
+    provider_type = type(provider)
+    certificate = vars(provider_type).get("_workflow_generative_provider_certificate")
+    if not isinstance(certificate, _WorkflowGenerativeProviderCertificate):
         return None
-    if GLMLikelihood.generate_data is not _CERTIFIED_GLM_GENERATE_DATA:
+    if certificate.provider_type is not provider_type:
+        return None
+    if getattr(provider_type, "generate_data", None) is not certificate.generate_data:
         return None
     if "generate_data" in vars(provider):
         return None
-    return _GLM_GENERATIVE_PROVIDER_ABI
+    return certificate
 
 
 def _require_certified_generative_provider(provider: Any, operation: str) -> str:
     """Require the closed omitted-key generative provider contract."""
-    provider_abi = _certified_generative_provider_abi(provider)
-    if provider_abi is None:
+    certificate = _certified_generative_provider(provider)
+    if certificate is None:
         raise TypeError(
             f"{operation} cannot use workflow-owned randomness with opaque provider "
             f"{type(provider).__name__}; pass an explicit key= value."
         )
-    if provider._x is None:
-        raise ValueError(
-            f"{operation} requires GLMLikelihood to have a stored design matrix "
-            "before requesting workflow-owned randomness"
-        )
-    return provider_abi
+    certificate.preflight(provider, operation)
+    return certificate.provider_abi
 
 
 def _resolve_validation_key(

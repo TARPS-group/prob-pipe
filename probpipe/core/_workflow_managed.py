@@ -462,7 +462,8 @@ def _validated_managed_effect_claim_snapshot(
     effect: object,
 ) -> ManagedEffectClaim:
     """Reconstruct one immutable effect while rerunning its full validation."""
-    effect = _validate_managed_effect_claim_instance(effect)
+    if not isinstance(effect, ManagedEffectClaim):
+        raise TypeError("managed reports must contain ManagedEffectClaim values")
     return ManagedEffectClaim(
         occurrence_path=effect.occurrence_path,
         occurrence_kind=effect.occurrence_kind,
@@ -484,27 +485,22 @@ def _validated_managed_claim_report_snapshot(
     """Deeply revalidate and freeze an untrusted transported report."""
     if not isinstance(report, ManagedClaimReport):
         raise TypeError("remote managed reports must be ManagedClaimReport values")
-    _validate_managed_claim_report_fields(
-        frame=report.frame,
-        attempt=report.attempt,
-        child_count=report.child_count,
-        effects=report.effects,
-        successful_effects=report.successful_effects,
-    )
-
-    frame_token = ManagedWorkItemToken(report.frame.token.value)
-    frame = ManagedUnitFrame(
-        unit_segment=report.frame.unit_segment,
-        token=frame_token,
-        derivation_abi=report.frame.derivation_abi,
-    )
-    attempt = ManagedAttemptState(
-        work_item_token=ManagedWorkItemToken(report.attempt.work_item_token.value),
-        attempt_token=report.attempt.attempt_token,
-    )
+    if not isinstance(report.frame, ManagedUnitFrame) or not isinstance(
+        report.attempt,
+        ManagedAttemptState,
+    ):
+        raise TypeError("managed claim reports require a frame and attempt")
+    if not isinstance(report.effects, tuple) or any(
+        not isinstance(effect, ManagedEffectClaim) for effect in report.effects
+    ):
+        raise TypeError("managed effect reports must contain a tuple of effects")
+    if not isinstance(report.successful_effects, tuple) or any(
+        not isinstance(effect, ManagedEffectClaim) for effect in report.successful_effects
+    ):
+        raise TypeError("managed successful effects must contain a tuple of effects")
     return ManagedClaimReport(
-        frame=frame,
-        attempt=attempt,
+        frame=_validated_managed_unit_frame_snapshot(report.frame),
+        attempt=_validated_managed_attempt_snapshot(report.attempt),
         child_count=report.child_count,
         effects=tuple(
             _validated_managed_effect_claim_snapshot(effect) for effect in report.effects
@@ -629,11 +625,8 @@ def _validated_managed_unit_frame_snapshot(frame: object) -> ManagedUnitFrame:
     """Deeply reconstruct one transported managed frame."""
     if not isinstance(frame, ManagedUnitFrame):
         raise TypeError("transported managed frames must be ManagedUnitFrame values")
-    _validate_managed_unit_frame_fields(
-        unit_segment=frame.unit_segment,
-        token=frame.token,
-        derivation_abi=frame.derivation_abi,
-    )
+    if not isinstance(frame.token, ManagedWorkItemToken):
+        raise TypeError("managed unit frames require a managed work-item token")
     return ManagedUnitFrame(
         unit_segment=frame.unit_segment,
         token=ManagedWorkItemToken(frame.token.value),
@@ -645,10 +638,8 @@ def _validated_managed_attempt_snapshot(attempt: object) -> ManagedAttemptState:
     """Deeply reconstruct one transported managed attempt."""
     if not isinstance(attempt, ManagedAttemptState):
         raise TypeError("transported managed attempts must be ManagedAttemptState values")
-    _validate_managed_attempt_fields(
-        work_item_token=attempt.work_item_token,
-        attempt_token=attempt.attempt_token,
-    )
+    if not isinstance(attempt.work_item_token, ManagedWorkItemToken):
+        raise TypeError("managed attempts require a managed work-item token")
     return ManagedAttemptState(
         work_item_token=ManagedWorkItemToken(attempt.work_item_token.value),
         attempt_token=attempt.attempt_token,
@@ -659,11 +650,8 @@ def _validated_managed_work_item_snapshot(item: object) -> ManagedWorkItem:
     """Deeply reconstruct one transported work item while preserving values."""
     if not isinstance(item, ManagedWorkItem):
         raise TypeError("transported work items must be ManagedWorkItem values")
-    _validate_managed_work_item_fields(
-        index=item.index,
-        values=item.values,
-        frame=item.frame,
-    )
+    if not isinstance(item.frame, ManagedUnitFrame):
+        raise TypeError("managed work items require a valid managed unit frame")
     return ManagedWorkItem(
         index=item.index,
         values=item.values,
@@ -677,14 +665,22 @@ def _validated_managed_parent_envelope_snapshot(
     """Deeply reconstruct one transported parent authority envelope."""
     if not isinstance(parent, ManagedParentEnvelope):
         raise TypeError("transported parent authority must be a ManagedParentEnvelope")
-    _validate_managed_parent_envelope_fields(
-        root_words=parent.root_words,
-        parent_occurrence_path=parent.parent_occurrence_path,
-        frame=parent.frame,
-        attempt=parent.attempt,
-        replay_expected_effects=parent.replay_expected_effects,
-        retry_effects=parent.retry_effects,
-    )
+    if not isinstance(parent.frame, ManagedUnitFrame) or not isinstance(
+        parent.attempt,
+        ManagedAttemptState,
+    ):
+        raise TypeError("managed parent authority requires a frame and attempt")
+    if parent.replay_expected_effects is not None and (
+        not isinstance(parent.replay_expected_effects, tuple)
+        or any(
+            not isinstance(effect, ManagedEffectClaim) for effect in parent.replay_expected_effects
+        )
+    ):
+        raise TypeError("managed replay expectations must be effect tuples or None")
+    if not isinstance(parent.retry_effects, tuple) or any(
+        not isinstance(effect, ManagedEffectClaim) for effect in parent.retry_effects
+    ):
+        raise TypeError("managed retry effects must be an effect tuple")
     replay_expected_effects = (
         None
         if parent.replay_expected_effects is None
@@ -711,12 +707,13 @@ def _validated_managed_prefect_payload_snapshot(
     """Deeply reconstruct a payload before worker submission or execution."""
     if not isinstance(payload, ManagedPrefectPayload):
         raise TypeError("transported worker payloads must be ManagedPrefectPayload values")
-    _validate_managed_prefect_payload_fields(
-        item=payload.item,
-        attempt=payload.attempt,
-        provenance_mode=payload.provenance_mode,
-        parent=payload.parent,
-    )
+    if not isinstance(payload.item, ManagedWorkItem) or not isinstance(
+        payload.attempt,
+        ManagedAttemptState,
+    ):
+        raise TypeError("managed Prefect payloads require a work item and attempt")
+    if payload.parent is not None and not isinstance(payload.parent, ManagedParentEnvelope):
+        raise TypeError("managed Prefect parent authority must be an envelope or None")
     return ManagedPrefectPayload(
         item=_validated_managed_work_item_snapshot(payload.item),
         attempt=_validated_managed_attempt_snapshot(payload.attempt),
@@ -735,13 +732,8 @@ def _validated_managed_execution_outcome_snapshot(
     """Deeply reconstruct a worker outcome before parent-side admission."""
     if not isinstance(outcome, ManagedExecutionOutcome):
         raise TypeError("transported worker outcomes must be ManagedExecutionOutcome values")
-    _validate_managed_execution_outcome_fields(
-        index=outcome.index,
-        value=outcome.value,
-        error=outcome.error,
-        coordination_required=outcome.coordination_required,
-        report=outcome.report,
-    )
+    if outcome.report is not None and not isinstance(outcome.report, ManagedClaimReport):
+        raise TypeError("managed outcome reports must be claim reports or None")
     return ManagedExecutionOutcome(
         index=outcome.index,
         value=outcome.value,

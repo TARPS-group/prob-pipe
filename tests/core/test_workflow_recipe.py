@@ -6,6 +6,7 @@ import functools
 import inspect
 import json
 import sys
+from pathlib import Path
 from unittest.mock import patch
 
 import jax
@@ -572,6 +573,55 @@ class TestWorkflowCallableAnchor:
         assert anchor.supported is True
         assert anchor.source_artifact_digest is not None
         source_artifact.assert_called_once_with(replayable_identity)
+
+    def test_unchanged_source_artifacts_are_read_once_across_function_calls(self):
+        workflow = Function(func=replayable_identity)
+        explicit_key = jax.random.key(11)
+        expected_paths = {
+            Path(inspect.getsourcefile(replayable_identity)).absolute(),
+            Path(probpipe.core.ops.__file__).absolute(),
+        }
+        reads = {path: 0 for path in expected_paths}
+        read_bytes = Path.read_bytes
+
+        def recording_read_bytes(path):
+            if path in reads:
+                reads[path] += 1
+            return read_bytes(path)
+
+        _workflow_callable._source_artifact_digest.cache_clear()
+        with patch.object(Path, "read_bytes", recording_read_bytes):
+            for _ in range(5):
+                workflow(value=1.0)
+            for _ in range(3):
+                sample(Normal(loc=0.0, scale=1.0, name="value"), key=explicit_key)
+
+        assert reads == dict.fromkeys(expected_paths, 1)
+
+    def test_source_artifact_cache_invalidates_for_changed_file(self, tmp_path, monkeypatch):
+        source_path = tmp_path / "callable_source.py"
+        source_path.write_bytes(b"first")
+        read_bytes = Path.read_bytes
+        reads = 0
+
+        def recording_read_bytes(path):
+            nonlocal reads
+            if path == source_path:
+                reads += 1
+            return read_bytes(path)
+
+        monkeypatch.setattr(inspect, "getsourcefile", lambda candidate: str(source_path))
+        _workflow_callable._source_artifact_digest.cache_clear()
+        with patch.object(Path, "read_bytes", recording_read_bytes):
+            first = _workflow_callable._source_artifact(object())
+            unchanged = _workflow_callable._source_artifact(object())
+            source_path.write_bytes(b"second version")
+            changed = _workflow_callable._source_artifact(object())
+
+        assert unchanged == first
+        assert changed[0] == first[0]
+        assert changed[1] != first[1]
+        assert reads == 2
 
     def test_unsupported_definition_state_does_not_read_source_artifact(self):
         workflow = Function(func=replayable_identity)

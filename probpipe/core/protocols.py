@@ -51,6 +51,8 @@ Concrete classes that want default MC implementations can use the
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -491,6 +493,16 @@ def protocols_supported_by_all(
 # ---------------------------------------------------------------------------
 # Likelihoods and generative simulators
 # ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True, slots=True)
+class _WorkflowGenerativeProviderCertificate:
+    """Private exact-provider authority for workflow-owned generation."""
+
+    provider_type: type[Any]
+    generate_data: Callable[..., Any]
+    provider_abi: str
+    preflight: Callable[[Any, str], None]
 
 
 @runtime_checkable

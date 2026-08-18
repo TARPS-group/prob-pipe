@@ -11,9 +11,8 @@ import numpy as np
 from ..core._numeric_record import NumericRecord
 from ..core.distribution import Distribution, RecordEmpiricalDistribution
 from ..core.node import function
-from ..core.protocols import SupportsSampling
+from ..core.protocols import GenerativeLikelihood, SupportsSampling
 from ..custom_types import PRNGKey
-from ..modeling._likelihood import GenerativeLikelihood  # needed for type hint resolution
 from ._workflow_rng import (
     _require_certified_generative_provider,
     _resolve_validation_key,
