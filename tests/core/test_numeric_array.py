@@ -22,28 +22,30 @@ def _batch(values=None, level_names="draw", **kwargs) -> NumericArrayBatch:
 class TestNumericArrayHoldsOneValue:
     def test_shape_is_the_event_shape(self):
         """A NumericArray carries no batch axes, so its shape is the event's."""
-        value = NumericArray(jnp.zeros((2, 5)))
+        value = NumericArray(jnp.zeros((2, 5)), name="v")
 
         assert value.shape == (2, 5)
         assert value.ndim == 2
         assert len(value) == 2
 
     def test_the_spec_is_derived_when_omitted(self):
-        value = NumericArray(jnp.arange(3.0))
+        value = NumericArray(jnp.arange(3.0), name="v")
 
         assert value.spec == NumericArraySpec(shape=(3,), dtype=jnp.float32)
 
     def test_a_supplied_spec_is_checked(self):
         with pytest.raises(ValueError, match="does not satisfy its declaration"):
-            NumericArray(jnp.arange(3.0), spec=NumericArraySpec(shape=(2,), dtype=jnp.float32))
+            NumericArray(
+                jnp.arange(3.0), spec=NumericArraySpec(shape=(2,), dtype=jnp.float32), name="v"
+            )
 
     def test_a_value_that_is_not_an_array_is_refused(self):
         with pytest.raises(TypeError, match="holds one numeric array"):
-            NumericArray(object())
+            NumericArray(object(), name="v")
 
     def test_a_spec_of_another_kind_is_refused(self):
         with pytest.raises(TypeError, match="must be a NumericArraySpec"):
-            NumericArray(jnp.arange(3.0), spec="not a spec")
+            NumericArray(jnp.arange(3.0), spec="not a spec", name="v")
 
 
 class TestNumericArrayStoresNativeForm:
@@ -56,33 +58,33 @@ class TestNumericArrayStoresNativeForm:
     def test_an_array_is_stored_verbatim(self):
         raw = np.arange(3.0)
 
-        assert NumericArray(raw).value is raw
+        assert NumericArray(raw, name="v").value is raw
 
     def test_a_container_keeps_its_own_metadata(self):
         xr = pytest.importorskip("xarray")
         data = xr.DataArray(np.arange(3.0), dims=["t"], coords={"t": [10, 20, 30]})
 
-        stored = NumericArray(data).value
+        stored = NumericArray(data, name="v").value
 
         assert isinstance(stored, xr.DataArray)
         assert list(stored.coords) == ["t"]
 
     def test_the_spec_is_read_from_metadata(self):
-        assert NumericArray(np.arange(3.0)).shape == (3,)
+        assert NumericArray(np.arange(3.0), name="v").shape == (3,)
 
     def test_a_bare_scalar_is_normalised(self):
         """It carries no metadata to read, so it is normalised."""
-        assert isinstance(NumericArray(2.5).value, jax.Array)
+        assert isinstance(NumericArray(2.5, name="v").value, jax.Array)
 
     def test_conversion_happens_once_and_is_memoised(self):
-        value = NumericArray(np.arange(3.0))
+        value = NumericArray(np.arange(3.0), name="v")
 
         assert isinstance(value.as_jax(), jax.Array)
         assert value.as_jax() is value.as_jax()
 
     def test_the_pytree_boundary_presents_a_bare_array(self):
         """A compute boundary, where native form converts."""
-        (leaf,) = jax.tree_util.tree_leaves(NumericArray(np.arange(3.0)))
+        (leaf,) = jax.tree_util.tree_leaves(NumericArray(np.arange(3.0), name="v"))
 
         assert isinstance(leaf, jax.Array)
 
@@ -94,6 +96,7 @@ class TestNumericArrayStoresNativeForm:
         value = NumericArray(
             jnp.zeros(3, dtype=jnp.float32),
             spec=NumericArraySpec(shape=(3,), dtype=jnp.float64),
+            name="v",
         )
 
         assert value.dtype == jnp.float32
@@ -101,7 +104,7 @@ class TestNumericArrayStoresNativeForm:
 
     def test_a_non_numeric_value_is_refused(self):
         with pytest.raises(TypeError, match="is not a numeric leaf"):
-            NumericArray("not numeric")
+            NumericArray("not numeric", name="v")
 
 
 class TestNumericArrayCarriesIdentity:
@@ -110,11 +113,22 @@ class TestNumericArrayCarriesIdentity:
 
         assert (value.name, value.name_is_auto) == ("draw", False)
 
-    def test_an_omitted_name_is_auto_derived(self):
-        assert NumericArray(jnp.arange(3.0)).name_is_auto is True
+    def test_a_name_is_required(self):
+        """A value carries no fields to describe it, so the name is what says
+        which one it is; a class-name default would name every array alike."""
+        with pytest.raises(TypeError, match="name"):
+            NumericArray(jnp.arange(3.0))
+
+    def test_a_derived_name_is_marked_auto(self):
+        """Set by an operation that derives one, as the output boundary does."""
+        value = NumericArray(jnp.arange(3.0), name="outer", name_is_auto=True)
+
+        assert (value.name, value.name_is_auto) == ("outer", True)
 
     def test_provenance_is_write_once(self):
-        value = NumericArray(jnp.arange(3.0)).with_provenance(Provenance.create("test", parents=[]))
+        value = NumericArray(jnp.arange(3.0), name="v").with_provenance(
+            Provenance.create("test", parents=[])
+        )
 
         assert value.provenance.operation == "test"
         with pytest.raises(RuntimeError, match="already set"):
@@ -122,17 +136,17 @@ class TestNumericArrayCarriesIdentity:
 
     def test_it_is_immutable(self):
         with pytest.raises(AttributeError, match="immutable"):
-            NumericArray(jnp.arange(3.0))._value = jnp.zeros(3)
+            NumericArray(jnp.arange(3.0), name="v")._value = jnp.zeros(3)
 
     def test_the_array_is_reachable_untracked(self):
         raw = jnp.arange(3.0)
 
-        assert NumericArray(raw).value is raw
+        assert NumericArray(raw, name="v").value is raw
 
     def test_it_is_unhashable(self):
         """`__eq__` is elementwise, so a hash would promise more than it keeps."""
         with pytest.raises(TypeError):
-            hash(NumericArray(jnp.arange(3.0)))
+            hash(NumericArray(jnp.arange(3.0), name="v"))
 
 
 class TestNumericArrayComputesAsAnArray:
@@ -153,14 +167,14 @@ class TestNumericArrayComputesAsAnArray:
     )
     def test_arithmetic_yields_a_bare_array(self, compute):
         """Identity is attached by operations; arithmetic is not one."""
-        result = compute(NumericArray(jnp.arange(3.0)))
+        result = compute(NumericArray(jnp.arange(3.0), name="v"))
 
         assert not isinstance(result, NumericArray)
         assert isinstance(result, jax.Array)
 
     def test_arithmetic_returns_the_stored_types_own_result(self):
         """The operators forward to the value, so numpy stays numpy."""
-        result = NumericArray(np.arange(3.0)) + 1
+        result = NumericArray(np.arange(3.0), name="v") + 1
 
         assert isinstance(result, np.ndarray)
         assert not isinstance(result, jax.Array)
@@ -169,22 +183,23 @@ class TestNumericArrayComputesAsAnArray:
         raw = jnp.arange(3.0)
 
         np.testing.assert_array_equal(
-            np.asarray(NumericArray(raw) * 2 + 1), np.asarray(raw * 2 + 1)
+            np.asarray(NumericArray(raw, name="v") * 2 + 1), np.asarray(raw * 2 + 1)
         )
 
     def test_two_numeric_arrays_combine(self):
-        pair = NumericArray(jnp.arange(3.0)) + NumericArray(jnp.ones(3))
+        pair = NumericArray(jnp.arange(3.0), name="v") + NumericArray(jnp.ones(3), name="v")
 
         assert not isinstance(pair, NumericArray)
         np.testing.assert_array_equal(np.asarray(pair), np.asarray(jnp.arange(1.0, 4.0)))
 
     def test_comparison_is_elementwise(self):
         np.testing.assert_array_equal(
-            np.asarray(NumericArray(jnp.arange(3.0)) == 1.0), np.array([False, True, False])
+            np.asarray(NumericArray(jnp.arange(3.0), name="v") == 1.0),
+            np.array([False, True, False]),
         )
 
     def test_it_converts_through_both_hooks(self):
-        value = NumericArray(jnp.arange(3.0))
+        value = NumericArray(jnp.arange(3.0), name="v")
 
         np.testing.assert_array_equal(np.asarray(value), np.arange(3.0))
         assert isinstance(jnp.asarray(value), jax.Array)
@@ -197,23 +212,23 @@ class TestNumericArrayComputesAsAnArray:
             return x * 2
 
         np.testing.assert_allclose(
-            np.asarray(double(NumericArray(jnp.arange(3.0)))), np.arange(3.0) * 2
+            np.asarray(double(NumericArray(jnp.arange(3.0), name="v"))), np.arange(3.0) * 2
         )
 
     def test_a_scalar_converts_to_a_number(self):
-        assert float(NumericArray(jnp.asarray(2.5))) == 2.5
-        assert int(NumericArray(jnp.asarray(2))) == 2
+        assert float(NumericArray(jnp.asarray(2.5), name="v")) == 2.5
+        assert int(NumericArray(jnp.asarray(2), name="v")) == 2
 
     def test_a_scalar_is_truthy_by_its_value(self):
-        assert bool(NumericArray(jnp.asarray(1.0))) is True
-        assert bool(NumericArray(jnp.asarray(0.0))) is False
+        assert bool(NumericArray(jnp.asarray(1.0), name="v")) is True
+        assert bool(NumericArray(jnp.asarray(0.0), name="v")) is False
 
     def test_an_integer_scalar_indexes(self):
         """``__index__`` is what lets one stand in for a position."""
-        assert [10, 20, 30][NumericArray(jnp.asarray(1))] == 20
+        assert [10, 20, 30][NumericArray(jnp.asarray(1), name="v")] == 20
 
     def test_indexing_and_iteration_reach_the_array(self):
-        value = NumericArray(jnp.arange(3.0))
+        value = NumericArray(jnp.arange(3.0), name="v")
 
         assert float(value[1]) == 1.0
         assert [float(x) for x in value] == [0.0, 1.0, 2.0]
@@ -491,7 +506,9 @@ class TestNumericArrayIsAPyTree:
         The value reports what it now holds; the spec keeps saying what was
         declared, which is the only thing the round trip can be faithful to.
         """
-        stacked = jax.tree_util.tree_map(lambda x: jnp.stack([x, x]), NumericArray(jnp.arange(3.0)))
+        stacked = jax.tree_util.tree_map(
+            lambda x: jnp.stack([x, x]), NumericArray(jnp.arange(3.0), name="v")
+        )
 
         assert stacked.shape == (2, 3)
         assert stacked.spec == NumericArraySpec(shape=(3,), dtype=jnp.float32)
@@ -505,6 +522,7 @@ class TestNumericArrayIsAPyTree:
         value = NumericArray(
             jnp.arange(3.0, dtype=jnp.float32),
             spec=NumericArraySpec(shape=(3,), dtype=np.float64),
+            name="v",
         )
 
         leaves, treedef = jax.tree_util.tree_flatten(value)
@@ -513,7 +531,7 @@ class TestNumericArrayIsAPyTree:
 
     def test_a_skeleton_still_carries_its_declaration(self):
         """`spec` is typed as one, so a rebuilt value has to have one."""
-        skeleton = jax.tree_util.tree_map(lambda x: None, NumericArray(jnp.arange(3.0)))
+        skeleton = jax.tree_util.tree_map(lambda x: None, NumericArray(jnp.arange(3.0), name="v"))
 
         assert skeleton.spec == NumericArraySpec(shape=(3,), dtype=jnp.float32)
 
@@ -524,6 +542,7 @@ class TestNumericArrayIsAPyTree:
         value = NumericArray(
             jnp.arange(1.0, 4.0),
             spec=NumericArraySpec(shape=(3,), dtype=jnp.float32, support=positive),
+            name="v",
         )
 
         rebuilt = jax.tree_util.tree_map(lambda x: x, value)
@@ -540,7 +559,7 @@ class TestNumericArrayIsAPyTree:
         assert skeleton.name == "draw"
 
     def test_a_sentinel_child_rebuilds(self):
-        _, treedef = jax.tree_util.tree_flatten(NumericArray(jnp.arange(3.0)))
+        _, treedef = jax.tree_util.tree_flatten(NumericArray(jnp.arange(3.0), name="v"))
 
         rebuilt = jax.tree_util.tree_unflatten(treedef, [object()])
 
@@ -548,7 +567,7 @@ class TestNumericArrayIsAPyTree:
 
     def test_provenance_does_not_survive_the_boundary(self):
         """As for `Record`: lineage rides on the function layer, not the treedef."""
-        value = NumericArray(jnp.arange(3.0)).with_provenance(
+        value = NumericArray(jnp.arange(3.0), name="v").with_provenance(
             Provenance.create("sample", parents=[])
         )
 
