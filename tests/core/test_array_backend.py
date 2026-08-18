@@ -18,7 +18,7 @@ import pytest
 
 from probpipe import ArrayBackend, NumericRecord, Record, array_backend_for, register_array_backend
 from probpipe.core import _array_backend
-from probpipe.core.event_template import ArraySpec, EventTemplate, NumericEventTemplate
+from probpipe.core.event_template import EventTemplate, NumericArraySpec, NumericEventTemplate
 
 xr = pytest.importorskip("xarray")
 pd = pytest.importorskip("pandas")
@@ -87,7 +87,7 @@ class TestRegistryLookup:
         assert backend.numpy_dtype(homo) == np.dtype("float64")
         # A mixed-but-all-numeric frame densifies (to_numpy / to_jax) to its
         # columns' common promotion — the dtype the leaf is actually built as —
-        # not None, so a dtype-pinned ArraySpec does not over-reject it.
+        # not None, so a dtype-pinned NumericArraySpec does not over-reject it.
         assert backend.numpy_dtype(mixed) == np.dtype("float64")
         # No single dense dtype (an empty frame) still reports None.
         assert backend.numpy_dtype(pd.DataFrame()) is None
@@ -96,7 +96,7 @@ class TestRegistryLookup:
         # Regression: an int64 + float64 frame validates against a float64-pinned
         # NumericEventTemplate (previously rejected because numpy_dtype was None).
         df = pd.DataFrame({"a": [1, 2], "b": [3.0, 4.0]})
-        tpl = NumericEventTemplate({"x": ArraySpec((2, 2), dtype=np.dtype("float64"))})
+        tpl = NumericEventTemplate({"x": NumericArraySpec((2, 2), dtype=np.dtype("float64"))})
         nr = NumericRecord("r", x=df, event_template=tpl)
         assert nr["x"] is df
 
@@ -331,7 +331,7 @@ class TestLazyConversion:
         leaf = _LazyLeaf()
         nr = NumericRecord("nr", lazy=leaf, x=1.0)
         assert nr["lazy"] is leaf
-        assert nr.event_template["lazy"] == ArraySpec((3,))
+        assert nr.event_template["lazy"] == NumericArraySpec((3,))
         assert nr.vector_size == 4
         assert leaf.materialisations == 0
 
@@ -439,7 +439,7 @@ def _fake_backend() -> ArrayBackend:
 class TestBackendRegistrationEndToEnd:
     def test_unregistered_fake_tensor_is_rejected(self):
         t = _FakeTensor([1.0, 2.0])
-        assert EventTemplate.infer_from({"t": t})["t"] != ArraySpec((2,))
+        assert EventTemplate.infer_from({"t": t})["t"] != NumericArraySpec((2,))
         with pytest.raises(TypeError, match="must be a numeric"):
             NumericRecord("nr", t=t)
 
@@ -450,10 +450,10 @@ class TestBackendRegistrationEndToEnd:
         # Recognition: template inference and spec validation.
         tpl = EventTemplate.infer_from({"t": t})
         assert isinstance(tpl, NumericEventTemplate)
-        assert tpl["t"] == ArraySpec((2,))
-        assert ArraySpec((2,)).is_valid(t)
-        assert ArraySpec((2,), dtype=np.float32).is_valid(t)
-        assert not ArraySpec((3,)).is_valid(t)
+        assert tpl["t"] == NumericArraySpec((2,))
+        assert NumericArraySpec((2,)).is_valid(t)
+        assert NumericArraySpec((2,), dtype=np.float32).is_valid(t)
+        assert not NumericArraySpec((3,)).is_valid(t)
 
         # Promotion: an all-numeric record holding the tensor promotes.
         r = Record("r", t=t)

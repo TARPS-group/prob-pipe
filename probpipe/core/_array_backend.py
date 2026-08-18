@@ -21,7 +21,7 @@ type, how to answer the four questions every numeric gate asks:
 * ``to_jax(obj)`` / ``to_numpy(obj)`` — materialising conversions, used at
   the compute boundary and for content fingerprints.
 
-Every consumer — template inference and ``ArraySpec.is_valid``, the
+Every consumer — template inference and ``NumericArraySpec.is_valid``, the
 ``Record`` → ``NumericRecord`` promotion probe, the ``NumericRecord``
 conversion cache, batch stacking, and ``fingerprint()`` — resolves
 **registry first, duck-typing second**, so registering one backend makes a
@@ -179,7 +179,7 @@ def register_array_backend(leaf_type: type, backend: ArrayBackend) -> None:
     """Register *backend* as the array-backend hooks for *leaf_type*.
 
     Registering a type makes its instances first-class numeric leaves
-    everywhere at once: template inference and ``ArraySpec.is_valid``
+    everywhere at once: template inference and ``NumericArraySpec.is_valid``
     recognise them, all-numeric records holding them auto-promote to
     ``NumericRecord``, the compute boundary converts them through
     ``backend.to_jax``, batch stacking coerces them per element, and

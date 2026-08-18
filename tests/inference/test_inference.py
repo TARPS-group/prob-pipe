@@ -29,7 +29,7 @@ from probpipe import (
 )
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core.distribution import _RecordDistributionView
-from probpipe.core.event_template import ArraySpec
+from probpipe.core.event_template import NumericArraySpec
 from probpipe.inference import rwmh
 from probpipe.inference._approximate_distribution import make_posterior
 from probpipe.inference._inference_utils import build_mcmc_datatree
@@ -1273,7 +1273,7 @@ class TestEndToEndValuesPipeline:
         tpl = posterior.event_template
         assert tpl is not None
         assert tpl.fields == ("params",)
-        assert tpl["params"] == ArraySpec((2,))
+        assert tpl["params"] == NumericArraySpec((2,))
 
     def test_draws_are_named_values(self, posterior):
         """draws() returns Record with correct field names and shapes."""

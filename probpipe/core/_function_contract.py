@@ -16,8 +16,8 @@ from ._distribution_base import Distribution
 from ._record_batch import RecordBatch
 from .constraints import _supports_compatible
 from .event_template import (
-    ArraySpec,
     EventTemplate,
+    NumericArraySpec,
     ValueSpec,
     _concretize_event_template,
     _full_array_shape_or_none,
@@ -364,7 +364,7 @@ def _validate_batched_function_output_values(
     batch_shape = value.batch_shape
     batch_rank = len(batch_shape)
     for path, spec in template.items():
-        if not isinstance(spec, ArraySpec):
+        if not isinstance(spec, NumericArraySpec):
             continue
         leaf = value[path]
         actual_shape = _full_array_shape_or_none(leaf)
@@ -405,8 +405,8 @@ def _validate_function_output_template_supports(
     for path, declared_spec in declared_template.items():
         actual_spec = actual_template[path]
         if (
-            isinstance(declared_spec, ArraySpec)
-            and isinstance(actual_spec, ArraySpec)
+            isinstance(declared_spec, NumericArraySpec)
+            and isinstance(actual_spec, NumericArraySpec)
             and declared_spec.support is not None
             and actual_spec.support is not None
             and not _supports_compatible(actual_spec.support, declared_spec.support)
@@ -423,7 +423,7 @@ def _validate_function_output_supports(
     template: EventTemplate,
     value: Any,
 ) -> None:
-    """Validate declared ArraySpec supports at an eager execution boundary."""
+    """Validate declared NumericArraySpec supports at an eager execution boundary."""
     if isinstance(value, RecordBatch):
         # A batch is a collection, not a named tree: its columns are keyed by leaf
         # path and each carries the batch axes in front of its event shape, which a
@@ -482,8 +482,8 @@ def _validate_function_output_leaf_support(
     spec: ValueSpec,
     value: Any,
 ) -> None:
-    """Validate one declared ArraySpec support at an eager execution boundary."""
-    if not isinstance(spec, ArraySpec) or spec.support is None:
+    """Validate one declared NumericArraySpec support at an eager execution boundary."""
+    if not isinstance(spec, NumericArraySpec) or spec.support is None:
         return
     support = spec.support
     membership = jnp.all(support.check(value))

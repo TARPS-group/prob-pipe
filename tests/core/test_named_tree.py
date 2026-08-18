@@ -11,7 +11,12 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import EventTemplate, NumericRecord, Record
-from probpipe.core.event_template import ArraySpec, NumericEventTemplate, OpaqueSpec, ValueSpec
+from probpipe.core.event_template import (
+    NumericArraySpec,
+    NumericEventTemplate,
+    OpaqueSpec,
+    ValueSpec,
+)
 from probpipe.core.named_tree import NamedTree
 
 # ===========================================================================
@@ -173,7 +178,7 @@ class TestWithPathNames:
         assert renamed_named.name_is_auto is False
 
     def test_explicit_template_metadata_survives(self):
-        spec = ArraySpec((), dtype=jnp.float32)
+        spec = NumericArraySpec((), dtype=jnp.float32)
         r = Record("r", a=jnp.array(1.0, dtype=jnp.float32), event_template=EventTemplate(a=spec))
         renamed = r.with_path_names(a="alpha")
         assert renamed.event_template["alpha"] == spec
@@ -250,7 +255,7 @@ class TestPytreeAuxSplit:
     def test_template_and_identity_survive_roundtrip(self):
         import jax
 
-        spec = ArraySpec((), dtype=jnp.float32)
+        spec = NumericArraySpec((), dtype=jnp.float32)
         r = Record(
             "mine",
             a=jnp.array(1.0, dtype=jnp.float32),
@@ -304,7 +309,7 @@ class TestPytreeAuxSplit:
         richer = Record(
             "r",
             a=jnp.array(1.0, dtype=jnp.float32),
-            event_template=EventTemplate(a=ArraySpec((), dtype=jnp.float32)),
+            event_template=EventTemplate(a=NumericArraySpec((), dtype=jnp.float32)),
         )
         # Treedef equality is stricter than record equality: a richer explicit
         # template distinguishes the treedefs even when the data is equal.

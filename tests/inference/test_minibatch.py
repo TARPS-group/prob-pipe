@@ -16,10 +16,10 @@ import pytest
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from probpipe import (
-    ArraySpec,
     EventTemplate,
     GLMLikelihood,
     MultivariateNormal,
+    NumericArraySpec,
     NumericRecordBatch,
     Record,
     random_unnormalized_log_prob,
@@ -486,7 +486,7 @@ def test_a_multi_axis_batch_is_refused_at_construction(prior, likelihood):
     grid = NumericRecordBatch(
         {"x": jnp.ones((4, 3))},
         ("n", "k"),
-        element_spec=EventTemplate(x=ArraySpec(shape=())),
+        element_spec=EventTemplate(x=NumericArraySpec(shape=())),
     )
     with pytest.raises(ValueError, match="rows are one axis"):
         MinibatchedDistribution(prior, likelihood, grid, batch_size=2)

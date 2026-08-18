@@ -9,7 +9,7 @@ This document uses the **`Function`** vocabulary. A `Function` is the universal 
 - **One package per layer.** Packages mirror the reference's parts in dependency order, and a module realizes one section or one coherent piece of one.
 - **Imports point downward.** Each package imports only from packages above it in the tree below. There are no import cycles, and no lazy imports to dodge one.
 - **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register evaluation rules and converters, and the inference methods register themselves. Capability reaches the operations without the operations importing their providers.
-- **A spec lives with the type it admits.** `FunctionSpec` lives in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The rule bends only where layering forbids it: `ValueSpec` and the `TermSpec` marker are what the tracked base stores, and `ArraySpec` and `OpaqueSpec` admit no ProbPipe kind at all, so all four sit in `core/` beside `EventTemplate` and `Constraint` — `core/` cannot import the value layer. The same placement rule covers each type's batch form.
+- **A spec lives with the type it admits.** `FunctionSpec` lives in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The rule bends only where layering forbids it: `ValueSpec` and the `TermSpec` marker are what the tracked base stores, and `NumericArraySpec` and `OpaqueSpec` admit no ProbPipe kind at all, so all four sit in `core/` beside `EventTemplate` and `Constraint` — `core/` cannot import the value layer. The same placement rule covers each type's batch form.
 - **Modules are private, packages are public.** Every module is underscore-prefixed. A package's `__init__` exports its public names, and the top-level `probpipe` namespace re-exports the curated user surface, which is the only import a user needs.
 - **Tests mirror the tree**, as `tests/<package>/test_<module>.py`.
 
@@ -25,7 +25,7 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.1)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.2)
-│   ├── _specs.py              #   ValueSpec, TermSpec, ArraySpec, OpaqueSpec (II.2)
+│   ├── _specs.py              #   ValueSpec, TermSpec, NumericArraySpec, OpaqueSpec (II.2)
 │   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (II.3)
 │   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.4)
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)

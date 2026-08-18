@@ -27,8 +27,8 @@ from probpipe import (
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
 from probpipe.core.event_template import (
-    ArraySpec,
     EventTemplate,
+    NumericArraySpec,
     NumericEventTemplate,
     OpaqueSpec,
 )
@@ -108,7 +108,7 @@ def test_event_template_pickle_roundtrip():
     assert type(t2) is EventTemplate
     assert t2.fields == ("label", "x")
     assert t2["label"] == OpaqueSpec()
-    assert t2["x"] == ArraySpec(())
+    assert t2["x"] == NumericArraySpec(())
 
 
 def test_numeric_event_template_pickle_roundtrip():
@@ -324,7 +324,9 @@ class TestPicklePreservesTemplate:
     def test_plain_record_template_survives(self):
         from probpipe.core.constraints import positive
 
-        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive), tag=OpaqueSpec(meta="units"))
+        tpl = EventTemplate(
+            x=NumericArraySpec(shape=(3,), support=positive), tag=OpaqueSpec(meta="units")
+        )
         r = Record("r", {"x": jnp.ones(3), "tag": "meters"}, event_template=tpl)
         assert not isinstance(r, NumericRecord)  # opaque leaf keeps it a plain Record
         back = roundtrip(r)
@@ -334,7 +336,7 @@ class TestPicklePreservesTemplate:
     def test_numeric_record_template_survives(self):
         from probpipe.core.constraints import positive
 
-        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        tpl = EventTemplate(x=NumericArraySpec(shape=(3,), support=positive))
         nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
         back = roundtrip(nr)
         assert back.event_template == nr.event_template
@@ -343,7 +345,7 @@ class TestPicklePreservesTemplate:
     def test_cloudpickle_preserves_template(self):
         from probpipe.core.constraints import positive
 
-        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        tpl = EventTemplate(x=NumericArraySpec(shape=(3,), support=positive))
         nr = NumericRecord("nr", {"x": jnp.ones(3)}, event_template=tpl)
         assert cloudpickle_roundtrip(nr).event_template == nr.event_template
 
@@ -352,7 +354,7 @@ class TestPicklePreservesTemplate:
         from probpipe.core.constraints import positive
 
         da = xr.DataArray([1.0, 2.0, 3.0], dims=["t"], coords={"t": [10, 20, 30]})
-        tpl = EventTemplate(x=ArraySpec(shape=(3,), support=positive))
+        tpl = EventTemplate(x=NumericArraySpec(shape=(3,), support=positive))
         nr = NumericRecord("nr", {"x": da}, event_template=tpl)
         back = roundtrip(nr)
         assert back.event_template == nr.event_template  # explicit template survived

@@ -54,8 +54,8 @@ from ._numeric_record_batch import NumericRecordBatch
 from ._record_batch import RecordBatch
 from ._record_distribution import RecordDistribution
 from .event_template import (
-    ArraySpec,
     EventTemplate,
+    NumericArraySpec,
     NumericEventTemplate,
     _concretize_event_template,
 )
@@ -1122,7 +1122,7 @@ class Function(Node, TrackedTerm, Annotated):
     ) -> None:
         """Raise a clear error if explicit JAX dispatch cannot trace."""
         if self._output_template is not None and any(
-            isinstance(spec, ArraySpec) and spec.support is not None
+            isinstance(spec, NumericArraySpec) and spec.support is not None
             for spec in self._output_template.values()
         ):
             raise ValueError(

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from probpipe import EventTemplate, NumericRecord, NumericRecordBatch, Record
-from probpipe.core.event_template import ArraySpec, NumericEventTemplate, OpaqueSpec
+from probpipe.core.event_template import NumericArraySpec, NumericEventTemplate, OpaqueSpec
 
 # ---------------------------------------------------------------------------
 # Construction: path-keyed unflattening and its error cases
@@ -83,7 +83,7 @@ class TestConditionalRoundTrip:
 
     def test_value_only_dict_is_lossy_for_dtype(self):
         # A template carrying dtype is not recoverable from a value-only dict.
-        tpl = EventTemplate(x=ArraySpec((), dtype=jnp.dtype("float32")))
+        tpl = EventTemplate(x=NumericArraySpec((), dtype=jnp.dtype("float32")))
         r = Record("r", {"x": jnp.float32(1.0)}, event_template=tpl)
         assert Record("r", dict(r)) != r  # re-inferred template drops the dtype
 
@@ -109,7 +109,7 @@ class TestSubtreeTemplateInvariant:
 
     def test_supplied_template_via_path_keys(self):
         tpl = EventTemplate(
-            physics=EventTemplate(force=ArraySpec((), dtype=jnp.dtype("float32")), mass=()),
+            physics=EventTemplate(force=NumericArraySpec((), dtype=jnp.dtype("float32")), mass=()),
             obs=(),
         )
         r = Record(
@@ -124,7 +124,7 @@ class TestSubtreeTemplateInvariant:
         # A pre-built child Record whose own template differs from the supplied
         # slice must adopt the slice's specs.
         tpl = EventTemplate(
-            physics=EventTemplate(force=ArraySpec((), dtype=jnp.dtype("float64")), mass=()),
+            physics=EventTemplate(force=NumericArraySpec((), dtype=jnp.dtype("float64")), mass=()),
             obs=(),
         )
         child = Record("r", {"force": 1.0, "mass": 2.0})  # bare-shape inferred template
@@ -211,8 +211,8 @@ class TestConvenienceConstructors:
 class TestEditTemplateThreading:
     def _rich(self):
         tpl = EventTemplate(
-            physics=EventTemplate(force=ArraySpec((), dtype=jnp.dtype("float32")), mass=()),
-            obs=ArraySpec((), dtype=jnp.dtype("float32")),
+            physics=EventTemplate(force=NumericArraySpec((), dtype=jnp.dtype("float32")), mass=()),
+            obs=NumericArraySpec((), dtype=jnp.dtype("float32")),
         )
         return Record(
             "r",
@@ -232,7 +232,7 @@ class TestEditTemplateThreading:
         right = Record(
             "r",
             {"obs": jnp.float32(9.0)},
-            event_template=EventTemplate(obs=ArraySpec((), dtype=jnp.dtype("float32"))),
+            event_template=EventTemplate(obs=NumericArraySpec((), dtype=jnp.dtype("float32"))),
         )
         m = left.merge(right)
         assert m.event_template.at_path("physics/force").dtype == jnp.dtype("float32")
@@ -282,7 +282,7 @@ class TestEditTemplateThreading:
         t = EventTemplate(x=(), y=(3,))
         t2 = t.replace(x=OpaqueSpec())
         assert type(t2) is EventTemplate
-        assert isinstance(t2.replace(x=ArraySpec(())), NumericEventTemplate)
+        assert isinstance(t2.replace(x=NumericArraySpec(())), NumericEventTemplate)
 
     def test_edits_reuse_untouched_children_verbatim(self):
         # An untouched nested child already named by its field key survives
@@ -309,7 +309,9 @@ class TestEditTemplateThreading:
             with pytest.raises(ValueError, match="overlap"):
                 r.replace(updates)
         with pytest.raises(ValueError, match="overlap"):
-            r.event_template.replace({"physics": ArraySpec((2,)), "physics/mass": ArraySpec((5,))})
+            r.event_template.replace(
+                {"physics": NumericArraySpec((2,)), "physics/mass": NumericArraySpec((5,))}
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -335,7 +337,7 @@ class TestEventTemplateOps:
     def test_map_to_numeric_promotes(self):
         tpl = EventTemplate(a=None, b=())  # mixed -> base EventTemplate
         assert not isinstance(tpl, NumericEventTemplate)
-        mapped = tpl.map(lambda s: ArraySpec((2,)))  # every spec numeric now
+        mapped = tpl.map(lambda s: NumericArraySpec((2,)))  # every spec numeric now
         assert isinstance(mapped, NumericEventTemplate)
 
 
