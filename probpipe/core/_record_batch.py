@@ -41,6 +41,7 @@ import numpy as np
 from ._array_backend import _is_numeric_dtype, _to_jax_array
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._function_batch import FunctionBatch
+from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque import OpaqueSpec
 from ._opaque_batch import OpaqueBatch
@@ -381,19 +382,21 @@ class RecordBatch(Batch[Record]):
         spec = self.event_template[key]
         if isinstance(spec, NumericArraySpec):
             return column
-        name = f"{self.name}[{key!r}]"
-        column_spec = BatchSpec(spec, self.axis_groups, self.level_names)
-        if isinstance(spec, FunctionSpec):
-            return self._inherit_provenance(
-                FunctionBatch._over_store(column, spec=column_spec, name=name)
+        # Every other kind presents through its registered batch form, so a new
+        # kind is reachable here by registering itself rather than by being added
+        # to a switch this module would otherwise have to know about.
+        column_cls = batch_class_for_spec(spec)
+        if column_cls is None:
+            raise TypeError(
+                f"the field {key!r} is declared {type(spec).__name__}, which has no batch form; "
+                f"a kind registers its batch form beside its classes (see core/_kinds.py)"
             )
-        if isinstance(spec, OpaqueSpec):
-            return self._inherit_provenance(
-                OpaqueBatch._over_store(column, spec=column_spec, name=name)
+        return self._inherit_provenance(
+            column_cls._over_store(
+                column,
+                spec=BatchSpec(spec, self.axis_groups, self.level_names),
+                name=f"{self.name}[{key!r}]",
             )
-        raise TypeError(
-            f"the field {key!r} is declared {type(spec).__name__}, which has no batch form yet; "
-            f"an array field, a callable field, and an opaque field are the forms a column takes"
         )
 
     def _field_view(self, path: str, template: EventTemplate) -> Self:
