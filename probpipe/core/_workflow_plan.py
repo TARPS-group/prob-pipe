@@ -7,22 +7,27 @@ execute. Planning is intentionally side-effect-free.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
+from itertools import product as cartesian_product
 from math import prod
 from types import UnionType
 from typing import Any, Literal, Union, get_args, get_origin
 
-from . import _workflow_call, _workflow_distribution_normalization
+from . import _workflow_call, _workflow_descendants, _workflow_distribution_normalization
 from ._batch import Batch
 from ._distribution_array import DistributionArray
 from ._record_batch import RecordBatch
-from .distribution import Distribution
+from .distribution import Distribution, EmpiricalDistribution
 
 BroadcastRegime = Literal["none", "distribution", "sweep", "nested"]
+StochasticExecutionMode = Literal["exact", "sampled"]
+StochasticEvaluationMode = Literal["exact", "sampled", "mixed_exact_sampled"]
+LogicalUnitLayout = Literal["singleton", "canonical_sweep"]
+StructuralRngId = tuple[str | int, ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ArrayBroadcastGroup:
     """One zip group of array-valued sweep arguments — read along the same axes.
 
@@ -44,7 +49,7 @@ class ArrayBroadcastGroup:
     axis_groups: tuple[tuple[int, ...], ...]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BroadcastPlan:
     """Pure broadcast classification for one resolved workflow call."""
 
@@ -56,6 +61,124 @@ class BroadcastPlan:
     sweep_level_names: tuple[str, ...]
     sweep_axis_groups: tuple[tuple[int, ...], ...]
     n_sweep: int
+
+
+@dataclass(frozen=True, slots=True)
+class StochasticConsumerPlan:
+    """Canonical projection of one argument from a co-sampled root."""
+
+    arg_ref: _workflow_call.WorkflowInputRef
+    record_path: tuple[str, ...]
+    descendant_descriptor: tuple[Any, ...] | None
+    _descriptor_abi_summary: _workflow_descendants._DescriptorAbiSummary = field(
+        init=False,
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+
+    def __post_init__(self) -> None:
+        """Derive non-authoritative execution metadata from the descriptor."""
+        object.__setattr__(
+            self,
+            "_descriptor_abi_summary",
+            _workflow_descendants._summarize_descriptor_abis(self.descendant_descriptor),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class StochasticSourceGroup:
+    """One recursive stochastic root and its ordered consumers."""
+
+    index: int
+    consumers: tuple[StochasticConsumerPlan, ...]
+    execution_mode: StochasticExecutionMode
+    exact_size: int | None
+
+    @property
+    def arg_refs(self) -> tuple[_workflow_call.WorkflowInputRef, ...]:
+        """Return consumer references in canonical argument order."""
+        return tuple(consumer.arg_ref for consumer in self.consumers)
+
+    @property
+    def stochastic_source_id(self) -> StructuralRngId:
+        """Return the structural identity used by the workflow RNG broker."""
+        return ("source-group", self.index)
+
+
+@dataclass(frozen=True, slots=True)
+class StochasticRuntimeBinding:
+    """Live root and preflight-captured evaluators for one source group."""
+
+    root: Distribution = field(compare=False, hash=False, repr=False)
+    sample_root: Callable[[Any, tuple[int, ...]], Any] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+    consumer_evaluators: tuple[Callable[[Any], Any], ...] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class LogicalUnit:
+    """One singleton or row-major sweep cell in a lifting plan."""
+
+    layout: LogicalUnitLayout
+    flat_index: int
+    coordinates: tuple[int, ...]
+
+    @property
+    def logical_unit_id(self) -> StructuralRngId:
+        """Return the structural identity used by the workflow RNG broker."""
+        if self.layout == "singleton":
+            return ("singleton",)
+        return ("cell", *self.coordinates)
+
+
+@dataclass(frozen=True, slots=True)
+class PlannedRandomEvent:
+    """Derived source/unit identity for one planned random event."""
+
+    stochastic_source_id: StructuralRngId
+    logical_unit_id: StructuralRngId
+
+
+@dataclass(frozen=True, slots=True)
+class StochasticPlan:
+    """Immutable stochastic lifting decisions for one normalized call."""
+
+    evaluation_mode: StochasticEvaluationMode
+    arg_refs: tuple[_workflow_call.WorkflowInputRef, ...]
+    source_groups: tuple[StochasticSourceGroup, ...]
+    logical_units: tuple[LogicalUnit, ...]
+    n_broadcast_samples: int
+    sample_shape: tuple[int, ...] | None
+    exact_group_order: tuple[int, ...]
+    exact_combination_order: tuple[tuple[int, ...], ...]
+    repetitions_per_combination: int
+    n_evaluations: int
+    runtime_bindings: tuple[StochasticRuntimeBinding, ...] = field(
+        compare=False,
+        hash=False,
+        repr=False,
+    )
+
+    @property
+    def random_events(self) -> tuple[PlannedRandomEvent, ...]:
+        """Derive sampled source/unit events without storing a second table."""
+        return tuple(
+            PlannedRandomEvent(
+                stochastic_source_id=group.stochastic_source_id,
+                logical_unit_id=unit.logical_unit_id,
+            )
+            for unit in self.logical_units
+            for group in self.source_groups
+            if group.execution_mode == "sampled"
+        )
 
 
 def build_broadcast_plan(
@@ -100,6 +223,174 @@ def build_broadcast_plan(
         sweep_axis_groups=sweep_axis_groups,
         n_sweep=n_sweep,
     )
+
+
+def build_stochastic_plan(
+    values: Mapping[str, Any],
+    broadcast_plan: BroadcastPlan,
+    n_broadcast_samples: int,
+) -> StochasticPlan | None:
+    """Build immutable stochastic decisions without claiming random events."""
+    if broadcast_plan.regime in ("none", "sweep"):
+        return None
+
+    _validate_stochastic_sample_count(n_broadcast_samples)
+    arg_refs = tuple(broadcast_plan.dist_args)
+    grouped_consumers, source_values, runtime_samplers, runtime_evaluators = (
+        _group_stochastic_sources(
+            values=values,
+            refs=arg_refs,
+        )
+    )
+
+    candidates = [
+        (index, source)
+        for index, source in enumerate(source_values)
+        if isinstance(source, EmpiricalDistribution) and source.num_atoms <= n_broadcast_samples
+    ]
+    candidates.sort(key=lambda pair: pair[1].num_atoms)
+
+    exact_group_indices: list[int] = []
+    exact_sizes: dict[int, int] = {}
+    exact_product = 1
+    for index, source in candidates:
+        size = source.num_atoms
+        if exact_product * size <= n_broadcast_samples:
+            exact_group_indices.append(index)
+            exact_sizes[index] = size
+            exact_product *= size
+
+    source_groups = tuple(
+        StochasticSourceGroup(
+            index=index,
+            consumers=tuple(consumers),
+            execution_mode="exact" if index in exact_sizes else "sampled",
+            exact_size=exact_sizes.get(index),
+        )
+        for index, consumers in enumerate(grouped_consumers)
+    )
+    runtime_bindings = tuple(
+        StochasticRuntimeBinding(
+            root=source,
+            sample_root=runtime_samplers[index],
+            consumer_evaluators=tuple(runtime_evaluators[index]),
+        )
+        for index, source in enumerate(source_values)
+    )
+    logical_units = _build_logical_units(broadcast_plan)
+    exact_group_order = tuple(exact_group_indices)
+    exact_combination_order = tuple(
+        cartesian_product(*(range(exact_sizes[index]) for index in exact_group_order))
+    )
+
+    has_sampled_groups = any(group.execution_mode == "sampled" for group in source_groups)
+    if not has_sampled_groups:
+        evaluation_mode: StochasticEvaluationMode = "exact"
+        repetitions_per_combination = 1
+        n_evaluations = exact_product
+        sample_shape = None
+    elif exact_group_order:
+        evaluation_mode = "mixed_exact_sampled"
+        repetitions_per_combination = max(1, n_broadcast_samples // exact_product)
+        n_evaluations = exact_product * repetitions_per_combination
+        sample_shape = (n_evaluations,)
+    else:
+        evaluation_mode = "sampled"
+        repetitions_per_combination = n_broadcast_samples
+        n_evaluations = n_broadcast_samples
+        sample_shape = (n_broadcast_samples,)
+
+    return StochasticPlan(
+        evaluation_mode=evaluation_mode,
+        arg_refs=arg_refs,
+        source_groups=source_groups,
+        logical_units=logical_units,
+        n_broadcast_samples=n_broadcast_samples,
+        sample_shape=sample_shape,
+        exact_group_order=exact_group_order,
+        exact_combination_order=exact_combination_order,
+        repetitions_per_combination=repetitions_per_combination,
+        n_evaluations=n_evaluations,
+        runtime_bindings=runtime_bindings,
+    )
+
+
+def _group_stochastic_sources(
+    *,
+    values: Mapping[str, Any],
+    refs: Sequence[_workflow_call.WorkflowInputRef],
+) -> tuple[
+    list[list[StochasticConsumerPlan]],
+    list[Distribution],
+    list[Callable[[Any, tuple[int, ...]], Any]],
+    list[list[Callable[[Any], Any]]],
+]:
+    """Discover live roots while keeping object IDs out of canonical plans."""
+    grouped_consumers: list[list[StochasticConsumerPlan]] = []
+    source_values: list[Distribution] = []
+    runtime_samplers: list[Callable[[Any, tuple[int, ...]], Any]] = []
+    runtime_evaluators: list[list[Callable[[Any], Any]]] = []
+    group_index_by_root_id: dict[int, int] = {}
+
+    source_entries = tuple((ref, _workflow_call.input_ref_value(values, ref)) for ref in refs)
+    captured_consumers = _workflow_descendants.capture_stochastic_consumers(
+        tuple(value for _ref, value in source_entries)
+    )
+
+    for (ref, _value), captured in zip(source_entries, captured_consumers, strict=True):
+        root = captured.root
+
+        root_identity = id(root)
+        group_index = group_index_by_root_id.get(root_identity)
+        if group_index is None:
+            group_index = len(grouped_consumers)
+            group_index_by_root_id[root_identity] = group_index
+            grouped_consumers.append([])
+            source_values.append(root)
+            runtime_samplers.append(captured.sample_root)
+            runtime_evaluators.append([])
+        descendant_descriptor = captured.descendant_descriptor
+        if descendant_descriptor is not None:
+            descendant_descriptor = (
+                "stochastic-descendant",
+                ("base_source_slot", group_index),
+                ("graph", descendant_descriptor),
+            )
+        grouped_consumers[group_index].append(
+            StochasticConsumerPlan(
+                arg_ref=ref,
+                record_path=captured.record_path,
+                descendant_descriptor=descendant_descriptor,
+            )
+        )
+        runtime_evaluators[group_index].append(captured.evaluator)
+
+    return grouped_consumers, source_values, runtime_samplers, runtime_evaluators
+
+
+def _build_logical_units(broadcast_plan: BroadcastPlan) -> tuple[LogicalUnit, ...]:
+    if broadcast_plan.regime == "distribution":
+        return (LogicalUnit(layout="singleton", flat_index=0, coordinates=()),)
+
+    return tuple(
+        LogicalUnit(
+            layout="canonical_sweep",
+            flat_index=flat_index,
+            coordinates=tuple(coordinates),
+        )
+        for flat_index, coordinates in enumerate(
+            cartesian_product(*(range(axis) for axis in broadcast_plan.sweep_batch_shape))
+        )
+    )
+
+
+def _validate_stochastic_sample_count(n_broadcast_samples: int) -> None:
+    if isinstance(n_broadcast_samples, bool) or not isinstance(n_broadcast_samples, int):
+        raise TypeError(f"n_broadcast_samples must be an integer; got {n_broadcast_samples!r}")
+    if n_broadcast_samples <= 0:
+        raise ValueError(
+            f"n_broadcast_samples must be a positive integer; got {n_broadcast_samples!r}"
+        )
 
 
 def group_by_alignment(

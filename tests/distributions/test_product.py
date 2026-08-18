@@ -21,6 +21,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
@@ -498,7 +499,6 @@ class TestBroadcastingReconnection:
             func=add,
             dispatch=backend,
             n_broadcast_samples=50,
-            seed=42,
         )
 
     def test_joint_views_sampled_together_loop(self):
@@ -519,7 +519,8 @@ class TestBroadcastingReconnection:
             y=Normal(loc=10.0, scale=1.0, name="y"),
         )
         wf = self._make_add_workflow("sequential")
-        result = wf(a=joint["x"], b=joint["y"])
+        with workflow_run(seed=42):
+            result = wf(a=joint["x"], b=joint["y"])
         assert hasattr(result, "samples")
         # x ~ N(0,1), y ~ N(10,1), independent => a+b ~ N(10, sqrt(2))
         # With n=128 (default broadcast), MC SE on mean ~ sqrt(2)/sqrt(128) ~ 0.125
@@ -545,9 +546,9 @@ class TestBroadcastingReconnection:
             func=subtract,
             dispatch="sequential",
             n_broadcast_samples=20,
-            seed=99,
         )
-        result = wf(a=view_x, b=view_x)
+        with workflow_run(seed=99):
+            result = wf(a=view_x, b=view_x)
         assert hasattr(result, "samples")
         # a and b are the same samples, so a - b = 0 for every sample
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
@@ -567,9 +568,9 @@ class TestBroadcastingReconnection:
             func=add3,
             dispatch="sequential",
             n_broadcast_samples=50,
-            seed=77,
         )
-        result = wf(a=joint["x"], b=joint["y"], c=independent)
+        with workflow_run(seed=77):
+            result = wf(a=joint["x"], b=joint["y"], c=independent)
         assert hasattr(result, "samples")
         # x ~ N(0,1), y ~ N(5,1), c ~ N(100, 0.1) => sum ~ N(105, ...)
         mean_val = float(jnp.mean(result.samples))
@@ -589,9 +590,9 @@ class TestBroadcastingReconnection:
             func=add,
             dispatch="jax",
             n_broadcast_samples=50,
-            seed=55,
         )
-        result = wf(a=joint["x"], b=joint["y"])
+        with workflow_run(seed=55):
+            result = wf(a=joint["x"], b=joint["y"])
         assert hasattr(result, "samples")
         mean_val = float(jnp.mean(result.samples))
         assert abs(mean_val - 10.0) < 2.0
@@ -611,9 +612,9 @@ class TestBroadcastingReconnection:
             func=subtract,
             dispatch="jax",
             n_broadcast_samples=20,
-            seed=88,
         )
-        result = wf(a=view_x, b=view_x)
+        with workflow_run(seed=88):
+            result = wf(a=view_x, b=view_x)
         assert hasattr(result, "samples")
         np.testing.assert_allclose(np.array(result.samples), 0.0, atol=1e-5)
 
@@ -1020,9 +1021,9 @@ class TestEnumerateWithDistributionViews:
             func=compute,
             dispatch="sequential",
             n_broadcast_samples=50,
-            seed=123,
         )
-        result = wf(a=view_x, b=view_y, c=ed)
+        with workflow_run(seed=123):
+            result = wf(a=view_x, b=view_y, c=ed)
         assert hasattr(result, "samples")
         assert result.num_atoms == 50
 
@@ -1356,9 +1357,9 @@ class TestNestedProductDistribution:
             func=add,
             dispatch="sequential",
             n_broadcast_samples=30,
-            seed=42,
         )
-        result = wf(a=view_force, b=view_obs)
+        with workflow_run(seed=42):
+            result = wf(a=view_force, b=view_obs)
         assert hasattr(result, "samples")
         assert result.num_atoms == 30
 

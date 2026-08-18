@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **Workflow-scoped structural RNG, co-sampling, and validated replay (#389).**
+  Function-owned RNG controls—`Function(..., seed=...)`, the former reserved
+  call-level RNG option, and `Function.with_options(seed=...)`—have been removed
+  without a deprecation shim. Reproducible ProbPipe-owned randomness now belongs
+  to a run:
+
+  ```python
+  from probpipe import workflow_run
+
+  with workflow_run(seed=42):
+      result = workflow(distribution_input)
+  ```
+
+  A bare omitted-key stochastic call receives a fresh ephemeral root; seeded,
+  anonymous, and nested `workflow_run` scopes derive keys from stable call,
+  source, and logical-unit identities. All omitted-key sampling, conversion,
+  validation, and diagnostics routes use the same broker. Explicit sampling
+  keys and inference `random_seed` arguments remain caller-owned, are passed
+  through unchanged, and do not advance the workflow stream. A wrapped user
+  callable's own `seed` parameter is still an ordinary input.
+
+  `score_posterior(..., key=None)` no longer uses a fixed
+  `jax.random.PRNGKey(0)` for sliced Wasserstein projections. It now follows
+  the same ownership rule: a bare score receives a fresh ephemeral root, while
+  benchmark scoring must run inside `workflow_run(seed=...)` (or pass an
+  explicit `key=`) to remain reproducible.
+
+  Omitted-key `predictive_check`, `simulation_based_calibration`, and `add_ppc`
+  certify only the exact built-in `GLMLikelihood` data generator. Custom or
+  otherwise opaque likelihoods, including subclasses, must pass `key=`
+  explicitly; inheriting `generate_data` does not certify that a subclass's
+  sampling still matches the built-in stochastic-effect descriptor. The
+  omitted-key route also requires that exact likelihood to carry its stored
+  design matrix.
+
+  PPC test functions must have unique `__name__` values because those names
+  label the returned statistics; use distinct named functions instead of
+  multiple lambdas or same-named methods.
+
+  Repeated aliases, record views, empirical weights, and the supported closed
+  set of transformed descendants now co-sample from one root realization.
+  Exact empirical eligibility likewise follows that recursive root, so calls
+  such as `f(emp["x"], emp["y"])` enumerate and weight the original atoms
+  instead of drawing unweighted rows. Because JAX dispatch does not implement
+  exact enumeration, explicitly requesting `dispatch="jax"` for this case now
+  raises `dispatch='jax' does not support exact empirical enumeration`; use
+  `auto`, `sequential`, or `thread` instead.
+
+  Managed thread/Prefect work items preserve logical RNG identity across
+  scheduling and retries, while rejecting unmanaged copied concurrent
+  contexts. JAX probing cannot consume workflow RNG state.
+
+  Successful workflow-owned stochastic results store an exact provenance RNG
+  recipe in FULL and LIGHTWEIGHT modes. `replay_run(provenance)` validates the
+  callable, plan, execution capability, provider ABI, and expected events
+  before re-deriving keys; OFF and legacy provenance without a recipe are not
+  guessed. The new public failures are
+  `UnmanagedConcurrentWorkflowEntryError`, `ReplayCompatibilityError`, and
+  `ReplayUnsupportedCallableError`.
+
+  A top-level workflow snapshots `provenance_config.mode` on entry. Nested
+  scopes and managed workers inherit that value, and configuration changes
+  made during execution apply only to the next top-level workflow.
+
+  RNG ABI v1 has no call-local replacement that recreates the old exact
+  sibling-realization behavior. Put related quantities in one joint Function
+  call, retain the resulting joint distribution, or materialize and reuse
+  samples explicitly when a shared realization is required.
+
 ### Removed (breaking)
 
 - **`RecordArray` and `NumericRecordArray` are gone; the batch of records is
@@ -174,17 +245,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   assembly read the row count from the samples' `shape`, which a record batch
   refuses unless it holds exactly one leaf; the count now comes from
   `batch_shape`, the one accessor that means the same thing for every batched
-  value. (Not `len`: on a `RecordBatch` that is the *field* count, which would
-  have made `num_atoms` silently wrong.) And enumeration stacked each
-  argument's per-row values with `jnp.stack`, which a `Record` row is not; those
-  now stack through `RecordBatch.stack`.
+  value. Enumeration also stacked each argument's per-row values with
+  `jnp.stack`, which a `Record` row is not; those now stack through
+  `RecordBatch.stack`.
 
   The first of those is what kept `f(d, d["x"])` — a parent alongside its own
   view, the remaining co-sampling case above — from running end to end once its
-  draws were shared. Record-valued laws now lift under `auto`, `sequential`, and
-  `thread` dispatch, including record-valued empiricals, whether enumerated or
-  passed twice. Explicit `dispatch="jax"` reports the usual not-traceable error
-  when the wrapped function indexes a record.
+  draws were shared. Record-valued laws now lift under `auto`, `sequential`,
+  `thread`, and `jax` dispatch when the mapped body is JAX-traceable, including
+  nested sampled records and repeated roots. Exactly enumerated empirical roots
+  still report the exact-enumeration error described above under explicit
+  `dispatch="jax"`.
 
   **The joint those lifts produce also resamples.** `include_inputs=True` keeps
   every input beside the output, and drawing from that joint gathers the same
@@ -200,20 +271,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   side, where a vectorized broadcast over a record-returning function leaves the
   output a batched `Record`. A single draw is unwrapped to one record rather than
   a one-row batch, its field names intact.
-
-  Two shapes are still unsupported. A record with **nested** fields cannot be
-  batched at all, since a record batch is keyed by its top-level children rather
-  than by leaf path, so lifting such a law is refused with a message naming the
-  argument rather than surfacing what the container said. That is #340, and a
-  strict `xfail` in the broadcast tests marks the case so it reports the day
-  record batches become leaf-keyed.
-
-  The other: a record-valued empirical passed alongside a
-  field view of itself. That group routes to sampling rather than enumeration,
-  where `RecordEmpiricalDistribution._sample` hands back a plain record batched
-  on its leaves rather than a record batch — deliberately, so a vmap'd caller
-  can flatten it — and the view half of the group has no rows to project from. That is a distribution-
-  layer contract gap rather than a broadcast one.
 
 - **Value specs are fingerprinted by declaration, not identity (#381).** The
   spec hasher now covers `RecordSpec` and recurses into a stored declaration

@@ -50,10 +50,10 @@ import jax
 import jax.numpy as jnp
 
 from .._dtype import _as_float_array
-from .._utils import _auto_key
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
+from . import _workflow_broker, _workflow_descendants
 from ._distribution_base import Distribution
 from ._record_distribution import RecordDistribution, _field_event_shape
 from .constraints import (
@@ -140,9 +140,25 @@ def _mc_expectation(
         If ``None``, use the global ``RETURN_APPROX_DIST`` setting.
     """
     n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
+    if isinstance(n, bool) or not isinstance(n, int):
+        raise TypeError(f"num_evaluations must be an integer; got {n!r}")
+    if n <= 0:
+        raise ValueError(f"num_evaluations must be positive; got {n!r}")
     if key is None:
-        key = _auto_key()
-    samples = dist._sample(key, sample_shape=(n,))
+        captured = _workflow_descendants.capture_stochastic_consumer(dist)
+        key = _workflow_broker._resolve_automatic_key(
+            None,
+            _workflow_broker._singleton_effect_plan(
+                operation_kind="expectation",
+                execution_mode="monte_carlo",
+                sample_shape=(n,),
+                record_path=captured.record_path,
+                descendant_descriptor=captured.descendant_descriptor,
+            ),
+        )
+        samples = _workflow_descendants.sample_captured_consumer(captured, key, (n,))
+    else:
+        samples = dist._sample(key, sample_shape=(n,))
     evals = jax.vmap(f)(samples)
 
     rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
@@ -901,6 +917,10 @@ def _flattened_distribution_view_class_for_base(base: Distribution) -> type:
         (FlattenedDistributionView, *extra_bases),
         extra_methods,
     )
+    _workflow_descendants._register_unsupported_descendant_type(
+        new_cls,
+        "FlattenedDistributionView",
+    )
     _FLATTENED_VIEW_CLASS_CACHE[key] = new_cls
     return new_cls
 
@@ -1123,7 +1143,23 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             # in flat form (no aux-shape invariants) and run vmap over a
             # closure that unflattens to a Record inside the loop body.
             n = num_evaluations if num_evaluations is not None else _base.DEFAULT_NUM_EVALUATIONS
-            sample_key = key if key is not None else _auto_key()
+            if isinstance(n, bool) or not isinstance(n, int):
+                raise TypeError(f"num_evaluations must be an integer; got {n!r}")
+            if n <= 0:
+                raise ValueError(f"num_evaluations must be positive; got {n!r}")
+            sample_key = key
+            if sample_key is None:
+                captured = _workflow_descendants.capture_stochastic_consumer(self)
+                sample_key = _workflow_broker._resolve_automatic_key(
+                    None,
+                    _workflow_broker._singleton_effect_plan(
+                        operation_kind="expectation",
+                        execution_mode="monte_carlo",
+                        sample_shape=(n,),
+                        record_path=captured.record_path,
+                        descendant_descriptor=captured.descendant_descriptor,
+                    ),
+                )
             base_samples = self._base._sample(sample_key, sample_shape=(n,))
             flat_samples = self._base.flatten_value(
                 base_samples,
@@ -1153,6 +1189,10 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
         "NumericRecordDistributionView",
         (NumericRecordDistributionView, *extra_bases),
         extra_methods,
+    )
+    _workflow_descendants._register_unsupported_descendant_type(
+        new_cls,
+        "NumericRecordDistributionView",
     )
     _LIFTED_VIEW_CLASS_CACHE[type(base)] = new_cls
     return new_cls
@@ -1246,3 +1286,13 @@ class NumericRecordDistributionView(NumericRecordDistribution):
             f"NumericRecordDistributionView(base={type(self._base).__name__}, "
             f"template={self.event_template!r})"
         )
+
+
+_workflow_descendants._register_unsupported_descendant_type(
+    FlattenedDistributionView,
+    "FlattenedDistributionView",
+)
+_workflow_descendants._register_unsupported_descendant_type(
+    NumericRecordDistributionView,
+    "NumericRecordDistributionView",
+)

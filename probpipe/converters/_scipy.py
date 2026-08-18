@@ -8,14 +8,25 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 
 from ..core.distribution import (
     NumericRecordDistribution,
     RecordEmpiricalDistribution,
 )
 from ..core.provenance import Provenance
-from ._registry import ConversionInfo, ConversionMethod, Converter
+from ._registry import (
+    _SCIPY_PROVIDER_ABI,
+    ConversionInfo,
+    ConversionMethod,
+    Converter,
+    _ConversionExecutionMode,
+    _ConversionExecutionPlan,
+    _resolve_conversion_key,
+    _sampled_conversion_plan,
+)
 
 try:
     import scipy.stats as _stats
@@ -25,6 +36,25 @@ try:
 except ImportError:
     _HAS_SCIPY = False
     _rv_frozen = None
+
+
+def _scipy_nonrandom_plan(
+    execution_mode: _ConversionExecutionMode,
+) -> _ConversionExecutionPlan:
+    """Build a non-consuming SciPy conversion plan."""
+    return _ConversionExecutionPlan(
+        execution_mode=execution_mode,
+        sample_shape=None,
+        provider_abi=_SCIPY_PROVIDER_ABI,
+        automatic_key_certified=True,
+    )
+
+
+def _scipy_generator_from_key(key: Any) -> np.random.Generator:
+    """Adapt raw JAX key words to the fixed SeedSequence/PCG64 provider."""
+    words = np.asarray(jax.random.key_data(key), dtype=np.uint32).reshape(-1)
+    seed_sequence = np.random.SeedSequence([int(word) for word in words])
+    return np.random.Generator(np.random.PCG64(seed_sequence))
 
 
 def _build_scipy_to_probpipe() -> dict[type, tuple[str, callable]]:
@@ -199,9 +229,48 @@ class ScipyConverter(Converter):
 
         return ConversionInfo(feasible=False)
 
+    def _workflow_plan_conversion(
+        self,
+        source: Any,
+        target_type: type,
+        kwargs: dict[str, Any],
+    ) -> _ConversionExecutionPlan:
+        """Capture the SciPy adapter path before any sampling occurs."""
+        if isinstance(source, _rv_frozen):
+            dist_cls = type(source.dist)
+            if dist_cls not in self._scipy_map:
+                return _sampled_conversion_plan(
+                    kwargs.get("num_samples", 1024),
+                    provider_abi=_SCIPY_PROVIDER_ABI,
+                )
+            pp_cls, _ = self._scipy_map[dist_cls]
+            if target_type is pp_cls or issubclass(pp_cls, target_type):
+                return _scipy_nonrandom_plan("exact")
+            return _scipy_nonrandom_plan("delegated")
+        return _scipy_nonrandom_plan("exact")
+
     def convert(
         self, source: Any, target_type: type, *, key: Any | None = None, **kwargs: Any
     ) -> Any:
+        plan = self._workflow_plan_conversion(source, target_type, dict(kwargs))
+        return self._workflow_execute_conversion(
+            source,
+            target_type,
+            plan,
+            key=key,
+            **kwargs,
+        )
+
+    def _workflow_execute_conversion(
+        self,
+        source: Any,
+        target_type: type,
+        plan: _ConversionExecutionPlan,
+        *,
+        key: Any | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Execute a conversion from its already validated private plan."""
         if not _HAS_SCIPY:
             raise TypeError("scipy is not installed")
 
@@ -221,8 +290,16 @@ class ScipyConverter(Converter):
                 return converter_registry.convert(pp_dist, target_type, key=key, **kwargs)
 
             # Unknown scipy: sample -> RecordEmpiricalDistribution
-            n = kwargs.pop("num_samples", 1024)
-            samples = jnp.asarray(source.rvs(size=n))
+            kwargs.pop("num_samples", None)
+            sample_shape = plan.sample_shape
+            assert sample_shape is not None
+            key = _resolve_conversion_key(key, plan)
+            samples = jnp.asarray(
+                source.rvs(
+                    size=sample_shape[0],
+                    random_state=_scipy_generator_from_key(key),
+                )
+            )
             emp_name = kwargs.get("name") or getattr(source, "name", None) or "samples"
             emp = RecordEmpiricalDistribution(samples, name=emp_name)
             emp.with_provenance(Provenance.create("convert_from_scipy", parents=[]))

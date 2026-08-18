@@ -10,7 +10,13 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ._registry import ConversionInfo, ConversionMethod, Converter
+from ._registry import (
+    _DECLARED_CONVERTER_ABI,
+    ConversionInfo,
+    ConversionMethod,
+    Converter,
+    _ConversionExecutionPlan,
+)
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -153,6 +159,21 @@ class ProtocolConverter(Converter):
 
         concrete_type = resolver(source)
         return self._registry.convert(source, concrete_type, key=key, **kwargs)
+
+    def _workflow_plan_conversion(
+        self,
+        source: Any,
+        target_type: type,
+        kwargs: dict[str, Any],
+    ) -> _ConversionExecutionPlan:
+        """Leave concrete stochastic planning to the delegated registry call."""
+        del kwargs
+        return _ConversionExecutionPlan(
+            execution_mode=("exact" if isinstance(source, target_type) else "delegated"),
+            sample_shape=None,
+            provider_abi=_DECLARED_CONVERTER_ABI,
+            automatic_key_certified=True,
+        )
 
     @property
     def priority(self) -> int:

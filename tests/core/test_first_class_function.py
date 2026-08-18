@@ -39,6 +39,7 @@ from probpipe import (
     positive_definite,
     real,
     simplex,
+    workflow_run,
 )
 
 
@@ -448,10 +449,10 @@ class TestApplyContract:
             input_template=EventTemplate(x=ArraySpec((), support=positive)),
             dispatch="sequential",
             n_broadcast_samples=5,
-            seed=0,
         )
 
-        result = wrapped(SupportAnnotatedNormal(0, 1, name="x"))
+        with workflow_run(seed=0):
+            result = wrapped(SupportAnnotatedNormal(0, 1, name="x"))
 
         assert result.num_atoms == 5
 
@@ -725,10 +726,10 @@ class TestSymbolicCalls:
             output_template=EventTemplate(pair=(2,)),
             dispatch=dispatch,
             n_broadcast_samples=8,
-            seed=4,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=4):
+            result = wrapped(Normal(0, 1, name="x"))
 
         assert result.event_template == EventTemplate(pair=(2,))
         assert result.num_atoms == 8
@@ -777,10 +778,10 @@ class TestSymbolicCalls:
             output_template=EventTemplate(y=ArraySpec((), support=positive)),
             dispatch="auto",
             n_broadcast_samples=8,
-            seed=11,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=11):
+            result = wrapped(Normal(0, 1, name="x"))
 
         assert result.provenance.metadata["dispatch"] == "sequential"
         assert result.event_template == EventTemplate(y=ArraySpec((), support=positive))
@@ -793,7 +794,6 @@ class TestSymbolicCalls:
             output_template=EventTemplate(y=ArraySpec((), support=positive)),
             dispatch="jax",
             n_broadcast_samples=8,
-            seed=11,
         )
 
         with pytest.raises(
@@ -874,10 +874,10 @@ class TestSymbolicCalls:
             ),
             dispatch=dispatch,
             n_broadcast_samples=8,
-            seed=7,
         )
 
-        result = wrapped(Normal(0, 1, name="x"))
+        with workflow_run(seed=7):
+            result = wrapped(Normal(0, 1, name="x"))
 
         assert result.event_template == EventTemplate(
             stats=EventTemplate(value=(), doubled=()),
@@ -903,10 +903,10 @@ class TestSymbolicCalls:
             output_template=EventTemplate(y=()),
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=3,
         )
 
-        broadcast = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"))
+        with workflow_run(seed=3):
+            broadcast = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"))
         result = broadcast.marginalize()
 
         assert result.event_template == EventTemplate(y=())
@@ -927,7 +927,6 @@ class TestSymbolicCalls:
             output_template=EventTemplate(y=ArraySpec((), support=real)),
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=3,
         )
 
         with pytest.raises(
@@ -975,10 +974,10 @@ class TestSymbolicCalls:
             output_template=EventTemplate(prediction=()),
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=5,
         )
 
-        result = wrapped(rows, Normal(0, 1, name="noise"))
+        with workflow_run(seed=5):
+            result = wrapped(rows, Normal(0, 1, name="noise"))
 
         assert isinstance(result, DistributionArray)
         assert result.event_template == EventTemplate(prediction=())
@@ -1154,19 +1153,22 @@ class TestDynamicImplementation:
 
 
 class TestReentrancyAndProvenance:
-    def test_same_seed_is_repeatable_across_sequential_and_concurrent_calls(self):
+    def test_seeded_runs_are_repeatable_across_sequential_and_concurrent_calls(self):
         probpipe.provenance_config.mode = ProvenanceMode.OFF
         wrapped = Function(
             func=lambda x: x + 1,
             n_broadcast_samples=12,
             dispatch="sequential",
-            seed=19,
         )
         source = Normal(0, 1, name="x")
 
-        sequential = [wrapped(source).samples["marginal"] for _ in range(2)]
+        def evaluate(_):
+            with workflow_run(seed=19):
+                return wrapped(source).samples["marginal"]
+
+        sequential = [evaluate(index) for index in range(2)]
         with ThreadPoolExecutor(max_workers=2) as pool:
-            concurrent = list(pool.map(lambda _: wrapped(source).samples["marginal"], range(2)))
+            concurrent = list(pool.map(evaluate, range(2)))
 
         assert jnp.array_equal(sequential[0], sequential[1])
         assert all(jnp.array_equal(sequential[0], value) for value in concurrent)
@@ -1264,10 +1266,10 @@ class TestVariadicPlanning:
             func=lambda *items: items[0] + items[1],
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=11,
         )
 
-        result = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"), 2.0)
+        with workflow_run(seed=11):
+            result = wrapped.with_options(include_inputs=True)(Normal(0, 1, name="x"), 2.0)
 
         assert isinstance(result, Distribution)
         assert result.num_atoms == 8
@@ -1410,10 +1412,10 @@ class TestVariadicPlanning:
             bind={"items": (Normal(0, 1, name="x"), 2.0)},
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=13,
         )
 
-        result = wrapped()
+        with workflow_run(seed=13):
+            result = wrapped()
 
         assert result.num_atoms == 8
         assert result.provenance.metadata["broadcast_args"] == ["*items[0]"]
@@ -1423,10 +1425,10 @@ class TestVariadicPlanning:
             func=lambda **extras: extras["x"] + extras["offset"],
             dispatch="sequential",
             n_broadcast_samples=8,
-            seed=17,
         )
 
-        result = wrapped(x=Normal(0, 1, name="x"), offset=2.0)
+        with workflow_run(seed=17):
+            result = wrapped(x=Normal(0, 1, name="x"), offset=2.0)
 
         assert result.num_atoms == 8
         assert result.provenance.metadata["broadcast_args"] == ["**extras['x']"]

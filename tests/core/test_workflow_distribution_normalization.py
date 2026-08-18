@@ -20,6 +20,7 @@ from probpipe import (
     NumericRecordDistribution,
     log_prob,
     mean,
+    workflow_run,
 )
 from probpipe.core._workflow_call import make_signature_info_from_signature
 from probpipe.core._workflow_distribution_normalization import (
@@ -225,11 +226,11 @@ class TestUnhintedExternalDistribution:
             func=double,
             n_broadcast_samples=8,
             dispatch="sequential",
-            seed=42,
         )
         external = tfd.Normal(loc=1.0, scale=0.1)
 
-        result = wf(external)
+        with workflow_run(seed=42):
+            result = wf(external)
 
         assert result.num_atoms == 8
         assert [value.shape for value in seen_values] == [()] * 8
@@ -262,10 +263,10 @@ def test_non_distribution_capability_protocol_does_not_disable_lifting():
         func=consume,
         n_broadcast_samples=8,
         dispatch="sequential",
-        seed=12,
     )
 
-    result = wrapped(Normal(0, 1, name="x"))
+    with workflow_run(seed=12):
+        result = wrapped(Normal(0, 1, name="x"))
 
     assert result.num_atoms == 8
     assert len(seen) == 8

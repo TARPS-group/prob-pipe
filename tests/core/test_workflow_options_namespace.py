@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import inspect
+
 import jax.numpy as jnp
 import pytest
 
 import probpipe
 import probpipe.core.node as node
-from probpipe import BroadcastDistribution, Function, Normal, function
+from probpipe import BroadcastDistribution, Function, Normal, function, workflow_run
 
 
 def test_function_is_the_only_public_wrapper_api():
@@ -29,18 +31,63 @@ def test_function_decorator_sets_construction_defaults():
     @function(
         n_broadcast_samples=7,
         dispatch="sequential",
-        seed=0,
     )
     def identity(x):
         return x
 
-    result = identity(Normal(loc=0.0, scale=1.0, name="x"))
+    with workflow_run(seed=0):
+        result = identity(Normal(loc=0.0, scale=1.0, name="x"))
 
     assert result.num_atoms == 7
 
 
 def test_function_has_no_options_alias():
     assert not hasattr(function, "options")
+
+
+def test_function_rng_seed_controls_are_removed():
+    def identity(x):
+        return x
+
+    wf = Function(func=identity, dispatch="sequential")
+
+    assert "seed" not in inspect.signature(Function).parameters
+    assert "seed" not in inspect.signature(wf.with_options).parameters
+    with pytest.raises((TypeError, ValueError), match="seed"):
+        Function(func=identity, dispatch="sequential", seed=42)
+    with pytest.raises((TypeError, ValueError), match="seed"):
+
+        @function(seed=42)
+        def decorated_identity(x):
+            return x
+
+    with pytest.raises(TypeError, match="seed"):
+        wf.with_options(seed=42)
+
+
+def test_function_construction_seed_is_rejected_when_user_parameter_can_bind_it():
+    def add_seed(x, seed):
+        return x + seed
+
+    with pytest.raises(TypeError, match="seed"):
+        Function(func=add_seed, dispatch="sequential", seed=42)
+
+
+def test_decorator_construction_seed_is_rejected_for_variadic_user_kwargs():
+    with pytest.raises(TypeError, match="seed"):
+
+        @function(seed=42)
+        def collect_seed(x, **kwargs):
+            return x + kwargs["seed"]
+
+
+def test_function_bind_can_still_supply_user_seed_parameter():
+    def add_seed(x, seed):
+        return x + seed
+
+    wf = Function(func=add_seed, dispatch="sequential", bind={"seed": 42})
+
+    assert float(wf(1.0)) == 43.0
 
 
 def test_bare_decorator_forms_wrap_functions():
@@ -66,20 +113,20 @@ def test_with_options_controls_sample_count_and_include_inputs():
         func=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
-        seed=0,
     )
 
-    result = wf.with_options(
-        n_broadcast_samples=6,
-        include_inputs=True,
-    )(Normal(loc=0.0, scale=1.0, name="x"))
+    with workflow_run(seed=0):
+        result = wf.with_options(
+            n_broadcast_samples=6,
+            include_inputs=True,
+        )(Normal(loc=0.0, scale=1.0, name="x"))
 
     assert isinstance(result, BroadcastDistribution)
     assert result.num_atoms == 6
     assert "x" in result.input_samples
 
 
-def test_with_options_seed_restarts_sampling_state_for_one_call():
+def test_workflow_run_reproduces_one_lifted_call():
     def identity(x):
         return x
 
@@ -87,17 +134,18 @@ def test_with_options_seed_restarts_sampling_state_for_one_call():
         func=identity,
         n_broadcast_samples=8,
         dispatch="sequential",
-        seed=0,
     )
     normal = Normal(loc=0.0, scale=1.0, name="x")
 
-    first = wf.with_options(seed=42)(normal)
-    second = wf.with_options(seed=42)(normal)
+    with workflow_run(seed=42):
+        first = wf(normal)
+    with workflow_run(seed=42):
+        second = wf(normal)
 
     assert jnp.allclose(first.samples, second.samples)
 
 
-def test_with_options_seed_is_separate_from_user_seed_parameter():
+def test_workflow_seed_is_separate_from_user_seed_parameter():
     def identity(x):
         return x
 
@@ -109,20 +157,25 @@ def test_with_options_seed_is_separate_from_user_seed_parameter():
         func=identity,
         n_broadcast_samples=8,
         dispatch="sequential",
-        seed=0,
-    ).with_options(seed=42)(normal)
+    )
     wf = Function(
         func=add_user_seed,
         n_broadcast_samples=8,
         dispatch="sequential",
-        seed=0,
     )
 
-    first = wf.with_options(seed=42)(normal, seed=7.0)
-    second = wf.with_options(seed=42)(normal, seed=7.0)
+    with workflow_run(seed=42):
+        base_result = base(normal)
+    with workflow_run(seed=42):
+        first = wf(normal, seed=7.0)
+    with workflow_run(seed=42):
+        second = wf(normal, seed=7.0)
 
     assert jnp.allclose(first.samples["marginal"], second.samples["marginal"])
-    assert jnp.allclose(first.samples["marginal"], base.samples["marginal"] + 7.0)
+    assert jnp.allclose(
+        first.samples["marginal"],
+        base_result.samples["marginal"] + 7.0,
+    )
 
 
 def test_workflow_control_names_are_user_parameters():
@@ -152,16 +205,16 @@ def test_var_keyword_receives_workflow_control_names():
         func=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
-        seed=0,
     )
     normal = Normal(loc=0.0, scale=1.0, name="x")
 
-    result = wf.with_options(n_broadcast_samples=5)(
-        x=normal,
-        seed=42,
-        n_broadcast_samples=99,
-        include_inputs=True,
-    )
+    with workflow_run(seed=0):
+        result = wf.with_options(n_broadcast_samples=5)(
+            x=normal,
+            seed=42,
+            n_broadcast_samples=99,
+            include_inputs=True,
+        )
 
     assert result.num_atoms == 5
     assert (
@@ -181,7 +234,6 @@ def test_unbindable_call_time_control_name_is_rejected():
         func=identity,
         n_broadcast_samples=20,
         dispatch="sequential",
-        seed=0,
     )
 
     with pytest.raises(TypeError, match="unexpected keyword argument"):
@@ -196,10 +248,10 @@ def test_bindable_workflow_control_name_does_not_override():
         func=identity,
         n_broadcast_samples=5,
         dispatch="sequential",
-        seed=0,
     )
     normal = Normal(loc=0.0, scale=1.0, name="x")
 
-    result = wf(x=normal, n_broadcast_samples=4)
+    with workflow_run(seed=0):
+        result = wf(x=normal, n_broadcast_samples=4)
 
     assert result.num_atoms == 5

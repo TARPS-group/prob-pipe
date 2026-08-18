@@ -44,6 +44,13 @@ from probpipe.core._numeric_record import NumericRecord
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core._record_batch import RecordBatch
+from probpipe.core._workflow_context import workflow_run
+from probpipe.core._workflow_errors import (
+    ReplayCompatibilityError,
+    ReplayUnsupportedCallableError,
+    UnmanagedConcurrentWorkflowEntryError,
+)
+from probpipe.core._workflow_replay import replay_run
 from probpipe.core.config import ProvenanceMode, WorkflowKind, prefect_config, provenance_config
 from probpipe.core.constraints import (
     Constraint,
@@ -298,6 +305,8 @@ __all__ = [
     "RecordDistribution",
     "RecordEmpiricalDistribution",
     "RecordSpec",
+    "ReplayCompatibilityError",
+    "ReplayUnsupportedCallableError",
     "SequentialJointDistribution",
     "SimpleGenerativeModel",
     "SimpleModel",
@@ -322,6 +331,7 @@ __all__ = [
     "TransformedDistribution",
     "TruncatedNormal",
     "Uniform",
+    "UnmanagedConcurrentWorkflowEntryError",
     "ValueSpec",
     "VonMisesFisher",
     # Weights
@@ -361,6 +371,7 @@ __all__ = [
     "real",
     "register_array_backend",
     "register_bijector",
+    "replay_run",
     "rwmh",
     "simplex",
     "sphere",
@@ -368,6 +379,7 @@ __all__ = [
     "with_conversion",
     "with_resampling",
     "workflow_method",
+    "workflow_run",
 ]
 
 # ---------------------------------------------------------------------------

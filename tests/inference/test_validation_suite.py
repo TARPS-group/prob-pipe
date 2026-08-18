@@ -61,7 +61,11 @@ class TestNUTSReproducesNonGaussianReference:
         assert m.posterior_skewness > 0.5  # Gaussian skewness is 0; measured ≈ 0.7
         # NUTS captures the shape: the distributional metrics sit near the sampling
         # floor. Measured across seeds 0–2: mmd ≤ 0.001, sliced_W ≤ 0.009.
-        nuts = score_posterior(beta_bernoulli_nuts_posterior, m.reference)
+        nuts = score_posterior(
+            beta_bernoulli_nuts_posterior,
+            m.reference,
+            key=jax.random.PRNGKey(0),
+        )
         assert float(nuts["mmd"]) < 0.004
         assert float(nuts["sliced_wasserstein"]) < 0.014
         assert float(nuts["relative_cov_error"]) < 0.2
@@ -74,6 +78,10 @@ class TestNUTSReproducesNonGaussianReference:
         mean = m.reference.mean
         sd = jnp.sqrt(jnp.diag(m.reference.cov))
         gaussian = mean + sd * jax.random.normal(jax.random.PRNGKey(7), (5000, mean.shape[0]))
-        control = score_posterior(gaussian, m.reference)
+        control = score_posterior(
+            gaussian,
+            m.reference,
+            key=jax.random.PRNGKey(0),
+        )
         assert float(control["relative_cov_error"]) < 0.05  # moments match
         assert float(control["mmd"]) > 0.004  # but the non-Gaussian shape is rejected

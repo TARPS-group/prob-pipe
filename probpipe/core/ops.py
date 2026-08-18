@@ -18,13 +18,14 @@ Usage::
 
 from __future__ import annotations
 
+import operator
 from typing import Any
 
 import jax
 import jax.numpy as jnp
 
-from .._utils import _auto_key
 from ..custom_types import Array, PRNGKey
+from . import _workflow_broker, _workflow_descendants
 from .distribution import Distribution, RandomFunction
 from .node import function
 from .protocols import (
@@ -88,10 +89,30 @@ def sample(
         raise TypeError(
             f"{type(dist).__name__} does not support sampling (does not implement SupportsSampling)"
         )
-    if isinstance(sample_shape, int):
-        sample_shape = (sample_shape,)
+    if isinstance(sample_shape, bool):
+        raise TypeError("sample_shape must be an integer or tuple of integers, not bool")
+    axes = sample_shape if isinstance(sample_shape, tuple) else (sample_shape,)
+    if any(isinstance(axis, bool) for axis in axes):
+        raise TypeError("sample_shape must be an integer or tuple of integers")
+    try:
+        sample_shape = tuple(operator.index(axis) for axis in axes)
+    except TypeError:
+        raise TypeError("sample_shape must be an integer or tuple of integers") from None
+    if any(axis < 0 for axis in sample_shape):
+        raise ValueError(f"sample_shape dimensions must be non-negative; got {sample_shape!r}")
     if key is None:
-        key = _auto_key()
+        captured = _workflow_descendants.capture_stochastic_consumer(dist)
+        key = _workflow_broker._resolve_automatic_key(
+            None,
+            _workflow_broker._singleton_effect_plan(
+                operation_kind="sample",
+                execution_mode="sampled",
+                sample_shape=sample_shape,
+                record_path=captured.record_path,
+                descendant_descriptor=captured.descendant_descriptor,
+            ),
+        )
+        return _workflow_descendants.sample_captured_consumer(captured, key, sample_shape)
     return dist._sample(key, sample_shape)
 
 
@@ -526,8 +547,6 @@ def from_distribution(
     """
     from ..converters import converter_registry
 
-    if key is None:
-        key = _auto_key()
     return converter_registry.convert(
         source, target_type, key=key, check_support=check_support, **kwargs
     )

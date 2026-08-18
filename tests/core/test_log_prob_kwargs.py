@@ -274,11 +274,15 @@ class TestControlsViaWithOptions:
 
     @pytest.mark.parametrize(
         "control",
-        [{"seed": 3}, {"n_broadcast_samples": 8}, {"include_inputs": True}],
+        [{"n_broadcast_samples": 8}, {"include_inputs": True}],
     )
     def test_with_options_accepts_controls(self, control):
         d = Normal(0.0, 1.0, name="x")
         log_prob.with_options(**control)(d, 1.5)
+
+    def test_with_options_rejects_removed_rng_seed_control(self):
+        with pytest.raises(TypeError, match="seed"):
+            log_prob.with_options(seed=3)
 
     def test_op_is_its_own_function(self):
         # No wrapper: log_prob *is* a Function, so with_options is its
@@ -293,8 +297,8 @@ class TestControlsViaWithOptions:
         # the positional and keyword value forms alike.
         d = Normal(0.0, 1.0, name="x")
         base = log_prob(d, 1.5)
-        assert jnp.allclose(log_prob.with_options(seed=0)(d, 1.5), base)
-        assert jnp.allclose(log_prob.with_options(seed=0)(d, x=1.5), base)
+        assert jnp.allclose(log_prob.with_options()(d, 1.5), base)
+        assert jnp.allclose(log_prob.with_options()(d, x=1.5), base)
 
     def test_control_as_call_kwarg_is_rejected(self):
         # Controls are not call kwargs on the density ops; with a positional
@@ -361,7 +365,7 @@ class TestRandomMeasureKwargForm:
 
     def test_value_omitted_returns_callable_with_options(self):
         m = self._measure()
-        rf = random_unnormalized_log_prob.with_options(seed=0)(m)
+        rf = random_unnormalized_log_prob.with_options()(m)
         assert callable(rf)
 
     @pytest.mark.parametrize("op", [random_log_prob, random_unnormalized_log_prob])

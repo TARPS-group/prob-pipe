@@ -5,7 +5,7 @@ import logging
 import math
 import warnings
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping
 from functools import partial
 from types import MappingProxyType
 from typing import Any, Literal, cast, get_args, overload
@@ -18,7 +18,7 @@ try:
 except ImportError:
     task = flow = None
 
-from .config import WorkflowKind, prefect_config
+from .config import ProvenanceMode, WorkflowKind, prefect_config
 
 try:
     from graphviz import Digraph
@@ -26,11 +26,17 @@ except ImportError:
     Digraph = None
 
 from . import (
+    _workflow_broker,
     _workflow_call,
+    _workflow_callable,
+    _workflow_context,
     _workflow_distribution_broadcast,
     _workflow_distribution_normalization,
     _workflow_execution,
+    _workflow_execution_contract,
     _workflow_plan,
+    _workflow_recipe,
+    _workflow_replay,
     _workflow_result,
     _workflow_sweep,
 )
@@ -44,8 +50,15 @@ from ._function_contract import (
     _validate_function_templates,
     _wrap_declared_function_output,
 )
+from ._numeric_record_batch import NumericRecordBatch
 from ._record_batch import RecordBatch
-from .event_template import ArraySpec, EventTemplate, _concretize_event_template
+from ._record_distribution import RecordDistribution
+from .event_template import (
+    ArraySpec,
+    EventTemplate,
+    NumericEventTemplate,
+    _concretize_event_template,
+)
 from .provenance import Provenance
 from .tracked import Annotated, TrackedTerm, auto_name
 
@@ -134,7 +147,7 @@ def function(
         Users should not pass this argument by keyword.
     **kwargs : Any
         Construction-time ``Function`` controls and declarations such as
-        ``dispatch``, ``seed``, ``n_broadcast_samples``, ``include_inputs``,
+        ``dispatch``, ``n_broadcast_samples``, ``include_inputs``,
         ``workflow_kind``, ``input_template``, and ``output_template``.
 
     Returns
@@ -252,10 +265,6 @@ class Function(Node, TrackedTerm, Annotated):
         ``"thread"`` and execution resolves to local thread dispatch. JAX
         ``vmap``, local sequential dispatch, Prefect, Ray, and Dask do not
         use this setting.
-    seed : int
-        Random seed for invocation-local JAX PRNG key management during
-        broadcasting. Repeated calls with the same seed use the same key
-        sequence without mutating the Function.
     include_inputs : bool
         Whether distribution broadcasting includes sampled inputs in the
         returned joint distribution by default.
@@ -275,7 +284,7 @@ class Function(Node, TrackedTerm, Annotated):
     Keyword arguments passed to a workflow call belong to the wrapped user
     function whenever they can bind to that function. Use
     ``with_options(...)`` for call-time ProbPipe controls such as
-    ``seed``, ``n_broadcast_samples``, and ``include_inputs``.
+    ``n_broadcast_samples`` and ``include_inputs``.
 
     Raises
     ------
@@ -297,7 +306,6 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None = None,  # default number of samples for broadcasting
         dispatch: _FunctionDispatch = "auto",  # "auto" | "jax" | "sequential" | "thread"
         max_workers: int | None = None,  # ThreadPoolExecutor worker count
-        seed: int = 0,  # JAX PRNG seed for broadcasting
         include_inputs: bool = False,  # True → return BroadcastDistribution (joint over inputs+outputs)
         input_template: EventTemplate | None = None,
         output_template: EventTemplate | None = None,
@@ -305,6 +313,12 @@ class Function(Node, TrackedTerm, Annotated):
     ):
         if not callable(func):
             raise TypeError(f"func must be callable, got {type(func).__name__}")
+        if "seed" in kwargs:
+            raise TypeError(
+                "seed is no longer a Function construction option; "
+                "use workflow_run(seed=...) for workflow randomness, or pass a "
+                "wrapped-function seed at call time or through bind={'seed': ...}"
+            )
         signature_info = _workflow_call.make_signature_info(func)
         implementation = _CallableFunctionImplementation(func)
         resolved_name, name_is_auto = auto_name(
@@ -321,7 +335,6 @@ class Function(Node, TrackedTerm, Annotated):
             n_broadcast_samples=n_broadcast_samples,
             dispatch=dispatch,
             max_workers=max_workers,
-            seed=seed,
             include_inputs=include_inputs,
             input_template=input_template,
             output_template=output_template,
@@ -343,7 +356,6 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None = None,
         dispatch: _FunctionDispatch = "auto",
         max_workers: int | None = None,
-        seed: int = 0,
         include_inputs: bool = False,
     ) -> Function:
         """Construct an ordinary Function from a private implementation.
@@ -370,7 +382,6 @@ class Function(Node, TrackedTerm, Annotated):
             n_broadcast_samples=n_broadcast_samples,
             dispatch=dispatch,
             max_workers=max_workers,
-            seed=seed,
             include_inputs=include_inputs,
             input_template=input_template,
             output_template=output_template,
@@ -392,7 +403,6 @@ class Function(Node, TrackedTerm, Annotated):
         n_broadcast_samples: int | None,
         dispatch: _FunctionDispatch,
         max_workers: int | None,
-        seed: int,
         include_inputs: bool,
         input_template: EventTemplate | None,
         output_template: EventTemplate | None,
@@ -454,7 +464,6 @@ class Function(Node, TrackedTerm, Annotated):
         )
         set_attribute("_dispatch", dispatch)
         set_attribute("_max_workers", max_workers)
-        set_attribute("_seed", seed)
         set_attribute("_include_inputs", include_inputs)
         set_attribute("_input_template", input_template)
         set_attribute("_output_template", output_template)
@@ -510,6 +519,20 @@ class Function(Node, TrackedTerm, Annotated):
         ValueError
             If an authoritative input or output template is violated.
         """
+        _workflow_context._assert_workflow_admission()
+        _workflow_replay._reject_function_apply()
+        with (
+            _workflow_context._ephemeral_workflow_run(),
+            _workflow_broker._function_stochastic_scope(),
+        ):
+            return self._apply_in_context(args, call_inputs)
+
+    def _apply_in_context(
+        self,
+        args: tuple[Any, ...],
+        call_inputs: dict[str, Any],
+    ) -> Any:
+        """Execute one raw point inside its workflow and broker scopes."""
         call = _workflow_call.resolve_workflow_call(
             self._signature_info,
             args,
@@ -621,7 +644,6 @@ class Function(Node, TrackedTerm, Annotated):
         *,
         n_broadcast_samples: int | None = None,
         include_inputs: bool | None = None,
-        seed: int | None = None,
     ) -> _FunctionCallWithOptions:
         """Return a callable view with temporary call-time workflow options.
 
@@ -636,8 +658,6 @@ class Function(Node, TrackedTerm, Annotated):
         include_inputs : bool or None
             Temporary override for returning the joint input/output broadcast
             distribution.
-        seed : int or None
-            Temporary PRNG seed override for one workflow call.
 
         Returns
         -------
@@ -649,7 +669,6 @@ class Function(Node, TrackedTerm, Annotated):
             _workflow_call.WorkflowCallOptions(
                 n_broadcast_samples=n_broadcast_samples,
                 include_inputs=include_inputs,
-                seed=seed,
             ),
         )
 
@@ -661,6 +680,35 @@ class Function(Node, TrackedTerm, Annotated):
         )
 
     def _call_with_options(
+        self,
+        args: tuple[Any, ...],
+        call_inputs: dict[str, Any],
+        options: _workflow_call.WorkflowCallOptions,
+    ) -> Any:
+        _workflow_context._assert_workflow_admission()
+        with _workflow_replay._function_replay_scope() as replay_call:
+            occurrence_path = None if replay_call is None else replay_call.occurrence_path
+            with (
+                _workflow_context._ephemeral_workflow_run(),
+                _workflow_broker._function_stochastic_scope(
+                    occurrence_path=occurrence_path
+                ) as broker,
+            ):
+                if (
+                    replay_call is not None
+                    or _workflow_context._active_provenance_mode() is not ProvenanceMode.OFF
+                ):
+                    anchor = _workflow_callable.capture_function_anchor(self)
+                    broker.set_callable_anchor(anchor)
+                    if replay_call is not None:
+                        replay_call.validate_callable(anchor)
+                return self._call_with_options_in_context(
+                    args,
+                    call_inputs,
+                    options,
+                )
+
+    def _call_with_options_in_context(
         self,
         args: tuple[Any, ...],
         call_inputs: dict[str, Any],
@@ -678,12 +726,6 @@ class Function(Node, TrackedTerm, Annotated):
             default_include_inputs=self._include_inputs,
             options=options,
         )
-        key = jax.random.PRNGKey(self._seed if call.overrides.seed is None else call.overrides.seed)
-
-        def get_key():
-            nonlocal key
-            key, subkey = jax.random.split(key)
-            return subkey
 
         values = _workflow_distribution_normalization.normalize_distribution_values(
             values=call.values,
@@ -692,6 +734,34 @@ class Function(Node, TrackedTerm, Annotated):
         broadcast_plan = _workflow_plan.build_broadcast_plan(
             values=values,
             signature_info=self._signature_info,
+        )
+        stochastic_plan = _workflow_plan.build_stochastic_plan(
+            values,
+            broadcast_plan,
+            call.overrides.n_broadcast_samples,
+        )
+        stochastic_sample_shape = None if stochastic_plan is None else stochastic_plan.sample_shape
+
+        def get_key(event: _workflow_plan.PlannedRandomEvent):
+            return _workflow_broker._resolve_automatic_key(
+                None,
+                _workflow_broker.StochasticEffectPlan(
+                    operation_kind="function_lifting",
+                    execution_mode="sampled",
+                    event=event,
+                    sample_shape=stochastic_sample_shape,
+                    sampling_abi="probpipe.distribution_sampling/v1",
+                    provider_abi="probpipe.distribution/v1",
+                ),
+            )
+
+        workflow_kind = self.effective_workflow_kind
+        _workflow_broker._record_active_requested_execution(
+            self._dispatch,
+            workflow_kind.value,
+        )
+        _workflow_replay._validate_active_plan(
+            _workflow_recipe.serialize_stochastic_plan(stochastic_plan)
         )
         _, invocation_bindings = _bind_planned_function_inputs(
             function_name=self._name,
@@ -760,6 +830,7 @@ class Function(Node, TrackedTerm, Annotated):
                     broadcast_args,
                     jax_supported=jax_supported,
                     func=invoke_point,
+                    stochastic_plan=stochastic_plan,
                 )
             if resolved_dispatch is None:
                 resolved_dispatch = self._resolve_dispatch(
@@ -767,6 +838,7 @@ class Function(Node, TrackedTerm, Annotated):
                     broadcast_args,
                     jax_supported=True,
                     func=invoke_point,
+                    stochastic_plan=stochastic_plan,
                 )
             return resolved_dispatch
 
@@ -778,20 +850,22 @@ class Function(Node, TrackedTerm, Annotated):
                 dispatch_values,
                 broadcast_args,
                 func=invoke_point,
+                stochastic_plan=stochastic_plan,
             )
 
         def execute_distribution_broadcast(
             *,
             row_values: dict[str, Any],
-            dist_args: Sequence[_workflow_call.WorkflowInputRef],
-            n_broadcast_samples: int = call.overrides.n_broadcast_samples,
+            plan: _workflow_plan.StochasticPlan,
+            logical_unit: _workflow_plan.LogicalUnit,
             include_inputs: bool = call.overrides.include_inputs,
+            record_recipe: bool = True,
         ):
             return _workflow_distribution_broadcast.execute_distribution_broadcast(
                 func=invoke_point,
                 values=row_values,
-                broadcast_args=dist_args,
-                n_broadcast_samples=n_broadcast_samples,
+                stochastic_plan=plan,
+                logical_unit=logical_unit,
                 include_inputs=include_inputs,
                 get_key=get_key,
                 make_execution_config=self._make_execution_config,
@@ -799,47 +873,53 @@ class Function(Node, TrackedTerm, Annotated):
                 resolve_dispatch=resolve_dispatch,
                 require_jax_traceable=require_jax_traceable,
                 workflow_name=self._name,
-                workflow_kind=self.effective_workflow_kind,
+                workflow_kind=workflow_kind,
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,
                 provenance_inputs=provenance_inputs,
+                record_recipe=record_recipe,
             )
 
         if broadcast_plan.regime == "distribution":
+            if stochastic_plan is None:  # pragma: no cover - planner contract guard
+                raise RuntimeError("distribution broadcast is missing its stochastic plan")
             return execute_distribution_broadcast(
                 row_values=values,
-                dist_args=broadcast_plan.dist_args,
+                plan=stochastic_plan,
+                logical_unit=stochastic_plan.logical_units[0],
             )
         if broadcast_plan.regime in ("sweep", "nested"):
 
             def distribution_broadcast(
                 row_values: dict[str, Any],
-                dist_args: list[_workflow_call.WorkflowInputRef],
-                n_broadcast_samples: int,
+                plan: _workflow_plan.StochasticPlan,
+                logical_unit: _workflow_plan.LogicalUnit,
                 include_inputs: bool,
             ):
                 return execute_distribution_broadcast(
                     row_values=row_values,
-                    dist_args=dist_args,
-                    n_broadcast_samples=n_broadcast_samples,
+                    plan=plan,
+                    logical_unit=logical_unit,
                     include_inputs=include_inputs,
+                    record_recipe=False,
                 )
 
             return _workflow_sweep.execute_sweep(
                 func=invoke_point,
                 values=values,
                 plan=broadcast_plan,
+                stochastic_plan=stochastic_plan,
                 make_execution_config=self._make_execution_config,
                 requested_dispatch=self._dispatch,
                 resolve_dispatch=resolve_dispatch,
                 require_jax_traceable=require_jax_traceable,
                 distribution_broadcast=distribution_broadcast,
                 workflow_name=self._name,
-                n_broadcast_samples=call.overrides.n_broadcast_samples,
                 include_inputs=call.overrides.include_inputs,
                 output_template=concrete_output_template,
                 provenance_parents=provenance_parents,
                 provenance_inputs=provenance_inputs,
+                workflow_kind=workflow_kind,
             )
 
         # Non-broadcast call — one function invocation, then wrap. TrackedTerm
@@ -848,18 +928,30 @@ class Function(Node, TrackedTerm, Annotated):
         # Known harmless duplication: the distribution-broadcast module builds
         # the same request shape. A later execution cleanup can centralize this
         # without reintroducing private facade wrappers.
+        execution = self._make_execution_config()
         request = _workflow_execution.WorkflowExecutionRequest(
             func=invoke_point,
-            call_value_list=[values],
-            execution=self._make_execution_config(),
+            work_items=_workflow_execution.make_managed_work_items(
+                [values],
+                unit_segments=(_workflow_execution.point_unit_segment(),),
+            ),
+            execution=execution,
+            contract=_workflow_execution_contract.make_execution_contract(
+                evaluator="rowwise",
+                transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+                stochastic_plan=None,
+            ),
         )
         result = _workflow_execution.execute_many(request)[0]
         name = self._name
+        controls, diagnostics = _workflow_recipe.provenance_recipe_fields(None)
         provenance = Provenance.create(
             f"workflow.{name}",
             parents=provenance_parents,
             metadata={"func": name},
             inputs=provenance_inputs,
+            controls=controls,
+            diagnostics=diagnostics,
         )
         return _workflow_result._coerce_output(
             result,
@@ -875,6 +967,7 @@ class Function(Node, TrackedTerm, Annotated):
         broadcast_args: list[_workflow_call.WorkflowInputRef],
         *,
         func: Callable[..., Any],
+        stochastic_plan: _workflow_plan.StochasticPlan | None,
     ) -> Exception | None:
         """Return the JAX trace-probe error for the current call, if any.
 
@@ -916,49 +1009,105 @@ class Function(Node, TrackedTerm, Annotated):
                     else:
                         replacement = v
                     dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
-            if batched_sources:
-                refs = list(batched_sources)
-                # The executor's own body, not a copy of it: what the probe
-                # traces and what runs must not be two things kept alike by
-                # hand. ``dummy_kw`` already carries the non-batched arguments,
-                # so the wrapper only has the batched refs left to replace.
-                _row_call = _workflow_sweep.mapped_row_body(
-                    func=func, values=dummy_kw, array_args=refs
-                )
-
-                probe_leaves = []
-                for source in batched_sources.values():
-                    n_batch = len(source.batch_shape)
-                    # The flat size is stated, exactly as the executor states it:
-                    # a ``-1`` cannot be inferred over a zero-width event, which
-                    # is a shape the real reshape handles.
-                    n_rows = int(math.prod(source.batch_shape))
-                    probe_leaves.append(
-                        {
-                            leaf: jnp.reshape(
-                                jnp.asarray(source[leaf]),
-                                (n_rows, *jnp.shape(source[leaf])[n_batch:]),
-                            )[:1]
-                            for leaf in source.event_template
-                        }
+            with _workflow_context._workflow_probe():
+                if batched_sources:
+                    refs = list(batched_sources)
+                    # The executor's own body, not a copy maintained in the
+                    # probe. ``dummy_kw`` already carries non-batched inputs.
+                    _row_call = _workflow_sweep.mapped_row_body(
+                        func=func, values=dummy_kw, array_args=refs
                     )
-                jax.make_jaxpr(jax.vmap(_row_call))(tuple(probe_leaves))
-            elif drawn_refs:
-                refs = drawn_refs
-                # The executor's own body and the executor's own draw, so the
-                # probe traces the value the body will actually receive: a
-                # record-valued law draws a batch of records, which zeros of its
-                # event shape would not have modelled. One draw, so the map has
-                # an axis.
-                _draw_call = _workflow_distribution_broadcast.mapped_draw_body(
-                    func=func, values=dummy_kw, broadcast_args=refs
-                )
-                sampled = _workflow_distribution_broadcast._sample_broadcast_args(
-                    values, refs, 1, jax.random.PRNGKey(0)
-                )
-                jax.make_jaxpr(jax.vmap(_draw_call))(tuple(sampled[ref] for ref in refs))
-            else:
-                jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
+
+                    probe_leaves = []
+                    for source in batched_sources.values():
+                        n_batch = len(source.batch_shape)
+                        # The flat size is stated, exactly as the executor states it:
+                        # a ``-1`` cannot be inferred over a zero-width event, which
+                        # is a shape the real reshape handles.
+                        n_rows = int(math.prod(source.batch_shape))
+                        probe_leaves.append(
+                            {
+                                leaf: jnp.reshape(
+                                    jnp.asarray(source[leaf]),
+                                    (n_rows, *jnp.shape(source[leaf])[n_batch:]),
+                                )[:1]
+                                for leaf in source.event_template
+                            }
+                        )
+                    jax.make_jaxpr(jax.vmap(_row_call))(tuple(probe_leaves))
+                elif drawn_refs:
+                    if stochastic_plan is None:  # pragma: no cover - planner contract guard
+                        raise RuntimeError("distribution probe is missing its stochastic plan")
+                    refs = drawn_refs
+                    _draw_call = _workflow_distribution_broadcast.mapped_draw_body(
+                        func=func, values=dummy_kw, broadcast_args=refs
+                    )
+                    sampled_groups = tuple(
+                        group
+                        for group in stochastic_plan.source_groups
+                        if group.execution_mode == "sampled"
+                    )
+                    root_probes = []
+                    for group in sampled_groups:
+                        binding = stochastic_plan.runtime_bindings[group.index]
+                        root = binding.root
+                        template = root.event_template
+                        if (
+                            not isinstance(template, NumericEventTemplate)
+                            or not template.is_concrete
+                        ):
+                            raise TypeError(
+                                f"{type(root).__name__} does not declare a concrete numeric "
+                                "event template for side-effect-free JAX probing"
+                            )
+                        try:
+                            dtypes = root.dtypes
+                        except (AttributeError, NotImplementedError) as error:
+                            raise TypeError(
+                                f"{type(root).__name__} does not declare field dtypes for "
+                                "side-effect-free JAX probing"
+                            ) from error
+                        columns = {}
+                        for path in template:
+                            dtype = dtypes.get(path)
+                            if dtype is None:
+                                dtype = dtypes[path.split("/", 1)[0]]
+                            columns[path] = jax.ShapeDtypeStruct(
+                                (1, *template[path].shape),
+                                dtype,
+                            )
+                        if isinstance(root, RecordDistribution):
+                            root_probe = NumericRecordBatch(
+                                columns,
+                                "draw",
+                                element_spec=template,
+                                axis_groups=((1,),),
+                                name=root.name,
+                                name_is_auto=True,
+                            )
+                        else:
+                            root_probe = next(iter(columns.values()))
+                        root_probes.append(root_probe)
+
+                    def probe_draw(root_values):
+                        sampled = {}
+                        for group, root_value in zip(
+                            sampled_groups,
+                            root_values,
+                            strict=True,
+                        ):
+                            binding = stochastic_plan.runtime_bindings[group.index]
+                            for consumer, evaluate in zip(
+                                group.consumers,
+                                binding.consumer_evaluators,
+                                strict=True,
+                            ):
+                                sampled[consumer.arg_ref] = evaluate(root_value)
+                        return _draw_call(tuple(sampled[ref] for ref in refs))
+
+                    jax.make_jaxpr(jax.vmap(probe_draw))(tuple(root_probes))
+                else:
+                    jax.make_jaxpr(lambda kw: func(**kw))(dummy_kw)
         except Exception as exc:
             return exc
         return None
@@ -969,6 +1118,7 @@ class Function(Node, TrackedTerm, Annotated):
         broadcast_args: list[_workflow_call.WorkflowInputRef],
         *,
         func: Callable[..., Any],
+        stochastic_plan: _workflow_plan.StochasticPlan | None,
     ) -> None:
         """Raise a clear error if explicit JAX dispatch cannot trace."""
         if self._output_template is not None and any(
@@ -979,9 +1129,20 @@ class Function(Node, TrackedTerm, Annotated):
                 "dispatch='jax' cannot validate output_template support constraints "
                 "during JAX tracing; use dispatch='auto', 'sequential', or 'thread'."
             )
-        trace_error = self._jax_traceability_error(values, broadcast_args, func=func)
+        trace_error = self._jax_traceability_error(
+            values,
+            broadcast_args,
+            func=func,
+            stochastic_plan=stochastic_plan,
+        )
         if trace_error is None:
             return
+        if isinstance(trace_error, _workflow_context._StochasticProbeSignal):
+            raise TypeError(
+                "dispatch='jax' cannot execute a wrapped function that requests "
+                "workflow-owned randomness with key=None. Pass an explicit key, "
+                "or use dispatch='auto', 'sequential', or 'thread'."
+            ) from trace_error
         raise ValueError(
             "dispatch='jax' failed while tracing the wrapped function with JAX; "
             "ensure the function is JAX-traceable, or use dispatch='auto', "
@@ -995,6 +1156,7 @@ class Function(Node, TrackedTerm, Annotated):
         *,
         jax_supported: bool = True,
         func: Callable[..., Any],
+        stochastic_plan: _workflow_plan.StochasticPlan | None,
     ) -> str:
         """Resolve the dispatch strategy, caching JAX traceability detection.
 
@@ -1008,7 +1170,15 @@ class Function(Node, TrackedTerm, Annotated):
         if not jax_supported:
             return "sequential"
 
-        if self._jax_traceability_error(values, broadcast_args, func=func) is None:
+        if (
+            self._jax_traceability_error(
+                values,
+                broadcast_args,
+                func=func,
+                stochastic_plan=stochastic_plan,
+            )
+            is None
+        ):
             return "jax"
         else:
             logger.info(

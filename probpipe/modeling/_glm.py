@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
+from typing import ClassVar
+
 import jax
 import jax.numpy as jnp
 import tensorflow_probability.substrates.jax.glm as tfp_glm
 
 from ..core.event_template import EventTemplate
+from ..core.protocols import _WorkflowGenerativeProviderCertificate
 from ..core.record import Record
 from ..custom_types import Array, ArrayLike, PRNGKey
 
 __all__ = ["GLMLikelihood"]
+
+_GLM_GENERATIVE_PROVIDER_ABI = "probpipe.modeling.GLMLikelihood.generate_data/v1"
 
 
 def _coerce_array(x: ArrayLike | Record) -> jnp.ndarray:
@@ -76,6 +81,8 @@ class GLMLikelihood:
     seed : int
         Random seed for data generation.
     """
+
+    _workflow_generative_provider_certificate: ClassVar[_WorkflowGenerativeProviderCertificate]
 
     def __init__(
         self,
@@ -237,3 +244,20 @@ class GLMLikelihood:
             eta = beta @ Xn.T
         dist = self.family.as_distribution(eta)
         return dist.sample(seed=key)
+
+
+def _preflight_workflow_generation(provider: GLMLikelihood, operation: str) -> None:
+    """Validate GLM state before workflow-owned stochastic commit."""
+    if provider._x is None:
+        raise ValueError(
+            f"{operation} requires GLMLikelihood to have a stored design matrix "
+            "before requesting workflow-owned randomness"
+        )
+
+
+GLMLikelihood._workflow_generative_provider_certificate = _WorkflowGenerativeProviderCertificate(
+    provider_type=GLMLikelihood,
+    generate_data=GLMLikelihood.generate_data,
+    provider_abi=_GLM_GENERATIVE_PROVIDER_ABI,
+    preflight=_preflight_workflow_generation,
+)

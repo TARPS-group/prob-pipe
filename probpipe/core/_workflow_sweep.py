@@ -9,16 +9,32 @@ outer sweep layer of nested array + distribution broadcasts.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
+from itertools import product as cartesian_product
 from typing import Any
 
 import jax
 import numpy as np
 
-from . import _workflow_call, _workflow_execution, _workflow_plan, _workflow_result
+try:
+    from prefect import flow, task
+except ImportError:
+    task = flow = None
+
+from . import (
+    _workflow_broker,
+    _workflow_call,
+    _workflow_context,
+    _workflow_execution,
+    _workflow_execution_contract,
+    _workflow_plan,
+    _workflow_recipe,
+    _workflow_result,
+)
 from ._batch import Batch
 from ._broadcast_distributions import _make_stack
 from ._distribution_array import DistributionArray, _make_distribution_array
 from ._record_batch import RecordBatch, _MappedBatchColumns
+from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution
 from .event_template import EventTemplate
 from .provenance import Provenance
@@ -31,6 +47,7 @@ def execute_sweep(
     func: Callable[..., Any],
     values: dict[str, Any],
     plan: _workflow_plan.BroadcastPlan,
+    stochastic_plan: _workflow_plan.StochasticPlan | None,
     make_execution_config: Callable[
         [],
         _workflow_execution.WorkflowExecutionConfig,
@@ -39,15 +56,20 @@ def execute_sweep(
     resolve_dispatch: Callable[..., str],
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
     distribution_broadcast: Callable[
-        [dict[str, Any], list[_workflow_call.WorkflowInputRef], int, bool],
+        [
+            dict[str, Any],
+            _workflow_plan.StochasticPlan,
+            _workflow_plan.LogicalUnit,
+            bool,
+        ],
         BroadcastDistribution | Distribution,
     ],
     workflow_name: str,
-    n_broadcast_samples: int,
     include_inputs: bool = False,
     output_template: EventTemplate | None = None,
     provenance_parents: list[TrackedTerm] | None = None,
     provenance_inputs: Mapping[str, Any] | None = None,
+    workflow_kind: WorkflowKind = WorkflowKind.OFF,
 ) -> Any:
     """Execute pure or nested sweep regimes for one workflow call."""
     if plan.regime not in ("sweep", "nested"):
@@ -73,6 +95,8 @@ def execute_sweep(
             requested_dispatch=requested_dispatch,
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=require_jax_traceable,
+            workflow_kind=workflow_kind,
+            workflow_name=workflow_name,
         )
         aggregate = _make_stack(
             per_row,
@@ -94,6 +118,7 @@ def execute_sweep(
             k=0,
             parents=provenance_parents,
             inputs=provenance_inputs,
+            stochastic_plan=None,
         )
         return _workflow_result._coerce_output(
             aggregate,
@@ -102,17 +127,20 @@ def execute_sweep(
             field_name=workflow_name,
         )
 
+    if stochastic_plan is None:  # pragma: no cover - Function planning contract guard
+        raise RuntimeError("nested sweep is missing its stochastic plan")
+
     per_row_marginals: list[Distribution] = []
-    for i in range(plan.n_sweep):
+    for logical_unit in stochastic_plan.logical_units:
         row_values = slice_sweep_values(
             values=values,
-            index=i,
+            index=logical_unit.flat_index,
             array_groups=plan.array_groups,
         )
         inner = distribution_broadcast(
             row_values,
-            dist_args,
-            n_broadcast_samples,
+            stochastic_plan,
+            logical_unit,
             True,
         )
         if isinstance(inner, BroadcastDistribution):
@@ -134,9 +162,10 @@ def execute_sweep(
         dist_args=dist_args,
         workflow_name=workflow_name,
         batch_shape=plan.sweep_batch_shape,
-        k=n_broadcast_samples,
+        k=stochastic_plan.n_broadcast_samples,
         parents=provenance_parents,
         inputs=provenance_inputs,
+        stochastic_plan=stochastic_plan,
     )
     return _workflow_result._coerce_output(
         stacked,
@@ -162,9 +191,8 @@ def slice_sweep_values(
         rem = rem // group.size
         # A batch spanning several axes addresses its element by position, one
         # indexer per axis; a flat index would read the leading axis alone and
-        # run off its end. Positional tuples are a batch key — on a record
-        # array a tuple spells a field path — so the legacy class keeps its
-        # flat index.
+        # run off its end. Positional tuples are used only for Batch values;
+        # other array-like operands retain their flat row-major index.
         position: Any = idx
         if len(group.batch_shape) > 1:
             position = tuple(int(i) for i in np.unravel_index(idx, group.batch_shape))
@@ -194,6 +222,8 @@ def execute_sweep_rows(
     requested_dispatch: str,
     resolve_dispatch: Callable[..., str],
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
+    workflow_kind: WorkflowKind = WorkflowKind.OFF,
+    workflow_name: str = "workflow",
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
     # Zero rows run nothing, so there is no body for a dispatch to trace and no
@@ -207,7 +237,19 @@ def execute_sweep_rows(
         isinstance(_workflow_call.input_ref_value(values, ref), DistributionArray)
         for ref in array_args
     )
-    jax_supported = not (has_dist_array or len(plan.array_groups) > 1 or len(array_args) > 1)
+    jax_structure_supported = not (
+        has_dist_array or len(plan.array_groups) > 1 or len(array_args) > 1
+    )
+    jax_contract = _workflow_execution_contract.make_execution_contract(
+        evaluator="jax_vmap",
+        transport=_workflow_execution_contract.transport_for_workflow_kind(workflow_kind),
+        stochastic_plan=None,
+    )
+    jax_supported = _workflow_execution_contract.supports_execution_contract(
+        jax_contract,
+        None,
+        jax_structure_supported=jax_structure_supported,
+    )
     if requested_dispatch == "jax" and not jax_supported:
         raise ValueError(
             "dispatch='jax' supports only a single plain batched-record sweep; "
@@ -221,6 +263,7 @@ def execute_sweep_rows(
     )
 
     if dispatch == "jax":
+        _workflow_broker._record_active_execution_contract(jax_contract)
         if requested_dispatch == "jax":
             require_jax_traceable(values, array_args)
         return execute_sweep_rows_jax(
@@ -228,6 +271,8 @@ def execute_sweep_rows(
             values=values,
             array_args=array_args,
             n_total=plan.n_sweep,
+            workflow_kind=workflow_kind,
+            workflow_name=workflow_name,
         )
 
     per_row_values = [
@@ -238,10 +283,24 @@ def execute_sweep_rows(
         )
         for i in range(plan.n_sweep)
     ]
+    execution = make_execution_config()
     request = _workflow_execution.WorkflowExecutionRequest(
         func=func,
-        call_value_list=per_row_values,
-        execution=make_execution_config(),
+        work_items=_workflow_execution.make_managed_work_items(
+            per_row_values,
+            unit_segments=tuple(
+                _workflow_execution.sweep_unit_segment(tuple(coordinates))
+                for coordinates in cartesian_product(
+                    *(range(axis) for axis in plan.sweep_batch_shape)
+                )
+            ),
+        ),
+        execution=execution,
+        contract=_workflow_execution_contract.make_execution_contract(
+            evaluator="rowwise",
+            transport=_workflow_execution_contract.transport_for_execution_mode(execution.mode),
+            stochastic_plan=None,
+        ),
     )
     return _workflow_execution.execute_many(request)
 
@@ -284,6 +343,8 @@ def execute_sweep_rows_jax(
     values: dict[str, Any],
     array_args: list[_workflow_call.WorkflowInputRef],
     n_total: int,
+    workflow_kind: WorkflowKind = WorkflowKind.OFF,
+    workflow_name: str = "workflow",
 ) -> Any:
     """Execute the limited single-batch sweep through ``jax.vmap``."""
     single_call = mapped_row_body(func=func, values=values, array_args=array_args)
@@ -298,7 +359,26 @@ def execute_sweep_rows_jax(
                 for leaf in array_value.event_template
             }
         )
-    return jax.vmap(single_call)(tuple(vmap_input))
+
+    def run_vmap():
+        with _workflow_context._workflow_jax_runtime_guard():
+            return jax.vmap(single_call)(tuple(vmap_input))
+
+    if workflow_kind in (WorkflowKind.TASK, WorkflowKind.FLOW):
+        if task is None or flow is None:
+            raise RuntimeError(
+                "Prefect task or flow execution was requested, but Prefect is not "
+                "installed. Install with: pip install probpipe[prefect]"
+            )
+        if workflow_kind is WorkflowKind.TASK:
+            run_vmap = task(name=f"{workflow_name}_vmap")(run_vmap)
+        else:
+            runner = prefect_config.resolve_task_runner()
+            run_vmap = flow(
+                name=f"{workflow_name}_vmap",
+                **({"task_runner": runner} if runner is not None else {}),
+            )(run_vmap)
+    return run_vmap()
 
 
 def make_sweep_provenance(
@@ -311,6 +391,7 @@ def make_sweep_provenance(
     k: int,
     parents: list[TrackedTerm] | None = None,
     inputs: Mapping[str, Any] | None = None,
+    stochastic_plan: _workflow_plan.StochasticPlan | None = None,
 ) -> Provenance | None:
     """Build provenance metadata for pure and nested sweep outputs.
 
@@ -327,6 +408,7 @@ def make_sweep_provenance(
             if isinstance(_workflow_call.input_ref_value(values, ref), Distribution)
         ]
         parents = array_candidates + dist_candidates
+    controls, diagnostics = _workflow_recipe.provenance_recipe_fields(stochastic_plan)
     return Provenance.create(
         f"workflow.{regime}",
         parents=parents,
@@ -338,4 +420,6 @@ def make_sweep_provenance(
             "dist_args": [ref.label for ref in dist_args],
         },
         inputs=inputs,
+        controls=controls,
+        diagnostics=diagnostics,
     )

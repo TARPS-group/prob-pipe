@@ -25,6 +25,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core.distribution import _RecordDistributionView
@@ -1326,11 +1327,12 @@ class TestEndToEndValuesPipeline:
         """Broadcast predict(params, x) computes correct function of posterior."""
         from probpipe.core.node import function
 
-        @function(n_broadcast_samples=100, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=100, dispatch="sequential")
         def predict(params, x):
             return params[0] + params[1] * x
 
-        result = predict(**posterior.select("params"), x=0.5)
+        with workflow_run(seed=0):
+            result = predict(**posterior.select("params"), x=0.5)
         assert result.num_atoms == 100
         # predict([~0.91, ~1.82], 0.5) ≈ 0.91 + 1.82*0.5 ≈ 1.82
         analytical = 10 / 11 + 0.5 * 20 / 11
@@ -1345,12 +1347,13 @@ class TestEndToEndValuesPipeline:
         """
         from probpipe.core.node import function
 
-        @function(n_broadcast_samples=50, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=50, dispatch="sequential")
         def identity_pair(a, b):
             return a - b
 
         sel = posterior.select(a="params", b="params")
-        result = identity_pair(**sel)
+        with workflow_run(seed=0):
+            result = identity_pair(**sel)
         # Mean check: necessary but insufficient
         np.testing.assert_allclose(np.asarray(mean(result)), 0.0, atol=1e-5)
         # Variance check: this is what actually validates correlation
@@ -1386,15 +1389,27 @@ class TestEndToEndValuesPipeline:
         """Workflow with both posterior views and an independent distribution."""
         from probpipe.core.node import function
 
-        @function(n_broadcast_samples=50, dispatch="sequential", seed=0)
+        @function(n_broadcast_samples=posterior.num_atoms, dispatch="sequential")
         def noisy_predict(params, noise):
             return params[0] + params[1] * 0.5 + noise
 
-        result = noisy_predict(
-            **posterior.select("params"),
-            noise=Normal(0, 0.01, name="noise"),
+        params = np.asarray(posterior.draws()["params"])
+        expected_values = params[:, 0] + params[:, 1] * 0.5
+        expected_mean = float(np.mean(expected_values))
+        expected_variance = float(np.var(expected_values) + 0.01**2)
+
+        with workflow_run(seed=0):
+            result = noisy_predict(
+                **posterior.select("params"),
+                noise=Normal(0, 0.01, name="noise"),
+            )
+        assert result.num_atoms == posterior.num_atoms
+        # Across workflow seeds 0-15, mean errors were 0.000003-0.000526 and
+        # variance errors were 0.000010-0.002307 against the materialized posterior.
+        np.testing.assert_allclose(float(mean(result)), expected_mean, rtol=0.0, atol=0.003)
+        np.testing.assert_allclose(
+            float(variance(result)),
+            expected_variance,
+            rtol=0.0,
+            atol=0.01,
         )
-        assert result.num_atoms == 50
-        # Mean should be close to predict without noise
-        analytical = 10 / 11 + 0.5 * 20 / 11
-        np.testing.assert_allclose(float(mean(result)), analytical, atol=0.3)

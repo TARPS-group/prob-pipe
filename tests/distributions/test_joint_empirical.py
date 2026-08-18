@@ -18,6 +18,7 @@ from probpipe import (
     mean,
     sample,
     variance,
+    workflow_run,
 )
 from probpipe.core._record_distribution import _RecordDistributionView
 from probpipe.core.node import Function
@@ -400,9 +401,9 @@ class TestBroadcasting:
             func=add,
             dispatch="sequential",
             n_broadcast_samples=30,
-            seed=42,
         )
-        result = wf(a=je["x"], b=je["y"])
+        with workflow_run(seed=42):
+            result = wf(a=je["x"], b=je["y"])
         assert hasattr(result, "samples")
         # Joint resampling means y = 10*x, so a+b = 11*x
         # Mean of x is 2.0, so mean of a+b should be ~22

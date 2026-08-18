@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from typing import Any, get_type_hints
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowSignatureInfo:
     """Cached signature metadata for one wrapped Function."""
 
@@ -25,25 +25,23 @@ class WorkflowSignatureInfo:
     has_var_keyword: bool
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowCallOptions:
     """Optional call-time workflow controls outside user kwargs."""
 
     n_broadcast_samples: int | None = None
     include_inputs: bool | None = None
-    seed: int | None = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowCallOverrides:
     """Resolved call-time workflow settings consumed by ``Function``."""
 
     n_broadcast_samples: int
     include_inputs: bool
-    seed: int | None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ResolvedWorkflowCall:
     """Fully resolved signature-shaped values plus workflow overrides."""
 
@@ -51,7 +49,7 @@ class ResolvedWorkflowCall:
     overrides: WorkflowCallOverrides
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class WorkflowInputRef:
     """Reference to one planner-visible value in a resolved Python call."""
 
@@ -74,16 +72,7 @@ def make_signature_info(
     """Build reusable signature metadata for a wrapped function."""
     signature = inspect.signature(func)
     hints = _get_type_hints(func)
-    param_names = tuple(signature.parameters)
-    has_var_keyword = any(
-        p.kind == inspect.Parameter.VAR_KEYWORD for p in signature.parameters.values()
-    )
-    return WorkflowSignatureInfo(
-        signature=signature,
-        hints=hints,
-        param_names=param_names,
-        has_var_keyword=has_var_keyword,
-    )
+    return make_signature_info_from_signature(signature, hints=hints)
 
 
 def make_signature_info_from_signature(
@@ -247,7 +236,6 @@ def bind_call_inputs(
             "include_inputs",
             default_include_inputs,
         ),
-        seed=resolve_option("seed"),
     )
 
     bound = info.signature.bind_partial(*args, **call_inputs)
@@ -370,10 +358,18 @@ def resolve_workflow_call(
 
 def _get_type_hints(func: Callable[..., Any]) -> dict[str, Any]:
     type_params = getattr(func, "__type_params__", ())
-    if not type_params:
-        return get_type_hints(func)
-    localns = {param.__name__: param for param in type_params}
-    return get_type_hints(func, localns=localns)
+    try:
+        if not type_params:
+            return get_type_hints(func)
+        localns = {param.__name__: param for param in type_params}
+        return get_type_hints(func, localns=localns)
+    except TypeError:
+        # ``typing.get_type_hints`` rejects partials and callable instances even
+        # though ``inspect.signature`` supports them. Their adjusted signature
+        # remains authoritative and contributes any retained annotations below.
+        if getattr(func, "__annotations__", None) is None:
+            return {}
+        raise
 
 
 def _validate_required_values(

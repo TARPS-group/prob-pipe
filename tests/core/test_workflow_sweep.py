@@ -23,7 +23,7 @@ from probpipe import (
 )
 from probpipe.core import _workflow_call, _workflow_execution, _workflow_sweep
 from probpipe.core._record_batch import _MappedBatchColumns
-from probpipe.core._workflow_plan import build_broadcast_plan
+from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
 
 
 def _numeric_record_batch(
@@ -45,6 +45,10 @@ def _plan(values):
     )
     signature_info = _workflow_call.make_signature_info_from_signature(signature)
     return build_broadcast_plan(values=values, signature_info=signature_info)
+
+
+def _stochastic_plan(values, n_broadcast_samples):
+    return build_stochastic_plan(values, _plan(values), n_broadcast_samples)
 
 
 def _unexpected_distribution_broadcast(*args, **kwargs):
@@ -151,7 +155,7 @@ class TestExecuteSweep:
 
         def fake_execute_many(request):
             seen["request"] = request
-            return [request.func(**call_values) for call_values in request.call_value_list]
+            return [request.func(**item.call_values()) for item in request.work_items]
 
         monkeypatch.setattr(
             _workflow_sweep._workflow_execution,
@@ -163,19 +167,19 @@ class TestExecuteSweep:
             func=double,
             values=values,
             plan=plan,
+            stochastic_plan=None,
             make_execution_config=lambda: execution,
             requested_dispatch="thread",
             resolve_dispatch=resolve_dispatch,
             require_jax_traceable=_require_not_called,
             distribution_broadcast=_unexpected_distribution_broadcast,
             workflow_name="double",
-            n_broadcast_samples=5,
         )
 
         request = seen["request"]
         assert request.execution is execution
         assert request.func is double
-        assert [float(row["p"]["x"]) for row in request.call_value_list] == [
+        assert [float(item.call_values()["p"]["x"]) for item in request.work_items] == [
             0.0,
             1.0,
             2.0,
@@ -195,13 +199,13 @@ class TestExecuteSweep:
                 func=lambda p: p["x"],
                 values=values,
                 plan=plan,
+                stochastic_plan=None,
                 make_execution_config=lambda: execution,
                 requested_dispatch="sequential",
                 resolve_dispatch=lambda *args, **kwargs: "sequential",
                 require_jax_traceable=_require_not_called,
                 distribution_broadcast=_unexpected_distribution_broadcast,
                 workflow_name="identity",
-                n_broadcast_samples=5,
                 include_inputs=True,
             )
 
@@ -211,6 +215,7 @@ class TestExecuteSweep:
             "noise": Normal(loc=0.0, scale=1.0, name="noise"),
         }
         plan = _plan(values)
+        stochastic_plan = _stochastic_plan(values, 7)
         execution = _workflow_execution.WorkflowExecutionConfig(
             mode="sequential",
             name="nested",
@@ -219,15 +224,15 @@ class TestExecuteSweep:
 
         def distribution_broadcast(
             row_values,
-            dist_args,
-            n_broadcast_samples,
+            received_plan,
+            logical_unit,
             include_inputs,
         ):
             calls.append(
                 {
                     "x": float(row_values["p"]["x"]),
-                    "dist_args": tuple(dist_args),
-                    "n": n_broadcast_samples,
+                    "plan": received_plan,
+                    "logical_unit": logical_unit,
                     "include_inputs": include_inputs,
                 }
             )
@@ -244,13 +249,13 @@ class TestExecuteSweep:
             func=lambda p, noise: p["x"] + noise,
             values=values,
             plan=plan,
+            stochastic_plan=stochastic_plan,
             make_execution_config=lambda: execution,
             requested_dispatch="sequential",
             resolve_dispatch=lambda *args, **kwargs: "sequential",
             require_jax_traceable=_require_not_called,
             distribution_broadcast=distribution_broadcast,
             workflow_name="nested",
-            n_broadcast_samples=7,
         )
 
         assert result.batch_shape == (2,)
@@ -261,14 +266,14 @@ class TestExecuteSweep:
         assert calls == [
             {
                 "x": 0.0,
-                "dist_args": (_ref("noise"),),
-                "n": 7,
+                "plan": stochastic_plan,
+                "logical_unit": stochastic_plan.logical_units[0],
                 "include_inputs": True,
             },
             {
                 "x": 1.0,
-                "dist_args": (_ref("noise"),),
-                "n": 7,
+                "plan": stochastic_plan,
+                "logical_unit": stochastic_plan.logical_units[1],
                 "include_inputs": True,
             },
         ]
