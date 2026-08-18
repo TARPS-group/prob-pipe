@@ -203,6 +203,8 @@ class _MixtureSampling:
                 SAMPLE_LEVEL,
                 element_spec=stacked.element_spec,
                 axis_groups=(sample_shape,),
+                name=self.name,
+                name_is_auto=True,
             )
 
         try:
@@ -1116,6 +1118,8 @@ def _make_stack(
             shared = {
                 "element_spec": tpl,
                 "axis_groups": sweep_groups,
+                "name": name or field_name,
+                "name_is_auto": True,
             }
             try:
                 return NumericRecordBatch(columns, level_names, **shared)

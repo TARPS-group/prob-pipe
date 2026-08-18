@@ -242,6 +242,7 @@ class TestInnerDraw:
             level_names="draw",
             axis_groups=((n,),),
             element_spec=NumericEventTemplate(X=(X.shape[1],), y=()),
+            name="batch",
         )
 
         m_rec = MinibatchedDistribution(prior, likelihood, record_data, batch_size=20)
@@ -487,6 +488,7 @@ def test_a_multi_axis_batch_is_refused_at_construction(prior, likelihood):
         {"x": jnp.ones((4, 3))},
         ("n", "k"),
         element_spec=EventTemplate(x=NumericArraySpec(shape=())),
+        name="batch",
     )
     with pytest.raises(ValueError, match="rows are one axis"):
         MinibatchedDistribution(prior, likelihood, grid, batch_size=2)

@@ -72,7 +72,7 @@ class NumericRecordBatch(RecordBatch):
         *,
         element_spec: RecordSpec | EventTemplate,
         axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str | None = None,
+        name: str,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:

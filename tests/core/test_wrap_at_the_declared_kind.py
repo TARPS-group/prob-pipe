@@ -301,7 +301,7 @@ class TestAnEmptyRecordHasNoBatch:
         from probpipe import EventTemplate, RecordBatch
 
         with pytest.raises(ValueError, match="at least one field"):
-            RecordBatch({}, "x", element_spec=EventTemplate())
+            RecordBatch({}, "x", element_spec=EventTemplate(), name="batch")
 
 
 class TestEachSweptRowTakesItsOwnKind:

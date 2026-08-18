@@ -130,30 +130,24 @@ class TestWhichKindsRequireAName:
         )
 
     @pytest.mark.parametrize(
-        ("build", "expected"),
+        "build",
         [
             pytest.param(
-                lambda: RecordBatch(COLUMNS, "lvl", element_spec=ELEMENT),
-                "recordbatch",
-                id="RecordBatch",
+                lambda: RecordBatch(COLUMNS, "lvl", element_spec=ELEMENT), id="RecordBatch"
             ),
             pytest.param(
                 lambda: NumericRecordBatch(COLUMNS, "lvl", element_spec=ELEMENT),
-                "numericrecordbatch",
                 id="NumericRecordBatch",
             ),
-            pytest.param(lambda: OpaqueBatch([1, 2], "lvl"), "opaquebatch", id="OpaqueBatch"),
-            pytest.param(
-                lambda: FunctionBatch([lambda: 1], "lvl"), "functionbatch", id="FunctionBatch"
-            ),
+            pytest.param(lambda: OpaqueBatch([1, 2], "lvl"), id="OpaqueBatch"),
+            pytest.param(lambda: FunctionBatch([lambda: 1], "lvl"), id="FunctionBatch"),
         ],
     )
-    def test_the_other_batches_fall_back_to_their_class_name(self, build, expected):
-        """Recorded rather than endorsed: `NumericArrayBatch` requires a name, and
-        these do not. Aligning them is tracked separately."""
-        batch = build()
-
-        assert (batch.name, batch.name_is_auto) == (expected, True)
+    def test_every_batch_requires_a_name(self, build):
+        """No class-name fallback: a batch is what an operation hands back, and
+        naming it after its class names every batch in a pipeline alike."""
+        with pytest.raises(TypeError, match="name"):
+            build()
 
 
 class TestADerivedNameSaysSo:
@@ -381,3 +375,70 @@ class TestEveryAggregateIsNamedForItsFunction:
 
         assert (result.name, result.name_is_auto) == ("double", True)
         assert result.level_names == ("a", "b")
+
+
+class TestNoKindInventsAName:
+    """The rule the whole layer now shares: a name is given, or derived from
+    something that carries meaning. A class name carries none.
+
+    Every batch defaulted to its own lowercased class name, so a pipeline full
+    of them read `recordbatch`, `opaquebatch`, `numericrecordbatch` — names that
+    say what the object *is*, which its type already says, and nothing about
+    which one it is.
+    """
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            pytest.param(lambda: NumericArray(jnp.arange(3.0)), id="NumericArray"),
+            pytest.param(
+                lambda: RecordBatch(COLUMNS, "lvl", element_spec=ELEMENT), id="RecordBatch"
+            ),
+            pytest.param(
+                lambda: NumericRecordBatch(COLUMNS, "lvl", element_spec=ELEMENT),
+                id="NumericRecordBatch",
+            ),
+            pytest.param(
+                lambda: NumericArrayBatch(
+                    jnp.arange(4.0), "lvl", element_spec=NumericArraySpec(shape=())
+                ),
+                id="NumericArrayBatch",
+            ),
+            pytest.param(lambda: OpaqueBatch([1, 2], "lvl"), id="OpaqueBatch"),
+            pytest.param(lambda: FunctionBatch([lambda: 1], "lvl"), id="FunctionBatch"),
+        ],
+    )
+    def test_a_name_is_required(self, build):
+        with pytest.raises(TypeError, match="name"):
+            build()
+
+    def test_stack_derives_its_name_from_what_it_stacks(self):
+        """Derived from real content, so no call site has to invent one: a batch
+        of `draw` records is about `draw`."""
+        rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
+
+        batch = NumericRecordBatch.stack(rows, level_name="row")
+
+        assert (batch.name, batch.name_is_auto) == ("draw", True)
+
+    def test_stack_takes_a_better_name_when_offered(self):
+        rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
+
+        batch = NumericRecordBatch.stack(rows, level_name="row", name="posterior")
+
+        assert (batch.name, batch.name_is_auto) == ("posterior", False)
+
+    def test_a_structural_transform_carries_the_name_and_its_flag(self):
+        """There is no class-name default to re-derive from, and an auto name is
+        something derived rather than a placeholder."""
+        batch = NumericRecordBatch(
+            {"a": jnp.zeros(3), "b": jnp.zeros(3)},
+            "lvl",
+            element_spec=NumericEventTemplate(a=(), b=()),
+            name="derived",
+            name_is_auto=True,
+        )
+
+        edited = batch.without("b")
+
+        assert (edited.name, edited.name_is_auto) == ("derived", True)
