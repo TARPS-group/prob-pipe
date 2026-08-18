@@ -312,3 +312,71 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
         scored = log_prob(self.LAW, jnp.zeros(3))
 
         assert not isinstance(scored, NumericArrayBatch)
+
+
+class TestEveryAggregateIsNamedForItsFunction:
+    """The naming table, widened across the axes that had diverged.
+
+    A sweep's aggregate is built by the boundary, not by a caller, so its name is
+    the producing function's and is marked auto. Three paths disagreed: the
+    undeclared record aggregate took `stack`'s class-name default, and the scalar,
+    opaque, and declared paths marked a derived name as user-given — which would
+    stop a later operation renaming it.
+    """
+
+    @staticmethod
+    def _rows(n: int = 3):
+        from probpipe.core.event_template import NumericEventTemplate
+
+        return NumericRecordBatch(
+            {"x": jnp.arange(float(n))},
+            "row",
+            element_spec=NumericEventTemplate(x=()),
+            name="rows",
+        )
+
+    def _swept(self, body, **controls):
+        return Function(func=body, name="double", dispatch="sequential", **controls)(v=self._rows())
+
+    @pytest.mark.parametrize(
+        ("label", "body"),
+        [
+            ("numeric", lambda v: jnp.asarray(v["x"]) * 2),
+            ("mapping", lambda v: {"y": jnp.asarray(v["x"])}),
+            ("opaque", lambda v: "tag"),
+            ("callable", lambda v: lambda: 1),
+            ("sequence", lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])]),
+        ],
+    )
+    def test_an_undeclared_aggregate_is_named_for_the_function(self, label, body):
+        result = self._swept(body)
+
+        assert (result.name, result.name_is_auto) == ("double", True)
+
+    def test_a_declared_aggregate_is_named_the_same_way(self):
+        from probpipe import EventTemplate
+
+        result = self._swept(
+            lambda v: {"y": jnp.asarray(v["x"])}, output_template=EventTemplate(y=())
+        )
+
+        assert (result.name, result.name_is_auto) == ("double", True)
+
+    def test_a_multi_axis_sweep_is_named_the_same_way(self):
+        """The re-cut to the sweep's own geometry is a separate construction, and
+        it had its own naming."""
+        from probpipe.core.event_template import NumericEventTemplate
+
+        grid = NumericRecordBatch(
+            {"x": jnp.arange(6.0).reshape(2, 3)},
+            ("a", "b"),
+            element_spec=NumericEventTemplate(x=()),
+            name="grid",
+        )
+
+        result = Function(
+            func=lambda v: {"y": jnp.asarray(v["x"])}, name="double", dispatch="sequential"
+        )(v=grid)
+
+        assert (result.name, result.name_is_auto) == ("double", True)
+        assert result.level_names == ("a", "b")
