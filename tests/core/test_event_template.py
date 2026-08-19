@@ -84,9 +84,20 @@ class TestConstruction:
         with pytest.raises(ValueError, match="Cannot pass both"):
             EventTemplate({"a": ()}, b=(2,))
 
-    def test_empty_raises(self):
-        with pytest.raises(ValueError, match="at least one"):
-            EventTemplate()
+    def test_the_empty_template_is_legal(self):
+        """A template is a finite map of fields, and the empty map is one.
+
+        It is also the identity of template composition, which a floor of one
+        field would leave inexpressible.
+        """
+        empty = EventTemplate()
+
+        assert len(empty) == 0
+        assert list(empty) == []
+
+    def test_the_empty_template_is_not_promoted_to_numeric(self):
+        """Vacuously every leaf is numeric, which is not a reason to claim it."""
+        assert not isinstance(EventTemplate(), NumericEventTemplate)
 
     def test_none_spec(self):
         tpl = EventTemplate(label=None, x=())
@@ -418,9 +429,8 @@ class TestInferFrom:
         assert isinstance(tpl.at_path("params"), EventTemplate)
         assert tpl["params/m"] == NumericArraySpec((2,))
 
-    def test_empty_mapping_raises(self):
-        with pytest.raises(ValueError, match="at least one field"):
-            EventTemplate.infer_from({})
+    def test_an_empty_mapping_infers_the_empty_template(self):
+        assert len(EventTemplate.infer_from({})) == 0
 
     def test_array_fields(self):
         r = Record("r", x=jnp.zeros(5), y=jnp.zeros((2, 3)))

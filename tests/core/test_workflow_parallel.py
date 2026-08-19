@@ -275,7 +275,7 @@ class TestExecutionRequestShape:
 
         result = wf(x=1)
 
-        assert float(result["add_one"]) == 2.0
+        assert float(result) == 2.0
         assert callable(seen["request"].func)
         assert seen["request"].func is not add_one
         assert not isinstance(seen["request"].func, Function)
@@ -2545,7 +2545,7 @@ class TestPrefectMapping:
                 dispatch="sequential",
             )
             with workflow_run(seed=outer_seed):
-                return int(workflow()["_claim_nested_seeded_scalar"])
+                return int(workflow())
 
         local = run("local", 1)
         assert run("local", 2) == local
@@ -2795,6 +2795,6 @@ class TestFunctionExecutionConfig:
             dispatch="sequential",
         )
 
-        assert float(task_wf(x=1)["add_one"]) == 2.0
-        assert float(flow_wf(x=1)["add_one"]) == 2.0
+        assert float(task_wf(x=1)) == 2.0
+        assert float(flow_wf(x=1)) == 2.0
         assert seen_modes == ["prefect_task", "prefect_flow"]

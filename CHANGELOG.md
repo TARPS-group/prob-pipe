@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`sample(law, sample_shape=...)` mints the `sample` level for every kind of
+  draw (#398).** The boundary assumed a law that assembles its own draws also
+  names what they range over. An empirical did not: numeric atoms came back as one
+  `NumericRecord` whose fields had grown an axis, record atoms and opaque atoms as
+  a single `Opaque` holding the whole array. All three now give the batch form of
+  the draw's kind — `NumericRecordBatch`, `NumericRecordBatch`, `OpaqueBatch` —
+  over a `sample` level, matching what a plain law already gave. Code that read
+  `drawn["field"]` on such a result now reads a column of a batch rather than a
+  field of a record, and `"field" in drawn` is now
+  `"field" in drawn.event_template`. A single draw is unchanged.
+
 - **Workflow-scoped structural RNG, co-sampling, and validated replay (#389).**
   Function-owned RNG controls—`Function(..., seed=...)`, the former reserved
   call-level RNG option, and `Function.with_options(seed=...)`—have been removed
@@ -77,6 +88,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sibling-realization behavior. Put related quantities in one joint Function
   call, retain the resulting joint distribution, or materialize and reuse
   samples explicitly when a shared realization is required.
+
+- **A sweep of opaque or callable rows aggregates at its own kind (#398).** Rows
+  that do not stack numerically fell to a single-field `RecordBatch` keyed by the
+  function's name — the burial the output boundary otherwise stopped doing — and
+  it was the one aggregation that left the result auto-named. Opaque rows now give
+  an `OpaqueBatch` and callable rows a `FunctionBatch`, both named for the
+  function as every other aggregation already was.
+
+- **An empty return keeps its host's kind (#398).** A `Function` returning `{}`
+  raised, and `[]` / `()` became an `Opaque`, because `Record`, `EventTemplate`,
+  and the object batches each required at least one entry. The kind now follows
+  the host's *type* whether or not anything is in it: `{}` is an empty `Record`,
+  and `[]` / `()` an `OpaqueBatch` of `batch_shape == (0,)` — no element can say
+  what kind it holds, and every element spec holds vacuously of none.
+
+  `Record()`, `EventTemplate()`, and `OpaqueBatch([], level)` are legal as a
+  result. A *batch* of empty records is not: a batch reads its multiplicity off
+  a column, and a zero-field element supplies none, so `RecordBatch` still
+  requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:
+  vacuously every leaf is numeric, which is not a reason to claim it. A batch
+  still requires a batch *axis* — a single object with no axis is refused as
+  before.
+
+- **A sweep over numeric rows aggregates as a `NumericArrayBatch` (#398).** A
+  `Function` swept over a batch collected numeric rows into a single-field
+  `NumericRecordBatch` keyed by the function's own name, so `out["my_func"]`
+  reached the column. The aggregate is now the batch form of the rows' own kind,
+  read through `.values`.
+
+  A row that is itself a batch keeps its levels either way. Only `RecordBatch`
+  rows did before, so once a scalar law's `sample` began returning a
+  `NumericArrayBatch`, a swept `sample(dist_array, sample_shape=(7,))` read the
+  rows' `draw` axis as event shape and dropped the level. It now gives
+  `batch_shape == (n, 7)` on levels `("dist", "sample")`, as the record-valued
+  case already did.
+
+- **A non-empty `sample_shape` puts the draws on a `sample` level (#398).**
+  `sample(law, sample_shape=(5,))` for an array-valued law gives a
+  `NumericArrayBatch` whose `batch_shape` is the sample shape, on one level named
+  `sample`, with the event axes left to the element. An operation names the level
+  it mints after itself, as `quantile` already did; `sample` was the exception,
+  minting `draw`. The axis an *enumerated* argument ranges over keeps the name
+  `draw` for now — no operation mints it, and naming it is #427. Design V.2 states this; the
+  record-drawing laws implemented it and the array-drawing ones returned a flat
+  array, leaving the level algebra unavailable for the most common law kind.
+
+  `NumericArrayBatch` gains the array shim its `NumericRecordBatch` sibling
+  carries — `shape` (the whole store), `dtype`, `ndim`, and both conversion
+  hooks — and is a registered pytree under the two-transformation contract
+  `RecordBatch` states: every batch axis preserved, or every one removed.
+
+- **An operation returns the tracked term of its declared kind (#398).** The
+  `Function` output boundary wrapped every raw array in a single-field
+  `NumericRecord` keyed by the function's own name, and every other raw value in
+  a single-field `Record`. It now wraps each into its **own** kind:
+
+  | raw return | before | now |
+  | --- | --- | --- |
+  | numeric scalar / array | single-field `NumericRecord` | `NumericArray` |
+  | mapping | `Record` | `Record` |
+  | callable | single-field `Record` | `Function` |
+  | anything else | single-field `Record` | `Opaque` |
+
+  So `log_prob`, `mean`, `variance`, `quantile`, `expectation`, and a scalar
+  law's `sample` all return a `NumericArray`. **A result is no longer indexable
+  by the function's name** — `result["my_func"]` becomes `result` itself, and an
+  opaque result is read through `.value`.
+
+  A callable result is callable because it *is* the function kind, rather than
+  because a single-field record forwards `__call__`.
+
+  **Every tracked term keeps its kind**, uniformly: a body returning a
+  `Function`, `NumericArray`, or `Opaque` gets it back as itself, as a `Record`,
+  `Distribution`, or `Batch` always did. A declared `output_template` still
+  shapes the result, being a caller's declaration rather than a default.
 
 ### Added
 

@@ -72,9 +72,11 @@ class TestConstruction:
         with pytest.raises(ValueError, match="Cannot pass both"):
             Record("r", {"a": 1.0}, b=2.0)
 
-    def test_empty_raises(self):
-        with pytest.raises(ValueError, match="at least one"):
-            Record("r")
+    def test_the_empty_record_is_legal(self):
+        """A record is a named tree, and the tree with no branches is one."""
+        empty = Record("r")
+
+        assert (empty.name, list(empty.event_template)) == ("r", [])
 
     def test_all_numeric_promotes_and_coerces(self):
         from probpipe import NumericRecord
