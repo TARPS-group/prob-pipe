@@ -258,6 +258,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A declared function can be swept over any kind of batch (#398).** Lifting a
+  declaration against a batched operand read `event_template`, the view only a
+  batch of records has, so a `NumericArrayBatch`, `OpaqueBatch`, or `FunctionBatch`
+  operand raised `does not expose an authoritative event_template for lifting`
+  however its declaration was written. It now reads `element_spec`, which the
+  `Batch` contract states at every kind. Two consequences: every batch kind is
+  read the same way, and a batch of one-field records no longer satisfies a
+  declaration that named a bare array — the record-only view unwrapped a
+  single-field element to its field, so `EventTemplate(v=())` accepted an operand
+  whose elements are records. A distribution operand is unchanged: it is lifted by
+  being sampled, and its event template remains what the draw is checked against.
+
 - **A swept row's kind no longer depends on which executor ran it (#398).** The
   row-wise path gave each row the tracked class of its own kind; the mapped
   (`jax.vmap`) path handed its rows to the aggregation raw, so a body returning a

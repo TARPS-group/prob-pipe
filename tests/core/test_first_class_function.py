@@ -461,6 +461,71 @@ class TestApplyContract:
 
         assert result.num_atoms == 5
 
+    def test_every_batch_kind_lifts_against_its_element_spec(self):
+        """A batch states what one element satisfies in ``element_spec``, at every
+        kind, so a declared function reads every batch the same way."""
+        from probpipe import FunctionBatch, NumericArrayBatch, OpaqueBatch
+
+        cases = [
+            (
+                NumericArrayBatch(
+                    jnp.arange(3.0), "row", element_spec=NumericArraySpec(()), name="rows"
+                ),
+                EventTemplate(v=()),
+            ),
+            (OpaqueBatch([object(), object()], "row", name="rows"), EventTemplate(v=None)),
+            (
+                FunctionBatch([lambda z: z, lambda z: z], "row", name="rows"),
+                EventTemplate(v=FunctionSpec()),
+            ),
+            (
+                NumericRecordBatch(
+                    {"x": jnp.arange(3.0)}, "row", element_spec=EventTemplate(x=()), name="rows"
+                ),
+                EventTemplate(v=EventTemplate(x=())),
+            ),
+        ]
+        for operand, input_template in cases:
+            wrapped = Function(
+                func=lambda v: 1.0,
+                name="f",
+                input_template=input_template,
+                dispatch="sequential",
+            )
+
+            result = wrapped(v=operand)
+
+            assert isinstance(result, NumericArrayBatch), type(operand).__name__
+            assert result.level_names == ("row",), type(operand).__name__
+
+    def test_a_batch_of_records_does_not_satisfy_a_bare_array_declaration(self):
+        """Reading the record-only view made a one-field element pass as its field."""
+        rows = NumericRecordBatch(
+            {"x": jnp.arange(3.0)}, "row", element_spec=EventTemplate(x=()), name="rows"
+        )
+        wrapped = Function(
+            func=lambda v: 1.0,
+            name="f",
+            input_template=EventTemplate(v=()),
+            dispatch="sequential",
+        )
+
+        with pytest.raises(ValueError, match=r"RecordSpec.*does not conform"):
+            wrapped(v=rows)
+
+    def test_a_mismatched_element_kind_names_both_specs(self):
+        from probpipe import OpaqueBatch
+
+        wrapped = Function(
+            func=lambda v: 1.0,
+            name="f",
+            input_template=EventTemplate(v=()),
+            dispatch="sequential",
+        )
+
+        with pytest.raises(ValueError, match=r"OpaqueSpec.*does not conform.*NumericArraySpec"):
+            wrapped(v=OpaqueBatch([object()], "row", name="rows"))
+
     def test_authoritative_nested_mapping_must_match_exactly(self):
         template = EventTemplate(
             stats=EventTemplate(copy=("obs",), total=()),
@@ -686,8 +751,9 @@ class TestSymbolicCalls:
         with pytest.raises(
             ValueError,
             match=(
-                r"Function 'identity' input 'x' does not expose an authoritative "
-                r"event_template for lifting"
+                r"Function 'identity' input 'x' states no element specification for "
+                r"lifting: a DistributionArray reports neither an element_spec nor an "
+                r"event_template"
             ),
         ):
             wrapped(values)
