@@ -914,7 +914,7 @@ class TestBatchValuedRowAggregation:
         def body(x):
             return self._inner(2) if float(x["x"]) < 1.5 else Record("r", y=0.0)
 
-        with pytest.raises(TypeError, match="some rows returned a batch of records"):
+        with pytest.raises(TypeError, match="some rows returned a batch and some did not"):
             Function(func=body, dispatch="sequential")(x=self._rows())
 
     @pytest.mark.parametrize(
