@@ -244,6 +244,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The kind table is the single answer to which batch form a field has (#398).**
+  `RecordBatch` construction listed the admissible field kinds inline while the
+  reading end asked the registry, so registering a kind widened one and not the
+  other. Construction now asks the registry too. Aggregating a batch of rows also
+  converts each row through its own `as_jax`, whose set-once cache it was
+  bypassing by converting the raw store directly.
+
 - **A swept row of unstackable elements keeps its level (#398).** A row returning
   a sequence of opaque objects or callables had its own batch stored whole as one
   element of the aggregate, so the row's multiplicity vanished and a row of

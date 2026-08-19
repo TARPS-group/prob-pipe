@@ -906,10 +906,11 @@ def _make_stack(
                     name_is_auto=True,
                 )
             if isinstance(first, NumericArrayBatch):
-                # One store rather than columns, so the rows stack directly —
-                # through the array backend, as the columns below do, since a
-                # row's store is in native form.
-                store = jnp.stack([_to_jax_array(o.values) for o in outs], axis=0)
+                # One store rather than columns, so the rows stack directly. Each
+                # row converts through ``as_jax``, not through the backend on its
+                # raw store: the conversion is the batch's own and is cached
+                # set-once there, so a row aggregated again is not converted again.
+                store = jnp.stack([o.as_jax() for o in outs], axis=0)
                 return NumericArrayBatch(
                     store.reshape(batch_shape + store.shape[1:]),
                     (*level_names, *first.level_names),
