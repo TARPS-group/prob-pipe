@@ -31,8 +31,10 @@ class FunctionBatch(_ObjectBatch[Callable]):
         specifies a callable and neither of its templates.
     axis_groups : iterable of iterable of int, optional
         The axis sizes each level holds; defaults to one axis per level.
-    name : str, optional
-        The batch's name; defaults to ``"functionbatch"``, marked auto-derived.
+    name : str
+        The batch's name. Required, as it is for every batch: a batch is a value a
+        caller holds, and a name derived from its class says nothing about what it
+        holds.
     name_is_auto : bool, default False
         Whether *name* is auto-derived rather than user-given.
     provenance : Provenance, optional
