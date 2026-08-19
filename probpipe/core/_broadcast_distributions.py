@@ -30,7 +30,7 @@ from ._function_batch import FunctionBatch
 from ._immutable import constructing, transient_memo
 from ._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ._numeric_record_batch import NumericRecordBatch
-from ._object_batch import _from_iterable, _is_object_array
+from ._object_batch import _from_iterable, _is_object_array, _ObjectBatch
 from ._opaque_batch import OpaqueBatch
 from ._record_batch import RecordBatch, _batch_class_for, _MappedBatchColumns
 from .event_template import (
@@ -677,13 +677,18 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
     field the others have and misnaming their axes.
     """
     first = outs[0]
-    # The family, not the exact class: a RecordBatch and a NumericRecordBatch
-    # row hold the same thing, and only one of them says so in its name.
-    family = NumericArrayBatch if isinstance(first, NumericArrayBatch) else RecordBatch
+    # The family, not the exact class: a RecordBatch and a NumericRecordBatch row
+    # hold the same thing, and only one of them says so in its name. An
+    # OpaqueBatch and a FunctionBatch share their storage but not their element
+    # spec, so the spec comparison below is what separates them.
+    for candidate in (NumericArrayBatch, _ObjectBatch, RecordBatch):
+        if isinstance(first, candidate):
+            family = candidate
+            break
     if not all(isinstance(o, family) for o in outs):
         kinds = sorted({type(o).__name__ for o in outs})
         raise TypeError(
-            f"{field_name}: some rows returned a batch of records and some did not "
+            f"{field_name}: some rows returned a batch and some did not "
             f"({', '.join(kinds)}). A swept body returns one kind for every row, since "
             f"the aggregate has one schema; return a batch from every row or from none"
         )
@@ -723,7 +728,12 @@ def _row_at_its_kind(row: Any, field_name: str) -> Any:
 
     if isinstance(row, Mapping):
         return Record(field_name, dict(row), name_is_auto=True)
-    if isinstance(row, (list, tuple)) and row:
+    if isinstance(row, (list, tuple)):
+        if not row:
+            # A batch of nothing, exactly as ``_wrap_as_term`` reads an empty
+            # sequence returned on its own: no element to read a kind off, and the
+            # level still counts zero of them.
+            return OpaqueBatch([], field_name, name=field_name, name_is_auto=True)
         return _make_stack(list(row), n=len(row), level_names=(field_name,), field_name=field_name)
     return row
 
@@ -883,9 +893,20 @@ def _make_stack(
         # inner batch axis.
         # Both batch kinds a swept body can return; each keeps its own kind
         # through the sweep, as a scalar row does.
-        stackable = (RecordBatch, NumericArrayBatch)
+        stackable = (RecordBatch, NumericArrayBatch, _ObjectBatch)
         if outs and any(isinstance(o, stackable) for o in outs):
             first = _agreeing_batch_rows(outs, field_name=field_name)
+            if isinstance(first, _ObjectBatch):
+                # The elements are stored, not stacked, so the aggregate is one
+                # object array over the sweep's axes then the rows' own.
+                store = np.stack([o._store for o in outs], axis=0)
+                return type(first)(
+                    store.reshape(batch_shape + store.shape[1:]),
+                    (*level_names, *first.level_names),
+                    axis_groups=(*sweep_groups, *first.axis_groups),
+                    name=name or field_name,
+                    name_is_auto=True,
+                )
             if isinstance(first, NumericArrayBatch):
                 # One store rather than columns, so the rows stack directly —
                 # through the array backend, as the columns below do, since a
