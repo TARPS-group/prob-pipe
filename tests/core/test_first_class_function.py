@@ -194,6 +194,7 @@ class TestApplyContract:
             level_names="draw",
             axis_groups=((2,),),
             element_spec=intrinsic,
+            name="batch",
         )
         wrapped = Function(func=lambda: returned, output_template=declared)
 
@@ -219,6 +220,7 @@ class TestApplyContract:
             level_names="draw",
             axis_groups=(batch_shape,),
             element_spec=template,
+            name="batch",
         )
         wrapped = Function(func=lambda: returned, output_template=template)
 
@@ -235,6 +237,7 @@ class TestApplyContract:
             level_names="draw",
             axis_groups=((2,),),
             element_spec=EventTemplate(y=(3,)),
+            name="batch",
         )
         wrapped = Function(func=lambda: returned, output_template=EventTemplate(y=()))
 
@@ -248,6 +251,7 @@ class TestApplyContract:
             level_names="draw",
             axis_groups=((2,),),
             element_spec=EventTemplate(y=()),
+            name="batch",
         )
 
         with pytest.raises(ValueError, match=r"output/y dtype float32 does not conform"):
@@ -259,6 +263,7 @@ class TestApplyContract:
             level_names="draw",
             axis_groups=((2,),),
             element_spec=EventTemplate(y=()),
+            name="batch",
         )
 
         with pytest.raises(ValueError, match=r"output at 'y'.*support positive"):
@@ -1520,6 +1525,7 @@ class TestDeclaredSupportOnABatchedOutput:
             {"a": jnp.ones(3), "b": jnp.ones(3) * 2},
             "draw",
             element_spec=EventTemplate(a=(), b=()),
+            name="batch",
         )
 
         result = Function(func=lambda: valid, output_template=template).apply()
@@ -1536,6 +1542,7 @@ class TestDeclaredSupportOnABatchedOutput:
             {"a": jnp.ones(3), "b": jnp.asarray([1.0, -2.0, 3.0])},
             "draw",
             element_spec=EventTemplate(a=(), b=()),
+            name="batch",
         )
 
         with pytest.raises(ValueError, match=r"output at 'b'.*support positive"):

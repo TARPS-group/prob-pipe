@@ -49,12 +49,13 @@ class _ObjectBatch[E](Batch[E]):
         elements are stored in. Defaults to one axis per level, which requires
         as many names as ``elements`` has axes; a level spanning several axes is
         stated explicitly.
-    name : str, optional
-        The batch's name. Defaults to the class name lowercased, marked
-        auto-derived.
+    name : str
+        The batch's name. Required, as it is for every batch: a batch is a value a
+        caller holds, and a name derived from its class says nothing about what it
+        holds.
     name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given. A batch left
-        unnamed is auto-named regardless.
+        Whether *name* is auto-derived rather than user-given, which is what an
+        operation naming its own result states.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -79,7 +80,7 @@ class _ObjectBatch[E](Batch[E]):
     suffixing. The caller that mints a level knows what it means.
 
     Construction admits no elements, as selection always did: ``batch[0:0]`` and
-    ``OpaqueBatch([], "draw")`` are both a batch of nothing. Zero is a count the
+    ``OpaqueBatch([], "draw", name="draws")`` are both a batch of nothing. Zero is a count the
     level can carry, and an object array of no elements still reports the shape
     ``(0,)`` to read it from. What is refused is a missing *axis*: a
     zero-dimensional store is one object, with no level to count along.
@@ -99,7 +100,7 @@ class _ObjectBatch[E](Batch[E]):
         *,
         element_spec: ValueSpec,
         axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str | None = None,
+        name: str,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
@@ -113,8 +114,8 @@ class _ObjectBatch[E](Batch[E]):
         )
         self._init_batch(
             BatchSpec(element_spec, groups, names),
-            name=name if name is not None else type(self).__name__.lower(),
-            name_is_auto=name is None or name_is_auto,
+            name=name,
+            name_is_auto=name_is_auto,
             provenance=provenance,
         )
 

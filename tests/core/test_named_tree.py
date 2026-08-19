@@ -191,6 +191,7 @@ class TestWithPathNames:
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
+            name="batch",
         )
         renamed = ra.with_path_names(a="b")
         assert list(renamed.event_template) == ["b"]
@@ -385,6 +386,7 @@ class TestRecordAutoPromotion:
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
+            name="batch",
         )
         assert type(ra) is RecordBatch
         nrb = NumericRecordBatch(
@@ -392,6 +394,7 @@ class TestRecordAutoPromotion:
             level_names="draw",
             axis_groups=((3,),),
             element_spec=EventTemplate(a=()),
+            name="batch",
         )
         assert type(nrb) is NumericRecordBatch
 

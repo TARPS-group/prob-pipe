@@ -159,6 +159,7 @@ def test_record_batch_pickle_roundtrip():
         level_names="draw",
         axis_groups=((2,),),
         element_spec=template,
+        name="batch",
     )
     ra2 = roundtrip(ra)
     assert ra2.batch_shape == (2,)
@@ -173,6 +174,7 @@ def test_record_batch_template_preserved():
         level_names="draw",
         axis_groups=((1,),),
         element_spec=template,
+        name="batch",
     )
     ra2 = roundtrip(ra)
     assert ra2.event_template == template
@@ -190,6 +192,7 @@ def test_numeric_record_batch_pickle_roundtrip():
         level_names="draw",
         axis_groups=((3,),),
         element_spec=template,
+        name="batch",
     )
     nra2 = roundtrip(nrb)
     assert type(nra2) is NumericRecordBatch
@@ -204,6 +207,7 @@ def test_numeric_record_batch_cloudpickle_roundtrip():
         level_names="draw",
         axis_groups=((2,),),
         element_spec=template,
+        name="batch",
     )
     nra2 = cloudpickle_roundtrip(nrb)
     assert type(nra2) is NumericRecordBatch
