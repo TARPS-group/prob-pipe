@@ -33,7 +33,15 @@ from probpipe import (
     RecordBatch,
 )
 from probpipe.core.event_template import NumericEventTemplate
-from probpipe.core.ops import log_prob, mean, sample, variance
+from probpipe.core.ops import (
+    log_prob,
+    mean,
+    prob,
+    sample,
+    unnormalized_log_prob,
+    unnormalized_prob,
+    variance,
+)
 
 KEY = jax.random.PRNGKey(0)
 ELEMENT = NumericEventTemplate(a=())
@@ -323,3 +331,132 @@ class TestLevelsAreNamedForWhatMintsThem:
         )
 
         assert (drawn.name, drawn.name_is_auto) == ("atoms", False)
+
+
+class TestABatchOperandKeepsItsLevelsThroughAnOperation:
+    """Design V.9: a density op maps elementwise "with the batch axes preserved".
+
+    An operation whose value parameter is `Any`-hinted takes the batch whole and
+    evaluates it in one vectorized call — the fused implementation V.9 allows.
+    That is not licence to hand back a bare array: the axes the operand accounted
+    for are levels, and a result that drops them says the draws were one value.
+
+    Every op that scores a value is covered, since which of them restates the
+    levels is not something a caller should have to know. `prob` and the two
+    unnormalized ops used to drop them, so the same draws scored as a batch under
+    one op and as one wide value under another.
+    """
+
+    LAW = Normal(0.0, 1.0, name="height")
+
+    @pytest.fixture(
+        params=[log_prob, prob, unnormalized_log_prob, unnormalized_prob], ids=lambda op: op.name
+    )
+    def density_op(self, request):
+        return request.param
+
+    def test_scoring_a_batch_of_draws_keeps_the_sample_level(self, density_op):
+        drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
+
+        scored = density_op(self.LAW, drawn)
+
+        assert (scored.batch_shape, scored.level_names) == ((3,), ("sample",))
+
+    def test_the_result_is_named_for_the_operand_it_scored(self, density_op):
+        drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
+
+        assert density_op(self.LAW, drawn).name == drawn.name
+
+    def test_several_levels_are_all_restated(self, density_op):
+        """The operand's own tiling, not one flat axis."""
+        drawn = NumericArrayBatch(
+            jnp.zeros((2, 3)),
+            ("chain", "draw"),
+            element_spec=NumericArraySpec(()),
+            axis_groups=((2,), (3,)),
+            name="draws",
+        )
+
+        scored = density_op(self.LAW, drawn)
+
+        assert (scored.batch_shape, scored.level_names) == ((2, 3), ("chain", "draw"))
+
+    def test_a_single_draw_is_still_a_single_value(self, density_op):
+        """No operand levels to restate, so nothing is invented."""
+        scored = density_op(self.LAW, sample(self.LAW, key=KEY))
+
+        assert not isinstance(scored, NumericArrayBatch)
+
+    def test_a_raw_array_operand_is_left_alone(self, density_op):
+        """A bare array states no levels, so the result carries none."""
+        scored = density_op(self.LAW, jnp.zeros(3))
+
+        assert not isinstance(scored, NumericArrayBatch)
+
+
+class TestEveryAggregateIsNamedForItsFunction:
+    """The naming table, widened across the axes that had diverged.
+
+    A sweep's aggregate is built by the boundary, not by a caller, so its name is
+    the producing function's and is marked auto. Three paths disagreed: the
+    undeclared record aggregate took `stack`'s class-name default, and the scalar,
+    opaque, and declared paths marked a derived name as user-given — which would
+    stop a later operation renaming it.
+    """
+
+    @staticmethod
+    def _rows(n: int = 3):
+        from probpipe.core.event_template import NumericEventTemplate
+
+        return NumericRecordBatch(
+            {"x": jnp.arange(float(n))},
+            "row",
+            element_spec=NumericEventTemplate(x=()),
+            name="rows",
+        )
+
+    def _swept(self, body, **controls):
+        return Function(func=body, name="double", dispatch="sequential", **controls)(v=self._rows())
+
+    @pytest.mark.parametrize(
+        ("label", "body"),
+        [
+            ("numeric", lambda v: jnp.asarray(v["x"]) * 2),
+            ("mapping", lambda v: {"y": jnp.asarray(v["x"])}),
+            ("opaque", lambda v: "tag"),
+            ("callable", lambda v: lambda: 1),
+            ("sequence", lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])]),
+        ],
+    )
+    def test_an_undeclared_aggregate_is_named_for_the_function(self, label, body):
+        result = self._swept(body)
+
+        assert (result.name, result.name_is_auto) == ("double", True)
+
+    def test_a_declared_aggregate_is_named_the_same_way(self):
+        from probpipe import EventTemplate
+
+        result = self._swept(
+            lambda v: {"y": jnp.asarray(v["x"])}, output_template=EventTemplate(y=())
+        )
+
+        assert (result.name, result.name_is_auto) == ("double", True)
+
+    def test_a_multi_axis_sweep_is_named_the_same_way(self):
+        """The re-cut to the sweep's own geometry is a separate construction, and
+        it had its own naming."""
+        from probpipe.core.event_template import NumericEventTemplate
+
+        grid = NumericRecordBatch(
+            {"x": jnp.arange(6.0).reshape(2, 3)},
+            ("a", "b"),
+            element_spec=NumericEventTemplate(x=()),
+            name="grid",
+        )
+
+        result = Function(
+            func=lambda v: {"y": jnp.asarray(v["x"])}, name="double", dispatch="sequential"
+        )(v=grid)
+
+        assert (result.name, result.name_is_auto) == ("double", True)
+        assert result.level_names == ("a", "b")

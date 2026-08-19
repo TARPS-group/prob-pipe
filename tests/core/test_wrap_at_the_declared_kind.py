@@ -302,3 +302,143 @@ class TestAnEmptyRecordHasNoBatch:
 
         with pytest.raises(ValueError, match="at least one field"):
             RecordBatch({}, "x", element_spec=EventTemplate())
+
+
+class TestEachSweptRowTakesItsOwnKind:
+    """A row is one call's return, so the rule that names a single return's kind
+    is the rule that names a row's.
+
+    Every case runs under both dispatches. Which executor a sweep picks is a
+    performance decision, so a row's kind cannot depend on it: the mapped path
+    reads its rows through the same rule the row-wise path does, and the two
+    agree here rather than in prose.
+    """
+
+    @pytest.fixture(params=["auto", "sequential"])
+    def dispatch(self, request):
+        return request.param
+
+    @staticmethod
+    def _rows(n: int = 3):
+        from probpipe import NumericRecordBatch
+        from probpipe.core.event_template import NumericEventTemplate
+
+        return NumericRecordBatch(
+            {"x": jnp.arange(float(n))},
+            "row",
+            element_spec=NumericEventTemplate(x=()),
+            name="rows",
+        )
+
+    def _swept(self, body, dispatch):
+        return Function(func=body, name="f", dispatch=dispatch)(v=self._rows())
+
+    def test_a_mapping_row_gives_a_batch_of_records(self, dispatch):
+        out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2}, dispatch)
+
+        assert list(out.event_template) == ["y"]
+        assert (out.batch_shape, out.level_names) == ((3,), ("row",))
+        np.testing.assert_array_equal(np.asarray(out["y"]), np.arange(3.0) * 2)
+
+    def test_a_nested_mapping_row_keeps_its_subtree(self, dispatch):
+        out = self._swept(
+            lambda v: {"lo": jnp.asarray(v["x"]) - 1, "grp": {"hi": jnp.asarray(v["x"]) + 1}},
+            dispatch,
+        )
+
+        assert list(out.event_template) == ["lo", "grp/hi"]
+        np.testing.assert_array_equal(np.asarray(out["grp/hi"]), np.arange(3.0) + 1)
+
+    def test_any_mapping_counts_not_only_dict(self, dispatch):
+        from collections import OrderedDict
+
+        out = self._swept(lambda v: OrderedDict(y=jnp.asarray(v["x"])), dispatch)
+
+        assert list(out.event_template) == ["y"]
+
+    def test_a_sequence_row_keeps_its_own_level(self, dispatch):
+        """The row's multiplicity is a level, not part of the element's shape."""
+        out = self._swept(lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])], dispatch)
+
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "f"))
+
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            (lambda v: [object(), object()], "OpaqueBatch"),
+            (lambda v: [lambda z: z, lambda z: z], "FunctionBatch"),
+        ],
+        ids=["opaque", "callable"],
+    )
+    def test_a_row_of_unstackable_elements_keeps_its_level_too(self, dispatch, body, expected):
+        """The level does not depend on what the elements are.
+
+        These rows were stored whole: the row's own batch became one opaque
+        element of the aggregate, so its multiplicity vanished and a batch of
+        callables came back as opaque.
+        """
+        out = self._swept(body, dispatch)
+
+        assert type(out).__name__ == expected
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "f"))
+
+    def test_an_empty_sequence_row_counts_zero_on_its_level(self, dispatch):
+        """A batch of nothing is still a batch, as it is for a single return."""
+        out = self._swept(lambda v: [], dispatch)
+
+        assert (out.batch_shape, out.level_names) == ((3, 0), ("row", "f"))
+
+    def test_two_nested_anonymous_levels_are_refused(self, dispatch):
+        """Both would take the function's name, and a clash is not resolved by
+        suffixing it."""
+        with pytest.raises(ValueError, match="level names must be unique"):
+            self._swept(lambda v: [[jnp.asarray(v["x"])], [jnp.asarray(v["x"])]], dispatch)
+
+    def test_a_batch_row_keeps_the_level_it_named(self, dispatch):
+        """A row that names its own level keeps that name inside the sweep's."""
+        from probpipe import NumericRecordBatch
+        from probpipe.core.event_template import NumericEventTemplate
+
+        def body(v):
+            x = jnp.asarray(v["x"])
+            return NumericRecordBatch(
+                {"y": jnp.stack([x, x * 2])},
+                "part",
+                element_spec=NumericEventTemplate(y=()),
+                name="parts",
+            )
+
+        out = self._swept(body, dispatch)
+
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "part"))
+
+    def test_rows_of_differing_numeric_shape_are_refused(self, dispatch):
+        """An object column would record the disagreement as if it were the answer."""
+        with pytest.raises(ValueError, match="differing shapes"):
+            self._swept(lambda v: jnp.ones(int(jnp.asarray(v["x"])) + 1), dispatch)
+
+    def test_a_disagreement_inside_a_returned_sequence_is_not_swallowed(self):
+        """The stack has a batch form for every element kind, so what raises here
+        is the rows disagreeing — which the caller should see."""
+        with pytest.raises(ValueError, match="differing shapes"):
+            Function(func=lambda: [jnp.ones(1), jnp.ones(2)], name="g")()
+
+
+class TestASweptEmptyMappingHitsTheSameWall:
+    """Per-row wrapping makes a `{}` row a `Record`, so the sweep reaches the
+    field guard and says what the direct routes say."""
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
+    def test_a_swept_body_returning_an_empty_mapping_is_refused(self, dispatch):
+        from probpipe import NumericRecordBatch
+        from probpipe.core.event_template import NumericEventTemplate
+
+        rows = NumericRecordBatch(
+            {"x": jnp.arange(3.0)},
+            "row",
+            element_spec=NumericEventTemplate(x=()),
+            name="rows",
+        )
+
+        with pytest.raises(ValueError, match="at least one field"):
+            Function(func=lambda v: {}, name="f", dispatch=dispatch)(v=rows)

@@ -95,7 +95,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   it was the one aggregation that left the result auto-named. Opaque rows now give
   an `OpaqueBatch` and callable rows a `FunctionBatch`, both named for the
   function as every other aggregation already was.
-
 - **An empty return keeps its host's kind (#398).** A `Function` returning `{}`
   raised, and `[]` / `()` became an `Opaque`, because `Record`, `EventTemplate`,
   and the object batches each required at least one entry. The kind now follows
@@ -107,6 +106,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   result. A *batch* of empty records is not: a batch reads its multiplicity off
   a column, and a zero-field element supplies none, so `RecordBatch` still
   requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:
+
+  result. An empty template is **not** promoted to `NumericEventTemplate`:
+
+
   vacuously every leaf is numeric, which is not a reason to claim it. A batch
   still requires a batch *axis* — a single object with no axis is refused as
   before.
@@ -250,6 +253,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   names the classes being removed.
 
 ### Fixed
+
+- **The kind table is the single answer to which batch form a field has (#398).**
+  `RecordBatch` construction listed the admissible field kinds inline while the
+  reading end asked the registry, so registering a kind widened one and not the
+  other. Construction now asks the registry too. Aggregating a batch of rows also
+  converts each row through its own `as_jax`, whose set-once cache it was
+  bypassing by converting the raw store directly.
+
+- **A swept row of unstackable elements keeps its level (#398).** A row returning
+  a sequence of opaque objects or callables had its own batch stored whole as one
+  element of the aggregate, so the row's multiplicity vanished and a row of
+  callables came back as an `OpaqueBatch`. The row-stacking path now knows all
+  three batch families, so such a row aggregates to `(rows, row_size)` over both
+  levels and a row of callables gives a `FunctionBatch`. An empty sequence row is
+  a batch of nothing on its own level, as it already was for a single return,
+  which also settles a dispatch disagreement: the mapped path raised where the
+  row-wise path returned.
+
+- **Every density op keeps a batch operand's levels (#398).** `log_prob` restated
+  the levels its operand carried; `prob`, `unnormalized_log_prob`, and
+  `unnormalized_prob` handed back a bare array, so the same draws scored as a
+  batch over `("chain", "draw")` under one op and as one value of shape `(2, 3)`
+  under another. All four now restate them, so which op is called no longer
+  decides whether the draws were a multiplicity.
+
+- **A declared function can be swept over any kind of batch (#398).** Lifting a
+  declaration against a batched operand read `event_template`, the view only a
+  batch of records has, so a `NumericArrayBatch`, `OpaqueBatch`, or `FunctionBatch`
+  operand raised `does not expose an authoritative event_template for lifting`
+  however its declaration was written. It now reads `element_spec`, which the
+  `Batch` contract states at every kind. Two consequences: every batch kind is
+  read the same way, and a batch of one-field records no longer satisfies a
+  declaration that named a bare array — the record-only view unwrapped a
+  single-field element to its field, so `EventTemplate(v=())` accepted an operand
+  whose elements are records. A distribution operand is unchanged: it is lifted by
+  being sampled, and its event template remains what the draw is checked against.
+
+- **A swept row's kind no longer depends on which executor ran it (#398).** The
+  row-wise path gave each row the tracked class of its own kind; the mapped
+  (`jax.vmap`) path handed its rows to the aggregation raw, so a body returning a
+  mapping raised `cannot aggregate output of type dict` and one returning a
+  sequence raised a spurious row-count mismatch — under `dispatch="auto"`, on
+  bodies that worked under `dispatch="sequential"`. Both paths now read a row
+  through the same rule, and a record row crosses the map as inert columns over no
+  level of its own, the way a batch row already crossed it. A declared
+  `output_template` still names the row's kind, as before.
 
 - **Reading a distribution no longer modifies it.** `BroadcastDistribution`
   assigned its marginal on the first `marginalize()`, and a backend-delegated

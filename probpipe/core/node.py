@@ -40,6 +40,7 @@ from . import (
     _workflow_result,
     _workflow_sweep,
 )
+from ._batch import Batch
 from ._function_contract import (
     _bind_function_inputs,
     _bind_planned_function_inputs,
@@ -198,6 +199,18 @@ class Node(ABC):  # noqa: B024
     @property
     def inputs(self) -> Mapping[str, Any]:
         return self._inputs
+
+
+class _UnvectorizableBatchSignal(Exception):
+    """The probe met a batch whose rows the mapped body cannot be built from.
+
+    Raised so the reason survives to the caller: the generic tracing message
+    would say the function is not JAX-traceable, which is not what went wrong.
+    """
+
+    def __init__(self, kinds: list[str]) -> None:
+        super().__init__(", ".join(kinds))
+        self.kinds = kinds
 
 
 class Function(Node, TrackedTerm, Annotated):
@@ -991,6 +1004,7 @@ class Function(Node, TrackedTerm, Annotated):
             dummy_kw = dict(values)
             broadcast_refs = set(broadcast_args)
             batched_sources: dict[_workflow_call.WorkflowInputRef, Any] = {}
+            unvectorized_batches: dict[Any, Any] = {}
             drawn_refs: list[_workflow_call.WorkflowInputRef] = []
             for ref in _workflow_call.iter_input_refs(self._signature_info, values):
                 v = _workflow_call.input_ref_value(values, ref)
@@ -1001,6 +1015,15 @@ class Function(Node, TrackedTerm, Annotated):
                     if isinstance(v, RecordBatch):
                         batched_sources[ref] = v
                         dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, v[0])
+                    elif isinstance(v, Batch):
+                        # A batch that is not a batch of records is still a swept
+                        # source, not a draw. The probe's synthesis below builds a
+                        # leaf per field, which a single-store batch does not have,
+                        # so this route declines rather than mis-reading it as a
+                        # law: ``auto`` runs it sequentially and gets the right
+                        # answer, which an explicit ``jax`` should not silently
+                        # differ from.
+                        unvectorized_batches[ref] = v
                     else:
                         # Nothing to synthesize: the draw itself supplies the
                         # structure and dtype below, which is what lets a
@@ -1016,12 +1039,20 @@ class Function(Node, TrackedTerm, Annotated):
                         replacement = v
                     dummy_kw = _workflow_call.replace_input_ref(dummy_kw, ref, replacement)
             with _workflow_context._workflow_probe():
+                if unvectorized_batches:
+                    raise _UnvectorizableBatchSignal(
+                        sorted({type(b).__name__ for b in unvectorized_batches.values()})
+                    )
                 if batched_sources:
                     refs = list(batched_sources)
                     # The executor's own body, not a copy maintained in the
                     # probe. ``dummy_kw`` already carries non-batched inputs.
                     _row_call = _workflow_sweep.mapped_row_body(
-                        func=func, values=dummy_kw, array_args=refs
+                        func=func,
+                        values=dummy_kw,
+                        array_args=refs,
+                        field_name=self._name,
+                        output_is_declared=self._output_template is not None,
                     )
 
                     probe_leaves = []
@@ -1143,6 +1174,12 @@ class Function(Node, TrackedTerm, Annotated):
         )
         if trace_error is None:
             return
+        if isinstance(trace_error, _UnvectorizableBatchSignal):
+            raise TypeError(
+                f"dispatch='jax' cannot vectorize over {', '.join(trace_error.kinds)}: the "
+                f"mapped row body is built from one leaf per field, which a single-store batch "
+                f"does not have. Use dispatch='auto' or 'sequential', which sweep it correctly."
+            ) from trace_error
         if isinstance(trace_error, _workflow_context._StochasticProbeSignal):
             raise TypeError(
                 "dispatch='jax' cannot execute a wrapped function that requests "

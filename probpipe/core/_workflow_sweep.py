@@ -31,8 +31,9 @@ from . import (
     _workflow_result,
 )
 from ._batch import Batch
-from ._broadcast_distributions import _make_stack
+from ._broadcast_distributions import _make_stack, _row_at_its_kind
 from ._distribution_array import DistributionArray, _make_distribution_array
+from ._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ._record_batch import RecordBatch, _MappedBatchColumns
 from .config import WorkflowKind, prefect_config
 from .distribution import BroadcastDistribution, Distribution
@@ -97,6 +98,7 @@ def execute_sweep(
             require_jax_traceable=require_jax_traceable,
             workflow_kind=workflow_kind,
             workflow_name=workflow_name,
+            output_is_declared=output_template is not None,
         )
         aggregate = _make_stack(
             per_row,
@@ -224,6 +226,7 @@ def execute_sweep_rows(
     require_jax_traceable: Callable[[dict[str, Any], list[_workflow_call.WorkflowInputRef]], None],
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str = "workflow",
+    output_is_declared: bool = False,
 ) -> Any:
     """Execute pure sweep rows through JAX vmap or row-wise execution."""
     # Zero rows run nothing, so there is no body for a dispatch to trace and no
@@ -273,6 +276,7 @@ def execute_sweep_rows(
             n_total=plan.n_sweep,
             workflow_kind=workflow_kind,
             workflow_name=workflow_name,
+            output_is_declared=output_is_declared,
         )
 
     per_row_values = [
@@ -310,6 +314,8 @@ def mapped_row_body(
     func: Callable[..., Any],
     values: dict[str, Any],
     array_args: Sequence[_workflow_call.WorkflowInputRef],
+    field_name: str,
+    output_is_declared: bool = False,
 ) -> Callable[[Any], Any]:
     """The body ``jax.vmap`` runs for one sweep row, and the probe traces.
 
@@ -318,10 +324,15 @@ def mapped_row_body(
     functions cannot promise.
 
     A row's batched-record argument is rebuilt from raw leaf columns inside the
-    traced call, so nothing infers a batch axis on the way in. On the way out, a
-    returned :class:`Batch` is taken apart into :class:`_MappedBatchColumns`,
-    because the map is about to add an axis that the batch's own unflatten hook
-    could not name — the executor names it afterwards, from the sweep's levels.
+    traced call, so nothing infers a batch axis on the way in. On the way out the
+    row takes the kind of its own return, as a row-wise row does, and a record or
+    a batch is then taken apart into :class:`_MappedBatchColumns` or
+    :class:`_MappedBatchStore`: the map is about to add an axis that neither
+    class's unflatten hook could name, and the executor names it afterwards from
+    the sweep's levels.
+
+    *output_is_declared* says *func* already gave the row a declared template, in
+    which case that template is the row's kind and nothing here re-derives one.
     """
 
     def one_row(array_slice_leaves):
@@ -330,8 +341,16 @@ def mapped_row_body(
             for ref, leaves in zip(array_args, array_slice_leaves)
         }
         out = func(**_workflow_call.replace_input_refs(values, replacements))
+        if not output_is_declared:
+            out = _row_at_its_kind(out, field_name)
+            if isinstance(out, Record):
+                # As a batch row is carried, but with no level of its own: the
+                # axis the map adds is the only one the aggregate will have.
+                return _MappedBatchColumns.of_record(out)
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)
+        if isinstance(out, NumericArrayBatch):
+            return _MappedBatchStore.of(out)
         return out
 
     return one_row
@@ -345,9 +364,16 @@ def execute_sweep_rows_jax(
     n_total: int,
     workflow_kind: WorkflowKind = WorkflowKind.OFF,
     workflow_name: str = "workflow",
+    output_is_declared: bool = False,
 ) -> Any:
     """Execute the limited single-batch sweep through ``jax.vmap``."""
-    single_call = mapped_row_body(func=func, values=values, array_args=array_args)
+    single_call = mapped_row_body(
+        func=func,
+        values=values,
+        array_args=array_args,
+        field_name=workflow_name,
+        output_is_declared=output_is_declared,
+    )
 
     vmap_input = []
     for ref in array_args:
