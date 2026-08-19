@@ -33,7 +33,15 @@ from probpipe import (
     RecordBatch,
 )
 from probpipe.core.event_template import NumericEventTemplate
-from probpipe.core.ops import log_prob, mean, sample, variance
+from probpipe.core.ops import (
+    log_prob,
+    mean,
+    prob,
+    sample,
+    unnormalized_log_prob,
+    unnormalized_prob,
+    variance,
+)
 
 KEY = jax.random.PRNGKey(0)
 ELEMENT = NumericEventTemplate(a=())
@@ -274,37 +282,62 @@ class TestLevelsAreNamedForWhatMintsThem:
 
 
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
-    """Design V.9: `log_prob` maps elementwise "with the batch axes preserved".
+    """Design V.9: a density op maps elementwise "with the batch axes preserved".
 
     An operation whose value parameter is `Any`-hinted takes the batch whole and
     evaluates it in one vectorized call — the fused implementation V.9 allows.
     That is not licence to hand back a bare array: the axes the operand accounted
     for are levels, and a result that drops them says the draws were one value.
+
+    Every op that scores a value is covered, since which of them restates the
+    levels is not something a caller should have to know. `prob` and the two
+    unnormalized ops used to drop them, so the same draws scored as a batch under
+    one op and as one wide value under another.
     """
 
     LAW = Normal(0.0, 1.0, name="height")
 
-    def test_log_prob_of_a_batch_of_draws_keeps_the_sample_level(self):
+    @pytest.fixture(
+        params=[log_prob, prob, unnormalized_log_prob, unnormalized_prob], ids=lambda op: op.name
+    )
+    def density_op(self, request):
+        return request.param
+
+    def test_scoring_a_batch_of_draws_keeps_the_sample_level(self, density_op):
         drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
 
-        scored = log_prob(self.LAW, drawn)
+        scored = density_op(self.LAW, drawn)
 
         assert (scored.batch_shape, scored.level_names) == ((3,), ("sample",))
 
-    def test_the_result_is_named_for_the_operand_it_scored(self):
+    def test_the_result_is_named_for_the_operand_it_scored(self, density_op):
         drawn = sample(self.LAW, sample_shape=(3,), key=KEY)
 
-        assert log_prob(self.LAW, drawn).name == drawn.name
+        assert density_op(self.LAW, drawn).name == drawn.name
 
-    def test_a_single_draw_is_still_a_single_value(self):
+    def test_several_levels_are_all_restated(self, density_op):
+        """The operand's own tiling, not one flat axis."""
+        drawn = NumericArrayBatch(
+            jnp.zeros((2, 3)),
+            ("chain", "draw"),
+            element_spec=NumericArraySpec(()),
+            axis_groups=((2,), (3,)),
+            name="draws",
+        )
+
+        scored = density_op(self.LAW, drawn)
+
+        assert (scored.batch_shape, scored.level_names) == ((2, 3), ("chain", "draw"))
+
+    def test_a_single_draw_is_still_a_single_value(self, density_op):
         """No operand levels to restate, so nothing is invented."""
-        scored = log_prob(self.LAW, sample(self.LAW, key=KEY))
+        scored = density_op(self.LAW, sample(self.LAW, key=KEY))
 
         assert not isinstance(scored, NumericArrayBatch)
 
-    def test_a_raw_array_operand_is_left_alone(self):
+    def test_a_raw_array_operand_is_left_alone(self, density_op):
         """A bare array states no levels, so the result carries none."""
-        scored = log_prob(self.LAW, jnp.zeros(3))
+        scored = density_op(self.LAW, jnp.zeros(3))
 
         assert not isinstance(scored, NumericArrayBatch)
 

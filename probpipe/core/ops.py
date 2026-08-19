@@ -272,8 +272,8 @@ def prob(dist: SupportsLogProb, value: Any = None, **field_kwargs: Any) -> Array
     """
     if not isinstance(dist, SupportsLogProb):
         raise TypeError(f"{type(dist).__name__} does not support prob (missing _log_prob method)")
-    value = _resolve_value("prob", dist, value, field_kwargs)
-    return jnp.exp(dist._log_prob(value))
+    resolved = _resolve_value("prob", dist, value, field_kwargs)
+    return _at_the_operands_levels(jnp.exp(dist._log_prob(resolved)), resolved)
 
 
 @function
@@ -291,8 +291,8 @@ def unnormalized_log_prob(
             f"{type(dist).__name__} does not support unnormalized_log_prob "
             f"(missing _unnormalized_log_prob method)"
         )
-    value = _resolve_value("unnormalized_log_prob", dist, value, field_kwargs)
-    return dist._unnormalized_log_prob(value)
+    resolved = _resolve_value("unnormalized_log_prob", dist, value, field_kwargs)
+    return _at_the_operands_levels(dist._unnormalized_log_prob(resolved), resolved)
 
 
 @function
@@ -310,8 +310,8 @@ def unnormalized_prob(
             f"{type(dist).__name__} does not support unnormalized_prob "
             f"(missing _unnormalized_log_prob method)"
         )
-    value = _resolve_value("unnormalized_prob", dist, value, field_kwargs)
-    return jnp.exp(dist._unnormalized_log_prob(value))
+    resolved = _resolve_value("unnormalized_prob", dist, value, field_kwargs)
+    return _at_the_operands_levels(jnp.exp(dist._unnormalized_log_prob(resolved)), resolved)
 
 
 @function
