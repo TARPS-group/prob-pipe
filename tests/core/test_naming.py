@@ -332,6 +332,7 @@ class TestLevelsAreNamedForWhatMintsThem:
 
         assert (drawn.name, drawn.name_is_auto) == ("atoms", False)
 
+
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     """Design V.9: a density op maps elementwise "with the batch axes preserved".
 
