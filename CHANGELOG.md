@@ -258,6 +258,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`sample(law, sample_shape=...)` mints the `sample` level for every kind of
+  draw (#398).** *Breaking.* The boundary assumed a law that assembles its own
+  draws also names what they range over. An empirical did not: numeric atoms came
+  back as one `NumericRecord` whose fields had grown an axis, record atoms and
+  opaque atoms as a single `Opaque` holding the whole array. All three now give
+  the batch form of the draw's kind — `NumericRecordBatch`, `NumericRecordBatch`,
+  `OpaqueBatch` — over a `sample` level, matching what a plain law already gave.
+  Code that read `drawn["field"]` on such a result now reads a column of a batch
+  rather than a field of a record, and `"field" in drawn` is now
+  `"field" in drawn.event_template`. A single draw is unchanged.
+
 - **A swept row of unstackable elements keeps its level (#398).** A row returning
   a sequence of opaque objects or callables had its own batch stored whole as one
   element of the aggregate, so the row's multiplicity vanished and a row of

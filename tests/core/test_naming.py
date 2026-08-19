@@ -280,6 +280,52 @@ class TestLevelsAreNamedForWhatMintsThem:
 
         assert result.level_names == ("myfunc",)
 
+    @pytest.mark.parametrize(
+        ("atoms", "expected"),
+        [
+            pytest.param(jnp.linspace(0.0, 1.0, 5), "NumericRecordBatch", id="numeric-atoms"),
+            pytest.param(
+                [Record("a", {"u": jnp.asarray(float(i))}) for i in range(4)],
+                "NumericRecordBatch",
+                id="record-atoms",
+            ),
+            pytest.param([object() for _ in range(3)], "OpaqueBatch", id="opaque-atoms"),
+        ],
+    )
+    def test_a_law_that_assembles_its_own_draws_still_gets_the_level(self, atoms, expected):
+        """The boundary mints the level for every kind of draw.
+
+        These laws lay the draws out themselves — as record columns, or as an array
+        of stored objects — and named nothing. The draws came back as one value:
+        a record whose fields had grown an axis, or a single opaque object holding
+        the whole array.
+        """
+        from probpipe import EmpiricalDistribution
+
+        drawn = sample(EmpiricalDistribution(atoms, name="atoms"), sample_shape=(3,), key=KEY)
+
+        assert type(drawn).__name__ == expected
+        assert (drawn.batch_shape, drawn.level_names) == ((3,), ("sample",))
+
+    def test_a_single_draw_from_such_a_law_is_not_a_batch(self):
+        """No sample_shape, no level to mint."""
+        from probpipe import EmpiricalDistribution
+
+        drawn = sample(EmpiricalDistribution(jnp.linspace(0.0, 1.0, 5), name="atoms"), key=KEY)
+
+        assert not isinstance(drawn, NumericRecordBatch)
+
+    def test_the_draws_keep_the_law_s_name_and_whether_it_was_given(self):
+        from probpipe import EmpiricalDistribution
+
+        drawn = sample(
+            EmpiricalDistribution([object() for _ in range(3)], name="atoms"),
+            sample_shape=(3,),
+            key=KEY,
+        )
+
+        assert (drawn.name, drawn.name_is_auto) == ("atoms", False)
+
 
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     """Design V.9: a density op maps elementwise "with the batch axes preserved".
