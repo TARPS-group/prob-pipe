@@ -362,6 +362,38 @@ class TestEachSweptRowTakesItsOwnKind:
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "f"))
 
+    @pytest.mark.parametrize(
+        ("body", "expected"),
+        [
+            (lambda v: [object(), object()], "OpaqueBatch"),
+            (lambda v: [lambda z: z, lambda z: z], "FunctionBatch"),
+        ],
+        ids=["opaque", "callable"],
+    )
+    def test_a_row_of_unstackable_elements_keeps_its_level_too(self, dispatch, body, expected):
+        """The level does not depend on what the elements are.
+
+        These rows were stored whole: the row's own batch became one opaque
+        element of the aggregate, so its multiplicity vanished and a batch of
+        callables came back as opaque.
+        """
+        out = self._swept(body, dispatch)
+
+        assert type(out).__name__ == expected
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "f"))
+
+    def test_an_empty_sequence_row_counts_zero_on_its_level(self, dispatch):
+        """A batch of nothing is still a batch, as it is for a single return."""
+        out = self._swept(lambda v: [], dispatch)
+
+        assert (out.batch_shape, out.level_names) == ((3, 0), ("row", "f"))
+
+    def test_two_nested_anonymous_levels_are_refused(self, dispatch):
+        """Both would take the function's name, and a clash is not resolved by
+        suffixing it."""
+        with pytest.raises(ValueError, match="level names must be unique"):
+            self._swept(lambda v: [[jnp.asarray(v["x"])], [jnp.asarray(v["x"])]], dispatch)
+
     def test_a_batch_row_keeps_the_level_it_named(self, dispatch):
         """A row that names its own level keeps that name inside the sweep's."""
         from probpipe import NumericRecordBatch

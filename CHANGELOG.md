@@ -254,6 +254,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A swept row of unstackable elements keeps its level (#398).** A row returning
+  a sequence of opaque objects or callables had its own batch stored whole as one
+  element of the aggregate, so the row's multiplicity vanished and a row of
+  callables came back as an `OpaqueBatch`. The row-stacking path now knows all
+  three batch families, so such a row aggregates to `(rows, row_size)` over both
+  levels and a row of callables gives a `FunctionBatch`. An empty sequence row is
+  a batch of nothing on its own level, as it already was for a single return,
+  which also settles a dispatch disagreement: the mapped path raised where the
+  row-wise path returned.
+
 - **Every density op keeps a batch operand's levels (#398).** `log_prob` restated
   the levels its operand carried; `prob`, `unnormalized_log_prob`, and
   `unnormalized_prob` handed back a bare array, so the same draws scored as a
