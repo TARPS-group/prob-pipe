@@ -746,7 +746,7 @@ class TestValueSpecs:
 # ---------------------------------------------------------------------------
 
 
-class TestArraySpecIsValid:
+class TestNumericArraySpecIsValid:
     def test_shape_match(self):
         spec = NumericArraySpec((3,))
         assert spec.is_valid(jnp.ones(3))

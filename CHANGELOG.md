@@ -258,6 +258,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The kind table is the single answer to which batch form a field has (#398).**
+  `RecordBatch` construction listed the admissible field kinds inline while the
+  reading end asked the registry, so registering a kind widened one and not the
+  other. Construction now asks the registry too. Aggregating a batch of rows also
+  converts each row through its own `as_jax`, whose set-once cache it was
+  bypassing by converting the raw store directly.
+
 - **`sample(law, sample_shape=...)` mints the `sample` level for every kind of
   draw (#398).** *Breaking.* The boundary assumed a law that assembles its own
   draws also names what they range over. An empirical did not: numeric atoms came

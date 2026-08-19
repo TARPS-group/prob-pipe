@@ -43,7 +43,6 @@ from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._function_batch import FunctionBatch
 from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
-from ._opaque import OpaqueSpec
 from ._opaque_batch import OpaqueBatch
 from .event_template import (
     EventTemplate,
@@ -242,15 +241,17 @@ class RecordBatch(Batch[Record]):
             if isinstance(spec, NumericArraySpec):
                 _check_array_column(column, spec, path=path, kind=kind)
                 continue
-            if not isinstance(spec, FunctionSpec | OpaqueSpec):
+            if batch_class_for_spec(spec) is None:
                 # A field kind with no batch form cannot be *read* back: reading
                 # one presents the column as the batch of its element kind, and
                 # there is none for this. Admitting it at construction would make
-                # a batch nobody can take a field from.
+                # a batch nobody can take a field from. The registry answers that,
+                # as it does at the reading end, so a newly registered kind is
+                # admitted here without this guard being widened to match.
                 raise TypeError(
                     f"{kind}: the field {path!r} is declared {type(spec).__name__}, which has no "
-                    f"batch form, so a batch cannot present its column; an array field, a "
-                    f"callable field, and an opaque field are the forms a column takes"
+                    f"batch form, so a batch cannot present its column; a kind registers its "
+                    f"batch form beside its classes (see core/_kinds.py)"
                 )
             if not _is_object_array(column):
                 raise TypeError(

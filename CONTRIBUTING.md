@@ -708,7 +708,7 @@ register_array_backend(
 ```
 
 One registration makes the type recognised everywhere at once:
-template inference and `ArraySpec.is_valid`, `NumericRecord`
+template inference and `NumericArraySpec.is_valid`, `NumericRecord`
 promotion, boundary conversion, batch stacking, and `fingerprint()`.
 The built-in registration covers `pandas.DataFrame` (per-column
 `.dtypes`, no single `.dtype`). Lookup walks the MRO of `type(obj)`,
