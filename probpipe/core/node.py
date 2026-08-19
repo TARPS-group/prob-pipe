@@ -1048,7 +1048,11 @@ class Function(Node, TrackedTerm, Annotated):
                     # The executor's own body, not a copy maintained in the
                     # probe. ``dummy_kw`` already carries non-batched inputs.
                     _row_call = _workflow_sweep.mapped_row_body(
-                        func=func, values=dummy_kw, array_args=refs
+                        func=func,
+                        values=dummy_kw,
+                        array_args=refs,
+                        field_name=self._name,
+                        output_is_declared=self._output_template is not None,
                     )
 
                     probe_leaves = []

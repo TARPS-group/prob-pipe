@@ -308,10 +308,15 @@ class TestEachSweptRowTakesItsOwnKind:
     """A row is one call's return, so the rule that names a single return's kind
     is the rule that names a row's.
 
-    Rows reached the aggregation raw, so the branches there read them as whatever
-    they happened to stack as: a mapping row was an unstackable object, and a
-    sequence row's multiplicity became event shape.
+    Every case runs under both dispatches. Which executor a sweep picks is a
+    performance decision, so a row's kind cannot depend on it: the mapped path
+    reads its rows through the same rule the row-wise path does, and the two
+    agree here rather than in prose.
     """
+
+    @pytest.fixture(params=["auto", "sequential"])
+    def dispatch(self, request):
+        return request.param
 
     @staticmethod
     def _rows(n: int = 3):
@@ -325,32 +330,60 @@ class TestEachSweptRowTakesItsOwnKind:
             name="rows",
         )
 
-    def _swept(self, body):
-        return Function(func=body, name="f", dispatch="sequential")(v=self._rows())
+    def _swept(self, body, dispatch):
+        return Function(func=body, name="f", dispatch=dispatch)(v=self._rows())
 
-    def test_a_mapping_row_gives_a_batch_of_records(self):
-        out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2})
+    def test_a_mapping_row_gives_a_batch_of_records(self, dispatch):
+        out = self._swept(lambda v: {"y": jnp.asarray(v["x"]) * 2}, dispatch)
 
         assert list(out.event_template) == ["y"]
         assert (out.batch_shape, out.level_names) == ((3,), ("row",))
+        np.testing.assert_array_equal(np.asarray(out["y"]), np.arange(3.0) * 2)
 
-    def test_any_mapping_counts_not_only_dict(self):
+    def test_a_nested_mapping_row_keeps_its_subtree(self, dispatch):
+        out = self._swept(
+            lambda v: {"lo": jnp.asarray(v["x"]) - 1, "grp": {"hi": jnp.asarray(v["x"]) + 1}},
+            dispatch,
+        )
+
+        assert list(out.event_template) == ["lo", "grp/hi"]
+        np.testing.assert_array_equal(np.asarray(out["grp/hi"]), np.arange(3.0) + 1)
+
+    def test_any_mapping_counts_not_only_dict(self, dispatch):
         from collections import OrderedDict
 
-        out = self._swept(lambda v: OrderedDict(y=jnp.asarray(v["x"])))
+        out = self._swept(lambda v: OrderedDict(y=jnp.asarray(v["x"])), dispatch)
 
         assert list(out.event_template) == ["y"]
 
-    def test_a_sequence_row_keeps_its_own_level(self):
+    def test_a_sequence_row_keeps_its_own_level(self, dispatch):
         """The row's multiplicity is a level, not part of the element's shape."""
-        out = self._swept(lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])])
+        out = self._swept(lambda v: [jnp.asarray(v["x"]), jnp.asarray(v["x"])], dispatch)
 
         assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "f"))
 
-    def test_rows_of_differing_numeric_shape_are_refused(self):
+    def test_a_batch_row_keeps_the_level_it_named(self, dispatch):
+        """A row that names its own level keeps that name inside the sweep's."""
+        from probpipe import NumericRecordBatch
+        from probpipe.core.event_template import NumericEventTemplate
+
+        def body(v):
+            x = jnp.asarray(v["x"])
+            return NumericRecordBatch(
+                {"y": jnp.stack([x, x * 2])},
+                "part",
+                element_spec=NumericEventTemplate(y=()),
+                name="parts",
+            )
+
+        out = self._swept(body, dispatch)
+
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "part"))
+
+    def test_rows_of_differing_numeric_shape_are_refused(self, dispatch):
         """An object column would record the disagreement as if it were the answer."""
         with pytest.raises(ValueError, match="differing shapes"):
-            self._swept(lambda v: jnp.ones(int(jnp.asarray(v["x"])) + 1))
+            self._swept(lambda v: jnp.ones(int(jnp.asarray(v["x"])) + 1), dispatch)
 
     def test_a_disagreement_inside_a_returned_sequence_is_not_swallowed(self):
         """The stack has a batch form for every element kind, so what raises here
@@ -363,7 +396,8 @@ class TestASweptEmptyMappingHitsTheSameWall:
     """Per-row wrapping makes a `{}` row a `Record`, so the sweep reaches the
     field guard and says what the direct routes say."""
 
-    def test_a_swept_body_returning_an_empty_mapping_is_refused(self):
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
+    def test_a_swept_body_returning_an_empty_mapping_is_refused(self, dispatch):
         from probpipe import NumericRecordBatch
         from probpipe.core.event_template import NumericEventTemplate
 
@@ -375,4 +409,4 @@ class TestASweptEmptyMappingHitsTheSameWall:
         )
 
         with pytest.raises(ValueError, match="at least one field"):
-            Function(func=lambda v: {}, name="f", dispatch="sequential")(v=rows)
+            Function(func=lambda v: {}, name="f", dispatch=dispatch)(v=rows)

@@ -1426,6 +1426,23 @@ class _MappedBatchColumns:
             name_is_auto=batch._name_is_auto,
         )
 
+    @classmethod
+    def of_record(cls, record: Record) -> _MappedBatchColumns:
+        """One record as columns over no levels of its own.
+
+        A record row has a multiplicity of one, so the axis the map is about to
+        add is the only level the aggregate will have. Naming none here is what
+        says so.
+        """
+        return cls(
+            {path: record[path] for path in record.event_template},
+            element_spec=record.spec,
+            level_names=(),
+            axis_groups=(),
+            name=record._name,
+            name_is_auto=record._name_is_auto,
+        )
+
 
 def _mapped_batch_columns_flatten(carried: _MappedBatchColumns):
     return list(carried.columns.values()), (
