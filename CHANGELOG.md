@@ -244,6 +244,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Every density op keeps a batch operand's levels (#398).** `log_prob` restated
+  the levels its operand carried; `prob`, `unnormalized_log_prob`, and
+  `unnormalized_prob` handed back a bare array, so the same draws scored as a
+  batch over `("chain", "draw")` under one op and as one value of shape `(2, 3)`
+  under another. All four now restate them, so which op is called no longer
+  decides whether the draws were a multiplicity.
+
 - **A declared function can be swept over any kind of batch (#398).** Lifting a
   declaration against a batched operand read `event_template`, the view only a
   batch of records has, so a `NumericArrayBatch`, `OpaqueBatch`, or `FunctionBatch`
