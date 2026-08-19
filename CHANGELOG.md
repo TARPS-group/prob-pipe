@@ -254,6 +254,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A swept row's kind no longer depends on which executor ran it (#398).** The
+  row-wise path gave each row the tracked class of its own kind; the mapped
+  (`jax.vmap`) path handed its rows to the aggregation raw, so a body returning a
+  mapping raised `cannot aggregate output of type dict` and one returning a
+  sequence raised a spurious row-count mismatch — under `dispatch="auto"`, on
+  bodies that worked under `dispatch="sequential"`. Both paths now read a row
+  through the same rule, and a record row crosses the map as inert columns over no
+  level of its own, the way a batch row already crossed it. A declared
+  `output_template` still names the row's kind, as before.
+
 - **Reading a distribution no longer modifies it.** `BroadcastDistribution`
   assigned its marginal on the first `marginalize()`, and a backend-delegated
   `DistributionArray` assigned its components on the first read, so a query
