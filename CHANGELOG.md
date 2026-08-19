@@ -78,7 +78,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   call, retain the resulting joint distribution, or materialize and reuse
   samples explicitly when a shared realization is required.
 
+### Added
+
+- **`NumericArray` and `NumericArrayBatch` (#398).** The tracked class of the
+  numeric-array kind and its batch form, so `NumericArraySpec` has the pair every
+  other value spec has. Nothing returns them yet; the operations switch over in a
+  later change.
+
+  `NumericArray` holds one array and carries no batch axes, so its `shape` is the
+  event shape. Construction **validates without converting** — the value is stored
+  in its native form and materialises at most once, at the compute boundary — the
+  rule `NumericRecord` already follows for its leaves. It carries the full array
+  surface, and **arithmetic yields a bare value of the stored type**: identity is
+  attached by operations, and arithmetic is not one. It is a registered pytree,
+  which is what lets it cross a `jit` or `vmap` boundary; the boundary presents a
+  bare array, and its spec is re-derived from what arrives, since a shape and a
+  dtype state it exactly.
+
+  `NumericArrayBatch` stores one array with the batch axes leading and splits
+  them from the event axes by its element spec, which it validates the stored
+  dtype against at construction — the batch asserts that spec of every element,
+  so a store that reports no single dtype cannot carry a pinned one either.
+  Selection yields a `NumericArray` under the derived name, as `RecordBatch`
+  yields a `Record`.
+
+- **`Opaque` — the tracked class of the opaque kind (#398).** What an operation
+  returns when its declared kind is an `OpaqueSpec`, completing the pair with the
+  `OpaqueBatch` that already existed. It adds identity and nothing else: no
+  attribute forwarding, no `__call__`, no operators — the wrapped value is
+  reached through `.value`, explicitly. `OpaqueBatch`'s element contract is
+  unchanged; it still hands back the object the caller put in rather than
+  wrapping it.
+
+  The name is the required first argument, as a `Record`'s is: an opaque value
+  exposes nothing else that says what it is, so a default would name every one
+  of them alike. `OpaqueSpec` moves to the same module as the class it types;
+  the public import path is unchanged.
+
+- **`ArrayBackend.take` — positional selection for a native container.** `[]` is
+  positional on a numpy-protocol container and reads *labels* on a `pandas` one,
+  so a batch stored as a `DataFrame` could not address its own elements. Backends
+  now declare how to select by position, defaulting to `obj[index]`; the built-in
+  `pandas` backends select through `.iloc`.
+
 ### Changed
+
+- **`ArraySpec` is renamed `NumericArraySpec` (#398).** The spec now agrees with
+  the class it names, as `RecordSpec`/`Record` does. `Array` remains the type
+  alias for a bare backend array.
 
 - **Design: every value spec has a tracked class (#398).** `ArraySpec` gains
   `NumericArray` and `NumericArrayBatch`, `OpaqueSpec` gains `Opaque` beside its

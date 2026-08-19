@@ -11,10 +11,10 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import EventTemplate, NumericRecord, Record
+from probpipe.core._opaque import OpaqueSpec
 from probpipe.core.event_template import (
     NumericArraySpec,
     NumericEventTemplate,
-    OpaqueSpec,
     ValueSpec,
 )
 from probpipe.core.named_tree import NamedTree

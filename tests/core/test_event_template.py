@@ -11,6 +11,7 @@ import pytest
 from probpipe import Function, NumericRecord, Record
 from probpipe.core._batch import BatchSpec
 from probpipe.core._numeric_record_batch import NumericRecordBatch
+from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core.event_template import (
     DistributionSpec,
@@ -18,7 +19,6 @@ from probpipe.core.event_template import (
     FunctionSpec,
     NumericArraySpec,
     NumericEventTemplate,
-    OpaqueSpec,
     RecordSpec,
     TermSpec,
     ValueSpec,
@@ -1075,7 +1075,7 @@ class TestConstructionSpecs:
 
 
 # ---------------------------------------------------------------------------
-# Auto-promotion to NumericEventTemplate (iff every leaf is an NumericArraySpec)
+# Auto-promotion to NumericEventTemplate (iff every leaf is a NumericArraySpec)
 # ---------------------------------------------------------------------------
 
 

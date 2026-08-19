@@ -284,7 +284,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     equal only when inference recovers the original template, for instance when
     that template was itself inferred (the record was built without an explicit
     ``event_template``). Inference is lossy: :meth:`EventTemplate.infer_from`
-    cannot recover an ``NumericArraySpec``'s ``dtype`` / ``support``, an
+    cannot recover a ``NumericArraySpec``'s ``dtype`` / ``support``, an
     ``OpaqueSpec``'s ``meta``, etc., so an identity ``map`` of a record carrying
     a richer explicit template does *not* compare equal::
 
@@ -573,7 +573,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                     )
                 elif check_leaf_values and not spec.is_valid(value):
                     # Both leaves: each value must satisfy its spec's is_valid
-                    # (structural shape + dtype; an NumericArraySpec's support is
+                    # (structural shape + dtype; a NumericArraySpec's support is
                     # descriptive and not part of is_valid). Skipped on the
                     # pytree-unflatten path, where a leaf's shape is
                     # transform-relative (e.g. vmap strips the mapped axis) and
@@ -617,7 +617,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Notes
         -----
-        Inference is a lossy fallback (it cannot recover an ``NumericArraySpec``'s
+        Inference is a lossy fallback (it cannot recover a ``NumericArraySpec``'s
         ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
         ``RecordSpec`` / ``DistributionSpec`` / ``FunctionSpec``), so both round
         trips out of this process carry the declaration rather than re-deriving
@@ -1026,7 +1026,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             If the number of *values* is not the number of fields
             (``len(template)``), or a value fails its field spec's structural
             ``is_valid`` at construction — a shape mismatch, or a cross-kind
-            dtype (an ``NumericArraySpec``'s ``support`` is descriptive and not
+            dtype (a ``NumericArraySpec``'s ``support`` is descriptive and not
             checked).
         """
         values = list(values)

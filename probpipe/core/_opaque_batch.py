@@ -11,7 +11,7 @@ from typing import Any
 import numpy as np
 
 from ._object_batch import _ObjectBatch
-from .event_template import OpaqueSpec
+from ._opaque import OpaqueSpec
 from .provenance import Provenance
 
 __all__ = ["OpaqueBatch"]

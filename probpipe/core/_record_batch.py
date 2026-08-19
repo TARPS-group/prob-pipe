@@ -42,13 +42,13 @@ from ._array_backend import _is_numeric_dtype, _to_jax_array
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._function_batch import FunctionBatch
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
+from ._opaque import OpaqueSpec
 from ._opaque_batch import OpaqueBatch
 from .event_template import (
     EventTemplate,
     FunctionSpec,
     NumericArraySpec,
     NumericEventTemplate,
-    OpaqueSpec,
     RecordSpec,
     ValueSpec,
     _record_declaration_template,
@@ -70,7 +70,7 @@ class RecordBatch(Batch[Record]):
         The field columns, keyed by **leaf path** (``"outer/a"``) or given as a
         nested mapping, which is flattened to leaf paths. Each column holds one
         field's values across the batch, shaped ``(*batch_shape, *event_shape)``
-        where the event shape is the field spec's for an ``NumericArraySpec`` and empty
+        where the event shape is the field spec's for a ``NumericArraySpec`` and empty
         otherwise — so a field that is not an array takes an object array, one
         entry per element. The keys must be exactly the fields of *element_spec*.
     level_names : str or iterable of str
@@ -1024,7 +1024,7 @@ def _batch_shape_of(
 def _stack_column(values: list[Any], spec: ValueSpec, *, kind: str) -> Any:
     """One field's values across the elements, stacked into a column.
 
-    The field's *spec* decides the form, not the values: an ``NumericArraySpec`` field
+    The field's *spec* decides the form, not the values: a ``NumericArraySpec`` field
     batches natively into an array with the batch axis leading, and every other
     leaf kind goes into an object array, one entry per element, which is the form
     the object batches present. Reading the spec rather than the values is what
@@ -1243,7 +1243,7 @@ def _refuse_a_retyped_element(
     slice shrinking the event while passing the rank check, or an object array
     arriving under a field declared numeric.
 
-    The **kind** is re-checked, not only a pinned dtype: an ``NumericArraySpec`` requires
+    The **kind** is re-checked, not only a pinned dtype: a ``NumericArraySpec`` requires
     numeric data whether or not it names a dtype, so this asks the constructor's
     own :func:`_check_array_column`, which settles kind and dtype together. That
     is the rule a batch is built under, and a transform is not a licence to

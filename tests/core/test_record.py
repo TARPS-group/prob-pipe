@@ -363,7 +363,7 @@ class TestStorage:
         assert v.replace(z=jnp.array(2.0))["y"] is da
 
     def test_backend_leaf_gives_numeric_template(self):
-        # A native backend leaf infers an NumericArraySpec, so the template is
+        # A native backend leaf infers a NumericArraySpec, so the template is
         # numeric and stays in step with the record's promoted class.
         from probpipe.core.event_template import NumericArraySpec, NumericEventTemplate
 

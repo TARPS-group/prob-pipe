@@ -33,8 +33,8 @@ from probpipe import (
 )
 from probpipe.core import _array_backend
 from probpipe.core._numeric_record_batch import NumericRecordBatch
+from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._record_batch import RecordBatch
-from probpipe.core.event_template import OpaqueSpec
 
 
 @pytest.fixture
@@ -1096,7 +1096,7 @@ class TestStack:
             NumericRecord("r", {"x": jnp.zeros(2)}, event_template=EventTemplate(x=(2,))),
             NumericRecord("r", {"x": jnp.zeros(3)}, event_template=EventTemplate(x=(3,))),
         ]
-        # Declared an NumericArraySpec, so it stacks natively and the shapes must agree —
+        # Declared a NumericArraySpec, so it stacks natively and the shapes must agree —
         # it is not quietly demoted to an object column.
         with pytest.raises((TypeError, ValueError)):
             NumericRecordBatch.stack(records, level_name="draw", element_spec=EventTemplate(x=(2,)))
@@ -1511,7 +1511,7 @@ class TestPyTreeRebuildContract:
 
     def test_retyping_an_opaque_column_is_refused(self):
         """The same for a field whose spec narrows what an entry may be."""
-        from probpipe.core.event_template import OpaqueSpec
+        from probpipe.core._opaque import OpaqueSpec
 
         column = _object_column(["north", "south"])
         batch = RecordBatch(

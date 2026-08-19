@@ -52,7 +52,7 @@ class is a term spec therefore names a kind. The concrete specs are as follows:
 Numeric vs. Mixed
 -----------------
 
-When every field is an ``NumericArraySpec`` the template is all-numeric, and
+When every field is a ``NumericArraySpec`` the template is all-numeric, and
 ``EventTemplate(...)`` auto-promotes to :class:`NumericEventTemplate` — the
 specialization describing a value that is a PyTree of arrays. That subclass
 adds the flat-vector layout — ``vector_size`` and :meth:`from_vector`
@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import operator
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from math import prod
 from typing import Any
@@ -89,7 +89,6 @@ __all__ = [
     "FunctionSpec",
     "NumericArraySpec",
     "NumericEventTemplate",
-    "OpaqueSpec",
     "RecordSpec",
     "TermSpec",
     "ValueSpec",
@@ -387,39 +386,6 @@ class NumericArraySpec(ValueSpec):
 
 
 @dataclass(frozen=True)
-class OpaqueSpec(ValueSpec):
-    """The fallback value spec, for a value no other spec describes.
-
-    An opaque value carries no exposed structure (a string, a DataFrame, an
-    arbitrary Python object, ...). ``meta`` is optional opaque metadata and
-    must be hashable (or ``None``).
-    """
-
-    meta: Hashable = None
-
-    def __post_init__(self) -> None:
-        _require_hashable(self.meta, context="OpaqueSpec.meta")
-
-    def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a valid opaque value — anything but a mapping.
-
-        As the fallback spec, ``OpaqueSpec`` accepts any value **except** a
-        ``Mapping``: a mapping denotes tree structure (a subtree), never a
-        leaf. Every other value is valid, including a numeric array or scalar
-        — such a value is *typically* described by an :class:`NumericArraySpec`, but
-        an explicitly-opaque field still accepts it. ``meta`` is metadata
-        about the spec and is not checked against the value.
-
-        Notes
-        -----
-        The record layer honours the same rule: mappings are never leaves, so
-        :class:`~probpipe.Record` construction materialises a mapping field
-        value into a nested subtree.
-        """
-        return not isinstance(value, Mapping)
-
-
-@dataclass(frozen=True)
 class RecordSpec(TermSpec):
     """A term spec for a ``Record``, and the stored form of a record declaration.
 
@@ -700,7 +666,7 @@ class FunctionSpec(TermSpec):
     meaningful, matching :class:`DistributionSpec`.
 
     The output declaration is any value specification, so a callable may
-    declare a raw-value result as well as a term: an ``NumericArraySpec`` output
+    declare a raw-value result as well as a term: a ``NumericArraySpec`` output
     declares one array. A term declaration names its kind by its class, while a
     raw-value declaration types the value the wrap boundary then places in a
     single-field ``Record``, keyed by the ``Function``'s name.
@@ -853,6 +819,8 @@ def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
     if isinstance(spec, (ValueSpec, EventTemplate)):
         return spec
     if spec is None:
+        from ._opaque import OpaqueSpec
+
         return OpaqueSpec()
     if isinstance(spec, tuple):
         return NumericArraySpec(shape=spec)
@@ -1336,6 +1304,8 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
+        from ._opaque import OpaqueSpec
+
         parts = []
         for name, spec in self._tree.items():
             if isinstance(spec, EventTemplate):
@@ -1420,7 +1390,7 @@ class NumericEventTemplate(EventTemplate):
                 for sub_name, sub_shape in spec.leaf_shapes.items():
                     result[f"{name}{_PATH_SEP}{sub_name}"] = sub_shape
             else:
-                # ``_post_validate`` guarantees a non-nested spec is an NumericArraySpec.
+                # ``_post_validate`` guarantees a non-nested spec is a NumericArraySpec.
                 result[name] = spec.shape
         return result
 
@@ -1433,7 +1403,7 @@ class NumericEventTemplate(EventTemplate):
             if isinstance(spec, NumericEventTemplate):
                 total += spec.vector_size
             else:
-                # spec is an NumericArraySpec — validated by ``_post_validate``.
+                # spec is a NumericArraySpec — validated by ``_post_validate``.
                 total += prod(spec.shape) if spec.shape else 1
         return total
 
