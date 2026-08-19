@@ -218,6 +218,36 @@ def _bind_function_inputs(
     )
 
 
+def _lifted_element_spec(value: Any, *, function_name: str, name: str) -> ValueSpec | EventTemplate:
+    """What one element of a lifted operand satisfies.
+
+    A :class:`~probpipe.core._batch.Batch` states this uniformly in
+    ``element_spec``, at every kind: a batch of records answers with a
+    ``RecordSpec``, one of arrays with a ``NumericArraySpec``, one of callables
+    with a ``FunctionSpec``. Reading the record-only ``event_template`` view
+    instead let only a batch of records be swept by a declared function, and made
+    a batch of records satisfy a declaration that named a bare array.
+
+    A distribution operand is not a batch, and is lifted by being sampled, so what
+    the body receives is one draw. Its schema is the operand's own event template,
+    passed as the template it is: a scalar law reports a single field named after
+    itself, which the unification pass reads against a declared leaf. Restating
+    that as a record declaration belongs with the ``Distribution``-side rework.
+    """
+    from ._batch import Batch
+
+    if isinstance(value, Batch):
+        return value.element_spec
+    template = getattr(value, "event_template", None)
+    if isinstance(template, EventTemplate):
+        return template
+    raise ValueError(
+        f"Function {function_name!r} input {name!r} states no element specification for "
+        f"lifting: a {type(value).__name__} reports neither an element_spec nor an "
+        f"event_template"
+    )
+
+
 def _bind_planned_function_inputs(
     *,
     function_name: str,
@@ -230,20 +260,9 @@ def _bind_planned_function_inputs(
         return None, {}
     schema_values = dict(values)
     for name in lifted_names:
-        value = values[name]
-        try:
-            lifted_template = value.event_template
-        except (AttributeError, TypeError) as error:
-            raise ValueError(
-                f"Function {function_name!r} input {name!r} does not expose an "
-                "authoritative event_template for lifting"
-            ) from error
-        if not isinstance(lifted_template, EventTemplate):
-            raise ValueError(
-                f"Function {function_name!r} input {name!r} does not expose an "
-                "authoritative event_template for lifting"
-            )
-        schema_values[name] = lifted_template
+        schema_values[name] = _lifted_element_spec(
+            values[name], function_name=function_name, name=name
+        )
     return _unify_event_template_with_value(
         input_template,
         schema_values,
