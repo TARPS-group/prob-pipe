@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`sample(law, sample_shape=...)` mints the `sample` level for every kind of
+  draw (#398).** The boundary assumed a law that assembles its own draws also
+  names what they range over. An empirical did not: numeric atoms came back as one
+  `NumericRecord` whose fields had grown an axis, record atoms and opaque atoms as
+  a single `Opaque` holding the whole array. All three now give the batch form of
+  the draw's kind — `NumericRecordBatch`, `NumericRecordBatch`, `OpaqueBatch` —
+  over a `sample` level, matching what a plain law already gave. Code that read
+  `drawn["field"]` on such a result now reads a column of a batch rather than a
+  field of a record, and `"field" in drawn` is now
+  `"field" in drawn.event_template`. A single draw is unchanged.
+
 - **`ArraySpec` → `NumericArraySpec` (#434; design #443).** The public spec has
   been hard-renamed with no compatibility alias; update imports and type
   references to use `NumericArraySpec`. The bare backend-array alias remains

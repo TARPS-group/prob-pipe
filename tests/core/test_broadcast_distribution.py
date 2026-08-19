@@ -806,10 +806,16 @@ class TestRecordBatchMarginal:
         np.testing.assert_allclose(float(v["sum"]), 0.02, atol=0.02)
         np.testing.assert_allclose(float(v["diff"]), 0.02, atol=0.02)
 
-    def test_sample_returns_record(self, record_workflow, prior, key):
+    def test_sample_returns_a_batch_of_records_on_the_sample_level(
+        self, record_workflow, prior, key
+    ):
+        """The draws are a multiplicity, and the level says what they range over."""
         result = record_workflow(**prior.select("x", "y"))
+
         s = sample(result, key=key, sample_shape=(5,))
-        assert "sum" in s
+
+        assert (s.batch_shape, s.level_names) == ((5,), ("sample",))
+        assert list(s.event_template) == ["sum", "diff"]
         assert s["sum"].shape == (5,)
         assert s["diff"].shape == (5,)
 
