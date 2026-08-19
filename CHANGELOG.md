@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `drawn["field"]` on such a result now reads a column of a batch rather than a
   field of a record, and `"field" in drawn` is now
   `"field" in drawn.event_template`. A single draw is unchanged.
+
 - **Every batch requires a name (#398).** `RecordBatch`, `NumericRecordBatch`,
   `OpaqueBatch`, and `FunctionBatch` defaulted to their own lowercased class name,
   so a pipeline full of them read `recordbatch` / `opaquebatch` — a name that says
@@ -125,7 +126,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `[]` / `()` an `OpaqueBatch` of `batch_shape == (0,)` — no element can say
   what kind it holds, and every element spec holds vacuously of none.
 
-  `Record()`, `EventTemplate()`, and `OpaqueBatch([], level)` are legal as a
+  `Record()`, `EventTemplate()`, and `OpaqueBatch([], level, name=...)` are legal as a
   result. A *batch* of empty records is not: a batch reads its multiplicity off
   a column, and a zero-field element supplies none, so `RecordBatch` still
   requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:

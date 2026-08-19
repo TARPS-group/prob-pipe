@@ -62,7 +62,7 @@ checked against the shared specification at construction.
 Two consequences worth knowing. The store is frozen and a supplied array is
 copied — the pointer array only, so the elements themselves stay shared — so a
 batch holds the elements it validated even if the caller keeps writing to the
-array they passed. And a batch of no elements is a batch: `OpaqueBatch([], "draw")`
+array they passed. And a batch of no elements is a batch: `OpaqueBatch([], "draw", name="draws")`
 and `batch[0:0]` both give one, since zero is a count the level can carry. What a
 batch does need is an *axis* — a single object with none has no level to count
 along, and is refused.
