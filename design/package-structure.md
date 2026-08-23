@@ -26,38 +26,38 @@ probpipe/
 │   ├── _named_tree.py         #   NamedTree (II.1)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.2)
 │   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec, InputSpec, OutputSpec (II.2)
-│   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (II.3)
-│   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.4)
-│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
-│   ├── _dispatch.py           #   dispatch methods and registries (II.6)
-│   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.6)
+│   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.4)
+│   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.3)
+│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.4)
+│   ├── _dispatch.py           #   dispatch methods and registries (II.5)
+│   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.5)
 │   └── _config.py             #   library configuration
-├── values/                    # the value layer (III.1–III.3)
+├── values/                    # the value layer (III.3–III.5)
 │   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
 │   │                          #     plain evaluation), FunctionSpec, and the function capabilities
 │   ├── _object_batch.py       #   object-array storage the two batch forms share
-│   ├── _function_batch.py     #   FunctionBatch (III.1)
-│   ├── _opaque_batch.py       #   OpaqueBatch (III.1)
-│   ├── _record.py             #   Record, NumericRecord (III.2)
-│   ├── _record_batch.py       #   RecordBatch (III.3)
-│   └── _numeric_record_batch.py  #   NumericRecordBatch (III.3)
-├── linalg/                    # LinOp, the linear Function subtype (III.4)
+│   ├── _function_batch.py     #   FunctionBatch (III.3)
+│   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
+│   ├── _record.py             #   Record, NumericRecord (III.4)
+│   ├── _record_batch.py       #   RecordBatch (III.5)
+│   └── _numeric_record_batch.py  #   NumericRecordBatch (III.5)
+├── linalg/                    # LinOp, the linear Function subtype (III.6)
 │   ├── _linop.py              #   LinOp: the action, the queries, flags
 │   ├── _structured.py         #   Dense / Diagonal / Triangular / Cholesky / Root …
 │   ├── _composites.py         #   Product / Sum / Scaled / Transpose — the operator algebra
 │   └── _batch.py              #   LinOpBatch
-├── distributions/             # the distribution layer (III.5–III.13)
-│   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.5)
-│   ├── _views.py              #   FieldView (III.5–III.6)
-│   ├── _capabilities.py       #   the Supports* protocols (III.6)
-│   ├── _conditional.py        #   ConditionalDistribution, its markers and spec (III.7)
-│   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.8)
-│   ├── _factored.py           #   SupportsFactors and the factored classes (III.9)
-│   ├── _composition.py        #   the * engine behind __mul__ (III.10)
+├── distributions/             # the distribution layer (III.7–III.15)
+│   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.7)
+│   ├── _views.py              #   FieldView (III.7–III.8)
+│   ├── _capabilities.py       #   the Supports* protocols (III.8)
+│   ├── _conditional.py        #   ConditionalDistribution, its markers and spec (III.9)
+│   ├── _batches.py            #   DistributionBatch, ConditionalDistributionBatch (III.10)
+│   ├── _factored.py           #   SupportsFactors and the factored classes (III.11)
+│   ├── _composition.py        #   the * engine behind __mul__ (III.12)
 │   ├── _empirical.py          #   EmpiricalDistribution (VI.2) — the closure family the
 │   │                          #     lift and the Monte Carlo fallbacks construct
-│   ├── _conversion.py         #   Converter, ConverterRegistry (III.12)
-│   └── _reparameterization.py #   Constraint → invertible Function (III.13)
+│   ├── _conversion.py         #   Converter, ConverterRegistry (III.14)
+│   └── _reparameterization.py #   Constraint → invertible Function (III.15)
 ├── functions/                 # Part IV — Function and its engine
 │   ├── _function.py           #   the engine installed on Function at import; the wrapping decorator
 │   ├── _call.py               #   argument classification: the lifting trigger (IV.2)
@@ -90,7 +90,7 @@ probpipe/
 │   ├── _random_functions.py   #   RandomFunction, RandomMeasure (VI.5)
 │   ├── _gaussian.py           #   the Gaussian algebra (VI.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VI.8)
-│   └── _converters.py         #   the shipped converters (III.12)
+│   └── _converters.py         #   the shipped converters (III.14)
 ├── inference/                 # the registered inference methods (V.4)
 ├── diagnostics/               # diagnostics over inference results
 └── validation/                # predictive checks and model comparison
@@ -102,7 +102,7 @@ probpipe/
 - **`values/`** is the value layer of Part III, covering every leaf kind. The function kind's base lives here: `Function` itself, the class a `FunctionSpec` admits and a `FunctionBatch` holds, together with its capability protocols. The base carries the *representation* only: templates, identity, and plain evaluation. `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, installed on the III.1 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
 - **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per operation section (V.1–V.8). V.0's operation model is the wrapping itself, and V.9's batching is the engine's sweep, so neither is a module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
