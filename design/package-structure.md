@@ -2,14 +2,14 @@
 
 The package layout realizes the design reference as an import architecture: one package per layer of the reference, imports pointing strictly downward, and registries carrying capability upward. Like the rest of the reference, it describes the target state, but its module boundaries follow the seams the implementation already has, so the layout is reachable by moving modules rather than rewriting them.
 
-This document uses the **`Function`** vocabulary. A `Function` is the universal function representation: a tracked term carrying an input and an output template and wrapping any Python callable. `LinOp` is its linear subtype, and invertibility is a capability a `Function` may claim. The value-layer specs stay callable-generic: a `FunctionSpec` admits any callable — a `Function` is one such, not the required type — and a `FunctionBatch` holds a collection of them. The base class is `Function` itself, in the value layer, carrying templates, identity, and plain evaluation; the Part IV engine is installed on it at import, registration flowing upward. This document fixes where its pieces live.
+This document uses the **`Function`** vocabulary. A `Function` is the universal function representation: a tracked term carrying an input and an output declaration and wrapping any Python callable. `LinOp` is its linear subtype, and invertibility is a capability a `Function` may claim. The value-layer specs stay callable-generic: a `FunctionSpec` admits any callable — a `Function` is one such, not the required type — and a `FunctionBatch` holds a collection of them. The base class is `Function` itself, in the value layer, carrying templates, identity, and plain evaluation; the Part IV engine is installed on it at import, registration flowing upward. This document fixes where its pieces live.
 
 ### Principles
 
 - **One package per layer.** Packages mirror the reference's parts in dependency order, and a module realizes one section or one coherent piece of one.
 - **Imports point downward.** Each package imports only from packages above it in the tree below. There are no import cycles, and no lazy imports to dodge one.
 - **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register evaluation rules and converters, and the inference methods register themselves. Capability reaches the operations without the operations importing their providers.
-- **A spec lives with the type it admits.** `FunctionSpec` lives in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The rule bends only where layering forbids it: `ValueSpec` and the `TermSpec` marker are what the tracked base stores, while `NumericArraySpec` and `OpaqueSpec` describe the raw hosts of value-layer kinds, so all four sit in `core/` beside `EventTemplate` and `Constraint` — `core/` cannot import the value layer. Each concrete tracked class and batch form lives together in the lowest layer that can implement it.
+- **A spec lives with the type it admits.** `FunctionSpec` lives in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The rule bends only where layering forbids it: `TermSpec` is what the tracked base stores, `RecordSpec` is the schema the shared layer itself traffics in, and `InputSpec` and `OutputSpec` are the declarations the kind specs carry, so they sit in `core/` with `NumericArraySpec`, `OpaqueSpec`, and `Constraint` — `core/` cannot import the value layer. The same placement rule covers each type's batch form.
 - **Modules are private, packages are public.** Every module is underscore-prefixed. A package's `__init__` exports its public names, and the top-level `probpipe` namespace re-exports the curated user surface, which is the only import a user needs.
 - **Tests mirror the tree**, as `tests/<package>/test_<module>.py`.
 
@@ -25,23 +25,20 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.1)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.2)
-│   ├── _specs.py              #   ValueSpec, TermSpec, NumericArraySpec, OpaqueSpec (II.2)
-│   ├── _event_template.py     #   EventTemplate, NumericEventTemplate, unification (II.3)
+│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec, InputSpec, OutputSpec (II.2)
+│   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (II.3)
 │   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.4)
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries (II.6)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.6)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.3)
-│   ├── _numeric_array.py      #   NumericArray (III.1)
-│   ├── _numeric_array_batch.py  # NumericArrayBatch (III.1)
-│   ├── _opaque.py             #   Opaque (III.1)
 │   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
 │   │                          #     plain evaluation), FunctionSpec, and the function capabilities
 │   ├── _object_batch.py       #   object-array storage the two batch forms share
 │   ├── _function_batch.py     #   FunctionBatch (III.1)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.1)
-│   ├── _record.py             #   Record, NumericRecord (III.2), RecordSpec (II.2)
+│   ├── _record.py             #   Record, NumericRecord (III.2)
 │   ├── _record_batch.py       #   RecordBatch (III.3)
 │   └── _numeric_record_batch.py  #   NumericRecordBatch (III.3)
 ├── linalg/                    # LinOp, the linear Function subtype (III.4)
@@ -133,7 +130,7 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
 | `core/record.py`, `core/_record_batch.py`, `core/_numeric_record_batch.py` | `values/`, one module per III section |
-| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_event_template.py`, `core/_constraints.py` (II.2–II.3) |
+| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_constraints.py` (II.2–II.3) |
 
 ### Open points
 

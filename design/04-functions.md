@@ -17,7 +17,7 @@ Each concern has one home, and only two things are open for extension — the en
 
 | Piece | Lives in | Extension status |
 | --- | --- | --- |
-| identity (`name`, `provenance`) and the templates | the base (III.1) | fixed at construction |
+| identity (`name`, `provenance`) and the declared sides | the base (III.1) | fixed at construction |
 | plain evaluation | the base (III.1) | the call path before the engine installs |
 | the engine itself | this part, installed into the base's call path | one slot, filled once at import; cataloged like the converter and bijector factories |
 | lifting trigger, planning and co-sampling groups, the lift and the sweep, key splitting, result wrapping, provenance | the engine (IV.1–IV.2) | internal machinery; nothing to register |
@@ -68,20 +68,20 @@ A `Function` compares each argument against the type its function expects, and l
 
 **Grouping and correlation.** The lifted arguments are grouped by **root ancestor**, transitively: sibling views of one parent, the same distribution passed twice, and a parent passed alongside its own view all fall in one group. Each group contributes one joint draw per repetition, so dependence between its members flows through `f` rather than being broken by independent sampling. A view lifts by sampling its parent, so its parent must itself sample. Groups with no common ancestor draw independently: the lift samples the **product law**, and, as a corollary, detached marginals of one joint lift independently while its views co-sample. For example, `f(d, d["x"])` forms one group, and each repetition evaluates `f` on a joint draw and its own projection, while `f(d1, d2)` for unrelated `d1` and `d2` samples the product of their laws. The number of lifted arguments changes only the grouping, never the mechanism or the return type.
 
-**The output wrapping.** The output is wrapped by the kind-directed boundary (05 V.0). A returned **tracked term** keeps its kind and may share its representation, but the call result receives a fresh derived identity and provenance; it is never buried inside another kind. An untracked return is classified by its raw host: an **array** becomes a `NumericArray`, a **mapping** a `Record`, a **callable** a `Function`, and any other object an `Opaque`. The optional `output_spec=` on the decorator declares what the producer knows and inference cannot recover. It accepts any value specification (II.2): a `NumericArraySpec` or `OpaqueSpec` declares the corresponding raw-host kind; a `TermSpec` declares its tracked kind — a `FunctionSpec` for a fitted mapping, a `ConditionalDistributionSpec` for a predictive kernel — while a record schema (an `EventTemplate`, i.e. a `RecordSpec`) declares field structure such as a constrained support or a shared symbolic dimension. The declaration is bound per call by unification, which validates the output and, for a nested `RecordSpec`, keeps a tracked record field as a term-valued leaf rather than flattening it.
+**The output wrapping.** The output is wrapped by the kind-directed boundary (05 V.0), so wrapping depends on what the return already is. A **tracked term** returns as itself, every kind alike — a `Function`, `Distribution`, `Record`, or `NumericArray` the callable produced is the result, not a field buried inside a fresh `Record`. A **raw callable** becomes a `Function`. A raw **mapping** becomes fields keyed by its keys, materializing as the record's own structure (II.2). A raw **array** becomes a `NumericArray`, and any other raw return an `Opaque`, tuples included; an opaque output samples downstream but carries none of the numeric machinery, so a function whose output deserves structure returns a mapping or declares it. The optional `output_spec=` on the decorator declares what the producer knows and inference cannot recover: an `OutputSpec` (II.2), or a bare term spec with the name defaulted to the function's own, captured once. Its spec declares the result's kind — a `FunctionSpec` for a fitted mapping, a `ConditionalDistributionSpec` for a predictive kernel — and a `RecordSpec` declares field structure such as a constrained support or a shared symbolic dimension. The declaration is bound per call by unification, which validates the output, and a tracked record supplied at a record-shaped position is stored with its identity kept (II.2). For a non-record output, the declaration's name is the result's field name wherever one is required — the joint layout below and composition's produced slots (III.10) — so no field name ever derives from the function's renamable label.
 
 ```python
-@function(output_spec=EventTemplate(rate=NumericArraySpec(("obs",), float32, positive)))
+@function(output_spec=RecordSpec(rate=NumericArraySpec(("obs",), float32, positive)))
 def rate(x):
     return jnp.exp(x)
 # inference alone would read the support as real; the declaration carries support=positive
 # and binds "obs" to the actual output length on each call
 ```
 
-**Including the inputs.** By default the result holds only the outputs. With `include_inputs=True` it is instead the **joint** empirical distribution over the sampled inputs and the outputs: one top-level field per lifted parameter, named by the parameter, whose subtree is that argument's `event_template` (a single-field argument still nests, so the layout never depends on the argument's field count), plus the output fields. A term-drawing law has no fields to include, so a parameter drawn from one contributes its draw as a single term-valued field. A plain-value argument contributes no field, since it is recorded in provenance rather than sampled. Sibling uniqueness applies across the lifted-parameter names and the output keys, and a collision, such as a function named after one of its own lifted parameters, is an error at result construction. Grouping affects only how the draws are taken, never this layout.
+**Including the inputs.** By default the result holds only the outputs. With `include_inputs=True` it is instead the **joint** empirical distribution over the sampled inputs and the outputs: one top-level field per lifted parameter, named by the parameter, whose subtree is that argument's event schema (a single-field argument still nests, so the layout never depends on the argument's field count), plus the output fields. A term-drawing law has no fields to include, so a parameter drawn from one contributes its draw as a single term-valued field. A plain-value argument contributes no field, since it is recorded in provenance rather than sampled. Sibling uniqueness applies across the lifted-parameter names and the output names, and a collision, such as an output declared under the name of one of its own lifted parameters, is an error — at construction when the declaration makes it knowable, and at result construction otherwise. Grouping affects only how the draws are taken, never this layout.
 
 ```python
-# posterior.event_template == EventTemplate(beta=NumericArraySpec(shape=(5,), dtype=float32, support=real))
+# posterior's event schema == RecordSpec(beta=NumericArraySpec(shape=(5,), dtype=float32, support=real))
 
 @function(include_inputs=True, n_broadcast_samples=200, seed=7)
 def predict(theta, x):
@@ -90,8 +90,8 @@ def predict(theta, x):
 result = predict(theta=posterior, x=X_new)   # X_new: a plain (20, 5) array, not lifted
 
 # result: empirical over 200 atoms, each one joint draw (theta_s, predict(theta_s, X_new)):
-#   EventTemplate(
-#       theta=EventTemplate(beta=NumericArraySpec(shape=(5,), dtype=float32, support=real)),
+#   RecordSpec(
+#       theta=RecordSpec(beta=NumericArraySpec(shape=(5,), dtype=float32, support=real)),
 #       predict=NumericArraySpec(shape=(20,), dtype=float32, support=real),
 #   )
 # so the fields are theta/beta and predict; X_new lands in provenance, not in the law
