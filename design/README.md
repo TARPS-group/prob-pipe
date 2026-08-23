@@ -4,7 +4,7 @@ This document consolidates the design intent spread across the active design thr
 
 ### Mathematical scope
 
-ProbPipe is built around five kinds of mathematical objects and the operations that connect them. Every operation returns another ProbPipe object, so the system is closed under all of them.
+ProbPipe is built around four kinds of mathematical objects and the operations that connect them, with the linear operator entering as a refinement of the function kind rather than a kind of its own. Every operation returns another ProbPipe object, so the system is closed under all of them.
 
 | Object | Mathematics | ProbPipe |
 |---|---|---|
@@ -12,7 +12,7 @@ ProbPipe is built around five kinds of mathematical objects and the operations t
 | probability measure | `μ ∈ P(X)` | `Distribution` |
 | probability kernel | `K : S → P(T)` | `ConditionalDistribution` |
 | function | `f : X → Y` | `Function` |
-| linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp`, a `Function` subtype |
+| linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp`, the linear `Function` subtype — a refinement of the function kind |
 
 Each object also has an indexed-collection form (a batch), and every operation lifts to batches elementwise. Values, distributions, and conditional distributions additionally have **numeric** specializations (`NumericRecord`, `NumericDistribution`, …) covering the all-array case: they identify the event space with a flat vector space, where `LinOp` acts and differentiation applies.
 
