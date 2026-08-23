@@ -47,7 +47,7 @@ Selection yields the element kind, as it does for every batch: `NumericArrayBatc
 
 ### Rationale
 
-The array kind separates identity from storage: the value is one native array with tracked identity riding above it, so tracking never copies data (`C3 – Computational detail hidden by default, available on demand`, `D7 – Single source of truth`). Arithmetic returning tracked terms keeps the provenance chain unbroken through ordinary computation (`C6 – Traceable and reproducible workflows`), and boundary-attached identity keeps that tracking free inside compiled execution. The full operator surface is safe here and only here: with no fields, an expression on one array has exactly one meaning (`D1 – Mathematical fidelity`).
+The full operator surface is safe here and only here: with no fields, an expression on one array has exactly one meaning (`D1 – Mathematical fidelity`). Everything else — the stored spec, tracked results, boundary-attached identity, the batch form — is Part II's contract instantiated at the array kind.
 
 ## III.2 — `Opaque`
 
@@ -72,7 +72,7 @@ class OpaqueBatch(Batch[Any]):
 
 ### Rationale
 
-An `Opaque` extends the tracked vocabulary to values the library cannot introspect, so closure under operations holds for every return (`D4 – Closed system of objects under operations`). It adds identity and nothing else because a richer interface would promise structure the value does not declare (`D1 – Mathematical fidelity`), and the fallback spec makes the kind total over Python values without claiming anything about them (`D2 – Generality first`).
+The kind exists so that closure under operations holds for every return value (`D4 – Closed system of objects under operations`), and it adds identity and nothing else because a richer interface would promise structure the value does not declare (`D1 – Mathematical fidelity`).
 
 ## III.3 — `Function` and `SupportsDifferentiation`
 
@@ -145,7 +145,7 @@ class FunctionBatch(Batch[Callable]):
 
 ### Rationale
 
-Defining the base in the value layer keeps the layering strict: the representation is fixed here, the call engine arrives by upward registration (`D2 – Generality first`), and `LinOp` and the specs reference `Function` downward — the split the package structure realizes as `values/_function_base.py` and `functions/`. `FunctionBatch` closes the multiplicity axis over the kind: `N` function draws are a *collection* of functions, never one function, the same `D1 – Mathematical fidelity` distinction every `Batch` enforces, and giving every term spec a batch form keeps batched operations total over event types (`D2 – Generality first`), so an operation that returns many draws can always stack them.
+Defining the base in the value layer keeps the layering strict: the representation is fixed here, the call engine arrives by upward registration (`D2 – Generality first`), and `LinOp` and the specs reference `Function` downward — the split the package structure realizes as `values/_function_base.py` and `functions/`.
 
 ### Open points
 
@@ -252,7 +252,7 @@ class NumericRecord(Record):
 
 ### Rationale
 
-A `Record` is the *values* half of `C1 – Uniform interface to distributions and values`: a distribution's draw is a `Record` (or a `RecordBatch` for many), and a function over named values consumes one. It is where `D5 – Explicit, carried structure` becomes concrete — a `Record` *carries* its schema as authoritative structure, threaded forward from whoever produced it, rather than having it re-inferred from raw arrays downstream. Inheriting the `NamedTree` interface, a value's parts are reached by meaningful name (`C5 – Naming for unambiguous meaning`) and navigation yields views, not copies (`D7 – Single source of truth`).
+A `Record` is the *values* half of `C1 – Uniform interface to distributions and values`: a distribution's draw is a `Record` (or a `RecordBatch` for many), and a function over named values consumes one. One class serves the schema and the kind because they denote the same space: a second tag class would be a distinction without mathematical content, converted at every construction site (`D1 – Mathematical fidelity`, `D7 – Single source of truth`). Carrying the schema forward from its producer rather than re-inferring it downstream is `D5 – Explicit, carried structure` made concrete.
 
 ### Notes
 
@@ -312,7 +312,7 @@ class RecordBatch(Batch[Record]):
 
 ### Rationale
 
-A `RecordBatch` makes `D1 – Mathematical fidelity` concrete on the value side: a batch of `N` records is a *collection* of `N` distinct records, never the same as a single record with `N` fields. This is why it claims only the batch axis and never the leaf-keyed `Mapping` contract.
+It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a batch of `N` records can never read as one record of `N` fields — `D1 – Mathematical fidelity` at exactly the point where the two would otherwise be conflated.
 
 ## III.6 — `LinOp`
 
@@ -366,7 +366,7 @@ class LinOp(Function, ABC):        # the linear subtype of the III.3 base
 
 ### Rationale
 
-Operations mint linear operators, covariances above all, and every operation must return a tracked term, so a `LinOp` is `TrackedTerm` (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), array-backed operators claim `SupportsDifferentiation` so their queries differentiate end-to-end (`D6 – Differentiability as a capability`), and flags are functional rather than mutating (`C2 – Functional interface over immutable objects`). Typing both sides with numeric event templates is what makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
+Operations mint linear operators, covariances above all, so the kind exists to keep those results first-class (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), and typing both sides with numeric schemas makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
 
 ### Open points
 
@@ -428,7 +428,7 @@ class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. It carries its draw schema rather than re-inferring it at each step to satisfy `D5 – Explicit, carried structure`, and its operations are pure to satisfy `C2 – Functional interface over immutable objects` and differentiable end-to-end when it claims `SupportsDifferentiation`, as the array-backed families do (`D6 – Differentiability as a capability`). A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`).
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`); the rest — the stored spec, purity, tracked results — is Part II's contract at the distribution kind.
 
 ## III.8 — Distribution capabilities
 
@@ -575,7 +575,7 @@ class ConditionalDistributionSpec(TermSpec):  # a ConditionalDistribution; is_va
 
 ### Rationale
 
-Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. As with `Distribution`, a concrete `ConditionalDistribution` family derives both sides from its parameters and passes them up, and the base only requires they are fixed at construction (`D5 – Explicit, carried structure`, `D7 – Single source of truth`). The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the deliberate exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` satisfying `SupportsConditioning` is intended rather than a collision, while the names stay distinct exactly where the meanings differ.
+Applying a `ConditionalDistribution` to a conditioning value returns a `Distribution`, which ensures `D4 – Closed system of objects under operations` is satisfied. A `ConditionalDistribution`'s capabilities are the `Distribution` capabilities shifted by one conditioning argument (`D3 – Capability-based operations`), so a single operation vocabulary applies to conditional distributions too, under the rule that *`Distribution` and `ConditionalDistribution` behave as similarly as possible*. The capabilities use distinct `_conditional_*` method names because a `@runtime_checkable` check matches on method name alone, so reusing `_sample` / `_log_prob` would corrupt the unconditional capability checks. `_condition_on` is the deliberate exception: fixing given fields means the same thing on both types, so a `ConditionalDistribution` satisfying `SupportsConditioning` is intended rather than a collision, while the names stay distinct exactly where the meanings differ.
 
 ## III.10 — `DistributionBatch` and `ConditionalDistributionBatch`
 
@@ -607,7 +607,7 @@ class ConditionalDistributionBatch(Batch[ConditionalDistribution]):
 
 ### Rationale
 
-This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space, exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a `ConditionalDistribution` produces a `DistributionBatch` of conditioned laws. Like every `Batch`, it is `TrackedTerm` but not `Annotated`, and indexing or iterating yields a *view* (`D7 – Single source of truth`).
+This is `D1 – Mathematical fidelity` on the distribution layer: a `DistributionBatch` of `N` laws is a *collection of separate measures*, kept firmly distinct from one *joint* law over a product space, exactly as a `RecordBatch` of `N` draws is distinct from one `Record` of `N` fields. It is the natural result of a vectorized operation that yields many distributions: sweeping a parameter batch through a `ConditionalDistribution` produces a `DistributionBatch` of conditioned laws.
 
 ## III.11 — Factored distributions
 
