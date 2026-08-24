@@ -2,7 +2,7 @@
 
 The package layout realizes the design reference as an import architecture: one package per layer of the reference, imports pointing strictly downward, and registries carrying capability upward. Like the rest of the reference, it describes the target state, but its module boundaries follow the seams the implementation already has, so the layout is reachable by moving modules rather than rewriting them.
 
-This document uses the **`Function`** vocabulary. A `Function` is the universal function representation: a tracked term carrying an input and an output declaration and wrapping any Python callable. `LinOp` is its linear subtype, and invertibility is a capability a `Function` may claim. The value-layer specs stay callable-generic: a `FunctionSpec` admits any callable — a `Function` is one such, not the required type — and a `FunctionBatch` holds a collection of them. The base class is `Function` itself, in the value layer, carrying templates, identity, and plain evaluation; the Part IV engine is installed on it at import, registration flowing upward. This document fixes where its pieces live.
+This document uses the **`Function`** vocabulary. A `Function` is the universal function representation: a tracked term carrying an input and an output declaration and wrapping any Python callable. `LinOp` is its linear subtype, and invertibility is a capability a `Function` may claim. The value-layer specs stay callable-generic: a `FunctionSpec` admits any callable — a `Function` is one such, not the required type — and a `FunctionBatch` holds a collection of them. The base class is `Function` itself, in the value layer, carrying its declared sides, identity, and plain evaluation; the Part IV engine is installed on it at import, registration flowing upward. This document fixes where its pieces live.
 
 ### Principles
 
@@ -24,16 +24,19 @@ probpipe/
 ├── __init__.py                # the curated public API
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.1)
-│   ├── _constraints.py        #   Constraint and the constraint factories (II.2)
-│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec, InputSpec, OutputSpec (II.2)
+│   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
+│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec, InputSpec, OutputSpec (II.2), Numeric (II.3)
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.4)
-│   ├── _identity.py           #   TrackedTerm, Annotated, Provenance, fingerprints (II.3)
-│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.4)
-│   ├── _dispatch.py           #   dispatch methods and registries (II.5)
-│   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.5)
+│   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.4); Annotated (II.5)
+│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.6)
+│   ├── _dispatch.py           #   dispatch methods and registries (II.7)
+│   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   └── _config.py             #   library configuration
-├── values/                    # the value layer (III.3–III.5)
-│   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
+├── values/                    # the value layer (III.1–III.5)
+│   ├── _numeric_array.py      #   NumericArray (III.1)
+│   ├── _numeric_array_batch.py  #   NumericArrayBatch (III.1)
+│   ├── _opaque.py             #   Opaque (III.2)
+│   ├── _function_base.py      #   Function itself (declared sides, identity, controls and with_options,
 │   │                          #     plain evaluation), FunctionSpec, and the function capabilities
 │   ├── _object_batch.py       #   object-array storage the two batch forms share
 │   ├── _function_batch.py     #   FunctionBatch (III.3)
@@ -63,22 +66,26 @@ probpipe/
 │   ├── _call.py               #   argument classification: the lifting trigger (IV.2)
 │   ├── _plan.py               #   broadcast planning, root-ancestor grouping (IV.2)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
-│   │                          #     populated upward by the families (V.6)
+│   │                          #     populated upward by the families (V.7)
 │   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (IV.2)
 │   ├── _sweep.py              #   the batch sweep (IV.2)
-│   ├── _keys.py               #   the structural key split from seed (IV.3)
-│   ├── _execution.py          #   jax / sequential / thread dispatch (IV.4)
-│   ├── _orchestration.py      #   optional tracing (IV.4)
+│   ├── _rng.py                #   structural event identity, the versioned key derivation (IV.3)
+│   ├── _context.py            #   workflow scopes and frames: workflow_run (IV.3)
+│   ├── _replay.py             #   replay_run, replay records and anchors (IV.3)
+│   ├── _broker.py             #   managed work items: keys across threads, tasks, and flows (IV.3, IV.5)
+│   ├── _execution.py          #   jax / sequential / thread dispatch, the route contract (IV.5)
+│   ├── _orchestration.py      #   optional tracing (IV.5)
 │   └── _result.py             #   output wrapping, identity, provenance (IV.1, V.0)
 ├── operations/                # Part V — the operations
 │   ├── _moments.py            #   mean, variance, cov, quantile, expectation (V.1)
 │   ├── _sample.py             #   sample (V.2)
 │   ├── _density.py            #   log_prob, unnormalized_log_prob (V.3)
-│   ├── _condition.py          #   condition_on, predictive, the inference registry (V.4)
-│   ├── _joint.py              #   joint (V.5)
-│   ├── _evaluate.py           #   evaluate and its rule registry (V.6)
-│   ├── _inverse.py            #   inverse, log_det_jacobian (V.7)
-│   └── _marginal.py           #   marginal, factor (V.8)
+│   ├── _condition.py          #   condition_on, the inference registry (V.4)
+│   ├── _mixture.py            #   mixture (V.5)
+│   ├── _joint.py              #   joint (V.6)
+│   ├── _evaluate.py           #   evaluate and its rule registry (V.7)
+│   ├── _inverse.py            #   inverse, log_det_jacobian (V.8)
+│   └── _marginal.py           #   marginal, factor (V.9)
 ├── families/                  # Part VI — the distribution catalog
 │   ├── _backend.py            #   TFPDistribution, the backend adapter (VI.1)
 │   ├── _continuous.py         #   Normal, Gamma, … (VI.1)
@@ -99,11 +106,11 @@ probpipe/
 ### The layers
 
 - **`core/`** is Part II verbatim: generic, type-agnostic, and importable by everything.
-- **`values/`** is the value layer of Part III, covering every leaf kind. The function kind's base lives here: `Function` itself, the class a `FunctionSpec` admits and a `FunctionBatch` holds, together with its capability protocols. The base carries the *representation* only: templates, identity, and plain evaluation. `LinOp` subclasses it and the spec references it, both below the distribution layer.
+- **`values/`** is the value layer of Part III, covering every leaf kind. The function kind's base lives here: `Function` itself, the class a `FunctionSpec` admits and a `FunctionBatch` holds, together with its capability protocols. The base carries the *representation* only: the declared sides, identity, and plain evaluation. `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the key split, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
-- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per operation section (V.1–V.8). V.0's operation model is the wrapping itself, and V.9's batching is the engine's sweep, so neither is a module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
+- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the workflow scopes and structural keys, replay, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`operations/`** is thin by design, matching what the operations are: capability-dispatched definitions wrapped by the decorator, one module per operation section (V.1–V.9). V.0's operation model is the wrapping itself, and V.10's batching is the engine's sweep, so neither is a module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
 
@@ -120,16 +127,20 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `core/_workflow_plan.py` | `functions/_plan.py` |
 | `core/_workflow_distribution_broadcast.py` | `functions/_broadcast.py` |
 | `core/_workflow_sweep.py` | `functions/_sweep.py` |
-| `core/_workflow_execution.py` | `functions/_execution.py` |
+| `core/_workflow_rng.py` | `functions/_rng.py` |
+| `core/_workflow_context.py` | `functions/_context.py` |
+| `core/_workflow_replay.py`, `core/_workflow_recipe.py` | `functions/_replay.py` |
+| `core/_workflow_broker.py`, `core/_workflow_managed.py` | `functions/_broker.py` |
+| `core/_workflow_execution.py`, `core/_workflow_execution_contract.py` | `functions/_execution.py` |
 | `core/_workflow_result.py`, `core/_workflow_distribution_normalization.py` | `functions/_result.py` |
-| `core/ops.py` | `operations/`, one module per operation section (V.1–V.8) |
+| `core/ops.py` | `operations/`, one module per operation section (V.1–V.9) |
 | `core/distribution.py`, `core/_distribution_base.py` | `distributions/_distribution.py` |
 | `core/protocols.py` | `distributions/_capabilities.py` |
 | `core/_distribution_array.py`, `core/_broadcast_distributions.py` | `distributions/_batches.py` |
 | `core/_empirical.py` | `distributions/_empirical.py` |
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
-| `core/record.py`, `core/_record_batch.py`, `core/_numeric_record_batch.py` | `values/`, one module per III section |
+| `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
 | `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_constraints.py` (II.2–II.3) |
 
 ### Open points

@@ -2,18 +2,16 @@
 
 Parts III and V fixed what a distribution *is* and what the operations do to one. Part VI catalogs the **concrete families** the library ships: for each, its event kind, its place on the axes of the `Distribution` hierarchy, the capabilities it implements and how, and the way instances arise, whether by constructor or as the result of an operation. Every family here is an ordinary `Distribution` or `ConditionalDistribution`, and the catalog adds no new base classes.
 
-## VI.0 — Overview: the catalog map
-
 | §     | Family                            | Event                                  | Factored?                          | Capabilities                                        | Arises by                                             |
 | ----- | --------------------------------- | -------------------------------------- | ---------------------------------- | --------------------------------------------------- | ----------------------------------------------------- |
 | VI.1  | parametric (`Normal`, …)          | one array field, or a fixed record     | no                                 | closed form throughout                              | constructor                                            |
 | VI.2  | empirical, bootstrap, KDE         | any                                    | no                                 | sampling, sample moments, exact marginals           | constructor, or as a sampling result                   |
-| VI.3  | mixture                           | the components' shared event           | no                                 | what the components jointly support                 | `predictive`, dependent marginals, or constructor      |
-| VI.4  | evaluation results                | the map's output template              | no                                 | per rule: exact density, exact moments, or sampling | `evaluate`                                             |
+| VI.3  | mixture                           | the components' shared event           | no                                 | what the components jointly support                 | `mixture`, dependent marginals, or constructor      |
+| VI.4  | evaluation results                | the map's output schema              | no                                 | per rule: exact density, exact moments, or sampling | `evaluate`                                             |
 | VI.5  | random functions, random measures | a `FunctionSpec` or `DistributionSpec` event declaration | no                             | mean function / marginalized law, sampling          | constructor                                            |
 | VI.6  | the Gaussian algebra              | numeric                                | yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `evaluate`    |
 | VI.7  | inference-produced                | any                                    | as realized                        | whatever the realizing family supports              | `condition_on` (inference)                             |
-| VI.8  | conditional families              | (given, event) template pairs          | some                               | the conditional capabilities                        | constructor or composition                             |
+| VI.8  | conditional families              | (given, event) pairs          | some                               | the conditional capabilities                        | constructor or composition                             |
 
 ## VI.1 — Parametric families
 
@@ -29,7 +27,7 @@ class TFPDistribution(Distribution[Array]):
 
 class Normal(TFPDistribution):
     def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike) -> None: ...
-# and likewise for each family above: parameters in, template and capabilities derived
+# and likewise for each family above: parameters in, event spec and capabilities derived
 ```
 
 ### Rationale
@@ -88,11 +86,11 @@ All four are bona fide laws with honestly partial capabilities (`D1 – Mathemat
 
 - *Bandwidth shape.* Whether `bandwidth` admits a matrix / linear operator, with the kernel applied in the whitened space, is open.
 
-## VI.3 — Mixtures and predictives
+## VI.3 — Mixtures
 
 ### Contract
 
-A `MixtureDistribution` is a convex combination of component distributions over one shared event template. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `predictive` returns for a finite mixing distribution, and the form a dependent joint's detached marginal takes under finite mixing.
+A `MixtureDistribution` is a convex combination of component distributions over one shared event spec. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `mixture` returns for a finite mixing distribution, and the form a dependent joint's detached marginal takes under finite mixing.
 
 ```python
 class MixtureDistribution(Distribution[T]):
@@ -113,7 +111,7 @@ Each evaluation rule returns a family from this catalog. A closed-form rule retu
 ```python
 class LinearPushforwardDistribution(Distribution):
     def __init__(self, name: str, base: Distribution, op: LinOp) -> None: ...
-    # the law of op @ X for X ~ base; the event template is op's output template.
+    # the law of op @ X for X ~ base; the event spec is op's output schema.
     # _sample pushes base draws through op; _mean and _cov delegate exactly,
     # E[A X] = A E[X] and Cov(A X) = A Cov(X) Aᵀ, lazily through the operator algebra;
     # _log_prob only when op is invertible, by change of variables
@@ -209,7 +207,7 @@ Approximation is a relation between a result and its target: a variational Gauss
 
 ### Contract
 
-The conditional members of the catalog are `ConditionalDistribution`s, each fixed by its (given, event) template pair.
+The conditional members of the catalog are `ConditionalDistribution`s, each fixed by its (given, event) pair.
 
 - A **linear-Gaussian conditional distribution** is `s ↦ N(A @ s + b, Σ)` with `A` a `LinOp`. It is the conditional member of the Gaussian algebra: composed with a Gaussian prior it yields a `FactoredMultivariateGaussian`, and conditioning through it is exact.
 - A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean, dispersion)` returns the law of conditionally independent observations, one per entry of `mean`, with `has_dispersion` declaring whether the family takes a dispersion parameter, such as a Gaussian scale. The likelihood's given slots are `X`, `β`, and the dispersion when the family has one, its event is the response vector, and its law is `family.build(link⁻¹(X @ β), dispersion)`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. `X` and the dispersion may instead be supplied to `glm_likelihood`, which fixes them at construction, exactly the exogenous curry of `condition_on` applied early. The pieces are the interface: changing the link or the family changes the likelihood without a new class.

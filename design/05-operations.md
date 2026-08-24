@@ -2,7 +2,7 @@
 
 Parts II–IV fixed the *shared abstractions*, the *values and distributions*, and the *functions* that act on them. Part V fixes the **operations**. Every operation is a `Function`, so it inherits lifting, provenance, dispatch, and orchestration from the function layer. This part adds only what is specific to each operation: its signature, its argument and return types and shapes, the choice between an exact and a default algorithm, its error behavior, and how its result is wrapped and tracked. Every operation is also capability-dispatched, so it applies to any object that implements the matching capability, and closed, so it returns another **tracked term**.
 
-**Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for conditional distributions, the `_conditional_*` family.
+**Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for conditional distributions, the prefix `_conditional` is added as well.
 
 ## V.0 — The operation model
 
@@ -11,17 +11,17 @@ Parts II–IV fixed the *shared abstractions*, the *values and distributions*, a
 Every operation shares the following mechanics:
 - **Capability dispatch.** An operation tests the relevant structural protocol with `isinstance(obj, SupportsX)` and calls the implementer method. An object that does not implement the capability raises a clear error.
 - **Two levels.** The implementer's `_x` method acts on the raw value type `T`. The user-facing operation wraps the result at the boundary, attaches identity, metadata, and provenance, and broadcasts, all at no cost to the implementer.
-- **Operations are `Function`s.** Each operation is itself a `Function` (Part IV) whose wrapped callable is its implementer dispatch: select the capability method and invoke it on the raw types. Its `apply` is that raw, untracked result, and `__call__` adds the engine's lifting and the wrap, which is why the batched sweep of V.9 needs no machinery of its own; `raw=True` returns what the plain path computes.
+- **Operations are `Function`s.** Each operation is itself a `Function` (Part IV) whose wrapped callable is its implementer dispatch: select the capability method and invoke it on the raw types. Its `apply` is that raw, untracked result, and `__call__` adds the engine's lifting and the wrap, which is why the batched sweep needs no machinery of its own; `raw=True` returns what the plain path computes.
 - **The wrap boundary.** The boundary is kind-directed and wraps only the untracked.
   - *A tracked term keeps its kind.* A `Record`, `Distribution`, `ConditionalDistribution`, `Function`, `NumericArray`, or `Opaque` an operation returns is never re-wrapped and never buried inside another kind.
   - *Identity is attached by derivation.* TrackedTerm terms are immutable and provenance is write-once. The default result is therefore a new term: the implementer's representation, shared, under the operation's fresh name and provenance. The implementer's object is never modified. `raw=True` returns it untouched.
-  - *A raw host wraps into its own kind.* A bare array becomes a `NumericArray`, a raw mapping a structured `Record`, a raw callable a `Function`, and any other raw value an `Opaque`. The rules are ordered rather than disjoint — a callable is also a non-mapping value — so `Opaque` is the fallback the named kinds fall through to. A backend distribution enters through its converter. A concrete family such as a `Normal` can therefore be written in plain arrays, with the family's natural constructor and no hand-written schema.
+  - *A raw host wraps into its own kind*, by the kind-directed wrap of the call boundary (IV.2): a bare array becomes a `NumericArray`, a raw mapping a structured `Record`, a raw callable a `Function`, and any other raw value an `Opaque`, the ordered fallback. A backend distribution enters through its converter. A concrete family such as a `Normal` can therefore be written in plain arrays, with the family's natural constructor and no hand-written schema.
   - *An output declaration is enforced.* When the operation carries one, the result is coerced to the declared kind and validated. A wrong kind and a schema mismatch raise distinct errors.
   - A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
-- **The `raw` opt-out.** Every operation accepts `raw=True` and returns the raw side of the kind hierarchy, skipping the wrap and the identity attachment: each kind's raw value — the bare array, the nested mapping of raw leaves for a record, the wrapped callable for a function-kind result, the wrapped object for an opaque one — and the bare operator for `cov`. Under a non-empty `sample_shape` the raw result is the storage view, the draws' raw values in their native stacked layout (II.4). The wrapped, tracked result is always the default.
-- **Stated fallback status.** Every operation declares one of three fallback statuses. A *fallback* means a closed form when the object provides one and otherwise a default such as Monte Carlo, total on a stated domain (any distribution that samples), with the sample count and PRNG key exposed as controls. *Total by definition* means the operation is the object's own capability, so no fallback question arises; `sample` is one. *Capability-only* means no fallback: the operation answers only where the object claims the capability, as for `log_prob` (V.3) and `factor` (V.8). The status is registry data, not contract: registering a numerical default later moves an operation from capability-only to fallback-backed without changing its signature.
+- **The `raw` opt-out.** Every operation accepts `raw=True` and returns the raw side of the kind hierarchy, skipping the wrap and the identity attachment: each kind's raw value — the bare array, the nested mapping of raw leaves for a record, the wrapped callable for a function-kind result, the wrapped object for an opaque one — and the bare operator for `cov`. Under a non-empty `sample_shape` the raw result is the storage view, the draws' raw values in their native stacked layout (II.6). The wrapped, tracked result is always the default.
+- **Stated fallback status.** Every operation declares one of three fallback statuses. A *fallback* means a closed form when the object provides one and otherwise a default such as Monte Carlo, total on a stated domain (any distribution that samples), with the sample count and PRNG key exposed as controls. *Total by definition* means the operation is the object's own capability, so no fallback question arises; `sample` is one. *Capability-only* means no fallback: the operation answers only where the object claims the capability, as for `log_prob` and `factor`. The status is registry data, not contract: registering a numerical default later moves an operation from capability-only to fallback-backed without changing its signature.
 - **Controls in the signature.** An operation is not a user function, so its signature is its control surface: the PRNG key, sample counts, and `method=` selection appear as ordinary parameters. The separate options namespace exists for wrapped user functions, whose argument names the framework must not constrain.
-- **Randomness.** No operation draws from ambient random state. A draw-producing operation (`sample`) requires an explicit PRNG `key` and raises without one, since without ambient state a defaulted key would silently repeat a draw. An operation whose contract is a deterministic quantity but that falls back to Monte Carlo, such as a moment, a marginal, or an inference result, instead takes the key as an optional control defaulting to one derived from the `seed`, so the Monte Carlo route neither enters the signature nor burdens the caller. The resolved key is recorded in `provenance`.
+- **Randomness.** No operation draws from ambient random state, and no operation carries a seed. An explicit PRNG `key` is caller-owned: the draw is consumed as given and reproducible from the key alone. With the key omitted, the draw is a **workflow-owned random event** (IV.3): its key derives structurally from the enclosing workflow scope, and a bare call outside any scope gets its own ephemeral scope — so an omitted key is never silently repeated, and a seeded scope reproduces it on demand. An operation whose contract is a deterministic quantity but that falls back to Monte Carlo, such as a moment, a marginal, or an inference result, takes its key the same way, so the Monte Carlo route neither burdens the caller nor loses reproducibility. The resolved key is recorded in `provenance`.
 - **Output identity.** Every tracked term an operation mints is fully specified, never left implicit. Its spec is carried or derived from the inputs, its `provenance` records the operation and its parent descriptors, and its `name` is auto-derived and marked `name_is_auto`. Free-form `annotations` do not auto-propagate, since lineage rides on `provenance` rather than on annotations.
 - **Tracking scope.** Every result is tracked, including a numeric summary: a density returns as a `NumericArray` whose provenance records the operation, and the bare value is one `raw=True` away.
 
@@ -34,8 +34,8 @@ The operation model is where the core principles become mechanical. Capability d
 ### Contract
 
 The moment operations summarize a distribution by a deterministic value.
-- `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is wrapped at the law's declared event kind — a `Record` whose event template matches the distribution's for a record-drawing law, and a term for a term-drawing one, so a random function's mean is a `Function` — or the raw event-typed value `T` with `raw=True`.
-- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates. Its input and output templates are both the distribution's `NumericRecordSpec`, so it applies directly to draws.
+- `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is wrapped at the law's declared event kind — a `Record` whose schema matches the distribution's for a record-drawing law, and a term for a term-drawing one, so a random function's mean is a `Function` — or the raw event-typed value `T` with `raw=True`.
+- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates. Its input and output schemas are both the distribution's `NumericRecordSpec`, so it applies directly to draws.
 - `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. If a single level is provided it returns a `Record`; for multiple levels, it returns a `RecordBatch`. Both require a numeric draw, so the record form is the only one in question here.
 - `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. The result is wrapped at the kind `f`'s output declaration names, a `Record` for the usual record output.
 
@@ -49,10 +49,10 @@ A mean is defined whenever draws can be averaged: coordinate-wise for arrays, po
 
 ### Contract
 
-`sample(d, key, sample_shape=(), raw=False)` draws from a distribution.
+`sample(d, key=None, sample_shape=(), raw=False)` draws from a distribution.
 - With `sample_shape=()` it returns a single draw **at the declared kind**, tracked. The kind is the event declaration's class, fixed by the declaration and never by the runtime value: a `RecordSpec` draws a `Record`, a `DistributionSpec` a `Distribution`, a `FunctionSpec` a `Function`, a `NumericArraySpec` a `NumericArray`, and an `OpaqueSpec` an `Opaque`. Every spec names a class, so no kind is presented by wrapping it in another: a scalar law draws a `NumericArray`, not a single-field `Record`.
 - A non-empty `sample_shape` prepends batch axes and returns the tracked batch type of the draw's kind, with those leading dimensions on a level named for the operation that mints them, `sample`: a `RecordBatch` (`NumericRecordBatch` when numeric) for a record event, and the tracked batch form of the table below — a `DistributionBatch`, `FunctionBatch`, and so on — for a term-drawing law.
-- With `raw=True`, `sample` skips the identity attachment and returns the raw side. For `sample_shape=()` that is the kind's raw value: the bare array for an array-drawing law, the nested mapping of raw leaves for a record-drawing one, the wrapped callable for a function draw, the wrapped object for an opaque one; a `Distribution`- or `ConditionalDistribution`-valued draw is its own raw form and returns as the implementer's term, under its own name and provenance rather than fresh `sample` identity. For a non-empty `sample_shape` it returns the **storage view** (II.4), the draws' raw values in their native stacked layout:
+- With `raw=True`, `sample` skips the identity attachment and returns the raw side: the kind's raw value (V.0) for `sample_shape=()`, except that a `Distribution`- or `ConditionalDistribution`-valued draw is its own raw form and returns as the implementer's term, under its own name and provenance rather than fresh `sample` identity. For a non-empty `sample_shape` it returns the **storage view** (II.6), the draws' raw values in their native stacked layout:
 
 | declared kind | tracked batch | `raw=True` result |
 |---|---|---|
@@ -63,14 +63,14 @@ A mean is defined whenever draws can be averaged: coordinate-wise for arrays, po
 | `FunctionSpec` | `FunctionBatch` | an object array of the drawn callables |
 | `OpaqueSpec` | `OpaqueBatch` | an object array of the drawn objects |
 - Sampling requires a concrete declaration and raises with the free dimensions named; in the fused conditional path, the given value binds them first.
-- The PRNG `key` is explicit and supplied by the caller, so a draw is reproducible from its key. Under a non-empty `sample_shape` the key splits by draw index, so the draws are jointly independent and reproducible together; inside a `Function` the `seed` supplies the key by the same structural split, so draws are never hand-threaded.
+- A caller-supplied PRNG `key` makes the draw reproducible from the key alone; with the key omitted, the draw is a workflow-owned random event (IV.3). Under a non-empty `sample_shape` the key splits by draw index, so the draws are jointly independent and reproducible together; inside a `Function`, the workflow scope supplies each draw's key by structural identity, so draws are never hand-threaded.
 - The draw carries `provenance` recording `sample` and the distribution it came from.
 
 For a `ConditionalDistribution`, `sample(K, given=s, key=...)` is the fused conditional path that's equivalent to `sample(condition_on(K, s), key=...)`.
 
 ### Rationale
 
-Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Returning every draw as the tracked term of its declared kind serves `C1 – Uniform interface to distributions and values` without making the kinds uniform: what is the same across laws is that a draw is tracked and its type is fixed by the declaration, not that every draw is a `Record`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it.
+Every draw is reproducible from its inputs — from the key alone when the caller supplies one, and from the workflow scope's seed and the draw's structural identity otherwise (IV.3) — which is `C6 – Traceable and reproducible workflows`. Returning every draw as the tracked term of its declared kind serves `C1 – Uniform interface to distributions and values` without making the kinds uniform: what is the same across laws is that a draw is tracked and its type is fixed by the declaration, not that every draw is a `Record`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it.
 
 ## V.3 — `log_prob` and `unnormalized_log_prob`
 
@@ -88,13 +88,13 @@ Threading an explicit PRNG `key` makes every draw reproducible from its inputs, 
 
 Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (`D1 – Mathematical fidelity`): a distribution that knows its normalizing constant offers the true density, while one that does not still serves inference, which needs the density only up to a constant.
 
-## V.4 — `condition_on` and `predictive`
+## V.4 — `condition_on`
 
 ### Contract
 
 `condition_on(d, given)` fixes some fields of a distribution or conditional distribution and returns the resulting distribution.
 
-**The `given` argument.** `given` is field-keyed: a `Record`, or a mapping from field paths to values, with each value conforming to the spec at its path, checked as one simultaneous unification that binds any symbolic dimensions and raises on jointly inconsistent shapes. Each key must name either a *given* slot (a name in the `given_spec`, or a path into a structured slot) or a *produced* field (a path in the event schema), and any other key is an error. A key may also name an interior path, in which case its value is a sub-record checked against the sub-schema. Binding part of a structured slot is defined as restructure-then-bind (II.1, III.9): the bound part is promoted and bound exactly, the residual slot remains, and a group emptied by the binding dissolves. Conditioning is stated entirely in terms of fields, and factors never appear in the call: the derived factor graph is read only to decide which case below applies and to carry it out.
+**The `given` argument.** `given` is field-keyed: a `Record`, or a mapping from field paths to values, with each value, in either presentation (II.2), conforming to the spec at its path, checked as one simultaneous unification that binds any symbolic dimensions and raises on jointly inconsistent shapes. Each key must name either a *given* slot (a name in the `given_spec`, or a path into a structured slot) or a *produced* field (a path in the event schema), and any other key is an error. A key may also name an interior path, in which case its value is a sub-record checked against the sub-schema. Binding part of a structured slot is defined as restructure-then-bind (II.1): the bound part is promoted and bound exactly, the residual slot remains, and a group emptied by the binding dissolves. Conditioning is stated entirely in terms of fields, and factors never appear in the call: the derived factor graph is read only to decide which case below applies and to carry it out.
 
 **Dispatch.** The operation dispatches on the conditioning capability: a `ConditionalDistribution` always implements it (`_condition_on` is its required primitive), a `Distribution` implements it optionally (`SupportsConditioning`), and the factored classes implement it with one structural rule, dispatched on where each conditioned field sits in the factor graph.
 - **Exogenous given, so curry.** Binding a slot that the object conditions on but does not produce returns a smaller `ConditionalDistribution`, or an ordinary `Distribution` once all given slots are bound. This is exact and involves no inference. For example, binding a regression model's covariates curries it toward the data-ready likelihood.
@@ -103,7 +103,7 @@ Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (
 
 When `given` names several fields, the cases combine: the exact bindings (curry and slice) are applied first, and Bayes' rule runs on what remains. Field classification is computed once, on the graph with every conditioned field marked, so the outcome does not depend on the order the fields are listed. Conditioning on a produced field does not require the given fields to be bound first. The result stays conditional on the unmet givens, with the produced-field conditioning applied within each slice of the given, so the result curries like any other `ConditionalDistribution` and the two orders agree: conditioning on a produced field and then binding the given yields the same distribution as binding the given first. When that produced-field conditioning requires Bayes' rule, the resulting `ConditionalDistribution` may realize the inference lazily, once its given is bound, or through a method that supports amortization.
 
-`condition_on` always binds the supplied value as the field's fixed value, whatever the value's type. The predictive mixture `∫ K(s, ·) μ(ds)` over a mixing distribution `μ` is requested explicitly through the `predictive(K, mixing)` operation. The result carries `provenance` recording the operation and the conditioning fields, and `predictive` additionally records the mixing distribution.
+`condition_on` always binds the supplied value as the field's fixed value, whatever the value's type; the mixture `∫ K(s, ·) μ(ds)` over a mixing distribution is requested explicitly through the separate `mixture` operation. The result carries `provenance` recording the operation and the conditioning fields.
 
 **The inference-method registry.** The Bayes' rule case is dispatched through the **inference-method registry**, a `UnaryDispatchRegistry` keyed on the model's type whose methods are inference algorithms such as MCMC or variational families. Each method registers under a unique `name`, declares the models it applies to, and probes feasibility before it runs. `condition_on(..., method="tfp_nuts")` selects a specific algorithm, and otherwise the registry picks the best applicable one.
 
@@ -113,27 +113,37 @@ When `given` names several fields, the cases combine: the exact bindings (curry 
 
 A single operation covers binding, slicing, and Bayes' rule because all three are the same mathematical act of conditioning, and they differ only in whether the conditioned field is exogenous, upstream, or downstream in the factor graph. Collapsing them into one operation keeps the user interface small (`C1 – Uniform interface to distributions and values`), while the derived graph decides the algorithm (`C3 – Computational detail hidden by default, available on demand`).
 
-## V.5 — `joint`
+## V.5 — `mixture`
 
 ### Contract
 
-Recall that the composition operator `A * B`, exposed on `Distribution` and `ConditionalDistribution` as `__mul__` constructs the joint (conditional) distribution of `A` and `B`. It returns either a `FactoredDistribution` or, when some givens remain, a `FactoredConditionalDistribution`. Its `provenance` records `*` as the operation and the operand factors, and its `name` is auto-derived, as described next.
+`mixture(K, mixing)` returns the mixture `μK = ∫ K(s, ·) μ(ds)`: the law of `T` for `S ~ mixing` and `T ~ K(S, ·)`, the mixing distribution's produced slots meeting the kernel's given slots by name.
 
-**Auto-derived names.** A joint is derived, not constructed by hand, so `*` derives its `name` deterministically from its factors. The factors are listed in **canonical order** (the conditional-first topological order of the flattened factor graph, with factors incomparable in the derived graph ordered lexicographically by the fields they produce), and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` produce the same joint distribution. The derived name is marked `name_is_auto`.
+Its defining identity is structural: `mixture(K, mixing)` is the detached `marginal` of the composed joint `K * mixing` onto the kernel's produced slots. Slot matching, spec unification, and unmet givens therefore behave exactly as composition (III.12) and `marginal` fix them, with nothing separately defined: a given slot the mixing distribution does not meet stays unmet, and the result is then a `ConditionalDistribution` over the unmet givens. Exactness follows the same route — a finite mixing distribution yields the explicit `MixtureDistribution`, a closed family stays closed, as in the Gaussian algebra, and otherwise the result is the Monte Carlo empirical marginal through ancestral sampling, with the route recorded in provenance.
 
-Re-composition reads `name_is_auto`. An auto-named operand is **flattened**: its factors enter the new joint directly, its old name is discarded, and a fresh name is derived from the full factor list. An operand whose name the user has pinned with `with_name` is **not** flattened. It enters as a single factor under that name, and that name appears as one token in the parent's derived name. So `(lik * prior).with_name("posterior")` both labels the joint and, in any later composition, keeps it as the single factor `posterior`.
+Mixing is always an explicit request: `condition_on` binds a supplied value as a value whatever its type (V.4), so no conditioning call ever mixes implicitly. The result is a tracked term whose `provenance` records the operation, the kernel, and the mixing distribution.
+
+### Rationale
+
+Keeping the integral out of `condition_on` keeps conditioning single-valued — a supplied value always binds, and `μK` is always asked for by name — so neither call has a data-dependent meaning (`C1 – Uniform interface to distributions and values`). The name is the result's mathematical name: `μK` is the mixture of the kernel family with mixing distribution `μ`, which covers predictive, compound, and state-propagation uses without privileging one (`C5 – Naming for unambiguous meaning`, `D1 – Mathematical fidelity`). Defining the operation as the marginal of the composed joint adds no second semantics: one identity ties it to machinery already fixed, so every behavior has a single source (`D7 – Single source of truth`).
+
+## V.6 — `joint`
+
+### Contract
+
+Recall that the composition operator `A * B`, exposed on `Distribution` and `ConditionalDistribution` as `__mul__` constructs the joint (conditional) distribution of `A` and `B`. It returns either a `FactoredDistribution` or, when some givens remain, a `FactoredConditionalDistribution`. Its `provenance` records `*` as the operation and the operand factors, and its `name` is auto-derived by the canonical-order rule fixed with `*` (III.12).
 
 **The realigning `joint` form.** A limitation of `*` is that it requires a producer's field names to match the names its consumer conditions on. This motivates the `joint(A, B, **align)` op, which realigns fields first and then composes exactly as `*`, so it is equivalent to `A * B.with_path_names(**align)`. For example, a likelihood that conditions on `slope` can be combined with a prior where the slope is called `beta` with `joint(lik, prior, beta="slope")`.
 
 ### Rationale
 
-Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Deriving the name deterministically keeps a joint's meaning clear without forcing the user to label every intermediate output (`C5 – Naming for unambiguous meaning`), while `with_name` lets the user impose grouping where it carries intent. Realignment is an exact rename: `with_path_names` returns the same law under new field names, so `joint` connects mismatched factors without altering their joint law (`D1 – Mathematical fidelity`).
+Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Realignment is an exact rename: `with_path_names` returns the same law under new field names, so `joint` connects mismatched factors without altering their joint law (`D1 – Mathematical fidelity`).
 
 ### Open points
 
 - *The `align` contract.* `align` pairs are `with_path_names` pairs, path-valued targets included (II.1), so realignment can promote a nested field to a slot-matchable name. The remaining fine print — freshness and injectivity requirements on the new names, and which operand's fields may be realigned — stays deliberately deferred: the question is subtle, and implementation experience should inform the decision.
 
-## V.6 — `evaluate`
+## V.7 — `evaluate`
 
 ### Contract
 
@@ -151,7 +161,7 @@ The selected rule records its name and fidelity in the result's provenance where
 
 **Linear maps push moments exactly.** Whatever rule realizes `A @ d`, the result's `mean` and `cov` delegate exactly whenever `d` supports them, since `E[A X] = A E[X]` and `Cov(A X) = A Cov(X) Aᵀ`. An approximate linear pushforward therefore still reports exact first and second moments.
 
-Applied to a `ConditionalDistribution`, evaluation acts on the event side, giving the kernel `s ↦ f♯K(s, ·)` with the same given template.
+Applied to a `ConditionalDistribution`, evaluation acts on the event side, giving the kernel `s ↦ f♯K(s, ·)` with the same given spec.
 
 The result is a tracked term: its `provenance` records `evaluate`, the map, and the operand, and its `name` is auto-derived.
 
@@ -159,8 +169,7 @@ The result is a tracked term: its `provenance` records `evaluate`, the map, and 
 
 `evaluate` is `C4 – Function lifting via pushforward` in operation form: applying a map is one act whatever the operand kind, and replacing a value by a distribution over it leaves that act well-defined, with this operation returning the resulting law directly. Dispatching over pairs of map and distribution types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form gets it automatically and every other pair still answers by sampling. Recording the producing rule keeps the approximation honest (`D1 – Mathematical fidelity`), registration grows the exact set without changing call sites (`D2 – Generality first`), and the result is a tracked term that composes further (`D4 – Closed system of objects under operations`). The operation is named for what it does across every operand kind, with *pushforward* reserved for mathematical statements, as *kernel* is for `ConditionalDistribution`.
 
-
-## V.7 — `inverse` and `log_det_jacobian`
+## V.8 — `inverse` and `log_det_jacobian`
 
 ### Contract
 
@@ -174,7 +183,7 @@ Two operations read a map's inverse structure.
 
 Reparameterization moves in both directions between a constrained and an unconstrained space, so the inverse must be reachable from user code, and the operation form keeps the capability's implementer methods private, per the V.0 convention. Returning the inverse as a `Function` keeps the system closed (`D4 – Closed system of objects under operations`): the inverse evaluates, composes, and pushes forward like any map. Splitting the Jacobian claim from invertibility is `D3 – Capability-based operations`: a map can be invertible without a tractable Jacobian determinant, and the determinant exists only for a differentiable map, so each claim stays honest on its own and change of variables requires exactly the pair.
 
-## V.8 — `marginal` and `factor`
+## V.9 — `marginal` and `factor`
 
 ### Contract
 
@@ -189,7 +198,7 @@ Both return a **tracked term** whose `provenance` records the access and its sou
 
 `marginal` and `factor` are the two query directions of the field and factor interfaces fixed with the factored distributions: `marginal` reads a field's law detached from its joint, and `factor` reads a construction block. Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` keeps factor access honest, since only a distribution actually built from named parts can answer it (`D3 – Capability-based operations`).
 
-## V.9 — Batched operations
+## V.10 — Batched operations
 
 ### Contract
 
