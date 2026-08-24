@@ -136,7 +136,7 @@ class BatchSpec(TermSpec):
     batch of opaque values carry a term spec of its own.
 
     An axis size may be a **symbolic dimension name** instead of an integer, as
-    an ``NumericArraySpec`` shape entry may, so that a declaration can fix the number of
+    a ``NumericArraySpec`` shape entry may, so that a declaration can fix the number of
     levels while deferring how many elements each holds — "returns a batch of
     ``S`` draws" before ``S`` is known. The names share one scope with the
     element's schema, so a batch of ``("n",)`` over arrays of shape ``("n",)`` is

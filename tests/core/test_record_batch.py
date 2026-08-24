@@ -1096,7 +1096,7 @@ class TestStack:
             NumericRecord("r", {"x": jnp.zeros(2)}, event_template=EventTemplate(x=(2,))),
             NumericRecord("r", {"x": jnp.zeros(3)}, event_template=EventTemplate(x=(3,))),
         ]
-        # Declared an NumericArraySpec, so it stacks natively and the shapes must agree —
+        # Declared a NumericArraySpec, so it stacks natively and the shapes must agree —
         # it is not quietly demoted to an object column.
         with pytest.raises((TypeError, ValueError)):
             NumericRecordBatch.stack(records, level_name="draw", element_spec=EventTemplate(x=(2,)))
@@ -1480,7 +1480,7 @@ class TestPyTreeRebuildContract:
             jax.tree.map(lambda column: float(column.sum()), batch)
 
     def test_object_data_under_a_numeric_field_is_refused(self):
-        """An ``NumericArraySpec`` requires numeric data whether or not it pins a dtype,
+        """A ``NumericArraySpec`` requires numeric data whether or not it pins a dtype,
         so the kind is re-checked and not only the pinned dtype — otherwise a
         numeric batch comes back holding objects."""
         batch = self._batch((3,), "draw")

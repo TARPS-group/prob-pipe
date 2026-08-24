@@ -516,7 +516,7 @@ class TestRepr:
         tpl = EventTemplate(label=None, x=())
         assert "label=None" in repr(tpl)
 
-    def test_populated_array_spec_shows_full_repr(self):
+    def test_populated_numeric_array_spec_shows_full_repr(self):
         # A spec carrying dtype/support is not bare, so repr falls back to the
         # full dataclass repr rather than the bare-shape shorthand. The dtype
         # renders in its normalised ``numpy.dtype`` form.
@@ -538,19 +538,19 @@ class TestRepr:
 
 
 class TestValueSpecs:
-    def test_array_spec_defaults(self):
+    def test_numeric_array_spec_defaults(self):
         spec = NumericArraySpec((3,))
         assert spec.shape == (3,)
         assert spec.dtype is None
         assert spec.support is None
 
-    def test_array_spec_coerces_shape_to_tuple(self):
+    def test_numeric_array_spec_coerces_shape_to_tuple(self):
         # A list shape is normalised to a tuple so the spec stays hashable.
         spec = NumericArraySpec([2, 4])
         assert spec.shape == (2, 4)
         assert isinstance(spec.shape, tuple)
 
-    def test_array_spec_rejects_negative_dims(self):
+    def test_numeric_array_spec_rejects_negative_dims(self):
         with pytest.raises(TypeError, match="non-negative ints"):
             NumericArraySpec((-1,))
 
@@ -582,7 +582,7 @@ class TestValueSpecs:
         with pytest.raises(TypeError, match=r"OpaqueSpec\.meta must be hashable"):
             OpaqueSpec(meta=[])  # type: ignore[arg-type]
 
-    def test_array_spec_rejects_unhashable_support_at_construction(self):
+    def test_numeric_array_spec_rejects_unhashable_support_at_construction(self):
         with pytest.raises(TypeError, match=r"NumericArraySpec\.support must be hashable"):
             NumericArraySpec((), support=[])  # type: ignore[arg-type]
 
@@ -663,14 +663,14 @@ class TestValueSpecs:
             EventTemplate(a=()), EventTemplate(c=())
         )
 
-    def test_array_spec_unset_dtype_not_equal_to_set(self):
+    def test_numeric_array_spec_unset_dtype_not_equal_to_set(self):
         # numpy treats ``np.dtype(None)`` as the default dtype, so a naive
         # field comparison would report these equal (while the eq/hash
         # contract requires equal objects to hash equal).
         assert NumericArraySpec(()) != NumericArraySpec((), dtype=jnp.float64)
         assert NumericArraySpec((), dtype=jnp.float64) != NumericArraySpec(())
 
-    def test_array_spec_dtype_spellings_normalise(self):
+    def test_numeric_array_spec_dtype_spellings_normalise(self):
         # Any numpy-coercible dtype spelling yields the same (equal, and
         # equal-hashing) spec.
         specs = [
@@ -681,7 +681,7 @@ class TestValueSpecs:
         assert len(set(specs)) == 1
         assert all(s.dtype == np.dtype("float32") for s in specs)
 
-    def test_array_spec_pickle_round_trip(self):
+    def test_numeric_array_spec_pickle_round_trip(self):
         import pickle
 
         spec = NumericArraySpec((3,), dtype="float32")
@@ -706,20 +706,20 @@ class TestValueSpecs:
         assert restored == tpl
         assert hash(restored) == hash(tpl)
 
-    def test_array_spec_zero_dim_allowed(self):
+    def test_numeric_array_spec_zero_dim_allowed(self):
         spec = NumericArraySpec((0,))
         assert spec.shape == (0,)
         assert spec.is_valid(jnp.ones(0))
         assert not spec.is_valid(jnp.ones(1))
 
-    def test_array_spec_symbolic_dimensions(self):
+    def test_numeric_array_spec_symbolic_dimensions(self):
         spec = NumericArraySpec(("obs", 3, "obs"))
 
         assert spec.is_valid(np.zeros((4, 3, 4)))
         assert not spec.is_valid(np.zeros((4, 3, 5)))
 
     @pytest.mark.parametrize("dimension", ["", -1, 1.5, None])
-    def test_array_spec_rejects_invalid_symbolic_dimensions(self, dimension):
+    def test_numeric_array_spec_rejects_invalid_symbolic_dimensions(self, dimension):
         with pytest.raises(TypeError, match="symbolic dimension"):
             NumericArraySpec((dimension,))
 
@@ -736,7 +736,7 @@ class TestValueSpecs:
 # ---------------------------------------------------------------------------
 
 
-class TestArraySpecIsValid:
+class TestNumericArraySpecIsValid:
     def test_shape_match(self):
         spec = NumericArraySpec((3,))
         assert spec.is_valid(jnp.ones(3))
@@ -1039,7 +1039,7 @@ class TestFunctionSpecOptionalTemplates:
 
 
 class TestConstructionSpecs:
-    def test_tuple_becomes_array_spec(self):
+    def test_tuple_becomes_numeric_array_spec(self):
         tpl = EventTemplate(x=(3,))
         assert tpl["x"] == NumericArraySpec((3,))
 
@@ -1052,7 +1052,7 @@ class TestConstructionSpecs:
         tpl = EventTemplate(sub=inner, z=())
         assert tpl.at_path("sub") is inner
 
-    def test_explicit_array_spec_accepted(self):
+    def test_explicit_numeric_array_spec_accepted(self):
         spec = NumericArraySpec((2,), dtype="float32")
         tpl = EventTemplate(x=spec)
         assert tpl["x"] is spec
@@ -1075,12 +1075,12 @@ class TestConstructionSpecs:
 
 
 # ---------------------------------------------------------------------------
-# Auto-promotion to NumericEventTemplate (iff every leaf is an NumericArraySpec)
+# Auto-promotion to NumericEventTemplate (iff every leaf is a NumericArraySpec)
 # ---------------------------------------------------------------------------
 
 
 class TestAutoPromotionSpecs:
-    def test_explicit_array_specs_promote(self):
+    def test_explicit_numeric_array_specs_promote(self):
         tpl = EventTemplate(x=NumericArraySpec(()), y=NumericArraySpec((3,)))
         assert isinstance(tpl, NumericEventTemplate)
 
@@ -1162,7 +1162,7 @@ def _func_spec() -> FunctionSpec:
 
 
 class TestIsNumeric:
-    def test_all_arrayspec(self):
+    def test_all_numeric_array_specs(self):
         assert EventTemplate(x=(), y=(3,)).is_numeric is True
 
     def test_nested_all_numeric(self):
@@ -1607,9 +1607,13 @@ class TestFunctionSpecOutputWidening:
 def test_public_exports():
     import probpipe
 
-    for name in ("TermSpec", "RecordSpec"):
+    for name in ("TermSpec", "RecordSpec", "NumericArraySpec"):
         assert hasattr(probpipe, name), name
         assert name in probpipe.__all__, name
+
+    removed_name = "Array" + "Spec"
+    assert not hasattr(probpipe, removed_name)
+    assert removed_name not in probpipe.__all__
 
 
 class TestFreeDimsReachThroughTermSpecs:

@@ -9,7 +9,7 @@ This document uses the **`Function`** vocabulary. A `Function` is the universal 
 - **One package per layer.** Packages mirror the reference's parts in dependency order, and a module realizes one section or one coherent piece of one.
 - **Imports point downward.** Each package imports only from packages above it in the tree below. There are no import cycles, and no lazy imports to dodge one.
 - **Registration flows upward.** A lower layer defines a registry and higher layers populate it at import time: the families register evaluation rules and converters, and the inference methods register themselves. Capability reaches the operations without the operations importing their providers.
-- **A spec lives with the type it admits.** `FunctionSpec` lives in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The rule bends only where layering forbids it: `ValueSpec` and the `TermSpec` marker are what the tracked base stores, and `NumericArraySpec` and `OpaqueSpec` admit no ProbPipe kind at all, so all four sit in `core/` beside `EventTemplate` and `Constraint` — `core/` cannot import the value layer. The same placement rule covers each type's batch form.
+- **A spec lives with the type it admits.** `FunctionSpec` lives in the value layer with the kind it describes, and `DistributionSpec` and `ConditionalDistributionSpec` live with the distribution classes. The rule bends only where layering forbids it: `ValueSpec` and the `TermSpec` marker are what the tracked base stores, while `NumericArraySpec` and `OpaqueSpec` describe the raw hosts of value-layer kinds, so all four sit in `core/` beside `EventTemplate` and `Constraint` — `core/` cannot import the value layer. Each concrete tracked class and batch form lives together in the lowest layer that can implement it.
 - **Modules are private, packages are public.** Every module is underscore-prefixed. A package's `__init__` exports its public names, and the top-level `probpipe` namespace re-exports the curated user surface, which is the only import a user needs.
 - **Tests mirror the tree**, as `tests/<package>/test_<module>.py`.
 
@@ -33,6 +33,9 @@ probpipe/
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.6)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.3)
+│   ├── _numeric_array.py      #   NumericArray (III.1)
+│   ├── _numeric_array_batch.py  # NumericArrayBatch (III.1)
+│   ├── _opaque.py             #   Opaque (III.1)
 │   ├── _function_base.py      #   Function itself (templates, identity, controls and with_options,
 │   │                          #     plain evaluation), FunctionSpec, and the function capabilities
 │   ├── _object_batch.py       #   object-array storage the two batch forms share

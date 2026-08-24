@@ -796,7 +796,7 @@ class TestSpecValidation:
             _spec([(2.7,)], ["draw"])
 
     def test_an_identifier_is_a_symbolic_axis_size(self):
-        """A name defers a size, as an `NumericArraySpec` shape entry may."""
+        """A name defers a size, as a `NumericArraySpec` shape entry may."""
         assert _spec([("draws",)], ["draw"]).axis_groups == (("draws",),)
 
     def test_a_symbolic_axis_size_must_be_an_identifier(self):
@@ -1532,7 +1532,7 @@ class TestAStoredElementKeepsItsOwnIdentity:
 
 
 class TestSymbolicMultiplicity:
-    """An axis size may be a name, as an `NumericArraySpec` shape entry may.
+    """An axis size may be a name, as a `NumericArraySpec` shape entry may.
 
     A *declaration* may defer how many elements a level holds — "returns a batch
     of `S` draws" before `S` is known. A live batch may not: it holds elements at

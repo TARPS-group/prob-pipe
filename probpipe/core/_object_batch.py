@@ -1,6 +1,6 @@
 """Object-array storage for the batch forms of values that do not stack natively.
 
-An ``NumericArraySpec`` value batches natively — an array with the batch axes leading —
+A ``NumericArraySpec`` value batches natively — an array with the batch axes leading —
 so no class is needed for it. A callable and an opaque object have no such form:
 there is nothing to stack them *into*. :class:`_ObjectBatch` supplies the
 storage those two batch forms share, a numpy object array, leaving each public

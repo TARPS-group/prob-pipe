@@ -93,7 +93,7 @@ if it were user-guide reference text.
 | Abstraction | Canonical contract location |
 |---|---|
 | `NamedTree` (shared name-keyed tree substrate) | docstrings in `probpipe/core/named_tree.py`; #235 Chapter 1 |
-| `EventTemplate` / `NumericEventTemplate` / `ValueSpec` (raw-value: `ArraySpec`·`OpaqueSpec`; `TermSpec`: `RecordSpec`·`DistributionSpec`·`FunctionSpec`) | docstrings in `probpipe/core/event_template.py`; #235 Chapter 1 |
+| `EventTemplate` / `NumericEventTemplate` / `ValueSpec` (raw-value: `NumericArraySpec`·`OpaqueSpec`; `TermSpec`: `RecordSpec`·`DistributionSpec`·`FunctionSpec`) | docstrings in `probpipe/core/event_template.py`; #235 Chapter 1 |
 | `Record` / `NumericRecord` (each stores its type as a `RecordSpec`, with `event_template` a view on it) | docstrings in `probpipe/core/record.py`, `_numeric_record.py`; #235 Chapter 2 |
 | `Batch` / `BatchSpec` (the multiplicity axis: levels, level names, view identity) | docstrings in `probpipe/core/_batch.py`; #235 Chapter 2 |
 | Batch types (`RecordBatch`/`NumericRecordBatch`, `DistributionArray`) | docstrings in `_record_batch.py`, `_numeric_record_batch.py`, `_distribution_array.py`; #235 Chapter 2 |
