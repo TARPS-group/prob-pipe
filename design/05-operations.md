@@ -11,19 +11,19 @@ Parts II–IV fixed the *shared abstractions*, the *values and distributions*, a
 Every operation shares the following mechanics:
 - **Capability dispatch.** An operation tests the relevant structural protocol with `isinstance(obj, SupportsX)` and calls the implementer method. An object that does not implement the capability raises a clear error.
 - **Two levels.** The implementer's `_x` method acts on the raw value type `T`. The user-facing operation wraps the result at the boundary, attaches identity, metadata, and provenance, and broadcasts, all at no cost to the implementer.
-- **Operations are `Function`s.** Each operation is itself a `Function` (Part IV) whose wrapped callable is its implementer dispatch: select the capability method and invoke it on the raw types. Its `apply` is that raw, untracked result, and `__call__` adds the engine's lifting and the wrap, which is why the batched sweep of V.9 needs no machinery of its own; `raw=True` returns what the plain path computes.
+- **Operations are `Function`s.** Each operation is itself a `Function` (Part IV) whose wrapped callable is its implementer dispatch: select the capability method and invoke it on the raw types. Its `apply` is that raw, untracked point-evaluation result, and `__call__` adds the engine's lifting and the wrap, which is why the batched sweep of V.9 needs no machinery of its own. The operation-only `raw=True` control unwraps the kind produced by that path; it is not added to arbitrary `Function` calls, where it could collide with a wrapped callable's own parameter.
 - **The wrap boundary.** The boundary is kind-directed and wraps only the untracked.
-  - *A tracked term keeps its kind.* A `Record`, `Distribution`, `ConditionalDistribution`, or `Function` an operation returns is never re-wrapped and never buried inside another kind.
-  - *Identity is attached by derivation.* TrackedTerm terms are immutable and provenance is write-once. The default result is therefore a new term: the implementer's representation, shared, under the operation's fresh name and provenance. The implementer's object is never modified. `raw=True` returns it untouched.
-  - *A raw host wraps into its own kind.* A bare array or other raw non-mapping value becomes the single-field `Record` its `event_template` describes. A raw mapping becomes a structured `Record`. A raw callable becomes a `Function`. A backend distribution enters through its converter. A concrete family such as a `Normal` can therefore be written in plain arrays, with the family's natural constructor and no hand-written template.
+  - *A tracked term keeps its kind.* A `Record`, `Distribution`, `ConditionalDistribution`, `Function`, `NumericArray`, or `Opaque` an operation returns is never re-wrapped and never buried inside another kind.
+  - *Identity is attached by derivation.* TrackedTerm terms are immutable and provenance is write-once. The default result is therefore a new term: the implementer's representation, shared, under the operation's fresh name and provenance. The implementer's object is never modified. The raw path instead returns the raw value held by the resulting kind.
+  - *A raw host wraps into its own kind.* A bare array becomes a `NumericArray` and any other raw non-mapping value an `Opaque`. A raw mapping becomes a structured `Record`. A raw callable becomes a `Function`. A backend distribution enters through its converter. A concrete family such as a `Normal` can therefore be written in plain arrays, with the family's natural constructor and no hand-written template.
   - *An output declaration is enforced.* When the operation carries one, the result is coerced to the declared kind and validated. A wrong kind and a schema mismatch raise distinct errors.
   - A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
-- **The `raw` opt-out.** Every operation accepts `raw=True` and returns the implementer method's result unchanged, skipping the wrap and the identity attachment: the raw event type `T` for an event-typed result, the bare array for a density, and the bare operator for `cov`. The wrapped, tracked result is always the default.
+- **The `raw` opt-out.** Every operation accepts `raw=True` and returns the raw value of the kind it would otherwise track: the held array for `NumericArray`, the wrapped callable for `Function`, the held object for `Opaque`, and a nested mapping of raw field values for `Record`. A kind with no distinct raw host remains its term representation. For a batch it calls the concrete batch's `raw()` and therefore returns a shared storage view rather than the tracked batch. The wrapped, tracked result is always the default.
 - **Stated fallback status.** Every operation declares one of three fallback statuses. A *fallback* means a closed form when the object provides one and otherwise a default such as Monte Carlo, total on a stated domain (any distribution that samples), with the sample count and PRNG key exposed as controls. *Total by definition* means the operation is the object's own capability, so no fallback question arises; `sample` is one. *Capability-only* means no fallback: the operation answers only where the object claims the capability, as for `log_prob` (V.3) and `factor` (V.8). The status is registry data, not contract: registering a numerical default later moves an operation from capability-only to fallback-backed without changing its signature.
 - **Controls in the signature.** An operation is not a user function, so its signature is its control surface: the PRNG key, sample counts, and `method=` selection appear as ordinary parameters. The separate options namespace exists for wrapped user functions, whose argument names the framework must not constrain.
 - **Randomness.** No operation draws from ambient random state. A draw-producing operation (`sample`) requires an explicit PRNG `key` and raises without one, since without ambient state a defaulted key would silently repeat a draw. An operation whose contract is a deterministic quantity but that falls back to Monte Carlo, such as a moment, a marginal, or an inference result, instead takes the key as an optional control defaulting to one derived from the `seed`, so the Monte Carlo route neither enters the signature nor burdens the caller. The resolved key is recorded in `provenance`.
 - **Output identity.** Every tracked term an operation mints is fully specified, never left implicit. Its spec is carried or derived from the inputs, its `provenance` records the operation and its parent descriptors, and its `name` is auto-derived and marked `name_is_auto`. Free-form `annotations` do not auto-propagate, since lineage rides on `provenance` rather than on annotations.
-- **Tracking scope.** Every result is tracked, including a numeric summary: a density returns as a single-field `Record` whose provenance records the operation, and the bare value is one `raw=True` away.
+- **Tracking scope.** Every result is tracked, including a numeric summary: a density returns as a `NumericArray` whose provenance records the operation, and the bare value is one `raw=True` away.
 
 ### Rationale
 
@@ -50,18 +50,18 @@ A mean is defined whenever draws can be averaged: coordinate-wise for arrays, po
 ### Contract
 
 `sample(d, key, sample_shape=(), raw=False)` draws from a distribution.
-- With `sample_shape=()` it returns a single draw **at the declared kind**, tracked. The kind is the event declaration's class, fixed by the declaration and never by the runtime value: a `RecordSpec` draws a `Record`, a `DistributionSpec` a `Distribution`, a `FunctionSpec` a `Function`. A scalar law returns a single-field `Record` keyed by the distribution's name, initialized from the name and thereafter independent of it. The record wrap applies only to a raw draw, so `sample` never buries a term as a `Record`'s leaf value.
+- With `sample_shape=()` it returns a single draw **at the declared kind**, tracked. The kind is the event declaration's class, fixed by the declaration and never by the runtime value: a `RecordSpec` draws a `Record`, a `DistributionSpec` a `Distribution`, a `FunctionSpec` a `Function`, a `NumericArraySpec` a `NumericArray`, and an `OpaqueSpec` an `Opaque`. Every spec names a class, so no kind is presented by wrapping it in another: a scalar law draws a `NumericArray`, not a single-field `Record`.
 - A non-empty `sample_shape` prepends batch axes and returns the tracked batch type of the draw's kind, with those leading dimensions on a level named `draw`: a `RecordBatch` (`NumericRecordBatch` when numeric) for a record event, and the native batch form of the table below — a `DistributionBatch`, `FunctionBatch`, and so on — for a term-drawing law.
-- With `raw=True`, `sample` skips the identity attachment. For `sample_shape=()` it returns the bare draw type `T`; when `T` is already a tracked term (a `Record`, `Distribution`, `ConditionalDistribution`, or `Function`) the wrap is already the identity, so the only difference from the default is the identity attachment — `raw=True` returns the implementer's term itself, with its own name and provenance, while the default derives a new term from it, the same kind and representation under fresh `sample` provenance, and a raw non-term draw carries no name or provenance either way. For a non-empty `sample_shape` it returns `T`'s **native batch form**:
+- With `raw=True`, `sample` returns the raw value of the declared draw kind. For `sample_shape=()` that is the held array for `NumericArray`, the wrapped callable for `Function`, the held object for `Opaque`, and a nested mapping of raw field values for `Record`; a draw kind with no distinct raw host remains its term representation. For a non-empty `sample_shape`, `sample` first forms the same tracked batch as the default and returns that batch's shared storage view through `raw()`:
 
-| raw type `T` | native batch form |
-|---|---|
-| `Array` | an array with the `sample_shape` axes leading |
-| `Record` / `NumericRecord` | `RecordBatch` / `NumericRecordBatch` |
-| `Distribution` | `DistributionBatch` |
-| `ConditionalDistribution` | `ConditionalDistributionBatch` |
-| function | `FunctionBatch` |
-| opaque | `OpaqueBatch` |
+| declared draw kind | tracked result | `raw=True` storage view |
+|---|---|---|
+| `NumericArray` | `NumericArrayBatch` | backing native array |
+| `Record` / `NumericRecord` | `RecordBatch` / `NumericRecordBatch` | nested mapping of raw column views |
+| `Function` | `FunctionBatch` | object array of wrapped callables |
+| `Opaque` | `OpaqueBatch` | object array of held objects |
+| `Distribution` | `DistributionBatch` | the concrete batch's `raw()` view |
+| `ConditionalDistribution` | `ConditionalDistributionBatch` | the concrete batch's `raw()` view |
 - Sampling requires a concrete declaration and raises with the free dimensions named; in the fused conditional path, the given value binds them first.
 - The PRNG `key` is explicit and supplied by the caller, so a draw is reproducible from its key. Under a non-empty `sample_shape` the key splits by draw index, so the draws are jointly independent and reproducible together; inside a `Function` the `seed` supplies the key by the same structural split, so draws are never hand-threaded.
 - The draw carries `provenance` recording `sample` and the distribution it came from.
@@ -70,7 +70,7 @@ For a `ConditionalDistribution`, `sample(K, given=s, key=...)` is the fused cond
 
 ### Rationale
 
-Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Wrapping even a scalar draw as a single-field `Record` lets `sample` return a tracked term of uniform shape whatever the distribution's raw type, serving `C1 – Uniform interface to distributions and values`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it.
+Threading an explicit PRNG `key` makes every draw reproducible from its inputs, which is `C6 – Traceable and reproducible workflows`. Returning every draw as the tracked term of its declared kind serves `C1 – Uniform interface to distributions and values` without making the kinds uniform: what is the same across laws is that a draw is tracked and its type is fixed by the declaration, not that every draw is a `Record`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it.
 
 ## V.3 — `log_prob` and `unnormalized_log_prob`
 
@@ -79,9 +79,9 @@ Threading an explicit PRNG `key` makes every draw reproducible from its inputs, 
 `log_prob(d, value)` returns the log-density of `value` under `d`. The value may be a `Record` matching the `event_template`, or a bare array for a scalar law.
 - `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
 - `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
-- The result is a tracked term: a single-field `Record` whose provenance records the operation, the distribution, and the scored value, with `raw=True` returning the bare array.
+- The result is a tracked term: a `NumericArray` whose provenance records the operation, the distribution, and the scored value, with `raw=True` returning the bare array.
 - A scored value binds any symbolic event dimensions for that call only, so one law scores datasets of different sizes.
-- A batch of values, or a `DistributionBatch`, maps elementwise to the batched densities, a single-field `NumericRecordBatch`.
+- A batch of values, or a `DistributionBatch`, maps elementwise to the batched densities, a `NumericArrayBatch`.
 - For a `ConditionalDistribution`, `log_prob(K, y, given=s)` is the fused conditional path that's equivalent to `log_prob(condition_on(K, s), y)`.
 
 ### Rationale

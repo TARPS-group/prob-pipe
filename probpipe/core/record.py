@@ -214,19 +214,19 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     Because an :class:`EventTemplate` is itself a :class:`~probpipe.core.named_tree.NamedTree`, its tree
     mirrors the record's exactly: each nested ``Record`` corresponds to a
     nested ``EventTemplate``, and each field value corresponds to a value spec
-    (an array to an :class:`ArraySpec`, any non-array to an
+    (an array to an :class:`NumericArraySpec`, any non-array to an
     :class:`OpaqueSpec`, and so on). ::
 
         r.event_template
         # NumericEventTemplate(x=(), y=NumericEventTemplate(a=(), b=()))
-        r.event_template["y/a"]  # ArraySpec(shape=())  — the spec for r["y/a"]
+        r.event_template["y/a"]  # NumericArraySpec(shape=())  — the spec for r["y/a"]
 
         # A record's subtree and its template's subtree stay in lock-step:
         r.at_path("y").event_template == r.event_template.at_path("y")  # True
 
         # Each field value maps to a value spec by type:
         Record("r", vec=jnp.zeros(3), label="fox").event_template
-        # EventTemplate(vec=(3,), label=None)   — array -> ArraySpec, str -> OpaqueSpec
+        # EventTemplate(vec=(3,), label=None)   — array -> NumericArraySpec, str -> OpaqueSpec
 
     Metadata: identity and annotations
     ----------------------------------
@@ -284,7 +284,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     equal only when inference recovers the original template, for instance when
     that template was itself inferred (the record was built without an explicit
     ``event_template``). Inference is lossy: :meth:`EventTemplate.infer_from`
-    cannot recover an ``ArraySpec``'s ``dtype`` / ``support``, an
+    cannot recover a ``NumericArraySpec``'s ``dtype`` / ``support``, an
     ``OpaqueSpec``'s ``meta``, etc., so an identity ``map`` of a record carrying
     a richer explicit template does *not* compare equal::
 
@@ -540,8 +540,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         Validates the **whole tree**, recursively: at every level the field-name
         sets must match, a nested ``Record`` must align with a nested
         ``EventTemplate`` (both internal nodes), and a non-``Record`` leaf must
-        satisfy its value spec's ``is_valid`` (structure: shape and dtype; an
-        ``ArraySpec``'s ``support`` is descriptive and not part of ``is_valid``).
+        satisfy its value spec's ``is_valid`` (structure: shape and dtype; a
+        ``NumericArraySpec``'s ``support`` is descriptive and not part of ``is_valid``).
         Leaf validation is skipped on the pytree-unflatten path, where a leaf's
         shape is transform-relative (e.g. ``vmap`` strips the mapped axis) and
         the record was already validated when first built.
@@ -573,7 +573,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                     )
                 elif check_leaf_values and not spec.is_valid(value):
                     # Both leaves: each value must satisfy its spec's is_valid
-                    # (structural shape + dtype; an ArraySpec's support is
+                    # (structural shape + dtype; a NumericArraySpec's support is
                     # descriptive and not part of is_valid). Skipped on the
                     # pytree-unflatten path, where a leaf's shape is
                     # transform-relative (e.g. vmap strips the mapped axis) and
@@ -617,7 +617,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
         Notes
         -----
-        Inference is a lossy fallback (it cannot recover an ``ArraySpec``'s
+        Inference is a lossy fallback (it cannot recover a ``NumericArraySpec``'s
         ``dtype`` / ``support``, an ``OpaqueSpec``'s ``meta``, or a
         ``RecordSpec`` / ``DistributionSpec`` / ``FunctionSpec``), so both round
         trips out of this process carry the declaration rather than re-deriving
@@ -1026,7 +1026,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             If the number of *values* is not the number of fields
             (``len(template)``), or a value fails its field spec's structural
             ``is_valid`` at construction — a shape mismatch, or a cross-kind
-            dtype (an ``ArraySpec``'s ``support`` is descriptive and not
+            dtype (a ``NumericArraySpec``'s ``support`` is descriptive and not
             checked).
         """
         values = list(values)
@@ -1117,8 +1117,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         both infer the same template and compare equal; but a record given a
         richer explicit template compares equal to a re-inferred rebuild of
         itself (e.g. via :meth:`map`) only when inference recovers that template,
-        since :meth:`EventTemplate.infer_from` is lossy (it cannot recover an
-        ``ArraySpec``'s ``dtype`` / ``support``, etc.).
+        since :meth:`EventTemplate.infer_from` is lossy (it cannot recover a
+        ``NumericArraySpec``'s ``dtype`` / ``support``, etc.).
 
         :meth:`__hash__` is a coarser, structural hash (shape only, never the
         values or metadata), so equal records always hash equal while records

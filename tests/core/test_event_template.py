@@ -13,10 +13,10 @@ from probpipe.core._batch import BatchSpec
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque_batch import OpaqueBatch
 from probpipe.core.event_template import (
-    ArraySpec,
     DistributionSpec,
     EventTemplate,
     FunctionSpec,
+    NumericArraySpec,
     NumericEventTemplate,
     OpaqueSpec,
     RecordSpec,
@@ -91,13 +91,13 @@ class TestConstruction:
     def test_none_spec(self):
         tpl = EventTemplate(label=None, x=())
         assert tpl["label"] == OpaqueSpec()
-        assert tpl["x"] == ArraySpec(())
+        assert tpl["x"] == NumericArraySpec(())
 
     def test_nested(self):
         inner = EventTemplate(force=(), mass=())
         outer = EventTemplate(physics=inner, obs=())
         assert isinstance(outer.at_path("physics"), EventTemplate)
-        assert outer["physics/force"] == ArraySpec(())
+        assert outer["physics/force"] == NumericArraySpec(())
 
     def test_invalid_spec_raises(self):
         with pytest.raises(TypeError, match="spec must be"):
@@ -123,9 +123,9 @@ class TestFieldAccess:
         return EventTemplate(a=(), b=(3,), c=(2, 4))
 
     def test_getitem(self, tpl):
-        assert tpl["a"] == ArraySpec(())
-        assert tpl["b"] == ArraySpec((3,))
-        assert tpl["c"] == ArraySpec((2, 4))
+        assert tpl["a"] == NumericArraySpec(())
+        assert tpl["b"] == NumericArraySpec((3,))
+        assert tpl["c"] == NumericArraySpec((2, 4))
 
     def test_contains(self, tpl):
         assert "a" in tpl
@@ -151,9 +151,9 @@ class TestNamedTreeSurfaceOnEventTemplate:
         return EventTemplate(theta=EventTemplate(loc=(2,), scale=()), sigma=(3,))
 
     def test_path_indexing_returns_leaf_spec(self, nested):
-        assert nested["theta/loc"] == ArraySpec((2,))
-        assert nested["theta/scale"] == ArraySpec(())
-        assert nested["sigma"] == ArraySpec((3,))
+        assert nested["theta/loc"] == NumericArraySpec((2,))
+        assert nested["theta/scale"] == NumericArraySpec(())
+        assert nested["sigma"] == NumericArraySpec((3,))
 
     def test_tuple_indexing_matches_slash_path(self, nested):
         assert nested["theta", "loc"] == nested["theta/loc"]
@@ -185,7 +185,7 @@ class TestNamedTreeSurfaceOnEventTemplate:
 
     def test_values_and_items(self, nested):
         values = list(nested.values())
-        assert values == [ArraySpec((2,)), ArraySpec(()), ArraySpec((3,))]
+        assert values == [NumericArraySpec((2,)), NumericArraySpec(()), NumericArraySpec((3,))]
         assert list(nested.items()) == list(zip(nested.keys(), values))
 
 
@@ -299,7 +299,7 @@ class TestFlatSize:
             _ = tpl.vector_size
 
     def test_rejects_opaque_leaf(self):
-        with pytest.raises(TypeError, match="only ArraySpec"):
+        with pytest.raises(TypeError, match="only NumericArraySpec"):
             NumericEventTemplate(label=None, x=(3,))
 
     def test_rejects_non_numeric_nested(self):
@@ -395,8 +395,8 @@ class TestInferFrom:
         r = Record("r", a=1.0, b=2.0)
         tpl = EventTemplate.infer_from(r)
         assert tpl.fields == ("a", "b")
-        assert tpl["a"] == ArraySpec(())
-        assert tpl["b"] == ArraySpec(())
+        assert tpl["a"] == NumericArraySpec(())
+        assert tpl["b"] == NumericArraySpec(())
 
     def test_nested_mapping_is_structure_not_opaque(self):
         # A mapping is never a leaf: a nested dict value is inferred as a
@@ -413,10 +413,10 @@ class TestInferFrom:
             {"a": 1.0, "x": jnp.zeros(3), "params": Record("r", m=jnp.zeros(2))}
         )
         assert tuple(tpl.children) == ("a", "x", "params")
-        assert tpl["a"] == ArraySpec(())
-        assert tpl["x"] == ArraySpec((3,))
+        assert tpl["a"] == NumericArraySpec(())
+        assert tpl["x"] == NumericArraySpec((3,))
         assert isinstance(tpl.at_path("params"), EventTemplate)
-        assert tpl["params/m"] == ArraySpec((2,))
+        assert tpl["params/m"] == NumericArraySpec((2,))
 
     def test_empty_mapping_raises(self):
         with pytest.raises(ValueError, match="at least one field"):
@@ -425,17 +425,17 @@ class TestInferFrom:
     def test_array_fields(self):
         r = Record("r", x=jnp.zeros(5), y=jnp.zeros((2, 3)))
         tpl = EventTemplate.infer_from(r)
-        assert tpl["x"] == ArraySpec((5,))
-        assert tpl["y"] == ArraySpec((2, 3))
+        assert tpl["x"] == NumericArraySpec((5,))
+        assert tpl["y"] == NumericArraySpec((2, 3))
 
     def test_nested_record(self):
         inner = Record("r", x=1.0, y=jnp.zeros(3))
         outer = Record("r", params=inner, z=2.0)
         tpl = EventTemplate.infer_from(outer)
         assert isinstance(tpl.at_path("params"), EventTemplate)
-        assert tpl["params/x"] == ArraySpec(())
-        assert tpl["params/y"] == ArraySpec((3,))
-        assert tpl["z"] == ArraySpec(())
+        assert tpl["params/x"] == NumericArraySpec(())
+        assert tpl["params/y"] == NumericArraySpec((3,))
+        assert tpl["z"] == NumericArraySpec(())
 
     def test_roundtrip_vector_size(self):
         from probpipe.core._numeric_record import NumericRecord
@@ -484,7 +484,7 @@ class TestInferFrom:
 
         r = Record("r", xs=np.asarray([1.0, 2.0, 3.0]))
         tpl = EventTemplate.infer_from(r)
-        assert tpl["xs"] == ArraySpec((3,))
+        assert tpl["xs"] == NumericArraySpec((3,))
 
 
 # ---------------------------------------------------------------------------
@@ -516,13 +516,13 @@ class TestRepr:
         tpl = EventTemplate(label=None, x=())
         assert "label=None" in repr(tpl)
 
-    def test_populated_array_spec_shows_full_repr(self):
+    def test_populated_numeric_array_spec_shows_full_repr(self):
         # A spec carrying dtype/support is not bare, so repr falls back to the
         # full dataclass repr rather than the bare-shape shorthand. The dtype
         # renders in its normalised ``numpy.dtype`` form.
-        tpl = EventTemplate(x=ArraySpec((3,), dtype="float32"))
+        tpl = EventTemplate(x=NumericArraySpec((3,), dtype="float32"))
         r = repr(tpl)
-        assert "ArraySpec(" in r
+        assert "NumericArraySpec(" in r
         assert "dtype=dtype('float32')" in r
 
     def test_populated_opaque_spec_shows_full_repr(self):
@@ -532,33 +532,33 @@ class TestRepr:
 
 
 # ---------------------------------------------------------------------------
-# Value specs — the ValueSpec base and its concrete subclasses (ArraySpec /
+# Value specs — the ValueSpec base and its concrete subclasses (NumericArraySpec /
 # OpaqueSpec / DistributionSpec / FunctionSpec)
 # ---------------------------------------------------------------------------
 
 
 class TestValueSpecs:
-    def test_array_spec_defaults(self):
-        spec = ArraySpec((3,))
+    def test_numeric_array_spec_defaults(self):
+        spec = NumericArraySpec((3,))
         assert spec.shape == (3,)
         assert spec.dtype is None
         assert spec.support is None
 
-    def test_array_spec_coerces_shape_to_tuple(self):
+    def test_numeric_array_spec_coerces_shape_to_tuple(self):
         # A list shape is normalised to a tuple so the spec stays hashable.
-        spec = ArraySpec([2, 4])
+        spec = NumericArraySpec([2, 4])
         assert spec.shape == (2, 4)
         assert isinstance(spec.shape, tuple)
 
-    def test_array_spec_rejects_negative_dims(self):
+    def test_numeric_array_spec_rejects_negative_dims(self):
         with pytest.raises(TypeError, match="non-negative ints"):
-            ArraySpec((-1,))
+            NumericArraySpec((-1,))
 
     def test_specs_are_frozen(self):
         from dataclasses import FrozenInstanceError
 
         for spec in (
-            ArraySpec((3,)),
+            NumericArraySpec((3,)),
             OpaqueSpec(),
             RecordSpec(EventTemplate(x=())),
             DistributionSpec(event_spec=EventTemplate(x=())),
@@ -570,7 +570,7 @@ class TestValueSpecs:
     def test_specs_are_hashable(self):
         # Usable as dict keys / set members — required for treedef caching.
         specs = {
-            ArraySpec((3,)): 1,
+            NumericArraySpec((3,)): 1,
             OpaqueSpec(): 2,
             DistributionSpec(event_spec=EventTemplate(x=())): 3,
             FunctionSpec(input_template=EventTemplate(x=()), output_spec=EventTemplate(y=())): 4,
@@ -582,9 +582,9 @@ class TestValueSpecs:
         with pytest.raises(TypeError, match=r"OpaqueSpec\.meta must be hashable"):
             OpaqueSpec(meta=[])  # type: ignore[arg-type]
 
-    def test_array_spec_rejects_unhashable_support_at_construction(self):
-        with pytest.raises(TypeError, match=r"ArraySpec\.support must be hashable"):
-            ArraySpec((), support=[])  # type: ignore[arg-type]
+    def test_numeric_array_spec_rejects_unhashable_support_at_construction(self):
+        with pytest.raises(TypeError, match=r"NumericArraySpec\.support must be hashable"):
+            NumericArraySpec((), support=[])  # type: ignore[arg-type]
 
     def test_template_rejects_unhashable_custom_value_spec_at_construction(self):
         spec = _UnhashableValueSpec(metadata=["mutable"])
@@ -601,10 +601,10 @@ class TestValueSpecs:
         assert hash(template) == hash(EventTemplate(custom=_TaggedValueSpec(tag="custom")))
 
     def test_specs_value_equality(self):
-        assert ArraySpec((3,)) == ArraySpec((3,))
-        assert ArraySpec((3,), dtype="float32") == ArraySpec((3,), dtype="float32")
-        assert ArraySpec((3,)) != ArraySpec((2,))
-        assert ArraySpec((3,)) != ArraySpec((3,), dtype="float32")
+        assert NumericArraySpec((3,)) == NumericArraySpec((3,))
+        assert NumericArraySpec((3,), dtype="float32") == NumericArraySpec((3,), dtype="float32")
+        assert NumericArraySpec((3,)) != NumericArraySpec((2,))
+        assert NumericArraySpec((3,)) != NumericArraySpec((3,), dtype="float32")
         assert OpaqueSpec() == OpaqueSpec()
         assert OpaqueSpec(meta="a") == OpaqueSpec(meta="a")
         assert OpaqueSpec(meta="a") != OpaqueSpec(meta="b")
@@ -618,10 +618,10 @@ class TestValueSpecs:
         ) == FunctionSpec(input_template=EventTemplate(x=()), output_spec=EventTemplate(y=()))
 
     def test_array_and_opaque_specs_are_distinct(self):
-        assert ArraySpec(()) != OpaqueSpec()
+        assert NumericArraySpec(()) != OpaqueSpec()
 
     def test_value_spec_is_abstract_base(self):
-        for cls in (ArraySpec, OpaqueSpec, DistributionSpec, FunctionSpec):
+        for cls in (NumericArraySpec, OpaqueSpec, DistributionSpec, FunctionSpec):
             assert issubclass(cls, ValueSpec)
         with pytest.raises(TypeError, match="abstract"):
             ValueSpec()  # type: ignore[abstract]
@@ -635,16 +635,16 @@ class TestValueSpecs:
         assert "LeafSpec" not in probpipe.__all__
 
     def test_equal_specs_hash_equal(self):
-        # ``ArraySpec.__hash__`` is hand-written; pin the eq/hash contract for
-        # every spec kind, including a populated ArraySpec.
+        # ``NumericArraySpec.__hash__`` is hand-written; pin the eq/hash contract for
+        # every spec kind, including a populated NumericArraySpec.
         from probpipe.core.constraints import positive
 
         inner_a, inner_b = EventTemplate(x=()), EventTemplate(x=())
         pairs = [
-            (ArraySpec((3,)), ArraySpec((3,))),
+            (NumericArraySpec((3,)), NumericArraySpec((3,))),
             (
-                ArraySpec((2,), dtype="float32", support=positive),
-                ArraySpec((2,), dtype=jnp.float32, support=positive),
+                NumericArraySpec((2,), dtype="float32", support=positive),
+                NumericArraySpec((2,), dtype=jnp.float32, support=positive),
             ),
             (OpaqueSpec(meta="a"), OpaqueSpec(meta="a")),
             (DistributionSpec(event_spec=inner_a), DistributionSpec(event_spec=inner_b)),
@@ -663,28 +663,28 @@ class TestValueSpecs:
             EventTemplate(a=()), EventTemplate(c=())
         )
 
-    def test_array_spec_unset_dtype_not_equal_to_set(self):
+    def test_numeric_array_spec_unset_dtype_not_equal_to_set(self):
         # numpy treats ``np.dtype(None)`` as the default dtype, so a naive
         # field comparison would report these equal (while the eq/hash
         # contract requires equal objects to hash equal).
-        assert ArraySpec(()) != ArraySpec((), dtype=jnp.float64)
-        assert ArraySpec((), dtype=jnp.float64) != ArraySpec(())
+        assert NumericArraySpec(()) != NumericArraySpec((), dtype=jnp.float64)
+        assert NumericArraySpec((), dtype=jnp.float64) != NumericArraySpec(())
 
-    def test_array_spec_dtype_spellings_normalise(self):
+    def test_numeric_array_spec_dtype_spellings_normalise(self):
         # Any numpy-coercible dtype spelling yields the same (equal, and
         # equal-hashing) spec.
         specs = [
-            ArraySpec((), dtype="float32"),
-            ArraySpec((), dtype=jnp.float32),
-            ArraySpec((), dtype=np.dtype("float32")),
+            NumericArraySpec((), dtype="float32"),
+            NumericArraySpec((), dtype=jnp.float32),
+            NumericArraySpec((), dtype=np.dtype("float32")),
         ]
         assert len(set(specs)) == 1
         assert all(s.dtype == np.dtype("float32") for s in specs)
 
-    def test_array_spec_pickle_round_trip(self):
+    def test_numeric_array_spec_pickle_round_trip(self):
         import pickle
 
-        spec = ArraySpec((3,), dtype="float32")
+        spec = NumericArraySpec((3,), dtype="float32")
         restored = pickle.loads(pickle.dumps(spec))
         assert restored == spec
         assert hash(restored) == hash(spec)
@@ -694,39 +694,41 @@ class TestValueSpecs:
         import pickle
 
         tpl = EventTemplate(
-            x=ArraySpec((2,), dtype="float32"),
+            x=NumericArraySpec((2,), dtype="float32"),
             label=OpaqueSpec(meta="tag"),
             d=DistributionSpec(event_spec=EventTemplate(a=())),
-            f=FunctionSpec(EventTemplate(inp=ArraySpec(())), EventTemplate(out=ArraySpec(()))),
-            r=RecordSpec(EventTemplate(c=ArraySpec(()))),
+            f=FunctionSpec(
+                EventTemplate(inp=NumericArraySpec(())), EventTemplate(out=NumericArraySpec(()))
+            ),
+            r=RecordSpec(EventTemplate(c=NumericArraySpec(()))),
         )
         restored = pickle.loads(pickle.dumps(tpl))
         assert restored == tpl
         assert hash(restored) == hash(tpl)
 
-    def test_array_spec_zero_dim_allowed(self):
-        spec = ArraySpec((0,))
+    def test_numeric_array_spec_zero_dim_allowed(self):
+        spec = NumericArraySpec((0,))
         assert spec.shape == (0,)
         assert spec.is_valid(jnp.ones(0))
         assert not spec.is_valid(jnp.ones(1))
 
-    def test_array_spec_symbolic_dimensions(self):
-        spec = ArraySpec(("obs", 3, "obs"))
+    def test_numeric_array_spec_symbolic_dimensions(self):
+        spec = NumericArraySpec(("obs", 3, "obs"))
 
         assert spec.is_valid(np.zeros((4, 3, 4)))
         assert not spec.is_valid(np.zeros((4, 3, 5)))
 
     @pytest.mark.parametrize("dimension", ["", -1, 1.5, None])
-    def test_array_spec_rejects_invalid_symbolic_dimensions(self, dimension):
+    def test_numeric_array_spec_rejects_invalid_symbolic_dimensions(self, dimension):
         with pytest.raises(TypeError, match="symbolic dimension"):
-            ArraySpec((dimension,))
+            NumericArraySpec((dimension,))
 
     def test_distribution_spec_requires_record_declaration(self):
         with pytest.raises(TypeError, match="must be an EventTemplate or a RecordSpec"):
             DistributionSpec(event_spec=(3,))  # type: ignore[arg-type]
         # A raw-value spec is not a declaration: it names no kind.
         with pytest.raises(TypeError, match="must be an EventTemplate or a RecordSpec"):
-            DistributionSpec(event_spec=ArraySpec(()))  # type: ignore[arg-type]
+            DistributionSpec(event_spec=NumericArraySpec(()))  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------
@@ -734,16 +736,16 @@ class TestValueSpecs:
 # ---------------------------------------------------------------------------
 
 
-class TestArraySpecIsValid:
+class TestNumericArraySpecIsValid:
     def test_shape_match(self):
-        spec = ArraySpec((3,))
+        spec = NumericArraySpec((3,))
         assert spec.is_valid(jnp.ones(3))
         assert spec.is_valid(np.ones(3))
         assert not spec.is_valid(jnp.ones(2))
         assert not spec.is_valid(jnp.ones((3, 1)))
 
     def test_scalar_shape(self):
-        spec = ArraySpec(())
+        spec = NumericArraySpec(())
         assert spec.is_valid(1.5)
         assert spec.is_valid(2)
         assert spec.is_valid(True)
@@ -751,7 +753,7 @@ class TestArraySpecIsValid:
         assert not spec.is_valid(jnp.ones(1))
 
     def test_non_numeric_values_invalid(self):
-        spec = ArraySpec(())
+        spec = NumericArraySpec(())
         assert not spec.is_valid("text")
         assert not spec.is_valid([1.0, 2.0])
         assert not spec.is_valid((1.0, 2.0))
@@ -760,49 +762,49 @@ class TestArraySpecIsValid:
         assert not spec.is_valid(np.asarray(["a"]))
 
     def test_dtype_checked_when_set(self):
-        spec = ArraySpec((2,), dtype=jnp.float32)
+        spec = NumericArraySpec((2,), dtype=jnp.float32)
         assert spec.is_valid(jnp.ones(2, dtype=jnp.float32))
         # A same-kind cast satisfies the spec (numpy treats int->float as
         # same_kind); a cross-kind cast (a float value against an int-dtype
         # spec) does not.
         assert spec.is_valid(jnp.ones(2, dtype=jnp.int32))
-        assert not ArraySpec((2,), dtype=jnp.int32).is_valid(jnp.ones(2, dtype=jnp.float32))
+        assert not NumericArraySpec((2,), dtype=jnp.int32).is_valid(jnp.ones(2, dtype=jnp.float32))
 
     def test_dtype_unset_accepts_any_numeric_dtype(self):
-        spec = ArraySpec((2,))
+        spec = NumericArraySpec((2,))
         assert spec.is_valid(jnp.ones(2, dtype=jnp.float32))
         assert spec.is_valid(np.ones(2, dtype=np.int64))
 
     def test_ml_dtypes_are_numeric(self):
         # bfloat16 / float8 report numpy kind "V" but are numeric JAX arrays;
-        # they satisfy ArraySpec (shape-only and dtype-pinned). infer_from
+        # they satisfy NumericArraySpec (shape-only and dtype-pinned). infer_from
         # therefore routes them to the array side (see the infer_from test).
         bf16 = jnp.ones(2, dtype=jnp.bfloat16)
-        assert ArraySpec((2,)).is_valid(bf16)
-        assert ArraySpec((2,), dtype=jnp.bfloat16).is_valid(bf16)
+        assert NumericArraySpec((2,)).is_valid(bf16)
+        assert NumericArraySpec((2,), dtype=jnp.bfloat16).is_valid(bf16)
         # bf16 -> float32 is a safe widening (same-kind), so it satisfies a
         # float32 spec; a cross-kind int spec does not.
-        assert ArraySpec((2,), dtype=jnp.float32).is_valid(bf16)
-        assert not ArraySpec((2,), dtype=jnp.int32).is_valid(bf16)
+        assert NumericArraySpec((2,), dtype=jnp.float32).is_valid(bf16)
+        assert not NumericArraySpec((2,), dtype=jnp.int32).is_valid(bf16)
         f8 = jnp.ones((), dtype=jnp.float8_e4m3fn)
-        assert ArraySpec(()).is_valid(f8)
+        assert NumericArraySpec(()).is_valid(f8)
 
     def test_structured_dtype_stays_non_numeric(self):
         # numpy structured dtypes are also kind "V" but are not numeric:
-        # they fail ArraySpec, so infer_from routes them to OpaqueSpec.
+        # they fail NumericArraySpec, so infer_from routes them to OpaqueSpec.
         rec = np.zeros(2, dtype=[("a", "f4")])
-        assert not ArraySpec((2,)).is_valid(rec)
+        assert not NumericArraySpec((2,)).is_valid(rec)
         assert EventTemplate.infer_from({"r": rec})["r"] == OpaqueSpec()
 
     def test_infer_from_bfloat16_is_numeric(self):
         tpl = EventTemplate.infer_from({"x": jnp.ones((2, 3), dtype=jnp.bfloat16)})
         assert isinstance(tpl, NumericEventTemplate)
-        assert tpl["x"] == ArraySpec((2, 3))
+        assert tpl["x"] == NumericArraySpec((2, 3))
 
     def test_python_scalar_dtype_is_numpy_default(self):
         # A bare Python scalar reports the dtype ``np.asarray`` gives it.
-        assert ArraySpec((), dtype=np.asarray(1.0).dtype).is_valid(1.0)
-        assert not ArraySpec((), dtype=jnp.int32).is_valid(1.0)
+        assert NumericArraySpec((), dtype=np.asarray(1.0).dtype).is_valid(1.0)
+        assert not NumericArraySpec((), dtype=jnp.int32).is_valid(1.0)
 
     def test_support_not_checked_by_is_valid(self):
         # ``support`` is descriptive metadata on the spec; ``is_valid`` validates
@@ -811,7 +813,7 @@ class TestArraySpecIsValid:
         # and is_valid runs at Record construction, which happens under trace.)
         from probpipe.core.constraints import positive
 
-        spec = ArraySpec((2,), support=positive)
+        spec = NumericArraySpec((2,), support=positive)
         assert spec.support is positive  # still stored on the spec
         assert spec.is_valid(jnp.asarray([1.0, 2.0]))
         assert spec.is_valid(jnp.asarray([1.0, -2.0]))  # support not enforced
@@ -823,11 +825,11 @@ class TestArraySpecIsValid:
         # Python bool as a scalar Array, hence bool(...).)
         from probpipe.core.constraints import positive
 
-        spec = ArraySpec((3,), dtype=jnp.float32)
+        spec = NumericArraySpec((3,), dtype=jnp.float32)
         assert bool(jax.jit(spec.is_valid)(jnp.ones(3, dtype=jnp.float32))) is True
         assert bool(jax.jit(spec.is_valid)(jnp.ones(2, dtype=jnp.float32))) is False
         # even with a support set, no concretization is forced:
-        assert bool(jax.jit(ArraySpec((3,), support=positive).is_valid)(jnp.ones(3))) is True
+        assert bool(jax.jit(NumericArraySpec((3,), support=positive).is_valid)(jnp.ones(3))) is True
 
 
 class TestOpaqueSpecIsValid:
@@ -840,7 +842,7 @@ class TestOpaqueSpecIsValid:
 
     def test_numeric_values_valid(self):
         # As the fallback spec, OpaqueSpec accepts any non-mapping value,
-        # including numerics (though infer_from routes those to ArraySpec).
+        # including numerics (though infer_from routes those to NumericArraySpec).
         spec = OpaqueSpec()
         assert spec.is_valid(1.5)
         assert spec.is_valid(jnp.ones(2))
@@ -976,7 +978,7 @@ class TestFunctionSpecTemplatesRequired:
         # a bare ValueSpec is not wrapped into one. The output side is a
         # declaration and accepts any value specification.
         with pytest.raises(TypeError, match="input_template must be None or an EventTemplate"):
-            FunctionSpec(ArraySpec(()), EventTemplate(b=()))  # type: ignore[arg-type]
+            FunctionSpec(NumericArraySpec(()), EventTemplate(b=()))  # type: ignore[arg-type]
 
         assert FunctionSpec(EventTemplate(a=()), OpaqueSpec()).output_spec == OpaqueSpec()
 
@@ -1004,10 +1006,10 @@ class TestFunctionSpecOptionalTemplates:
         assert not spec.is_valid(3.0)
 
     def test_one_side_specified(self):
-        spec = FunctionSpec(output_spec=EventTemplate(out=ArraySpec(())))
+        spec = FunctionSpec(output_spec=EventTemplate(out=NumericArraySpec(())))
         assert spec.input_template is None
         # A record output is stored as its declaration (the storage rule).
-        assert spec.output_spec == RecordSpec(EventTemplate(out=ArraySpec(())))
+        assert spec.output_spec == RecordSpec(EventTemplate(out=NumericArraySpec(())))
 
     def test_none_specs_are_hashable_and_equal(self):
         assert FunctionSpec() == FunctionSpec()
@@ -1037,9 +1039,9 @@ class TestFunctionSpecOptionalTemplates:
 
 
 class TestConstructionSpecs:
-    def test_tuple_becomes_array_spec(self):
+    def test_tuple_becomes_numeric_array_spec(self):
         tpl = EventTemplate(x=(3,))
-        assert tpl["x"] == ArraySpec((3,))
+        assert tpl["x"] == NumericArraySpec((3,))
 
     def test_none_becomes_opaque_spec(self):
         tpl = EventTemplate(label=None)
@@ -1050,8 +1052,8 @@ class TestConstructionSpecs:
         tpl = EventTemplate(sub=inner, z=())
         assert tpl.at_path("sub") is inner
 
-    def test_explicit_array_spec_accepted(self):
-        spec = ArraySpec((2,), dtype="float32")
+    def test_explicit_numeric_array_spec_accepted(self):
+        spec = NumericArraySpec((2,), dtype="float32")
         tpl = EventTemplate(x=spec)
         assert tpl["x"] is spec
 
@@ -1073,13 +1075,13 @@ class TestConstructionSpecs:
 
 
 # ---------------------------------------------------------------------------
-# Auto-promotion to NumericEventTemplate (iff every leaf is an ArraySpec)
+# Auto-promotion to NumericEventTemplate (iff every leaf is a NumericArraySpec)
 # ---------------------------------------------------------------------------
 
 
 class TestAutoPromotionSpecs:
-    def test_explicit_array_specs_promote(self):
-        tpl = EventTemplate(x=ArraySpec(()), y=ArraySpec((3,)))
+    def test_explicit_numeric_array_specs_promote(self):
+        tpl = EventTemplate(x=NumericArraySpec(()), y=NumericArraySpec((3,)))
         assert isinstance(tpl, NumericEventTemplate)
 
     def test_nested_numeric_promotes(self):
@@ -1106,19 +1108,19 @@ class TestAutoPromotionSpecs:
         assert type(tpl) is EventTemplate
 
     def test_numeric_rejects_opaque_spec(self):
-        with pytest.raises(TypeError, match="only ArraySpec"):
+        with pytest.raises(TypeError, match="only NumericArraySpec"):
             NumericEventTemplate(x=(), label=OpaqueSpec())
 
     def test_numeric_rejects_distribution_spec(self):
-        with pytest.raises(TypeError, match="only ArraySpec"):
+        with pytest.raises(TypeError, match="only NumericArraySpec"):
             NumericEventTemplate(x=(), d=DistributionSpec(event_spec=EventTemplate(a=())))
 
     def test_numeric_rejects_record_spec(self):
-        with pytest.raises(TypeError, match="only ArraySpec"):
+        with pytest.raises(TypeError, match="only NumericArraySpec"):
             NumericEventTemplate(x=(), r=RecordSpec(EventTemplate(a=())))
 
     def test_numeric_rejects_function_spec(self):
-        with pytest.raises(TypeError, match="only ArraySpec"):
+        with pytest.raises(TypeError, match="only NumericArraySpec"):
             NumericEventTemplate(
                 x=(),
                 f=FunctionSpec(input_template=EventTemplate(a=()), output_spec=EventTemplate(b=())),
@@ -1160,7 +1162,7 @@ def _func_spec() -> FunctionSpec:
 
 
 class TestIsNumeric:
-    def test_all_arrayspec(self):
+    def test_all_numeric_array_specs(self):
         assert EventTemplate(x=(), y=(3,)).is_numeric is True
 
     def test_nested_all_numeric(self):
@@ -1247,7 +1249,7 @@ class TestNumericSubset:
 
     def test_raises_when_no_numeric_leaves(self):
         tpl = EventTemplate(label=None, tag=None)
-        with pytest.raises(ValueError, match="ArraySpec leaves survive"):
+        with pytest.raises(ValueError, match="NumericArraySpec leaves survive"):
             tpl.numeric_subset()
 
     def test_raises_names_dropped_fields(self):
@@ -1409,7 +1411,7 @@ class TestTermSpecTaxonomy:
 
     def test_raw_value_specs_are_not_term_specs(self):
 
-        assert not isinstance(ArraySpec(()), TermSpec)
+        assert not isinstance(NumericArraySpec(()), TermSpec)
         assert not isinstance(OpaqueSpec(), TermSpec)
 
     # --- the storage rule: a declaration is stored as a ValueSpec ---
@@ -1439,7 +1441,7 @@ class TestTermSpecTaxonomy:
         """
         assert get_type_hints(DistributionSpec)["event_spec"] is RecordSpec
         assert get_type_hints(FunctionSpec)["output_spec"] == ValueSpec | None
-        assert get_type_hints(ArraySpec)["dtype"] == np.dtype | None
+        assert get_type_hints(NumericArraySpec)["dtype"] == np.dtype | None
 
     def test_the_old_parameter_names_are_gone(self):
         """Positional construction survives the rename; keyword construction does not.
@@ -1492,7 +1494,7 @@ class TestTermSpecTaxonomy:
         field name is invented here.
         """
         tau = EventTemplate(x=())
-        for raw in (ArraySpec((3,)), OpaqueSpec(meta="m")):
+        for raw in (NumericArraySpec((3,)), OpaqueSpec(meta="m")):
             assert FunctionSpec(tau, raw).output_spec is raw
 
     def test_unspecified_output_stays_none(self):
@@ -1540,11 +1542,11 @@ class TestRecordSpec:
     def test_requires_event_template(self):
 
         with pytest.raises(TypeError):
-            RecordSpec(ArraySpec(()))  # not an EventTemplate
+            RecordSpec(NumericArraySpec(()))  # not an EventTemplate
 
     def test_requires_event_template_message(self):
         with pytest.raises(TypeError, match="must be an EventTemplate"):
-            RecordSpec(ArraySpec(()))
+            RecordSpec(NumericArraySpec(()))
 
     def test_is_valid_accepts_matching_record_only(self):
 
@@ -1605,9 +1607,13 @@ class TestFunctionSpecOutputWidening:
 def test_public_exports():
     import probpipe
 
-    for name in ("TermSpec", "RecordSpec"):
+    for name in ("TermSpec", "RecordSpec", "NumericArraySpec"):
         assert hasattr(probpipe, name), name
         assert name in probpipe.__all__, name
+
+    removed_name = "Array" + "Spec"
+    assert not hasattr(probpipe, removed_name)
+    assert removed_name not in probpipe.__all__
 
 
 class TestFreeDimsReachThroughTermSpecs:
@@ -1620,12 +1626,12 @@ class TestFreeDimsReachThroughTermSpecs:
 
     @staticmethod
     def _symbolic():
-        return EventTemplate(x=ArraySpec(shape=("obs",)))
+        return EventTemplate(x=NumericArraySpec(shape=("obs",)))
 
     @pytest.mark.parametrize(
         "declare",
         [
-            lambda sym: EventTemplate(x=ArraySpec(shape=("obs",))),
+            lambda sym: EventTemplate(x=NumericArraySpec(shape=("obs",))),
             lambda sym: EventTemplate(r=RecordSpec(sym)),
             lambda sym: EventTemplate(law=DistributionSpec(sym)),
             lambda sym: EventTemplate(f=FunctionSpec(sym, None)),
@@ -1643,7 +1649,7 @@ class TestFreeDimsReachThroughTermSpecs:
     def test_one_scope_across_a_term_spec_boundary(self):
         """The same name inside and outside a term spec is one dimension."""
         template = EventTemplate(
-            data=ArraySpec(shape=("obs",)),
+            data=NumericArraySpec(shape=("obs",)),
             law=DistributionSpec(self._symbolic()),
         )
 
@@ -1654,13 +1660,13 @@ class TestFreeDimsReachThroughTermSpecs:
 
     def test_a_spec_declaring_no_dimensions_reports_none(self):
         assert OpaqueSpec().free_dims == frozenset()
-        assert ArraySpec(shape=(3,)).free_dims == frozenset()
+        assert NumericArraySpec(shape=(3,)).free_dims == frozenset()
 
 
 class TestWithDims:
     def test_binding_reaches_through_a_term_spec(self):
-        sym = EventTemplate(x=ArraySpec(shape=("obs",)))
-        template = EventTemplate(law=DistributionSpec(sym), data=ArraySpec(shape=("obs",)))
+        sym = EventTemplate(x=NumericArraySpec(shape=("obs",)))
+        template = EventTemplate(law=DistributionSpec(sym), data=NumericArraySpec(shape=("obs",)))
 
         bound = template.with_dims(obs=4)
 
@@ -1669,19 +1675,21 @@ class TestWithDims:
         assert bound["law"].event_spec.event_template["x"].shape == (4,)
 
     def test_binding_returns_a_new_template(self):
-        template = EventTemplate(x=ArraySpec(shape=("obs",)))
+        template = EventTemplate(x=NumericArraySpec(shape=("obs",)))
 
         assert template.with_dims(obs=2) is not template
         assert not template.is_concrete
 
     def test_an_all_numeric_bound_template_gains_its_flat_layout(self):
-        bound = EventTemplate(x=ArraySpec(shape=("n",))).with_dims(n=3)
+        bound = EventTemplate(x=NumericArraySpec(shape=("n",))).with_dims(n=3)
 
         assert isinstance(bound, NumericEventTemplate)
         assert bound.vector_size == 3
 
     def test_an_unbound_dimension_is_named(self):
-        template = EventTemplate(x=ArraySpec(shape=("obs",)), y=ArraySpec(shape=("features",)))
+        template = EventTemplate(
+            x=NumericArraySpec(shape=("obs",)), y=NumericArraySpec(shape=("features",))
+        )
 
         with pytest.raises(ValueError, match="unbound symbolic dimensions: features, obs"):
             template.with_dims()
@@ -1690,7 +1698,7 @@ class TestWithDims:
         """It is reported by `free_dims`, so it must be substitutable."""
         from probpipe import BatchSpec
 
-        template = EventTemplate(b=BatchSpec(ArraySpec(shape=(3,)), [("S",)], ["draw"]))
+        template = EventTemplate(b=BatchSpec(NumericArraySpec(shape=(3,)), [("S",)], ["draw"]))
 
         bound = template.with_dims(S=4)
 
@@ -1699,20 +1707,20 @@ class TestWithDims:
 
     def test_a_size_must_be_an_integer(self):
         """A string would be read as a dimension *name*, silently renaming it."""
-        template = EventTemplate(x=ArraySpec(shape=("n",)))
+        template = EventTemplate(x=NumericArraySpec(shape=("n",)))
 
         for size in ("m", 2.0, None):
             with pytest.raises(TypeError, match="must be an integer"):
                 template.with_dims(n=size)
 
     def test_binding_some_names_reports_only_the_rest(self):
-        template = EventTemplate(x=ArraySpec(shape=("a",)), y=ArraySpec(shape=("b",)))
+        template = EventTemplate(x=NumericArraySpec(shape=("a",)), y=NumericArraySpec(shape=("b",)))
 
         with pytest.raises(ValueError, match=r"unbound symbolic dimensions: b$"):
             template.with_dims(a=2)
 
     def test_binding_an_already_concrete_template_is_a_no_op_copy(self):
-        template = EventTemplate(x=ArraySpec(shape=(3,)))
+        template = EventTemplate(x=NumericArraySpec(shape=(3,)))
 
         bound = template.with_dims()
 
@@ -1721,7 +1729,7 @@ class TestWithDims:
 
     def test_a_name_the_template_does_not_declare_is_ignored(self):
         """So one mapping can bind several templates."""
-        assert EventTemplate(x=ArraySpec(shape=("n",))).with_dims(n=2, other=9).is_concrete
+        assert EventTemplate(x=NumericArraySpec(shape=("n",))).with_dims(n=2, other=9).is_concrete
 
 
 class TestBindingAFunctionSpec:
@@ -1734,7 +1742,7 @@ class TestBindingAFunctionSpec:
 
     @staticmethod
     def _sym():
-        return EventTemplate(x=ArraySpec(shape=("obs",)))
+        return EventTemplate(x=NumericArraySpec(shape=("obs",)))
 
     def test_a_bare_callable_leaves_the_dimensions_free(self):
         """It declares nothing, so there is nothing to bind from — and no refusal."""
@@ -1747,7 +1755,7 @@ class TestBindingAFunctionSpec:
     def test_the_input_side_binds_from_the_callable_declaration(self):
         declared = EventTemplate(f=FunctionSpec(self._sym(), None))
         typed = Function(
-            func=lambda x: x, name="g", input_template=EventTemplate(x=ArraySpec(shape=(7,)))
+            func=lambda x: x, name="g", input_template=EventTemplate(x=NumericArraySpec(shape=(7,)))
         )
 
         record = Record("r", f=typed, event_template=declared)
@@ -1756,10 +1764,12 @@ class TestBindingAFunctionSpec:
 
     def test_the_output_side_binds_from_the_callable_declaration(self):
         declared = EventTemplate(
-            f=FunctionSpec(None, RecordSpec(EventTemplate(y=ArraySpec(("m",)))))
+            f=FunctionSpec(None, RecordSpec(EventTemplate(y=NumericArraySpec(("m",)))))
         )
         typed = Function(
-            func=lambda x: x, name="g", output_template=EventTemplate(y=ArraySpec(shape=(5,)))
+            func=lambda x: x,
+            name="g",
+            output_template=EventTemplate(y=NumericArraySpec(shape=(5,))),
         )
 
         record = Record("r", f=typed, event_template=declared)
@@ -1776,7 +1786,7 @@ class TestBindingAFunctionSpec:
 class TestInferenceThroughTermSpecs:
     """Sizes are bound from the term a spec is matched against, as for an array.
 
-    `ArraySpec` has always accepted a concrete value against a symbolic shape and
+    `NumericArraySpec` has always accepted a concrete value against a symbolic shape and
     left the binding to the one pass; these tests hold the term specs to the same
     rule.
     """
@@ -1790,7 +1800,7 @@ class TestInferenceThroughTermSpecs:
         return MultivariateNormal(jnp.zeros(size), jnp.eye(size), name="x")
 
     def test_a_distribution_binds_the_declared_dimension(self):
-        sym = EventTemplate(x=ArraySpec(shape=("obs",)))
+        sym = EventTemplate(x=NumericArraySpec(shape=("obs",)))
         record = Record(
             "r", law=self._law(3), event_template=EventTemplate(law=DistributionSpec(sym))
         )
@@ -1800,8 +1810,8 @@ class TestInferenceThroughTermSpecs:
 
     def test_a_name_shared_across_the_boundary_binds_once(self):
         declared = EventTemplate(
-            data=ArraySpec(shape=("obs",)),
-            law=DistributionSpec(EventTemplate(x=ArraySpec(shape=("obs",)))),
+            data=NumericArraySpec(shape=("obs",)),
+            law=DistributionSpec(EventTemplate(x=NumericArraySpec(shape=("obs",)))),
         )
         record = Record("r", data=jnp.zeros(3), law=self._law(3), event_template=declared)
 
@@ -1817,8 +1827,8 @@ class TestInferenceThroughTermSpecs:
         inward — so this is the case that pins one scope rather than two.
         """
         declared = EventTemplate(
-            law=DistributionSpec(EventTemplate(x=ArraySpec(shape=("obs",)))),
-            data=ArraySpec(shape=("obs",)),
+            law=DistributionSpec(EventTemplate(x=NumericArraySpec(shape=("obs",)))),
+            data=NumericArraySpec(shape=("obs",)),
         )
 
         with pytest.raises(
@@ -1829,12 +1839,12 @@ class TestInferenceThroughTermSpecs:
     def test_field_order_does_not_change_the_outcome(self):
         """The same declaration either way round: one scope, one answer."""
         term_first = EventTemplate(
-            law=DistributionSpec(EventTemplate(x=ArraySpec(shape=("obs",)))),
-            data=ArraySpec(shape=("obs",)),
+            law=DistributionSpec(EventTemplate(x=NumericArraySpec(shape=("obs",)))),
+            data=NumericArraySpec(shape=("obs",)),
         )
         array_first = EventTemplate(
-            data=ArraySpec(shape=("obs",)),
-            law=DistributionSpec(EventTemplate(x=ArraySpec(shape=("obs",)))),
+            data=NumericArraySpec(shape=("obs",)),
+            law=DistributionSpec(EventTemplate(x=NumericArraySpec(shape=("obs",)))),
         )
 
         for declared in (term_first, array_first):
@@ -1845,8 +1855,8 @@ class TestInferenceThroughTermSpecs:
     def test_a_disagreement_across_the_boundary_raises(self):
         """The point of one scope: 5 outside and 3 inside is a contradiction."""
         declared = EventTemplate(
-            data=ArraySpec(shape=("obs",)),
-            law=DistributionSpec(EventTemplate(x=ArraySpec(shape=("obs",)))),
+            data=NumericArraySpec(shape=("obs",)),
+            law=DistributionSpec(EventTemplate(x=NumericArraySpec(shape=("obs",)))),
         )
 
         with pytest.raises(
@@ -1863,7 +1873,7 @@ class TestInferenceThroughTermSpecs:
         """
         law = self._law(3)
         record = Record("w", x=jnp.zeros(3))
-        sym = EventTemplate(x=ArraySpec(shape=("obs",)))
+        sym = EventTemplate(x=NumericArraySpec(shape=("obs",)))
 
         for declared, value in (
             (RecordSpec(sym), law),
@@ -1876,21 +1886,27 @@ class TestInferenceThroughTermSpecs:
 
     def test_a_callable_declaration_refuses_a_non_callable_in_the_pass(self):
         """Likewise for the FunctionSpec branch, which has its own refusal."""
-        declared = EventTemplate(f=FunctionSpec(EventTemplate(x=ArraySpec(shape=("obs",))), None))
+        declared = EventTemplate(
+            f=FunctionSpec(EventTemplate(x=NumericArraySpec(shape=("obs",))), None)
+        )
 
         with pytest.raises(ValueError, match="does not conform to its field spec"):
             _unify_event_template_with_value(declared, {"f": 3}, context="v")
 
     def test_a_value_carrying_no_schema_says_so(self):
         """A polymorphic schema needs one to bind against."""
-        declared = EventTemplate(law=DistributionSpec(EventTemplate(x=ArraySpec(shape=("obs",)))))
+        declared = EventTemplate(
+            law=DistributionSpec(EventTemplate(x=NumericArraySpec(shape=("obs",))))
+        )
 
         with pytest.raises(ValueError, match="exposes no schema to bind it against"):
             Record("r", law=object(), event_template=declared)
 
     def test_a_concrete_declaration_still_requires_an_exact_match(self):
         """Inference is for the symbolic case; a fixed size is still a fixed size."""
-        declared = EventTemplate(law=DistributionSpec(EventTemplate(x=ArraySpec(shape=(4,)))))
+        declared = EventTemplate(
+            law=DistributionSpec(EventTemplate(x=NumericArraySpec(shape=(4,))))
+        )
 
         with pytest.raises(ValueError, match="does not conform"):
             Record("r", law=self._law(3), event_template=declared)
@@ -1911,17 +1927,19 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         return Function(
             func=lambda x: jnp.zeros(output_size),
             name="f",
-            input_template=EventTemplate(x=ArraySpec(shape=(input_size,))),
-            output_template=EventTemplate(out=ArraySpec(shape=(output_size,))),
+            input_template=EventTemplate(x=NumericArraySpec(shape=(input_size,))),
+            output_template=EventTemplate(out=NumericArraySpec(shape=(output_size,))),
         )
 
     @staticmethod
     def _declared(output_spec):
-        return EventTemplate(f=FunctionSpec(EventTemplate(x=ArraySpec(shape=("n",))), output_spec))
+        return EventTemplate(
+            f=FunctionSpec(EventTemplate(x=NumericArraySpec(shape=("n",))), output_spec)
+        )
 
     def test_a_shared_name_binds_from_a_non_record_output(self):
         """`n` on both sides binds once when the two agree."""
-        declared = self._declared(ArraySpec(shape=("n",)))
+        declared = self._declared(NumericArraySpec(shape=("n",)))
 
         record = Record("r", f=self._function(4, 4), event_template=declared)
 
@@ -1935,14 +1953,14 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         `(3,)` for a callable that returns `(5,)` — a schema that is not merely
         unbound but wrong.
         """
-        declared = self._declared(ArraySpec(shape=("n",)))
+        declared = self._declared(NumericArraySpec(shape=("n",)))
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
             Record("r", f=self._function(3, 5), event_template=declared)
 
     def test_a_record_output_that_disagrees_raises_the_same_way(self):
         """The route that already worked, asserted beside the one that did not."""
-        declared = self._declared(RecordSpec(EventTemplate(out=ArraySpec(shape=("n",)))))
+        declared = self._declared(RecordSpec(EventTemplate(out=NumericArraySpec(shape=("n",)))))
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
             Record("r", f=self._function(3, 5), event_template=declared)
@@ -1952,17 +1970,19 @@ class TestAFunctionOutputBindsWhateverItDeclares:
         function = Function(
             func=lambda x: x,
             name="f",
-            input_template=EventTemplate(x=ArraySpec(shape=(3,))),
-            output_template=EventTemplate(a=ArraySpec(shape=(3,)), b=ArraySpec(shape=(4,))),
+            input_template=EventTemplate(x=NumericArraySpec(shape=(3,))),
+            output_template=EventTemplate(
+                a=NumericArraySpec(shape=(3,)), b=NumericArraySpec(shape=(4,))
+            ),
         )
-        declared = self._declared(ArraySpec(shape=("n",)))
+        declared = self._declared(NumericArraySpec(shape=("n",)))
 
         with pytest.raises(ValueError, match=r"declares one output value.*output fields"):
             Record("r", f=function, event_template=declared)
 
     def test_a_bare_callable_still_binds_nothing_from_its_output(self):
         """No declaration to read, so the output stays free rather than raising."""
-        declared = self._declared(ArraySpec(shape=("k",)))
+        declared = self._declared(NumericArraySpec(shape=("k",)))
 
         record = Record("r", f=lambda x: x, event_template=declared)
 
@@ -1996,7 +2016,7 @@ class TestMultiplicityBindsFromAValue:
     def _declared(axis="n", field=None):
         fields: dict[str, Any] = {}
         if field is not None:
-            fields["data"] = ArraySpec(shape=(field,))
+            fields["data"] = NumericArraySpec(shape=(field,))
         fields["b"] = BatchSpec(OpaqueSpec(), [(axis,)], ["item"])
         return EventTemplate(fields)
 
@@ -2027,10 +2047,10 @@ class TestMultiplicityBindsFromAValue:
         other, so both directions are asserted.
         """
         array_first = EventTemplate(
-            data=ArraySpec(shape=("n",)), b=BatchSpec(OpaqueSpec(), [("n",)], ["item"])
+            data=NumericArraySpec(shape=("n",)), b=BatchSpec(OpaqueSpec(), [("n",)], ["item"])
         )
         batch_first = EventTemplate(
-            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=ArraySpec(shape=("n",))
+            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=NumericArraySpec(shape=("n",))
         )
 
         for declared in (array_first, batch_first):
@@ -2051,7 +2071,7 @@ class TestMultiplicityBindsFromAValue:
     def test_the_disagreement_raises_in_either_order(self):
         """The batch-first direction, which a copied scope would let through."""
         declared = EventTemplate(
-            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=ArraySpec(shape=("n",))
+            b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]), data=NumericArraySpec(shape=("n",))
         )
 
         with pytest.raises(
@@ -2135,7 +2155,7 @@ class TestMultiplicityBindsFromAValue:
         template that is neither concrete nor refused.
         """
         declared = EventTemplate(
-            f=FunctionSpec(EventTemplate(x=ArraySpec(shape=("k",))), None),
+            f=FunctionSpec(EventTemplate(x=NumericArraySpec(shape=("k",))), None),
             b=BatchSpec(OpaqueSpec(), [("n",)], ["item"]),
         )
 
@@ -2170,7 +2190,7 @@ class TestEverySpecBindsWhatItDeclares:
         """The walk finds the specs it is meant to hold."""
         found = set(self._concrete_specs())
 
-        assert {ArraySpec, OpaqueSpec, RecordSpec, DistributionSpec, FunctionSpec} <= found
+        assert {NumericArraySpec, OpaqueSpec, RecordSpec, DistributionSpec, FunctionSpec} <= found
         assert BatchSpec in found
 
     @pytest.mark.parametrize("method", ["bind_dims_from_value", "bind_dims_from_spec"])
@@ -2200,9 +2220,9 @@ class TestEverySpecBindsWhatItDeclares:
             _DimlessButClaiming().bind_dims_from_value(object(), {}, "p")
 
     def test_an_array_binds_its_own_shape(self):
-        """`ArraySpec` owns its binding rather than being special-cased by the pass."""
+        """`NumericArraySpec` owns its binding rather than being special-cased by the pass."""
         bindings: dict[str, int] = {}
 
-        ArraySpec(shape=("n", "m")).bind_dims_from_value(jnp.zeros((2, 5)), bindings, "p")
+        NumericArraySpec(shape=("n", "m")).bind_dims_from_value(jnp.zeros((2, 5)), bindings, "p")
 
         assert bindings == {"n": 2, "m": 5}

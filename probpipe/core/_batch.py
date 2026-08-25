@@ -136,7 +136,7 @@ class BatchSpec(TermSpec):
     batch of opaque values carry a term spec of its own.
 
     An axis size may be a **symbolic dimension name** instead of an integer, as
-    an ``ArraySpec`` shape entry may, so that a declaration can fix the number of
+    a ``NumericArraySpec`` shape entry may, so that a declaration can fix the number of
     levels while deferring how many elements each holds — "returns a batch of
     ``S`` draws" before ``S`` is known. The names share one scope with the
     element's schema, so a batch of ``("n",)`` over arrays of shape ``("n",)`` is
@@ -1021,7 +1021,7 @@ class Batch[E](TrackedTerm, ABC):
 def _axis_size(size: Any) -> int | str:
     """An axis size as an ``int``, or a symbolic dimension name as a ``str``.
 
-    The two spellings ``ArraySpec.shape`` accepts, for the same reason: a
+    The two spellings ``NumericArraySpec.shape`` accepts, for the same reason: a
     declaration may defer a size while fixing the rank. A name must be a
     non-empty identifier, as a level name must be.
     """

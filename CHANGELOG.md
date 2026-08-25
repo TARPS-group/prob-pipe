@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **`ArraySpec` → `NumericArraySpec` (#434; design #443).** The public spec has
+  been hard-renamed with no compatibility alias; update imports and type
+  references to use `NumericArraySpec`. The bare backend-array alias remains
+  `Array`. The design baseline now gives each raw value kind a corresponding
+  tracked term and batch form, including `NumericArray` / `NumericArrayBatch`
+  and `Opaque` / `OpaqueBatch`, and defines `Batch.raw()` as a shared storage
+  view. Runtime implementations of those design contracts land in the
+  subsequent stack.
+
 - **Workflow-scoped structural RNG, co-sampling, and validated replay (#389).**
   Function-owned RNG controls—`Function(..., seed=...)`, the former reserved
   call-level RNG option, and `Function.with_options(seed=...)`—have been removed
@@ -77,6 +86,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   sibling-realization behavior. Put related quantities in one joint Function
   call, retain the resulting joint distribution, or materialize and reuse
   samples explicitly when a shared realization is required.
+
+### Changed
 
 ### Removed (breaking)
 
@@ -197,7 +208,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cannot name: `BatchSpec` lives in `_batch.py`, which imports from
   `event_template.py`, so a type test there could report a batch axis as free
   while nothing could bind it. Every spec that reports a dimension implements
-  both binding methods — `ArraySpec` and `FunctionSpec` included, which the
+  both binding methods — `NumericArraySpec` and `FunctionSpec` included, which the
   unification pass had special-cased — so the four methods are one contract
   rather than a rule with exceptions.
 
@@ -209,7 +220,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   describes the one value returned, so it now meets the sole leaf of the
   callable's output template, and several output fields do not match it.
 
-  This brings the term specs into line with `ArraySpec`, which has always
+  This brings the term specs into line with `NumericArraySpec`, which has always
   accepted a concrete value against a symbolic shape and left the sizes to the
   single pass, per II.3's division of labor. A polymorphic term-spec declaration
   was previously unsatisfiable: `is_valid` compared inner templates for exact
@@ -390,7 +401,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   A batch holds what it validated. Every field is checked against what it declares:
   an array field for a numeric dtype its declaration admits, by the same same-kind
-  rule `ArraySpec.is_valid` applies to one value, and every other field value by
+  rule `NumericArraySpec.is_valid` applies to one value, and every other field value by
   value against its spec, naming the field and the position that failed. A field
   with no stacked form is stored as a frozen object array, so its entries are the
   values themselves and a caller keeping a handle cannot write in a value the spec
@@ -457,17 +468,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   *materializes* an element per index; these store theirs, so what the caller put
   in is what comes out.
 
-  `OpaqueBatch` is the case a batch's own spec exists for — an `OpaqueSpec`
-  names no ProbPipe kind, yet the batch is specified all the same, at the family
-  kind over it. Every element is checked against the shared spec at construction,
+  `OpaqueBatch` is the case a batch's own spec exists for even though an
+  `OpaqueSpec` accepts arbitrary non-mapping Python objects. Every element is
+  checked against the shared spec at construction,
   reporting the position that failed, since a batch asserts that spec of *all*
   of them, and `axis_groups` must tile the shape the elements are stored in, so
   the spec cannot describe a shape the storage does not have.
 
 - **`TermSpec` — the term-spec sub-hierarchy, and declarations stored as specs
-  (#381).** `ValueSpec` now splits into *raw-value specs* (`ArraySpec`,
-  `OpaqueSpec`), which name no ProbPipe kind, and *term specs*, one per kind,
-  whose concrete class *is* the kind. `TermSpec(ValueSpec)` is the marker
+  (#381).** `ValueSpec` now splits into *raw-value specs* (`NumericArraySpec`,
+  `OpaqueSpec`), which describe the raw hosts held by corresponding tracked
+  kinds, and *term specs*, whose concrete class identifies an already tracked
+  kind. `TermSpec(ValueSpec)` is the marker
   `isinstance` reads; `is_valid` stays declared once on `ValueSpec`, so a term
   spec is accepted anywhere a leaf is. New `RecordSpec` completes the four
   corners beside `DistributionSpec`, `FunctionSpec`, and the conditional spec
@@ -476,8 +488,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   An **output declaration** is any value specification, matching the model's
   `Fun(σ, ρ)` with `ρ` a value specification: a callable may declare a term
-  result of any kind or a raw-value result, the latter typing the value the wrap
-  boundary places in a single-field `Record`. An **event** declaration is
+  result of any kind or a raw-value result, the latter typing the raw host that
+  the boundary wraps in its corresponding tracked kind. An **event** declaration is
   narrower, record-valued, because `DistributionSpec.is_valid` checks it.
 
   A *declaration* — of an event or an output — is now **stored as a spec**: a
@@ -556,7 +568,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   immutable `Node` / `TrackedTerm` / `Annotated` object with a construction-time
   Python `signature`, optional authoritative `input_template` and
   `output_template`, and a raw `apply(*args, **kwargs)` execution boundary.
-  `ArraySpec` shapes accept symbolic dimension names; templates expose
+  `NumericArraySpec` shapes accept symbolic dimension names; templates expose
   `free_dims` / `is_concrete`, and each invocation unifies input and output
   symbols without mutating declarations. Decorated and private-
   implementation-backed Functions share the same planner, invocation-local
@@ -929,7 +941,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Each field is now declared at the type it *stores* — `event_spec: RecordSpec`,
   `output_spec: ValueSpec | None` — with the wider template sugar carried by the
   constructor signature, so a type checker and the generated API reference both
-  read the post-construction guarantee. `ArraySpec` follows the same split, its
+  read the post-construction guarantee. `NumericArraySpec` follows the same split, its
   `dtype` field declared as the `numpy.dtype` it stores rather than the
   `DTypeLike` spellings it accepts.
 
@@ -1013,7 +1025,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   converts). All-numeric records holding
   native containers **auto-promote** to `NumericRecord` (the previous
   backend-leaf exclusion is removed), and `EventTemplate.infer_from` infers
-  `ArraySpec` for them. Native leaves are stored by reference (no defensive
+  `NumericArraySpec` for them. Native leaves are stored by reference (no defensive
   copies). A native container's metadata (an `xarray` leaf's coords / dims /
   attrs, a `pandas` leaf's index / columns) is **part of a record's identity**:
   `Record.__eq__` and `fingerprint()` distinguish it, so two records with equal
@@ -1070,15 +1082,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the value-level `NumericRecord.to_vector`. `Record.from_dict` likewise takes
   the name first. Construction now validates each
   leaf against its field spec's `is_valid` (structure only: shape and dtype,
-  the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). An
-  `ArraySpec`'s `support` is descriptive metadata and is not checked by
+  the latter by `numpy.can_cast` same-kind, so a cross-kind dtype raises). A
+  `NumericArraySpec`'s `support` is descriptive metadata and is not checked by
   `is_valid` — a data-dependent check that is not `jax.jit`-traceable.
 
 - **Leaf specs unified under a `ValueSpec` base with `is_valid` (#337,
-  breaking).** `ArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
+  breaking).** `NumericArraySpec` / `OpaqueSpec` / `DistributionSpec` / `FunctionSpec`
   now subclass a common `ValueSpec` ABC, and every spec implements
   `is_valid(value) -> bool` — a structural check that a concrete value matches
-  the spec (shape and dtype for arrays — an `ArraySpec`'s `support` is
+  the spec (shape and dtype for arrays — a `NumericArraySpec`'s `support` is
   descriptive metadata and is **not** checked by `is_valid`, being
   data-dependent and not `jax.jit`-traceable; `OpaqueSpec` accepts any
   non-mapping value; a `DistributionSpec` requires a `Distribution` carrying an
@@ -1092,7 +1104,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   now optional (default `None`, meaning "structure unspecified", so a bare
   `FunctionSpec()` describes any callable); either may still be given as a
   bare `ValueSpec`, wrapped in a single-field template (fields `input` /
-  `output`). `ArraySpec` fixes: `dtype` is
+  `output`). `NumericArraySpec` fixes: `dtype` is
   normalised to `numpy.dtype` at construction so equal dtypes compare and hash
   equal however they were spelled (the field is annotated `DTypeLike`
   accordingly), and a spec with an unset `dtype` no longer compares equal to
@@ -1260,7 +1272,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `NumericRecordTemplate` is `NumericEventTemplate`, and
   `Distribution.record_template` is `event_template` (hard rename, **no
   deprecation alias** — pre-stable). Template leaves are now a closed sum of
-  frozen, hashable specs (`ArraySpec` / `OpaqueSpec` / `DistributionSpec` /
+  frozen, hashable specs (`NumericArraySpec` / `OpaqueSpec` / `DistributionSpec` /
   `FunctionSpec`) instead of `tuple[int, ...] | None`; construction-time sugar
   is preserved (`EventTemplate(x=(3,), label=None, sub=…)` still works) and
   `__getitem__` now returns the spec object (shape access stays on
@@ -1294,7 +1306,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ml_dtypes arrays (bfloat16, float8, int4) now classify as numeric
   (#343).** The numeric-dtype gates previously keyed on numpy's
   `dtype.kind`, under which the ml_dtypes extension types JAX registers
-  report `"V"` (void) — so a bfloat16 array failed `ArraySpec.is_valid`,
+  report `"V"` (void) — so a bfloat16 array failed `NumericArraySpec.is_valid`,
   inferred as an `OpaqueSpec`, and was rejected as a `NumericRecord` /
   `NumericRecordBatch` leaf. All five gates (template inference, spec
   validation, the two record-layer leaf checks, the broadcast-template

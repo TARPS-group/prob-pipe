@@ -21,10 +21,10 @@ import pytest
 
 from probpipe import (
     ArrayBackend,
-    ArraySpec,
     EventTemplate,
     FunctionBatch,
     FunctionSpec,
+    NumericArraySpec,
     NumericRecord,
     OpaqueBatch,
     Record,
@@ -176,7 +176,7 @@ class TestConstruction:
 
     def test_element_spec_must_be_a_record_declaration(self):
         with pytest.raises(TypeError, match="RecordSpec or an EventTemplate"):
-            NumericRecordBatch({"x": jnp.zeros(3)}, "draw", element_spec=ArraySpec(shape=()))
+            NumericRecordBatch({"x": jnp.zeros(3)}, "draw", element_spec=NumericArraySpec(shape=()))
 
     def test_numeric_batch_refuses_a_non_numeric_element_spec(self):
         with pytest.raises(TypeError, match="carries a NumericEventTemplate"):
@@ -428,7 +428,7 @@ class TestColumnSpecConformance:
             NumericRecordBatch(
                 {"x": jnp.zeros(3, dtype=jnp.float32)},
                 "draw",
-                element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32)),
+                element_spec=EventTemplate(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
             )
 
     @pytest.mark.parametrize(
@@ -442,7 +442,7 @@ class TestColumnSpecConformance:
         ids=["float-widening", "float-narrowing", "int-widening", "int-narrowing"],
     )
     def test_a_same_kind_cast_is_admitted(self, column_dtype, declared):
-        # The rule ``ArraySpec.is_valid`` applies to one value: a widening or a
+        # The rule ``NumericArraySpec.is_valid`` applies to one value: a widening or a
         # within-kind narrowing passes.
         #
         # The pairs stay inside 32 bits deliberately. ``jax_enable_x64`` is off by
@@ -457,7 +457,7 @@ class TestColumnSpecConformance:
         NumericRecordBatch(
             {"x": column},
             "draw",
-            element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=declared)),
+            element_spec=EventTemplate(x=NumericArraySpec(shape=(), dtype=declared)),
         )
 
     @pytest.mark.parametrize("spec", [FunctionSpec(), None], ids=["function", "opaque"])
@@ -992,8 +992,8 @@ class TestFlatLayout:
         from. Equality would not catch it: values compare, dtypes do not."""
         template = EventTemplate(
             {
-                "i": ArraySpec(shape=(), dtype=jnp.int32),
-                "f": ArraySpec(shape=(), dtype=jnp.float32),
+                "i": NumericArraySpec(shape=(), dtype=jnp.int32),
+                "f": NumericArraySpec(shape=(), dtype=jnp.float32),
             }
         )
         batch = NumericRecordBatch(
@@ -1096,7 +1096,7 @@ class TestStack:
             NumericRecord("r", {"x": jnp.zeros(2)}, event_template=EventTemplate(x=(2,))),
             NumericRecord("r", {"x": jnp.zeros(3)}, event_template=EventTemplate(x=(3,))),
         ]
-        # Declared an ArraySpec, so it stacks natively and the shapes must agree —
+        # Declared a NumericArraySpec, so it stacks natively and the shapes must agree —
         # it is not quietly demoted to an object column.
         with pytest.raises((TypeError, ValueError)):
             NumericRecordBatch.stack(records, level_name="draw", element_spec=EventTemplate(x=(2,)))
@@ -1123,7 +1123,7 @@ class TestStack:
             NumericRecordBatch.stack([], level_name="draw")
 
     def test_stack_takes_the_spec_from_the_first_record(self):
-        spec = RecordSpec(EventTemplate(x=ArraySpec(shape=(), dtype=jnp.float32)))
+        spec = RecordSpec(EventTemplate(x=NumericArraySpec(shape=(), dtype=jnp.float32)))
         records = [
             NumericRecord("r", {"x": jnp.asarray(1.0, dtype=jnp.float32)}, event_template=spec)
             for _ in range(2)
@@ -1480,7 +1480,7 @@ class TestPyTreeRebuildContract:
             jax.tree.map(lambda column: float(column.sum()), batch)
 
     def test_object_data_under_a_numeric_field_is_refused(self):
-        """An ``ArraySpec`` requires numeric data whether or not it pins a dtype,
+        """A ``NumericArraySpec`` requires numeric data whether or not it pins a dtype,
         so the kind is re-checked and not only the pinned dtype — otherwise a
         numeric batch comes back holding objects."""
         batch = self._batch((3,), "draw")
@@ -1494,7 +1494,7 @@ class TestPyTreeRebuildContract:
         batch = NumericRecordBatch(
             {"x": jnp.zeros(3, dtype=jnp.int32)},
             "draw",
-            element_spec=EventTemplate(x=ArraySpec(shape=(), dtype=jnp.int32)),
+            element_spec=EventTemplate(x=NumericArraySpec(shape=(), dtype=jnp.int32)),
         )
         with pytest.raises(TypeError, match="does not admit"):
             jax.tree.map(lambda column: column.astype(jnp.float32), batch)

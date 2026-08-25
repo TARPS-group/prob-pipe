@@ -44,9 +44,9 @@ from ._function_batch import FunctionBatch
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
 from ._opaque_batch import OpaqueBatch
 from .event_template import (
-    ArraySpec,
     EventTemplate,
     FunctionSpec,
+    NumericArraySpec,
     NumericEventTemplate,
     OpaqueSpec,
     RecordSpec,
@@ -70,7 +70,7 @@ class RecordBatch(Batch[Record]):
         The field columns, keyed by **leaf path** (``"outer/a"``) or given as a
         nested mapping, which is flattened to leaf paths. Each column holds one
         field's values across the batch, shaped ``(*batch_shape, *event_shape)``
-        where the event shape is the field spec's for an ``ArraySpec`` and empty
+        where the event shape is the field spec's for a ``NumericArraySpec`` and empty
         otherwise — so a field that is not an array takes an object array, one
         entry per element. The keys must be exactly the fields of *element_spec*.
     level_names : str or iterable of str
@@ -220,7 +220,7 @@ class RecordBatch(Batch[Record]):
         the batch-axis derivation, so what is left is the dtype and the entries.
 
         An **array** field declares a dtype, so its column is checked against
-        it by the rule :meth:`~probpipe.ArraySpec.is_valid` applies to a single
+        it by the rule :meth:`~probpipe.NumericArraySpec.is_valid` applies to a single
         value: same-kind castable, so a widening or a within-kind narrowing passes
         and a cross-kind conversion does not. Any **other** field holds one entry
         per element, so its column is walked entry by entry, as ``_ObjectBatch``
@@ -237,7 +237,7 @@ class RecordBatch(Batch[Record]):
         """
         for path, column in store.items():
             spec = template[path]
-            if isinstance(spec, ArraySpec):
+            if isinstance(spec, NumericArraySpec):
                 _check_array_column(column, spec, path=path, kind=kind)
                 continue
             if not isinstance(spec, FunctionSpec | OpaqueSpec):
@@ -365,7 +365,7 @@ class RecordBatch(Batch[Record]):
     def _column_as_batch(self, key: str) -> Any:
         """One field's column, in the batch form its spec calls for.
 
-        An ``ArraySpec`` batches natively — the column *is* the array, with the
+        A ``NumericArraySpec`` batches natively — the column *is* the array, with the
         batch axes leading — so it is returned as stored. A callable or an opaque
         value has no such form, so the column is presented as the matching object
         batch over the same elements, carrying this batch's own levels.
@@ -379,7 +379,7 @@ class RecordBatch(Batch[Record]):
         """
         column = self._columns[key]
         spec = self.event_template[key]
-        if isinstance(spec, ArraySpec):
+        if isinstance(spec, NumericArraySpec):
             return column
         name = f"{self.name}[{key!r}]"
         column_spec = BatchSpec(spec, self.axis_groups, self.level_names)
@@ -927,7 +927,7 @@ def _inferred_field_spec(column: Any, event_shape: tuple[int, ...]) -> Any:
 def _event_shape(spec: ValueSpec, *, path: str, kind: str) -> tuple[int, ...]:
     """The event shape a column carries beyond the batch axes.
 
-    An ``ArraySpec`` declares one; every other leaf kind exposes no shape, so its
+    A ``NumericArraySpec`` declares one; every other leaf kind exposes no shape, so its
     column is one entry per element and the batch axes are all of it.
 
     Raises
@@ -938,7 +938,7 @@ def _event_shape(spec: ValueSpec, *, path: str, kind: str) -> tuple[int, ...]:
         refused where it can be named rather than compared against an integer
         further on.
     """
-    if not isinstance(spec, ArraySpec):
+    if not isinstance(spec, NumericArraySpec):
         return ()
     shape = tuple(spec.shape)
     symbolic = [entry for entry in shape if not isinstance(entry, int)]
@@ -1024,7 +1024,7 @@ def _batch_shape_of(
 def _stack_column(values: list[Any], spec: ValueSpec, *, kind: str) -> Any:
     """One field's values across the elements, stacked into a column.
 
-    The field's *spec* decides the form, not the values: an ``ArraySpec`` field
+    The field's *spec* decides the form, not the values: a ``NumericArraySpec`` field
     batches natively into an array with the batch axis leading, and every other
     leaf kind goes into an object array, one entry per element, which is the form
     the object batches present. Reading the spec rather than the values is what
@@ -1032,7 +1032,7 @@ def _stack_column(values: list[Any], spec: ValueSpec, *, kind: str) -> Any:
     ``OpaqueSpec`` admits — so the column comes back as the batch form its spec
     calls for and an element comes back as the object that was put in.
     """
-    if isinstance(spec, ArraySpec):
+    if isinstance(spec, NumericArraySpec):
         # Through the array backend, not ``jnp.asarray``: a registered container
         # converts by its own ``to_jax``, and the duck path cannot see it.
         return jnp.stack([_to_jax_array(value) for value in values])
@@ -1078,10 +1078,10 @@ def _one_entry_equal(left: Any, right: Any) -> bool:
         return False
 
 
-def _check_array_column(column: Any, spec: ArraySpec, *, path: str, kind: str) -> None:
+def _check_array_column(column: Any, spec: NumericArraySpec, *, path: str, kind: str) -> None:
     """Fail unless *column* is a numeric array whose dtype *spec* admits.
 
-    The dtype rule is :meth:`~probpipe.ArraySpec.is_valid`'s, applied to the
+    The dtype rule is :meth:`~probpipe.NumericArraySpec.is_valid`'s, applied to the
     column rather than to one value: same-kind castable, so a widening or a
     within-kind narrowing passes and a cross-kind conversion does not. The shape
     is already settled by the batch-axis derivation.
@@ -1243,7 +1243,7 @@ def _refuse_a_retyped_element(
     slice shrinking the event while passing the rank check, or an object array
     arriving under a field declared numeric.
 
-    The **kind** is re-checked, not only a pinned dtype: an ``ArraySpec`` requires
+    The **kind** is re-checked, not only a pinned dtype: a ``NumericArraySpec`` requires
     numeric data whether or not it names a dtype, so this asks the constructor's
     own :func:`_check_array_column`, which settles kind and dtype together. That
     is the rule a batch is built under, and a transform is not a licence to
@@ -1255,7 +1255,7 @@ def _refuse_a_retyped_element(
     for path, column in columns.items():
         shape = _column_shape(column)
         field = template[path]
-        if not isinstance(field, ArraySpec):
+        if not isinstance(field, NumericArraySpec):
             # A field with no stacked form is checked the way the constructor
             # checks it: entry by entry against its own spec. A shape-preserving
             # transform can replace a column of callables with integers and leave
@@ -1305,7 +1305,7 @@ def _surviving_batch_rank(
         if shape is None:
             return None
         field = template[path]
-        event_rank = len(field.shape) if isinstance(field, ArraySpec) else 0
+        event_rank = len(field.shape) if isinstance(field, NumericArraySpec) else 0
         if len(shape) < event_rank:
             raise ValueError(
                 f"a transform left the column {path!r} with shape {tuple(shape)}, fewer axes "

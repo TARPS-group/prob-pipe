@@ -40,7 +40,7 @@ Specs come in two families. A **raw-value spec** describes a plain value that
 names no ProbPipe kind. A **term spec** describes a tracked term, one class per
 kind, and all of them subclass the :class:`TermSpec` marker; a declaration whose
 class is a term spec therefore names a kind. The concrete specs are as follows:
-- :class:`ArraySpec`: describes a numeric array (shape, optional dtype/support)
+- :class:`NumericArraySpec`: describes a numeric array (shape, optional dtype/support)
 - :class:`RecordSpec`: describes an embedded ``Record``. Carries the event
   template of that record.
 - :class:`DistributionSpec`: describes a ``Distribution``. Carries the *event
@@ -52,7 +52,7 @@ class is a term spec therefore names a kind. The concrete specs are as follows:
 Numeric vs. Mixed
 -----------------
 
-When every field is an ``ArraySpec`` the template is all-numeric, and
+When every field is a ``NumericArraySpec`` the template is all-numeric, and
 ``EventTemplate(...)`` auto-promotes to :class:`NumericEventTemplate` — the
 specialization describing a value that is a PyTree of arrays. That subclass
 adds the flat-vector layout — ``vector_size`` and :meth:`from_vector`
@@ -84,10 +84,10 @@ from .named_tree import (
 )
 
 __all__ = [
-    "ArraySpec",
     "DistributionSpec",
     "EventTemplate",
     "FunctionSpec",
+    "NumericArraySpec",
     "NumericEventTemplate",
     "OpaqueSpec",
     "RecordSpec",
@@ -216,7 +216,7 @@ class TermSpec(ValueSpec):
     term — a ``Record``, ``Distribution``, or ``Function``. It subclasses
     :class:`ValueSpec` and adds no members of its own: the concrete subclass
     (:class:`RecordSpec`, :class:`DistributionSpec`, :class:`FunctionSpec`)
-    *is* the kind, and ``is_valid`` is inherited, not redeclared. ``ArraySpec``
+    *is* the kind, and ``is_valid`` is inherited, not redeclared. ``NumericArraySpec``
     and ``OpaqueSpec``, the raw-value leaves, are not term specs.
 
     The marker is what ``isinstance`` reads: a declaration whose class is a term
@@ -233,7 +233,7 @@ class TermSpec(ValueSpec):
 
 
 @dataclass(frozen=True, eq=False, init=False)
-class ArraySpec(ValueSpec):
+class NumericArraySpec(ValueSpec):
     """A numeric-array value spec: an event ``shape`` plus optional metadata.
 
     ``dtype`` and ``support`` are optional (default ``None``); when unset the
@@ -267,11 +267,11 @@ class ArraySpec(ValueSpec):
             (isinstance(d, int) and d >= 0) or (isinstance(d, str) and bool(d)) for d in dimensions
         ):
             raise TypeError(
-                "ArraySpec.shape must contain only non-negative ints or non-empty "
+                "NumericArraySpec.shape must contain only non-negative ints or non-empty "
                 f"symbolic dimension names, got {shape!r}"
             )
         if support is not None:
-            _require_hashable(support, context="ArraySpec.support")
+            _require_hashable(support, context="NumericArraySpec.support")
         object.__setattr__(self, "shape", dimensions)
         object.__setattr__(self, "dtype", None if dtype is None else np.dtype(dtype))
         object.__setattr__(self, "support", support)
@@ -296,7 +296,7 @@ class ArraySpec(ValueSpec):
 
     def bind_dims_from_spec(self, actual: ValueSpec, bindings: dict[str, int], path: str) -> bool:
         """Bind the symbolic entries of :attr:`shape` from *actual*'s own shape."""
-        if not isinstance(actual, ArraySpec):
+        if not isinstance(actual, NumericArraySpec):
             return False
         if any(isinstance(entry, str) for entry in actual.shape):
             raise ValueError(
@@ -308,9 +308,9 @@ class ArraySpec(ValueSpec):
                 raise ValueError(f"{path} dtype {actual.dtype} does not conform to {self.dtype}")
         return True
 
-    def with_bound_dims(self, bindings: Mapping[str, int]) -> ArraySpec:
+    def with_bound_dims(self, bindings: Mapping[str, int]) -> NumericArraySpec:
         """This spec with each bound entry of :attr:`shape` replaced by its size."""
-        return ArraySpec(
+        return NumericArraySpec(
             tuple(
                 bindings.get(entry, entry) if isinstance(entry, str) else entry
                 for entry in self.shape
@@ -325,7 +325,7 @@ class ArraySpec(ValueSpec):
         # ``False`` when both sides decline).
         if other.__class__ is not self.__class__:
             return NotImplemented
-        assert isinstance(other, ArraySpec)  # narrow for the type checker
+        assert isinstance(other, NumericArraySpec)  # narrow for the type checker
         # ``numpy.dtype`` treats ``None`` as an alias for the default dtype
         # (``np.dtype(None)`` is float64), so a plain field comparison would
         # report an unset dtype equal to a concrete one. Compare set-ness
@@ -406,7 +406,7 @@ class OpaqueSpec(ValueSpec):
         As the fallback spec, ``OpaqueSpec`` accepts any value **except** a
         ``Mapping``: a mapping denotes tree structure (a subtree), never a
         leaf. Every other value is valid, including a numeric array or scalar
-        — such a value is *typically* described by an :class:`ArraySpec`, but
+        — such a value is *typically* described by an :class:`NumericArraySpec`, but
         an explicitly-opaque field still accepts it. ``meta`` is metadata
         about the spec and is not checked against the value.
 
@@ -545,8 +545,8 @@ def _reshaped_template(
     for path, spec in template.children.items():
         if isinstance(spec, EventTemplate):
             children[path] = _reshaped_template(spec, reshape)
-        elif isinstance(spec, ArraySpec):
-            children[path] = ArraySpec(
+        elif isinstance(spec, NumericArraySpec):
+            children[path] = NumericArraySpec(
                 tuple(reshape(tuple(spec.shape))), dtype=spec.dtype, support=spec.support
             )
         else:
@@ -700,7 +700,7 @@ class FunctionSpec(TermSpec):
     meaningful, matching :class:`DistributionSpec`.
 
     The output declaration is any value specification, so a callable may
-    declare a raw-value result as well as a term: an ``ArraySpec`` output
+    declare a raw-value result as well as a term: a ``NumericArraySpec`` output
     declares one array. A term declaration names its kind by its class, while a
     raw-value declaration types the value the wrap boundary then places in a
     single-field ``Record``, keyed by the ``Function``'s name.
@@ -846,16 +846,16 @@ def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
     """Normalise a constructor input to a stored field spec.
 
     Construction-time sugar (preserved): a bare shape ``tuple`` becomes an
-    :class:`ArraySpec`, ``None`` becomes an :class:`OpaqueSpec`, and a nested
+    :class:`NumericArraySpec`, ``None`` becomes an :class:`OpaqueSpec`, and a nested
     :class:`EventTemplate` is kept as-is. Already-built specs pass through, so
-    new code may supply explicit ``ArraySpec(...)`` / ``OpaqueSpec(...)`` etc.
+    new code may supply explicit ``NumericArraySpec(...)`` / ``OpaqueSpec(...)`` etc.
     """
     if isinstance(spec, (ValueSpec, EventTemplate)):
         return spec
     if spec is None:
         return OpaqueSpec()
     if isinstance(spec, tuple):
-        return ArraySpec(shape=spec)
+        return NumericArraySpec(shape=spec)
     raise TypeError(
         f"spec must be a shape tuple, None, a ValueSpec, or an "
         f"EventTemplate, got {type(spec).__name__}"
@@ -863,7 +863,7 @@ def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
 
 
 def _is_numeric_spec(spec: Any) -> bool:
-    """A numeric leaf: an :class:`ArraySpec` or a (nested) :class:`NumericEventTemplate`.
+    """A numeric leaf: an :class:`NumericArraySpec` or a (nested) :class:`NumericEventTemplate`.
 
     A mapping spec (nested structure, not yet materialised into a nested
     template) counts as numeric iff all of its own values are — so
@@ -872,7 +872,7 @@ def _is_numeric_spec(spec: Any) -> bool:
     """
     if isinstance(spec, Mapping):
         return _all_numeric(spec.values())
-    return isinstance(spec, (ArraySpec, NumericEventTemplate))
+    return isinstance(spec, (NumericArraySpec, NumericEventTemplate))
 
 
 def _all_numeric(specs: Iterable[Any]) -> bool:
@@ -880,7 +880,7 @@ def _all_numeric(specs: Iterable[Any]) -> bool:
 
     Drives the base-class auto-promotion hook so ``EventTemplate(x=(), y=(3,))``
     returns a ``NumericEventTemplate`` without opting in explicitly. Raw inputs
-    also allow the shape-tuple sugar; ``None``, every non-``ArraySpec`` spec,
+    also allow the shape-tuple sugar; ``None``, every non-``NumericArraySpec`` spec,
     mixed nested templates, and any unsupported type are non-numeric
     (``__init__`` rejects the latter).
     """
@@ -977,7 +977,7 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
 
         - ``tuple[int | str, ...]`` — fixed or symbolic shape of a numeric array
           leaf (e.g. ``()`` for a scalar, ``(3,)`` for a 3-vector, or
-          ``("obs", 3)``); normalised to :class:`ArraySpec`.
+          ``("obs", 3)``); normalised to :class:`NumericArraySpec`.
         - ``None`` — opaque (non-array) leaf; normalised to :class:`OpaqueSpec`.
         - a :class:`ValueSpec` — an already-built spec (passed through).
         - ``EventTemplate`` — a nested sub-structure (an internal node).
@@ -1101,11 +1101,11 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
 
     @property
     def is_numeric(self) -> bool:
-        """Whether every reachable leaf is an :class:`ArraySpec`.
+        """Whether every reachable leaf is an :class:`NumericArraySpec`.
 
         Recursive: descends into nested :class:`EventTemplate` fields and
         returns ``True`` only if *all* leaves (at every depth) are numeric
-        array leaves. Any non-:class:`ArraySpec` leaf — or a nested
+        array leaves. Any non-:class:`NumericArraySpec` leaf — or a nested
         sub-template that is not itself all-numeric — makes the whole
         template non-numeric.
 
@@ -1117,10 +1117,10 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
         Returns
         -------
         bool
-            ``True`` iff every reachable leaf is an :class:`ArraySpec`.
+            ``True`` iff every reachable leaf is an :class:`NumericArraySpec`.
         """
         for spec in self._tree.values():
-            if isinstance(spec, ArraySpec):
+            if isinstance(spec, NumericArraySpec):
                 continue
             if isinstance(spec, EventTemplate):
                 if not spec.is_numeric:
@@ -1171,7 +1171,7 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
 
         Examples
         --------
-        >>> template = EventTemplate(x=ArraySpec(shape=("obs",)))
+        >>> template = EventTemplate(x=NumericArraySpec(shape=("obs",)))
         >>> template.is_concrete
         False
         >>> template.with_dims(obs=5).is_concrete
@@ -1188,11 +1188,11 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
         return _concretize_event_template(self, sizes, context=type(self).__name__)
 
     def numeric_subset(self) -> NumericEventTemplate:
-        """Project to the :class:`ArraySpec`-leaf sub-template.
+        """Project to the :class:`NumericArraySpec`-leaf sub-template.
 
         Keeps every numeric leaf, recursing into nested
         :class:`EventTemplate` fields (each contributes its own
-        ``numeric_subset()``); drops every non-:class:`ArraySpec` leaf; and
+        ``numeric_subset()``); drops every non-:class:`NumericArraySpec` leaf; and
         prunes any nested template that becomes empty. Surviving leaves keep their
         ``/``-delimited paths (the projection is path-stable). Inference uses
         this to recover the numeric leaves of a mixed template.
@@ -1215,7 +1215,7 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
         """
         specs: dict[str, _FieldSpec] = {}
         for name, spec in self._tree.items():
-            if isinstance(spec, ArraySpec):
+            if isinstance(spec, NumericArraySpec):
                 specs[name] = spec
             elif isinstance(spec, EventTemplate):
                 try:
@@ -1233,13 +1233,13 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
                 name
                 for name, spec in self._tree.items()
                 if not (
-                    isinstance(spec, ArraySpec)
+                    isinstance(spec, NumericArraySpec)
                     or (isinstance(spec, EventTemplate) and spec.is_numeric)
                 )
             )
             raise ValueError(
                 f"numeric_subset() of {type(self).__name__} is empty: no "
-                f"ArraySpec leaves survive. Dropped non-numeric fields: {dropped}."
+                f"NumericArraySpec leaves survive. Dropped non-numeric fields: {dropped}."
             )
         return NumericEventTemplate(specs)
 
@@ -1274,14 +1274,14 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
         - A **mapping** of named fields (e.g. a ``Record``'s field dict) is
           inferred field by field: a nested ``Record`` field contributes its
           own ``event_template``; a numeric array or scalar becomes an
-          :class:`ArraySpec` of its shape; anything else becomes a bare
+          :class:`NumericArraySpec` of its shape; anything else becomes a bare
           :class:`OpaqueSpec`. The result auto-promotes to a
           :class:`NumericEventTemplate` when every field is numeric.
 
         This is the **fallback** for wrapping a raw value that has no template
         yet (e.g. at a workflow boundary); for a value you already hold, read
         its authoritative ``event_template`` directly. Inference is lossy — it
-        cannot recover an :class:`ArraySpec`'s ``dtype`` / ``support``, an
+        cannot recover an :class:`NumericArraySpec`'s ``dtype`` / ``support``, an
         :class:`OpaqueSpec`'s ``meta``, or a :class:`RecordSpec` /
         :class:`DistributionSpec` / :class:`FunctionSpec`. A Python ``list`` /
         ``tuple`` leaf (no ``.shape`` / ``.dtype``) is treated as opaque even if
@@ -1326,7 +1326,7 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
                 return cls.infer_from(val)
             # Any numeric array-like — bare arrays and native containers
             # (xarray / pandas / registered backends) alike — infers an
-            # ``ArraySpec``; leaves are stored in native form, so nothing is
+            # ``NumericArraySpec``; leaves are stored in native form, so nothing is
             # lost by classing them numeric.
             return _full_array_shape_or_none(val)
 
@@ -1340,7 +1340,7 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
         for name, spec in self._tree.items():
             if isinstance(spec, EventTemplate):
                 parts.append(f"{name}={spec!r}")
-            elif isinstance(spec, ArraySpec) and spec.dtype is None and spec.support is None:
+            elif isinstance(spec, NumericArraySpec) and spec.dtype is None and spec.support is None:
                 # Bare specs render as their sugar form (shape tuple / None).
                 parts.append(f"{name}={spec.shape}")
             elif isinstance(spec, OpaqueSpec) and spec.meta is None:
@@ -1389,7 +1389,7 @@ class NumericEventTemplate(EventTemplate):
             # Any non-array leaf — OpaqueSpec, RecordSpec, DistributionSpec, or FunctionSpec.
             raise TypeError(
                 f"NumericEventTemplate: field {name!r} is a {type(spec).__name__}; "
-                f"only ArraySpec leaves (or a nested NumericEventTemplate) are "
+                f"only NumericArraySpec leaves (or a nested NumericEventTemplate) are "
                 f"allowed — use EventTemplate if you need a mixed template."
             )
 
@@ -1408,7 +1408,7 @@ class NumericEventTemplate(EventTemplate):
 
         Maps each leaf's ``/``-delimited path to its array ``shape``. Defined
         only on :class:`NumericEventTemplate` — where every leaf is an
-        :class:`ArraySpec` and therefore *has* a shape — because a shape is an
+        :class:`NumericArraySpec` and therefore *has* a shape — because a shape is an
         array notion; on a general (mixed) :class:`EventTemplate` the leaves are
         a heterogeneous sum with no uniform shape, so the structural view there
         is :meth:`keys`. A nested sub-template contributes one entry per
@@ -1420,7 +1420,7 @@ class NumericEventTemplate(EventTemplate):
                 for sub_name, sub_shape in spec.leaf_shapes.items():
                     result[f"{name}{_PATH_SEP}{sub_name}"] = sub_shape
             else:
-                # ``_post_validate`` guarantees a non-nested spec is an ArraySpec.
+                # ``_post_validate`` guarantees a non-nested spec is a NumericArraySpec.
                 result[name] = spec.shape
         return result
 
@@ -1433,7 +1433,7 @@ class NumericEventTemplate(EventTemplate):
             if isinstance(spec, NumericEventTemplate):
                 total += spec.vector_size
             else:
-                # spec is an ArraySpec — validated by ``_post_validate``.
+                # spec is a NumericArraySpec — validated by ``_post_validate``.
                 total += prod(spec.shape) if spec.shape else 1
         return total
 
@@ -1589,7 +1589,7 @@ def _unify_specs(
     :meth:`ValueSpec.bind_dims_from_spec`, and an array is concretized for the
     same reason it is when bound from a value.
     """
-    if isinstance(expected, ArraySpec) and isinstance(actual, ArraySpec):
+    if isinstance(expected, NumericArraySpec) and isinstance(actual, NumericArraySpec):
         expected.bind_dims_from_spec(actual, bindings, path)
         return expected.with_bound_dims(bindings)
     if expected.free_dims and type(expected) is type(actual):
@@ -1617,7 +1617,7 @@ def _unify_spec_with_value(
     since it may bind only some of its names and the rest belong to fields this
     pass has not reached.
     """
-    if not isinstance(spec, ArraySpec):
+    if not isinstance(spec, NumericArraySpec):
         if spec.free_dims:
             return _unify_term_spec_with_value(spec, value, bindings, path)
         if not spec.is_valid(value):

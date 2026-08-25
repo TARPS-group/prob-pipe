@@ -16,7 +16,7 @@ from typing import get_type_hints
 
 import pytest
 
-from probpipe import ArraySpec, EventTemplate, OpaqueSpec, TermSpec
+from probpipe import EventTemplate, NumericArraySpec, OpaqueSpec, TermSpec
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._fingerprint import fingerprint
 from probpipe.core.provenance import Provenance
@@ -319,8 +319,8 @@ class TestSpec:
 
     def test_an_element_spec_naming_no_kind_is_well_formed(self):
         """The case ``BatchSpec`` exists to cover: a batch of raw values."""
-        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
-        assert bare.element_spec == ArraySpec(shape=())
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], NumericArraySpec(shape=())))
+        assert bare.element_spec == NumericArraySpec(shape=())
         assert isinstance(bare.spec, BatchSpec)
 
     def test_axis_groups_are_normalized_to_tuples(self):
@@ -578,7 +578,7 @@ class TestElementIdentity:
         assert nested[1].with_name("inner")[2].name == "inner[draw=2]"
 
     def test_bare_elements_carry_no_identity(self):
-        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], NumericArraySpec(shape=())))
         assert bare[1] == 1
         assert not isinstance(bare[1], TrackedTerm)
 
@@ -736,7 +736,7 @@ class TestViewProvenance:
         assert produced[1][2].provenance is produced.provenance
 
     def test_a_bare_element_has_nowhere_to_carry_it(self, full_provenance_mode):
-        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], ArraySpec(shape=())))
+        bare = _BareBatch(range(3), _spec([(3,)], ["draw"], NumericArraySpec(shape=())))
         produced = self._from_an_operation(bare)
 
         assert produced[1] == 1
@@ -796,7 +796,7 @@ class TestSpecValidation:
             _spec([(2.7,)], ["draw"])
 
     def test_an_identifier_is_a_symbolic_axis_size(self):
-        """A name defers a size, as an `ArraySpec` shape entry may."""
+        """A name defers a size, as a `NumericArraySpec` shape entry may."""
         assert _spec([("draws",)], ["draw"]).axis_groups == (("draws",),)
 
     def test_a_symbolic_axis_size_must_be_an_identifier(self):
@@ -974,19 +974,25 @@ class TestRenamingAView:
 
 class TestBatchSpecFingerprint:
     def test_equal_specs_fingerprint_alike(self):
-        one = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
-        two = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
+        one = _spec([(3,)], ["draw"], NumericArraySpec(shape=(2,)))
+        two = _spec([(3,)], ["draw"], NumericArraySpec(shape=(2,)))
         assert fingerprint(one) == fingerprint(two)
 
     def test_the_multiplicity_is_part_of_the_digest(self):
-        base = _spec([(3,)], ["draw"], ArraySpec(shape=(2,)))
-        assert fingerprint(base) != fingerprint(_spec([(4,)], ["draw"], ArraySpec(shape=(2,))))
-        assert fingerprint(base) != fingerprint(_spec([(3,)], ["chain"], ArraySpec(shape=(2,))))
-        assert fingerprint(base) != fingerprint(_spec([(3,)], ["draw"], ArraySpec(shape=(5,))))
+        base = _spec([(3,)], ["draw"], NumericArraySpec(shape=(2,)))
+        assert fingerprint(base) != fingerprint(
+            _spec([(4,)], ["draw"], NumericArraySpec(shape=(2,)))
+        )
+        assert fingerprint(base) != fingerprint(
+            _spec([(3,)], ["chain"], NumericArraySpec(shape=(2,)))
+        )
+        assert fingerprint(base) != fingerprint(
+            _spec([(3,)], ["draw"], NumericArraySpec(shape=(5,)))
+        )
 
     def test_a_spec_in_a_template_fingerprints_by_content(self):
-        one = EventTemplate(post=_spec([(3,)], ["draw"], ArraySpec(shape=(2,))), y=(2,))
-        two = EventTemplate(post=_spec([(3,)], ["draw"], ArraySpec(shape=(2,))), y=(2,))
+        one = EventTemplate(post=_spec([(3,)], ["draw"], NumericArraySpec(shape=(2,))), y=(2,))
+        two = EventTemplate(post=_spec([(3,)], ["draw"], NumericArraySpec(shape=(2,))), y=(2,))
         assert fingerprint(one) == fingerprint(two)
 
 
@@ -1526,7 +1532,7 @@ class TestAStoredElementKeepsItsOwnIdentity:
 
 
 class TestSymbolicMultiplicity:
-    """An axis size may be a name, as an `ArraySpec` shape entry may.
+    """An axis size may be a name, as a `NumericArraySpec` shape entry may.
 
     A *declaration* may defer how many elements a level holds — "returns a batch
     of `S` draws" before `S` is known. A live batch may not: it holds elements at
@@ -1541,20 +1547,20 @@ class TestSymbolicMultiplicity:
 
     def test_free_dims_unions_the_element_schema_and_the_multiplicity(self):
         """Distinct names, so neither operand can pass for the union."""
-        spec = BatchSpec(ArraySpec(shape=("d",)), [("S",)], ["draw"])
+        spec = BatchSpec(NumericArraySpec(shape=("d",)), [("S",)], ["draw"])
 
         assert spec.free_dims == frozenset({"S", "d"})
         assert spec.free_axis_dims == frozenset({"S"})
 
     def test_a_shared_name_declares_a_square_batch(self):
         """One scope: `("n",)` of arrays of shape `("n",)` is square by declaration."""
-        spec = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+        spec = BatchSpec(NumericArraySpec(shape=("n",)), [("n",)], ["row"])
 
         assert spec.free_dims == frozenset({"n"})
 
     def test_only_the_multiplicity_must_be_concrete_for_a_live_batch(self):
         """How many elements there are is a different question from what one is."""
-        spec = BatchSpec(ArraySpec(shape=("d",)), [(4,)], ["draw"])
+        spec = BatchSpec(NumericArraySpec(shape=("d",)), [(4,)], ["draw"])
 
         assert spec.free_axis_dims == frozenset()
         assert spec.batch_size == 4
@@ -1599,18 +1605,18 @@ class TestSymbolicMultiplicity:
 
     def test_an_axis_and_an_element_dimension_share_one_scope(self):
         """A batch of `("n",)` over arrays of shape `("n",)` binds `n` once."""
-        declared = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
+        declared = BatchSpec(NumericArraySpec(shape=("n",)), [("n",)], ["row"])
         bindings: dict[str, int] = {}
 
         assert declared.bind_dims_from_spec(
-            BatchSpec(ArraySpec(shape=(3,)), [(3,)], ["row"]), bindings, "path"
+            BatchSpec(NumericArraySpec(shape=(3,)), [(3,)], ["row"]), bindings, "path"
         )
         assert bindings == {"n": 3}
 
     def test_a_batch_that_is_not_square_is_refused(self):
         """The other half of declaring it square: 3 elements of length 5 is not."""
-        declared = BatchSpec(ArraySpec(shape=("n",)), [("n",)], ["row"])
-        actual = BatchSpec(ArraySpec(shape=(5,)), [(3,)], ["row"])
+        declared = BatchSpec(NumericArraySpec(shape=("n",)), [("n",)], ["row"])
+        actual = BatchSpec(NumericArraySpec(shape=(5,)), [(3,)], ["row"])
 
         with pytest.raises(ValueError, match=r"symbolic dimension 'n' to 5, .*already bound to 3"):
             declared.bind_dims_from_spec(actual, {}, "path")
@@ -1675,8 +1681,8 @@ class TestSymbolicMultiplicity:
 
     def test_an_element_dimension_binds_through_the_element_spec(self):
         """The element's own schema binds by the same rule one level in."""
-        declared = BatchSpec(ArraySpec(shape=("d",)), [("n",)], ["item"])
-        actual = BatchSpec(ArraySpec(shape=(7,)), [(3,)], ["item"])
+        declared = BatchSpec(NumericArraySpec(shape=("d",)), [("n",)], ["item"])
+        actual = BatchSpec(NumericArraySpec(shape=(7,)), [(3,)], ["item"])
         bindings: dict[str, int] = {}
 
         declared.bind_dims_from_spec(actual, bindings, "path")

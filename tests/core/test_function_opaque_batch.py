@@ -17,12 +17,12 @@ import numpy as np
 import pytest
 
 from probpipe import (
-    ArraySpec,
     Batch,
     BatchSpec,
     EventTemplate,
     FunctionBatch,
     FunctionSpec,
+    NumericArraySpec,
     OpaqueBatch,
     OpaqueSpec,
     Record,
@@ -160,8 +160,8 @@ class TestConstructionRefusals:
     @pytest.mark.parametrize(
         ("cls", "spec", "match"),
         [
-            (FunctionBatch, ArraySpec(()), "must be a FunctionSpec"),
-            (OpaqueBatch, ArraySpec(()), "must be an OpaqueSpec"),
+            (FunctionBatch, NumericArraySpec(()), "must be a FunctionSpec"),
+            (OpaqueBatch, NumericArraySpec(()), "must be an OpaqueSpec"),
         ],
     )
     def test_the_element_spec_must_be_its_own_kind(self, cls, spec, match):

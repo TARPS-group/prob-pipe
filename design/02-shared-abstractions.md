@@ -90,10 +90,10 @@ class ValueSpec(ABC):
     def is_valid(self, value: Any) -> bool: ...
 ```
 
-Value specs come in two families. A **raw-value spec** types a plain value that names no ProbPipe kind: a numeric array or an opaque Python object. An `ArraySpec` declares a shape, a dtype, and a support. An `OpaqueSpec` is the fallback, admitting any non-mapping value.
+Value specs come in two families. A **raw-value spec** types the raw host value held by a ProbPipe kind: a numeric array or an opaque Python object. A `NumericArraySpec` declares a shape, a dtype, and a support. An `OpaqueSpec` is the fallback, admitting any non-mapping value.
 
 ```python
-class ArraySpec(ValueSpec):  # a numeric array leaf
+class NumericArraySpec(ValueSpec):  # a numeric array leaf
     shape: tuple[int | str, ...]   # a str names a symbolic dimension (II.3)
     dtype: DType
     support: Constraint
@@ -112,7 +112,11 @@ class Constraint(ABC):
 
 A **term spec** types a tracked term, one concrete class per kind. `TermSpec` subclasses `ValueSpec` as a marker, since a tracked term is still one value that can occupy a leaf. Two consequences follow: `is_valid` stays declared once, on `ValueSpec`, and anywhere a leaf is accepted, a term spec is accepted unchanged.
 
-A batch is a tracked term too, so it has a term spec of its own: `BatchSpec` types the *collection*, carrying the spec its elements satisfy together with the named multiplicity. It is what keeps the storage rule below universal — a batch's own type is not its element's type, and `OpaqueBatch`, whose elements name no kind at all, still has one.
+A batch is a tracked term too, so it has a term spec of its own: `BatchSpec` types the *collection*, carrying the spec its elements satisfy together with the named multiplicity. It is what keeps the storage rule below universal — a batch's own type is not its element's type, and `OpaqueBatch` still has one even though its raw host accepts arbitrary Python objects.
+
+**Every base value kind has a raw host, a tracked class, and a tracked batch form.** The hierarchy is `raw value → tracked term → tracked batch`: an array is held by `NumericArray` and collected by `NumericArrayBatch`; an arbitrary non-mapping object is held by `Opaque` and collected by `OpaqueBatch`; and a callable is held by `Function` and collected by `FunctionBatch`. `Record` is the composite rather than another base kind: a mapping is tracked as a `Record`, a collection as a `RecordBatch`, and its raw form applies the same hierarchy recursively to its fields. The present `ValueSpec` / `TermSpec` marker split remains for this stack; it does not make either raw-value family kindless.
+
+The tracked class is what an operation **returns**. A raw-value spec describes the value that class holds, while a term spec describes an already tracked value. This distinction does not change record storage or navigation; it fixes the operation boundary, where a result declared as `NumericArraySpec` is returned as a `NumericArray`.
 
 ```python
 class TermSpec(ValueSpec): ...      # marker; adds nothing, is_valid inherited
@@ -128,7 +132,7 @@ class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
 class BatchSpec(TermSpec):     # a Batch; is_valid accepts a matching batch
     element_spec: ValueSpec               # the spec every element satisfies
     axis_groups: tuple[tuple[int | str, ...], ...]  # the multiplicity, tiled into levels (II.5);
-                                          #   a str names a symbolic dimension, as in ArraySpec
+                                          #   a str names a symbolic dimension, as in NumericArraySpec
     level_names: tuple[str, ...]
 # DistributionSpec and ConditionalDistributionSpec are the other two term specs (Part III).
 ```
@@ -159,7 +163,7 @@ Each accessor is a view on the one stored object, so none can disagree with it.
 
 `RecordSpec(τ)` and the template `τ` denote the same space. The tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity (name, provenance, capabilities) is never dropped implicitly.
 
-A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, written out even for a single-field signature, so a function's field names are caller-chosen and meaningful. The output side accepts any value specification, so a function may declare a term result of any kind or a raw-value result, with a record output the common case. A term declaration names its kind by its class; a raw-value declaration types the value that the wrap boundary then places in a single-field `Record`, keyed by the function's name, so no field name is invented at the spec layer. The output side is unchecked — validity is callability alone — so nothing there is expressible but unsatisfiable, unlike an event declaration, which `DistributionSpec` checks and therefore keeps record-valued. Validity is callability alone: the value-layer specs stay callable-generic, and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to wrap a raw callable result into a `Function`. The two sides are independent, so a callable may map a space to itself or between two spaces.
+A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, written out even for a single-field signature, so a function's field names are caller-chosen and meaningful. The output side accepts any value specification, so a function may declare a term result of any kind or a raw-value result, with a record output the common case. A declaration fixes the output kind: `NumericArraySpec` produces a `NumericArray`, `OpaqueSpec` an `Opaque`, and each term spec its own tracked class. The output side is unchecked — validity is callability alone — so nothing there is expressible but unsatisfiable, unlike an event declaration, which `DistributionSpec` checks and therefore keeps record-valued. Validity is callability alone: the value-layer specs stay callable-generic, and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to wrap a raw callable result into a `Function`. The two sides are independent, so a callable may map a space to itself or between two spaces.
 
 ### Rationale
 
@@ -173,13 +177,13 @@ Storing every declaration as a spec, and the spec on the term itself, is `D7 –
 
 An `EventTemplate` is a `NamedTree` whose leaves are value specifications (II.2). It defines the *shape of one event*, such as a draw or a stored datum, and it is the *schema*: the structure that indexes a kind. It is never one of its own leaves.
 
-When every leaf is an `ArraySpec`, the template is fully numeric and construction auto-promotes it to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
+When every leaf is a `NumericArraySpec`, the template is fully numeric and construction auto-promotes it to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
 
 ```python
 class EventTemplate(NamedTree[ValueSpec]):
     def __init__(self, field_specs: Mapping[str, Any] | None = None, /,
                  **fields: ValueSpec | EventTemplate | tuple[int, ...] | None) -> None: ...
-    # sugar: a bare shape tuple means ArraySpec(shape) and None means OpaqueSpec();
+    # sugar: a bare shape tuple means NumericArraySpec(shape) and None means OpaqueSpec();
     # the positional mapping form accepts "/"-path keys and names that collide with keywords
 
     @classmethod
@@ -191,7 +195,7 @@ class EventTemplate(NamedTree[ValueSpec]):
     @property
     def free_dims(self) -> frozenset[str]: ...              # the unbound symbolic dimensions
     def with_dims(self, **sizes: int) -> EventTemplate: ... # bind them; a new template
-    def numeric_subset(self) -> NumericEventTemplate: ...   # remove non-ArraySpec leaves
+    def numeric_subset(self) -> NumericEventTemplate: ...   # remove non-NumericArraySpec leaves
 ```
 
 `NumericEventTemplate` further provides a flat (vectorized) layout of the leaves:
@@ -204,11 +208,11 @@ class NumericEventTemplate(EventTemplate):
     def vector_size(self) -> int: ...                          # total flat dimension; defined only when concrete
 ```
 
-**Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer. `ArraySpec(shape=("obs", "features"))` fixes the rank and gives each dimension an identity while deferring its size. Within one template a name refers to one dimension: fields `X: ("obs", "features")` and `coefficients: ("features",)` share the dimension `features`, an equality no pair of concrete integers can express. A template with any symbolic entry is **polymorphic**, with `is_concrete` false and `free_dims` listing the unbound names. Templates carry no scope object beyond the names themselves, so they serialize as plain data.
+**Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer. `NumericArraySpec(shape=("obs", "features"))` fixes the rank and gives each dimension an identity while deferring its size. Within one template a name refers to one dimension: fields `X: ("obs", "features")` and `coefficients: ("features",)` share the dimension `features`, an equality no pair of concrete integers can express. A template with any symbolic entry is **polymorphic**, with `is_concrete` false and `free_dims` listing the unbound names. Templates carry no scope object beyond the names themselves, so they serialize as plain data.
 
 Checking a value against a polymorphic template cannot be done leaf by leaf, because a symbolic name constrains several leaves at once. Validation therefore runs a single pass over all fields, resolving each name to one size: a name is bound the first time it is seen, every later occurrence must agree, and a disagreement raises. Bound names never rebind.
 
-The work splits accordingly. A leaf's `is_valid` checks its own rank and dtype, and nothing else — an `ArraySpec`'s `support` is descriptive metadata, unchecked. Sizes belong to the one pass, since only it sees every occurrence of a name.
+The work splits accordingly. A leaf's `is_valid` checks its own rank and dtype, and nothing else — a `NumericArraySpec`'s `support` is descriptive metadata, unchecked. Sizes belong to the one pass, since only it sees every occurrence of a name.
 
 **Every spec reports, substitutes, and binds its own dimensions.** `ValueSpec.free_dims` gives the names one spec declares, and a template's are the union over its fields. A term spec's schema therefore lies inside the scope: a name declared within a `DistributionSpec` is the same dimension as that name beside it, so it binds once and a disagreement raises. The outcome does not depend on the order the fields were declared in. Keeping all three with the spec is what reaches a spec the schema layer cannot name — a batch axis, declared one layer out — so every dimension a template reports is one some spec can bind.
 
@@ -303,6 +307,7 @@ class Batch[E](TrackedTerm):
     def __len__(self) -> int: ...                       # leading-axis size, batch_shape[0]
     def __iter__(self) -> Iterator[E | Self]: ...       # over the leading batch axis
     def __repr__(self) -> str: ...                      # the class, the name, and each level with its sizes
+    def raw(self) -> Any: ...                           # a view of the concrete backing storage
     def __getitem__(self, key: Any) -> Any: ...         # a position indexes the axes, a name the elements' fields
     def at_levels(self, /, **levels: int | slice | None | tuple[int | slice | None, ...]) -> E | Self: ...
     # index by named level (a view); unnamed levels kept whole, None means the whole axis (:)
@@ -310,9 +315,11 @@ class Batch[E](TrackedTerm):
 
 **Axis groups.** A batch's axes are partitioned into ordered **levels**. `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and positional `[]` address the leading **axis**, `batch_shape[0]`, rather than the leading level. The two coincide when the outermost level holds one axis: iterating `(N,)` of `(S,)` then walks the `N`, yielding each inner batch of `S` as a view. When the outermost level spans several axes, the leading axis is only the first of them, so indexing drops that axis and leaves the level in place, one axis shorter. Nesting needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store.
 
-**The batch's own type.** A batch stores a `BatchSpec` (II.2), which carries the element spec and the named multiplicity together; `element_spec`, `axis_groups`, and `level_names` are views on it. This keeps the storage rule reading the same way for a batch as for any other term — `spec` is the batch's *own* type, not its element's — which is what makes `OpaqueBatch` well typed even though an `OpaqueSpec` names no kind. It also mirrors the model, where a batch inhabits the *family* kind over its element's kind rather than the element kind itself.
+**The batch's own type.** A batch stores a `BatchSpec` (II.2), which carries the element spec and the named multiplicity together; `element_spec`, `axis_groups`, and `level_names` are views on it. This keeps the storage rule reading the same way for a batch as for any other term — `spec` is the batch's *own* type, not its element's — which is what makes `OpaqueBatch` well typed even though an `OpaqueSpec` accepts arbitrary Python objects. It also mirrors the model, where a batch inhabits the *family* kind over its element's kind rather than the element kind itself.
 
-**A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, exactly as an `ArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds — "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A declaration may be polymorphic; a live `Batch` may not, since it holds elements at positions, so construction refuses a spec with free dimensions and `batch_size` is undefined until they are bound.
+**Raw storage.** `raw()` returns a view of the concrete batch's backing storage, never another tracked wrapper and never a copy introduced merely to opt out of tracking. An array-backed batch returns its backing native array; `FunctionBatch` and `OpaqueBatch` return object arrays; and `RecordBatch` returns a nested mapping whose leaves are its columns' raw storage views. Other concrete batches, including distribution batches, define their own storage representation and return that representation through the same contract.
+
+**A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, exactly as a `NumericArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds — "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A declaration may be polymorphic; a live `Batch` may not, since it holds elements at positions, so construction refuses a spec with free dimensions and `batch_size` is undefined until they are bound.
 
 **Level names.** Each level carries a name, listed in order by `level_names`, and names are unique within a batch. An operation that mints a level takes the name to give it; a name already in use raises, as does a rename onto one, so the caller supplies another. A suffixing rule was considered and rejected: `draw2` would state the order the levels were added in, a fact about the computation path rather than about meaning, and levels are named precisely so that operands align by meaning. `with_level_names` repins names on a shallow copy, shapes and elements unchanged, re-reading its own derived name under the new ones so that it and any view taken from it agree. Renaming a *view* is refused where the new name belongs to a level the view derives its name from but no longer carries, since the derived name would then be ambiguous; `with_name` re-roots it instead. Names must be identifiers, since `at_levels` addresses a level by keyword. Operations align batched operands by level name — two levels meant to correspond under different names are lined up by renaming one — and level names are independent of the field names within an element.
 
@@ -324,7 +331,7 @@ posterior.at_levels(chain=0, draw=7).name   # "posterior[chain=0, draw=7]"  — 
 posterior.at_levels(draw=slice(1, 3)).name  # "posterior[draw=1:3]"         — both levels kept
 ```
 
-The derived name is marked `name_is_auto`, and it states what was selected rather than how it was reached: levels selected whole are left out, so selecting all of a batch derives the batch's own name, and the levels that do appear are listed in the batch's own order rather than the order they were indexed in. Two routes to one selection therefore read alike, and two different selections never do. Lineage needs no node of its own, since selecting computes nothing — a view carries the lineage of the batch it came out of, and which position it was is already stated by the name. Storage matters at one point only, and there it governs name and lineage together. A batch that *materializes* an element, as a row of columnar storage that does not exist until it is built, gives that element the derived name and its own lineage. A batch that *stores* its elements hands the stored object back untouched, under the name and lineage it already carries: renaming it would mean returning a copy, and a batch that did not produce an object cannot truthfully claim its lineage. A *sub-batch* is derived either way, being the batch's own view rather than an object a caller put there. Elements that are bare values have no identity to carry, so a batch of them yields bare values.
+The derived name is marked `name_is_auto`, and it states what was selected rather than how it was reached: levels selected whole are left out, so selecting all of a batch derives the batch's own name, and the levels that do appear are listed in the batch's own order rather than the order they were indexed in. Two routes to one selection therefore read alike, and two different selections never do. Lineage needs no node of its own, since selecting computes nothing — a view carries the lineage of the batch it came out of, and which position it was is already stated by the name. Storage matters at one point only, and there it governs identity and lineage together. If the selected position stores a tracked term, indexing returns that same object with its existing identity. If it stores only a raw value, indexing materializes the value's tracked class under the derived selection identity and the batch's lineage. A *sub-batch* is a shared-storage view with its own derived identity either way.
 
 **Selecting by level.** `at_levels(**levels)` indexes a batch along its named levels and returns a view, the by-name counterpart of positional `[]`. It is the level analogue of `NamedTree.at_path` (II.1), and shares its shape: a path addresses a position and returns a leaf or a subtree, while named level indexers address positions and return an element or a sub-batch. The name is neither `select`, the field-splatting selector on `Record` (III.2) that a batch of records also carries, nor a name promising elements, which it returns only when the selection indexes down to one. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order, where an integer drops its axis and a slice or `None` keeps it, `None` meaning the whole axis as `:` does. It means that here and only here: a keyword cannot take a `:` literal, so `None` is the spelling this form needs, while positional `[]` writes `:` and refuses `None`, which an unset argument would otherwise leave standing for *all of it*. A level spanning several axes takes one indexer per axis, and a shorter indexer fills the leading axes and leaves the rest whole, so a scalar `draw=i` on a two-axis `draw` level means `draw=(i, None)`. A level whose axes are all dropped is removed, so selecting a single-axis level by an integer — or every axis of a multi-axis level — yields the inner batch or element just as positional indexing and iteration do, while a level left unnamed is kept whole. This parallels xarray's `isel` in indexing by name and by position, with `level_names` in the role of xarray dimension names, and there is no label-based counterpart, since batch levels carry no coordinate labels. The tuple form departs from it: a tuple here addresses a level's axes in order, where `isel` reads one as several positions of a single dimension.
 

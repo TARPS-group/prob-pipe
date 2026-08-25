@@ -18,7 +18,7 @@ import numpy as np
 import pytest
 
 from probpipe import SupportsLogProb, log_prob
-from probpipe.core.event_template import ArraySpec
+from probpipe.core.event_template import NumericArraySpec
 from probpipe.modeling._stan import StanModel, _param_blocks, _UnconstrainedStanView
 
 # ---------------------------------------------------------------------------
@@ -437,8 +437,8 @@ class TestUnconstrainedStanView:
         view = structured_model.as_unconstrained_distribution()
         assert view.fields == ("mu", "theta", "L", "p")
         # The simplex is unconstrained in (n-1) free coordinates.
-        assert structured_model.event_template["p"] == ArraySpec((3,))
-        assert view.event_template["p"] == ArraySpec((2,))
+        assert structured_model.event_template["p"] == NumericArraySpec((3,))
+        assert view.event_template["p"] == NumericArraySpec((2,))
 
     def test_log_prob_finite_and_unnormalized_agrees(self, structured_model):
         view = structured_model.as_unconstrained_distribution()
