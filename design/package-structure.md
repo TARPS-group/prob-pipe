@@ -24,13 +24,13 @@ probpipe/
 ├── __init__.py                # the curated public API
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.1)
-│   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
-│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec, InputSpec, OutputSpec (II.2), Numeric (II.3)
+│   ├── _constraints.py        #   Constraint and the constraint factories (II.4)
+│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.2), InputSpec, OutputSpec (II.3), Numeric, NumericSpec (II.4)
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.4)
-│   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.4); Annotated (II.5)
-│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.6)
-│   ├── _dispatch.py           #   dispatch methods and registries (II.7)
-│   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
+│   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.5); Annotated (II.6)
+│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.7)
+│   ├── _dispatch.py           #   dispatch methods and registries (II.8)
+│   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.8)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.5)
 │   ├── _numeric_array.py      #   NumericArray (III.1)
@@ -141,7 +141,7 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
-| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_constraints.py` (II.2–II.3) |
+| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_constraints.py` (II.2–II.4) |
 
 ### Open points
 

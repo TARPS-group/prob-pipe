@@ -17,7 +17,7 @@ Parts III and V fixed what a distribution *is* and what the operations do to one
 
 ### Contract
 
-A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its `event_spec` from its parameters, including shape, dtype, and the support `Constraint`, and auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists.
+A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its `event_spec` from its parameters, including shape, dtype, and the support `Constraint`, and auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists, and its `raw()` is the wrapped backend distribution — the family-defined rule of III.7.
 
 ```python
 class TFPDistribution(Distribution[Array]):
