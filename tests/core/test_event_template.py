@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 
 from probpipe import Function, NumericRecord, Record
-from probpipe.core._batch import BatchSpec, _ranks_of
+from probpipe.core._batch import BatchSpec
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._opaque import OpaqueSpec
 from probpipe.core._opaque_batch import OpaqueBatch
@@ -2019,7 +2019,7 @@ class TestMultiplicityBindsFromAValue:
         )
 
     @staticmethod
-    def _grid(shape, level_names="grid", axis_groups=None):
+    def _grid(shape, level_names="grid", axes_per_level=None):
         """A batch whose store has *shape*, for the multi-axis and multi-level cases."""
         store = np.empty(shape, dtype=object)
         for index in np.ndindex(shape):
@@ -2028,7 +2028,7 @@ class TestMultiplicityBindsFromAValue:
             "batch",
             store,
             level_names,
-            axes_per_level=_ranks_of(axis_groups) if axis_groups else (len(shape),),
+            axes_per_level=axes_per_level or (len(shape),),
         )
 
     @staticmethod
@@ -2153,7 +2153,7 @@ class TestMultiplicityBindsFromAValue:
 
         record = Record(
             "r",
-            b=self._grid((2, 4), ["chain", "draw"], [(2,), (4,)]),
+            b=self._grid((2, 4), ["chain", "draw"], (1, 1)),
             event_template=declared,
         )
 

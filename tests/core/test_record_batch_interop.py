@@ -33,7 +33,6 @@ from probpipe import (
     Record,
     function,
 )
-from probpipe.core._batch import _ranks_of
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core.event_template import NumericEventTemplate
@@ -444,13 +443,13 @@ class TestBatchFingerprinting:
     """A batch's multiplicity is part of its type, so it is hashed."""
 
     @staticmethod
-    def _one(level: str = "draw", groups=((3,),)):
+    def _one(level: str = "draw", axes_per_level=(1,)):
         return NumericRecordBatch(
             "batch",
             {"x": jnp.arange(3.0)},
             (level,),
             element_spec=EventTemplate(x=()),
-            axes_per_level=_ranks_of(groups),
+            axes_per_level=axes_per_level,
         )
 
     def test_a_multi_field_batch_fingerprints(self):

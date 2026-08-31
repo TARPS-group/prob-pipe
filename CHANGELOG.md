@@ -33,6 +33,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   levels before the counts are known. A live batch holds elements at positions,
   so it cannot.
 
+  `axes_per_level` reads its counts through `operator.index`, as an axis *size*
+  already did, so a count computed from an array's rank arrives as a numpy integer
+  without conversion. A `bool` is refused first, since it satisfies `operator.index`
+  as 0 or 1 and is not a thing anyone means to write as a level count.
+
 - **`sample(law, sample_shape=...)` mints the `sample` level for every kind of
   draw (#398).** The boundary assumed a law that assembles its own draws also
   names what they range over. An empirical did not: numeric atoms came back as one
@@ -150,7 +155,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `[]` / `()` an `OpaqueBatch` of `batch_shape == (0,)` — no element can say
   what kind it holds, and every element spec holds vacuously of none.
 
-  `Record()`, `EventTemplate()`, and `OpaqueBatch([], level, name=...)` are legal as a
+  `Record()`, `EventTemplate()`, and `OpaqueBatch(name, [], level)` are legal as a
   result. A *batch* of empty records is not: a batch reads its multiplicity off
   a column, and a zero-field element supplies none, so `RecordBatch` still
   requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:

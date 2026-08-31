@@ -274,16 +274,6 @@ class TestConstruction:
         assert batch.element_spec is batch.spec.element_spec
         assert batch.event_template is batch.element_spec.event_template
 
-    def test_a_name_is_required(self):
-        """No class-name fallback: naming a batch after its class names every
-        batch in a pipeline alike."""
-        with pytest.raises(TypeError, match="name"):
-            NumericRecordBatch(
-                {"outer/a": jnp.zeros(3), "outer/b": jnp.zeros(3), "m": jnp.zeros((3, 2))},
-                "draw",
-                element_spec=NESTED,
-            )
-
     def test_a_given_name_is_not_auto(self):
         assert not nested_batch(name="post").name_is_auto
 
@@ -801,8 +791,12 @@ class TestStructuralTransforms:
         with pytest.raises(ValueError, match="not both"):
             nested_batch().replace({"m": jnp.ones((3, 2))}, m=jnp.zeros((3, 2)))
 
-    def test_a_transform_keeps_a_user_given_name_and_re_derives_an_auto_one(self):
+    def test_a_transform_carries_the_name_and_whether_it_was_given(self):
+        """The transform restates both, rather than deriving a fresh name: an
+        auto name stays auto and a caller's stays the caller's."""
         assert nested_batch(name="post").without("m").name == "post"
+        assert not nested_batch(name="post").without("m").name_is_auto
+        assert nested_batch().without("m").name == "batch"
         assert nested_batch().without("m").name_is_auto
 
 

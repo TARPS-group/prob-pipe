@@ -795,15 +795,10 @@ class TestNumericArrayIsAPyTree:
 
 
 class TestABatchIsNamed:
-    """A batch's name is required, as a `Record`'s and an `Opaque`'s are."""
+    """A batch's name is required, as a `Record`'s and an `Opaque`'s are.
 
-    def test_a_name_is_required(self):
-        with pytest.raises(TypeError, match="name"):
-            NumericArrayBatch(
-                jnp.arange(12.0).reshape(4, 3),
-                "draw",
-                element_spec=NumericArraySpec(shape=(3,), dtype=jnp.float32),
-            )
+    The signature itself — the name first, positional-only, with no default behind it — is asserted in `test_batch.py`'s `TestTheConstructorSignatureContract`, across all six classes that share the rule.
+    """
 
     def test_a_given_name_is_marked_user_given(self):
         batch = _batch(name="posterior")

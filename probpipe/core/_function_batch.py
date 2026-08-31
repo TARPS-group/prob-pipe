@@ -53,9 +53,10 @@ class FunctionBatch(_ObjectBatch[Callable]):
         something other than its elements — or is not iterable at all.
     ValueError
         If ``elements`` is a zero-dimensional array (one object, with no batch
-        axis to count along); if ``axis_groups`` does not tile the shape the elements are
-        stored in; or if ``axis_groups`` is omitted and the number of level names
-        does not match the number of axes.
+        axis to count along); if ``axes_per_level`` does not account for every axis
+        the elements are stored in, or gives a count that is not one per level; or
+        if it is omitted and the number of level names does not match the number
+        of axes.
 
     Notes
     -----

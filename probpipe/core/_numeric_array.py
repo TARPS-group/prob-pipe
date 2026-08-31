@@ -185,7 +185,7 @@ class NumericArray(TrackedTerm, Annotated):
         return len(self._value)
 
     def __repr__(self) -> str:
-        return f"NumericArray({self._value!r}, name={self.name!r})"
+        return f"NumericArray({self.name!r}, {self._value!r})"
 
     # -- the array surface --------------------------------------------------
 

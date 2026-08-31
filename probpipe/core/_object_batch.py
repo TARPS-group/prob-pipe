@@ -68,9 +68,9 @@ class _ObjectBatch[E](Batch[E]):
         iterable at all, or if an ndarray of elements is not ``dtype=object``.
     ValueError
         If ``elements`` is a zero-dimensional array (one object, with no batch
-        axis to count along), if ``axis_groups`` does not tile the stored shape, or if
-        ``axis_groups`` is omitted and the number of names does not match the
-        number of axes.
+        axis to count along), if ``axes_per_level`` does not account for every
+        stored axis or gives a count that is not one per level, or if it is omitted
+        and the number of names does not match the number of axes.
 
     Notes
     -----

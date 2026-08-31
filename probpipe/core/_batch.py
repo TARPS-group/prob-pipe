@@ -1093,14 +1093,25 @@ def _axis_groups_for(
 def _axis_count(count: Any) -> int:
     """One entry of *axes_per_level*: how many axes a level holds.
 
+    Read through ``operator.index``, as :func:`_axis_size` reads a size, so a
+    ``numpy`` or other integer-like count is accepted — a caller who computed one
+    from an array's rank should not have to convert it back. A ``bool`` is refused
+    first: it satisfies ``operator.index`` as 0 or 1, and a level count is not a
+    thing anyone means to write as ``True``.
+
     A level holds at least one axis, so zero is refused here rather than left to
     produce a level that indexes nothing.
     """
-    if isinstance(count, bool) or not isinstance(count, int):
+    if isinstance(count, bool):
         raise TypeError(
-            f"axes_per_level entries are integer axis counts; got {count!r} "
-            f"({type(count).__name__})"
+            f"axes_per_level entries are integer axis counts, and a bool is not one; got {count!r}"
         )
+    try:
+        count = operator.index(count)
+    except TypeError:
+        raise TypeError(
+            f"axes_per_level entries are integer axis counts; got {type(count).__name__}: {count!r}"
+        ) from None
     if count < 1:
         raise ValueError(f"every level holds at least one axis; got axes_per_level entry {count}")
     return count

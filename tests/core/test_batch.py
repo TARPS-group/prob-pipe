@@ -10,13 +10,22 @@ named key; and `_ViewBatch`, which copies nothing and reads one shared store.
 from __future__ import annotations
 
 import copy
+import inspect
 import itertools
 import pickle
 from typing import get_type_hints
 
+import jax.numpy as jnp
+import numpy as np
 import pytest
 
-from probpipe import EventTemplate, NumericArraySpec, OpaqueSpec, TermSpec
+from probpipe import (
+    EventTemplate,
+    NumericArraySpec,
+    NumericRecordBatch,
+    OpaqueSpec,
+    TermSpec,
+)
 from probpipe.core._batch import Batch, BatchSpec
 from probpipe.core._fingerprint import fingerprint
 from probpipe.core.provenance import Provenance
@@ -1688,3 +1697,163 @@ class TestSymbolicMultiplicity:
         declared.bind_dims_from_spec(actual, bindings, "path")
 
         assert bindings == {"n": 3, "d": 7}
+
+
+# ---------------------------------------------------------------------------
+# The constructor signature contract
+# ---------------------------------------------------------------------------
+
+#: The six classes whose constructors take the name first. Five are batches;
+#: ``NumericArray`` is the single value that shares the rule, since it too has no
+#: fields to describe it and so nothing to derive a name from.
+NAME_FIRST = [
+    "NumericArray",
+    "NumericArrayBatch",
+    "RecordBatch",
+    "NumericRecordBatch",
+    "OpaqueBatch",
+    "FunctionBatch",
+]
+
+
+def _args_for(kind: str, *, shape: tuple[int, ...], levels):
+    """The positional data and the spec keyword *kind* is built from."""
+    if kind == "NumericArray":
+        return (jnp.zeros(shape),), {}
+    if kind in {"OpaqueBatch", "FunctionBatch"}:
+        store = np.empty(shape, dtype=object)
+        store[...] = (lambda: 1) if kind == "FunctionBatch" else "x"
+        return (store, levels), {}
+    if kind == "NumericArrayBatch":
+        return (jnp.zeros(shape), levels), {"element_spec": NumericArraySpec(())}
+    return ({"x": jnp.zeros(shape)}, levels), {"element_spec": EventTemplate(x=())}
+
+
+class TestTheConstructorSignatureContract:
+    """Read from the signature, not from a message the interpreter produced.
+
+    The tests this replaces asked ``pytest.raises(match="name")`` of a call in the
+    *old* argument order. Such a call fails on the missing ``level_names``, and
+    ``name`` is a substring of ``level_names``, so they passed without ever
+    exercising the rule. A signature cannot pass for that reason.
+    """
+
+    @pytest.fixture(params=NAME_FIRST)
+    def kind(self, request):
+        return request.param
+
+    @pytest.fixture
+    def cls(self, kind):
+        import probpipe
+
+        return getattr(probpipe, kind)
+
+    @staticmethod
+    def _own_params(cls):
+        return list(inspect.signature(cls.__init__).parameters.values())[1:]
+
+    def test_the_name_is_first_positional_only_and_has_no_default(self, cls):
+        """A default is what the whole change removes, so its absence is asserted
+        rather than inferred from a refusal."""
+        first = self._own_params(cls)[0]
+
+        assert first.name == "name"
+        assert first.kind is inspect.Parameter.POSITIONAL_ONLY
+        assert first.default is inspect.Parameter.empty
+
+    def test_the_data_is_second_positional_only_and_has_no_default(self, cls):
+        second = self._own_params(cls)[1]
+
+        assert second.kind is inspect.Parameter.POSITIONAL_ONLY
+        assert second.default is inspect.Parameter.empty
+
+    def test_the_name_cannot_be_passed_by_keyword(self, cls, kind):
+        args, kwargs = _args_for(kind, shape=(2,), levels="draw")
+
+        with pytest.raises(TypeError, match="positional-only"):
+            cls(*args, name="b", **kwargs)
+
+    def test_the_removed_axis_groups_keyword_is_refused(self, cls, kind):
+        if kind == "NumericArray":
+            pytest.skip("carries no levels, so it never took a grouping")
+        args, kwargs = _args_for(kind, shape=(2,), levels="draw")
+
+        with pytest.raises(TypeError, match="axis_groups"):
+            cls("b", *args, axis_groups=((2,),), **kwargs)
+
+    def test_a_level_may_hold_several_axes(self, cls, kind):
+        """The partition is the argument; the sizes come back off the data."""
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
+
+        batch = cls("b", *args, axes_per_level=(2,), **kwargs)
+
+        assert (batch.level_names, batch.axis_groups) == (("draw",), ((2, 3),))
+
+    @pytest.mark.parametrize(
+        ("count", "exc", "match"),
+        [
+            (0, ValueError, "at least one axis"),
+            (-1, ValueError, "at least one axis"),
+            (True, TypeError, "a bool is not one"),
+            (2.0, TypeError, "integer axis counts"),
+            ("2", TypeError, "integer axis counts"),
+        ],
+        ids=["zero", "negative", "bool", "float", "str"],
+    )
+    def test_an_axis_count_that_is_not_a_count_is_refused(self, cls, kind, count, exc, match):
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
+
+        with pytest.raises(exc, match=match):
+            cls("b", *args, axes_per_level=(count,), **kwargs)
+
+    @pytest.mark.parametrize("count", [np.int64(2), np.uint8(2)], ids=["int64", "uint8"])
+    def test_an_integer_like_count_is_accepted(self, cls, kind, count):
+        """Read through ``operator.index``, as an axis *size* already is: a count
+        computed from an array's rank arrives as a numpy integer."""
+        if kind == "NumericArray":
+            pytest.skip("carries no levels")
+        args, kwargs = _args_for(kind, shape=(2, 3), levels="draw")
+
+        batch = cls("b", *args, axes_per_level=(count,), **kwargs)
+
+        assert batch.axis_groups == ((2, 3),)
+
+
+class TestFromVectorTakesThePartitionToo:
+    """``from_vector`` names the levels, so it takes the same partition."""
+
+    @staticmethod
+    def _vec(batch_shape):
+        return jnp.zeros((*batch_shape, 2))
+
+    def test_one_name_takes_every_batch_axis(self):
+        rebuilt = NumericRecordBatch.from_vector(
+            "post", EventTemplate(x=(2,)), self._vec((4, 5)), level_names="sample"
+        )
+
+        assert (rebuilt.batch_shape, rebuilt.level_names) == ((4, 5), ("sample",))
+        assert rebuilt.axis_groups == ((4, 5),)
+
+    def test_several_names_take_one_axis_each(self):
+        rebuilt = NumericRecordBatch.from_vector(
+            "post", EventTemplate(x=(2,)), self._vec((4, 5)), level_names=("chain", "draw")
+        )
+
+        assert rebuilt.axis_groups == ((4,), (5,))
+
+    def test_an_explicit_partition_groups_the_axes_it_names(self):
+        """Three axes, two levels: the first level holds two of them."""
+        rebuilt = NumericRecordBatch.from_vector(
+            "post",
+            EventTemplate(x=(2,)),
+            self._vec((2, 3, 4)),
+            level_names=("grid", "draw"),
+            axes_per_level=(2, 1),
+        )
+
+        assert (rebuilt.batch_shape, rebuilt.level_names) == ((2, 3, 4), ("grid", "draw"))
+        assert rebuilt.axis_groups == ((2, 3), (4,))

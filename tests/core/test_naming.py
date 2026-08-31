@@ -165,26 +165,6 @@ class TestWhichKindsRequireAName:
             True,
         )
 
-    @pytest.mark.parametrize(
-        "build",
-        [
-            pytest.param(
-                lambda: RecordBatch(COLUMNS, "lvl", element_spec=ELEMENT), id="RecordBatch"
-            ),
-            pytest.param(
-                lambda: NumericRecordBatch(COLUMNS, "lvl", element_spec=ELEMENT),
-                id="NumericRecordBatch",
-            ),
-            pytest.param(lambda: OpaqueBatch([1, 2], "lvl"), id="OpaqueBatch"),
-            pytest.param(lambda: FunctionBatch([lambda: 1], "lvl"), id="FunctionBatch"),
-        ],
-    )
-    def test_every_batch_requires_a_name(self, build):
-        """No class-name fallback: a batch is what an operation hands back, and
-        naming it after its class names every batch in a pipeline alike."""
-        with pytest.raises(TypeError, match="name"):
-            build()
-
 
 class TestADerivedNameSaysSo:
     """A view names itself after the position it selected, and marks it auto."""
@@ -492,24 +472,12 @@ class TestNoKindInventsAName:
     of them read `recordbatch`, `opaquebatch`, `numericrecordbatch` — names that
     say what the object *is*, which its type already says, and nothing about
     which one it is.
-    """
 
-    @pytest.mark.parametrize(
-        "build",
-        [
-            pytest.param(NumericArray, id="NumericArray"),
-            pytest.param(RecordBatch, id="RecordBatch"),
-            pytest.param(NumericRecordBatch, id="NumericRecordBatch"),
-            pytest.param(NumericArrayBatch, id="NumericArrayBatch"),
-            pytest.param(OpaqueBatch, id="OpaqueBatch"),
-            pytest.param(FunctionBatch, id="FunctionBatch"),
-        ],
-    )
-    def test_a_name_is_required(self, build):
-        """The name is the first argument at every kind, and there is no default
-        behind it, so the refusal names it."""
-        with pytest.raises(TypeError, match="name"):
-            build()
+    That every constructor takes the name first, positional-only and with no
+    default behind it, is asserted from the signatures themselves in
+    `test_batch.py`'s `TestTheConstructorSignatureContract`. What is left here is
+    the other half of the rule: where a *derived* name comes from.
+    """
 
     def test_stack_derives_its_name_from_what_it_stacks(self):
         """Derived from real content, so no call site has to invent one: a batch

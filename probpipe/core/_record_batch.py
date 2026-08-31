@@ -120,8 +120,8 @@ class RecordBatch(Batch[Record]):
         *element_spec*; if a column's trailing axes are not the event shape its
         field declares; if two columns disagree on the batch axes; if a field
         declares a symbolic dimension, which gives its event shape no size to
-        split by; if a column leaves no batch axis; or if *axis_groups* does not
-        tile ``batch_shape``.
+        split by; if a column leaves no batch axis; or if *axes_per_level* does not
+        account for every batch axis, or gives a count that is not one per level.
 
     Notes
     -----

@@ -78,7 +78,8 @@ class NumericArrayBatch(Batch[NumericArray]):
         If *values* has fewer axes than the event shape it must end with, which
         would leave no batch axis; if its trailing axes are not that event
         shape; if a declared dimension is symbolic, which gives the event shape
-        no size to split by; or if *axis_groups* does not tile ``batch_shape``.
+        no size to split by; or if *axes_per_level* does not account for every
+        batch axis, or gives a count that is not one per level.
 
     Notes
     -----

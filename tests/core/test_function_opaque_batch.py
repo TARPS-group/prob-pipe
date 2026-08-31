@@ -29,7 +29,6 @@ from probpipe import (
     TermSpec,
     TrackedTerm,
 )
-from probpipe.core._batch import _ranks_of
 from probpipe.core.provenance import Provenance
 
 
@@ -100,7 +99,7 @@ class TestConstruction:
             "batch",
             store,
             "draw",
-            axes_per_level=_ranks_of([(2, 3)]),
+            axes_per_level=(2,),
         )
 
         assert batch.axis_groups == ((2, 3),)
@@ -109,11 +108,6 @@ class TestConstruction:
 
     def test_a_single_string_names_a_single_level(self, labels):
         assert labels.level_names == ("site",)
-
-    def test_a_name_is_required(self):
-        """No class-name fallback, as `NumericArrayBatch` already required."""
-        with pytest.raises(TypeError, match="name"):
-            OpaqueBatch(["a"], "site")
 
     def test_a_given_name_is_not_auto(self, labels):
         assert labels.name == "s"
