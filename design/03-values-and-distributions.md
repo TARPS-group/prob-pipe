@@ -221,9 +221,13 @@ names the single level it introduces.
 class RecordBatch(Batch[Record]):
     @classmethod
     def stack(cls, records: list[Record], *, level_name: str,
-              element_spec: RecordSpec | EventTemplate | None = None) -> RecordBatch: ...
+              element_spec: RecordSpec | EventTemplate | None = None,
+              name: str | None = None) -> RecordBatch: ...
     # one level of (len(records),); the element spec is taken from the first record
-    # when omitted, and every record's fields must be exactly its fields
+    # when omitted, and every record's fields must be exactly its fields.
+    # `name` is the one place a batch's name may be omitted: it is then derived
+    # from the first record's, and marked auto -- a batch of `draw` records is
+    # about `draw`, so no caller has to invent a name for it.
 ```
 
 ### Rationale
