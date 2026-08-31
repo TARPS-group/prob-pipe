@@ -183,11 +183,11 @@ def test_a_record_batch_iterates_leading_axis_views():
     from probpipe.core.event_template import EventTemplate
 
     batch = RecordBatch(
+        "batch",
         {"a": jnp.zeros((5,)), "b": jnp.zeros((5,))},
         level_names="draw",
-        axis_groups=((5,),),
+        axes_per_level=(1,),
         element_spec=EventTemplate(a=(), b=()),
-        name="batch",
     )
     rows = list(iter(batch))
     assert len(rows) == 5
@@ -198,11 +198,11 @@ def test_a_numeric_record_batch_iterates_leading_axis_views():
     from probpipe.core.event_template import NumericEventTemplate
 
     batch = NumericRecordBatch(
+        "batch",
         {"a": jnp.zeros((4,)), "b": jnp.zeros((4,))},
         level_names="draw",
-        axis_groups=((4,),),
+        axes_per_level=(1,),
         element_spec=NumericEventTemplate(a=(), b=()),
-        name="batch",
     )
     rows = list(iter(batch))
     assert len(rows) == 4

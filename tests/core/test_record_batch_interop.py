@@ -33,6 +33,7 @@ from probpipe import (
     Record,
     function,
 )
+from probpipe.core._batch import _ranks_of
 from probpipe.core._numeric_record_batch import NumericRecordBatch
 from probpipe.core._record_batch import RecordBatch
 from probpipe.core.event_template import NumericEventTemplate
@@ -43,21 +44,21 @@ ELEMENT = NumericEventTemplate(a=(), b=(2,))
 def _draws(n: int = 4, *, name: str = "draws") -> NumericRecordBatch:
     """*n* draws of a two-field numeric element, over a single ``draw`` level."""
     return NumericRecordBatch(
+        name,
         {"a": jnp.arange(n, dtype=float), "b": jnp.ones((n, 2))},
         "draw",
         element_spec=ELEMENT,
-        axis_groups=((n,),),
-        name=name,
+        axes_per_level=(1,),
     )
 
 
 def _one_field(n: int = 4, *, name: str = "draws") -> NumericRecordBatch:
     return NumericRecordBatch(
+        name,
         {"x": jnp.arange(n, dtype=float)},
         "draw",
         element_spec=NumericEventTemplate(x=()),
-        axis_groups=((n,),),
-        name=name,
+        axes_per_level=(1,),
     )
 
 
@@ -143,11 +144,11 @@ class TestFieldExtraction:
             name="joint",
         )
         batch = NumericRecordBatch(
+            "batch",
             {"a": jnp.arange(4.0), "b": jnp.ones(4)},
             "draw",
             element_spec=NumericEventTemplate(a=(), b=()),
-            axis_groups=((4,),),
-            name="batch",
+            axes_per_level=(1,),
         )
 
         assert np.allclose(joint["a"]._extract(batch), batch["a"])
@@ -208,11 +209,11 @@ class TestDesignCoercion:
 
         batch = _one_field(4).merge(
             NumericRecordBatch(
+                "batch",
                 {"y": jnp.ones(4)},
                 "draw",
                 element_spec=NumericEventTemplate(y=()),
-                axis_groups=((4,),),
-                name="batch",
+                axes_per_level=(1,),
             )
         )
 
@@ -238,11 +239,11 @@ class TestBroadcastComponents:
         from probpipe.core._broadcast_distributions import _take_rows
 
         batch = NumericRecordBatch(
+            "batch",
             {"a": jnp.zeros((5, 2))},
             "draw",
             element_spec=NumericEventTemplate(a=()),
-            axis_groups=((5, 2),),
-            name="batch",
+            axes_per_level=(2,),
         )
 
         taken = _take_rows(batch, jnp.array([1, 3]))
@@ -316,10 +317,10 @@ class TestSiblingViewsZipThroughACall:
         share its level — so a call over both zips rows rather than forming the
         (n, n) product a per-object grouping would."""
         batch = NumericRecordBatch(
+            "batch",
             {"x": jnp.arange(3.0), "y": jnp.arange(3.0) * 10},
             "draw",
             element_spec=EventTemplate(x=(), y=()),
-            name="batch",
         )
         views = batch.select_all()
 
@@ -341,13 +342,13 @@ class TestOpaqueColumnsAreRearrangedRaw:
     @staticmethod
     def _mixed():
         return RecordBatch(
+            "batch",
             {
                 "tag": np.array(["a", "b", "c"], dtype=object),
                 "x": jnp.arange(3.0),
             },
             "draw",
             element_spec=EventTemplate(tag=None, x=()),
-            name="batch",
         )
 
     def test_presented_and_raw_columns_differ_for_an_opaque_field(self):
@@ -382,10 +383,10 @@ class TestRetypingADeclaredOutputKeepsColumnsWithTheirKeys:
         from probpipe.core._workflow_result import _copy_result_term
 
         batch = NumericRecordBatch(
+            "batch",
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
             "draw",
             element_spec=EventTemplate(a=(), b=()),
-            name="batch",
         )
 
         retyped = _copy_result_term(batch, output_template=EventTemplate(b=(), a=()))
@@ -403,11 +404,11 @@ class TestATransformCannotAddAnUnnamedLevel:
 
         def body(x):
             return NumericRecordBatch(
+                "batch",
                 {"s": x + jnp.zeros(2)},
                 "inner",
                 element_spec=EventTemplate(s=()),
-                axis_groups=((2,),),
-                name="batch",
+                axes_per_level=(1,),
             )
 
         with pytest.raises(ValueError, match="An added axis belongs to no level"):
@@ -418,18 +419,21 @@ class TestATransformCannotAddAnUnnamedLevel:
         dropped one is refused because no shape says which level went. Removing
         every axis is the case that works, and it yields a ``Record``."""
         batch = NumericRecordBatch(
+            "batch",
             {"s": jnp.zeros((3, 2))},
             ("outer", "inner"),
             element_spec=EventTemplate(s=()),
-            axis_groups=((3,), (2,)),
-            name="batch",
+            axes_per_level=(1, 1),
         )
 
         with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
             jax.vmap(lambda b: jnp.zeros(()))(batch)
 
         single = NumericRecordBatch(
-            {"s": jnp.zeros(3)}, "outer", element_spec=EventTemplate(s=()), name="batch"
+            "batch",
+            {"s": jnp.zeros(3)},
+            "outer",
+            element_spec=EventTemplate(s=()),
         )
         seen: list[Any] = []
         jax.vmap(lambda b: seen.append(type(b).__name__) or jnp.zeros(()))(single)
@@ -442,21 +446,21 @@ class TestBatchFingerprinting:
     @staticmethod
     def _one(level: str = "draw", groups=((3,),)):
         return NumericRecordBatch(
+            "batch",
             {"x": jnp.arange(3.0)},
             (level,),
             element_spec=EventTemplate(x=()),
-            axis_groups=groups,
-            name="batch",
+            axes_per_level=_ranks_of(groups),
         )
 
     def test_a_multi_field_batch_fingerprints(self):
         from probpipe.core._fingerprint import fingerprint
 
         batch = NumericRecordBatch(
+            "batch",
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0)},
             "draw",
             element_spec=EventTemplate(a=(), b=()),
-            name="batch",
         )
 
         assert isinstance(fingerprint(batch), str)
@@ -476,10 +480,10 @@ class TestBatchFingerprinting:
 
         def build():
             return NumericRecordBatch(
+                "batch",
                 {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
                 "draw",
                 element_spec=EventTemplate(a=(), b=()),
-                name="batch",
             )
 
         assert fingerprint(build()) == fingerprint(build())
@@ -488,16 +492,16 @@ class TestBatchFingerprinting:
         from probpipe.core._fingerprint import fingerprint
 
         ab = NumericRecordBatch(
+            "batch",
             {"a": jnp.arange(3.0), "b": jnp.arange(3.0) * 10},
             "draw",
             element_spec=EventTemplate(a=(), b=()),
-            name="batch",
         )
         ba = NumericRecordBatch(
+            "batch",
             {"a": jnp.arange(3.0) * 10, "b": jnp.arange(3.0)},
             "draw",
             element_spec=EventTemplate(a=(), b=()),
-            name="batch",
         )
 
         assert fingerprint(ab) != fingerprint(ba)
@@ -506,18 +510,18 @@ class TestBatchFingerprinting:
         from probpipe.core._fingerprint import fingerprint
 
         split = NumericRecordBatch(
+            "batch",
             {"x": jnp.zeros((2, 3))},
             ("a", "b"),
             element_spec=EventTemplate(x=()),
-            axis_groups=((2,), (3,)),
-            name="batch",
+            axes_per_level=(1, 1),
         )
         joined = NumericRecordBatch(
+            "batch",
             {"x": jnp.zeros((2, 3))},
             "a",
             element_spec=EventTemplate(x=()),
-            axis_groups=((2, 3),),
-            name="batch",
+            axes_per_level=(2,),
         )
 
         assert fingerprint(split) != fingerprint(joined)
@@ -529,11 +533,11 @@ class TestMultiLevelSweeps:
         axis; a flat index would read the leading axis alone and run off its
         end at the third cell."""
         grid = NumericRecordBatch(
+            "batch",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
             element_spec=EventTemplate(x=()),
-            axis_groups=((2,), (3,)),
-            name="batch",
+            axes_per_level=(1, 1),
         )
 
         @function
@@ -550,20 +554,26 @@ class TestMultiLevelSweeps:
         levels: collapsing the sweep into one group would leave more names than
         levels and refuse."""
         a = NumericRecordBatch(
-            {"a": jnp.arange(2.0)}, "outer", element_spec=EventTemplate(a=()), name="batch"
+            "batch",
+            {"a": jnp.arange(2.0)},
+            "outer",
+            element_spec=EventTemplate(a=()),
         )
         b = NumericRecordBatch(
-            {"b": jnp.arange(3.0)}, "inner", element_spec=EventTemplate(b=()), name="batch"
+            "batch",
+            {"b": jnp.arange(3.0)},
+            "inner",
+            element_spec=EventTemplate(b=()),
         )
 
         @function
         def rows(a, b):
             return NumericRecordBatch(
+                "batch",
                 {"s": jnp.asarray(a["a"]) + jnp.asarray(b["b"]) + jnp.zeros(2)},
                 "rows",
                 element_spec=EventTemplate(s=()),
-                axis_groups=((2,),),
-                name="batch",
+                axes_per_level=(1,),
             )
 
         out = rows(a=a, b=b)
@@ -581,16 +591,19 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
         resolves to sequential instead of failing mid-call. Dispatch paths
         agree on results by contract, so the fallback changes speed alone."""
         source = NumericRecordBatch(
-            {"x": jnp.arange(3.0)}, "draw", element_spec=EventTemplate(x=()), name="batch"
+            "batch",
+            {"x": jnp.arange(3.0)},
+            "draw",
+            element_spec=EventTemplate(x=()),
         )
 
         def body(v):
             return NumericRecordBatch(
+                "batch",
                 {"s": jnp.asarray(v["x"]) + jnp.zeros(2)},
                 "inner",
                 element_spec=EventTemplate(s=()),
-                axis_groups=((2,),),
-                name="batch",
+                axes_per_level=(1,),
             )
 
         out = Function(func=body)(v=source)
@@ -606,7 +619,10 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
 
     def test_a_numeric_body_is_unaffected(self):
         source = NumericRecordBatch(
-            {"x": jnp.arange(3.0)}, "draw", element_spec=EventTemplate(x=()), name="batch"
+            "batch",
+            {"x": jnp.arange(3.0)},
+            "draw",
+            element_spec=EventTemplate(x=()),
         )
 
         @function
@@ -626,10 +642,10 @@ class TestSameRankTransformsCannotLieEither:
         anything else landing on the same shape, so it is refused; indexing is the
         route that carries its selection instead of inferring it."""
         batch = NumericRecordBatch(
+            "batch",
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0) * 10},
             "draw",
             element_spec=EventTemplate(x=(), y=()),
-            name="batch",
         )
 
         with pytest.raises(ValueError, match="keeps every batch axis or removes all of them"):
@@ -644,10 +660,10 @@ class TestSameRankTransformsCannotLieEither:
         import jax.tree_util as jtu
 
         batch = NumericRecordBatch(
+            "batch",
             {"x": jnp.arange(2.0), "y": jnp.arange(2.0)},
             "draw",
             element_spec=EventTemplate(x=(), y=()),
-            name="batch",
         )
         _, treedef = jtu.tree_flatten(batch)
 
@@ -664,13 +680,13 @@ class TestOpaqueBatchesStack:
 
         rows = [
             RecordBatch(
+                "batch",
                 {
                     "tag": np.array([f"{i}a", f"{i}b"], dtype=object),
                     "x": jnp.arange(2.0) + i,
                 },
                 "inner",
                 element_spec=EventTemplate(tag=None, x=()),
-                name="batch",
             )
             for i in range(3)
         ]
@@ -691,10 +707,10 @@ class TestObjectValuedMarginals:
         from probpipe.core._broadcast_distributions import _ListMarginal, _make_marginal
 
         batch = RecordBatch(
+            "batch",
             {"tag": np.array(["a", "b", "c"], dtype=object), "x": jnp.arange(3.0)},
             "draw",
             element_spec=EventTemplate(tag=None, x=()),
-            name="batch",
         )
 
         marginal = _make_marginal(batch)
@@ -707,7 +723,10 @@ class TestObjectValuedMarginals:
 class TestAnEmptySweepAnswersToItsTemplate:
     def test_zero_rows_still_build_the_declared_fields(self):
         source = NumericRecordBatch(
-            {"x": jnp.zeros((0,))}, "design", element_spec=EventTemplate(x=()), name="batch"
+            "batch",
+            {"x": jnp.zeros((0,))},
+            "design",
+            element_spec=EventTemplate(x=()),
         )
 
         @function(output_template=EventTemplate(y=()))
@@ -728,7 +747,10 @@ class TestATransformCannotResizeTheElement:
     @staticmethod
     def _vector_batch():
         return NumericRecordBatch(
-            {"x": jnp.zeros((3, 2))}, "draw", element_spec=EventTemplate(x=(2,)), name="batch"
+            "batch",
+            {"x": jnp.zeros((3, 2))},
+            "draw",
+            element_spec=EventTemplate(x=(2,)),
         )
 
     def test_slicing_an_event_axis_is_refused(self):
@@ -780,10 +802,10 @@ class TestZeroWidthEventsUnderExplicitJax:
         be inferred over zero width, so the probe states the size exactly as the
         executor does."""
         source = NumericRecordBatch(
+            "batch",
             {"x": jnp.zeros((3, 0)), "row": jnp.arange(3.0)},
             "draw",
             element_spec=EventTemplate(x=(0,), row=()),
-            name="batch",
         )
 
         out = Function(
@@ -807,11 +829,11 @@ class TestShapeCannotRecoverAxisProvenance:
     @staticmethod
     def _grid(chain: int, draw: int):
         return NumericRecordBatch(
+            "batch",
             {"x": jnp.arange(float(chain * draw)).reshape(chain, draw)},
             ("chain", "draw"),
             element_spec=EventTemplate(x=()),
-            axis_groups=((chain,), (draw,)),
-            name="batch",
+            axes_per_level=(1, 1),
         )
 
     @pytest.mark.parametrize(("chain", "draw"), [(2, 2), (2, 3)], ids=["equal", "distinct"])
@@ -830,10 +852,10 @@ class TestShapeCannotRecoverAxisProvenance:
 class TestATransformCannotRetypeTheElement:
     def test_a_changed_kind_is_refused(self):
         batch = NumericRecordBatch(
+            "batch",
             {"x": jnp.zeros(3, dtype=jnp.float32)},
             "draw",
             element_spec=EventTemplate(x=NumericArraySpec((), dtype=jnp.float32)),
-            name="batch",
         )
 
         with pytest.raises(TypeError, match="does not admit"):
@@ -843,10 +865,10 @@ class TestATransformCannotRetypeTheElement:
         """The constructor admits same-kind casts, so the transform guard does
         too — the two must agree on what conforms."""
         batch = NumericRecordBatch(
+            "batch",
             {"x": jnp.zeros(3, dtype=jnp.float16)},
             "draw",
             element_spec=EventTemplate(x=NumericArraySpec((), dtype=jnp.float32)),
-            name="batch",
         )
 
         widened = jax.tree.map(lambda leaf: leaf.astype(jnp.float32), batch)
@@ -860,11 +882,11 @@ class TestZeroRowsAgreeAcrossDispatch:
         output for the paths to disagree over; the output schema must not
         depend on how the rows would have been executed."""
         source = NumericRecordBatch(
+            "batch",
             {"x": jnp.zeros((2, 0))},
             ("a", "b"),
             element_spec=EventTemplate(x=()),
-            axis_groups=((2,), (0,)),
-            name="batch",
+            axes_per_level=(1, 1),
         )
 
         def body(v):
@@ -891,10 +913,10 @@ class TestFunctionValuedColumnsStack:
 
         rows = [
             RecordBatch(
+                "batch",
                 {"f": np.array([(lambda i=i, j=j: i * 10 + j) for j in range(2)], dtype=object)},
                 "inner",
                 element_spec=EventTemplate(f=FunctionSpec()),
-                name="batch",
             )
             for i in range(3)
         ]
@@ -915,10 +937,10 @@ class TestAnEmpiricalTakesABatch:
         from probpipe.core._empirical import RecordEmpiricalDistribution
 
         data = NumericRecordBatch(
+            "batch",
             {"X": jnp.arange(4.0), "y": jnp.arange(4.0) * 10},
             "obs",
             element_spec=EventTemplate(X=(), y=()),
-            name="batch",
         )
 
         empirical = EmpiricalDistribution(data)
@@ -937,19 +959,19 @@ class TestBatchValuedRowAggregation:
     @staticmethod
     def _rows(n: int = 3):
         return NumericRecordBatch(
+            "batch",
             {"x": jnp.arange(float(n))},
             "row",
             element_spec=EventTemplate(x=NumericArraySpec(shape=())),
-            name="batch",
         )
 
     @staticmethod
     def _inner(n: int, level: str = "inner"):
         return NumericRecordBatch(
+            "batch",
             {"y": jnp.zeros(n)},
             level,
             element_spec=EventTemplate(y=NumericArraySpec(shape=())),
-            name="batch",
         )
 
     def test_mixing_batch_and_non_batch_rows_is_refused(self):
@@ -978,10 +1000,10 @@ class TestBatchValuedRowAggregation:
             if float(x["x"]) < 0.5:
                 return self._inner(2)
             return NumericRecordBatch(
+                "batch",
                 {"z": jnp.zeros(2)},
                 "inner",
                 element_spec=EventTemplate(z=NumericArraySpec(shape=())),
-                name="batch",
             )
 
         with pytest.raises(ValueError, match="returned batches that disagree"):
@@ -995,7 +1017,10 @@ class TestBatchValuedRowAggregation:
     @staticmethod
     def _inner_array(n: int, level: str = "inner"):
         return NumericArrayBatch(
-            jnp.zeros(n), level, element_spec=NumericArraySpec(shape=()), name="inner"
+            "inner",
+            jnp.zeros(n),
+            level,
+            element_spec=NumericArraySpec(shape=()),
         )
 
     def test_array_batch_rows_stack_with_the_sweep_in_front(self):
@@ -1022,10 +1047,10 @@ class TestBatchValuedRowAggregation:
 
         rows = [
             NumericArrayBatch(
+                "inner",
                 pd.Series([1.0 * i, 2.0 * i]),
                 "inner",
                 element_spec=NumericArraySpec(shape=()),
-                name="inner",
             )
             for i in range(1, 4)
         ]
@@ -1107,7 +1132,10 @@ class TestEveryBatchIsAnOperand:
     @staticmethod
     def _numeric(n: int = 3):
         return NumericArrayBatch(
-            jnp.arange(float(n)), "row", element_spec=NumericArraySpec(shape=()), name="rows"
+            "rows",
+            jnp.arange(float(n)),
+            "row",
+            element_spec=NumericArraySpec(shape=()),
         )
 
     def test_a_numeric_array_batch_reaches_the_body_as_an_element(self):
@@ -1134,14 +1162,22 @@ class TestEveryBatchIsAnOperand:
         seen: list = []
 
         Function(func=lambda v: (seen.append(v), 0.0)[1], name="f", dispatch="sequential")(
-            v=OpaqueBatch(["a", "b"], "row", name="rows")
+            v=OpaqueBatch(
+                "rows",
+                ["a", "b"],
+                "row",
+            )
         )
 
         assert seen == ["a", "b"]
 
     def test_a_function_batch_is_swept_too(self):
         out = Function(func=lambda f: float(f()), name="call", dispatch="sequential")(
-            f=FunctionBatch([lambda: 1.0, lambda: 2.0], "row", name="rows")
+            f=FunctionBatch(
+                "rows",
+                [lambda: 1.0, lambda: 2.0],
+                "row",
+            )
         )
 
         assert (out.batch_shape, out.level_names) == ((2,), ("row",))
@@ -1154,16 +1190,19 @@ class TestSweepingASingleStoreBatchAgreesAcrossDispatch:
     @staticmethod
     def _rows(n: int = 3):
         return NumericArrayBatch(
-            jnp.arange(float(n)), "row", element_spec=NumericArraySpec(shape=()), name="rows"
+            "rows",
+            jnp.arange(float(n)),
+            "row",
+            element_spec=NumericArraySpec(shape=()),
         )
 
     @staticmethod
     def _inner(v):
         return NumericArrayBatch(
+            "i",
             jnp.stack([jnp.asarray(v), jnp.asarray(v)]),
             "inner",
             element_spec=NumericArraySpec(shape=()),
-            name="i",
         )
 
     @pytest.mark.parametrize("dispatch", ["auto", "sequential"])

@@ -187,11 +187,11 @@ class TestWithPathNames:
         from probpipe import RecordBatch
 
         ra = RecordBatch(
+            "batch",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
-            name="batch",
         )
         renamed = ra.with_path_names(a="b")
         assert list(renamed.event_template) == ["b"]
@@ -382,19 +382,19 @@ class TestRecordAutoPromotion:
         from probpipe import NumericRecordBatch, RecordBatch
 
         ra = RecordBatch(
+            "batch",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
-            name="batch",
         )
         assert type(ra) is RecordBatch
         nrb = NumericRecordBatch(
+            "batch",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
-            name="batch",
         )
         assert type(nrb) is NumericRecordBatch
 

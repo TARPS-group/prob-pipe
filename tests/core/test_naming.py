@@ -53,19 +53,41 @@ def _named(kind):
     return {
         "Record": lambda: Record("given", a=1.0),
         "NumericRecord": lambda: NumericRecord("given", a=1.0),
-        "NumericArray": lambda: NumericArray(jnp.arange(3.0), name="given"),
+        "NumericArray": lambda: NumericArray(
+            "given",
+            jnp.arange(3.0),
+        ),
         "Opaque": lambda: Opaque("given", object()),
         "Function": lambda: Function(func=lambda: 1, name="given"),
         "Normal": lambda: Normal(0.0, 1.0, name="given"),
-        "RecordBatch": lambda: RecordBatch(COLUMNS, "lvl", element_spec=ELEMENT, name="given"),
+        "RecordBatch": lambda: RecordBatch(
+            "given",
+            COLUMNS,
+            "lvl",
+            element_spec=ELEMENT,
+        ),
         "NumericRecordBatch": lambda: NumericRecordBatch(
-            COLUMNS, "lvl", element_spec=ELEMENT, name="given"
+            "given",
+            COLUMNS,
+            "lvl",
+            element_spec=ELEMENT,
         ),
         "NumericArrayBatch": lambda: NumericArrayBatch(
-            jnp.arange(4.0), "lvl", element_spec=NumericArraySpec(shape=()), name="given"
+            "given",
+            jnp.arange(4.0),
+            "lvl",
+            element_spec=NumericArraySpec(shape=()),
         ),
-        "OpaqueBatch": lambda: OpaqueBatch([1, 2], "lvl", name="given"),
-        "FunctionBatch": lambda: FunctionBatch([lambda: 1], "lvl", name="given"),
+        "OpaqueBatch": lambda: OpaqueBatch(
+            "given",
+            [1, 2],
+            "lvl",
+        ),
+        "FunctionBatch": lambda: FunctionBatch(
+            "given",
+            [lambda: 1],
+            "lvl",
+        ),
     }[kind]()
 
 
@@ -126,6 +148,12 @@ class TestWhichKindsRequireAName:
         """It carries no fields to describe it, so a class-name default would
         name every array in a pipeline alike."""
         with pytest.raises(TypeError, match="name"):
+            NumericArray()
+
+    def test_a_lone_value_is_not_enough_for_a_numeric_array(self):
+        """The name comes first, so a single argument is the name and the value
+        is what the refusal asks for."""
+        with pytest.raises(TypeError, match="value"):
             NumericArray(jnp.arange(3.0))
 
     def test_a_function_takes_its_callables_name(self):
@@ -164,10 +192,10 @@ class TestADerivedNameSaysSo:
     @staticmethod
     def _batch():
         return NumericArrayBatch(
+            "posterior",
             jnp.arange(12.0).reshape(4, 3),
             "draw",
             element_spec=NumericArraySpec(shape=(3,)),
-            name="posterior",
         )
 
     def test_an_element_is_named_for_its_position(self):
@@ -364,11 +392,11 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     def test_several_levels_are_all_restated(self, density_op):
         """The operand's own tiling, not one flat axis."""
         drawn = NumericArrayBatch(
+            "draws",
             jnp.zeros((2, 3)),
             ("chain", "draw"),
             element_spec=NumericArraySpec(()),
-            axis_groups=((2,), (3,)),
-            name="draws",
+            axes_per_level=(1, 1),
         )
 
         scored = density_op(self.LAW, drawn)
@@ -403,10 +431,10 @@ class TestEveryAggregateIsNamedForItsFunction:
         from probpipe.core.event_template import NumericEventTemplate
 
         return NumericRecordBatch(
+            "rows",
             {"x": jnp.arange(float(n))},
             "row",
             element_spec=NumericEventTemplate(x=()),
-            name="rows",
         )
 
     def _swept(self, body, **controls):
@@ -442,10 +470,10 @@ class TestEveryAggregateIsNamedForItsFunction:
         from probpipe.core.event_template import NumericEventTemplate
 
         grid = NumericRecordBatch(
+            "grid",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("a", "b"),
             element_spec=NumericEventTemplate(x=()),
-            name="grid",
         )
 
         result = Function(
@@ -469,25 +497,17 @@ class TestNoKindInventsAName:
     @pytest.mark.parametrize(
         "build",
         [
-            pytest.param(lambda: NumericArray(jnp.arange(3.0)), id="NumericArray"),
-            pytest.param(
-                lambda: RecordBatch(COLUMNS, "lvl", element_spec=ELEMENT), id="RecordBatch"
-            ),
-            pytest.param(
-                lambda: NumericRecordBatch(COLUMNS, "lvl", element_spec=ELEMENT),
-                id="NumericRecordBatch",
-            ),
-            pytest.param(
-                lambda: NumericArrayBatch(
-                    jnp.arange(4.0), "lvl", element_spec=NumericArraySpec(shape=())
-                ),
-                id="NumericArrayBatch",
-            ),
-            pytest.param(lambda: OpaqueBatch([1, 2], "lvl"), id="OpaqueBatch"),
-            pytest.param(lambda: FunctionBatch([lambda: 1], "lvl"), id="FunctionBatch"),
+            pytest.param(NumericArray, id="NumericArray"),
+            pytest.param(RecordBatch, id="RecordBatch"),
+            pytest.param(NumericRecordBatch, id="NumericRecordBatch"),
+            pytest.param(NumericArrayBatch, id="NumericArrayBatch"),
+            pytest.param(OpaqueBatch, id="OpaqueBatch"),
+            pytest.param(FunctionBatch, id="FunctionBatch"),
         ],
     )
     def test_a_name_is_required(self, build):
+        """The name is the first argument at every kind, and there is no default
+        behind it, so the refusal names it."""
         with pytest.raises(TypeError, match="name"):
             build()
 
@@ -511,10 +531,10 @@ class TestNoKindInventsAName:
         """There is no class-name default to re-derive from, and an auto name is
         something derived rather than a placeholder."""
         batch = NumericRecordBatch(
+            "derived",
             {"a": jnp.zeros(3), "b": jnp.zeros(3)},
             "lvl",
             element_spec=NumericEventTemplate(a=(), b=()),
-            name="derived",
             name_is_auto=True,
         )
 

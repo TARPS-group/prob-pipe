@@ -176,11 +176,11 @@ def _drawn_at_its_batch_form(
         # through, which inferring an element template from the columns would lose.
         element_spec = _reshaped_template(drawn.event_template, lambda shape: shape[n_draw_axes:])
         return _batch_class_for(element_spec)(
+            name,
             columns,
             SAMPLE_LEVEL,
             element_spec=element_spec,
-            axis_groups=(tuple(sample_shape),),
-            name=name,
+            axes_per_level=(len(sample_shape),),
             name_is_auto=name_is_auto,
         )
 
@@ -208,13 +208,13 @@ def _drawn_at_its_batch_form(
         # to make.
         return drawn
     return NumericArrayBatch(
+        name,
         drawn,
         SAMPLE_LEVEL,
         element_spec=NumericArraySpec(
             shape=shape[len(sample_shape) :], dtype=_numpy_dtype_of(drawn)
         ),
-        axis_groups=(tuple(sample_shape),),
-        name=name,
+        axes_per_level=(len(sample_shape),),
         name_is_auto=name_is_auto,
     )
 
@@ -233,7 +233,7 @@ def _at_the_operands_levels(computed: Any, operand: Any) -> Any:
     operand's rank rather than by the result's.
     """
     from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
-    from ._batch import Batch
+    from ._batch import Batch, _ranks_of
     from ._numeric_array_batch import NumericArrayBatch
     from .event_template import NumericArraySpec
 
@@ -246,13 +246,13 @@ def _at_the_operands_levels(computed: Any, operand: Any) -> Any:
         # there is no correspondence to restate.
         return computed
     return NumericArrayBatch(
+        operand.name,
         computed,
         tuple(operand.level_names),
         element_spec=NumericArraySpec(
             shape=shape[len(batch_shape) :], dtype=_numpy_dtype_of(computed)
         ),
-        axis_groups=tuple(operand.axis_groups),
-        name=operand.name,
+        axes_per_level=_ranks_of(operand.axis_groups),
         name_is_auto=operand.name_is_auto,
     )
 

@@ -182,11 +182,11 @@ class JointGaussian(
             result[cname] = flat[..., sl]
         if sample_shape:
             return NumericRecordBatch(
+                self.name,
                 result,
                 "sample",
                 element_spec=self.event_template,
-                axis_groups=(sample_shape,),
-                name=self.name,
+                axes_per_level=(len(sample_shape),),
                 name_is_auto=True,
             )
         return Record(self.name, result, name_is_auto=True)

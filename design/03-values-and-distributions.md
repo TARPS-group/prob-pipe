@@ -208,7 +208,7 @@ class NumericRecordBatch(RecordBatch):
     @classmethod
     def from_vector(cls, name: str, template: NumericEventTemplate, vec: Array, *,
                     level_names: str | Iterable[str],
-                    axis_groups: Iterable[Iterable[int]] | None = None) -> NumericRecordBatch: ...
+                    axes_per_level: Iterable[int] | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 

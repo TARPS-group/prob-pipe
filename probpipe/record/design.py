@@ -16,7 +16,6 @@ additional subclasses (`RandomDesign`, `LatinHypercubeDesign`,
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from math import prod
 from typing import Any
 
 import jax.numpy as jnp
@@ -179,7 +178,6 @@ class FullFactorialDesign(Design):
                 "FullFactorialDesign marginals must each be non-empty; "
                 f"got sizes {dict(zip(names, sizes))}"
             )
-        n_total = prod(sizes)
         # ``meshgrid(..., indexing='ij')`` then flatten: each axis
         # iterates at its own stride; C-order flatten then yields a
         # lexicographic row-major traversal over the marginals in
@@ -202,11 +200,11 @@ class FullFactorialDesign(Design):
 
         RecordBatch.__init__(
             self,
+            f"FullFactorialDesign({','.join(names)})",
             fields,
             DESIGN_LEVEL,
             element_spec=EventTemplate(template_spec),
-            axis_groups=((n_total,),),
-            name=f"FullFactorialDesign({','.join(names)})",
+            axes_per_level=(1,),
         )
         # The name is derived from the marginals, not user-typed.
         object.__setattr__(self, "_name_is_auto", True)

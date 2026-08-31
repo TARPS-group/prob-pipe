@@ -577,15 +577,18 @@ def _reconstruct_from_vector(
         # the flat blocks already are, so there is no tree to unflatten.
         from ._numeric_record_batch import NumericRecordBatch
 
-        # One level over however many axes the flat vector carried: a
-        # ``sample_shape`` of several axes is one multiplicity, named once, which
-        # is what the operation model says a draw level is.
+        # A single name takes however many axes the flat vector carried, since a
+        # ``sample_shape`` of several axes is one multiplicity named once; several
+        # names take one axis each. The same rule ``from_vector`` states, and it
+        # is stated once here rather than assumed: hardcoding one level made the
+        # ``level_names`` parameter a lie for every caller who named two.
+        names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
         return NumericRecordBatch(
+            name,
             dict(zip(template.keys(), leaves, strict=True)),
-            level_names,
+            names,
             element_spec=template,
-            axis_groups=(batch_shape,),
-            name=name,
+            axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
             name_is_auto=name_is_auto,
         )
     value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)

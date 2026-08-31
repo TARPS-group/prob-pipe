@@ -67,12 +67,13 @@ class NumericRecordBatch(RecordBatch):
 
     def __init__(
         self,
+        name: str,
         fields: Mapping[str, Any],
+        /,
         level_names: str | Iterable[str],
         *,
         element_spec: RecordSpec | EventTemplate,
-        axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str,
+        axes_per_level: Iterable[int] | None = None,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
@@ -84,11 +85,11 @@ class NumericRecordBatch(RecordBatch):
                 f"fields {list(template.keys())}"
             )
         super().__init__(
+            name,
             fields,
             level_names,
             element_spec=element_spec,
-            axis_groups=axis_groups,
-            name=name,
+            axes_per_level=axes_per_level,
             name_is_auto=name_is_auto,
             provenance=provenance,
         )
@@ -193,7 +194,7 @@ class NumericRecordBatch(RecordBatch):
         vec: Array,
         *,
         level_names: str | Iterable[str],
-        axis_groups: Iterable[Iterable[int]] | None = None,
+        axes_per_level: Iterable[int] | None = None,
     ) -> Self:
         """Rebuild a batch from its elements' flat vectors, inverting :meth:`to_vector`.
 
@@ -211,8 +212,8 @@ class NumericRecordBatch(RecordBatch):
             single string names a single level. Required for the reason
             :meth:`RecordBatch.stack` states, and plural because *vec* may carry
             several batch axes: naming them is how a multi-level batch round-trips.
-        axis_groups : iterable of iterable of int, optional
-            The axis sizes each level holds, as for the constructor. Omitted, a
+        axes_per_level : iterable of int, optional
+            How many axes each level holds, as for the constructor. Omitted, a
             single name takes **all** of *vec*'s batch axes as one level and
             several names take one axis each. The first is why a draw of several
             axes reconstructs without naming each: a ``sample_shape`` is one
@@ -239,8 +240,8 @@ class NumericRecordBatch(RecordBatch):
         >>> import jax.numpy as jnp
         >>> from probpipe import EventTemplate
         >>> template = EventTemplate(x=(2,))
-        >>> batch = NumericRecordBatch({"x": jnp.zeros((4, 5, 2))}, ("chain", "draw"),
-        ...                            element_spec=template, name="post")
+        >>> batch = NumericRecordBatch("post", {"x": jnp.zeros((4, 5, 2))},
+        ...                            ("chain", "draw"), element_spec=template)
         >>> rebuilt = NumericRecordBatch.from_vector(
         ...     "post", template, batch.to_vector(), level_names=("chain", "draw"))
         >>> rebuilt.batch_shape
@@ -273,14 +274,14 @@ class NumericRecordBatch(RecordBatch):
             columns[key] = block
             offset += size
         names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        if axis_groups is None and len(names) == 1:
-            axis_groups = (batch_shape,)
+        if axes_per_level is None and len(names) == 1:
+            axes_per_level = (len(batch_shape),)
         return cls(
+            name,
             columns,
             names,
             element_spec=template,
-            axis_groups=axis_groups,
-            name=name,
+            axes_per_level=axes_per_level,
         )
 
 

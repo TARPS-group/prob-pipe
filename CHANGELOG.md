@@ -9,6 +9,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A batch's name is its first argument, and construction takes the axis
+  partition rather than the sizes (#398).** Two changes to the same signatures.
+
+  `Record(name, fields)` and `Opaque(name, value)` put the name first;
+  `NumericArray` and all five batch forms took it as a keyword. They now match —
+  `RecordBatch("draws", columns, "draw", element_spec=...)`,
+  `NumericArray("x", values)` — with the name and the data positional-only, as
+  `Record`'s are, and the level names still acceptable either way.
+
+  `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
+  level holds rather than restating their sizes: `axes_per_level=(2,)` for one
+  level over two axes, where the old form needed `axis_groups=((4, 5),)`. The
+  sizes were never information a constructor lacked — the elements fix them and
+  the batch/event split comes from `element_spec` — so stating them only created
+  a way to contradict the data. Two of the four refusals the old argument had are
+  gone with it: a grouping can no longer disagree with the store or transpose it.
+  What remains is a partition that does not cover every batch axis, or does not
+  give one count per level.
+
+  `Batch.axis_groups` still reports the sizes, and `BatchSpec` still stores them,
+  which is right: a *declaration* may leave a size symbolic, fixing the number of
+  levels before the counts are known. A live batch holds elements at positions,
+  so it cannot.
+
 - **`sample(law, sample_shape=...)` mints the `sample` level for every kind of
   draw (#398).** The boundary assumed a law that assembles its own draws also
   names what they range over. An empirical did not: numeric atoms came back as one

@@ -1044,38 +1044,76 @@ def _axis_size(size: Any) -> int | str:
 def _axis_groups_for(
     shape: tuple[int, ...],
     names: tuple[str, ...],
-    axis_groups: Iterable[Iterable[int]] | None,
+    axes_per_level: Iterable[int] | None,
     *,
     kind: str,
 ) -> tuple[tuple[int, ...], ...]:
-    """The axis groups for *shape*, defaulting to one axis per level.
+    """The axis groups for *shape*, from how many axes each level holds.
 
-    A supplied grouping must tile the store's own shape: it says which axes each
-    level holds, and the axes are the ones the elements are actually arranged in.
-    A grouping that disagreed would make every accessor — ``batch_shape``,
-    ``len``, ``repr``, the spec itself — a statement about a shape the storage
-    does not have, and indexing would leave the batch's own bounds check to fail
-    somewhere inside numpy instead.
+    *axes_per_level* gives one count per level, outermost first, and they must
+    account for every axis the elements are stored in. The sizes are then read off
+    *shape* rather than restated: the elements are present, so the shape is
+    already known, and the only thing a caller can tell this function is where the
+    boundaries between levels fall. ``None`` puts one axis on each level.
+
+    A :class:`BatchSpec` states the sizes instead, and is right to — a
+    *declaration* may leave them symbolic, fixing the number of levels before the
+    counts are known. A live batch holds elements at positions, so it cannot.
     """
-    if axis_groups is None:
+    if axes_per_level is None:
         if len(names) != len(shape):
             axes = "axis" if len(shape) == 1 else "axes"
             raise ValueError(
-                f"{kind} places one axis per level unless axis_groups says otherwise, so "
+                f"{kind} places one axis per level unless axes_per_level says otherwise, so "
                 f"{len(shape)} {axes} need {len(shape)} level names; "
                 f"got {len(names)}: {list(names)}"
             )
         return tuple((size,) for size in shape)
 
-    groups = tuple(tuple(_axis_size(size) for size in group) for group in axis_groups)
-    tiled = tuple(size for group in groups for size in group)
-    if tiled != shape:
+    counts = tuple(_axis_count(count) for count in axes_per_level)
+    if len(counts) != len(names):
         raise ValueError(
-            f"axis_groups must tile the shape the elements are stored in: {groups} tiles "
-            f"{tiled}, but {kind} was given elements of shape {shape}. Each entry is an axis "
-            f"*size*, and the sizes in order are the store's own shape"
+            f"axes_per_level gives one count per level: {len(counts)} counts {counts} "
+            f"against {len(names)} level names {list(names)}"
         )
-    return groups
+    if sum(counts) != len(shape):
+        axes = "axis" if len(shape) == 1 else "axes"
+        raise ValueError(
+            f"axes_per_level must account for every batch axis: {counts} covers "
+            f"{sum(counts)}, but {kind} was given elements of shape {shape} — "
+            f"{len(shape)} {axes}"
+        )
+    groups, at = [], 0
+    for count in counts:
+        groups.append(shape[at : at + count])
+        at += count
+    return tuple(groups)
+
+
+def _axis_count(count: Any) -> int:
+    """One entry of *axes_per_level*: how many axes a level holds.
+
+    A level holds at least one axis, so zero is refused here rather than left to
+    produce a level that indexes nothing.
+    """
+    if isinstance(count, bool) or not isinstance(count, int):
+        raise TypeError(
+            f"axes_per_level entries are integer axis counts; got {count!r} "
+            f"({type(count).__name__})"
+        )
+    if count < 1:
+        raise ValueError(f"every level holds at least one axis; got axes_per_level entry {count}")
+    return count
+
+
+def _ranks_of(groups: Iterable[Iterable[Any]]) -> tuple[int, ...]:
+    """*groups* as the axis counts a constructor takes.
+
+    The bridge for the operations that already hold grouped sizes — an
+    aggregation composing a sweep's levels with a row's — and need to state the
+    same partition to a constructor, which reads the sizes from the elements.
+    """
+    return tuple(len(tuple(group)) for group in groups)
 
 
 def _normalize_indexer(

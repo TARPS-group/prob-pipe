@@ -155,11 +155,11 @@ def test_numeric_record_cloudpickle_roundtrip():
 def test_record_batch_pickle_roundtrip():
     template = EventTemplate(x=(), y=(3,))
     ra = RecordBatch(
+        "batch",
         {"x": jnp.array([1.0, 2.0]), "y": jnp.ones((2, 3))},
         level_names="draw",
-        axis_groups=((2,),),
+        axes_per_level=(1,),
         element_spec=template,
-        name="batch",
     )
     ra2 = roundtrip(ra)
     assert ra2.batch_shape == (2,)
@@ -170,11 +170,11 @@ def test_record_batch_pickle_roundtrip():
 def test_record_batch_template_preserved():
     template = EventTemplate(x=(), y=(3,))
     ra = RecordBatch(
+        "batch",
         {"x": jnp.array([1.0]), "y": jnp.ones((1, 3))},
         level_names="draw",
-        axis_groups=((1,),),
+        axes_per_level=(1,),
         element_spec=template,
-        name="batch",
     )
     ra2 = roundtrip(ra)
     assert ra2.event_template == template
@@ -188,11 +188,11 @@ def test_record_batch_template_preserved():
 def test_numeric_record_batch_pickle_roundtrip():
     template = EventTemplate(x=(), y=(2,))
     nrb = NumericRecordBatch(
+        "batch",
         {"x": jnp.array([1.0, 2.0, 3.0]), "y": jnp.ones((3, 2))},
         level_names="draw",
-        axis_groups=((3,),),
+        axes_per_level=(1,),
         element_spec=template,
-        name="batch",
     )
     nra2 = roundtrip(nrb)
     assert type(nra2) is NumericRecordBatch
@@ -203,11 +203,11 @@ def test_numeric_record_batch_pickle_roundtrip():
 def test_numeric_record_batch_cloudpickle_roundtrip():
     template = EventTemplate(x=())
     nrb = NumericRecordBatch(
+        "batch",
         {"x": jnp.array([1.0, 2.0])},
         level_names="draw",
-        axis_groups=((2,),),
+        axes_per_level=(1,),
         element_spec=template,
-        name="batch",
     )
     nra2 = cloudpickle_roundtrip(nrb)
     assert type(nra2) is NumericRecordBatch

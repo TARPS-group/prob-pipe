@@ -1115,11 +1115,11 @@ class Function(Node, TrackedTerm, Annotated):
                             )
                         if isinstance(root, RecordDistribution):
                             root_probe = NumericRecordBatch(
+                                root.name,
                                 columns,
                                 "draw",
                                 element_spec=template,
-                                axis_groups=((1,),),
-                                name=root.name,
+                                axes_per_level=(1,),
                                 name_is_auto=True,
                             )
                         else:
