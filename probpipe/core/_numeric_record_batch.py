@@ -240,7 +240,7 @@ class NumericRecordBatch(RecordBatch):
         >>> from probpipe import EventTemplate
         >>> template = EventTemplate(x=(2,))
         >>> batch = NumericRecordBatch({"x": jnp.zeros((4, 5, 2))}, ("chain", "draw"),
-        ...                            element_spec=template)
+        ...                            element_spec=template, name="post")
         >>> rebuilt = NumericRecordBatch.from_vector(
         ...     "post", template, batch.to_vector(), level_names=("chain", "draw"))
         >>> rebuilt.batch_shape
