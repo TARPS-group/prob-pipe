@@ -5,12 +5,13 @@ Part II introduces the shared abstractions the rest of the library is built on.
 | § | Layer | Abstraction | Role |
 |---|---|---|---|
 | II.1 | Structure | `NamedTree` | The named, ordered tree addressed by path that every structured object is built on, owning the leaf-keyed mapping contract and navigation. |
-| II.2 | Type | `TermSpec` | The term-specification base every field and declaration is typed by, the `InputSpec` / `OutputSpec` declarations, and the symbolic-dimension protocol. Each kind's concrete spec is defined beside the kind it describes. |
-| II.3 | Numeric value | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
-| II.4 | Identity | `TrackedTerm` / `Provenance` | The name, type (spec), and lineage an object carries beyond its raw representation. |
-| II.5 | Metadata | `Annotated` | The free-form, append-only annotation store — the one writable exception to immutability — for validation and diagnostic results. |
-| II.6 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space, with its `BatchSpec`. |
-| II.7 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved. The shared mechanism behind converters, inference selection, and bijector factories. |
+| II.2 | Type | `TermSpec` | The term-specification base every field and declaration is typed by, with the symbolic-dimension protocol. Each kind's concrete spec is defined beside the kind it describes. |
+| II.3 | Declarations | `InputSpec` / `OutputSpec` | The input and output declarations of the map-like kinds: named slots in, one named produced term out. |
+| II.4 | Numeric value | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
+| II.5 | Identity | `TrackedTerm` / `Provenance` | The name, type (spec), and lineage an object carries beyond its raw representation. |
+| II.6 | Metadata | `Annotated` | The free-form, append-only annotation store — the one writable exception to immutability — for validation and diagnostic results. |
+| II.7 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space, with its `BatchSpec`. |
+| II.8 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved. The shared mechanism behind converters, inference selection, and bijector factories. |
 
 ## II.1 — `NamedTree`
 
@@ -63,7 +64,7 @@ class NamedTree[L]:
     def _leaf_type(cls) -> type | UnionType: ...   # the family's declared leaf type
 ```
 
-The parameter `L` declares the leaf type — the one axis on which families differ, and what `values()`, `[]`, and `map` traffic in — while interior nodes are always the family's own class. Implementations should check leaves against the declared leaf type at construction. 
+The parameter `L` declares the leaf type — the one axis on which families differ, and what `values()`, `[]`, and `map` traffic in — while interior nodes are always the family's own class. Implementations should check leaves against the declared leaf type at construction.
 
 The `with_path_names` method renames or moves nodes by `old="new"` pairs. A key may be a bare name, resolving to the unique node so named and raising on ambiguity — keyword pairs cover the common case, while the positional mapping form addresses any path. A target may itself be a path: `with_path_names({"group/mu": "mu"})` promotes the field to the top level and `{"mu": "group/mu"}` demotes it under `group`, creating intermediate nodes as needed and dissolving an interior node a move empties, since a tree holds no empty subtrees. All substitutions apply simultaneously, so sources resolve against the original tree; this way, swaps and simultaneous ancestor–descendant moves are well-defined. Every target is checked against the result, where a collision raises as a rename onto an existing sibling does; a move into the moved node's own subtree raises, as do two targets where one is a prefix of the other. Ordering stays deterministic: an in-place rename keeps its position, and a moved node appends at the end of its new parent's children.
 
@@ -75,11 +76,11 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 
 - *Mappings are never leaves.* Construction should materialize a mapping-valued field into a subtree. The need for this mapping check is why `NamedTree` implements the `Mapping` interface without registering as a `collections.abc.Mapping` — so a nested mapping and its `to_nested_dict` export round-trip through the constructor, with no separate nested-dict reader.
 
-## II.2 — Term specifications: `TermSpec`, `InputSpec`, `OutputSpec`
+## II.2 — Term specifications: `TermSpec`
 
 ### Contract
 
-A **term specification** describes the available typing information for a term and validates whether an object satisfies the term's type constraints. Every term spec has exactly one **tracked class** and one **batch form**. These are descibed in Part III. 
+A **term specification** describes the available typing information for a term and validates whether an object satisfies the term's type constraints. Every term spec has exactly one **tracked class** and one **batch form**, described in Part III.
 
 **Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any unbound name is **polymorphic**, and one with none is **concrete**; a composite spec's dimensions are the union over its parts, and specs carry no scope object beyond the names themselves, so they serialize as plain data. Three operations manage dimensions, and every spec carries its own: it *reports* the names still unbound, it *substitutes* explicit sizes for names, and it *binds* names by unification against a value, reading the sizes off the data. Substitution and binding return a new spec rather than mutating, so refinement is monotone, and until every name is bound an operation that needs sizes raises, naming the free dimensions. Keeping report, substitution, and binding with the spec is what reaches a spec the schema layer cannot name — a batch axis, declared one layer out — so every dimension a schema reports is one some spec can bind.
 
@@ -99,8 +100,16 @@ class TermSpec(ABC):
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
 ```
 
-A spec accepts a value in that's either the raw representation or the tracked term of the spec's kind, with construction normalizing to the stored form. The rule is library-wide, since every accepting position is typed by a spec: a bare array is accepted at an array-spec position, a mapping at a record-shaped one, a callable at a function-shaped one, and a backend distribution at a distribution-shaped one, entering through its registered converter, while a tracked term is stored or handed on with its identity kept. The rule runs in both directions — wherever a raw value is accepted, its tracked form is accepted too — with one deliberate narrowing: an implementer method's *arguments* arrive already normalized to the implementer type, so an implementation handles exactly one presentation. What an implementer *returns* may be either presentation: the boundary keeps the kind and mints the result's identity afresh either way.
+A spec accepts a value in **either presentation** — the raw representation or the tracked term of the spec's kind — with construction normalizing to the stored form. The rule is library-wide, since every accepting position is typed by a spec: a bare array is accepted at an array-spec position, a mapping at a record-shaped one, a callable at a function-shaped one, and a backend distribution at a distribution-shaped one, entering through its registered converter, while a tracked term is stored or handed on with its identity kept. The rule runs in both directions — wherever a raw value is accepted, its tracked form is accepted too — with one deliberate narrowing: an implementer method's *arguments* arrive already normalized to the implementer type, so an implementation handles exactly one presentation. What an implementer *returns* may be either presentation: the boundary keeps the kind and mints the result's identity afresh either way.
 d
+### Rationale
+
+One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to distributions and values`), and defining each concrete spec beside the kind it describes keeps this layer generic and type-agnostic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule is `D2 – Generality first`: it keeps the operations total, since every result can be tracked and every collection of draws can be stacked. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
+
+## II.3 — Input and output declarations: `InputSpec`, `OutputSpec`
+
+### Contract
+
 An `InputSpec` is a flat mapping from names to term specs: the independently bindable slots a map-like term takes in, with a structured slot declared by the record kind's spec. It is flat because slots are bound independently and met from different sources — the semantics of function arguments rather than of one jointly produced value — and because composition's calculus is set algebra on exactly this shape. An `OutputSpec` is a term spec plus a required name for the produced term. Every output declaration is named because every tracked term is named. Symbolic dimensions are scoped jointly across an `InputSpec`'s slots and the output declaration beside it, so a name shared between an input and the output is one dimension:
 
 ```python
@@ -111,11 +120,13 @@ class OutputSpec:
     spec: TermSpec
 ```
 
+Neither declaration is a `TermSpec`: each types no leaf and has no tracked class or batch form, so the kind rule of II.2 covers the term specs alone.
+
 ### Rationale
 
-One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to distributions and values`), and defining each concrete spec beside the kind it describes keeps this layer generic and type-agnostic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule is `D2 – Generality first`: it keeps the operations total, since every result can be tracked and every collection of draws can be stacked. Requiring a name on every output declaration serves `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows` together: the produced term's name is fixed where the producer is declared, so model structure never rides on a relabelable string. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
+Requiring a name on every output declaration serves `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows` together: the produced term's name is fixed where the producer is declared, so model structure never rides on a relabelable string. Keeping the input side a flat mapping makes composition's set algebra the declaration's native shape (`D5 – Explicit, carried structure`).
 
-## II.3 — Numeric values: `Numeric`, `NumericSpec`, `Constraint`
+## II.4 — Numeric values: `Numeric`, `NumericSpec`, `Constraint`
 
 ### Contract
 
@@ -131,7 +142,7 @@ class Numeric(Protocol):                    # the flat-vector interface of the n
     def __jax_array__(self) -> Array: ...   #   functions see to_vector and return bare arrays
 ```
 
-**The `NumericSpec` mixin.** The spec-side counterpart of `Numeric` marks the specs whose values implement it. A `NumericSpec` carries the flat dimension and fixes the canonical flat layout that its values' `Numeric` interface obeys; construction from coordinates stays with the value types, since a spec describes and never builds. The mixin is abstract and doesn't specify a kind of its own. 
+**The `NumericSpec` mixin.** The spec-side counterpart of `Numeric` marks the specs whose values implement it. A `NumericSpec` carries the flat dimension and fixes the canonical flat layout that its values' `Numeric` interface obeys; construction from coordinates stays with the value types, since a spec describes and never builds. The mixin is abstract and doesn't specify a kind of its own.
 
 ```python
 class NumericSpec(TermSpec, ABC):   # mixin: the specs whose values implement Numeric
@@ -153,11 +164,11 @@ class Constraint(ABC):
 
 One flat-vector interface over the numeric kinds is `D2 – Generality first`: everything that consumes flat numeric values types against it once, and the coordinate protocols keep foreign array functions usable with no ProbPipe-specific code (`C3 – Computational detail hidden by default, available on demand`). The spec-side mixin is the same generality at the type level: everything that requires a numeric declaration types against `NumericSpec` once, whether the event is one array or a named tree of them. A constraint is data, not behavior: comparing and hashing by value lets a support key a registry, so the bijector factories select by the mathematics rather than by class identity (`D3 – Capability-based operations`).
 
-## II.4 — Identity & type: `TrackedTerm`, `Provenance`
+## II.5 — Identity & type: `TrackedTerm`, `Provenance`
 
 ### Contract
 
-Identity & type is the cross-cutting layer that lets any object carry, alongside its raw representation, three things: a **name** (what the object is called), a **spec** (the declaration of its type, II.2), and a **provenance** (how it was produced), provided by the `TrackedTerm` mixin. Every first-class object — the kind an operation consumes and produces — must be a `TrackedTerm`, while structural helpers such as specs are not. We call any such object a **tracked term**: values, distributions, conditional distributions, linear operators, and batches. Free-form **annotations** — auxiliary information supplied by the user or an algorithm — are the separate `Annotated` mixin of II.5.
+Identity & type is the cross-cutting layer that lets any object carry, alongside its raw representation, three things: a **name** (what the object is called), a **spec** (the declaration of its type, II.2), and a **provenance** (how it was produced), provided by the `TrackedTerm` mixin. Every first-class object — the kind an operation consumes and produces — must be a `TrackedTerm`, while structural helpers such as specs are not. We call any such object a **tracked term**: values, distributions, conditional distributions, linear operators, and batches. Free-form **annotations** — auxiliary information supplied by the user or an algorithm — are the separate `Annotated` mixin of II.6.
 
 A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: a structure-changing transform re-derives an auto-derived name from its result, and composition into a larger object may rename it again, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`. `with_name` renames the object itself, unlike `NamedTree.with_path_names`, which renames the fields within it. A name is a human label rather than an identity: nothing resolves an object by name, derived names need no escaping scheme, and two objects may share a name wherever field uniqueness does not force distinctness. The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves.
 
@@ -165,7 +176,7 @@ The `spec` slot is the term's type, stored once. Each kind narrows it to its own
 
 Every tracked term exposes its stored representation through `raw()`: the value with no ProbPipe extras — no name, no spec, no provenance. Each kind fixes what its representation is where the kind is defined, and a batch's is its storage view.
 
-**A tracked term is immutable, and that is a property of being one**: assignment and deletion raise, naming the class the caller touched, and every transformation returns a new term. `TrackedTerm` therefore carries the immutability itself rather than each kind opting in — one guard, so a subclass cannot report a different rule than its base. Immutability obliges a second thing, since `pickle` and `copy` restore an object by assigning its state back: a term reconstructs by allocating its resolved class and restoring the state it actually holds, rather than by rebuilding through its constructor. So a reconstruction cannot re-derive a schema an explicit declaration had pinned, cannot re-decide a class from arguments the state no longer carries, and cannot omit a field — including one written after construction, which no constructor argument names. A term declares any *memo* it holds as transient, keeping a cache out of the round-trip, and any *store written in place* as decoupled, so a copy takes its own container rather than sharing one. Annotations are the one such store (II.5). Identity is **boundary-attached** under compiled execution: inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data — name, provenance, and annotations never enter a trace, so a name can never affect compilation-cache identity — and the tracked result is minted at the enclosing call boundary.
+**A tracked term is immutable, and that is a property of being one**: assignment and deletion raise, naming the class the caller touched, and every transformation returns a new term. `TrackedTerm` therefore carries the immutability itself rather than each kind opting in — one guard, so a subclass cannot report a different rule than its base. Immutability obliges a second thing, since `pickle` and `copy` restore an object by assigning its state back: a term reconstructs by allocating its resolved class and restoring the state it actually holds, rather than by rebuilding through its constructor. So a reconstruction cannot re-derive a schema an explicit declaration had pinned, cannot re-decide a class from arguments the state no longer carries, and cannot omit a field — including one written after construction, which no constructor argument names. A term declares any *memo* it holds as transient, keeping a cache out of the round-trip, and any *store written in place* as decoupled, so a copy takes its own container rather than sharing one. Annotations are the one such store (II.6). Identity is **boundary-attached** under compiled execution: inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data — name, provenance, and annotations never enter a trace, so a name can never affect compilation-cache identity — and the tracked result is minted at the enclosing call boundary.
 
 ```python
 class TrackedTerm:
@@ -199,7 +210,7 @@ A provenance records everything its operation resolved: the tracked parents, the
 
 `TrackedTerm` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D7 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term**, so the provenance chain is never broken. Recording the resolved controls, not just the parents, is what turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Boundary attachment keeps names semantically inert in computation: nothing resolves an object by name, so a name may never decide what gets compiled. Immutability itself is `C2 – Functional interface over immutable objects` embodied: every transformation returns a new term, so nothing downstream ever observes a change. Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
 
-## II.5 — Annotations: `Annotated`
+## II.6 — Annotations: `Annotated`
 
 ### Contract
 
@@ -210,13 +221,13 @@ class Annotated:
     annotations: Mapping[str, Any] | None
 ```
 
-The store is the **one exception to immutability** (II.4): it can be written after construction, so a diagnostic can attach its result to the object it examined. By convention it is append-only, and it is decoupled on copy — a copy takes its own container rather than sharing one — exactly as the reconstruction contract of II.4 requires of any store written in place. Annotations are inert everywhere else: no operation reads them to decide behavior, they do not propagate to results, since lineage rides on `provenance`, and they never enter a compiled trace.
+The store is the **one exception to immutability** (II.5): it can be written after construction, so a diagnostic can attach its result to the object it examined. By convention it is append-only, and it is decoupled on copy — a copy takes its own container rather than sharing one — exactly as the reconstruction contract of II.5 requires of any store written in place. Annotations are inert everywhere else: no operation reads them to decide behavior, they do not propagate to results, since lineage rides on `provenance`, and they never enter a compiled trace.
 
 ### Rationale
 
 Annotations exist so that what was *learned about* an object — a validation verdict, a diagnostic score — can ride the object it describes without entering its identity (`C6 – Traceable and reproducible workflows`). Confining the one writable store to a named container that nothing load-bearing reads keeps the functional contract intact in substance: every input to every decision is still immutable (`C2 – Functional interface over immutable objects`).
 
-## II.6 — `Batch`
+## II.7 — `Batch`
 
 ### Contract
 
@@ -230,7 +241,7 @@ class BatchSpec(TermSpec):         # the batch kind's spec; is_valid accepts a m
     level_names: tuple[str, ...]
 ```
 
-**`[]` dispatch behavior.** A key is either a **position** or a **name**, and the two namespaces never collide: an axis has no name, and a field no position. A *position* (an integer, a slice, or a tuple of those) addresses the batch axes, which `Batch` itself answers. A *name* (a string, or a tuple of strings for a path) addresses a field within every element, which is only appliable to a batch whose elements have fields. A tuple mixing the two is invalid. 
+**`[]` dispatch behavior.** A key is either a **position** or a **name**, and the two namespaces never collide: an axis has no name, and a field no position. A *position* (an integer, a slice, or a tuple of those) addresses the batch axes, which `Batch` itself answers. A *name* (a string, or a tuple of strings for a path) addresses a field within every element, which is only appliable to a batch whose elements have fields. A tuple mixing the two is invalid.
 
 ```python
 class Batch[E](TrackedTerm):
@@ -284,7 +295,7 @@ The derived name is marked `name_is_auto`, and it states what was selected rathe
 
 `Batch` is necessary to satisfy `D1 – Mathematical fidelity` by ensuring how many objects there are stays separate from what one object contains. The level structure extends the same fidelity to collections of collections: how many objects sit at each level is a mathematical distinction, so `N` laws with `S` draws each are `(N,)` of `(S,)` rather than one anonymous `(N, S)`. Naming the levels is `C5 – Naming for unambiguous meaning` on that axis, letting a user say which multiplicity is which and letting operations align batches by meaning rather than by position. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). When those elements are array-backed and claim differentiation, the mapping is vectorized and differentiable end-to-end (`D6 – Differentiability as a capability`). To satisfy `D7 – Single source of truth`, indexing or iterating yields a *view*, the levels of a multi-level batch included. The obligation lands on the concrete batch, since only it knows its storage: the hook that presents a sub-batch shares the store rather than copying out of it, wherever the storage affords sharing. That is also why selecting all of a batch needs no special case — it reaches the same hook as any other selection, and a view costs nothing there.
 
-## II.7 — Dispatch and registries
+## II.8 — Dispatch and registries
 
 ### Contract
 
