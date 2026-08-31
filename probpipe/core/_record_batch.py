@@ -41,8 +41,8 @@ import numpy as np
 from ._array_backend import _is_numeric_dtype, _to_jax_array
 from ._batch import Batch, BatchSpec, _axis_groups_for
 from ._function_batch import FunctionBatch
+from ._kinds import batch_class_for_spec
 from ._object_batch import _from_iterable, _frozen_object_column, _is_object_array
-from ._opaque import OpaqueSpec
 from ._opaque_batch import OpaqueBatch
 from .event_template import (
     EventTemplate,
@@ -240,15 +240,17 @@ class RecordBatch(Batch[Record]):
             if isinstance(spec, NumericArraySpec):
                 _check_array_column(column, spec, path=path, kind=kind)
                 continue
-            if not isinstance(spec, FunctionSpec | OpaqueSpec):
+            if batch_class_for_spec(spec) is None:
                 # A field kind with no batch form cannot be *read* back: reading
                 # one presents the column as the batch of its element kind, and
                 # there is none for this. Admitting it at construction would make
-                # a batch nobody can take a field from.
+                # a batch nobody can take a field from. The registry answers that,
+                # as it does at the reading end, so a newly registered kind is
+                # admitted here without this guard being widened to match.
                 raise TypeError(
                     f"{kind}: the field {path!r} is declared {type(spec).__name__}, which has no "
-                    f"batch form, so a batch cannot present its column; an array field, a "
-                    f"callable field, and an opaque field are the forms a column takes"
+                    f"batch form, so a batch cannot present its column; a kind registers its "
+                    f"batch form beside its classes (see core/_kinds.py)"
                 )
             if not _is_object_array(column):
                 raise TypeError(
@@ -381,19 +383,21 @@ class RecordBatch(Batch[Record]):
         spec = self.event_template[key]
         if isinstance(spec, NumericArraySpec):
             return column
-        name = f"{self.name}[{key!r}]"
-        column_spec = BatchSpec(spec, self.axis_groups, self.level_names)
-        if isinstance(spec, FunctionSpec):
-            return self._inherit_provenance(
-                FunctionBatch._over_store(column, spec=column_spec, name=name)
+        # Every other kind presents through its registered batch form, so a new
+        # kind is reachable here by registering itself rather than by being added
+        # to a switch this module would otherwise have to know about.
+        column_cls = batch_class_for_spec(spec)
+        if column_cls is None:
+            raise TypeError(
+                f"the field {key!r} is declared {type(spec).__name__}, which has no batch form; "
+                f"a kind registers its batch form beside its classes (see core/_kinds.py)"
             )
-        if isinstance(spec, OpaqueSpec):
-            return self._inherit_provenance(
-                OpaqueBatch._over_store(column, spec=column_spec, name=name)
+        return self._inherit_provenance(
+            column_cls._over_store(
+                column,
+                spec=BatchSpec(spec, self.axis_groups, self.level_names),
+                name=f"{self.name}[{key!r}]",
             )
-        raise TypeError(
-            f"the field {key!r} is declared {type(spec).__name__}, which has no batch form yet; "
-            f"an array field, a callable field, and an opaque field are the forms a column takes"
         )
 
     def _field_view(self, path: str, template: EventTemplate) -> Self:
@@ -1406,6 +1410,23 @@ class _MappedBatchColumns:
             axis_groups=tuple(batch.axis_groups),
             name=batch._name,
             name_is_auto=batch._name_is_auto,
+        )
+
+    @classmethod
+    def of_record(cls, record: Record) -> _MappedBatchColumns:
+        """One record as columns over no levels of its own.
+
+        A record row has a multiplicity of one, so the axis the map is about to
+        add is the only level the aggregate will have. Naming none here is what
+        says so.
+        """
+        return cls(
+            {path: record[path] for path in record.event_template},
+            element_spec=record.spec,
+            level_names=(),
+            axis_groups=(),
+            name=record._name,
+            name_is_auto=record._name_is_auto,
         )
 
 

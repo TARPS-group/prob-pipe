@@ -1499,6 +1499,11 @@ def _unify_template_node(
     path: str,
 ) -> EventTemplate:
     """Recursively unify one declared template node with actual structure."""
+    if isinstance(actual, RecordSpec):
+        # An authoritative record declaration states the same fields the template
+        # node does; reading them off it is what lets a declared record operand be
+        # unified from its spec rather than only from a live value.
+        actual = actual.event_template
     children = getattr(actual, "children", None)
 
     if isinstance(children, Mapping):
