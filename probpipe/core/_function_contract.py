@@ -500,11 +500,10 @@ def _wrap_declared_function_output(
     function_name: str,
     output_template: EventTemplate,
 ) -> Record | Distribution:
-    """Wrap a validated event result under its authoritative template.
+    """Wrap a validated result under its declared template.
 
-    Schema-carrying results — a record, a batch of records, a distribution —
-    retain their structure. Other tracked terms are event leaves until #369
-    supplies an explicit term-result plan.
+    A result that already carries a schema — a record, a batch of records, a
+    distribution — keeps its structure; anything else is given the declared one.
     """
     if isinstance(result, (Record, RecordBatch, Distribution)):
         return result

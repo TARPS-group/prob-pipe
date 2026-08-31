@@ -23,6 +23,7 @@ from probpipe import (
     EventTemplate,
     Function,
     Normal,
+    NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
     OpaqueBatch,
@@ -323,7 +324,7 @@ class TestSiblingViewsZipThroughACall:
         out = add(x=views["x"], y=views["y"])
 
         assert out.batch_shape == (3,)
-        np.testing.assert_allclose(np.asarray(out["add"]), [0.0, 11.0, 22.0])
+        np.testing.assert_allclose(out.values, [0.0, 11.0, 22.0])
 
 
 class TestOpaqueColumnsAreRearrangedRaw:
@@ -519,7 +520,7 @@ class TestMultiLevelSweeps:
         out = scale(p=grid)
 
         assert out.batch_shape == (2, 3)
-        np.testing.assert_allclose(np.asarray(out["scale"]), np.arange(6.0).reshape(2, 3) * 10.0)
+        np.testing.assert_allclose(out.values, np.arange(6.0).reshape(2, 3) * 10.0)
 
     def test_two_groups_and_a_returned_batch_keep_their_partition(self):
         """The aggregate mints one level per swept group, then the rows' own
@@ -586,7 +587,7 @@ class TestAutoDispatchFallsBackForABatchReturningBody:
         out = double(v=source)
 
         assert out.batch_shape == (3,)
-        np.testing.assert_allclose(np.asarray(out["double"]), [0.0, 2.0, 4.0])
+        np.testing.assert_allclose(out.values, [0.0, 2.0, 4.0])
 
 
 class TestSameRankTransformsCannotLieEither:
@@ -759,7 +760,7 @@ class TestZeroWidthEventsUnderExplicitJax:
         assert out.batch_shape == (3,)
         # Row identities survive, so the zero-width column really was carried
         # per row rather than the output being indistinguishable zeros.
-        np.testing.assert_allclose(np.asarray(out["<lambda>"]), [0.0, 1.0, 2.0])
+        np.testing.assert_allclose(out.values, [0.0, 1.0, 2.0])
 
 
 class TestShapeCannotRecoverAxisProvenance:
@@ -837,9 +838,9 @@ class TestZeroRowsAgreeAcrossDispatch:
         }
 
         types = {type(r).__name__ for r in results.values()}
-        templates = {repr(r.event_template) for r in results.values()}
+        specs = {repr(r.element_spec) for r in results.values()}
         assert len(types) == 1
-        assert len(templates) == 1
+        assert len(specs) == 1
 
 
 class TestFunctionValuedColumnsStack:
@@ -945,6 +946,65 @@ class TestBatchValuedRowAggregation:
         out = Function(func=lambda x: self._inner(2), dispatch="sequential")(x=self._rows())
         assert out.batch_shape == (3, 2)
         assert out.level_names == ("row", "inner")
+
+    @staticmethod
+    def _inner_array(n: int, level: str = "inner"):
+        return NumericArrayBatch(
+            jnp.zeros(n), level, element_spec=NumericArraySpec(shape=()), name="inner"
+        )
+
+    def test_array_batch_rows_stack_with_the_sweep_in_front(self):
+        """A row's own levels survive whichever batch kind it returns.
+
+        Read as event shape instead, the rows' axis would say each cell holds
+        one 2-vector where it holds two elements on a level.
+        """
+        out = Function(func=lambda x: self._inner_array(2), dispatch="sequential")(x=self._rows())
+
+        assert isinstance(out, NumericArrayBatch)
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("row", "inner"))
+        assert tuple(out.element_spec.shape) == ()
+
+    def test_array_batch_rows_stack_from_their_native_store(self):
+        """A row's store is in native form, so stacking goes through its backend.
+
+        ``jnp.stack`` sees only what the duck path recognises, and would refuse a
+        registered container that converts perfectly well through ``to_jax``.
+        """
+        import pandas as pd
+
+        from probpipe.core._broadcast_distributions import _make_stack
+
+        rows = [
+            NumericArrayBatch(
+                pd.Series([1.0 * i, 2.0 * i]),
+                "inner",
+                element_spec=NumericArraySpec(shape=()),
+                name="inner",
+            )
+            for i in range(1, 4)
+        ]
+
+        out = _make_stack(rows, n=3, field_name="f", level_names=("sweep",))
+
+        assert (out.batch_shape, out.level_names) == ((3, 2), ("sweep", "inner"))
+        np.testing.assert_allclose(np.asarray(out.values)[2], [3.0, 6.0])
+
+    def test_array_batch_rows_disagreeing_on_their_multiplicity_are_refused(self):
+        def body(x):
+            return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner_array(3)
+
+        with pytest.raises(ValueError, match="returned batches that disagree"):
+            Function(func=body, dispatch="sequential")(x=self._rows())
+
+    def test_mixing_array_batch_and_record_batch_rows_is_refused(self):
+        """The two kinds hold different things, so there is no one aggregate."""
+
+        def body(x):
+            return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner(2)
+
+        with pytest.raises(TypeError, match="one kind for every row"):
+            Function(func=body, dispatch="sequential")(x=self._rows())
 
     def test_a_returned_design_aggregates_as_a_plain_batch(self):
         """The aggregate is not itself a design: a subclass with its own

@@ -78,14 +78,14 @@ def _add(row, noise):
 
 
 def _draw_value(value):
-    return sample(Normal(loc=value, scale=1.0, name="draw"))["sample"]
+    return sample(Normal(loc=value, scale=1.0, name="draw"))
 
 
 _INNER_DRAW = Function(func=_draw_value, dispatch="sequential")
 
 
 def _nested_automatic(value):
-    return _INNER_DRAW(value=value)["_draw_value"]
+    return _INNER_DRAW(value=value)
 
 
 def _randomness(result):

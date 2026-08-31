@@ -16,7 +16,7 @@ from probpipe import (
     EmpiricalDistribution,
     KDEDistribution,
     Normal,
-    NumericRecordBatch,
+    NumericArrayBatch,
     NumericRecordDistribution,
     log_prob,
     mean,
@@ -208,9 +208,9 @@ class TestDistributionArrayHandling:
 
         result = wf(dist=da)
 
-        assert isinstance(result, NumericRecordBatch)
+        assert isinstance(result, NumericArrayBatch)
         assert result.batch_shape == (1,)
-        np.testing.assert_allclose(result[result.event_template.fields[0]], jnp.asarray([3.0]))
+        np.testing.assert_allclose(result.values, jnp.asarray([3.0]))
 
 
 class TestUnhintedExternalDistribution:

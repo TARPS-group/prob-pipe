@@ -718,20 +718,11 @@ class RecordEmpiricalDistribution(
         for field_path in self._record_data:
             arr = jnp.asarray(self._record_data[field_path])
             fields[field_path] = arr[indices].reshape(*sample_shape, *arr.shape[1:])
-        # Return a ``NumericRecord`` rather than a ``NumericRecordBatch``
-        # for the batched case. ``NumericRecordBatch`` would carry a
-        # ``batch_shape`` that ``jax.vmap``'s pytree validation rejects
-        # when the empirical's ``_sample`` is wrapped inside a vmap'd
-        # callable (the array variant treats its leading axes as
-        # structural batch dims and refuses to be flattened/unflattened
-        # across that axis). Returning the looser ``NumericRecord``
-        # form is a deliberate deviation from the WF "uniform output
-        # wrap" contract; downstream consumers that need a batched
-        # container instead of per-field arrays don't currently exist
-        # — every callsite either iterates fields, indexes by name,
-        # or calls ``flatten_value`` (which handles both types).
-        # Single-field consumers still get the shape shim via the
-        # NumericRecord coercion path.
+        # The columns carry the draw axes, and the level naming them is the
+        # ``sample`` boundary's to mint: a law does not name what a caller's
+        # ``sample_shape`` ranges over. Building the batch here instead would put
+        # a named multiplicity inside a ``vmap``, whose pytree validation refuses
+        # the rank change it cannot name.
         return Record(self.name, fields, name_is_auto=True)
 
     # -- moments ------------------------------------------------------------

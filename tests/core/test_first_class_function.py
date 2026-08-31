@@ -510,7 +510,13 @@ class TestApplyContract:
                 output_template=matching.event_template,
             ).apply(1)
 
-    def test_function_return_remains_event_payload_without_template(self, full_provenance_mode):
+    def test_a_returned_function_keeps_its_kind(self, full_provenance_mode):
+        """A term an operation returns is never buried inside another kind.
+
+        ``apply`` hands back the implementer's object itself; the default call
+        derives a result term from it — the same kind under the call's own
+        provenance.
+        """
         learned = Function(func=lambda x: x + 1, name="learned")
         wrapped = Function(func=lambda: learned, name="fit_like")
 
@@ -518,8 +524,9 @@ class TestApplyContract:
 
         result = wrapped()
 
-        assert isinstance(result, Record)
-        assert result["fit_like"] is learned
+        assert isinstance(result, Function)
+        assert result is not learned
+        assert float(result(1.0)) == 2.0
         assert result.provenance.parents[0].parent is wrapped
 
     def test_function_spec_return_remains_authoritative_event_payload(self, full_provenance_mode):
@@ -1285,7 +1292,7 @@ class TestVariadicPlanning:
         result = wrapped(rows, 2.0)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["<lambda>"], np.arange(3.0) + 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) + 2)
 
     def test_record_batch_in_any_varargs_is_swept(self):
         rows = NumericRecordBatch.stack(
@@ -1298,7 +1305,7 @@ class TestVariadicPlanning:
         result = Function(func=double)(rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
 
     def test_record_batch_in_any_varkwargs_is_swept(self):
         rows = NumericRecordBatch.stack(
@@ -1311,7 +1318,7 @@ class TestVariadicPlanning:
         result = Function(func=double)(rows=rows)
 
         assert result.batch_shape == (3,)
-        np.testing.assert_allclose(result["double"], np.arange(3.0) * 2)
+        np.testing.assert_allclose(result.values, np.arange(3.0) * 2)
 
     def test_tracked_varargs_are_provenance_parents(self, full_provenance_mode):
         first = NumericRecord("first", value=1.0)

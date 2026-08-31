@@ -183,7 +183,7 @@ class JointGaussian(
         if sample_shape:
             return NumericRecordBatch(
                 result,
-                "draw",
+                "sample",
                 element_spec=self.event_template,
                 axis_groups=(sample_shape,),
                 name=self.name,

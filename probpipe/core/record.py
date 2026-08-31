@@ -441,8 +441,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             for field_name in fields:
                 _check_no_path_sep(field_name)
             field_inputs = dict(fields)
-        if not field_inputs:
-            raise ValueError("Record requires at least one named field")
 
         if event_template is not None and event_template.free_dims and _validate_leaves:
             event_template, _ = _unify_event_template_with_value(

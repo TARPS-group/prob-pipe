@@ -52,7 +52,7 @@ def _record_batch():
 
 def _add_automatic_noise(row):
     noise = sample(Normal(loc=0.0, scale=1.0, name="noise"))
-    return row["x"] + noise["sample"]
+    return row["x"] + noise
 
 
 def _add_caller_keyed_noise(row):
@@ -60,7 +60,7 @@ def _add_caller_keyed_noise(row):
         Normal(loc=0.0, scale=1.0, name="noise"),
         key=jax.random.key(3),
     )
-    return row["x"] + noise["sample"]
+    return row["x"] + noise
 
 
 class TestExecutionContract:
@@ -456,7 +456,7 @@ class TestJaxWorkflowGuards:
         with workflow_run(seed=19):
             rowwise_result = rowwise(row=_record_batch())
 
-        np.testing.assert_array_equal(auto_result["_add_automatic_noise"], rowwise_result)
+        np.testing.assert_array_equal(auto_result, rowwise_result)
 
     def test_explicit_jax_rejects_omitted_key_before_entropy(self):
         workflow = Function(func=_add_automatic_noise, dispatch="jax")

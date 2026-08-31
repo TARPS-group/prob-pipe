@@ -112,8 +112,111 @@ def sample(
                 descendant_descriptor=captured.descendant_descriptor,
             ),
         )
-        return _workflow_descendants.sample_captured_consumer(captured, key, sample_shape)
-    return dist._sample(key, sample_shape)
+        return _drawn_at_its_batch_form(
+            _workflow_descendants.sample_captured_consumer(captured, key, sample_shape),
+            sample_shape,
+            name=dist.name,
+            name_is_auto=dist.name_is_auto,
+        )
+    return _drawn_at_its_batch_form(
+        dist._sample(key, sample_shape),
+        sample_shape,
+        name=dist.name,
+        name_is_auto=dist.name_is_auto,
+    )
+
+
+def _drawn_at_its_batch_form(
+    drawn: Any, sample_shape: tuple[int, ...], *, name: str, name_is_auto: bool
+) -> Any:
+    """Give a multi-draw result the batch form of the draw's kind.
+
+    A non-empty ``sample_shape`` puts those leading dimensions on one level named
+    for the operation that mints them, ``sample`` (design V.2, V.9). The level is
+    minted here, at the boundary, for every kind of draw: a law that assembled the
+    draws itself — as a record of columns, or as an array of stored objects — did
+    not name what its leading axes range over, and reading them as event shape
+    says the draws were one wide value.
+
+    The event shape is read off the draw, which stays exact for a law whose event
+    shape is symbolic until a draw binds it. The batch takes the law's own *name*,
+    since the draws are that law's, and carries the law's *name_is_auto* with it:
+    the name is a caller's statement exactly when the caller's name for the law
+    was one.
+
+    A law that built its own batch already named the level, and a term of some
+    other kind is left as it is.
+    """
+    from ._array_backend import _event_shape_of, _is_numeric_leaf, _numpy_dtype_of
+    from ._batch import Batch
+    from ._broadcast_distributions import SAMPLE_LEVEL, _make_stack
+    from ._numeric_array_batch import NumericArrayBatch
+    from ._object_batch import _is_object_array
+    from ._record_batch import _batch_class_for
+    from .event_template import NumericArraySpec, _reshaped_template
+    from .record import Record
+    from .tracked import TrackedTerm
+
+    if not sample_shape or isinstance(drawn, Batch):
+        return drawn
+
+    n_draw_axes = len(sample_shape)
+    if isinstance(drawn, Record):
+        columns = {}
+        for path in drawn.event_template:
+            column = drawn[path]
+            if not _is_numeric_leaf(column):
+                return drawn
+            if tuple(_event_shape_of(column))[:n_draw_axes] != tuple(sample_shape):
+                # The draws are not where the contract puts them, so there is no
+                # split to make — the same conservatism the array case applies.
+                return drawn
+            columns[path] = column
+        # Only the draw axes move; the rest of each field's declaration rides
+        # through, which inferring an element template from the columns would lose.
+        element_spec = _reshaped_template(drawn.event_template, lambda shape: shape[n_draw_axes:])
+        return _batch_class_for(element_spec)(
+            columns,
+            SAMPLE_LEVEL,
+            element_spec=element_spec,
+            axis_groups=(tuple(sample_shape),),
+            name=name,
+            name_is_auto=name_is_auto,
+        )
+
+    if _is_object_array(drawn):
+        # Stored draws aggregate exactly as a sweep's rows do — each element at
+        # its own kind, under the one level the operation mints.
+        aggregate = _make_stack(
+            list(drawn.reshape(-1)),
+            batch_shape=tuple(sample_shape),
+            level_names=(SAMPLE_LEVEL,),
+            field_name=name,
+            name=name,
+        )
+        # An aggregation names its result for the function that produced the rows
+        # and marks that auto. Here the name is the law's, so whether it was a
+        # caller's statement is the law's answer, not this boundary's.
+        object.__setattr__(aggregate, "_name_is_auto", name_is_auto)
+        return aggregate
+
+    if isinstance(drawn, TrackedTerm) or not _is_numeric_leaf(drawn):
+        return drawn
+    shape = _event_shape_of(drawn)
+    if shape[: len(sample_shape)] != tuple(sample_shape):
+        # The draws are not where the contract puts them, so there is no split
+        # to make.
+        return drawn
+    return NumericArrayBatch(
+        drawn,
+        SAMPLE_LEVEL,
+        element_spec=NumericArraySpec(
+            shape=shape[len(sample_shape) :], dtype=_numpy_dtype_of(drawn)
+        ),
+        axis_groups=(tuple(sample_shape),),
+        name=name,
+        name_is_auto=name_is_auto,
+    )
 
 
 # -- keyword value form shared by the density ops ---------------------------

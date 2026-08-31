@@ -121,15 +121,21 @@ class SupportsSampling(Protocol):
 
     Return-type convention
     ----------------------
-    The shape of the return value depends on whether the distribution
-    emits structured samples and whether the caller asks for a batch:
+    The return lays the draws out on leading axes, and what carries them depends
+    on whether the distribution emits structured samples:
 
-    =====================  =======================  =========================================
-    Distribution kind      ``sample_shape == ()``   ``sample_shape == (S1, S2, ...)``
-    =====================  =======================  =========================================
-    Numeric (raw array)    ``Array[*event_shape]``  ``Array[*sample_shape, *event_shape]``
-    ``RecordDistribution`` ``Record`` / ``NumericRecord``  ``NumericRecordBatch(batch_shape=sample_shape)``
-    =====================  =======================  =========================================
+    ======================  ==========================  ==============================
+    Distribution kind       ``sample_shape == ()``      ``sample_shape == (S1, ...)``
+    ======================  ==========================  ==============================
+    Numeric (raw array)     ``Array[*event_shape]``     ``Array[*sample_shape, ...]``
+    ``RecordDistribution``  ``Record``                  ``Record`` of stacked columns
+    ======================  ==========================  ==============================
+
+    An implementation is not asked to *name* what those axes range over: the
+    ``sample`` operation mints the level, since a law cannot know what a caller's
+    ``sample_shape`` means. So returning the columns is right here, and a batch
+    inside a ``vmap`` — whose pytree validation refuses a rank change it cannot
+    name — is avoided.
 
     To draw a single sample, call ``_sample(key, ())``. Implementations
     that find it clearer to factor out a single-draw helper should
