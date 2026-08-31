@@ -65,7 +65,7 @@ from __future__ import annotations
 
 import operator
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Hashable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from math import prod
 from typing import Any
@@ -89,7 +89,6 @@ __all__ = [
     "FunctionSpec",
     "NumericArraySpec",
     "NumericEventTemplate",
-    "OpaqueSpec",
     "RecordSpec",
     "TermSpec",
     "ValueSpec",
@@ -384,39 +383,6 @@ class NumericArraySpec(ValueSpec):
             if not np.can_cast(np.dtype(actual), self.dtype, casting="same_kind"):
                 return False
         return True
-
-
-@dataclass(frozen=True)
-class OpaqueSpec(ValueSpec):
-    """The fallback value spec, for a value no other spec describes.
-
-    An opaque value carries no exposed structure (a string, a DataFrame, an
-    arbitrary Python object, ...). ``meta`` is optional opaque metadata and
-    must be hashable (or ``None``).
-    """
-
-    meta: Hashable = None
-
-    def __post_init__(self) -> None:
-        _require_hashable(self.meta, context="OpaqueSpec.meta")
-
-    def is_valid(self, value: Any) -> bool:
-        """Whether *value* is a valid opaque value — anything but a mapping.
-
-        As the fallback spec, ``OpaqueSpec`` accepts any value **except** a
-        ``Mapping``: a mapping denotes tree structure (a subtree), never a
-        leaf. Every other value is valid, including a numeric array or scalar
-        — such a value is *typically* described by an :class:`NumericArraySpec`, but
-        an explicitly-opaque field still accepts it. ``meta`` is metadata
-        about the spec and is not checked against the value.
-
-        Notes
-        -----
-        The record layer honours the same rule: mappings are never leaves, so
-        :class:`~probpipe.Record` construction materialises a mapping field
-        value into a nested subtree.
-        """
-        return not isinstance(value, Mapping)
 
 
 @dataclass(frozen=True)
@@ -853,6 +819,8 @@ def _to_spec(spec: _FieldSpecInput) -> _FieldSpec:
     if isinstance(spec, (ValueSpec, EventTemplate)):
         return spec
     if spec is None:
+        from ._opaque import OpaqueSpec
+
         return OpaqueSpec()
     if isinstance(spec, tuple):
         return NumericArraySpec(shape=spec)
@@ -1336,6 +1304,8 @@ class EventTemplate(NamedTree[ValueSpec], Immutable):
     # -- Repr ---------------------------------------------------------------
 
     def __repr__(self) -> str:
+        from ._opaque import OpaqueSpec
+
         parts = []
         for name, spec in self._tree.items():
             if isinstance(spec, EventTemplate):

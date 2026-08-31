@@ -26,11 +26,11 @@ from probpipe import (
     RecordBatch,
 )
 from probpipe.core._empirical import BootstrapReplicateDistribution, EmpiricalDistribution
+from probpipe.core._opaque import OpaqueSpec
 from probpipe.core.event_template import (
     EventTemplate,
     NumericArraySpec,
     NumericEventTemplate,
-    OpaqueSpec,
 )
 from probpipe.core.record import Record
 
