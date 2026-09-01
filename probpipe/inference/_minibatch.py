@@ -152,10 +152,10 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
             path: _index_column(data._raw_column(path), indices) for path in data.event_template
         }
         return _batch_class_for(data.element_spec)(
+            data.name,
             columns,
             DATUM_LEVEL,
             element_spec=data.element_spec,
-            name=data.name,
             name_is_auto=True,
         )
     if isinstance(data, Record):
@@ -165,7 +165,7 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
         # so a pinned dtype or support reaches the per-datum call.
         element = _reshaped_template(data.event_template, lambda shape: shape[1:])
         return _batch_class_for(element)(
-            columns, DATUM_LEVEL, element_spec=element, name=data.name, name_is_auto=True
+            data.name, columns, DATUM_LEVEL, element_spec=element, name_is_auto=True
         )
     return jnp.asarray(data)[indices]
 

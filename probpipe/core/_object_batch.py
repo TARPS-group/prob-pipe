@@ -33,6 +33,10 @@ class _ObjectBatch[E](Batch[E]):
 
     Parameters
     ----------
+    name : str
+        The batch's name. Required, as it is for every batch: a batch is a value a
+        caller holds, and a name derived from its class says nothing about what it
+        holds.
     elements : numpy.ndarray or iterable
         The elements, as an object array of any shape or a flat iterable. A
         nested sequence is not unpacked: build the array to state a shape of
@@ -44,17 +48,15 @@ class _ObjectBatch[E](Batch[E]):
         level. There is no default, deliberately — see *Notes*.
     element_spec : ValueSpec
         What every element satisfies, checked against each at construction.
-    axis_groups : iterable of iterable of int, optional
-        The axis *sizes* each level holds, in order, tiling the shape the
-        elements are stored in. Defaults to one axis per level, which requires
-        as many names as ``elements`` has axes; a level spanning several axes is
-        stated explicitly.
-    name : str, optional
-        The batch's name. Defaults to the class name lowercased, marked
-        auto-derived.
+    axes_per_level : iterable of int, optional
+        How many axes each level holds, outermost first; they must account for
+        every batch axis. Defaults to one axis per level, which requires as many
+        names as there are batch axes. The *sizes* are read off the elements
+        rather than restated here — they are already fixed by the data, so the
+        only thing left to say is where one level ends and the next begins.
     name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given. A batch left
-        unnamed is auto-named regardless.
+        Whether *name* is auto-derived rather than user-given, which is what an
+        operation naming its own result states.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -66,9 +68,9 @@ class _ObjectBatch[E](Batch[E]):
         iterable at all, or if an ndarray of elements is not ``dtype=object``.
     ValueError
         If ``elements`` is a zero-dimensional array (one object, with no batch
-        axis to count along), if ``axis_groups`` does not tile the stored shape, or if
-        ``axis_groups`` is omitted and the number of names does not match the
-        number of axes.
+        axis to count along), if ``axes_per_level`` does not account for every
+        stored axis or gives a count that is not one per level, or if it is omitted
+        and the number of names does not match the number of axes.
 
     Notes
     -----
@@ -79,7 +81,7 @@ class _ObjectBatch[E](Batch[E]):
     suffixing. The caller that mints a level knows what it means.
 
     Construction admits no elements, as selection always did: ``batch[0:0]`` and
-    ``OpaqueBatch([], "draw")`` are both a batch of nothing. Zero is a count the
+    ``OpaqueBatch("draws", [], "draw")`` are both a batch of nothing. Zero is a count the
     level can carry, and an object array of no elements still reports the shape
     ``(0,)`` to read it from. What is refused is a missing *axis*: a
     zero-dimensional store is one object, with no level to count along.
@@ -94,18 +96,19 @@ class _ObjectBatch[E](Batch[E]):
 
     def __init__(
         self,
+        name: str,
         elements: np.ndarray | Iterable[E],
+        /,
         level_names: str | Iterable[str],
         *,
         element_spec: ValueSpec,
-        axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str | None = None,
+        axes_per_level: Iterable[int] | None = None,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         store = _as_object_array(elements, kind=type(self).__name__)
         names = (level_names,) if isinstance(level_names, str) else tuple(level_names)
-        groups = _axis_groups_for(store.shape, names, axis_groups, kind=type(self).__name__)
+        groups = _axis_groups_for(store.shape, names, axes_per_level, kind=type(self).__name__)
 
         object.__setattr__(self, "_store", store)
         _check_elements(
@@ -113,8 +116,8 @@ class _ObjectBatch[E](Batch[E]):
         )
         self._init_batch(
             BatchSpec(element_spec, groups, names),
-            name=name if name is not None else type(self).__name__.lower(),
-            name_is_auto=name is None or name_is_auto,
+            name=name,
+            name_is_auto=name_is_auto,
             provenance=provenance,
         )
 

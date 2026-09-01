@@ -190,9 +190,10 @@ class TestApplyContract:
         intrinsic = EventTemplate(y=())
         declared = EventTemplate(y=NumericArraySpec((), dtype="float32"))
         returned = NumericRecordBatch(
+            "batch",
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
             level_names="draw",
-            axis_groups=((2,),),
+            axes_per_level=(1,),
             element_spec=intrinsic,
         )
         wrapped = Function(func=lambda: returned, output_template=declared)
@@ -215,9 +216,10 @@ class TestApplyContract:
     ):
         template = EventTemplate(y=(2,))
         returned = NumericRecordBatch(
+            "batch",
             {"y": jnp.ones((*batch_shape, 2))},
             level_names="draw",
-            axis_groups=(batch_shape,),
+            axes_per_level=(len(batch_shape),),
             element_spec=template,
         )
         wrapped = Function(func=lambda: returned, output_template=template)
@@ -231,9 +233,10 @@ class TestApplyContract:
 
     def test_declared_output_rejects_a_batch_with_the_wrong_event_shape(self):
         returned = RecordBatch(
+            "batch",
             {"y": jnp.ones((2, 3))},
             level_names="draw",
-            axis_groups=((2,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(y=(3,)),
         )
         wrapped = Function(func=lambda: returned, output_template=EventTemplate(y=()))
@@ -244,9 +247,10 @@ class TestApplyContract:
     def test_declared_output_checks_record_batch_dtype_and_support(self):
         dtype_template = EventTemplate(y=NumericArraySpec((), dtype="int32"))
         float_array = RecordBatch(
+            "batch",
             {"y": jnp.asarray([1.0, 2.0], dtype=jnp.float32)},
             level_names="draw",
-            axis_groups=((2,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(y=()),
         )
 
@@ -255,9 +259,10 @@ class TestApplyContract:
 
         support_template = EventTemplate(y=NumericArraySpec((), support=positive))
         invalid_array = NumericRecordBatch(
+            "batch",
             {"y": jnp.asarray([1.0, -2.0])},
             level_names="draw",
-            axis_groups=((2,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(y=()),
         )
 
@@ -464,18 +469,35 @@ class TestApplyContract:
         cases = [
             (
                 NumericArrayBatch(
-                    jnp.arange(3.0), "row", element_spec=NumericArraySpec(()), name="rows"
+                    "rows",
+                    jnp.arange(3.0),
+                    "row",
+                    element_spec=NumericArraySpec(()),
                 ),
                 EventTemplate(v=()),
             ),
-            (OpaqueBatch([object(), object()], "row", name="rows"), EventTemplate(v=None)),
             (
-                FunctionBatch([lambda z: z, lambda z: z], "row", name="rows"),
+                OpaqueBatch(
+                    "rows",
+                    [object(), object()],
+                    "row",
+                ),
+                EventTemplate(v=None),
+            ),
+            (
+                FunctionBatch(
+                    "rows",
+                    [lambda z: z, lambda z: z],
+                    "row",
+                ),
                 EventTemplate(v=FunctionSpec()),
             ),
             (
                 NumericRecordBatch(
-                    {"x": jnp.arange(3.0)}, "row", element_spec=EventTemplate(x=()), name="rows"
+                    "rows",
+                    {"x": jnp.arange(3.0)},
+                    "row",
+                    element_spec=EventTemplate(x=()),
                 ),
                 EventTemplate(v=EventTemplate(x=())),
             ),
@@ -496,7 +518,10 @@ class TestApplyContract:
     def test_a_batch_of_records_does_not_satisfy_a_bare_array_declaration(self):
         """Reading the record-only view made a one-field element pass as its field."""
         rows = NumericRecordBatch(
-            {"x": jnp.arange(3.0)}, "row", element_spec=EventTemplate(x=()), name="rows"
+            "rows",
+            {"x": jnp.arange(3.0)},
+            "row",
+            element_spec=EventTemplate(x=()),
         )
         wrapped = Function(
             func=lambda v: 1.0,
@@ -519,7 +544,13 @@ class TestApplyContract:
         )
 
         with pytest.raises(ValueError, match=r"OpaqueSpec.*does not conform.*NumericArraySpec"):
-            wrapped(v=OpaqueBatch([object()], "row", name="rows"))
+            wrapped(
+                v=OpaqueBatch(
+                    "rows",
+                    [object()],
+                    "row",
+                )
+            )
 
     def test_authoritative_nested_mapping_must_match_exactly(self):
         template = EventTemplate(
@@ -1517,6 +1548,7 @@ class TestDeclaredSupportOnABatchedOutput:
             a=NumericArraySpec((), support=positive), b=NumericArraySpec((), support=positive)
         )
         valid = NumericRecordBatch(
+            "batch",
             {"a": jnp.ones(3), "b": jnp.ones(3) * 2},
             "draw",
             element_spec=EventTemplate(a=(), b=()),
@@ -1533,6 +1565,7 @@ class TestDeclaredSupportOnABatchedOutput:
             a=NumericArraySpec((), support=positive), b=NumericArraySpec((), support=positive)
         )
         invalid = NumericRecordBatch(
+            "batch",
             {"a": jnp.ones(3), "b": jnp.asarray([1.0, -2.0, 3.0])},
             "draw",
             element_spec=EventTemplate(a=(), b=()),

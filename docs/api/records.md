@@ -55,14 +55,15 @@ Both take their elements the same way. Pass a flat sequence, or an object array
 of any shape to give the batch more than one axis; a nested sequence is *not*
 unpacked, since what nesting means for an arbitrary object is the caller's to
 decide. Elements are never looked inside, so a batch of two arrays stays a batch
-of two things rather than becoming one 2-d array. Every level takes a name, with
-one axis per level unless `axis_groups` states otherwise, and every element is
-checked against the shared specification at construction.
+of two things rather than becoming one 2-d array. The name comes first, as it does for a
+`Record` and an `Opaque`. Every level takes a name, with one axis per level unless
+`axes_per_level` says how many each holds, and every element is checked against
+the shared specification at construction.
 
 Two consequences worth knowing. The store is frozen and a supplied array is
 copied — the pointer array only, so the elements themselves stay shared — so a
 batch holds the elements it validated even if the caller keeps writing to the
-array they passed. And a batch of no elements is a batch: `OpaqueBatch([], "draw")`
+array they passed. And a batch of no elements is a batch: `OpaqueBatch("draws", [], "draw")`
 and `batch[0:0]` both give one, since zero is a count the level can carry. What a
 batch does need is an *axis* — a single object with none has no level to count
 along, and is refused.

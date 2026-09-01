@@ -326,11 +326,11 @@ class ProductDistribution(
             # not require numeric leaves.
             cls = NumericRecordBatch if isinstance(self, NumericRecordDistribution) else RecordBatch
             return cls(
+                self.name,
                 _sample_columns(self._components, key, sample_shape),
                 "sample",
                 element_spec=self.event_template,
-                axis_groups=(sample_shape,),
-                name=self.name,
+                axes_per_level=(len(sample_shape),),
                 name_is_auto=True,
             )
 

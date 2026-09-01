@@ -36,17 +36,17 @@ class NumericArray(TrackedTerm, Annotated):
 
     Parameters
     ----------
-    value : array-like
-        The array this names, stored verbatim in its native form: a bare array,
-        an ``xarray`` / ``pandas`` container, or any registered backend, so a
-        lazy or disk-backed value stays lazy. A bare Python scalar carries no
-        metadata to read and is normalised to a 0-d ``jax.Array``.
     name : str
         The value's name, **required**, as a :class:`~probpipe.Record`'s and an
         :class:`~probpipe.Opaque`'s are. A value carries no fields to describe it,
         so the name is what says which one it is; a class-name default would name
         every array in a pipeline alike. A caller that derives one says so with
         *name_is_auto*.
+    value : array-like
+        The array this names, stored verbatim in its native form: a bare array,
+        an ``xarray`` / ``pandas`` container, or any registered backend, so a
+        lazy or disk-backed value stays lazy. A bare Python scalar carries no
+        metadata to read and is normalised to a 0-d ``jax.Array``.
     name_is_auto : bool, default False
         Whether *name* is auto-derived rather than user-given — set by an
         operation that derives one, as the output boundary does when it names a
@@ -81,7 +81,7 @@ class NumericArray(TrackedTerm, Annotated):
     Examples
     --------
     >>> import jax.numpy as jnp
-    >>> value = NumericArray(jnp.arange(3.0), name="draw")
+    >>> value = NumericArray("draw", jnp.arange(3.0))
     >>> value.shape
     (3,)
     >>> value + 1          # a bare array, not a NumericArray
@@ -103,9 +103,10 @@ class NumericArray(TrackedTerm, Annotated):
 
     def __init__(
         self,
-        value: Any,
-        *,
         name: str,
+        value: Any,
+        /,
+        *,
         name_is_auto: bool = False,
         spec: NumericArraySpec | None = None,
         provenance: Provenance | None = None,
@@ -184,7 +185,7 @@ class NumericArray(TrackedTerm, Annotated):
         return len(self._value)
 
     def __repr__(self) -> str:
-        return f"NumericArray({self._value!r}, name={self.name!r})"
+        return f"NumericArray({self.name!r}, {self._value!r})"
 
     # -- the array surface --------------------------------------------------
 

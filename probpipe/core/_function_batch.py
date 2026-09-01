@@ -22,6 +22,10 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     Parameters
     ----------
+    name : str
+        The batch's name. Required, as it is for every batch: a batch is a value a
+        caller holds, and a name derived from its class says nothing about what it
+        holds.
     elements : numpy.ndarray or iterable of callable
         The callables, as an object array of any shape or a flat iterable.
     level_names : str or iterable of str
@@ -29,10 +33,12 @@ class FunctionBatch(_ObjectBatch[Callable]):
     element_spec : FunctionSpec, optional
         What every element satisfies. Defaults to ``FunctionSpec()``, which
         specifies a callable and neither of its templates.
-    axis_groups : iterable of iterable of int, optional
-        The axis sizes each level holds; defaults to one axis per level.
-    name : str, optional
-        The batch's name; defaults to ``"functionbatch"``, marked auto-derived.
+    axes_per_level : iterable of int, optional
+        How many axes each level holds, outermost first; they must account for
+        every batch axis. Defaults to one axis per level, which requires as many
+        names as there are batch axes. The *sizes* are read off the elements
+        rather than restated here — they are already fixed by the data, so the
+        only thing left to say is where one level ends and the next begins.
     name_is_auto : bool, default False
         Whether *name* is auto-derived rather than user-given.
     provenance : Provenance, optional
@@ -47,9 +53,10 @@ class FunctionBatch(_ObjectBatch[Callable]):
         something other than its elements — or is not iterable at all.
     ValueError
         If ``elements`` is a zero-dimensional array (one object, with no batch
-        axis to count along); if ``axis_groups`` does not tile the shape the elements are
-        stored in; or if ``axis_groups`` is omitted and the number of level names
-        does not match the number of axes.
+        axis to count along); if ``axes_per_level`` does not account for every axis
+        the elements are stored in, or gives a count that is not one per level; or
+        if it is omitted and the number of level names does not match the number
+        of axes.
 
     Notes
     -----
@@ -65,7 +72,7 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     Examples
     --------
-    >>> batch = FunctionBatch([lambda x: x, lambda x: 2 * x], "variant", name="f")
+    >>> batch = FunctionBatch("f", [lambda x: x, lambda x: 2 * x], "variant")
     >>> batch.batch_shape
     (2,)
     >>> batch[1](3)
@@ -78,12 +85,13 @@ class FunctionBatch(_ObjectBatch[Callable]):
 
     def __init__(
         self,
+        name: str,
         elements: np.ndarray | Iterable[Callable],
+        /,
         level_names: str | Iterable[str],
         *,
         element_spec: FunctionSpec | None = None,
-        axis_groups: Iterable[Iterable[int]] | None = None,
-        name: str | None = None,
+        axes_per_level: Iterable[int] | None = None,
         name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
@@ -95,11 +103,11 @@ class FunctionBatch(_ObjectBatch[Callable]):
                 f"got {type(element_spec).__name__}"
             )
         super().__init__(
+            name,
             elements,
             level_names,
             element_spec=element_spec,
-            axis_groups=axis_groups,
-            name=name,
+            axes_per_level=axes_per_level,
             name_is_auto=name_is_auto,
             provenance=provenance,
         )

@@ -53,19 +53,41 @@ def _named(kind):
     return {
         "Record": lambda: Record("given", a=1.0),
         "NumericRecord": lambda: NumericRecord("given", a=1.0),
-        "NumericArray": lambda: NumericArray(jnp.arange(3.0), name="given"),
+        "NumericArray": lambda: NumericArray(
+            "given",
+            jnp.arange(3.0),
+        ),
         "Opaque": lambda: Opaque("given", object()),
         "Function": lambda: Function(func=lambda: 1, name="given"),
         "Normal": lambda: Normal(0.0, 1.0, name="given"),
-        "RecordBatch": lambda: RecordBatch(COLUMNS, "lvl", element_spec=ELEMENT, name="given"),
+        "RecordBatch": lambda: RecordBatch(
+            "given",
+            COLUMNS,
+            "lvl",
+            element_spec=ELEMENT,
+        ),
         "NumericRecordBatch": lambda: NumericRecordBatch(
-            COLUMNS, "lvl", element_spec=ELEMENT, name="given"
+            "given",
+            COLUMNS,
+            "lvl",
+            element_spec=ELEMENT,
         ),
         "NumericArrayBatch": lambda: NumericArrayBatch(
-            jnp.arange(4.0), "lvl", element_spec=NumericArraySpec(shape=()), name="given"
+            "given",
+            jnp.arange(4.0),
+            "lvl",
+            element_spec=NumericArraySpec(shape=()),
         ),
-        "OpaqueBatch": lambda: OpaqueBatch([1, 2], "lvl", name="given"),
-        "FunctionBatch": lambda: FunctionBatch([lambda: 1], "lvl", name="given"),
+        "OpaqueBatch": lambda: OpaqueBatch(
+            "given",
+            [1, 2],
+            "lvl",
+        ),
+        "FunctionBatch": lambda: FunctionBatch(
+            "given",
+            [lambda: 1],
+            "lvl",
+        ),
     }[kind]()
 
 
@@ -126,6 +148,12 @@ class TestWhichKindsRequireAName:
         """It carries no fields to describe it, so a class-name default would
         name every array in a pipeline alike."""
         with pytest.raises(TypeError, match="name"):
+            NumericArray()
+
+    def test_a_lone_value_is_not_enough_for_a_numeric_array(self):
+        """The name comes first, so a single argument is the name and the value
+        is what the refusal asks for."""
+        with pytest.raises(TypeError, match="value"):
             NumericArray(jnp.arange(3.0))
 
     def test_a_function_takes_its_callables_name(self):
@@ -137,32 +165,6 @@ class TestWhichKindsRequireAName:
             True,
         )
 
-    @pytest.mark.parametrize(
-        ("build", "expected"),
-        [
-            pytest.param(
-                lambda: RecordBatch(COLUMNS, "lvl", element_spec=ELEMENT),
-                "recordbatch",
-                id="RecordBatch",
-            ),
-            pytest.param(
-                lambda: NumericRecordBatch(COLUMNS, "lvl", element_spec=ELEMENT),
-                "numericrecordbatch",
-                id="NumericRecordBatch",
-            ),
-            pytest.param(lambda: OpaqueBatch([1, 2], "lvl"), "opaquebatch", id="OpaqueBatch"),
-            pytest.param(
-                lambda: FunctionBatch([lambda: 1], "lvl"), "functionbatch", id="FunctionBatch"
-            ),
-        ],
-    )
-    def test_the_other_batches_fall_back_to_their_class_name(self, build, expected):
-        """Recorded rather than endorsed: `NumericArrayBatch` requires a name, and
-        these do not. Aligning them is tracked separately."""
-        batch = build()
-
-        assert (batch.name, batch.name_is_auto) == (expected, True)
-
 
 class TestADerivedNameSaysSo:
     """A view names itself after the position it selected, and marks it auto."""
@@ -170,10 +172,10 @@ class TestADerivedNameSaysSo:
     @staticmethod
     def _batch():
         return NumericArrayBatch(
+            "posterior",
             jnp.arange(12.0).reshape(4, 3),
             "draw",
             element_spec=NumericArraySpec(shape=(3,)),
-            name="posterior",
         )
 
     def test_an_element_is_named_for_its_position(self):
@@ -370,11 +372,11 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
     def test_several_levels_are_all_restated(self, density_op):
         """The operand's own tiling, not one flat axis."""
         drawn = NumericArrayBatch(
+            "draws",
             jnp.zeros((2, 3)),
             ("chain", "draw"),
             element_spec=NumericArraySpec(()),
-            axis_groups=((2,), (3,)),
-            name="draws",
+            axes_per_level=(1, 1),
         )
 
         scored = density_op(self.LAW, drawn)
@@ -409,10 +411,10 @@ class TestEveryAggregateIsNamedForItsFunction:
         from probpipe.core.event_template import NumericEventTemplate
 
         return NumericRecordBatch(
+            "rows",
             {"x": jnp.arange(float(n))},
             "row",
             element_spec=NumericEventTemplate(x=()),
-            name="rows",
         )
 
     def _swept(self, body, **controls):
@@ -448,10 +450,10 @@ class TestEveryAggregateIsNamedForItsFunction:
         from probpipe.core.event_template import NumericEventTemplate
 
         grid = NumericRecordBatch(
+            "grid",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("a", "b"),
             element_spec=NumericEventTemplate(x=()),
-            name="grid",
         )
 
         result = Function(
@@ -460,3 +462,50 @@ class TestEveryAggregateIsNamedForItsFunction:
 
         assert (result.name, result.name_is_auto) == ("double", True)
         assert result.level_names == ("a", "b")
+
+
+class TestNoKindInventsAName:
+    """The rule the whole layer now shares: a name is given, or derived from
+    something that carries meaning. A class name carries none.
+
+    Every batch defaulted to its own lowercased class name, so a pipeline full
+    of them read `recordbatch`, `opaquebatch`, `numericrecordbatch` — names that
+    say what the object *is*, which its type already says, and nothing about
+    which one it is.
+
+    That every constructor takes the name first, positional-only and with no
+    default behind it, is asserted from the signatures themselves in
+    `test_batch.py`'s `TestTheConstructorSignatureContract`. What is left here is
+    the other half of the rule: where a *derived* name comes from.
+    """
+
+    def test_stack_derives_its_name_from_what_it_stacks(self):
+        """Derived from real content, so no call site has to invent one: a batch
+        of `draw` records is about `draw`."""
+        rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
+
+        batch = NumericRecordBatch.stack(rows, level_name="row")
+
+        assert (batch.name, batch.name_is_auto) == ("draw", True)
+
+    def test_stack_takes_a_better_name_when_offered(self):
+        rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
+
+        batch = NumericRecordBatch.stack(rows, level_name="row", name="posterior")
+
+        assert (batch.name, batch.name_is_auto) == ("posterior", False)
+
+    def test_a_structural_transform_carries_the_name_and_its_flag(self):
+        """There is no class-name default to re-derive from, and an auto name is
+        something derived rather than a placeholder."""
+        batch = NumericRecordBatch(
+            "derived",
+            {"a": jnp.zeros(3), "b": jnp.zeros(3)},
+            "lvl",
+            element_spec=NumericEventTemplate(a=(), b=()),
+            name_is_auto=True,
+        )
+
+        edited = batch.without("b")
+
+        assert (edited.name, edited.name_is_auto) == ("derived", True)

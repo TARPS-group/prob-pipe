@@ -112,7 +112,7 @@ if it were user-guide reference text.
 | a 1-D numeric serialization | `vec` |
 | values for leaves dropped by `numeric_subset`, supplied when reconstructing a full value | `non_numeric` |
 | batch dimensions | `batch_shape` |
-| batch axes tiled into levels | `axis_groups` |
+| batch axes tiled into levels | `axis_groups` (reported; construction takes `axes_per_level`) |
 | one name per level of a batch | `level_names` |
 | the spec every element of a batch satisfies | `element_spec` |
 | the objects a batch is built from | `elements` |

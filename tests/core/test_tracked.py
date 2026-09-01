@@ -52,9 +52,10 @@ class TestMixinMembership:
 
     def test_record_batch_is_tracked(self):
         ra = RecordBatch(
+            "batch",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
         )
         assert isinstance(ra, TrackedTerm)
@@ -122,20 +123,23 @@ class TestNameIsAuto:
         assert r.name == "sample"
         assert r.name_is_auto is True
 
-    def test_unnamed_record_batch_is_auto(self):
+    def test_a_derived_batch_name_is_auto(self):
+        """A caller that derives a name says so; there is no unnamed batch."""
         ra = RecordBatch(
+            "derived",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
+            name_is_auto=True,
         )
         assert ra.name_is_auto is True
         named = RecordBatch(
+            "mine",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
-            name="mine",
         )
         assert named.name_is_auto is False
 
@@ -294,10 +298,12 @@ class TestWithNameOnBatchTypes:
 
     def test_record_batch(self):
         ra = RecordBatch(
+            "derived",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
+            name_is_auto=True,
         )
         ra2 = ra.with_name("mine")
         assert ra2 is not ra
@@ -310,11 +316,11 @@ class TestWithNameOnBatchTypes:
 
     def test_numeric_record_batch(self):
         nrb = NumericRecordBatch(
+            "orig",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
-            name="orig",
         )
         nra2 = nrb.with_name("new")
         assert nra2.name == "new"
@@ -525,11 +531,11 @@ class TestProductPickleRoundTrip:
 class TestBatchPickleRoundTrip:
     def test_numeric_record_batch_pickle_preserves_identity(self):
         nrb = NumericRecordBatch(
+            "mine",
             {"a": jnp.zeros((3,))},
             level_names="draw",
-            axis_groups=((3,),),
+            axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
-            name="mine",
         )
         nrb.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(nrb))

@@ -87,7 +87,7 @@ def _wrap_as_term(
             # can. Its own kind is still a batch, which is what the host says.
             from ._opaque_batch import OpaqueBatch
 
-            return OpaqueBatch([], field_name, name=field_name, name_is_auto=True)
+            return OpaqueBatch(field_name, [], field_name, name_is_auto=True)
         # A returned sequence ranges over nothing the call named, so the level
         # takes the function's own name. Errors are not caught here: the stack
         # has a batch form for every element kind, so what reaches this and
@@ -101,7 +101,7 @@ def _wrap_as_term(
     if _is_numeric_leaf(value):
         from ._numeric_array import NumericArray
 
-        return NumericArray(value, name=field_name, name_is_auto=True)
+        return NumericArray(field_name, value, name_is_auto=True)
     if callable(value):
         from .node import Function
 

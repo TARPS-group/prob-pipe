@@ -272,28 +272,31 @@ class Weights:
 
     >>> w = Weights(n=5)
 
-    **Use as a JAX array** — returns normalized weights automatically:
+    **Use as a JAX array** — the normalized weights, so a sum is one:
 
-    >>> jnp.sum(w)                          # -> ~1.0
-    >>> jnp.einsum("n,n...->...", w, vals)  # weighted sum
-    >>> w * values                          # element-wise product
+    >>> float(jnp.sum(w))
+    1.0
 
-    This means ``Weights`` can be passed anywhere a weight array is
-    expected, including ``jax.random.choice(..., p=w)``.
+    That is what lets a ``Weights`` be passed anywhere a weight array is
+    expected, ``jax.random.choice(..., p=w)`` included, and used directly in
+    an array expression::
 
-    **Access different representations** explicitly when needed:
+        jnp.einsum("n,n...->...", w, vals)   # weighted sum
+        w * values                           # element-wise product
 
-    >>> w.normalized         # Array, shape (n,) — probabilities summing to 1
-    >>> w.log_normalized     # Array — log-probabilities (always an array)
-    >>> w.log_unnormalized   # Array | None — raw stored log-weights (None if uniform)
-    >>> w.is_uniform         # bool — True when all items are equally weighted
+    **Access different representations** explicitly when needed::
 
-    **Compute weighted statistics** directly:
+        w.normalized         # Array, shape (n,) — probabilities summing to 1
+        w.log_normalized     # Array — log-probabilities (always an array)
+        w.log_unnormalized   # Array | None — raw stored log-weights (None if uniform)
+        w.is_uniform         # bool — True when all items are equally weighted
 
-    >>> w.mean(values)                  # weighted mean along leading axis
-    >>> w.variance(values)              # weighted variance
-    >>> w.covariance(values)            # weighted covariance matrix
-    >>> w.choice(key, shape=(10,))      # draw 10 weighted random indices
+    **Compute weighted statistics** directly::
+
+        w.mean(values)                  # weighted mean along leading axis
+        w.variance(values)              # weighted variance
+        w.covariance(values)            # weighted covariance matrix
+        w.choice(key, shape=(10,))      # draw 10 weighted random indices
 
     **Passing to distribution constructors** — all ProbPipe distribution
     constructors that accept ``weights`` or ``log_weights`` also accept

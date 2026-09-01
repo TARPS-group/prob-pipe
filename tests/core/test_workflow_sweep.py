@@ -367,10 +367,11 @@ class TestASweptBodyThatReturnsABatch:
         monkeypatch.setattr(_workflow_sweep, "execute_sweep_rows_jax", spy)
 
         grid = RecordBatch(
+            "batch",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             "cell",
             element_spec=EventTemplate(x=()),
-            axis_groups=((2, 3),),
+            axes_per_level=(2,),
         )
 
         mapped = Function(func=self._body, name="swept")(grid)

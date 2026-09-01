@@ -333,11 +333,11 @@ class SequentialJointDistribution(
         fields = {k: v for k, v in full.items() if k not in self._conditioned_names}
         if sample_shape:
             return NumericRecordBatch(
+                self.name,
                 fields,
                 "sample",
                 element_spec=self.event_template,
-                axis_groups=(sample_shape,),
-                name=self.name,
+                axes_per_level=(len(sample_shape),),
                 name_is_auto=True,
             )
         return Record(self.name, fields, name_is_auto=True)

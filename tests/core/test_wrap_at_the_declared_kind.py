@@ -101,7 +101,10 @@ class TestTheKindsAreOrderedNotDisjoint:
     @pytest.mark.parametrize(
         "make",
         [
-            lambda: NumericArray(jnp.arange(3.0), name="held"),
+            lambda: NumericArray(
+                "held",
+                jnp.arange(3.0),
+            ),
             lambda: Opaque("held", object()),
             lambda: Record("held", {"x": jnp.asarray(1.0)}, name_is_auto=True),
         ],
@@ -301,7 +304,12 @@ class TestAnEmptyRecordHasNoBatch:
         from probpipe import EventTemplate, RecordBatch
 
         with pytest.raises(ValueError, match="at least one field"):
-            RecordBatch({}, "x", element_spec=EventTemplate())
+            RecordBatch(
+                "batch",
+                {},
+                "x",
+                element_spec=EventTemplate(),
+            )
 
 
 class TestEachSweptRowTakesItsOwnKind:
@@ -324,10 +332,10 @@ class TestEachSweptRowTakesItsOwnKind:
         from probpipe.core.event_template import NumericEventTemplate
 
         return NumericRecordBatch(
+            "rows",
             {"x": jnp.arange(float(n))},
             "row",
             element_spec=NumericEventTemplate(x=()),
-            name="rows",
         )
 
     def _swept(self, body, dispatch):
@@ -402,10 +410,10 @@ class TestEachSweptRowTakesItsOwnKind:
         def body(v):
             x = jnp.asarray(v["x"])
             return NumericRecordBatch(
+                "parts",
                 {"y": jnp.stack([x, x * 2])},
                 "part",
                 element_spec=NumericEventTemplate(y=()),
-                name="parts",
             )
 
         out = self._swept(body, dispatch)
@@ -434,10 +442,10 @@ class TestASweptEmptyMappingHitsTheSameWall:
         from probpipe.core.event_template import NumericEventTemplate
 
         rows = NumericRecordBatch(
+            "rows",
             {"x": jnp.arange(3.0)},
             "row",
             element_spec=NumericEventTemplate(x=()),
-            name="rows",
         )
 
         with pytest.raises(ValueError, match="at least one field"):

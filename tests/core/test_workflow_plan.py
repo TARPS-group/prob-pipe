@@ -622,6 +622,7 @@ def _batch(level: str = "draw", n: int = 3, **fields) -> Any:
 
     fields = fields or {"x": jnp.arange(float(n))}
     return NumericRecordBatch(
+        "batch",
         dict(fields),
         (level,),
         element_spec=EventTemplate({name: value.shape[1:] for name, value in fields.items()}),
@@ -696,10 +697,11 @@ class TestPartialLevelOverlap:
         from probpipe.core.event_template import EventTemplate
 
         two = NumericRecordBatch(
+            "batch",
             {"x": jnp.arange(6.0).reshape(2, 3)},
             ("chain", "draw"),
             element_spec=EventTemplate(x=()),
-            axis_groups=((2,), (3,)),
+            axes_per_level=(1, 1),
         )
         one = _batch("draw", 3)
 
@@ -737,16 +739,18 @@ class TestPartialLevelOverlap:
         from probpipe.core.event_template import EventTemplate
 
         ga = NumericRecordBatch(
+            "batch",
             {"x": jnp.zeros((2, 3, 4))},
             ("a", "b"),
             element_spec=EventTemplate(x=()),
-            axis_groups=((2,), (3, 4)),
+            axes_per_level=(1, 2),
         )
         gb = NumericRecordBatch(
+            "batch",
             {"y": jnp.zeros((2, 3, 4))},
             ("a", "b"),
             element_spec=EventTemplate(y=()),
-            axis_groups=((2, 3), (4,)),
+            axes_per_level=(2, 1),
         )
 
         with pytest.raises(ValueError, match="same levels but are batched differently"):

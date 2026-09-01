@@ -235,12 +235,12 @@ class TestInnerDraw:
         from probpipe import NumericEventTemplate, NumericRecordBatch
 
         X, y = regression_data
-        n = X.shape[0]
         record_data = Record("r", X=X, y=y)
         record_batch_data = NumericRecordBatch(
+            "batch",
             {"X": jnp.asarray(X), "y": jnp.asarray(y)},
             level_names="draw",
-            axis_groups=((n,),),
+            axes_per_level=(1,),
             element_spec=NumericEventTemplate(X=(X.shape[1],), y=()),
         )
 
@@ -484,6 +484,7 @@ def test_a_multi_axis_batch_is_refused_at_construction(prior, likelihood):
     the check belongs where the distribution is built — otherwise ``dataset_size``
     reports the leading axis and the first draw is what raises."""
     grid = NumericRecordBatch(
+        "batch",
         {"x": jnp.ones((4, 3))},
         ("n", "k"),
         element_spec=EventTemplate(x=NumericArraySpec(shape=())),

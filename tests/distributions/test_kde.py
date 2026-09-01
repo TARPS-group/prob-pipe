@@ -155,6 +155,7 @@ class TestLogProbDualInput:
         )
         # Build a 3-row NumericRecordBatch
         nrb = NumericRecordBatch(
+            "batch",
             {"intercept": jnp.array([0.5, 0.6, 0.7]), "slope": jnp.array([-0.3, -0.4, -0.5])},
             "draw",
             element_spec=NumericEventTemplate(intercept=(), slope=()),

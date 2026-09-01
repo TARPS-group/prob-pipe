@@ -131,4 +131,4 @@ class Opaque(TrackedTerm, Annotated):
         return self._spec
 
     def __repr__(self) -> str:
-        return f"Opaque({self._value!r}, name={self.name!r})"
+        return f"Opaque({self.name!r}, {self._value!r})"

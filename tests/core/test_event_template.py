@@ -2012,15 +2012,24 @@ class TestMultiplicityBindsFromAValue:
 
     @staticmethod
     def _batch(size=3, level="item"):
-        return OpaqueBatch([object() for _ in range(size)], level)
+        return OpaqueBatch(
+            "batch",
+            [object() for _ in range(size)],
+            level,
+        )
 
     @staticmethod
-    def _grid(shape, level_names="grid", axis_groups=None):
+    def _grid(shape, level_names="grid", axes_per_level=None):
         """A batch whose store has *shape*, for the multi-axis and multi-level cases."""
         store = np.empty(shape, dtype=object)
         for index in np.ndindex(shape):
             store[index] = object()
-        return OpaqueBatch(store, level_names, axis_groups=axis_groups if axis_groups else [shape])
+        return OpaqueBatch(
+            "batch",
+            store,
+            level_names,
+            axes_per_level=axes_per_level or (len(shape),),
+        )
 
     @staticmethod
     def _declared(axis="n", field=None):
@@ -2144,7 +2153,7 @@ class TestMultiplicityBindsFromAValue:
 
         record = Record(
             "r",
-            b=self._grid((2, 4), ["chain", "draw"], [(2,), (4,)]),
+            b=self._grid((2, 4), ["chain", "draw"], (1, 1)),
             event_template=declared,
         )
 

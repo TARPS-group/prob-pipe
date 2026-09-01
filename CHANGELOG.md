@@ -9,6 +9,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A batch's name is its first argument, and construction takes the axis
+  partition rather than the sizes (#398).** Two changes to the same signatures.
+
+  `Record(name, fields)` and `Opaque(name, value)` put the name first;
+  `NumericArray` and all five batch forms took it as a keyword. They now match —
+  `RecordBatch("draws", columns, "draw", element_spec=...)`,
+  `NumericArray("x", values)` — with the name and the data positional-only, as
+  `Record`'s are, and the level names still acceptable either way.
+
+  `axis_groups=` is replaced by `axes_per_level=`, which says how many axes each
+  level holds rather than restating their sizes: `axes_per_level=(2,)` for one
+  level over two axes, where the old form needed `axis_groups=((4, 5),)`. The
+  sizes were never information a constructor lacked — the elements fix them and
+  the batch/event split comes from `element_spec` — so stating them only created
+  a way to contradict the data. Two of the four refusals the old argument had are
+  gone with it: a grouping can no longer disagree with the store or transpose it.
+  What remains is a partition that does not cover every batch axis, or does not
+  give one count per level.
+
+  `Batch.axis_groups` still reports the sizes, and `BatchSpec` still stores them,
+  which is right: a *declaration* may leave a size symbolic, fixing the number of
+  levels before the counts are known. A live batch holds elements at positions,
+  so it cannot.
+
+  `axes_per_level` reads its counts through `operator.index`, as an axis *size*
+  already did, so a count computed from an array's rank arrives as a numpy integer
+  without conversion. A `bool` is refused first, since it satisfies `operator.index`
+  as 0 or 1 and is not a thing anyone means to write as a level count.
+
 - **`sample(law, sample_shape=...)` mints the `sample` level for every kind of
   draw (#398).** The boundary assumed a law that assembles its own draws also
   names what they range over. An empirical did not: numeric atoms came back as one
@@ -19,6 +48,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `drawn["field"]` on such a result now reads a column of a batch rather than a
   field of a record, and `"field" in drawn` is now
   `"field" in drawn.event_template`. A single draw is unchanged.
+
+- **Every batch requires a name (#398).** `RecordBatch`, `NumericRecordBatch`,
+  `OpaqueBatch`, and `FunctionBatch` defaulted to their own lowercased class name,
+  so a pipeline full of them read `recordbatch` / `opaquebatch` — a name that says
+  what the object *is*, which its type already says, and nothing about which one it
+  is. `NumericArray` and `NumericArrayBatch` require one for the same reason.
+
+  A name is now given, or derived from something that carries meaning. `stack`
+  derives one from the records it stacks, so no call site has to invent it, and a
+  structural transform carries the name forward with the flag saying where it came
+  from rather than dropping it for a default that no longer exists.
+
+  The distribution-side placeholders (`DistributionArray`, `EmpiricalDistribution`,
+  the marginal and bootstrap names) are deliberately untouched — those classes are
+  being reworked, and changing their naming now would collide with that.
 
 - **`ArraySpec` → `NumericArraySpec` (#434; design #443).** The public spec has
   been hard-renamed with no compatibility alias; update imports and type
@@ -111,14 +155,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and `[]` / `()` an `OpaqueBatch` of `batch_shape == (0,)` — no element can say
   what kind it holds, and every element spec holds vacuously of none.
 
-  `Record()`, `EventTemplate()`, and `OpaqueBatch([], level)` are legal as a
+  `Record()`, `EventTemplate()`, and `OpaqueBatch(name, [], level)` are legal as a
   result. A *batch* of empty records is not: a batch reads its multiplicity off
   a column, and a zero-field element supplies none, so `RecordBatch` still
   requires at least one field. An empty template is **not** promoted to `NumericEventTemplate`:
-
-  result. An empty template is **not** promoted to `NumericEventTemplate`:
-
-
   vacuously every leaf is numeric, which is not a reason to claim it. A batch
   still requires a batch *axis* — a single object with no axis is refused as
   before.
