@@ -2,6 +2,18 @@
 
 ProbPipe's overarching aim is *simplification via abstraction*: complexity is absorbed into a few general, mathematically-grounded abstractions, so the interface a user interacts with stays small even as the space of supported methods and representations grows. The principles in this part make that aim concrete.
 
+## The Three Layers
+
+Every abstraction in this reference sits in one of three layers, and naming them fixes what a given contract is responsible for.
+
+| layer | what it holds | examples |
+|---|---|---|
+| **semantic** | the mathematical objects and the operations over them — what a thing *is* and what it *means* | the kinds and their specs, capabilities, the operation vocabulary |
+| **representation** | how a semantic object is concretely stored and computed with | backing arrays and array backends, columnar and object-array storage, flat-vector layouts, dispatch registries and converters |
+| **workflow** | how a computation is *run* and *recorded* | the call engine, lifting, provenance, randomness and replay, compute dispatch and orchestration, caching |
+
+The layers explain two recurring words. **Raw** is the representation layer seen from the semantic one: a term's raw form is the object that represents it, detached from the workflow — no name, no lineage, nothing the workflow would carry forward. And a **tracked term** is a semantic object bound to both of the others: a representation to compute with, and the workflow record of where it came from. A user works in the semantic layer by default; the other two are available on demand (`C3 – Computational detail hidden by default, available on demand`), which is why every escape hatch in this document is one of a small number of named doors rather than a per-class convention.
+
 ## Core Design Principles
 
 **C1 — Uniform interface to distributions and values.** ProbPipe provides a single, mathematically-oriented interface to probability distributions and to the values that arise from them. Distributions and values are first-class objects, related by the operations between them.
