@@ -2,18 +2,6 @@
 
 ProbPipe's overarching aim is *simplification via abstraction*: complexity is absorbed into a few general, mathematically-grounded abstractions, so the interface a user interacts with stays small even as the space of supported methods and representations grows. The principles in this part make that aim concrete.
 
-## The Three Layers
-
-Every abstraction in this reference sits in one of three layers, and naming them fixes what a given contract is responsible for.
-
-| layer | what it holds | examples |
-|---|---|---|
-| **semantic** | the mathematical objects and the operations over them — what a thing *is* and what it *means* | the kinds and their specs, capabilities, the operation vocabulary |
-| **representation** | how a semantic object is concretely stored and computed with | backing arrays and array backends, columnar and object-array storage, flat-vector layouts, dispatch registries and converters |
-| **workflow** | how a computation is *run* and *recorded* | the call engine, lifting, provenance, randomness and replay, compute dispatch and orchestration, caching |
-
-The layers explain two recurring words. **Raw** is the representation layer seen from the semantic one: a term's raw form is the object that represents it, detached from the workflow — no name, no lineage, nothing the workflow would carry forward. And a **tracked term** is a semantic object bound to both of the others: a representation to compute with, and the workflow record of where it came from. A user works in the semantic layer by default; the other two are available on demand (`C3 – Computational detail hidden by default, available on demand`), which is why every escape hatch in this document is one of a small number of named doors rather than a per-class convention.
-
 ## Core Design Principles
 
 **C1 — Uniform interface to distributions and values.** ProbPipe provides a single, mathematically-oriented interface to probability distributions and to the values that arise from them. Distributions and values are first-class objects, related by the operations between them.
@@ -43,3 +31,15 @@ The layers explain two recurring words. **Raw** is the representation layer seen
 **D6 — Differentiability as a capability.** Differentiability is a capability an object claims. Operations that require gradients dispatch on it, so support is settled at dispatch and a step that cannot differentiate is named there. Differentiability composes: a workflow is differentiable end-to-end exactly when every step claims it. Support for differentiation is encouraged but not required.
 
 **D7 — Single source of truth.** Each quantity is stored once, in one authoritative place; summaries, alternate encodings, exports, and any other view are derived from it on demand rather than stored separately.
+
+## The Three Layers
+
+The principles above imply a separation the rest of this reference is organized around. `C3 – Computational detail hidden by default, available on demand` distinguishes what a user means from how it is computed; `D7 – Single source of truth` insists each quantity is stored once; and `C6 – Traceable and reproducible workflows` adds a record of how a result came about. Those are three different responsibilities, so they belong to three layers:
+
+| layer | what it holds | examples |
+|---|---|---|
+| **semantic** | the mathematical objects and the operations over them — what a thing *is* and what it *means* | the kinds and their specs, capabilities, the operation vocabulary |
+| **representation** | how a semantic object is concretely stored and computed with | backing arrays and array backends, columnar and object-array storage, flat-vector layouts, dispatch registries and converters |
+| **workflow** | how a computation is *run* and *recorded* | the call engine, lifting, provenance, randomness and replay, compute dispatch and orchestration, caching |
+
+The layers are a consequence, not a fourth principle, and they earn their keep by fixing two recurring words. **Raw** is the representation layer seen from the semantic one: a term's raw form is the object that represents it, detached from the workflow — no name, no lineage, nothing the workflow would carry forward. A **tracked term** is a semantic object bound to both of the others: a representation to compute with, and the workflow record of where it came from. A user works in the semantic layer by default, which is why every escape hatch in this document is one of a small number of named doors rather than a per-class convention.
