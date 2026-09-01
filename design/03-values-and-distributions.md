@@ -221,7 +221,7 @@ class NumericRecord(Record):
 
 ### Rationale
 
-A `Record` is the *values* half of `C1 – Uniform interface to distributions and values`: a distribution's draw is a `Record` (or a `RecordBatch` for many), and a function over named values consumes one. One class serves the schema and the kind because they denote the same space: a second tag class would be a distinction without mathematical content, converted at every construction site (`D1 – Mathematical fidelity`, `D7 – Single source of truth`). Carrying the schema forward from its producer rather than re-inferring it downstream is `D5 – Explicit, carried structure` made concrete.
+A `Record` is the *values* half of `C1 – Uniform interface to functions, distributions, and values`: a distribution's draw is a `Record` (or a `RecordBatch` for many), and a function over named values consumes one. One class serves the schema and the kind because they denote the same space: a second tag class would be a distinction without mathematical content, converted at every construction site (`D1 – Mathematical fidelity`, `D6 – Single source of truth`). Carrying the schema forward from its producer rather than re-inferring it downstream is `D5 – Explicit, carried structure` made concrete.
 
 ### Notes
 
@@ -334,7 +334,7 @@ class LinOp(Function, ABC):        # the linear subtype of the III.3 base
 
 ### Rationale
 
-Operations mint linear operators, covariances above all, so the kind exists to keep those results first-class (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D7 – Single source of truth`), and typing both sides with numeric schemas makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
+Operations mint linear operators, covariances above all, so the kind exists to keep those results first-class (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D6 – Single source of truth`), and typing both sides with numeric schemas makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
 
 ### Open points
 
@@ -413,7 +413,7 @@ class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to distributions and values`. A field view is a reference rather than a copy (`D7 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`); the rest — the stored spec, purity, tracked results — is Part II's contract at the distribution kind.
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is a reference rather than a copy (`D6 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`); the rest — the stored spec, purity, tracked results — is Part II's contract at the distribution kind.
 
 ### Open points
 
@@ -761,7 +761,7 @@ converter_registry: ConverterRegistry   # the global instance
 
 ### Rationale
 
-Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment_match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`). Realizing the registry as a subclass of the shared dispatch machinery gives conversion registration, feasibility probing, prioritized selection, and cataloging without duplicating any of them (`D7 – Single source of truth`).
+Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity keeps the approximation honest, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while a `moment_match` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`). Realizing the registry as a subclass of the shared dispatch machinery gives conversion registration, feasibility probing, prioritized selection, and cataloging without duplicating any of them (`D6 – Single source of truth`).
 
 ## III.15 — Constraint reparameterization
 
@@ -797,7 +797,7 @@ The factory keys on constraint instances and types rather than dispatching on ar
 
 ### Rationale
 
-A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which serves `D6 – Differentiability as a capability`. Invertibility as a capability is `D3 – Capability-based operations`: an invertible map is an ordinary `Function` that additionally claims `SupportsInverse`, so it evaluates, composes, and pushes forward like any other, with *bijector* reserved for the mathematical statement. The Jacobian determinant is a separate claim for the same reason: a map can be invertible without a tractable determinant, so each claim stays honest on its own and change of variables asks for exactly the pair. Keeping the factory open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
+A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which is `C3 – Computational detail hidden by default, available on demand`: the reparameterization an algorithm needs is supplied for it rather than written into the model. Invertibility as a capability is `D3 – Capability-based operations`: an invertible map is an ordinary `Function` that additionally claims `SupportsInverse`, so it evaluates, composes, and pushes forward like any other, with *bijector* reserved for the mathematical statement. The Jacobian determinant is a separate claim for the same reason: a map can be invertible without a tractable determinant, so each claim stays honest on its own and change of variables asks for exactly the pair. Keeping the factory open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without touching the distributions that use it.
 
 ### Open points
 
