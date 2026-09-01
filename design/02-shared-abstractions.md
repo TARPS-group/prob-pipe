@@ -295,7 +295,7 @@ The derived name is marked `name_is_auto`, and it states what was selected rathe
 
 Some operations have many possible implementations, and which one applies depends on the *types* of the objects involved rather than on an object's own class. A **dispatch registry** holds those implementations as named methods and selects one for a given call.
 
-Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. Within one priority, the method whose declared types sit closest to the argument's class in method-resolution order wins, and any remaining tie falls to registration order. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration.
+Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. A method whose answer may be approximate also reports a **fidelity**, one shared scale across the registries — exact, approximate, or sampled — so that selection can prefer exactness and a result can record how it was obtained. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. Within one priority, the method whose declared types sit closest to the argument's class in method-resolution order wins, and any remaining tie falls to registration order. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration.
 
 ```python
 class BaseDispatchMethod(ABC):
@@ -314,10 +314,16 @@ class BinaryDispatchMethod(BaseDispatchMethod):   # still abstract
     @abstractmethod
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (left, right) types
 
+class Fidelity(Enum):     # how exact an answer is; totally ordered, EXACT the highest
+    EXACT       = "exact"
+    APPROXIMATE = "approximate"
+    SAMPLE      = "sample"
+
 class MethodInfo:
     feasible:    bool
     method_name: str
     description: str
+    fidelity:    Fidelity | None   # None when the method admits no approximation
 
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching

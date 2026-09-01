@@ -40,7 +40,7 @@ Where a route dispatches on a capability it names the operand it dispatches on, 
 
 **Primitive and derived.** A **primitive** operation states its own contract and carries its own routes. A **derived** operation is defined by an identity over other operations — `mixture` is the detached `marginal` of a composed joint — and carries no routes of its own: its result rule, its feasibility, and its failure modes are those of the operations it is defined by, and it adds only its own outer provenance record. How the identity is defined is what the operation *means*; where the work happens is the constituents' business.
 
-**Operand roles are declared by kind, not by spec.** An operation's operands are named and typed, but not by an `InputSpec` (II.3), which maps names to *concrete* term specs — the slots of one particular map-like term. An operation is generic over a kind: `mean` takes any distribution whatever its event, and `DistributionSpec` cannot express that, since it carries an event declaration of its own. Some authored parameters are not terms at all — `marginal`'s field path, `factor`'s factor name, `joint`'s alignment mapping — and a declaration that types terms has nothing to say about them. So an operand role declares the kind it accepts together with what a route will require of it, and the concrete typing happens per call, when the result rule reads the operands' actual specs. That is why planning is a rule rather than a stored declaration.
+**Operand roles are declared by kind, not by spec.** An operation's operands are named and typed, but not by an `InputSpec` (II.3), which maps names to *concrete* term specs — the slots of one particular map-like term. An operation is generic over a kind: `mean` takes any distribution whatever its event, and `DistributionSpec` cannot express that, since it carries an event declaration of its own. Some authored parameters are not terms at all — `marginal`'s field path, `factor`'s factor name, `joint`'s alignment mapping — and a declaration that types terms has nothing to say about them. So an operand role declares the kind it accepts — named by the spec *class*, since a spec's class is what fixes a term's kind, and a class needs no event declaration of its own — together with what a route will require of it, and the concrete typing happens per call, when the result rule reads the operands' actual specs. That is why planning is a rule rather than a stored declaration.
 
 **What a caller writes, and what the framework adds.** An operation's authored parameters are its operands together with anything the result rule reads — `sample_shape`, an alignment mapping, the plurality of a level. Its **controls** are the same for every operation and are supplied by the framework rather than by each author: `raw`, `method` for route selection, the PRNG `key`, and the sampling controls a Monte Carlo route consumes. The rule is one line: **a parameter is authored exactly when the result rule reads it; everything else is a control.** So an operation's signature is its operand list plus one uniform control block, and no operation may spell a control differently or omit one.
 
@@ -59,21 +59,37 @@ Where a route dispatches on a capability it names the operand it dispatches on, 
 
 **Output identity.** Every tracked term an operation mints is fully specified, never left implicit: its spec is the planned declaration, its `provenance` records the operation, its parent descriptors, and the selected route, and its `name` is auto-derived and marked `name_is_auto`. Every result is tracked, a numeric summary included — a density returns as a `NumericArray`, and the detached value is one `raw=True` away.
 
-**Listing available routes.** The operations are themselves a registry, so the vocabulary is discoverable the way every other extensible set in the library is (II.7). `operation_registry.list()` returns one summary per operation — its operands, whether it is primitive or derived, and each route with its source, fidelity, and requirement — and `describe()` renders the same content as text, for one operation or for all of them. The registry satisfies `SupportsRegistryCataloging`, so it appears in the catalog beside the converters, evaluation rules, inference methods, and bijector factories, and a user asking what ProbPipe can do has one place to look.
+**Listing available routes.** The operations are themselves a registry, so the vocabulary is discoverable the way every other extensible set in the library is (II.7). `operation_registry.list()` returns one summary per operation — each operand with the kinds it accepts, whether the operation is primitive or derived, and each route with its source, fidelity, and requirement — and `describe()` renders the same content as text, for one operation or for all of them. The registry satisfies `SupportsRegistryCataloging`, so it appears in the catalog beside the converters, evaluation rules, inference methods, and bijector factories, and a user asking what ProbPipe can do has one place to look.
 
 ```python
+class RouteSource(Enum):        # where a route's implementation comes from
+    STRUCTURAL = "structural"
+    CAPABILITY = "capability"
+    REGISTRY   = "registry"
+    FALLBACK   = "fallback"
+
+@dataclass(frozen=True)
+class OperandSummary:
+    name:     str                          # the role, as the signature spells it
+    accepts:  tuple[type[TermSpec], ...]   # the kinds it takes, each named by its spec class;
+                                           #   empty when the parameter selects rather than supplies,
+                                           #   as a field path or an alignment mapping does
+    planning: bool                         # whether the result rule reads it
+
 @dataclass(frozen=True)
 class RouteSummary:
     name:     str
-    source:   str        # "structural" | "capability" | "registry" | "fallback"
-    fidelity: str
-    requires: str        # what feasibility asks of the call, e.g. "SupportsMean"
+    source:   RouteSource
+    fidelity: Fidelity           # the shared scale of II.7
+    requires: tuple[type, ...]   # the protocols a capability route needs; empty otherwise
+    condition: str               # the feasibility condition in words, for the routes types cannot state
 
 @dataclass(frozen=True)
 class OperationSummary(EntrySummary):
-    operands:   Mapping[str, str]         # role name -> the kind it accepts, in signature order
-    definition: str                       # "primitive", or the identity a derived operation is
-    routes:     tuple[RouteSummary, ...]  # in selection order
+    operands:   tuple[OperandSummary, ...]   # in signature order
+    is_derived: bool
+    identity:   str | None                   # the defining identity, when derived
+    routes:     tuple[RouteSummary, ...]     # in selection order
 
 class OperationRegistry(SupportsRegistryCataloging):
     def register(self, op: Function) -> None: ...

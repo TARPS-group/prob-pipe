@@ -732,29 +732,24 @@ A distribution may have more than one representation, and an operation or backen
 
 Conversion is also the entry route for raw distributions: under the two-presentation rule (II.2), a backend distribution supplied at a distribution-shaped position — an argument, a given, a record field — is accepted in its raw form and converted on entry through the registry, exactly as a bare array is wrapped at an array-spec position.
 
-A converter declares the source types it converts *from* and the target types it converts *to* in the binary method's two slots, a cheap `check` that reports feasibility without converting, and the conversion as its `execute`. A conversion is rarely unique, so each carries a **fidelity**: `exact` for an equivalent representation, `moment_match` when only low-order moments are preserved, and `sample` for a Monte Carlo stand-in. The fidelities are totally ordered, `EXACT > MOMENT_MATCH > SAMPLE`. Priority remains the registry's sole selection order, with converter priorities assigned from the fidelity tiers, `EXACT` in the exact tier and the inexact fidelities in descending bands below it, so higher fidelity is preferred through the existing mechanism rather than a second ordering. A caller can name a converter or set `min_fidelity`, a feasibility floor `check` enforces.
+A converter declares the source types it converts *from* and the target types it converts *to* in the binary method's two slots, a cheap `check` that reports feasibility without converting, and the conversion as its `execute`. A conversion is rarely unique, so each carries a **fidelity** on the shared scale of II.7: `exact` for an equivalent representation, `approximate` where something is lost — moment matching, which preserves only low-order moments, is the common case — and `sample` for a Monte Carlo stand-in. Priority remains the registry's sole selection order, with converter priorities assigned from the fidelity tiers, `EXACT` in the exact tier and the inexact fidelities in descending bands below it, so higher fidelity is preferred through the existing mechanism rather than a second ordering. A caller can name a converter or set `min_fidelity`, a feasibility floor `check` enforces.
 
 ```python
-class ConversionMethod(Enum):
-    EXACT = "exact"
-    MOMENT_MATCH = "moment_match"
-    SAMPLE = "sample"
-
 @dataclass(frozen=True)
-class ConversionInfo(MethodInfo):   # the feasibility probe's result, extended with fidelity
-    method: ConversionMethod | None = None
+class ConversionInfo(MethodInfo):   # the feasibility probe's result; fidelity comes from MethodInfo
+    ...
 
 class Converter(BinaryDispatchMethod):
     name: str                            # unique within the registry; convert(..., method=name) selects it
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (source, target) types
     def check(self, source, target_type: type, *,
-              min_fidelity: ConversionMethod | None = None) -> ConversionInfo: ...
+              min_fidelity: Fidelity | None = None) -> ConversionInfo: ...
     def execute(self, source, target_type: type) -> Distribution: ...             # the conversion itself
 
 class ConverterRegistry(BinaryDispatchRegistry[Converter]):
     # keyed on (type(source), target): the second key is the target type itself
     def convert(self, source, target_type: type,
-                method: str | None = None, min_fidelity: ConversionMethod | None = None) -> Distribution: ...
+                method: str | None = None, min_fidelity: Fidelity | None = None) -> Distribution: ...
 
 converter_registry: ConverterRegistry   # the global instance
 ```
