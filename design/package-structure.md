@@ -23,13 +23,13 @@ The layout makes the reference's dependency order mechanical: what a part may de
 probpipe/
 ├── __init__.py                # the curated public API
 ├── core/                      # Part II — shared abstractions
-│   ├── _named_tree.py         #   NamedTree (II.1)
-│   ├── _constraints.py        #   Constraint and the constraint factories (II.4)
-│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.2), InputSpec, OutputSpec (II.3)
-│   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.4)
+│   ├── _named_tree.py         #   NamedTree (II.6)
+│   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
+│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.1), InputSpec, OutputSpec (II.2)
+│   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.3)
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.4)
-│   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.5)
-│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.6)
+│   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.4)
+│   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   └── _config.py             #   library configuration
@@ -144,7 +144,7 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
-| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_numeric.py`, `core/_constraints.py` (II.2–II.4) |
+| `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_numeric.py`, `core/_constraints.py` (II.1–II.3) |
 
 ### Open points
 
