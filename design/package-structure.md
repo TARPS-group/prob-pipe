@@ -78,7 +78,8 @@ probpipe/
 │   ├── _orchestration.py      #   optional tracing (IV.5)
 │   └── _result.py             #   output wrapping, identity, provenance (IV.1, V.0)
 ├── operations/                # Part V — the operations
-│   ├── _registry.py           #   OperationRegistry: list, describe, the catalog entry (V.0)
+│   ├── _operation.py          #   the @operation decorator, OperationRoute and its four
+│   │                          #     helpers, resolution, and the operation registry (V.0)
 │   ├── _moments.py            #   mean, variance, cov, quantile, expectation (V.1)
 │   ├── _sample.py             #   sample (V.2)
 │   ├── _density.py            #   log_prob, unnormalized_log_prob (V.3)
@@ -112,7 +113,7 @@ probpipe/
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` lives here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must sit below the machinery that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
 - **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the workflow scopes and structural keys, replay and caching, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
-- **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (V.1–V.9), above `_registry.py`, which holds the operation registry V.0 defines. The rest of V.0 is the wrapping itself rather than a module, and V.10's batching is the engine's sweep. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
+- **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (V.1–V.9) above `_operation.py`, which holds V.0's decorator, route protocol, resolution, and registry. V.10's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
 
@@ -135,7 +136,7 @@ The load-bearing moves, for orientation; the target contracts above are authorit
 | `core/_workflow_broker.py`, `core/_workflow_managed.py` | `functions/_broker.py` |
 | `core/_workflow_execution.py`, `core/_workflow_execution_contract.py` | `functions/_execution.py` |
 | `core/_workflow_result.py`, `core/_workflow_distribution_normalization.py` | `functions/_result.py` |
-| `core/ops.py` | `operations/`, one module per operation section (V.1–V.9), plus `_registry.py` for the operation registry |
+| `core/ops.py` | `operations/`, one module per operation section (V.1–V.9), plus `_operation.py` for the declaration, route, and registry machinery |
 | `core/distribution.py`, `core/_distribution_base.py` | `distributions/_distribution.py` |
 | `core/protocols.py` | `distributions/_capabilities.py` |
 | `core/_distribution_array.py`, `core/_broadcast_distributions.py` | `distributions/_batches.py` |

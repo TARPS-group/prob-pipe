@@ -42,6 +42,42 @@ Where a route dispatches on a capability it names the operand it dispatches on, 
 
 **Operand roles are declared by kind, not by spec.** An operation's operands are named and typed, but not by an `InputSpec` (II.3), which maps names to *concrete* term specs — the slots of one particular map-like term. An operation is generic over a kind: `mean` takes any distribution whatever its event, and `DistributionSpec` cannot express that, since it carries an event declaration of its own. Some authored parameters are not terms at all — `marginal`'s field path, `factor`'s factor name, `joint`'s alignment mapping — and a declaration that types terms has nothing to say about them. So an operand role declares the kind it accepts — named by the spec *class*, since a spec's class is what fixes a term's kind, and a class needs no event declaration of its own — together with what a route will require of it, and the concrete typing happens per call, when the result rule reads the operands' actual specs. That is why planning is a rule rather than a stored declaration.
 
+**Declaring an operation.** An operation is authored with the `@operation` decorator, which takes the result rule and registers the operation. The decorated function's parameters are its operands and declaration inputs; the controls are the framework's (below), so no author writes them. For a **primitive** operation the body is empty — the declaration is all the author supplies, and the routes below carry the work — while a **derived** operation's body *is* its identity, written in terms of other operations, and it registers no routes of its own.
+
+```python
+def _mean_result(d: DistributionSpec) -> TermSpec: ...
+# planning reads the operands' specs and the declaration inputs, and nothing traced (above)
+
+@operation(result=_mean_result)
+def mean(d: Distribution): ...              # primitive: no body; the routes below carry it
+
+@operation(result=_mixture_result)
+def mixture(K: ConditionalDistribution, mixing: Distribution):
+    return marginal(K * mixing, ...)        # derived: the body is the identity
+```
+
+**Registering routes.** A route is registered against the operation it realizes, at import, by whichever layer owns the implementation — the same upward registration the evaluation rules and converters use, so a route reaches an operation without the operation importing its provider. Every route has one shape, and the four helpers differ only in how one is built:
+
+```python
+class OperationRoute(Protocol):    # one shape; the helpers below are construction sugar
+    name:     str
+    source:   RouteSource
+    fidelity: Fidelity
+    def check(self, call: BoundCall, result: TermSpec) -> MethodInfo: ...
+    def execute(self, call: BoundCall, result: TermSpec) -> Any: ...
+
+mean.capability_route("closed_form", operand="d", protocol=SupportsMean, method="_mean",
+                      fidelity=Fidelity.EXACT)
+mean.fallback_route("monte_carlo", check=_can_sample, execute=_mc_mean,
+                    fidelity=Fidelity.SAMPLE)
+condition_on.structural_route("curry", check=_can_curry, execute=_curry, fidelity=Fidelity.EXACT)
+condition_on.registry_route("bayes", registry=inference_method_registry)
+```
+
+A capability route names the operand it dispatches on, which is why no operation needs a single distinguished subject. A registry route delegates selection to a registry of II.7, so the inference methods and the evaluation rules keep their own priorities and feasibility probes rather than having them restated here.
+
+**How a call resolves.** Every call runs the same steps, and each is a contract stated above: bind and normalize the arguments, either presentation accepted (II.2); validate applicability; plan the result declaration; collect the feasible routes by calling each `check`; select one; execute it; and cross the wrap boundary. Selection ranks by **fidelity** first, then **specificity** — the closest-in-method-resolution-order tie-break the dispatch registries already use — and then registration order, so exactness is never silently traded for specificity, while `method=` names a route outright and skips the ranking.
+
 **What a caller writes, and what the framework adds.** An operation's authored parameters are its operands together with anything the result rule reads — `sample_shape`, an alignment mapping, the plurality of a level. Its **controls** are the same for every operation and are supplied by the framework rather than by each author: `raw`, `method` for route selection, the PRNG `key`, and the sampling controls a Monte Carlo route consumes. The rule is one line: **a parameter is authored exactly when the result rule reads it; everything else is a control.** So an operation's signature is its operand list plus one uniform control block, and no operation may spell a control differently or omit one.
 
 **The wrap boundary.** The boundary is kind-directed and wraps only the untracked.
@@ -82,7 +118,7 @@ class RouteSummary:
     source:   RouteSource
     fidelity: Fidelity           # the shared scale of II.7
     requires: tuple[type, ...]   # the protocols a capability route needs; empty otherwise
-    condition: str               # the feasibility condition in words, for the routes types cannot state
+    condition: str               # the feasibility condition in words, for the routes that types cannot state
 
 @dataclass(frozen=True)
 class OperationSummary(EntrySummary):
@@ -104,13 +140,13 @@ operation_registry: OperationRegistry     # the global instance
 
 Defining an operation by its operands, a result rule, and a set of routes is what keeps the vocabulary closed: adding an operation cannot add a mechanism, and adding an *implementation* is registering a route rather than amending a contract (`D2 – Generality first`). Separating what a call means from how it is realized is why the old question "is this operation total?" was unanswerable — totality is a property of the routes available at call time, not of the operation — and stating resolution once gives the user one rule for when a call can fail instead of per-operation fine print. Planning the declaration before execution, from what is static under compilation, is `D5 – Explicit, carried structure` made checkable: the result's structure is known before the work starts and verified after it. Capability dispatch remains `D3 – Capability-based operations`, now as one route source among four rather than as the definition of an operation. Deriving the control block rather than authoring it per operation is `C1 – Uniform interface to functions, distributions, and values` at the operation layer: `raw` and `method` mean the same thing everywhere because no author writes them. Defining a derived operation by an identity keeps its behavior in one place (`D6 – Single source of truth`), and that every operation returns another tracked term is `D4 – Closed system of objects under operations`.
 
-## V.1 — Moments: `mean`, `variance`, `cov`, `quantile`, `expectation`
+## V.1 — Distribution functionals: `mean`, `variance`, `cov`, `quantile`, `expectation`
 
 ### Contract
 
 The moment operations summarize a distribution by a deterministic value.
 - `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is wrapped at the law's declared event kind — a `Record` whose schema matches the distribution's for a record-drawing law, and a term for a term-drawing one, so a random function's mean is a `Function` — or the raw event-typed value `T` with `raw=True`.
-- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp` rather than an event-typed value, since covariance couples distinct coordinates. Its input and output schemas are both the distribution's numeric event spec, so it applies directly to draws.
+- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp`, since covariance couples distinct coordinates. Its input and output schemas are both the distribution's numeric event spec, so it applies directly to draws.
 - `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. Its result declaration is event-kind-directed like any other: a single level returns the event's own kind — a `NumericArray` for an array-drawing law, a `NumericRecord` for a record-drawing one — and a plural `q` adds a level over those, giving the matching batch. The plurality of `q` is a shape, so planning reads it (V.0).
 - `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. The result is wrapped at the kind `f`'s output declaration names, a `Record` for the usual record output.
 
