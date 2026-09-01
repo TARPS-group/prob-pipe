@@ -12,16 +12,16 @@ An **operation** is a `Function` that declares three things and is realized by a
 
 1. its **operand roles** — which arguments are the mathematical inputs, and the kind each expects;
 2. its **applicability conditions** — what makes a call well-formed at the level of declarations;
-3. a **result rule** — computing the result's complete spec, not merely its class, before anything runs;
+3. a **result rule** — computing the result's complete spec before anything runs;
 
-and it is realized either by registered **routes** or, for a *derived* operation, by an identity over other operations. Everything else an operation does it does *because it is a `Function`*: controls, provenance, randomness, execution dispatch, and orchestration are Part IV's. An operation adds operands, a result rule, and routes to machinery that already exists.
+and it is realized either by registered **routes** or, for a *derived* operation, by an identity defined in terms of those other operations. An operation adds operands, a result rule, and routes to the dispatch machinery.
 
 **The four laws.**
 
 - **Planning.** The result declaration is computed before any route runs. Its inputs are exactly what is static under compilation — operand specs and structure, declared capabilities, which paths an argument supplied, and the control values — never traced array data, so a result declaration is `jit`-safe by construction and cannot depend on what the computation produces. The executed result must satisfy the declaration it was planned against.
 - **Resolution.** After applicability validation, a call succeeds when at least one route is **feasible**. Routes rank by fidelity, then specificity, then registration order, and the selected route records its name and fidelity in the result's provenance.
-- **Boundary.** `op(...)` returns a tracked term under fresh, derived identity. `op(..., raw=True)` **is** that result detached (II.5), computed without minting the identity it would discard — a definition, not a second path, so the raw form can never select a different route or a different draw.
-- **Lifting.** Substituting a `Distribution` or a `Batch` for a value operand lifts through the Part IV engine — the pushforward for a distribution, the elementwise sweep for a batch, co-sampling by root ancestor for several at once. **No operation implements lifting itself**, which is why none of the contracts below mention it.
+- **Boundary.** `op(...)` returns a tracked term under fresh, derived identity. `op(..., raw=True)` **is** that result detached (II.5), computed without constructing the identity it would discard.
+- **Lifting.** Substituting a `Distribution` or a `Batch` for a value operand lifts through the Part IV engine — the pushforward for a distribution, the elementwise sweep for a batch, co-sampling by root ancestor for several at once.
 
 **Routes.** A route is one way to realize an operation. Each declares a `check`, which reports feasibility for a bound call without computing the result, and an `execute`; each carries a **fidelity**, and an approximate route records the fidelity it achieved. Routes come from four sources, and an operation may carry any combination:
 
@@ -34,9 +34,36 @@ and it is realized either by registered **routes** or, for a *derived* operation
 
 Where a route dispatches on a capability it names the operand it dispatches on, so an operation needs no single distinguished subject: `joint` has two peer operands, and `evaluate` resolves on the map and the operand together.
 
-**Three failure modes, told apart.** A malformed call fails **applicability**, before planning. A call that is well-formed and mathematically meaningful but that no registered route can realize fails **resolution**, naming the requirements each route was missing. A resolved call may still fail in **execution**, as any numerical method may. No operation is total except on its stated applicability domain, and a route's presence is a fact about the registry at call time rather than a status stored on the operation — so registering a method later widens what resolves without changing any contract.
+**Failure modes.** A malformed call fails **applicability**, before planning. A call that is well-formed and mathematically meaningful but that no registered route can realize fails **resolution**, naming the requirements each route was missing. A resolved call may still fail in **execution**, as any numerical method may.
 
-**Asking before calling.** `op.check(...)` runs applicability and route feasibility for a bound call and reports what would happen: which routes are available, which are not and what each is missing, and which would be selected. It is the same `check` the converters and inference methods already expose, so feasibility has one name and one shape throughout the library.
+**Checking feasible routes.** `op.check(...)` runs applicability and route feasibility for a bound call and reports what would happen: which routes are available, which are not and what each is missing, and which would be selected. It is similar to the kind of `check` that the converters and inference methods expose.
+
+**Listing what exists.** The operations are themselves a registry, so the vocabulary is discoverable the way every other extensible set in the library is (II.7). `operation_registry.list()` returns one summary per operation — its operands, whether it is primitive or derived, and each route with its source, fidelity, and requirement — and `describe()` renders the same content as text, for one operation or for all of them. The registry satisfies `SupportsRegistryCataloging`, so it appears in the catalog beside the converters, evaluation rules, inference methods, and bijector factories, and a user asking what ProbPipe can do has one place to look.
+
+```python
+@dataclass(frozen=True)
+class RouteSummary:
+    name:     str
+    source:   str        # "structural" | "capability" | "registry" | "fallback"
+    fidelity: str
+    requires: str        # what feasibility asks of the call, e.g. "SupportsMean"
+
+@dataclass(frozen=True)
+class OperationSummary(EntrySummary):
+    operands:   tuple[str, ...]           # the operand roles, in signature order
+    definition: str                       # "primitive", or the identity a derived operation is
+    routes:     tuple[RouteSummary, ...]  # in selection order
+
+class OperationRegistry:                  # satisfies SupportsRegistryCataloging (II.7)
+    def register(self, op: Function) -> None: ...
+    def list(self) -> list[OperationSummary]: ...            # programmatic
+    def describe(self, name: str | None = None) -> str: ...  # rendered; every operation when None
+    def __getitem__(self, name: str) -> Function: ...
+
+operation_registry: OperationRegistry     # the global instance
+```
+
+The two queries answer different questions, and the pairing is the point: `list` is the **static inventory** — what operations exist and what routes they carry, independent of any call — while `check` is **per-call feasibility**, which of those routes applies to these operands. A route a plugin registers appears in the first at once, and changes the second only where it is feasible.
 
 **Primitive and derived.** A **primitive** operation states its own contract and carries its own routes. A **derived** operation is defined by an identity over other operations — `mixture` is the detached `marginal` of a composed joint — and carries no routes of its own: its result rule, its feasibility, and its failure modes are those of the operations it is defined by, and it adds only its own outer provenance record. How the identity is defined is what the operation *means*; where the work happens is the constituents' business.
 

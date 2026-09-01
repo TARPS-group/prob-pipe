@@ -77,6 +77,7 @@ probpipe/
 │   ├── _orchestration.py      #   optional tracing (IV.5)
 │   └── _result.py             #   output wrapping, identity, provenance (IV.1, V.0)
 ├── operations/                # Part V — the operations
+│   ├── _registry.py           #   OperationRegistry: list, describe, the catalog entry (V.0)
 │   ├── _moments.py            #   mean, variance, cov, quantile, expectation (V.1)
 │   ├── _sample.py             #   sample (V.2)
 │   ├── _density.py            #   log_prob, unnormalized_log_prob (V.3)
