@@ -217,7 +217,7 @@ class NumericRecord(Record):
     def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array) -> NumericRecord: ...
 ```
 
-**Vector-space arithmetic and the two routes.** `NumericRecord` implements the `Numeric` interface of II.4, and its arithmetic follows the two routes stated there. ProbPipe's own surface preserves structure and returns tracked terms: the vector-space set — `+` and `-` between records sharing a schema, and scalar `*` and `/` — and `map(f)` for elementwise maps, while array-shaped operations (broadcasting, positional indexing) stay with arrays. Foreign functions see the coordinates: `jnp.cos(record)` works and returns the bare coordinate vector, and `record.map(jnp.cos)` is the tracked spelling. No `__array_ufunc__` is defined, so NumPy and JAX functions never behave differently on the same object.
+**Vector-space arithmetic and the two routes.** `NumericRecord` implements the `Numeric` interface of II.4, and its arithmetic follows the two routes stated there. ProbPipe's own surface preserves structure and returns tracked terms: the vector-space set — `+` and `-` between records sharing a schema, and scalar `*` and `/` — and `map(f)` for elementwise maps, while array-shaped operations (broadcasting, positional indexing) stay with arrays. Foreign functions see the coordinates through the hooks the `Numeric` base supplies: `jnp.cos(record)` works and returns the bare coordinate vector, and `record.map(jnp.cos)` is the tracked spelling. No `__array_ufunc__` is defined, so NumPy and JAX functions never behave differently on the same object.
 
 ### Rationale
 

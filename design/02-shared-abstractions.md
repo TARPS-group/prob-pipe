@@ -69,21 +69,21 @@ The `with_path_names` method renames or moves nodes by `old="new"` pairs. A key 
 
 ### Rationale
 
-Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning`. Housing the collection contract in one shared class ensures `D6 – Single source of truth` is satisfied — the type- and value-level structures built on it cannot drift apart on how a field is named or a path is resolved.
+Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning`. Housing the collection contract in one shared class ensures the type- and value-level structures built on it cannot drift apart on how a field is named or a path is resolved, to satisfy `C1 — Uniform interface to functions, distributions, and values`.
 
 ### Notes
 
-- *Mappings are never leaves.* Construction should materialize a mapping-valued field into a subtree. The need for this mapping check is why `NamedTree` implements the `Mapping` interface without registering as a `collections.abc.Mapping` — so a nested mapping and its `to_nested_dict` export round-trip through the constructor, with no separate nested-dict reader.
+- *Mappings are never leaves.* Construction should materialize a mapping-valued field into a subtree. The need for this mapping check is why `NamedTree` implements the `Mapping` interface without registering as a `collections.abc.Mapping`, ensuring a nested mapping and its `to_nested_dict` export round-trip through the constructor.
 
 ## II.2 — Term specifications: `TermSpec`
 
 ### Contract
 
-A **term specification** describes the available typing information for a term and validates whether an object satisfies the term's type constraints.
+A **term specification** (``term spec'') describes the available typing information for a mathematical term and validates whether an object satisfies the term's type constraints.
 
-The specs partition into the **base kinds** and the batch kind. Every base kind has exactly one term spec, one **tracked class**, and one **batch form** — the numeric array, the opaque value, the record container, the function, the distribution, and the conditional distribution, each defined in Part III. The batch kind is the exception that needs no exception: a batch of batches is a batch, one term with an added level (II.6), so `BatchSpec` is the one spec whose batch form is its own kind.
+The specs partition into the **base kinds** and the **batch kinds**. Every base kind has exactly one term spec, one **tracked class**, and one **batch form**. Since a batch of batches is a batch, `BatchSpec` is the one spec whose batch spec is the same.
 
-**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any unbound name is **polymorphic**, and one with none is **concrete**; a composite spec's dimensions are the union over its parts, and specs carry no scope object beyond the names themselves, so they serialize as plain data. Three operations manage dimensions, and every spec carries its own: it *reports* the names still unbound, it *substitutes* explicit sizes for names, and it *binds* names by unification against a value, reading the sizes off the data. Substitution and binding return a new spec rather than mutating, so refinement is monotone, and until every name is bound an operation that needs sizes raises, naming the free dimensions. Keeping report, substitution, and binding with the spec is what reaches a spec the schema layer cannot name — a batch axis, declared one layer out — so every dimension a schema reports is one some spec can bind.
+**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any unbound name is said to be **polymorphic**, and one with none is said to be **concrete**. Three operations manage dimensions, and every spec carries its own: it *reports* the names still unbound, it *substitutes* explicit sizes for names, and it *binds* names by unification against a value, reading the sizes off the data. Substitution and binding return a new spec, so refinement is monotone. Until every name is bound an operation that needs sizes raises an error.
 
 Validation and the dimension protocol together are the base API:
 
@@ -100,18 +100,18 @@ class TermSpec(ABC):
     def with_dims(self, **sizes: int) -> Self: ...   # substitute explicit sizes; a new spec
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
 ```
-
-A spec accepts a value in **either presentation** — the raw representation or the tracked term of the spec's kind — with construction normalizing to the stored form. The rule is library-wide, since every accepting position is typed by a spec: a bare array is accepted at an array-spec position, a mapping at a record-shaped one, a callable at a function-shaped one, and a backend distribution at a distribution-shaped one, entering through its registered converter, while a tracked term is stored or handed on with its identity kept. The rule runs in both directions — wherever a raw value is accepted, its tracked form is accepted too — with one deliberate narrowing: an implementer method's *arguments* arrive already normalized to the implementer type, so an implementation handles exactly one presentation. What an implementer *returns* may be either presentation: the boundary keeps the kind and mints the result's identity afresh either way.
+s
+A spec accepts a value in **either presentation** — the raw representation or the tracked term of the spec's kind — with construction normalizing to the stored form. The rule also holds in the opposite direction: wherever a raw value is accepted by a function, its tracked form is accepted too; however, an implementer method's *arguments* arrive already normalized to the implementer type, so an implementation only needs to handle one presentation. An implementer may returns either presentation: the boundary keeps the kind and mints the result's identity afresh either way.
 
 ### Rationale
 
-One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to functions, distributions, and values`), and defining each concrete spec beside the kind it describes keeps this layer generic and type-agnostic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule is `D2 – Generality first`: every result can be tracked and every collection of draws stacked, so nothing an operation produces falls outside the system. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
+One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to functions, distributions, and values`), and defining each concrete spec beside the kind it describes keeps this layer generic and type-agnostic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule enforces `D2 – Generality first`: every result can be tracked and every collection of draws stacked, so nothing an operation produces falls outside the system. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
 
 ## II.3 — Input and output declarations: `InputSpec`, `OutputSpec`
 
 ### Contract
 
-An `InputSpec` is a flat mapping from names to term specs: the independently bindable slots a map-like term takes in, with a structured slot declared by the record kind's spec. It is flat because slots are bound independently and met from different sources — the semantics of function arguments rather than of one jointly produced value — and because composition's calculus is set algebra on exactly this shape. An `OutputSpec` is a term spec plus a required name for the produced term. Every output declaration is named because every tracked term is named. Symbolic dimensions are scoped jointly across an `InputSpec`'s slots and the output declaration beside it, so a name shared between an input and the output is one dimension:
+An `InputSpec` is a flat mapping from names to term specs: the independently bindable slots a map-like term takes in. An `OutputSpec` is a term spec plus a required name for the produced term. Every output declaration is named because every tracked term is named. Symbolic dimensions are scoped jointly across an `InputSpec`'s slots and the output declaration beside it, so a name shared between an input and the output is one dimension:
 
 ```python
 class InputSpec(Mapping[str, TermSpec]): ...   # named slots; keys are Python identifiers
@@ -121,26 +121,31 @@ class OutputSpec:
     spec: TermSpec
 ```
 
-Neither declaration is a `TermSpec`: each types no leaf and has no tracked class or batch form, so the kind rule of II.2 covers the term specs alone.
+Neither declaration is a `TermSpec` since they do not specify a term, so the kind rule of II.2 covers the term specs alone.
 
 ### Rationale
 
-Requiring a name on every output declaration serves `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows` together: the produced term's name is fixed where the producer is declared, so model structure never rides on a relabelable string. Keeping the input side a flat mapping makes composition's set algebra the declaration's native shape (`D5 – Explicit, carried structure`).
+Requiring a name on every output declaration serves `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows` together: the produced term's name is fixed where the producer is declared.
 
 ## II.4 — Numeric values: `Numeric`, `NumericSpec`, `Constraint`
 
 ### Contract
 
-**The `Numeric` interface.** The numeric kinds — the array kind, the numeric record specialization, and their batch forms (Part III) — share one flat-vector interface. `to_vector` lays a value out as one flat vector in canonical order, `vector_size` is its length, and each type's `from_vector` rebuilds a value of that type from coordinates. The coordinate protocols expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions are total over the numeric kinds at the coordinates and return bare arrays, while ProbPipe's own surface — operators and elementwise `map` — preserves structure and returns tracked terms. Anything typed over flat numeric values types against `Numeric` once, and a bare backend array passed where a `Numeric` is expected is promoted to the array kind's term on entry, zero-copy, its spec supplied by the position's declaration.
+**The `Numeric` interface.** The numeric kinds — the array kind, the numeric record specialization, and their batch forms — share one flat-vector interface. The `to_vector` method lays a value out as one flat vector in canonical order, the `vector_size` property is the flat vector's length, and the `from_vector` method rebuilds a value from the flat representation. The coordinate hooks expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions can be applied to the numeric kinds at the coordinates and return bare arrays. ProbPipe operators and elementwise `map` preserve structure and return tracked terms. Anything typed over flat numeric values types against `Numeric` once. If a bare array is passed where a `Numeric` value is expected, the array is promoted to the appropriate numeric type without any value copying.
+
+`Numeric` is an **abstract base class rather than a structural protocol**, and the distinction is worth stating once. A *capability* is open: any object may claim `SupportsMean` by implementing it, third-party families included, so capabilities are structural (III.8). A *kind interface* is closed: the numeric kinds are the ones ProbPipe defines, and a bare array reaching a `Numeric` position is promoted rather than duck-typed, so nothing outside the library ever satisfies it. Being a base rather than a shape also lets it carry what every numeric kind shares — the coordinate hooks are `to_vector` under other names, so the base defines them once and each kind implements only `to_vector` and `vector_size`.
 
 ```python
-@runtime_checkable
-class Numeric(Protocol):                    # the flat-vector interface of the numeric kinds
+class Numeric(ABC):                         # the flat-vector interface of the numeric kinds
     @property
+    @abstractmethod
     def vector_size(self) -> int: ...       # total flat dimension; defined only when concrete
+    @abstractmethod
     def to_vector(self) -> Array: ...       # the coordinates: one flat vector, canonical order
-    def __array__(self) -> np.ndarray: ...  # the coordinates as a protocol, so numpy and JAX
-    def __jax_array__(self) -> Array: ...   #   functions see to_vector and return bare arrays
+
+    # supplied once, so no kind restates them: numpy and JAX see to_vector
+    def __array__(self) -> np.ndarray: ...  # and therefore return bare arrays
+    def __jax_array__(self) -> Array: ...
 ```
 
 **The `NumericSpec` mixin.** The spec-side counterpart of `Numeric` marks the specs whose values implement it. A `NumericSpec` carries the flat dimension and fixes the canonical flat layout that its values' `Numeric` interface obeys; construction from coordinates stays with the value types, since a spec describes and never builds. The mixin is abstract and doesn't specify a kind of its own.
@@ -163,7 +168,7 @@ class Constraint(ABC):
 
 ### Rationale
 
-One flat-vector interface over the numeric kinds is `D2 – Generality first`: everything that consumes flat numeric values types against it once, and the coordinate protocols keep foreign array functions usable with no ProbPipe-specific code (`C3 – Computational detail hidden by default, available on demand`). The spec-side mixin is the same generality at the type level: everything that requires a numeric declaration types against `NumericSpec` once, whether the event is one array or a named tree of them. A constraint is data, not behavior: comparing and hashing by value lets a support key a registry, so the bijector factories select by the mathematics rather than by class identity (`D3 – Capability-based operations`).
+One flat-vector interface over the numeric kinds is `D2 – Generality first`: everything that consumes flat numeric values types against it once, and the coordinate protocols keep foreign array functions usable with no ProbPipe-specific code (`C3 – Computational detail hidden by default, available on demand`). The spec-side mixin is the same generality at the type level: everything that requires a numeric declaration types against `NumericSpec` once, whether the event is one array or a named tree of them. Both are abstract bases rather than protocols, which keeps the pair symmetric and states the rule the library follows elsewhere: an interface a closed set of ProbPipe kinds implements is a base, while an open claim any object may make is a structural protocol (`D6 – Single source of truth`, since the base holds the shared coordinate hooks instead of four copies). A constraint is data, not behavior: comparing and hashing by value lets a support key a registry, so the bijector factories select by the mathematics rather than by class identity (`D3 – Capability-based operations`).
 
 ## II.5 — Identity, type & metadata: `TrackedTerm`, `Provenance`
 
