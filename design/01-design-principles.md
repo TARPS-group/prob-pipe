@@ -4,7 +4,7 @@ ProbPipe's overarching aim is *simplification via abstraction*: complexity is ab
 
 ## Core Design Principles
 
-**C1 — Uniform interface to distributions and values.** ProbPipe provides a single, mathematically-oriented interface to probability distributions and to the values that arise from them. Distributions and values are first-class objects, related by the operations between them.
+**C1 — Uniform interface to functions, distributions, values.** ProbPipe provides a single, mathematically-oriented interface to terms such as functions, distributions, and values. These semantically defined terms are first-class objects, related by the operations between them.
 
 **C2 — Functional interface over immutable objects.** The interface is functional: operations have no side effects, and objects are never modified in place. An operation's result is determined entirely by its inputs, and any transformation yields a new object rather than mutating an existing one.
 

@@ -189,7 +189,7 @@ class Record(NamedTree[Any], TrackedTerm):
 
     @property
     def spec(self) -> RecordSpec: ...                    # the single stored source of the type
-    def to_numeric(self) -> NumericRecord: ...  # requires every leaf to be an array
+    def to_numeric(self) -> NumericRecord: ...  # requires every leaf to be numeric
     def raw(self, path: str | tuple[str, ...] | None = None) -> Any: ...
     # the stored representation: a field's raw value at path, or the whole
     # record as the nested mapping of raw leaves
@@ -401,7 +401,7 @@ class FieldView(Distribution):
     @property
     def path(self) -> str: ...
     # the declaration is the parent's schema at path; name == the field key,
-    # marked name_is_auto; provenance records the view and its parent
+    # marked name_is_auto; provenance records the parent it was viewed from
 ```
 
 **The distribution term specification.** `DistributionSpec` is the distribution kind's term spec. As a leaf, it types a field holding a matching `Distribution`. As an event declaration, it declares a random measure: a distribution whose draws are themselves `Distribution`s. The draw kind comes from the declaration, never from what `_sample` happens to return.
@@ -423,7 +423,7 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 ### Contract
 
-Each operation on a distribution is a **capability**: a distribution implements an underscore method (`_sample`, `_log_prob`, `_mean`, …) on the implementer draw type `T` (III.7) for each operation it supports — a value supplied to one, as `_log_prob`'s argument, arrives normalized to `T`, either presentation accepted at the boundary, and a return may be either presentation too, the boundary minting the result's identity either way (II.2) — and the matching user-facing op (`sample`, `log_prob`, `mean`, …) wraps the result at the boundary when appropriate.
+Each operation on a distribution is a **capability**: a distribution implements an underscore method (`_sample`, `_log_prob`, `_mean`, …) on the implementer draw type `T` (III.7) for each operation it supports — a value supplied to one, as `_log_prob`'s argument, arrives normalized to `T`, either presentation accepted at the boundary, and a return may be either presentation too, the boundary minting the result's identity either way (II.2) — and the matching user-facing op (`sample`, `log_prob`, `mean`, …) plans the result declaration, resolves the route, and wraps the result at the boundary (V.0).
 
 ```python
 @runtime_checkable
