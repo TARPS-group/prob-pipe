@@ -346,7 +346,7 @@ It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a 
 
 ### Contract
 
-A `Distribution[T]` is a single random law: a probability measure over values of type `T`, the implementer-side draw type fixed below. Its single stored source of type is its `DistributionSpec`, whose `event_spec`, the output declaration of one draw (an `OutputSpec`, II.2), it exposes as a view. Construction accepts a bare term spec or nested mapping data as a convenience, normalizing to an `OutputSpec` whose name defaults from the law's own constructor `name`, and the stored spec's class fixes the draw kind.
+A `Distribution[T]` is a single random law: a probability measure over values of type `T`, the implementer-side draw type fixed below. Its single stored source of type is its `DistributionSpec`, whose `event_spec`, the output declaration of one draw (an `OutputSpec`, II.2), it exposes as a view. That is the same declaration type a `Function` carries as its `output_spec`, and the two are named apart deliberately: a function's output is what one call *returns*, while a law's event is the space its draws inhabit, a standing property of the law rather than a per-call result. Construction accepts a bare term spec or nested mapping data as a convenience, normalizing to an `OutputSpec` whose name defaults from the law's own constructor `name`, and the stored spec's class fixes the draw kind.
 
 It is a `TrackedTerm`. It declares the operations it supports as **capabilities**, so operational support is decoupled from the class. Its `raw()` (II.4) returns the law **detached**: the same distribution without provenance, annotations, or a reference to a parent it was viewed from, keeping its spec and its name — so a field view's `raw()` is the detached marginal rather than a reference into its parent. Where a family stores a backend object, that object is what detachment yields; where the representation is ProbPipe's own, as for a factored joint, the detached law is. The draw a *user* sees is the tracked term of the declared kind: a `Record` for a record-valued law, and a `NumericArray` for a scalar one (III.1). It is not wrapped in another kind to make it uniform, so a draw's type follows the law's declaration rather than its field count.
 
@@ -381,8 +381,9 @@ class Distribution[T](TrackedTerm):
     def event_shape(self) -> tuple[int, ...]: ...    # defined only when a draw is a single array
 
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
-    # rename or move event fields; keys and path-valued targets resolve as for
-    # NamedTree.with_path_names (II.6), and the law is unchanged
+    # rename the produced slot by bare name, or rename and move event fields;
+    # keys and path-valued targets resolve as for NamedTree.with_path_names (II.6),
+    # and the law is unchanged
     def with_dims(self, **sizes: int) -> Self: ...
     # bind named symbolic dimensions (II.1); a conflict with an existing binding raises
     def __getitem__(self, path: str | tuple[str, ...]) -> FieldView: ...
@@ -625,7 +626,7 @@ class FactoredFullyNumericConditionalDistribution(
         FactoredNumericConditionalDistribution, FactoredConditionalNumericDistribution): ... # conditional joint, both numeric
 ```
 
-**Field versus factor.** A **field** is a named part of a draw, that is, a path in the event declaration. A **factor** is a constituent distribution the joint was built from. The two coincide only for an independent joint of single-field factors and differ in general. A correlated `MultivariateNormal` presented as `{intercept, slope}` is one factor with two fields. Conversely, the same draw `{x, y}` can arise from a single bivariate normal (no factors), from two independent factors (no edges), or from a chain p(y | x) · p(x) (two factors, one edge). The fields are identical but the factorization differs.
+**Field versus factor.** A **field** is a named part of a draw, that is, a path in the event schema. A **factor** is a constituent distribution the joint was built from. The two coincide only for an independent joint of single-field factors and differ in general. A correlated `MultivariateNormal` presented as `{intercept, slope}` is one factor with two fields. Conversely, the same draw `{x, y}` can arise from a single bivariate normal (no factors), from two independent factors (no edges), or from a chain p(y | x) · p(x) (two factors, one edge). The fields are identical but the factorization differs.
 
 **The two access interfaces.** A joint exposes up to two clearly separated interfaces, never through the same operator.
 - The **field interface** is available on every distribution. `d["intercept"]` returns a **view**: the field's marginal carrying a reference to its parent, so that sibling views co-sample from one parent draw and preserve correlation under broadcast. A view carries each capability its parent's capabilities can derive, its density routes through the parent's `SupportsMarginals`, and `marginal(d, "intercept")` returns that same marginal **detached** from the parent.
