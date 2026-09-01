@@ -91,7 +91,7 @@ A capability route names the operand it dispatches on, which is why no operation
 
 **Four raw mechanisms, one meaning.** *Raw* always means the representation layer, detached from the workflow; the mechanisms differ only in where they act. Route implementations are *written* over raw types (`T`); `apply` (III.3) *evaluates* a wrapped callable with no lifting, tracking, or provenance; `raw=True` *elides* the identity an operation would mint; and `raw()` (II.4) *detaches* an existing term.
 
-**Randomness.** No operation draws from ambient random state, and no operation carries a seed. An explicit PRNG `key` is caller-owned: the draw is consumed as given and reproducible from the key alone. With the key omitted, the draw is a **workflow-owned random event** (IV.3): its key derives structurally from the enclosing workflow scope, and a bare call outside any scope gets its own ephemeral scope — so an omitted key is never silently repeated, and a seeded scope reproduces it on demand. An operation whose contract is a deterministic quantity but whose resolved route samples takes its key the same way. The resolved key is recorded in `provenance`.
+**Randomness.** No operation draws from ambient random state, and no operation carries a seed. An explicit PRNG `key` is caller-owned: the draw is consumed as given and reproducible from the key alone. With the key omitted, the draw is a **workflow-owned random event** (IV.3): its key derives structurally from the enclosing workflow scope, and a bare call outside any scope gets its own ephemeral scope. An operation whose contract is a deterministic quantity but whose resolved route samples takes its key the same way. The resolved key is recorded in `provenance`.
 
 **Output identity.** Every tracked term an operation mints is fully specified, never left implicit: its spec is the planned declaration, its `provenance` records the operation, its parent descriptors, and the selected route, and its `name` is auto-derived and marked `name_is_auto`. Every result is tracked, a numeric summary included — a density returns as a `NumericArray`, and the detached value is one `raw=True` away.
 
@@ -140,121 +140,7 @@ operation_registry: OperationRegistry     # the global instance
 
 Defining an operation by its operands, a result rule, and a set of routes is what keeps the vocabulary closed: adding an operation cannot add a mechanism, and adding an *implementation* is registering a route rather than amending a contract (`D2 – Generality first`). Separating what a call means from how it is realized is why the old question "is this operation total?" was unanswerable — totality is a property of the routes available at call time, not of the operation — and stating resolution once gives the user one rule for when a call can fail instead of per-operation fine print. Planning the declaration before execution, from what is static under compilation, is `D5 – Explicit, carried structure` made checkable: the result's structure is known before the work starts and verified after it. Capability dispatch remains `D3 – Capability-based operations`, now as one route source among four rather than as the definition of an operation. Deriving the control block rather than authoring it per operation is `C1 – Uniform interface to functions, distributions, and values` at the operation layer: `raw` and `method` mean the same thing everywhere because no author writes them. Defining a derived operation by an identity keeps its behavior in one place (`D6 – Single source of truth`), and that every operation returns another tracked term is `D4 – Closed system of objects under operations`.
 
-## V.1 — Distribution functionals: `mean`, `variance`, `cov`, `quantile`, `expectation`
-
-### Contract
-
-The moment operations summarize a distribution by a deterministic value.
-- `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is wrapped at the law's declared event kind — a `Record` whose schema matches the distribution's for a record-drawing law, and a term for a term-drawing one, so a random function's mean is a `Function` — or the raw event-typed value `T` with `raw=True`.
-- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp`, since covariance couples distinct coordinates. Its input and output schemas are both the distribution's numeric event spec, so it applies directly to draws.
-- `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. Its result declaration is event-kind-directed like any other: a single level returns the event's own kind — a `NumericArray` for an array-drawing law, a `NumericRecord` for a record-drawing one — and a plural `q` adds a level over those, giving the matching batch. The plurality of `q` is a shape, so planning reads it (V.0).
-- `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. The result is wrapped at the kind `f`'s output declaration names, a `Record` for the usual record output.
-
-Each carries a capability route on the matching protocol (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`, `SupportsQuantile`, `SupportsExpectation`), feasible whatever the event type, and a Monte Carlo fallback route feasible through `SupportsSampling`, with the sample count and PRNG key as controls (V.0). A distribution that claims neither resolves to nothing and raises. The fallback route is defined per event kind. A numeric event averages draws coordinatewise. A function-valued event answers with a lazy function: its mean at a point is the average of the sampled callables there, and its variance the pointwise sample variance. A measure-valued event's mean is the finite mixture of the sampled draws, the Monte Carlo estimate of the mean measure. `cov` and `quantile` keep numeric-only fallback routes, the sample covariance returned as a `DenseLinOp` and the per-coordinate empirical quantiles. `expectation` averages the array outputs of `f` and so applies to any event type that samples.
-
-### Rationale
-
-A mean is defined whenever draws can be averaged: coordinate-wise for arrays, pointwise for functions, and set-wise for measures, where `A ↦ E[ξ(A)]` is again a measure. An event-typed variance additionally requires the second moment to be a value of the event type. That holds for arrays and functions, but fails for a general random measure: to be a measure, `A ↦ Var(ξ(A))` would have to be additive, which holds only when disjoint regions are uncorrelated (a completely random measure) and never for a random probability measure, whose fixed total mass forces negative correlation. A random measure's second-moment structure is instead a covariance over pairs of sets, the analog of `cov` rather than of `variance`. Gating `mean` and `variance` by capability rather than by a numeric event is `D1 – Mathematical fidelity`, and `cov` and `quantile` remain numeric-only, since a flat covariance operator and ordered quantile levels have no meaning for a non-numeric draw. `cov` returns a flat operator rather than an event-typed value because it couples coordinates that the event's field structure keeps separate. The closed-form-or-Monte-Carlo split realizes `C3 – Computational detail hidden by default, available on demand`: a distribution that can give an exact moment does, and one that can only sample still answers, approximately.
-
-## V.2 — `sample`
-
-### Contract
-
-`sample(d, key=None, sample_shape=(), raw=False)` draws from a distribution.
-- With `sample_shape=()` it returns a single draw **at the declared kind**, tracked. The kind is the event declaration's class, fixed by the declaration and never by the runtime value: a `RecordSpec` draws a `Record`, a `DistributionSpec` a `Distribution`, a `FunctionSpec` a `Function`, a `NumericArraySpec` a `NumericArray`, and an `OpaqueSpec` an `Opaque`. Every spec names a class, so no kind is presented by wrapping it in another: a scalar law draws a `NumericArray`, not a single-field `Record`.
-- A non-empty `sample_shape` prepends batch axes and returns the tracked batch type of the draw's kind, with those leading dimensions on a level named for the operation that mints them, `sample`: a `RecordBatch` (`NumericRecordBatch` when numeric) for a record event, and the tracked batch form of the table below — a `DistributionBatch`, `FunctionBatch`, and so on — for a term-drawing law.
-- `sample(..., raw=True)` is the draw detached (V.0): the kind's raw value for `sample_shape=()`, and for a `Distribution`- or `ConditionalDistribution`-valued draw the law itself, without provenance or annotations. For a non-empty `sample_shape` it is the **storage view** (II.5), the draws' raw values in their native stacked layout:
-
-| declared kind | tracked batch | `raw=True` result |
-|---|---|---|
-| `NumericArraySpec` | `NumericArrayBatch` | the stacked array, batch axes leading |
-| `RecordSpec` | `RecordBatch` / `NumericRecordBatch` | the nested mapping of raw columns |
-| `DistributionSpec` | `DistributionBatch` | an object array of the drawn laws |
-| `ConditionalDistributionSpec` | `ConditionalDistributionBatch` | an object array of the drawn kernels |
-| `FunctionSpec` | `FunctionBatch` | an object array of the drawn callables |
-| `OpaqueSpec` | `OpaqueBatch` | an object array of the drawn objects |
-- Sampling requires a concrete declaration and raises with the free dimensions named; in the fused conditional path, the given value binds them first.
-- A caller-supplied PRNG `key` makes the draw reproducible from the key alone; with the key omitted, the draw is a workflow-owned random event (IV.3). Under a non-empty `sample_shape` the key splits by draw index, so the draws are jointly independent and reproducible together; inside a `Function`, the workflow scope supplies each draw's key by structural identity, so draws are never hand-threaded.
-- The draw carries `provenance` recording `sample` and the distribution it came from.
-
-For a `ConditionalDistribution`, `sample(K, given=s, key=...)` is the fused conditional path that's equivalent to `sample(condition_on(K, s), key=...)`.
-
-### Rationale
-
-Every draw is reproducible from its inputs — from the key alone when the caller supplies one, and from the workflow scope's seed and the draw's structural identity otherwise (IV.3) — which is `C6 – Traceable and reproducible workflows`. Returning every draw as the tracked term of its declared kind serves `C1 – Uniform interface to functions, distributions, and values` without making the kinds uniform: what is the same across laws is that a draw is tracked and its type is fixed by the declaration, not that every draw is a `Record`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it.
-
-## V.3 — `log_prob` and `unnormalized_log_prob`
-
-### Contract
-
-`log_prob(d, value)` returns the log-density of `value` under `d`. The value may be a `Record` matching the event schema, or a bare array for a scalar law.
-- `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
-- `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
-- The result is a tracked term: a `NumericArray` whose provenance records the operation, the distribution, and the scored value, with `raw=True` returning the bare array.
-- A scored value binds any symbolic event dimensions for that call only, so one law scores datasets of different sizes.
-- A batch of values, or a `DistributionBatch`, maps elementwise to the batched densities, a `NumericArrayBatch`.
-- For a `ConditionalDistribution`, `log_prob(K, y, given=s)` is the fused conditional path that's equivalent to `log_prob(condition_on(K, s), y)`.
-
-### Rationale
-
-Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (`D1 – Mathematical fidelity`): a distribution that knows its normalizing constant offers the true density, while one that does not still serves inference, which needs the density only up to a constant.
-
-## V.4 — `condition_on`
-
-### Contract
-
-`condition_on(d, given)` fixes some fields of a distribution or conditional distribution and returns the resulting distribution.
-
-**The `given` argument.** `given` is field-keyed: a `Record`, or a mapping from field paths to values, with each value, in either presentation (II.1), conforming to the spec at its path, checked as one simultaneous unification that binds any symbolic dimensions and raises on jointly inconsistent shapes. Each key must name either a *given* slot (a name in the `given_spec`, or a path into a structured slot) or a *produced* field (a path in the event schema), and any other key is an error. A key may also name an interior path, in which case its value is a sub-record checked against the sub-schema. Binding part of a structured slot is defined as restructure-then-bind (II.6): the bound part is promoted and bound exactly, the residual slot remains, and a group emptied by the binding dissolves. Conditioning is stated entirely in terms of fields, and factors never appear in the call: the derived factor graph is read only to decide which case below applies and to carry it out.
-
-**The routes.** `condition_on` resolves across three of the four route sources (V.0): structural routes that curry a given slot or slice the factor graph, a capability route on `SupportsConditioning` — which a `ConditionalDistribution` always satisfies, `_condition_on` being its required primitive — and a registry route through the inference methods for Bayes' rule. Which is feasible follows from where each conditioned field sits in the factor graph, read from declarations:
-- **Exogenous given, so curry.** Binding a slot that the object conditions on but does not produce returns a smaller `ConditionalDistribution`, or an ordinary `Distribution` once all given slots are bound. This is exact and involves no inference. For example, binding a regression model's covariates curries it toward the data-ready likelihood.
-- **Upstream or independent produced field, so exact slice.** Conditioning on a produced field that no remaining factor depends on through an unconditioned path returns the exact conditional by slicing the factor graph, again with no inference. The slice is exact only when the field's own factor is single-field or itself implements the conditioning capability; a multi-field factor that cannot condition internally falls to the Bayes' rule case. For example, conditioning a Gaussian prior on one of its own fields slices, while an atomic empirical factor over two fields cannot be sliced on one of them.
-- **Downstream data, so Bayes' rule.** Conditioning on a field that downstream factors depend on is an application of Bayes' rule: the conditional is proportional to the joint density at the fixed value, and is generally not available in closed form. It is delegated to an inference algorithm registered for the model, and only the factored classes support it. For example, conditioning on observed responses downstream of the coefficients is the Bayes' rule case. On an atomic distribution, conditioning on produced fields uses its own `SupportsConditioning` when implemented, as a `MultivariateNormal` does exactly, and raises otherwise.
-
-When `given` names several fields, the cases combine: the exact bindings (curry and slice) are applied first, and Bayes' rule runs on what remains. Field classification is computed once, on the graph with every conditioned field marked, so the outcome does not depend on the order the fields are listed. Conditioning on a produced field does not require the given fields to be bound first. The result stays conditional on the unmet givens, with the produced-field conditioning applied within each slice of the given, so the result curries like any other `ConditionalDistribution` and the two orders agree: conditioning on a produced field and then binding the given yields the same distribution as binding the given first. When that produced-field conditioning requires Bayes' rule, the resulting `ConditionalDistribution` may realize the inference lazily, once its given is bound, or through a method that supports amortization.
-
-`condition_on` always binds the supplied value as the field's fixed value, whatever the value's type; the mixture `∫ K(s, ·) μ(ds)` over a mixing distribution is requested explicitly through the separate `mixture` operation. The result carries `provenance` recording the operation and the conditioning fields.
-
-**The inference-method registry.** The Bayes' rule case is dispatched through the **inference-method registry**, a `UnaryDispatchRegistry` keyed on the model's type whose methods are inference algorithms such as MCMC or variational families. Each method registers under a unique `name`, declares the models it applies to, and probes feasibility before it runs. `condition_on(..., method="tfp_nuts")` selects a specific algorithm, and otherwise the registry picks the best applicable one.
-
-**Prioritization.** Methods are ranked by an integer `priority` that tiers them: above 50 is an **exact** method, 1 to 50 an **inexact** one, and 0 is **opt-in-only**, skipped by auto-selection and reachable only by name. A newly registered method is opt-in-only until a contributor classifies it, so adding an algorithm never silently changes what runs. A deployment re-ranks methods at runtime with `set_priorities`, which warns when a method crosses into or out of opt-in-only.
-
-### Rationale
-
-A single operation covers binding, slicing, and Bayes' rule because all three are the same mathematical act of conditioning, and they differ only in whether the conditioned field is exogenous, upstream, or downstream in the factor graph. Collapsing them into one operation keeps the user interface small (`C1 – Uniform interface to functions, distributions, and values`), while the derived graph decides the algorithm (`C3 – Computational detail hidden by default, available on demand`).
-
-## V.5 — `mixture`
-
-### Contract
-
-`mixture(K, mixing)` returns the mixture `μK = ∫ K(s, ·) μ(ds)`: the law of `T` for `S ~ mixing` and `T ~ K(S, ·)`, the mixing distribution's produced slots meeting the kernel's given slots by name.
-
-`mixture` is a **derived** operation (V.0), defined by the identity `mixture(K, mixing) = marginal(K * mixing, ...)` onto the kernel's produced slots, detached. That identity is its floor route, so its feasibility and its failure modes are those of `*` and `marginal` — a call resolves at worst when the composition is well-formed and the marginal has a route, and a mixing distribution that cannot be sampled and admits no exact marginal raises there rather than here. A direct route may realize a case in one step instead, as the Gaussian algebra does, ranking above the identity by fidelity and specificity. Slot matching, spec unification, and unmet givens therefore behave exactly as composition (III.12) and `marginal` fix them, with nothing separately defined: a given slot the mixing distribution does not meet stays unmet, and the result is then a `ConditionalDistribution` over the unmet givens. Exactness follows the same route — a finite mixing distribution yields the explicit `MixtureDistribution`, a closed family stays closed, as in the Gaussian algebra, and otherwise the result is the Monte Carlo empirical marginal through ancestral sampling, with the route recorded in provenance.
-
-Mixing is always an explicit request: `condition_on` binds a supplied value as a value whatever its type (V.4), so no conditioning call ever mixes implicitly. The result is a tracked term whose `provenance` records the operation, the kernel, and the mixing distribution.
-
-### Rationale
-
-Keeping the integral out of `condition_on` keeps conditioning single-valued — a supplied value always binds, and `μK` is always asked for by name — so neither call has a data-dependent meaning (`C1 – Uniform interface to functions, distributions, and values`). The name is the result's mathematical name: `μK` is the mixture of the kernel family with mixing distribution `μ`, which covers predictive, compound, and state-propagation uses without privileging one (`C5 – Naming for unambiguous meaning`, `D1 – Mathematical fidelity`). Defining the operation as the marginal of the composed joint adds no second semantics: one identity ties it to machinery already fixed, so every behavior has a single source (`D6 – Single source of truth`).
-
-## V.6 — `joint`
-
-### Contract
-
-Recall that the composition operator `A * B`, exposed on `Distribution` and `ConditionalDistribution` as `__mul__` constructs the joint (conditional) distribution of `A` and `B`. It returns either a `FactoredDistribution` or, when some givens remain, a `FactoredConditionalDistribution`. Its `provenance` records `*` as the operation and the operand factors, and its `name` is auto-derived by the canonical-order rule fixed with `*` (III.12).
-
-**The realigning `joint` form.** A limitation of `*` is that it requires a producer's field names to match the names its consumer conditions on. This motivates the `joint(A, B, **align)` op, which realigns fields first and then composes exactly as `*`, so it is equivalent to `A * B.with_path_names(**align)`. For example, a likelihood that conditions on `slope` can be combined with a prior where the slope is called `beta` with `joint(lik, prior, beta="slope")`.
-
-### Rationale
-
-Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Realignment is an exact rename: `with_path_names` returns the same law under new field names, so `joint` connects mismatched factors without altering their joint law (`D1 – Mathematical fidelity`).
-
-### Open points
-
-- *The `align` contract.* `align` pairs are `with_path_names` pairs, path-valued targets included (II.6), so realignment can promote a nested field to a slot-matchable name. The remaining fine print — freshness and injectivity requirements on the new names, and which operand's fields may be realigned — stays deliberately deferred: the question is subtle, and implementation experience should inform the decision.
-
-## V.7 — `evaluate`
+## V.1 — `evaluate`
 
 ### Contract
 
@@ -280,7 +166,7 @@ The result is a tracked term: its `provenance` records `evaluate`, the map, and 
 
 `evaluate` is `C4 – Function lifting` in operation form: applying a map is one act whatever the operand kind, and substituting a multiplicity for a value leaves that act well-defined either way — a distribution gives the pushforward law, a batch the elementwise result — with this operation returning it directly. Dispatching over pairs of map and operand types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form or a fused batched routine gets it automatically, while every other pair still answers through the floors, sampling for a distribution and the sweep for a batch. Recording the producing rule keeps the approximation honest (`D1 – Mathematical fidelity`), registration grows the exact set without changing call sites (`D2 – Generality first`), and the result is a tracked term that composes further (`D4 – Closed system of objects under operations`). The operation is named for what it does across every operand kind, with *pushforward* reserved for mathematical statements, as *kernel* is for `ConditionalDistribution`.
 
-## V.8 — `inverse` and `log_det_jacobian`
+## V.2 — `inverse` and `log_det_jacobian`
 
 ### Contract
 
@@ -294,7 +180,104 @@ Two operations read a map's inverse structure.
 
 Reparameterization moves in both directions between a constrained and an unconstrained space, so the inverse must be reachable from user code, and the operation form keeps the capability's implementer methods private, per the V.0 convention. Returning the inverse as a `Function` keeps the system closed (`D4 – Closed system of objects under operations`): the inverse evaluates, composes, and pushes forward like any map. Splitting the Jacobian claim from invertibility is `D3 – Capability-based operations`: a map can be invertible without a tractable Jacobian determinant, and the determinant exists only for a differentiable map, so each claim stays honest on its own and change of variables requires exactly the pair.
 
-## V.9 — `marginal` and `factor`
+## V.3 — `sample`
+
+### Contract
+
+`sample(d, key=None, sample_shape=(), raw=False)` draws from a distribution.
+- With `sample_shape=()` it returns a single draw **at the declared kind**, tracked. The kind is the event declaration's class, fixed by the declaration and never by the runtime value: a `RecordSpec` draws a `Record`, a `DistributionSpec` a `Distribution`, a `FunctionSpec` a `Function`, a `NumericArraySpec` a `NumericArray`, and an `OpaqueSpec` an `Opaque`. Every spec names a class, so no kind is presented by wrapping it in another: a scalar law draws a `NumericArray`, not a single-field `Record`.
+- A non-empty `sample_shape` prepends batch axes and returns the tracked batch type of the draw's kind, with those leading dimensions on a level named for the operation that mints them, `sample`: a `RecordBatch` (`NumericRecordBatch` when numeric) for a record event, and the tracked batch form of the table below — a `DistributionBatch`, `FunctionBatch`, and so on — for a term-drawing law.
+- `sample(..., raw=True)` is the draw detached (V.0): the kind's raw value for `sample_shape=()`, and for a `Distribution`- or `ConditionalDistribution`-valued draw the law itself, without provenance or annotations. For a non-empty `sample_shape` it is the **storage view** (II.5), the draws' raw values in their native stacked layout:
+
+| declared kind | tracked batch | `raw=True` result |
+|---|---|---|
+| `NumericArraySpec` | `NumericArrayBatch` | the stacked array, batch axes leading |
+| `RecordSpec` | `RecordBatch` / `NumericRecordBatch` | the nested mapping of raw columns |
+| `DistributionSpec` | `DistributionBatch` | an object array of the drawn laws |
+| `ConditionalDistributionSpec` | `ConditionalDistributionBatch` | an object array of the drawn kernels |
+| `FunctionSpec` | `FunctionBatch` | an object array of the drawn callables |
+| `OpaqueSpec` | `OpaqueBatch` | an object array of the drawn objects |
+- Sampling requires a concrete declaration and raises with the free dimensions named; in the fused conditional path, the given value binds them first.
+- A caller-supplied PRNG `key` makes the draw reproducible from the key alone; with the key omitted, the draw is a workflow-owned random event (IV.3). Under a non-empty `sample_shape` the key splits by draw index, so the draws are jointly independent and reproducible together; inside a `Function`, the workflow scope supplies each draw's key by structural identity, so draws are never hand-threaded.
+- The draw carries `provenance` recording `sample` and the distribution it came from.
+
+### Rationale
+
+Every draw is reproducible from its inputs — from the key alone when the caller supplies one, and from the workflow scope's seed and the draw's structural identity otherwise (IV.3) — which is `C6 – Traceable and reproducible workflows`. Returning every draw as the tracked term of its declared kind serves `C1 – Uniform interface to functions, distributions, and values` without making the kinds uniform: what is the same across laws is that a draw is tracked and its type is fixed by the declaration, not that every draw is a `Record`. The `raw` opt-out serves `C3 – Computational detail hidden by default, available on demand`: the wrapped, tracked draw is the default, but the bare value remains available when the user needs it.
+
+## V.4 — `log_prob` and `unnormalized_log_prob`
+
+### Contract
+
+`log_prob(d, value)` returns the log-density of `value` under `d`. The value may be a `Record` matching the event schema, or a bare array for a scalar law.
+- `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
+- `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
+- The result is a tracked term: a `NumericArray` whose provenance records the operation, the distribution, and the scored value, with `raw=True` returning the bare array.
+- A scored value binds any symbolic event dimensions for that call only, so one law scores datasets of different sizes.
+- A batch of values, or a `DistributionBatch`, maps elementwise to the batched densities, a `NumericArrayBatch`.
+
+### Rationale
+
+Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (`D1 – Mathematical fidelity`): a distribution that knows its normalizing constant offers the true density, while one that does not still serves inference, which needs the density only up to a constant.
+
+## V.5 — Distribution functionals: `mean`, `variance`, `cov`, `quantile`, `expectation`
+
+### Contract
+
+The moment operations summarize a distribution by a deterministic value.
+- `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is wrapped at the law's declared event kind — a `Record` whose schema matches the distribution's for a record-drawing law, and a term for a term-drawing one, so a random function's mean is a `Function` — or the raw event-typed value `T` with `raw=True`.
+- `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp`, since covariance couples distinct coordinates. Its input and output schemas are both the distribution's numeric event spec, so it applies directly to draws.
+- `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. Its result declaration is event-kind-directed like any other: a single level returns the event's own kind — a `NumericArray` for an array-drawing law, a `NumericRecord` for a record-drawing one — and a plural `q` adds a level over those, giving the matching batch. The plurality of `q` is a shape, so planning reads it (V.0).
+- `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. The result is wrapped at the kind `f`'s output declaration names, a `Record` for the usual record output.
+
+Each carries a capability route on the matching protocol (`SupportsMean`, `SupportsVariance`, `SupportsCovariance`, `SupportsQuantile`, `SupportsExpectation`), feasible whatever the event type, and a Monte Carlo fallback route feasible through `SupportsSampling`, with the sample count and PRNG key as controls (V.0). A distribution that claims neither resolves to nothing and raises. The fallback route is defined per event kind. A numeric event averages draws coordinatewise. A function-valued event answers with a lazy function: its mean at a point is the average of the sampled callables there, and its variance the pointwise sample variance. A measure-valued event's mean is the finite mixture of the sampled draws, the Monte Carlo estimate of the mean measure. `cov` and `quantile` keep numeric-only fallback routes, the sample covariance returned as a `DenseLinOp` and the per-coordinate empirical quantiles. `expectation` averages the array outputs of `f` and so applies to any event type that samples.
+
+### Rationale
+
+A mean is defined whenever draws can be averaged: coordinate-wise for arrays, pointwise for functions, and set-wise for measures, where `A ↦ E[ξ(A)]` is again a measure. An event-typed variance additionally requires the second moment to be a value of the event type. That holds for arrays and functions, but fails for a general random measure: to be a measure, `A ↦ Var(ξ(A))` would have to be additive, which holds only when disjoint regions are uncorrelated (a completely random measure) and never for a random probability measure, whose fixed total mass forces negative correlation. A random measure's second-moment structure is instead a covariance over pairs of sets, the analog of `cov` rather than of `variance`. Gating `mean` and `variance` by capability rather than by a numeric event is `D1 – Mathematical fidelity`, and `cov` and `quantile` remain numeric-only, since a flat covariance operator and ordered quantile levels have no meaning for a non-numeric draw. `cov` returns a flat operator rather than an event-typed value because it couples coordinates that the event's field structure keeps separate. The closed-form-or-Monte-Carlo split realizes `C3 – Computational detail hidden by default, available on demand`: a distribution that can give an exact moment does, and one that can only sample still answers, approximately.
+
+## V.6 — `condition_on`
+
+### Contract
+
+`condition_on(d, given)` fixes some fields of a distribution or conditional distribution and returns the resulting distribution.
+
+**The `given` argument.** `given` is field-keyed: a `Record`, or a mapping from field paths to values, with each value, in either presentation (II.1), conforming to the spec at its path, checked as one simultaneous unification that binds any symbolic dimensions and raises on jointly inconsistent shapes. Each key must name either a *given* slot (a name in the `given_spec`, or a path into a structured slot) or a *produced* field (a path in the event schema), and any other key is an error. A key may also name an interior path, in which case its value is a sub-record checked against the sub-schema. Binding part of a structured slot is defined as restructure-then-bind (II.6): the bound part is promoted and bound exactly, the residual slot remains, and a group emptied by the binding dissolves. Conditioning is stated entirely in terms of fields, and factors never appear in the call: the derived factor graph is read only to decide which case below applies and to carry it out.
+
+**The routes.** `condition_on` resolves across three of the four route sources (V.0): structural routes that curry a given slot or slice the factor graph, a capability route on `SupportsConditioning` — which a `ConditionalDistribution` always satisfies, `_condition_on` being its required primitive — and a registry route through the inference methods for Bayes' rule. Which is feasible follows from where each conditioned field sits in the factor graph, read from declarations:
+- **Exogenous given, so curry.** Binding a slot that the object conditions on but does not produce returns a smaller `ConditionalDistribution`, or an ordinary `Distribution` once all given slots are bound. This is exact and involves no inference. For example, binding a regression model's covariates curries it toward the data-ready likelihood.
+- **Upstream or independent produced field, so exact slice.** Conditioning on a produced field that no remaining factor depends on through an unconditioned path returns the exact conditional by slicing the factor graph, again with no inference. The slice is exact only when the field's own factor is single-field or itself implements the conditioning capability; a multi-field factor that cannot condition internally falls to the Bayes' rule case. For example, conditioning a Gaussian prior on one of its own fields slices, while an atomic empirical factor over two fields cannot be sliced on one of them.
+- **Downstream data, so Bayes' rule.** Conditioning on a field that downstream factors depend on is an application of Bayes' rule: the conditional is proportional to the joint density at the fixed value, and is generally not available in closed form. It is delegated to an inference algorithm registered for the model, and only the factored classes support it. For example, conditioning on observed responses downstream of the coefficients is the Bayes' rule case. On an atomic distribution, conditioning on produced fields uses its own `SupportsConditioning` when implemented, as a `MultivariateNormal` does exactly, and raises otherwise.
+
+When `given` names several fields, the cases combine: the exact bindings (curry and slice) are applied first, and Bayes' rule runs on what remains. Field classification is computed once, on the graph with every conditioned field marked, so the outcome does not depend on the order the fields are listed. Conditioning on a produced field does not require the given fields to be bound first. The result stays conditional on the unmet givens, with the produced-field conditioning applied within each slice of the given, so the result curries like any other `ConditionalDistribution` and the two orders agree: conditioning on a produced field and then binding the given yields the same distribution as binding the given first. When that produced-field conditioning requires Bayes' rule, the resulting `ConditionalDistribution` may realize the inference lazily, once its given is bound, or through a method that supports amortization.
+
+`condition_on` always binds the supplied value as the field's fixed value, whatever the value's type; the mixture `∫ K(s, ·) μ(ds)` over a mixing distribution is requested explicitly through the separate `mixture` operation. The result carries `provenance` recording the operation and the conditioning fields.
+
+**The inference-method registry.** The Bayes' rule case is dispatched through the **inference-method registry**, a `UnaryDispatchRegistry` keyed on the model's type whose methods are inference algorithms such as MCMC or variational families. Each method registers under a unique `name`, declares the models it applies to, and probes feasibility before it runs. `condition_on(..., method="tfp_nuts")` selects a specific algorithm, and otherwise the registry picks the best applicable one.
+
+**Prioritization.** Methods are ranked by an integer `priority` that tiers them: above 50 is an **exact** method, 1 to 50 an **inexact** one, and 0 is **opt-in-only**, skipped by auto-selection and reachable only by name. A newly registered method is opt-in-only until a contributor classifies it, so adding an algorithm never silently changes what runs. A deployment re-ranks methods at runtime with `set_priorities`, which warns when a method crosses into or out of opt-in-only.
+
+### Rationale
+
+A single operation covers binding, slicing, and Bayes' rule because all three are the same mathematical act of conditioning, and they differ only in whether the conditioned field is exogenous, upstream, or downstream in the factor graph. Collapsing them into one operation keeps the user interface small (`C1 – Uniform interface to functions, distributions, and values`), while the derived graph decides the algorithm (`C3 – Computational detail hidden by default, available on demand`).
+
+## V.7 — `joint`
+
+### Contract
+
+Recall that the composition operator `A * B`, exposed on `Distribution` and `ConditionalDistribution` as `__mul__` constructs the joint (conditional) distribution of `A` and `B`. It returns either a `FactoredDistribution` or, when some givens remain, a `FactoredConditionalDistribution`. Its `provenance` records `*` as the operation and the operand factors, and its `name` is auto-derived by the canonical-order rule fixed with `*` (III.12).
+
+**The realigning `joint` form.** A limitation of `*` is that it requires a producer's field names to match the names its consumer conditions on. This motivates the `joint(A, B, **align)` op, which realigns fields first and then composes exactly as `*`, so it is equivalent to `A * B.with_path_names(**align)`. For example, a likelihood that conditions on `slope` can be combined with a prior where the slope is called `beta` with `joint(lik, prior, beta="slope")`.
+
+### Rationale
+
+Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Realignment is an exact rename: `with_path_names` returns the same law under new field names, so `joint` connects mismatched factors without altering their joint law (`D1 – Mathematical fidelity`).
+
+### Open points
+
+- *The `align` contract.* `align` pairs are `with_path_names` pairs, path-valued targets included (II.6), so realignment can promote a nested field to a slot-matchable name. The remaining fine print — freshness and injectivity requirements on the new names, and which operand's fields may be realigned — stays deliberately deferred: the question is subtle, and implementation experience should inform the decision.
+
+## V.8 — `marginal` and `factor`
 
 ### Contract
 
@@ -309,12 +292,26 @@ Both return a **tracked term** whose `provenance` records the access and its sou
 
 `marginal` and `factor` are the two query directions of the field and factor interfaces fixed with the factored distributions: `marginal` reads a field's law detached from its joint, and `factor` reads a construction block. Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` keeps factor access honest, since only a distribution actually built from named parts can answer it (`D3 – Capability-based operations`).
 
+## V.9 — `mixture`
+
+### Contract
+
+`mixture(K, mixing)` returns the mixture `μK = ∫ K(s, ·) μ(ds)`: the law of `T` for `S ~ mixing` and `T ~ K(S, ·)`, the mixing distribution's produced slots meeting the kernel's given slots by name.
+
+`mixture` is a **derived** operation (V.0), defined by the identity `mixture(K, mixing) = marginal(K * mixing, ...)` onto the kernel's produced slots, detached. That identity is its floor route, so its feasibility and its failure modes are those of `*` and `marginal` — a call resolves at worst when the composition is well-formed and the marginal has a route, and a mixing distribution that cannot be sampled and admits no exact marginal raises there rather than here. A direct route may realize a case in one step instead, as the Gaussian algebra does, ranking above the identity by fidelity and specificity. Slot matching, spec unification, and unmet givens therefore behave exactly as composition (III.12) and `marginal` fix them, with nothing separately defined: a given slot the mixing distribution does not meet stays unmet, and the result is then a `ConditionalDistribution` over the unmet givens. Exactness follows the same route — a finite mixing distribution yields the explicit `MixtureDistribution`, a closed family stays closed, as in the Gaussian algebra, and otherwise the result is the Monte Carlo empirical marginal through ancestral sampling, with the route recorded in provenance.
+
+Mixing is always an explicit request: `condition_on` binds a supplied value as a value whatever its type (V.6), so no conditioning call ever mixes implicitly. The result is a tracked term whose `provenance` records the operation, the kernel, and the mixing distribution.
+
+### Rationale
+
+Keeping the integral out of `condition_on` keeps conditioning single-valued — a supplied value always binds, and `μK` is always asked for by name — so neither call has a data-dependent meaning (`C1 – Uniform interface to functions, distributions, and values`). The name is the result's mathematical name: `μK` is the mixture of the kernel family with mixing distribution `μ`, which covers predictive, compound, and state-propagation uses without privileging one (`C5 – Naming for unambiguous meaning`, `D1 – Mathematical fidelity`). Defining the operation as the marginal of the composed joint adds no second semantics: one identity ties it to machinery already fixed, so every behavior has a single source (`D6 – Single source of truth`).
+
 ## V.10 — Batched operations
 
 ### Contract
 
 Every operation lifts to a `Batch` by mapping over its elements, which is the elementwise sweep applied to the operation itself.
-- `sample` over a `DistributionBatch` returns a **nested** batch, the outer level ranging over the laws and the inner over each law's draws: `sample(d_batch, key, sample_shape=(S,))` has `axis_groups` `(*d_batch.axis_groups, (S,))` and appends an inner draw level named `sample`, so iterating it visits one law's batch of draws at a time — a `RecordBatch` for a record-drawing law, and the batch form of the declared kind otherwise. An operation names the level it mints after itself, which is why `quantile` below adds a `quantile` level. Level names are unique, so a `d_batch` already carrying a `sample` level is renamed with `with_level_names` before the draw, rather than the new level being silently altered to `sample2`; giving `sample` its own level-name argument is the alternative, and either way the choice is the caller's. `log_prob` maps elementwise to the batched densities, with the batch axes preserved.
+- `sample` over a `DistributionBatch` returns a **nested** batch, the outer level ranging over the laws and the inner over each law's draws: `sample(d_batch, key, sample_shape=(S,))` has `axis_groups` `(*d_batch.axis_groups, (S,))` and appends an inner draw level named `sample`, so iterating it visits one law's batch of draws at a time — a `RecordBatch` for a record-drawing law, and the batch form of the declared kind otherwise. An operation names the level it mints after itself, which is why `quantile` adds a `quantile` level (V.5). Level names are unique, so a `d_batch` already carrying a `sample` level is renamed with `with_level_names` before the draw, rather than the new level being silently altered to `sample2`; giving `sample` its own level-name argument is the alternative, and either way the choice is the caller's. `log_prob` maps elementwise to the batched densities, with the batch axes preserved.
 - A moment over a `DistributionBatch` returns a batch of the corresponding values, such as a `LinOpBatch` for `cov`. A multi-level query nests the same way: `quantile(d_batch, q)` keeps the laws on the outer level and adds an inner level named `quantile` for the levels of `q`.
 - **Alignment.** A binary operation matches the operands' levels **by name**: a level in both must have broadcast-compatible shapes, with size-1 broadcasting; a level in only one operand broadcasts across the other; and an outer product is requested by explicit reshaping rather than implied. Because every level is named, there is no positional fallback, and two levels meant to correspond under different names are lined up by renaming one with `with_level_names` first, exactly as `joint` realigns fields for composition. So a flat batch of values on a `laws` level scores against the `laws` level of a nested sampling result. `given=` accepts a `RecordBatch` and yields the `DistributionBatch` of conditioned laws.
 - Two operands are exempt from batch lifting: the factors of composition (`*` and `joint`) and the map operand of `evaluate`, which are consumed as objects rather than swept.

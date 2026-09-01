@@ -27,13 +27,13 @@ probpipe/
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
 │   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.1), InputSpec, OutputSpec (II.2)
 │   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.3)
-│   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.4)
+│   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.5)
 │   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.4)
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
 │   ├── _dispatch.py           #   dispatch methods and registries (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   └── _config.py             #   library configuration
-├── values/                    # the value layer (III.1–III.5)
+├── values/                    # the value layer (III.1–III.6)
 │   ├── _numeric_array.py      #   NumericArray (III.1)
 │   ├── _numeric_array_batch.py  #   NumericArrayBatch (III.1)
 │   ├── _opaque.py             #   Opaque (III.2)
@@ -42,10 +42,10 @@ probpipe/
 │   ├── _object_batch.py       #   object-array storage the two batch forms share
 │   ├── _function_batch.py     #   FunctionBatch (III.3)
 │   ├── _opaque_batch.py       #   OpaqueBatch (III.2)
-│   ├── _record.py             #   Record, NumericRecord (III.4)
-│   ├── _record_batch.py       #   RecordBatch (III.5)
-│   └── _numeric_record_batch.py  #   NumericRecordBatch (III.5)
-├── linalg/                    # LinOp, the linear Function subtype (III.6)
+│   ├── _record.py             #   Record, NumericRecord (III.5)
+│   ├── _record_batch.py       #   RecordBatch (III.6)
+│   └── _numeric_record_batch.py  #   NumericRecordBatch (III.6)
+├── linalg/                    # LinOp, the linear Function subtype (III.4)
 │   ├── _linop.py              #   LinOp: the action, the queries, flags
 │   ├── _structured.py         #   Dense / Diagonal / Triangular / Cholesky / Root …
 │   ├── _composites.py         #   Product / Sum / Scaled / Transpose — the operator algebra
@@ -67,7 +67,7 @@ probpipe/
 │   ├── _call.py               #   argument classification: the lifting trigger (IV.2)
 │   ├── _plan.py               #   broadcast planning, root-ancestor grouping (IV.2)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
-│   │                          #     populated upward by the families (V.7)
+│   │                          #     populated upward by the families (V.1)
 │   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (IV.2)
 │   ├── _sweep.py              #   the batch sweep (IV.2)
 │   ├── _rng.py                #   structural event identity, the versioned key derivation (IV.3)
@@ -80,15 +80,15 @@ probpipe/
 ├── operations/                # Part V — the operations
 │   ├── _operation.py          #   the @operation decorator, OperationRoute and its four
 │   │                          #     helpers, resolution, and the operation registry (V.0)
-│   ├── _moments.py            #   mean, variance, cov, quantile, expectation (V.1)
-│   ├── _sample.py             #   sample (V.2)
-│   ├── _density.py            #   log_prob, unnormalized_log_prob (V.3)
-│   ├── _condition.py          #   condition_on, the inference registry (V.4)
-│   ├── _mixture.py            #   mixture (V.5)
-│   ├── _joint.py              #   joint (V.6)
-│   ├── _evaluate.py           #   evaluate and its rule registry (V.7)
-│   ├── _inverse.py            #   inverse, log_det_jacobian (V.8)
-│   └── _marginal.py           #   marginal, factor (V.9)
+│   ├── _evaluate.py           #   evaluate and its rule registry (V.1)
+│   ├── _inverse.py            #   inverse, log_det_jacobian (V.2)
+│   ├── _sample.py             #   sample (V.3)
+│   ├── _density.py            #   log_prob, unnormalized_log_prob (V.4)
+│   ├── _moments.py            #   mean, variance, cov, quantile, expectation (V.5)
+│   ├── _condition.py          #   condition_on, the inference registry (V.6)
+│   ├── _joint.py              #   joint (V.7)
+│   ├── _marginal.py           #   marginal, factor (V.8)
+│   └── _mixture.py            #   mixture (V.9)
 ├── families/                  # Part VI — the distribution catalog
 │   ├── _backend.py            #   TFPDistribution, the backend adapter (VI.1)
 │   ├── _continuous.py         #   Normal, Gamma, … (VI.1)
@@ -101,7 +101,7 @@ probpipe/
 │   ├── _gaussian.py           #   the Gaussian algebra (VI.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VI.8)
 │   └── _converters.py         #   the shipped converters (III.14)
-├── inference/                 # the registered inference methods (V.4)
+├── inference/                 # the registered inference methods (V.6)
 ├── diagnostics/               # diagnostics over inference results
 └── validation/                # predictive checks and model comparison
 ```
@@ -115,7 +115,7 @@ probpipe/
 - **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the workflow scopes and structural keys, replay and caching, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It sits above `distributions/` because lifting samples distributions and materializes empirical results.
 - **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (V.1–V.9) above `_operation.py`, which holds V.0's decorator, route protocol, resolution, and registry. V.10's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry lives with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
-- **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.4 registry, and diagnostics and validation are application layers over the public operations.
+- **`inference/`**, **`diagnostics/`**, and **`validation/`** sit outside the reference's parts: inference methods register into the V.6 registry, and diagnostics and validation are application layers over the public operations.
 
 A handful of private helper modules (dtypes, array utilities) support the packages and carry no design contract.
 

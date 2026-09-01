@@ -7,9 +7,9 @@ Part III introduces the value and distribution objects a user constructs and ope
 | III.1  | Values                      | `NumericArray` / `NumericArrayBatch`                                                                  | The numeric-array kind: its spec, tracked class, and batch form, with tracked arithmetic.                       |
 | III.2  | Values                      | `Opaque` / `OpaqueBatch`                                                                              | The fallback kind: identity for values the library cannot introspect.                                           |
 | III.3  | Functions                      | `Function`, `FunctionBatch`                                                | The function kind's base — declared sides, identity, plain evaluation — and its batch form. |
-| III.4  | Structured Values                      | `RecordSpec` / `Record` / `NumericRecord`                                                             | The record kind: its spec — the schema of one structured value — and the `NamedTree` of values bound to it.  |
-| III.5  | Structured Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws of a record-valued law.                               |
-| III.6  | Functions                      | `LinOp`                                                                                               | A lazy structured linear map — the linear `Function` subtype (III.3) — typed by numeric schemas, and the carrier of covariances.                          |
+| III.4  | Functions                      | `LinOp`                                                                                               | A lazy structured linear map — the linear `Function` subtype (III.3) — typed by numeric schemas, and the carrier of covariances.                          |
+| III.5  | Structured Values                      | `RecordSpec` / `Record` / `NumericRecord`                                                             | The record kind: its spec — the schema of one structured value — and the `NamedTree` of values bound to it.  |
+| III.6  | Structured Values                      | `RecordBatch` / `NumericRecordBatch`                                                                  | A batch of records — what `sample` returns for many draws of a record-valued law.                               |
 | III.7  | Distributions               | `Distribution`                                                                                        | A probability measure over one value type that carries an event declaration (`event_spec`) for its draws.                           |
 | III.8  | Distributions               | Distribution capabilities                                                                             | The `Supports*` protocols — sampling, density, moments, conditioning — a distribution implements.               |
 | III.9  | Distributions   | `ConditionalDistribution`                                                                             | A probability kernel: a family of distributions indexed by a conditioning value, and a sibling of `Distribution`.   |
@@ -124,7 +124,61 @@ class FunctionBatch(Batch[Function]):
 
 Defining the base in the value layer keeps the layering strict: the representation is fixed here, the call engine arrives by upward registration (`D2 – Generality first`), and `LinOp` and the specs reference `Function` downward — the split the package structure realizes as `values/_function_base.py` and `functions/`.
 
-## III.4 — `RecordSpec`, `Record`, and `NumericRecord`
+## III.4 — `LinOp`
+
+### Contract
+
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.3), so it is `TrackedTerm` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a value, a `Numeric` conforming to its input schema, returning the matching form, with the operator's parameters as the private state behind it. `matvec` is syntactic sugar for `apply`, its linear-algebra name; `matmat` applies the action to stacked columns in one routine and is the operator's registered batched rule, with `rmatvec` and `rmatmat` for the transpose. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericSpec` (II.3) — its domain and codomain schemas — reached through the declared sides it inherits as a `Function`, with no operator-specific accessor beside them: the `FunctionSpec` declares a single numeric slot on each side, so the input schema is that slot's spec in `input_spec` and the output schema is `output_spec`'s spec. It therefore maps whatever `Numeric` its sides declare — a bare array under a `NumericArraySpec` side, or a named tree of them under the numeric record spec — so an operator over a scalar law's draws needs no single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then the two schemas are equal, which the operator algebra reads as the structural fact that operands compose or act on the same space.
+
+Its schemas are always concrete, and construction from a schema with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
+
+```python
+class LinOp(Function, ABC):        # the linear subtype of the III.3 base
+    @property
+    @abstractmethod
+    def shape(self) -> tuple[int, int]: ...    # (output schema's vector_size, input schema's vector_size)
+    @property
+    @abstractmethod
+    def dtype(self) -> DType: ...
+    @abstractmethod
+    def to_dense(self) -> Array: ...
+
+    def matvec(self, x: Numeric) -> Numeric: ...
+    # syntactic sugar for apply: A x, with a Numeric flattened through
+    # the input schema and the result matching the argument's form
+    def matmat(self, X: Array) -> Array: ...
+    # A X on stacked columns, the operator's registered batched rule;
+    # rmatvec / rmatmat apply the transpose
+
+    # square-only queries
+    def solve(self, b: Array) -> Array: ...
+    def cholesky(self) -> LinOp: ...           # a triangular factor L with A = L Lᵀ
+    def diag(self) -> Array: ...
+    def logdet(self) -> Array: ...   # scalar Arrays rather than floats, keeping the queries differentiable
+    def trace(self) -> Array: ...
+
+    @property
+    def flags(self) -> frozenset[str]: ...      # structure metadata, e.g. "symmetric", "positive_definite"
+    def with_flag(self, flag: str) -> Self: ... # functional; construction otherwise fixes the flags
+```
+
+**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` swaps them. Composite operators are tracked terms like any other, with names auto-derived from their operands and marked `name_is_auto`.
+
+**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. Each also fixes the kind's `raw()` (II.4) as its stored parameterization, detached — the matrix for `DenseLinOp`, the diagonal for `DiagonalLinOp` — and a composite's is its operand tuple, laziness being the representation.
+
+**The batch form.** `LinOpBatch` is the element batch over operators, a thin `Batch[LinOp]` whose elements share both schemas. It is what a batched `cov` returns. Application is elementwise: a single operator maps over a batch's elements, and a `LinOpBatch` zips with a broadcast-compatible batch of numeric values, element by element in both cases. The queries lift the same way, elementwise to batched results.
+
+### Rationale
+
+Operations mint linear operators, covariances above all, so the kind exists to keep those results first-class (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D6 – Single source of truth`), and typing both sides with numeric schemas makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
+
+### Open points
+
+- *Structure-exploiting solves.* Exploiting structure in both operands of `A⁻¹B`, possibly through a dedicated `SolveLinOp`, is open.
+- *Flag semantics.* Whether flags only describe structure or also steer which implementation a query selects is open.
+- *Batched matrix action.* `matmat` against a batched operand, where a batch axis would meet the operator's matrix axis, and any richer `LinOpBatch` alignment are deferred until a concrete consumer exists.
+
+## III.5 — `RecordSpec`, `Record`, and `NumericRecord`
 
 ### Contract
 
@@ -230,7 +284,7 @@ A `Record` is the *values* half of `C1 – Uniform interface to functions, distr
 - *Single-field presentation.* A `Record` is a container and presents as one, whatever its field count: no coercion, no forwarding, and no array surface beyond the vector-space operations above.
 - *Construction validation.* Construction checks each leaf against its spec's `is_valid`, which validates structure only — for a `NumericArraySpec`, shape and dtype (dtype by `numpy.can_cast` same-kind: a widening promotion or a within-kind narrowing passes, a cross-kind conversion raises). A `NumericArraySpec`'s `support` is **not** part of `is_valid`: it is a data-dependent, element-wise check that reduces to a Python `bool` and so cannot run under `jax.jit` tracing, where construction also happens (pytree unflatten reconstructs a value inside the trace). `support` is therefore descriptive metadata, and invariant 2 (`is_valid`) covers shape and dtype. Leaf validation is skipped on the unflatten path, where a leaf's shape is transform-relative.
 
-## III.5 — `RecordBatch` and `NumericRecordBatch`
+## III.6 — `RecordBatch` and `NumericRecordBatch`
 
 ### Contract
 
@@ -287,60 +341,6 @@ class RecordBatch(Batch[Record]):
 ### Rationale
 
 It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a batch of `N` records can never read as one record of `N` fields — `D1 – Mathematical fidelity` at exactly the point where the two would otherwise be conflated.
-
-## III.6 — `LinOp`
-
-### Contract
-
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces. It is the linear subtype of `Function` (III.3), so it is `TrackedTerm` and applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a value, a `Numeric` conforming to its input schema, returning the matching form, with the operator's parameters as the private state behind it. `matvec` is syntactic sugar for `apply`, its linear-algebra name; `matmat` applies the action to stacked columns in one routine and is the operator's registered batched rule, with `rmatvec` and `rmatmat` for the transpose. It is how ProbPipe represents structured matrices, above all covariances, without materializing them. It carries an input and an output `NumericSpec` (II.3) — its domain and codomain schemas — reached through the declared sides it inherits as a `Function`, with no operator-specific accessor beside them: the `FunctionSpec` declares a single numeric slot on each side, so the input schema is that slot's spec in `input_spec` and the output schema is `output_spec`'s spec. It therefore maps whatever `Numeric` its sides declare: a numeric record with named fields under a `NumericRecordSpec` side, or a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws needs no single-field placeholder. The two sides coincide exactly when the operator maps a space to *itself* (an endomorphism such as a covariance or Hessian): then the two schemas are equal, which the operator algebra reads as the structural fact that operands compose or act on the same space.
-
-Its schemas are always concrete, and construction from a schema with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
-
-```python
-class LinOp(Function, ABC):        # the linear subtype of the III.3 base
-    @property
-    @abstractmethod
-    def shape(self) -> tuple[int, int]: ...    # (output schema's vector_size, input schema's vector_size)
-    @property
-    @abstractmethod
-    def dtype(self) -> DType: ...
-    @abstractmethod
-    def to_dense(self) -> Array: ...
-
-    def matvec(self, x: Numeric) -> Numeric: ...
-    # syntactic sugar for apply: A x, with a Numeric flattened through
-    # the input schema and the result matching the argument's form
-    def matmat(self, X: Array) -> Array: ...
-    # A X on stacked columns, the operator's registered batched rule;
-    # rmatvec / rmatmat apply the transpose
-
-    # square-only queries
-    def solve(self, b: Array) -> Array: ...
-    def cholesky(self) -> LinOp: ...           # a triangular factor L with A = L Lᵀ
-    def diag(self) -> Array: ...
-    def logdet(self) -> Array: ...   # scalar Arrays rather than floats, keeping the queries differentiable
-    def trace(self) -> Array: ...
-
-    @property
-    def flags(self) -> frozenset[str]: ...      # structure metadata, e.g. "symmetric", "positive_definite"
-    def with_flag(self, flag: str) -> Self: ... # functional; construction otherwise fixes the flags
-```
-
-**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` swaps them. Composite operators are tracked terms like any other, with names auto-derived from their operands and marked `name_is_auto`.
-
-**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. Each also fixes the kind's `raw()` (II.4) as its stored parameterization, detached — the matrix for `DenseLinOp`, the diagonal for `DiagonalLinOp` — and a composite's is its operand tuple, laziness being the representation.
-
-**The batch form.** `LinOpBatch` is the element batch over operators, a thin `Batch[LinOp]` whose elements share both schemas. It is what a batched `cov` returns. Application is elementwise: a single operator maps over a `RecordBatch`'s elements, and a `LinOpBatch` zips with a broadcast-compatible `RecordBatch`, element by element in both cases. The queries lift the same way, elementwise to batched results.
-
-### Rationale
-
-Operations mint linear operators, covariances above all, so the kind exists to keep those results first-class (`D4 – Closed system of objects under operations`). The structured subclasses exploit their form automatically behind one interface (`C3 – Computational detail hidden by default, available on demand`), the algebra returns lazy views rather than materialized matrices (`D6 – Single source of truth`), and typing both sides with numeric schemas makes closure concrete: the operator `cov` returns accepts the very draws its distribution produces (`D5 – Explicit, carried structure`).
-
-### Open points
-
-- *Structure-exploiting solves.* Exploiting structure in both operands of `A⁻¹B`, possibly through a dedicated `SolveLinOp`, is open.
-- *Flag semantics.* Whether flags only describe structure or also steer which implementation a query selects is open.
-- *Batched matrix action.* `matmat` against a batched operand, where a batch axis would meet the operator's matrix axis, and any richer `LinOpBatch` alignment are deferred until a concrete consumer exists.
 
 ## III.7 — `Distribution`
 
