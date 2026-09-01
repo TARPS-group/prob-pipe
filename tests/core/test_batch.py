@@ -1845,6 +1845,18 @@ class TestFromVectorTakesThePartitionToo:
 
         assert rebuilt.axis_groups == ((4,), (5,))
 
+    def test_the_removed_axis_groups_keyword_is_refused(self):
+        """`from_vector` names the levels, so it took the grouping too — and had
+        to lose the same keyword the constructors did."""
+        with pytest.raises(TypeError, match="unexpected keyword argument 'axis_groups'"):
+            NumericRecordBatch.from_vector(
+                "post",
+                EventTemplate(x=(2,)),
+                self._vec((4, 5)),
+                level_names=("chain", "draw"),
+                axis_groups=((4,), (5,)),
+            )
+
     def test_an_explicit_partition_groups_the_axes_it_names(self):
         """Three axes, two levels: the first level holds two of them."""
         rebuilt = NumericRecordBatch.from_vector(
