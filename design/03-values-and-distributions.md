@@ -55,7 +55,7 @@ class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts any non
 `OpaqueBatch` is its batch form. It **stores** its elements rather than materializing them, and indexing is tracked all the same: a stored tracked term is handed back untouched, under its own name and lineage, while a stored bare value materializes as the tracked term of its kind under the derived name (II.7), and a *sub-batch* takes the derived name as any view does. Its `raw()` is an object array of the stored raw values. And every element is checked against the shared `element_spec` at construction, reporting the position that failed, since the batch asserts that spec of all of them — one element that fails it would make the batch's own spec a false statement.
 
 ```python
-class OpaqueBatch(Batch[Any]):
+class OpaqueBatch(Batch[Opaque]):
     @property
     def spec(self) -> BatchSpec: ...      # the batch's own type
     @property
@@ -113,7 +113,7 @@ def install_call_engine(engine: Callable[..., Any]) -> None: ...
  `FunctionBatch` is the function kind's batch form, storing its elements exactly as `OpaqueBatch` does (III.2): indexing hands a stored `Function` back untouched under its own identity, materializes a stored bare callable as a `Function` under the derived name (II.7), and `raw()` is an object array of the stored callables, with every element checked against the shared `element_spec` at construction.
 
 ```python
-class FunctionBatch(Batch[Callable]):
+class FunctionBatch(Batch[Function]):
     @property
     def spec(self) -> BatchSpec: ...      # the batch's own type
     @property
@@ -245,13 +245,14 @@ class RecordBatch(Batch[Record]):
     def raw(self) -> Mapping[str, Any]: ...
     # the storage view: the nested mapping of raw columns, each field's raw batch form (II.7)
 
-    def __getitem__(self, key: int | slice | tuple[int, ...] | str | tuple[str, ...]) -> Record | RecordBatch | Array | Batch: ...
+    def __getitem__(self, key: int | slice | tuple[int, ...] | str | tuple[str, ...]) -> Record | RecordBatch | Batch: ...
     # int / slice (or a tuple of ints) -> an element Record or a sub-batch, indexing the batch axes
-    # field path (str or tuple of strs) -> the field's column in its native batch form:
-    #   an array for an array field, the matching element batch otherwise; a sub-RecordBatch if nested
+    # field path (str or tuple of strs) -> the field's tracked batch column:
+    #   a NumericArrayBatch for an array field, the matching element batch otherwise;
+    #   a sub-RecordBatch if nested
 ```
 
-Storage is columnar: per-field columns in each field's batch form. A field column is therefore a direct view, and an element `Record` is assembled on demand from the columns rather than stored a second time. A `RecordBatch` omits the field-keyed `Mapping` protocol (`keys()` / `values()` / `children`), so `len` and `iter` unambiguously range over the batch, and the field structure is read from `element_spec`. Its `raw()` is that columnar store itself, the nested mapping of raw columns; a `NumericRecordBatch` additionally presents the coordinates view, `__jax_array__` being its batched `to_vector`, so the tracked batch, the raw columns, and the flat coordinates are three presentations of one store.
+Storage is columnar: per-field columns in each field's batch form. A field column is therefore a direct tracked view, and an element `Record` is assembled on demand from the columns rather than stored a second time. A `RecordBatch` omits the field-keyed `Mapping` protocol (`keys()` / `values()` / `children`), so `len` and `iter` unambiguously range over the batch, and the field structure is read from `element_spec`. Its `raw()` is that columnar store itself, the nested mapping of raw columns; a `NumericRecordBatch` additionally presents the coordinates view, `__jax_array__` being its batched `to_vector`, so the tracked batch, the raw columns, and the flat coordinates are three presentations of one store.
 
 When every element is a `NumericRecord`, the batch is a `NumericRecordBatch`: a pytree of arrays whose leading dimensions are the `batch_shape`, bound to one shared `NumericRecordSpec`. Its columns are the leaves `vmap` / `grad` / `jit` traverse. The batch is *rebuilt* on the way out only where the level identity of what arrives is recoverable — a transform that preserves every batch axis, or one that removes all of them, which yields a single `NumericRecord`. Mapping one level of several is refused: the pytree hook is not told which axis the transform consumed, and no shape records it, so a rebuilt `BatchSpec` could name the wrong level. An operation that knows which level it consumes carries that knowledge itself; the workflow sweep does, mapping raw columns and building each row explicitly. It also adds batched flat vectorization, where `to_vector` stacks one flat vector per element into a `(*batch_shape, vector_size)` array:
 
@@ -261,7 +262,7 @@ class NumericRecordBatch(RecordBatch):
     @classmethod
     def from_vector(cls, name: str, spec: NumericRecordSpec, vec: Array, *,
                     level_names: str | Iterable[str],
-                    axis_groups: Iterable[Iterable[int]] | None = None) -> NumericRecordBatch: ...
+                    axes_per_level: Iterable[int] | None = None) -> NumericRecordBatch: ...
     # vec has shape (*batch_shape, vector_size): the last axis is the flat dimension
 ```
 
@@ -274,9 +275,13 @@ names the single level it introduces.
 class RecordBatch(Batch[Record]):
     @classmethod
     def stack(cls, records: list[Record], *, level_name: str,
-              element_spec: RecordSpec | None = None) -> RecordBatch: ...
+              element_spec: RecordSpec | None = None,
+              name: str | None = None) -> RecordBatch: ...
     # one level of (len(records),); the element spec is taken from the first record
-    # when omitted, and every record's fields must be exactly its fields
+    # when omitted, and every record's fields must be exactly its fields.
+    # `name` is the one place a batch's name may be omitted: it is then derived
+    # from the first record's, and marked auto -- a batch of `draw` records is
+    # about `draw`, so no caller has to invent a name for it.
 ```
 
 ### Rationale
