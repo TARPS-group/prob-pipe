@@ -56,10 +56,17 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     return marginal(K * mixing, ...)        # derived: the body is the identity, its floor route
 ```
 
-**Registering routes.** A route is registered against the operation it realizes, at import, by whichever layer owns the implementation — the same upward registration the evaluation rules and converters use, so a route reaches an operation without the operation importing its provider. Every route has one shape, and the four helpers differ only in how one is built:
+**Registering routes.** A route is registered against the operation it realizes, at import, by whichever layer owns the implementation — the same upward registration the evaluation rules and converters use, so a route reaches an operation without the operation importing its provider. Every route has one shape, and the four helpers differ only in how one is built. The split between a call's `specs` and its `operands` is what keeps feasibility cheap and planning honest: `check` decides from the declarations alone, so it neither computes nor touches a traced value, while `execute` is the only side that reads the operands themselves.
 
 ```python
-class BoundCall: ...               # one call's operands and controls, bound and normalized
+@dataclass(frozen=True)
+class BoundCall:                   # one call, after binding and normalization
+    operation: Function
+    operands:  Mapping[str, Any]           # by role name, each normalized to its kind (II.1)
+    controls:  Mapping[str, Any]           # the resolved controls: the key, the sample count, …
+    @property
+    def specs(self) -> Mapping[str, TermSpec]: ...
+    # each operand's spec: what `check` and the result rule read, never the values
 
 class OperationRoute(Protocol):    # one shape; the helpers below are construction sugar
     name:     str
