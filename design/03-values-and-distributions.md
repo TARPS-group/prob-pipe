@@ -423,7 +423,7 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 ### Contract
 
-Each operation on a distribution is a **capability**: a distribution implements an underscore method (`_sample`, `_log_prob`, `_mean`, …) on the implementer draw type `T` (III.7) for each operation it supports — a value supplied to one, as `_log_prob`'s argument, arrives normalized to `T`, either presentation accepted at the boundary, and a return may be either presentation too, the boundary minting the result's identity either way (II.1) — and the matching user-facing op (`sample`, `log_prob`, `mean`, …) plans the result declaration, resolves the route, and wraps the result at the boundary (V.0).
+Each operation on a distribution is a **capability**: a distribution implements an underscore method (`_sample`, `_log_prob`, `_mean`, …) on the implementer draw type `T` (III.7) for each operation it supports — a value supplied to one, as `_log_prob`'s argument, arrives normalized to `T`, either presentation accepted at the boundary, and a return may be either presentation too, the boundary minting the result's identity either way (II.1) — and the matching user-facing op (`sample`, `log_prob`, `mean`, …) plans the result declaration, resolves the route, and wraps the result at the boundary.
 
 ```python
 @runtime_checkable

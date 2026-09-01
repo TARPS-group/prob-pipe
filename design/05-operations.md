@@ -59,6 +59,8 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
 **Registering routes.** A route is registered against the operation it realizes, at import, by whichever layer owns the implementation — the same upward registration the evaluation rules and converters use, so a route reaches an operation without the operation importing its provider. Every route has one shape, and the four helpers differ only in how one is built:
 
 ```python
+class BoundCall: ...               # one call's operands and controls, bound and normalized
+
 class OperationRoute(Protocol):    # one shape; the helpers below are construction sugar
     name:     str
     source:   RouteSource
@@ -95,7 +97,7 @@ A capability route names the operand it dispatches on, which is why no operation
 
 **Output identity.** Every tracked term an operation mints is fully specified, never left implicit: its spec is the planned declaration, its `provenance` records the operation, its parent descriptors, and the selected route, and its `name` is auto-derived and marked `name_is_auto`. Every result is tracked, a numeric summary included — a density returns as a `NumericArray`, and the detached value is one `raw=True` away.
 
-**Listing available routes.** The operations are themselves a registry, so the vocabulary is discoverable the way every other extensible set in the library is (II.7). `operation_registry.list()` returns one summary per operation — each operand with the kinds it accepts, whether the operation is primitive or derived, and each route with its source, fidelity, and requirement — and `describe()` renders the same content as text, for one operation or for all of them. The registry satisfies `SupportsRegistryCataloging`, so it appears in the catalog beside the converters, evaluation rules, inference methods, and bijector factories, and a user asking what ProbPipe can do has one place to look.
+**Listing the operations and their routes.** The operations are themselves a registry, so the vocabulary is discoverable the way every other extensible set in the library is (II.7). `operation_registry.list()` returns one summary per operation — each operand with the kinds it accepts, whether the operation is primitive or derived, and each route with its source, fidelity, and requirement — and `describe()` renders the same content as text, for one operation or for all of them. The registry satisfies `SupportsRegistryCataloging`, so it appears in the catalog beside the converters, evaluation rules, inference methods, and bijector factories, and a user asking what ProbPipe can do has one place to look.
 
 ```python
 class RouteSource(Enum):        # where a route's implementation comes from

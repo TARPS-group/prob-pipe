@@ -2,11 +2,11 @@
 
 Part II introduces the shared abstractions the rest of the library is built on.
 
-| § | Layer | Abstraction | Role |
+| § | Category | Abstraction | Role |
 |---|---|---|---|
-| II.1 | Type | `TermSpec` | The term-specification base every field and declaration is typed by, with the symbolic-dimension protocol. Each kind's concrete spec is defined beside the kind it describes. |
+| II.1 | Typing | `TermSpec` | The term-specification base every field and declaration is typed by, with the symbolic-dimension protocol. Each kind's concrete spec is defined beside the kind it describes. |
 | II.2 | Declarations | `InputSpec` / `OutputSpec` | The input and output declarations of the map-like kinds: named slots in, one named produced term out. |
-| II.3 | Numeric value | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
+| II.3 | Numeric values | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
 | II.4 | Identity | `TrackedTerm` / `Provenance` | The name, type (spec), lineage, and annotations an object carries beyond its raw representation, and its `raw()` door back to that representation. |
 | II.5 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space, with its `BatchSpec`. |
 | II.6 | Structure | `NamedTree` | The named, ordered tree addressed by path that every structured object is built on, owning the leaf-keyed mapping contract and navigation. |
@@ -37,7 +37,7 @@ class TermSpec(ABC):
     def with_dims(self, **sizes: int) -> Self: ...   # substitute explicit sizes; a new spec
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
 ```
-s
+
 A spec accepts a value in **either presentation** — the raw representation or the tracked term of the spec's kind — with construction normalizing to the stored form. The rule also holds in the opposite direction: wherever a raw value is accepted by a function, its tracked form is accepted too; however, an implementer method's *arguments* arrive already normalized to the implementer type, so an implementation only needs to handle one presentation. An implementer may returns either presentation: the boundary keeps the kind and mints the result's identity afresh either way.
 
 ### Rationale
@@ -70,7 +70,7 @@ Requiring a name on every output declaration serves `C5 – Naming for unambiguo
 
 **The `Numeric` interface.** The numeric kinds — the array kind, the numeric record specialization, and their batch forms — share one flat-vector interface. The `to_vector` method lays a value out as one flat vector in canonical order, the `vector_size` property is the flat vector's length, and the `from_vector` method rebuilds a value from the flat representation. The coordinate hooks expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions can be applied to the numeric kinds at the coordinates and return bare arrays. ProbPipe operators and elementwise `map` preserve structure and return tracked terms. Anything typed over flat numeric values types against `Numeric` once. If a bare array is passed where a `Numeric` value is expected, the array is promoted to the appropriate numeric type without any value copying.
 
-`Numeric` is an **abstract base class rather than a structural protocol**, and the distinction is worth stating once. A *capability* is open: any object may claim `SupportsMean` by implementing it, third-party families included, so capabilities are structural (III.8). A *kind interface* is closed: the numeric kinds are the ones ProbPipe defines, and a bare array reaching a `Numeric` position is promoted rather than duck-typed, so nothing outside the library ever satisfies it. Being a base rather than a shape also lets it carry what every numeric kind shares — the coordinate hooks are `to_vector` under other names, so the base defines them once and each kind implements only `to_vector` and `vector_size`.
+`Numeric` is an **abstract base class rather than a structural protocol**, and the distinction is worth stating once. A *capability* is open: any object may claim `SupportsMean` by implementing it, third-party families included, so capabilities are structural. A *kind interface* is closed: the numeric kinds are the ones ProbPipe defines, and a bare array reaching a `Numeric` position is promoted rather than duck-typed, so nothing outside the library ever satisfies it. Being a base rather than a shape also lets it carry what every numeric kind shares — the coordinate hooks are `to_vector` under other names, so the base defines them once and each kind implements only `to_vector` and `vector_size`.
 
 ```python
 class Numeric(ABC):                         # the flat-vector interface of the numeric kinds
@@ -338,7 +338,7 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ..
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
 
-A single **catalog** makes every registry discoverable. It provides a list of registries, their entries with their priorities, and a one-line description, so a user can see which entries exist and how a given call will resolve. An **entry** is one registered item within a registry; the catalog uses this generic term rather than *method* because it spans registries whose items are not all type-dispatched methods. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`. The operation vocabulary is cataloged the same way (V.0), so *what ProbPipe can do* and *how a given call resolves* are answered from one place.
+A single **catalog** makes every registry discoverable. It provides a list of registries, their entries with their priorities, and a one-line description, so a user can see which entries exist and how a given call will resolve. An **entry** is one registered item within a registry; the catalog uses this generic term rather than *method* because it spans registries whose items are not all type-dispatched methods. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so *what ProbPipe can do* and *how a given call resolves* are answered from one place.
 
 ```python
 @dataclass(frozen=True)
