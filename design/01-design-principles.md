@@ -28,7 +28,7 @@ ProbPipe's overarching aim is *simplification via abstraction*: complexity is ab
 
 **D5 — Explicit, carried structure.** The structure of a value — its named parts and their kinds — is represented explicitly and travels with the value and with the objects that produce and consume it. Structure is propagated forward from the producer that knows it.
 
-**D6 — Single source of truth.** Each quantity has one authoritative place of storage; summaries, alternate encodings, exports, and any other view are derived from it as needed rather than stored separately.
+**D6 — Single source of truth.** Each quantity has one authoritative place of storage; summaries, alternate encodings, exports, and all other views are derived from it as needed rather than stored separately.
 
 ## The Three Layers
 
@@ -45,4 +45,4 @@ These distinct responsibilities are organized into layers:
 | **Representation** | how a semantic object is concretely stored and used in computations | backing arrays and array backends, columnar and object-array storage, flat-vector layouts, operation dispatch registries and representation converters |
 | **Workflow** | how a computation is *run* and *recorded* | the call engine, lifting, provenance tracking, randomness and replay, compute dispatch and orchestration, caching |
 
-Throughout, we use **raw** to denote how the representation layer is accessed from the semantic one: a term's raw form is the object that represents it, detached from the workflow — no lineage or anything the workflow would carry forward. A **tracked term** is a semantic object with a representation to compute with and the workflow record of where it came from. A user operates in the semantic layer by default and accesses the representation layer through a small number of explicit boundary points.
+Throughout, **raw** refers to the representation layer accessed from the semantic one: a term's raw form is the object that represents it, detached from the workflow — no lineage or anything the workflow would carry forward. A **tracked term** is a semantic object with a representation to compute with and the workflow record of where it came from. A user operates in the semantic layer by default and accesses the representation layer through a small number of explicit boundary points.
