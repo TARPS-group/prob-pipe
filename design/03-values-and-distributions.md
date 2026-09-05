@@ -33,9 +33,9 @@ class NumericArraySpec(NumericSpec):  # the numeric-array kind's spec, a Numeric
     support: Constraint            # descriptive membership metadata (II.3)
 ```
 
-It names the numeric-array kind alongside `NumericRecord`, whose leaves are values of that kind; `Array` stays the type alias for a bare backend array, so nothing is renamed to make room. It carries the full array surface — arithmetic, comparison, and the conversion hooks — because with no fields and no field count `arr + 1` has exactly one meaning. **Arithmetic returns tracked terms.** `arr + 1` is a `NumericArray` under a deterministically derived, evaluation-order name marked `name_is_auto`, with identity attached as for any operation (II.4). `Record` carries the vector-space subset only and otherwise stays a container.
+It names the numeric-array kind alongside `NumericRecord`, whose leaves are values of that kind; `Array` stays the type alias for a bare backend array, so nothing is renamed to make room. It carries the full array surface — arithmetic, comparison, and the conversion hooks — because with no fields and no field count `arr + 1` has exactly one meaning. **Arithmetic returns tracked terms.** `arr + 1` is a `NumericArray` under a deterministically derived, evaluation-order name, with identity attached as for any operation (II.4). `Record` carries the vector-space subset only and otherwise stays a container.
 
-`NumericArrayBatch` is the kind's batch form: a `Batch` whose `element_spec` is the `NumericArraySpec` and whose storage is one array with the batch axes leading — the same split `RecordBatch` uses, with one column instead of many. Native storage is not identity: an array with leading axes is just an array, and the batch form is what carries the level names, the shared spec, and provenance, so a `draw` level has somewhere to live for an array-valued law. `NumericArrayBatch[i]` is a view: a `NumericArray` under the derived name, its provenance recording the batch (II.4). `raw()` is the backing array itself.
+`NumericArrayBatch` is the kind's batch form: a `Batch` whose `element_spec` is the `NumericArraySpec` and whose storage is one array with the batch axes leading — the same split `RecordBatch` uses, with one column instead of many. Native storage is not identity: an array with leading axes is just an array, and the batch form is what carries the level names, the shared spec, and provenance, so a `draw` level has somewhere to live for an array-valued law. Its `raw()` is the backing array itself.
 
 ### Rationale
 
@@ -52,7 +52,7 @@ class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts any non
     meta: Hashable
 ```
 
-`OpaqueBatch` is its batch form. It **stores** its elements rather than materializing them, and indexing returns a view like any access (II.4): an `Opaque` under the derived name, its provenance recording the batch and, where a tracked element was supplied, that element as the source; a *sub-batch* is a view in the same way. Its `raw()` is an object array of the stored raw values, and `raw()` on an element hands back the stored object detached. And every element is checked against the shared `element_spec` at construction, reporting the position that failed, since the batch asserts that spec of all of them — one element that fails it would make the batch's own spec a false statement.
+`OpaqueBatch` is its batch form. It **stores** its elements rather than materializing them. Its `raw()` is an object array of the stored raw values, and `raw()` on an element hands back the stored object detached. And every element is checked against the shared `element_spec` at construction, reporting the position that failed, since the batch asserts that spec of all of them — one element that fails it would make the batch's own spec a false statement.
 
 ```python
 class OpaqueBatch(Batch[Opaque]):
@@ -110,7 +110,7 @@ def install_call_engine(engine: Callable[..., Any]) -> None: ...
     # plain evaluation on concrete values.
 ```
 
- `FunctionBatch` is the function kind's batch form, storing its elements exactly as `OpaqueBatch` does (III.2): indexing returns a `Function` view under the derived name, whatever the slot holds, and `raw()` is an object array of the stored callables, with every element checked against the shared `element_spec` at construction.
+ `FunctionBatch` is the function kind's batch form, storing its elements exactly as `OpaqueBatch` does (III.2); an element is a `Function` whatever callable the slot holds, `raw()` is an object array of the stored callables, and every element is checked against the shared `element_spec` at construction.
 
 ```python
 class FunctionBatch(Batch[Function]):
@@ -162,7 +162,7 @@ class LinOp(Function, ABC):        # the linear subtype of the III.3 base
     def with_flag(self, flag: str) -> Self: ... # functional; construction otherwise fixes the flags
 ```
 
-**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` swaps them. Composite operators are tracked terms like any other, with names auto-derived from their operands and marked `name_is_auto`.
+**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators (`ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view) that defer to their parts. The scalar `*` coexists with distribution composition by operand type. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` swaps them. Composite operators are tracked terms like any other, with names derived from their operands.
 
 **Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. Each also fixes the kind's `raw()` (II.4) as its stored parameterization, detached — the matrix for `DenseLinOp`, the diagonal for `DiagonalLinOp` — and a composite's is its operand tuple, laziness being the representation.
 
@@ -235,7 +235,7 @@ class Record(NamedTree[Any], TrackedTerm):
                  name_is_auto: bool = False,
                  **kw_fields: Any) -> None: ...
         # name is the required first argument (semantic identity)
-        # name_is_auto marks an operation-derived name (II.4); user constructions leave it False
+        # name_is_auto (II.4): user constructions leave it False
         # a nested sub-record's name is its field key; a mapping-valued field is a subtree, never a leaf.
         # Binds to the declaration if given (structural validation); nested mapping
         # data is normalized to a RecordSpec.
@@ -260,7 +260,7 @@ class Record(NamedTree[Any], TrackedTerm):
 
 `select` resolves each argument with `at_path`, so a key reaches a leaf and a partial path a subtree view, and returns a plain `dict` of tracked values carrying no schema; its purpose is `**`-splatting a value's parts into a `Function` call, with `select_all` the whole-record form over the top-level children.
 
-**Storage and access are separate contracts.** Storage retains the representation and the source: leaves are held in native form — a supplied `NumericArray`'s array is stored natively — and a supplied tracked term is retained as the field's **source**, its own name and provenance intact, held as a reference or a descriptor per the provenance mode (II.4). Access never hands back the stored source itself: `record[path]` returns a **view**, the tracked term of the field's kind under the field key as its name, marked `name_is_auto`, its provenance recording the record and, where a source was supplied, that source — the view is new and the source unchanged, so nothing mutates an immutable term. An interior path yields a sub-`Record` view as before, and batch indexing works the same way (II.5): every access is a view, and `raw()` is the one way to a detached value. `record.raw(path)` returns the stored representation, and `record.raw()` the whole record's nested mapping of raw leaves — the record kind's raw host.
+**Storage and access are separate contracts.** Storage retains the representation and the source: leaves are held in native form — a supplied `NumericArray`'s array is stored natively — and a supplied tracked term is retained as the field's **source**, its own name and provenance intact, held as a reference or a descriptor per the provenance mode (II.4). Access never hands back the stored source itself: `record[path]` returns a view (II.4) of the field's kind, named by the field key. An interior path yields a sub-`Record` view. `record.raw(path)` returns the stored representation, and `record.raw()` the whole record's nested mapping of raw leaves — the record kind's raw host.
 
 When every leaf is numeric, a `Record` is a `NumericRecord`. Leaves are stored in native form — a bare array, an `xarray` / `pandas` container, or any registered array backend — and convert to `jax.Array` only at the compute boundary (the pytree flatten that `grad` / `vmap` / `jit` traverse, and `to_vector`), each leaf at most once. Because promotion changes no data, construction auto-promotes exactly when every leaf is numeric and no explicit non-numeric schema vetoes it, and every transform re-derives the promotion from the current leaves — removing the last non-numeric leaf promotes, introducing one demotes — exactly as for its schema (above). Flat vectorization reads its layout (`leaf_shapes`, `vector_size`, canonical order) from the schema. At the boundary a `NumericRecord` presents a bare array pytree, so it passes through `grad` / `vmap` / `jit` unchanged and a JAX round-trip returns bare-array leaves; passing through means leaf transport only — a transform never promotes a `Record` to a `RecordBatch`. Flattening is deliberately numeric-only, which is why `NamedTree` itself has no `flatten`.
 
@@ -401,8 +401,7 @@ class FieldView(Distribution):
     def parent(self) -> Distribution: ...
     @property
     def path(self) -> str: ...
-    # the declaration is the parent's schema at path; name == the field key,
-    # marked name_is_auto; provenance records the parent it was viewed from
+    # the declaration is the parent's schema at path; a view (II.4), named by the field key
 ```
 
 **The distribution term specification.** `DistributionSpec` is the distribution kind's term spec. As a leaf, it types a field holding a matching `Distribution`. As an event declaration, it declares a random measure: a distribution whose draws are themselves `Distribution`s. The draw kind comes from the declaration, never from what `_sample` happens to return.
@@ -667,7 +666,7 @@ The result has two mathematical degrees of freedom, *conditional?* (`unmet ≠ �
 
 `*` returns the **most specific** class, recomputed from the *flattened* factor graph at each step. `A * B * C` builds one flat N-factor joint, with independent factors commuting and dependent ones kept in conditional-first order. Same-named unmet givens unify into one slot of the joint: their specs must unify, a disagreement raising at composition, and binding the slot feeds every factor that names it — two givens that are genuinely different quantities are renamed apart first, the discipline fields and levels already follow. Symbolic dimensions never unify by name across operands, since two factors may both call something `"obs"` and mean different dimensions. Each operand's dimensions instead enter the joint under a deterministic factor-qualified renaming, shared fields and shared unmet givens contribute the only identifications, and the joint stores the factors so refined. The renaming is canonical, so derived names and fingerprints stay deterministic.
 
-**Naming the result.** A joint is *derived*, not created by the user, so `*` **auto-derives** its `name` deterministically from its factors. The factors are listed in **canonical order** (the conditional-first topological order of the flattened factor graph, with factors incomparable in the derived graph ordered lexicographically by the fields they produce), and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` produce the same joint distribution. The derived name is marked `name_is_auto`.
+**Naming the result.** A joint is *derived*, not created by the user, so `*` **auto-derives** its `name` deterministically from its factors. The factors are listed in **canonical order** (the conditional-first topological order of the flattened factor graph, with factors incomparable in the derived graph ordered lexicographically by the fields they produce), and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` produce the same joint distribution.
 
 Re-composition reads `name_is_auto`. An auto-named operand is **flattened**: its factors enter the new joint directly, its old name is discarded, and a fresh name is derived from the full factor list. An operand whose name the user has pinned with `with_name` is **not** flattened. It enters as a single factor under that name, and that name appears as one token in the parent's derived name. So `(lik * prior).with_name("posterior")` both labels the joint and, in any later composition, keeps it as the single factor `posterior`.
 
