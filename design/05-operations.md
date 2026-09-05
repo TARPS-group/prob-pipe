@@ -264,7 +264,7 @@ When `given` names several fields, the cases combine: the exact bindings (curry 
 
 **The inference-method registry.** The Bayes' rule case is dispatched through the **inference-method registry**, a `UnaryDispatchRegistry` keyed on the model's type whose methods are inference algorithms such as MCMC or variational families.
 
-**Prioritization.** Methods rank in the shared selection order (II.7): an exact method above an approximate one, then specificity, then registration order, with an unclassified method opt-in-only until a contributor classifies it. A deployment re-ranks methods at runtime with `set_priorities`, which warns when a method crosses into or out of opt-in-only.
+**Fidelity.** An inference method's declared fidelity (II.7) is what its answer targets: `exact` for a method that targets the posterior itself, as MCMC does in the limit of its run, and `approximate` for one that targets a surrogate, as a variational family does.
 
 ### Rationale
 
