@@ -20,7 +20,7 @@ A **term specification** (``term spec'') describes the available typing informat
 
 The specs partition into the **base kinds** and the **batch kinds**. Every base kind has exactly one term spec, one **base form**, and one **batch form**. Since a batch of batches is a batch, the base form and batch form of a `Batch` are identical.
 
-**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any symbolic dimensions is said to be **polymorphic**, and one with none is said to be **concrete**. Three spec operations manage dimension information: it can *report* the names still unbound, *substitute* explicit sizes for names, and *binds* names by unification against a value, reading the sizes off that value's spec.
+**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any symbolic dimensions is said to be **polymorphic**, and one with none is said to be **concrete**. Three spec operations manage dimension information: it can *report* the names still unbound, *substitute* explicit sizes for names, and *binds* names by unification against a value, reading the sizes off that value's spec. Binding is one unification over everything bound together: a name takes its size from its first occurrence, every later occurrence must agree, a disagreement raises, and a bound name never rebinds.
 
 Validation and the dimension protocol together are the base API:
 
