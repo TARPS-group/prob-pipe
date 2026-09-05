@@ -1,6 +1,6 @@
 # Part III — Values and Distributions
 
-Part III introduces the value and distribution objects a user constructs and operates on, and the machinery specific to them. Each is built on the shared abstractions of Part II and introduced in dependency order. The final two sections cover the registries that act across these objects: cross-type conversion and constraint reparameterization.
+Part III introduces the value and distribution objects a user constructs and operates on, and the machinery specific to them. Each is built on the shared abstractions of Part II and introduced in dependency order, and each section states only what its kind adds — everything else is Part II's contract. The final two sections cover the registries that act across these objects: cross-type conversion and constraint reparameterization.
 
 | §      | Category                       | Contents                                                                                              | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -24,7 +24,7 @@ Part III introduces the value and distribution objects a user constructs and ope
 
 ### Contract
 
-`NumericArray` is one array value with identity: a `TrackedTerm`, holding a single array whose `shape` is the **event** shape, with no batch axes; its `raw()` is that array, detached (II.4). `NumericArraySpec` is its kind's term spec:
+`NumericArray` is one array value with identity: a `TrackedTerm`, holding a single array whose `shape` is the **event** shape, with no batch axes; its `raw()` is that array. `NumericArraySpec` is its kind's term spec:
 
 ```python
 class NumericArraySpec(NumericSpec):  # the numeric-array kind's spec, a NumericSpec (II.3)
@@ -35,11 +35,11 @@ class NumericArraySpec(NumericSpec):  # the numeric-array kind's spec, a Numeric
 
 It names the numeric-array kind alongside `NumericRecord`, whose leaves are values of that kind; `Array` stays the type alias for a bare backend array, so nothing is renamed to make room. It carries the full array surface — arithmetic, comparison, and the conversion hooks — because with no fields and no field count `arr + 1` has exactly one meaning. **Arithmetic returns tracked terms.** `arr + 1` is a `NumericArray` under a deterministically derived, evaluation-order name, with identity attached as for any operation (II.4). `Record` carries the vector-space subset only and otherwise stays a container.
 
-`NumericArrayBatch` is the kind's batch form: a `Batch` whose `element_spec` is the `NumericArraySpec` and whose storage is one array with the batch axes leading — the same split `RecordBatch` uses, with one column instead of many. Native storage is not identity: an array with leading axes is just an array, and the batch form is what carries the level names, the shared spec, and provenance, so a `draw` level has somewhere to live for an array-valued law. Its `raw()` is the backing array itself.
+`NumericArrayBatch` is the kind's batch form: a `Batch` whose `element_spec` is the `NumericArraySpec` and whose storage is one array with the batch axes leading — the same split `RecordBatch` uses, with one column instead of many. Native storage is not identity: an array with leading axes is just an array, and the batch form is what carries the level names, the shared spec, and provenance, so a `draw` level has somewhere to live for an array-valued law.
 
 ### Rationale
 
-The full operator surface is safe here and only here: with no fields, an expression on one array has exactly one meaning (`D1 – Mathematical fidelity`). Everything else — the stored spec, tracked results, boundary-attached identity, the batch form — is Part II's contract instantiated at the array kind.
+The full operator surface is safe here and only here: with no fields, an expression on one array has exactly one meaning (`D1 – Mathematical fidelity`).
 
 ## III.2 — `Opaque`
 
@@ -54,14 +54,6 @@ class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts any non
 
 `OpaqueBatch` is its batch form. It **stores** its elements rather than materializing them. Its `raw()` is an object array of the stored raw values, and `raw()` on an element hands back the stored object detached. And every element is checked against the shared `element_spec` at construction, reporting the position that failed, since the batch asserts that spec of all of them — one element that fails it would make the batch's own spec a false statement.
 
-```python
-class OpaqueBatch(Batch[Opaque]):
-    @property
-    def spec(self) -> BatchSpec: ...      # the batch's own type
-    @property
-    def element_spec(self) -> OpaqueSpec: ...     # view on spec
-```
-
 ### Rationale
 
 The kind exists so that closure under operations holds for every return value (`D4 – Closed system of objects under operations`), and it adds identity and nothing else because a richer interface would promise structure the value does not declare (`D1 – Mathematical fidelity`).
@@ -70,7 +62,7 @@ The kind exists so that closure under operations holds for every return value (`
 
 ### Contract
 
-The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map: a `name`, `provenance`, and its `FunctionSpec` — the single stored source of its type, whose sides it exposes as the `input_spec` and `output_spec` views, either side optional exactly as in the spec. Construction fixes all of it. A `Function` carries a frozen `inspect.Signature`, authoritative for Python argument binding — parameter kinds, defaults, and variadic parameters, which a value schema cannot express — while the `input_spec` is authoritative for the value schema. Construction validates their total correspondence, the signature's parameters matching the slots one for one, so binding an argument binds a slot by name. The wrapped callable and its state stay private in ordinary use — no attribute forwarding, and no backend object escapes through an operation — with `raw()` the one sanctioned way out, returning the wrapped callable as the kind's representation (II.4).
+The function kind's base type is `Function`: a tracked term wrapping exactly one Python callable. It carries the representation of a map, and its `FunctionSpec`, whose sides it exposes as the `input_spec` and `output_spec` views, either side optional exactly as in the spec. Construction fixes all of it. A `Function` carries a frozen `inspect.Signature`, authoritative for Python argument binding — parameter kinds, defaults, and variadic parameters, which a value schema cannot express — while the `input_spec` is authoritative for the value schema. Construction validates their total correspondence, the signature's parameters matching the slots one for one, so binding an argument binds a slot by name. The wrapped callable and its state stay private in ordinary use — no attribute forwarding, and no backend object escapes through an operation — with `raw()` the one sanctioned way out, returning the wrapped callable as the kind's representation (II.4).
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting. `__call__` runs the **call path**, the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import, adding lifting, tracking, and provenance to every `Function`. So `apply` is the raw map that operations such as change-of-variables build on, and `__call__` is the tracked call a user makes. The base also carries its **controls** — the execution defaults (sample count, dispatch, orchestration) — set at construction and revised functionally by `with_options`; the base gives them no meaning, and the engine reads them at call time.
 
@@ -90,7 +82,7 @@ class Function(TrackedTerm):
                  differentiable: NumericSpec = ...) -> None: ...
                  # optional differentiability claim; its contract is the engine's (IV.1)
     @property
-    def spec(self) -> FunctionSpec: ...                  # the single stored source of the type
+    def spec(self) -> FunctionSpec: ...
     @property
     def input_spec(self) -> InputSpec | None: ...                   # view on spec
     @property
@@ -111,14 +103,6 @@ def install_call_engine(engine: Callable[..., Any]) -> None: ...
 ```
 
  `FunctionBatch` is the function kind's batch form, storing its elements exactly as `OpaqueBatch` does (III.2); an element is a `Function` whatever callable the slot holds, `raw()` is an object array of the stored callables, and every element is checked against the shared `element_spec` at construction.
-
-```python
-class FunctionBatch(Batch[Function]):
-    @property
-    def spec(self) -> BatchSpec: ...      # the batch's own type
-    @property
-    def element_spec(self) -> FunctionSpec: ...   # view on spec: what every element satisfies
-```
 
 ### Rationale
 
@@ -242,7 +226,7 @@ class Record(NamedTree[Any], TrackedTerm):
         # Otherwise, infers it once via RecordSpec.infer_from.
 
     @property
-    def spec(self) -> RecordSpec: ...                    # the single stored source of the type
+    def spec(self) -> RecordSpec: ...
     def to_numeric(self) -> NumericRecord: ...  # requires every leaf to be numeric
     def raw(self, path: str | tuple[str, ...] | None = None) -> Any: ...
     # the stored representation: a field's raw value at path, or the whole
@@ -292,10 +276,6 @@ A `RecordBatch` is a batch of `Record`s that all conform to one shared `RecordSp
 
 ```python
 class RecordBatch(Batch[Record]):
-    @property
-    def spec(self) -> BatchSpec: ...                # the batch's own type
-    @property
-    def element_spec(self) -> RecordSpec: ...       # view on spec
     def raw(self) -> Mapping[str, Any]: ...
     # the storage view: the nested mapping of raw columns, each field's raw batch form (II.5)
 
@@ -346,9 +326,9 @@ It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a 
 
 ### Contract
 
-A `Distribution[T]` is a single random law: a probability measure over values of type `T`, the implementer-side draw type fixed below. Its single stored source of type is its `DistributionSpec`, whose `event_spec`, the output declaration of one draw (an `OutputSpec`, II.2), it exposes as a view. That is the same declaration type a `Function` carries as its `output_spec`, and the two are named apart deliberately: a function's output is what one call *returns*, while a law's event is the space its draws inhabit, a standing property of the law rather than a per-call result. Construction normalizes the event declaration to an `OutputSpec` whose name defaults from the law's own constructor `name`, and the stored spec's class fixes the draw kind.
+A `Distribution[T]` is a single random law: a probability measure over values of type `T`, the implementer-side draw type fixed below. Its `DistributionSpec` carries `event_spec`, the output declaration of one draw (an `OutputSpec`, II.2), exposed as a view. That is the same declaration type a `Function` carries as its `output_spec`, and the two are named apart deliberately: a function's output is what one call *returns*, while a law's event is the space its draws inhabit, a standing property of the law rather than a per-call result. Construction normalizes the event declaration to an `OutputSpec` whose name defaults from the law's own constructor `name`, and the stored spec's class fixes the draw kind.
 
-It is a `TrackedTerm`. It declares the operations it supports as **capabilities**, so operational support is decoupled from the class. Its `raw()` (II.4) returns the law **detached**: the same distribution without provenance, annotations, or a reference to a parent it was viewed from, keeping its spec and its name — so a field view's `raw()` is the detached marginal rather than a reference into its parent. Where a family stores a backend object, that object is what detachment yields; where the representation is ProbPipe's own, as for a factored joint, the detached law is. The draw a *user* sees is the tracked term of the declared kind: a `Record` for a record-valued law, and a `NumericArray` for a scalar one (III.1). It is not wrapped in another kind to make it uniform, so a draw's type follows the law's declaration rather than its field count.
+It declares the operations it supports as **capabilities**, so operational support is decoupled from the class. Its `raw()` (II.4) returns the law **detached**: the same distribution without provenance, annotations, or a reference to a parent it was viewed from, keeping its spec and its name — so a field view's `raw()` is the detached marginal rather than a reference into its parent. Where a family stores a backend object, that object is what detachment yields; where the representation is ProbPipe's own, as for a factored joint, the detached law is. The draw a *user* sees is the tracked term of the declared kind: a `Record` for a record-valued law, and a `NumericArray` for a scalar one (III.1). It is not wrapped in another kind to make it uniform, so a draw's type follows the law's declaration rather than its field count.
 
 **A slot is not a field.** Every law has exactly one **produced slot**, the name its `OutputSpec` declares: it is what composition matches on, what `include_inputs` labels, and what `with_path_names` renames by bare name. A **field** is a named part of one draw, a path in the event schema, and only a record-drawing law has any — its top-level fields are what `d[path]`, `marginal`, and the field views address. So a record-drawing law has both, while a term-drawing law has a slot and no fields: `Normal("x", 0, 1)` composes and renames under `x`, but offers no field interface, since projecting an atomic draw is the draw. The two never merge, and neither is derived from the other.
 
@@ -371,10 +351,10 @@ A `NumericDistribution` is a `Distribution` whose event spec is a `NumericSpec` 
 class Distribution[T](TrackedTerm):
     def __init__(self, name: str, event_spec: OutputSpec | TermSpec | Mapping) -> None: ...
         # the event declaration, normalized to an OutputSpec (name defaulted from
-        # the law's own name); its stored spec's class fixes the draw kind
+        # the law's own name)
 
     @property
-    def spec(self) -> DistributionSpec: ...     # the single stored source of the type
+    def spec(self) -> DistributionSpec: ...
     @property
     def event_spec(self) -> OutputSpec: ...     # view on spec: the event declaration
     @property
@@ -413,7 +393,7 @@ class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – Crossing copies nothing` at a field, and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`); the rest — the stored spec, purity, tracked results — is Part II's contract at the distribution kind. The draw-type table is `B2 – Representations only inside` per kind: an implementer writes over `T` and never sees a tracked draw.
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – No copying at boundaries` at a field, and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`). The draw-type table is `B2 – Representations only inside` per kind: an implementer writes over `T` and never sees a tracked draw.
 
 ### Open points
 
@@ -512,9 +492,9 @@ Users never call a method on the `ConditionalDistribution`. Instead, they use th
 ```python
 class ConditionalDistribution[S, T](TrackedTerm):
     def __init__(self, name: str, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec | Mapping) -> None: ...
-        # given before event, as in FunctionSpec; the stored event spec's class fixes the draw kind
+        # given before event, as in FunctionSpec
     @property
-    def spec(self) -> ConditionalDistributionSpec: ...   # the single stored source of the type
+    def spec(self) -> ConditionalDistributionSpec: ...
     @property
     def given_spec(self) -> InputSpec: ...               # view on spec
     @property
@@ -575,23 +555,13 @@ A `DistributionBatch` is a `Batch` of `Distribution`s: `N` separate distribution
 ```python
 class DistributionBatch(Batch[Distribution]):
     @property
-    def spec(self) -> BatchSpec: ...          # the batch's own type
-    @property
-    def element_spec(self) -> DistributionSpec: ...   # view on spec
-    @property
-    def event_spec(self) -> OutputSpec: ...   # view on spec
-    def __getitem__(self, index: int | slice) -> Distribution | DistributionBatch: ...
+    def event_spec(self) -> OutputSpec: ...   # the shared declaration, a view on spec
 
 class ConditionalDistributionBatch(Batch[ConditionalDistribution]):
     @property
-    def spec(self) -> BatchSpec: ...                     # the batch's own type
+    def given_spec(self) -> InputSpec: ...               # the shared declarations, views on spec
     @property
-    def element_spec(self) -> ConditionalDistributionSpec: ...   # view on spec
-    @property
-    def given_spec(self) -> InputSpec: ...               # view on spec
-    @property
-    def event_spec(self) -> OutputSpec: ...              # view on spec
-    def __getitem__(self, index: int | slice) -> ConditionalDistribution | ConditionalDistributionBatch: ...
+    def event_spec(self) -> OutputSpec: ...
 ```
 
 ### Rationale

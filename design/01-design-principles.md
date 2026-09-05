@@ -50,7 +50,7 @@ Every value has two presentations:
 1. The **tracked** form is the semantic layer's presentation.
 2. The **raw** form is the representation layer's presentation.
 
-The tracked form carries the raw form together with the workflow record. A user operates in the semantic layer by default and crosses into the representation layer only at explicit boundary points, whose contract is given by three further **boundary principles**:
+The tracked form carries the raw form together with the workflow record. A user operates in the semantic layer by default and crosses into the representation layer only at explicit boundary points, whose contract is given by four further **boundary principles**:
 
 **B1 — Either presentation in.** Wherever a value or declaration is accepted — a constructor, an operation, a method argument — it is accepted in tracked or raw form. Therefore, a caller never needs to convert manually.
 
@@ -58,4 +58,4 @@ The tracked form carries the raw form together with the workflow record. A user 
 
 **B3 — Tracked forms out by default.** A result is always returned to the user in tracked form. The raw form must be explicitly requested by the user.
 
-**B4 — Crossing copies nothing.** A wrap holds the representation it is given and raw access returns that same representation; neither copies. A view refers into its source rather than copying out of it, so the two presentations are one storage, never a second copy that could diverge. Only a computation, or a construction that combines several values, produces new storage.
+**B4 — No copying at boundaries.** A wrap holds the representation it is given and raw access returns that same representation without copying. A view refers into its source rather than copying out of it, so the two presentations are backed by one store. Only a computation, or a construction that combines several values, produces new storage.
