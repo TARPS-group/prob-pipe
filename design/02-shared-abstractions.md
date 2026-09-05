@@ -64,7 +64,7 @@ Requiring a name on every output declaration serves `C5 – Naming for unambiguo
 
 ### Contract
 
-**The `Numeric` interface.** The numeric kinds share one flat-vector interface. The `to_vector` method lays a value out as one flat vector in canonical order, the `vector_size` property is the flat vector's length, and the `from_vector` method rebuilds a value from the flat representation. The coordinate hooks expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions can be applied to the numeric kinds at the coordinates and return bare arrays. If a bare array is passed where a `Numeric` value is expected, the array is promoted to the appropriate numeric type.
+**The `Numeric` interface.** The numeric kinds share one flat-vector interface. The `to_vector` method lays a value out as one flat vector in canonical order, the `vector_size` property is the flat vector's length, and the `from_vector` method rebuilds a value from the flat representation. The coordinate hooks expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions can be applied to the numeric kinds at the coordinates and return bare arrays. If a bare array is passed where a `Numeric` value is expected, the array is promoted to the appropriate numeric type. Two routes therefore meet at a numeric value: a foreign function sees the coordinates and returns a bare array, while ProbPipe's own operators and elementwise `map` preserve structure and return tracked terms.
 
 ```python
 class Numeric(ABC):                         # the flat-vector interface of the numeric kinds
