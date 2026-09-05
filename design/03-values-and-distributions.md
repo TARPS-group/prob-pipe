@@ -657,7 +657,7 @@ Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 –
 
 ### Contract
 
-With the base `Distribution`, the `ConditionalDistribution`, and the factored distributions and their composition in place, the distribution *kinds* can be cataloged. Every class named here is defined earlier, and this section only organizes them. Two **independent** questions classify any distribution:
+With the base `Distribution`, the `ConditionalDistribution`, and the factored distributions and their composition in place, the distribution *kinds* can be classified. Two **independent** questions classify any distribution:
 1. **The type axis** — what does a draw look like, and is a factorization exposed? This fixes *which interfaces apply*.
 2. **The family axis** — how is the law realized? This fixes *which capabilities* the object implements, and how.
 
@@ -673,20 +673,7 @@ The axes are orthogonal, so they combine freely: a `Normal` is *atomic* (type) a
 
 The line between the last two is **factorization, not field count**: a multi-field empirical distribution or an amortized posterior has fields but no factors, so it is *atomic-structured*, and only a distribution built from named sub-distributions is *joint*. Hence there is **no `RecordDistribution`**: draw structure lives in `event_spec` and factor access in `SupportsFactors`.
 
-**The family axis — how the law is realized.** Each family is an ordinary `Distribution` (a `NumericDistribution` when its event is numeric), differing only in which capabilities it implements and how — refinement by capability, not a parallel class tower:
-
-| family | the law is realized as | capabilities, and how |
-|---|---|---|
-| **parametric (closed-form)** | the standard tensor-library families — continuous (`Normal`, `Gamma`, `Beta`, `Exponential`), discrete (`Bernoulli`, `Categorical`, `Poisson`), multivariate (`MultivariateNormal`, `Dirichlet`) — the bulk of the atomic, array-valued row | exact `sample` / `log_prob` / moments over a constrained-support event declaration; the multivariate families implement `SupportsMarginals` exactly |
-| **empirical** | a finite, possibly weighted, sample set — scalar or structured | `sample` resamples, moments are sample estimates, and marginals are again empirical; no density |
-| **transformed (pushforward)** | a base distribution pushed through a map with recognizable structure | an invertible map keeps an exact `log_prob` by change of variables, and a linear map exact first and second moments; a general map's pushforward proceeds by sampling, landing in the empirical family |
-| **mixture** | a convex combination of finitely many component distributions — the form a dependent joint's detached `marginal` takes when the mixing parent is finite | what its components jointly support, combined componentwise |
-| **random function** | a distribution over functions: a `FunctionSpec` event, so a draw is a callable — a Gaussian process is the canonical case | `mean` returns the mean function |
-| **random measure** | a distribution *over distributions*: a `DistributionSpec` event, so a draw is itself a `Distribution` | `mean` returns the marginalized law |
-
-Over a continuous mixing parent the true marginal is a continuous mixture, which no finite-component family can represent, so the `marginal` operation returns its Monte Carlo fallback, an `EmpiricalDistribution` of projected draws, unless an exact route applies, as when the factors are jointly Gaussian.
-
-Any family can arise as the approximation of a target: what makes a result approximate (the target, the method, and the fit) is recorded in its `provenance`.
+**The family axis — how the law is realized.** Each family is an ordinary `Distribution` (a `NumericDistribution` when its event is numeric), differing only in which capabilities it implements and how — refinement by capability, not a parallel class tower. The families themselves — their events, the capabilities each implements, and how each arises — are Part VI's catalog.
 
 **Conditional distributions and batches stratify identically.** A `ConditionalDistribution` repeats both axes (atomic / structured / the `FactoredConditionalDistribution` joint, crossed with parametric / amortized / empirical / …), and a `DistributionBatch` is `N` of any of these. The catalog is one classification, reused across the conditional and multiplicity layers.
 
