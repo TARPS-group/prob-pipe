@@ -1,6 +1,6 @@
 # Part V — Operations
 
-Parts II–IV fixed the *shared abstractions*, the *values and distributions*, and the *functions* that act on them. Part V fixes the **operations**. Every operation is a `Function`, so it inherits lifting, provenance, dispatch, and orchestration from the function layer. This part adds only what is specific to each operation: its signature, its argument and return types and shapes, the choice between an exact and a default algorithm, its error behavior, and how its result is wrapped and tracked. Every operation is also capability-dispatched, so it applies to any object that implements the matching capability, and closed, so it returns another **tracked term**.
+Parts II–IV fixed the *shared abstractions*, the *values and distributions*, and the *functions* that act on them. Part V fixes the **operations**: what one is (V.0), and for each operation its operands, its result, and its routes.
 
 **Conventions.** The user-facing names are the bare operations (`sample`, `log_prob`, `mean`, …). The implementer counterparts are `_`-prefixed (`_sample`, `_log_prob`, …) and, for conditional distributions, the prefix `_conditional` is added as well.
 
@@ -14,7 +14,7 @@ An **operation** is a `Function` that declares three things and is realized by a
 2. its **applicability conditions** — what makes a call well-formed at the level of declarations;
 3. a **result rule** — computing the result's complete spec before anything runs;
 
-and it is realized either by registered **routes** or, for a *derived* operation, by an identity defined in terms of those other operations. An operation adds operands, a result rule, and routes to the dispatch machinery.
+and it is realized either by registered **routes** or, for a *derived* operation, by an identity defined in terms of those other operations.
 
 **The four laws.**
 
@@ -42,7 +42,7 @@ Where a route dispatches on a capability it names the operand it dispatches on, 
 
 **Operand roles are declared by kind, not by spec.** An operation's operands are named and typed, but not by an `InputSpec` (II.2), which maps names to *concrete* term specs — the slots of one particular map-like term. An operation is generic over a kind: `mean` takes any distribution whatever its event, and `DistributionSpec` cannot express that, since it carries an event declaration of its own. Some authored parameters are not terms at all — `marginal`'s field path, `factor`'s factor name, `joint`'s alignment mapping — and a declaration that types terms has nothing to say about them. So an operand role declares the kind it accepts — named by the spec *class*, since a spec's class is what fixes a term's kind, and a class needs no event declaration of its own — together with what a route will require of it, and the concrete typing happens per call, when the result rule reads the operands' actual specs. That is why planning is a rule rather than a stored declaration.
 
-**Declaring an operation.** An operation is created using the `@operation` decorator, which takes the result rule and registers the operation. The decorated function's parameters are its operands and declaration inputs; the controls are implemented universally by the framework. For a **primitive** operation the body is empty because all that is required is a declaration, with the routes providing implementations. For a **derived** operation, the function body implements its identity in terms of other operations, and direct routes may be registered besides where realizing it in one step is more efficient than composing.
+**Declaring an operation.** An operation is created using the `@operation` decorator, which takes the result rule and registers the operation. The decorated function's parameters are its operands and declaration inputs; the controls are implemented universally by the framework. A primitive operation's body is empty; a derived operation's body is its identity.
 
 ```python
 def _mean_result(d: DistributionSpec) -> TermSpec: ...
@@ -56,7 +56,7 @@ def mixture(K: ConditionalDistribution, mixing: Distribution):
     return marginal(K * mixing, ...)        # derived: the body is the identity, its floor route
 ```
 
-**Registering routes.** A route is registered against the operation it realizes, by upward registration as for any registry (II.7). Every route has one shape, and the four helpers differ only in how one is built. The split between a call's `specs` and its `operands` is what keeps feasibility cheap and planning honest: `check` decides from the declarations alone, so it neither computes nor touches a traced value, while `execute` is the only side that reads the operands themselves.
+**Registering routes.** A route is registered against the operation it realizes, by upward registration as for any registry (II.7). The split between a call's `specs` and its `operands` is what keeps feasibility cheap and planning honest: `check` decides from the declarations alone, so it neither computes nor touches a traced value, while `execute` is the only side that reads the operands themselves.
 
 ```python
 @dataclass(frozen=True)
@@ -83,11 +83,11 @@ condition_on.structural_route("curry", check=_can_curry, execute=_curry, fidelit
 condition_on.registry_route("bayes", registry=inference_method_registry)
 ```
 
-A capability route names the operand it dispatches on, which is why no operation needs a single distinguished subject. A registry route delegates selection to a registry of II.7, so the inference methods and the evaluation rules keep their own priorities and feasibility probes rather than having them restated here.
+A registry route delegates selection to a registry of II.7, so the inference methods and the evaluation rules keep their own priorities and feasibility probes rather than having them restated here.
 
 **How a call resolves.** Every call runs the same steps, and each is a contract stated above: bind and normalize the arguments; validate applicability; plan the result declaration; collect the feasible routes by calling each `check`; select one; execute it; and cross the wrap boundary. Selection follows the shared order (II.7) without a within-tier priority — routes rank by fidelity, then specificity, then registration order — and `method=` names a route outright.
 
-**What a caller writes, and what the framework adds.** An operation's authored parameters are its operands together with anything the result rule reads — `sample_shape`, an alignment mapping, the plurality of a level. Its **controls** are the same for every operation and are supplied by the framework rather than by each author: `raw`, `method` for route selection, the PRNG `key`, and the sampling controls a Monte Carlo route consumes. The rule is one line: **a parameter is authored exactly when the result rule reads it; everything else is a control.** So an operation's signature is its operand list plus one uniform control block, and no operation may spell a control differently or omit one.
+**What a caller writes, and what the framework adds.** An operation's authored parameters are its operands together with anything the result rule reads — `sample_shape`, an alignment mapping, the plurality of a level. Its **controls** are the same for every operation and are supplied by the framework rather than by each author: `raw`, `method` for route selection, the PRNG `key`, and the sampling controls a Monte Carlo route consumes. The rule is one line: **a parameter is authored exactly when the result rule reads it; everything else is a control.**
 
 **The wrap boundary.** The result crosses the kind-directed wrap of IV.2 — a tracked term keeps its kind under the operation's fresh identity, a raw host wraps into its own kind, a backend distribution through its converter (III.14) — and two rules are the operation's own:
 
@@ -141,7 +141,7 @@ operation_registry: OperationRegistry     # the global instance
 
 ### Rationale
 
-Defining an operation by its operands, a result rule, and a set of routes is what keeps the vocabulary closed: adding an operation cannot add a mechanism, and adding an *implementation* is registering a route rather than amending a contract (`D2 – Generality first`). Separating what a call means from how it is realized is why the old question "is this operation total?" was unanswerable — totality is a property of the routes available at call time, not of the operation — and stating resolution once gives the user one rule for when a call can fail instead of per-operation fine print. Planning the declaration before execution, from what is static under compilation, is `D5 – Explicit, carried structure` made checkable: the result's structure is known before the work starts and verified after it. Capability dispatch remains `D3 – Capability-based operations`, now as one route source among four rather than as the definition of an operation. Deriving the control block rather than authoring it per operation is `C1 – Uniform interface to functions, distributions, and values` at the operation layer: `raw` and `method` mean the same thing everywhere because no author writes them. Defining a derived operation by an identity keeps its behavior in one place (`D6 – Single source of truth`), and that every operation returns another tracked term is `D4 – Closed system of objects under operations`. The laws restate the boundary principles at the operation layer: binding and normalizing is `B1 – Either presentation in`, a route written over `T` is `B2 – Representations only inside`, and the boundary law is `B3 – Tracked forms out by default`; planning and lifting are what an operation promises beyond them.
+Defining an operation by its operands, a result rule, and a set of routes is what keeps the vocabulary closed: adding an operation cannot add a mechanism, and adding an *implementation* is registering a route rather than amending a contract (`D2 – Generality first`). Separating what a call means from how it is realized makes totality a property of the routes available at call time rather than of the operation, so one rule says when a call can fail instead of per-operation fine print. Planning the declaration before execution, from what is static under compilation, is `D5 – Explicit, carried structure` made checkable: the result's structure is known before the work starts and verified after it. Capability dispatch remains `D3 – Capability-based operations`, now as one route source among four rather than as the definition of an operation. Deriving the control block rather than authoring it per operation is `C1 – Uniform interface to functions, distributions, and values` at the operation layer: `raw` and `method` mean the same thing everywhere because no author writes them. Defining a derived operation by an identity keeps its behavior in one place (`D6 – Single source of truth`), and that every operation returns another tracked term is `D4 – Closed system of objects under operations`. The laws restate the boundary principles at the operation layer: binding and normalizing is `B1 – Either presentation in`, a route written over `T` is `B2 – Representations only inside`, and the boundary law is `B3 – Tracked forms out by default`; planning and lifting are what an operation promises beyond them.
 
 ## V.1 — `evaluate`
 
@@ -165,7 +165,7 @@ Applied to a `ConditionalDistribution`, evaluation acts on the event side, givin
 
 ### Rationale
 
-`evaluate` is `C4 – Function lifting` in operation form: applying a map is one act whatever the operand kind, and substituting a multiplicity for a value leaves that act well-defined either way — a distribution gives the pushforward law, a batch the elementwise result — with this operation returning it directly. Dispatching over pairs of map and operand types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form or a fused batched routine gets it automatically, while every other pair still answers through the floors, sampling for a distribution and the sweep for a batch. Recording the producing rule keeps the approximation honest (`D1 – Mathematical fidelity`), registration grows the exact set without changing call sites (`D2 – Generality first`), and the result is a tracked term that composes further (`D4 – Closed system of objects under operations`). The operation is named for what it does across every operand kind, with *pushforward* reserved for mathematical statements, as *kernel* is for `ConditionalDistribution`.
+`evaluate` is `C4 – Function lifting` in operation form: applying a map is one act whatever the operand kind, and substituting a multiplicity for a value leaves that act well-defined either way — a distribution gives the pushforward law, a batch the elementwise result — with this operation returning it directly. Dispatching over pairs of map and operand types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form or a fused batched routine gets it automatically, while every other pair still answers through the floors, sampling for a distribution and the sweep for a batch. Recording the producing rule keeps the approximation honest (`D1 – Mathematical fidelity`), registration grows the exact set without changing call sites (`D2 – Generality first`), and the result is a tracked term that composes further (`D4 – Closed system of objects under operations`).
 
 ## V.2 — `inverse` and `log_det_jacobian`
 
@@ -211,7 +211,6 @@ Every draw is reproducible from its record (IV.3), which is `C6 – Traceable an
 - `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
 - `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
 - A scored value binds any symbolic event dimensions for that call only, so one law scores datasets of different sizes.
-- A batch of values, or a `DistributionBatch`, maps elementwise to the batched densities, a `NumericArrayBatch`.
 
 ### Rationale
 
@@ -222,7 +221,7 @@ Splitting `log_prob` from `unnormalized_log_prob` keeps each capability honest (
 ### Contract
 
 The moment operations summarize a distribution by a deterministic value.
-- `mean(d, raw=False)` and `variance(d, raw=False)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is wrapped at the law's declared event kind — a `Record` whose schema matches the distribution's for a record-drawing law, and a term for a term-drawing one, so a random function's mean is a `Function` — or the raw event-typed value `T` with `raw=True`.
+- `mean(d)` and `variance(d)` return an event-typed value, that is, a value shaped like a draw. Neither is restricted to numeric draws, but each requires the event type to support it: a random function has a mean function and a pointwise variance function, while a random measure has a mean (the marginalized law) but, in general, no event-typed variance. The result is wrapped at the law's declared event kind — a `Record` whose schema matches the distribution's for a record-drawing law, and a term for a term-drawing one, so a random function's mean is a `Function`.
 - `cov(d)` requires a numeric draw and returns a covariance operator over the *flattened* draw, a `(vector_size, vector_size)` `LinOp`, since covariance couples distinct coordinates. Its input and output schemas are both the distribution's numeric event spec, so it applies directly to draws.
 - `quantile(d, q)` requires a numeric draw. It takes a level `q ∈ [0, 1]` or array of such levels and returns the quantile for each, computed per coordinate for a multivariate draw. Its result declaration is event-kind-directed like any other: a single level returns the event's own kind — a `NumericArray` for an array-drawing law, a `NumericRecord` for a record-drawing one — and a plural `q` adds a level over those, giving the matching batch. The plurality of `q` is a shape, so planning reads it (V.0).
 - `expectation(d, f)` returns `E[f(X)]`, shaped by the output of `f`, for any event type `f` accepts. The result is wrapped at the kind `f`'s output declaration names, a `Record` for the usual record output.
@@ -231,7 +230,7 @@ Each carries a capability route on the matching protocol (`SupportsMean`, `Suppo
 
 ### Rationale
 
-A mean is defined whenever draws can be averaged: coordinate-wise for arrays, pointwise for functions, and set-wise for measures, where `A ↦ E[ξ(A)]` is again a measure. An event-typed variance additionally requires the second moment to be a value of the event type. That holds for arrays and functions, but fails for a general random measure: to be a measure, `A ↦ Var(ξ(A))` would have to be additive, which holds only when disjoint regions are uncorrelated (a completely random measure) and never for a random probability measure, whose fixed total mass forces negative correlation. A random measure's second-moment structure is instead a covariance over pairs of sets, the analog of `cov` rather than of `variance`. Gating `mean` and `variance` by capability rather than by a numeric event is `D1 – Mathematical fidelity`, and `cov` and `quantile` remain numeric-only, since a flat covariance operator and ordered quantile levels have no meaning for a non-numeric draw. `cov` returns a flat operator rather than an event-typed value because it couples coordinates that the event's field structure keeps separate. The closed-form-or-Monte-Carlo split realizes `C3 – Computational detail hidden by default, available on demand`: a distribution that can give an exact moment does, and one that can only sample still answers, approximately.
+A mean is defined whenever draws can be averaged — coordinate-wise for arrays, pointwise for functions, set-wise for measures — while an event-typed variance requires the second moment to be a value of the event type, which fails for a general random measure: `A ↦ Var(ξ(A))` is additive only when disjoint regions are uncorrelated, never for a random probability measure, whose fixed total mass forces negative correlation, so a random measure's second-moment structure is a covariance over pairs of sets, the analog of `cov`. Gating `mean` and `variance` by capability rather than by a numeric event is therefore `D1 – Mathematical fidelity`, as is keeping `cov` and `quantile` numeric-only, and `cov` returns a flat operator because it couples coordinates the event's field structure keeps separate. The closed-form-or-Monte-Carlo split realizes `C3 – Computational detail hidden by default, available on demand`: a distribution that can give an exact moment does, and one that can only sample still answers, approximately.
 
 ## V.6 — `condition_on`
 
@@ -262,13 +261,13 @@ A single operation covers binding, slicing, and Bayes' rule because all three ar
 
 ### Contract
 
-Recall that the composition operator `A * B`, exposed on `Distribution` and `ConditionalDistribution` as `__mul__` constructs the joint (conditional) distribution of `A` and `B`. It returns either a `FactoredDistribution` or, when some givens remain, a `FactoredConditionalDistribution`. Its `provenance` records `*` as the operation, and its `name` follows the canonical-order rule fixed with `*` (III.12).
+`A * B` (III.12) is the composition operator; its result's `provenance` records `*` as the operation, and its `name` follows the canonical-order rule fixed there.
 
 **The realigning `joint` form.** A limitation of `*` is that it requires a producer's field names to match the names its consumer conditions on. This motivates the `joint(A, B, **align)` op, which realigns fields first and then composes exactly as `*`, so it is equivalent to `A * B.with_path_names(**align)`. For example, a likelihood that conditions on `slope` can be combined with a prior where the slope is called `beta` with `joint(lik, prior, beta="slope")`.
 
 ### Rationale
 
-Composition is written as an expression so that a model is *built* rather than declared (`C2 – Functional interface over immutable objects`), and `*` returns a first-class joint so the result composes further (`D4 – Closed system of objects under operations`). Realignment is an exact rename: `with_path_names` returns the same law under new field names, so `joint` connects mismatched factors without altering their joint law (`D1 – Mathematical fidelity`).
+Realignment is an exact rename: `with_path_names` returns the same law under new field names, so `joint` connects mismatched factors without altering their joint law (`D1 – Mathematical fidelity`).
 
 ### Open points
 
@@ -278,14 +277,14 @@ Composition is written as an expression so that a model is *built* rather than d
 
 ### Contract
 
-Two operations read the parts of a structured or factored distribution. (The third access form, the `d[field]` **view**, is not an operation: it returns a correlation-preserving reference into its parent rather than a standalone object, and its contract is fixed with the factored distributions.)
+Two operations read the parts of a structured or factored distribution. (`d[field]`, the view, is not an operation; III.7.)
 
 - `marginal(d, field)` returns the **detached** marginal of a field or field group, a standalone `Distribution` with no reference back to `d`. It carries a capability route on `SupportsMarginals` and a Monte Carlo fallback route through `_sample`, projecting draws onto the field and returning an empirical marginal; when the capability is absent, or the path has no exact route within it, the fallback is what resolves, and a distribution that cannot sample either resolves to nothing and raises.
 - `factor(d, name)` returns a building-block **factor** of a joint, keyed by factor name, either a `Distribution` or a `ConditionalDistribution` for a dependent edge. Its capability route is `SupportsFactors`, so a distribution that exposes no factors resolves to nothing and raises.
 
 ### Rationale
 
-`marginal` and `factor` are the two query directions of the field and factor interfaces fixed with the factored distributions: `marginal` reads a field's law detached from its joint, and `factor` reads a construction block. Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` keeps factor access honest, since only a distribution actually built from named parts can answer it (`D3 – Capability-based operations`).
+Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` keeps factor access honest, since only a distribution actually built from named parts can answer it (`D3 – Capability-based operations`).
 
 ## V.9 — `mixture`
 

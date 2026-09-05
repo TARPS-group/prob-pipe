@@ -75,7 +75,6 @@ class EpanechnikovKernel(SmoothingKernel): ...
 class KDEDistribution(Distribution[Array]):
     def __init__(self, name: str, atoms: Array | NumericRecordBatch, bandwidth: ArrayLike | str | None = None,
                  weights: Array | None = None, kernel: type[SmoothingKernel] = GaussianKernel) -> None: ...
-    # builds the placed copies via kernel.build_kernels(atoms, bandwidth); the law is Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)
 ```
 
 ### Rationale
@@ -155,12 +154,10 @@ Both are ordinary distributions over nonstandard event types, claiming exactly t
 
 Three families form a closed algebra built on `LinOp`. A `MultivariateNormal`, from the parametric families, is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp`, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the random-function member: a `RandomFunction` whose finite-dimensional laws are Gaussian. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and an exact conversion to `MultivariateNormal` over the flat event is registered with the converter registry.
 
-The algebra is closed under the operations: composing Gaussian factors with linear-Gaussian conditional distributions yields a `FactoredMultivariateGaussian`, an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact. A composition of Gaussian pieces built before its dimensions are bound is an ordinary factored object holding its covariances as recipes; once binding makes the `LinOp` carriers constructible, refinement re-derives the most-specific class and the object joins the algebra as a `FactoredMultivariateGaussian`.
+The algebra is closed under the operations: an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact. A composition of Gaussian pieces built before its dimensions are bound is an ordinary factored object holding its covariances as recipes; once binding makes the `LinOp` carriers constructible, refinement re-derives the most-specific class and the object joins the algebra as a `FactoredMultivariateGaussian`.
 
 ```python
-class FactoredMultivariateGaussian(FactoredNumericDistribution): ...
-# derived by `*` / `joint` when every factor is Gaussian or linear-Gaussian;
-# log_prob, moments, sampling, conditioning, and marginals are all exact
+class FactoredMultivariateGaussian(FactoredNumericDistribution): ...   # derived by `*` / `joint`, never constructed
 ```
 
 **The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction`, the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
@@ -172,8 +169,7 @@ class GaussianRandomFunction(RandomFunction[Array, Array], ABC):
     @abstractmethod
     def predict_variance(self, X: Array) -> Array: ...    # marginal variance at each point
     def predict_covariance(self, X: Array) -> LinOp: ...  # joint covariance over the points, when supported
-    def __call__(self, X: Array) -> Normal | MultivariateNormal: ...
-    # the exact finite-dimensional law at the stacked points, joint when predict_covariance is available
+    def __call__(self, X: Array) -> Normal | MultivariateNormal: ...   # the finite-dimensional law at X
 
 class GaussianProcess(GaussianRandomFunction):
     def __init__(self, name: str, mean_fn: Callable[[Array], Array],
@@ -230,11 +226,7 @@ class PoissonFamily(GLMFamily): ...       # canonical link: log; no dispersion
 
 def glm_likelihood(name: str, family: GLMFamily, link: Function | None = None,
                    *, X: Array | None = None, dispersion: ArrayLike | None = None) -> ConditionalDistribution: ...
-    # a supplied link must satisfy is_invertible, checked at construction;
-    # given slots X ("obs", "features"), β ("features",), and the dispersion when the family has one;
-    # the event is the response y ("obs",), with law family.build(link⁻¹(X @ β), dispersion) and link
-    # defaulting to family.canonical_link. The dimensions are symbolic until X binds them, at
-    # construction, at condition_on, or in a fused call; supplying X or dispersion here fixes them
+    # shapes: X ("obs", "features"), β ("features",), y ("obs",); the dimensions are symbolic until X binds them
 ```
 
 ### Rationale

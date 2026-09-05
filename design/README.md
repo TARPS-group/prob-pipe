@@ -53,3 +53,5 @@ Every numbered section in Parts II through VI leads with a **Contract** subsecti
 #### Formatting
 
 Class and method names are set in code font. Design principles are cited only in the **Rationale** subsections, by identifier and short name, drawing on the *core principles* (the C-series), *derived principles* (the D-series), and *boundary principles* (the B-series) of Part I. For example, the fourth core principle would be cited as `C4 – Function lifting`.  An abstraction is referred to by its class name rather than by the underlying mathematical concept, except in mathematical statements. For example, `ConditionalDistribution` is used throughout, with *kernel* reserved for mathematical statements such as its definition as a probability kernel `K : S → P(T)`.
+
+A code comment states what the signature does not — a default, a constraint, a unit — and never the sentence above the block. A **Rationale** names the principle and the reason; it never restates the contract.
