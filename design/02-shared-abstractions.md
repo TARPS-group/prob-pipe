@@ -291,7 +291,7 @@ Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning
 
 Some operations have many possible implementations, and which one applies depends on the *types* of the objects involved rather than on an object's own class. A **dispatch registry** holds those implementations as named methods and selects one for a given call.
 
-Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation and reports, as a `MethodInfo`, whether the call is feasible and at what fidelity, an `execute` function that performs it, and a **fidelity** on one shared scale across the registries — exact, approximate, or sampled — declared where the method is registered, so that selection can prefer exactness and a result can record how it was obtained. Fidelity is a property of the algorithm, not a setting: nothing re-ranks a method at runtime, and a caller who wants a different one names it with `method=`. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in **selection order** and runs the first whose `check` reports feasible. Selection order is the same in every registry: **fidelity** first — exact above approximate above sampled, so exactness is never traded for specificity silently — then **specificity**, the method whose declared types sit closest to the argument's class in method-resolution order, then registration order. `priority` is derived from the declared fidelity, never set, and a method that declares none is **opt-in-only**: skipped by auto-selection and reachable only by name, so registering a method never silently changes what runs until its contributor classifies it. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration at import, by whichever layer owns the implementation, so a registry reaches its providers without importing them.
+Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation and reports, as a `MethodInfo`, whether the call is feasible and at what fidelity, an `execute` function that performs it, and a **fidelity** on one shared scale across the registries — exact, approximate, or sampled — declared where the method is registered, so that selection can prefer exactness and a result can record how it was obtained. Fidelity is a property of the algorithm and is fixed for the method's life; **priority** is an integer rank *within* a fidelity tier, and is the one thing about a method a deployment may change at runtime. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in **selection order** and runs the first whose `check` reports feasible. Selection order is the same in every registry: **fidelity** first — exact above approximate above sampled, so exactness is never traded for anything below it silently — then **priority** within the tier, higher first, then **specificity**, the method whose declared types sit closest to the argument's class in method-resolution order, then registration order. A method whose priority is `None` is **opt-in-only**: skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it, and `set_priorities` re-ranks at runtime within a tier — it cannot change a fidelity — warning when a method moves into or out of opt-in-only. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration at import, by whichever layer owns the implementation, so a registry reaches its providers without importing them.
 
 ```python
 class Fidelity(Enum):     # how exact an answer is; totally ordered, EXACT the highest
@@ -301,9 +301,8 @@ class Fidelity(Enum):     # how exact an answer is; totally ordered, EXACT the h
 
 class BaseDispatchMethod(ABC):
     name: str
-    fidelity: Fidelity | None   # declared at registration; None is opt-in-only
-    @property
-    def priority(self) -> int: ...   # derived from fidelity, never set
+    fidelity: Fidelity            # declared at registration, fixed for the method's life
+    priority: int | None = None   # rank within the tier, higher first; None is opt-in-only
 
     @abstractmethod
     def check(self, *args, **kwargs) -> MethodInfo: ...
@@ -326,6 +325,7 @@ class MethodInfo:
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
     def register(self, method: M) -> None: ...
+    def set_priorities(self, **priorities: int | None) -> None: ...   # within a tier only; warns on a move into or out of opt-in-only
     def execute(self, *args, method: str | None = None, **kwargs) -> Any: ...   # auto-select, or run the named method
     def check(self, *args, method: str | None = None, **kwargs) -> MethodInfo: ...
     def list_methods(self) -> list[str]: ...                           # names, in selection order
