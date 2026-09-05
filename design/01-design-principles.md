@@ -45,12 +45,17 @@ These distinct responsibilities are organized into layers:
 | **Representation** | how a semantic object is concretely stored and used in computations | backing arrays and array backends, columnar and object-array storage, flat-vector layouts, operation dispatch registries and representation converters |
 | **Workflow** | how a computation is *run* and *recorded* | the call engine, lifting, provenance tracking, randomness and replay, compute dispatch and orchestration, caching |
 
-Every value has two presentations: its **tracked** form is the semantic layer's presentation — the term a user names, types, and traces — and its **raw** form is the representation layer's presentation of the same value, the object that computes it. The tracked form carries the raw form together with the workflow record; the raw form is that representation detached, carrying neither. A user operates in the semantic layer by default and crosses into the representation layer only at explicit boundary points, whose contract the layers fix as three further principles.
+Every value has two presentations:
 
-## Boundary Principles
+1. The **tracked** form is the semantic layer's presentation.
+2. The **raw** form is the representation layer's presentation.
 
-**B1 — Either presentation in.** Wherever a value or declaration is accepted — a constructor, an operation, a method argument — it is accepted raw or tracked alike, and the position's declared kind directs the wrap of a raw one. A caller never converts before calling.
+The tracked form carries the raw form together with the workflow record. A user operates in the semantic layer by default and crosses into the representation layer only at explicit boundary points, whose contract is given by three further **boundary principles**:
 
-**B2 — Representations only inside.** An implementation behind the boundary receives the raw form and is written over representations alone; it may return either form, since the boundary re-wraps. The representation layer therefore never depends on the workflow layer.
+**B1 — Either presentation in.** Wherever a value or declaration is accepted — a constructor, an operation, a method argument — it is accepted in tracked or raw form. Therefore, a caller never needs to convert manually.
 
-**B3 — Tracked out, raw on demand.** A result crosses back into the semantic layer as a tracked term under fresh identity. The raw form is an explicit ask, never the default and never inferred.
+**B2 — Representations only inside.** An implementation behind the boundary receives the raw form and it may return either form. Therefore, the representation layer never needs to depend on the workflow layer.
+
+**B3 — Tracked forms out by default.** A result is always returned to the user in tracked form. The raw form must be explicitly requested by the user.
+
+**B4 — Crossing copies nothing.** A wrap holds the representation it is given and raw access returns that same representation; neither copies. A view refers into its source rather than copying out of it, so the two presentations are one storage, never a second copy that could diverge. Only a computation, or a construction that combines several values, produces new storage.

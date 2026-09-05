@@ -414,7 +414,7 @@ class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is a reference rather than a copy (`D6 – Single source of truth`), and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`); the rest — the stored spec, purity, tracked results — is Part II's contract at the distribution kind. The draw-type table is `B2 – Representations only inside` per kind: an implementer writes over `T` and never sees a tracked draw.
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – Crossing copies nothing` at a field, and deriving its capabilities from its parent's keeps advertised support honest (`D3 – Capability-based operations`); the rest — the stored spec, purity, tracked results — is Part II's contract at the distribution kind. The draw-type table is `B2 – Representations only inside` per kind: an implementer writes over `T` and never sees a tracked draw.
 
 ### Open points
 
