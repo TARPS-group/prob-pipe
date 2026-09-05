@@ -18,16 +18,16 @@ Part II introduces the shared abstractions the rest of the library is built on.
 
 A **term specification** (``term spec'') describes the available typing information for a mathematical term and validates whether an object satisfies the term's type constraints.
 
-The specs partition into the **base kinds** and the **batch kinds**. Every base kind has exactly one term spec, one **tracked class**, and one **batch form**. Since a batch of batches is a batch, `BatchSpec` is the one spec whose batch spec is the same.
+The specs partition into the **base kinds** and the **batch kinds**. Every base kind has exactly one term spec, one **base form**, and one **batch form**. Since a batch of batches is a batch, the base form and batch form of a `Batch` are identical.
 
-**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any unbound name is said to be **polymorphic**, and one with none is said to be **concrete**. Three operations manage dimensions, and every spec carries its own: it *reports* the names still unbound, it *substitutes* explicit sizes for names, and it *binds* names by unification against a value, reading the sizes off the data. Substitution and binding return a new spec, so refinement is monotone. Until every name is bound an operation that needs sizes raises an error.
+**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any symbolic dimensions is said to be **polymorphic**, and one with none is said to be **concrete**. Three spec operations manage dimension information: it can *report* the names still unbound, *substitute* explicit sizes for names, and *binds* names by unification against a value, reading the sizes off of the that value's spec. Substitution and binding return a new spec.
 
 Validation and the dimension protocol together are the base API:
 
 ```python
 class TermSpec(ABC):
     @abstractmethod
-    def is_valid(self, value: Any) -> bool: ...      # structural validity: kind, rank, dtype
+    def is_valid(self, value: Any) -> bool: ...      # structural validity such as kind, rank, dtype
 
     # the symbolic-dimension protocol: report, substitute, bind
     @property
@@ -38,8 +38,6 @@ class TermSpec(ABC):
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
 ```
 
-A spec accepts a value in **either presentation** — the raw representation or the tracked term of the spec's kind — with construction normalizing to the stored form. The rule also holds in the opposite direction: wherever a raw value is accepted by a function, its tracked form is accepted too; however, an implementer method's *arguments* arrive already normalized to the implementer type, so an implementation only needs to handle one presentation. An implementer may returns either presentation: the boundary keeps the kind and mints the result's identity afresh either way.
-
 ### Rationale
 
 One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to functions, distributions, and values`), and defining each concrete spec beside the kind it describes keeps this layer generic and type-agnostic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule enforces `D2 – Generality first`: every result can be tracked and every collection of draws stacked, so nothing an operation produces falls outside the system. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
@@ -48,7 +46,7 @@ One `is_valid` contract across the kinds keeps validation uniform (`C1 – Unifo
 
 ### Contract
 
-An `InputSpec` is a flat mapping from names to term specs: the independently bindable slots a map-like term takes in. An `OutputSpec` is a term spec plus a required name for the produced term. Every output declaration is named because every tracked term is named. Symbolic dimensions are scoped jointly across an `InputSpec`'s slots and the output declaration beside it, so a name shared between an input and the output is one dimension:
+An `InputSpec` is a flat mapping from names to term specs: the independently bindable slots a map-like term takes in. An `OutputSpec` is a term spec plus a required name for the produced term.
 
 ```python
 class InputSpec(Mapping[str, TermSpec]): ...   # named slots; keys are Python identifiers
@@ -58,8 +56,6 @@ class OutputSpec:
     spec: TermSpec
 ```
 
-Neither declaration is a `TermSpec` since they do not specify a term, so the kind rule of II.1 covers the term specs alone.
-
 ### Rationale
 
 Requiring a name on every output declaration serves `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows` together: the produced term's name is fixed where the producer is declared.
@@ -68,7 +64,7 @@ Requiring a name on every output declaration serves `C5 – Naming for unambiguo
 
 ### Contract
 
-**The `Numeric` interface.** The numeric kinds — the array kind, the numeric record specialization, and their batch forms — share one flat-vector interface. The `to_vector` method lays a value out as one flat vector in canonical order, the `vector_size` property is the flat vector's length, and the `from_vector` method rebuilds a value from the flat representation. The coordinate hooks expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions can be applied to the numeric kinds at the coordinates and return bare arrays. ProbPipe operators and elementwise `map` preserve structure and return tracked terms. Anything typed over flat numeric values types against `Numeric` once. If a bare array is passed where a `Numeric` value is expected, the array is promoted to the appropriate numeric type without any value copying.
+**The `Numeric` interface.** The numeric kinds share one flat-vector interface. The `to_vector` method lays a value out as one flat vector in canonical order, the `vector_size` property is the flat vector's length, and the `from_vector` method rebuilds a value from the flat representation. The coordinate hooks expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions can be applied to the numeric kinds at the coordinates and return bare arrays. ProbPipe operators and elementwise `map` preserve structure and return tracked terms. Anything typed over flat numeric values types against `Numeric` once. If a bare array is passed where a `Numeric` value is expected, the array is promoted to the appropriate numeric type without any value copying.
 
 `Numeric` is an **abstract base class rather than a structural protocol**, and the distinction is worth stating once. A *capability* is open: any object may claim `SupportsMean` by implementing it, third-party families included, so capabilities are structural. A *kind interface* is closed: the numeric kinds are the ones ProbPipe defines, and a bare array reaching a `Numeric` position is promoted rather than duck-typed, so nothing outside the library ever satisfies it. Being a base rather than a shape also lets it carry what every numeric kind shares — the coordinate hooks are `to_vector` under other names, so the base defines them once and each kind implements only `to_vector` and `vector_size`.
 
@@ -156,7 +152,7 @@ A provenance records everything its operation resolved: the tracked parents, the
 
 ### Rationale
 
-`TrackedTerm` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term**, so the provenance chain is never broken. Recording the resolved controls, not just the parents, is what turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Boundary attachment keeps names semantically inert in computation: nothing resolves an object by name, so a name may never decide what gets compiled. Immutability itself is `C2 – Functional interface over immutable objects` embodied: every transformation returns a new term, so nothing downstream ever observes a change; confining the one writable store to a container nothing load-bearing reads keeps that contract intact in substance. Carrying annotations on the same base, rather than on a second mixin some kinds elect, is what makes *every* tracked term annotatable — a diagnostic can label a batch of draws exactly as it labels a record. Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
+`TrackedTerm` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term**, so the provenance chain is never broken. Recording the resolved controls, not just the parents, is what turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Boundary attachment keeps names semantically inert in computation: nothing resolves an object by name, so a name may never decide what gets compiled. Immutability itself is `C2 – Functional interface over immutable objects` embodied: every transformation returns a new term, so nothing downstream ever observes a change; confining the one writable store to a container nothing load-bearing reads keeps that contract intact in substance. Carrying annotations on the same base, rather than on a second mixin some kinds elect, is what makes *every* tracked term annotatable — a diagnostic can label a batch of draws exactly as it labels a record. Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes. `raw()` is `B3 – Tracked out, raw on demand` for a term already in hand: the representation is one explicit call away and never the default.
 
 ## II.5 — `Batch`
 

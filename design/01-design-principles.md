@@ -1,6 +1,6 @@
 # Part I — Design Principles
 
-ProbPipe's overarching aim is *simplification via abstraction*: complexity is absorbed into a few general, mathematically-grounded abstractions, so the interface a user interacts with stays small even as the space of supported methods and representations grows. The principles in this part make that aim concrete.
+ProbPipe's overarching aim is *simplification via abstraction*: complexity is absorbed into a few general, mathematically-grounded abstractions, so the interface a user interacts with stays small even as the space of supported methods and representations grows. That aim motivates the following principles that guide the design.
 
 ## Core Design Principles
 
@@ -8,7 +8,7 @@ ProbPipe's overarching aim is *simplification via abstraction*: complexity is ab
 
 **C2 — Functional interface over immutable objects.** Operations are functional, so have no semantically relevant side effects, and objects are never modified in place. Hence, an operation's result is determined entirely by its inputs, and that result is a new object.
 
-**C3 — Computational detail hidden by default, available on demand.** Computational and algorithmic details are hidden whenever possible, while keeping them reachable for users who need precise control. The algorithm that realizes an operation and the representation of a given mathematical object are computational rather than mathematical concerns. Therefore, by default, they are handled automatically: canonical default algorithms are used and representations are converted as needed whenever possible.
+**C3 — Computational detail hidden by default, available on demand.** Computational and algorithmic details are hidden whenever possible, while keeping them accessible for users who need precise control. The algorithm that realizes an operation and the representation of a given mathematical object are computational rather than mathematical concerns. Therefore, by default, they are handled automatically: canonical default algorithms are used and representations are converted as needed whenever possible.
 
 **C4 — Function lifting.** A function defined on values remains well-defined when one or more of its arguments are replaced by distributions or batches over their respective types, the result being a distribution (respectively batch) over the function's output type. In the distributional case the result is the pushforward of the replaced arguments' joint distribution through the function; in the batching case the function is broadcast over the elements.
 
@@ -45,4 +45,12 @@ These distinct responsibilities are organized into layers:
 | **Representation** | how a semantic object is concretely stored and used in computations | backing arrays and array backends, columnar and object-array storage, flat-vector layouts, operation dispatch registries and representation converters |
 | **Workflow** | how a computation is *run* and *recorded* | the call engine, lifting, provenance tracking, randomness and replay, compute dispatch and orchestration, caching |
 
-Throughout, **raw** refers to the representation layer accessed from the semantic one: a term's raw form is the object that represents it, detached from the workflow — no lineage or anything the workflow would carry forward. A **tracked term** is a semantic object with a representation to compute with and the workflow record of where it came from. A user operates in the semantic layer by default and accesses the representation layer through a small number of explicit boundary points.
+Every value has two presentations: its **tracked** form is the semantic layer's presentation — the term a user names, types, and traces — and its **raw** form is the representation layer's presentation of the same value, the object that computes it. The tracked form carries the raw form together with the workflow record; the raw form is that representation detached, carrying neither. A user operates in the semantic layer by default and crosses into the representation layer only at explicit boundary points, whose contract the layers fix as three further principles.
+
+## Boundary Principles
+
+**B1 — Either presentation in.** Wherever a value or declaration is accepted — a constructor, an operation, a method argument — it is accepted raw or tracked alike, and the position's declared kind directs the wrap of a raw one. A caller never converts before calling.
+
+**B2 — Representations only inside.** An implementation behind the boundary receives the raw form and is written over representations alone; it may return either form, since the boundary re-wraps. The representation layer therefore never depends on the workflow layer.
+
+**B3 — Tracked out, raw on demand.** A result crosses back into the semantic layer as a tracked term under fresh identity. The raw form is an explicit ask, never the default and never inferred.
