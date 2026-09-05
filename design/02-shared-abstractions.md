@@ -116,7 +116,7 @@ A tracked term's name is supplied by the user at explicit construction, as the r
 
 The `spec` slot is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
-Every tracked term exposes `raw()`, the single access point to the representation layer. It returns the term **detached** from the workflow: without provenance, annotations, or any reference to a container or parent it was viewed from, but keeping its spec, its name, and `name_is_auto`. A kind with a raw host returns it (the backing array, the nested mapping of raw leaves, the wrapped callable, the wrapped object, an operator's stored parameterization, or a batch's storage view); a kind whose representation is itself a ProbPipe object, such as a distribution or a kernel, returns that object detached.
+Every tracked term exposes `raw()`, the single access point to the representation layer. It returns the term **detached** from the workflow: without provenance, annotations, or any reference to a container or parent it was viewed from, but keeping its spec, its name, and `name_is_auto`. A kind with a **raw host**, a representation that is not itself a ProbPipe object, returns it (the backing array, the nested mapping of raw leaves, the wrapped callable, the wrapped object, an operator's stored parameterization, or a batch's storage view); a kind whose representation is itself a ProbPipe object, such as a distribution or a kernel, returns that object detached.
 
 Reaching into a container (a record field, a batch element, a distribution's field) returns a **view**: a tracked term named from the accessor, the field key or the selected levels, marked `name_is_auto`, whose provenance records the container and the source term where one was supplied.
 
@@ -211,7 +211,7 @@ class Batch[E](TrackedTerm):
 
 **The batch's own type.** A batch stores its `BatchSpec`; `element_spec`, `axis_groups`, and `level_names` are views on it. `spec` is the batch's own type, not its element's, which keeps `OpaqueBatch` well typed although its elements carry no structure.
 
-**The raw view.** `raw()` returns the storage view, the elements' raw values in their native stacked layout: one array for array-valued elements, an object array for callable- or opaque-valued ones, and the nested mapping of raw columns for record-valued ones.
+**The raw view.** `raw()` returns the **storage view**, the elements' raw values in their native stacked layout: one array for array-valued elements, an object array for callable- or opaque-valued ones, and the nested mapping of raw columns for record-valued ones.
 
 **A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, as a `NumericArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds: "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A live `Batch` may not be polymorphic, since it holds elements at positions; construction refuses a spec with free dimensions, and `batch_size` is undefined until they are bound.
 
