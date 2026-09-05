@@ -16,7 +16,7 @@ Part III introduces the value and distribution objects a user constructs and ope
 | III.10  |Distributions | `DistributionBatch` / `ConditionalDistributionBatch`                                                  | A batch of distributions (or conditional distributions): `N` separate laws, distinct from one joint distribution.                 |
 | III.11  | Distributions | factored distributions (`SupportsFactors`, `FactoredDistribution`, `FactoredConditionalDistribution`) | A distribution built from named sub-distributions, with the factor and field access interfaces.                       |
 | III.12  | Distributions | the `*` operator                                                                                      | Builds a joint from parts, with the result kind derived from the operands.                                        |
-| III.13 | Distributions | `Distribution` hierarchy                                                                              | The catalog of kinds — basic, structured, and joint — assembled once composition exists.                        |
+| III.13 | Distributions | `Distribution` hierarchy                                                                              | The classification of kinds — atomic, structured, and joint — assembled once composition exists.                        |
 | III.14 | Registries | cross-type conversion (`converter_registry`) | Moving a distribution between representations, at a recorded fidelity. |
 | III.15 | Registries | constraint reparameterization (`bijector_for`, `SupportsInverse`, `SupportsLogDetJacobian`) | Mapping a `Constraint` to a bijector for unconstrained inference, with the invertibility and Jacobian claims. |
 
