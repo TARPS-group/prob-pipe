@@ -79,7 +79,7 @@ class KDEDistribution(Distribution[Array]):
 
 ### Rationale
 
-All four are bona fide laws with honestly partial capabilities (`D1 – Mathematical fidelity`), and the empirical family is the closure family for sampling-based operations (`D4 – Closed system of objects under operations`). Accepting any `SupportsSampling` source makes the parametric bootstrap the same object as the nonparametric one (`D2 – Generality first`).
+All four are genuine laws with exactly the capabilities they can provide (`D1 – Mathematical fidelity`), and the empirical family is the closure family for sampling-based operations (`D4 – Closed system of objects under operations`). Accepting any `SupportsSampling` source makes the parametric bootstrap the same object as the nonparametric one (`D2 – Generality first`).
 
 ### Open points
 
@@ -105,7 +105,7 @@ A mixture supports an operation exactly when its components do, the same interse
 
 ### Contract
 
-Each evaluation rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy carrier for `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws.
+Each evaluation rule returns a family from this catalog. A closed-form rule returns a parametric result, the linear-Gaussian case being a member of the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy representation of `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws.
 
 ```python
 class LinearPushforwardDistribution(Distribution):
@@ -154,7 +154,7 @@ Both are ordinary distributions over nonstandard event types, claiming exactly t
 
 Three families form a closed algebra built on `LinOp`. A `MultivariateNormal`, from the parametric families, is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp`, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the random-function member: a `RandomFunction` whose finite-dimensional laws are Gaussian. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and an exact conversion to `MultivariateNormal` over the flat event is registered with the converter registry.
 
-The algebra is closed under the operations: an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact. A composition of Gaussian pieces built before its dimensions are bound is an ordinary factored object holding its covariances as recipes; once binding makes the `LinOp` carriers constructible, refinement re-derives the most-specific class and the object joins the algebra as a `FactoredMultivariateGaussian`.
+The algebra is closed under the operations: an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact. A composition of Gaussian pieces built before its dimensions are bound is an ordinary factored object holding its covariances as recipes; once binding makes the `LinOp` covariances constructible, refinement re-derives the most-specific class and the object joins the algebra as a `FactoredMultivariateGaussian`.
 
 ```python
 class FactoredMultivariateGaussian(FactoredNumericDistribution): ...   # derived by `*` / `joint`, never constructed
@@ -192,12 +192,12 @@ An inference result is an ordinary member of whichever family realizes it: a var
 
 ### Rationale
 
-Approximation is a relation between a result and its target: a variational Gaussian's density is exact for the law it *is*, and approximate only relative to the posterior it stands in for. A relation belongs in the record of how the result arose, so it lives in `provenance` (`C6 – Traceable and reproducible workflows`).
+Approximation is a relation between a result and its target: a variational Gaussian's density is exact for the law it *is*, and approximate only relative to the posterior it stands in for. A relation belongs in the record of how the result arose, so it is recorded in `provenance` (`C6 – Traceable and reproducible workflows`).
 
 ### Open points
 
 - *Tagging approximate results.* `provenance` records how a result arose, and a lighter tag on top may be worth adding, either an `is_approximate` flag or a convention within `annotations`. Any such tag would span tracked terms generally, since conditional distributions and linear operators can be approximate too.
-- *Approximation error.* Capturing a result's approximation error (a bound, a diagnostic, a fitted estimate) has no generic representation yet. For now it rides in `annotations`, keyed by the producing method.
+- *Approximation error.* Capturing a result's approximation error (a bound, a diagnostic, a fitted estimate) has no generic representation yet. For now it is stored in `annotations`, keyed by the producing method.
 
 ## VI.8 — Conditional families
 
