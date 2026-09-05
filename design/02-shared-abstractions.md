@@ -1,32 +1,254 @@
 # Part II — Shared Abstractions
 
-Part II introduces the shared abstractions the rest of the library is built on: generic, type-agnostic machinery, one piece at a time, in dependency order.
+Part II introduces the shared abstractions the rest of the library is built on.
 
-## II.0 — Overview: the shared abstractions
-
-The shared abstractions, in dependency order. Each is generic and type-agnostic, defined once and reused throughout the library:
-
-| § | Layer | Abstraction | Role |
+| § | Category | Abstraction | Role |
 |---|---|---|---|
-| II.1 | Structure | `NamedTree` | The named, ordered tree addressed by path that every structured object is built on, owning the leaf-keyed mapping contract and navigation. |
-| II.2 | Type | `ValueSpec` / `TermSpec` | The value specifications every field and declaration is typed by, and the storage rule: a tracked term stores its type as its spec. |
-| II.3 | Schema | `EventTemplate` | The named tree of value specifications that gives one event its shape, with numeric promotion and symbolic dimensions. |
-| II.4 | Identity | `TrackedTerm` / `Annotated` / `Provenance` | The name, type (spec), lineage, and annotations an object carries beyond its raw representation. |
-| II.5 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space. |
-| II.6 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved. The shared mechanism behind converters, inference selection, and bijector factories. |
+| II.1 | Typing | `TermSpec` | The term-specification base every field and declaration is typed by, with the symbolic-dimension protocol. Each kind's concrete spec is defined beside the kind it describes. |
+| II.2 | Declarations | `InputSpec` / `OutputSpec` | The input and output declarations of the map-like kinds: named slots in, one named produced term out. |
+| II.3 | Numeric values | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
+| II.4 | Identity | `TrackedTerm` / `Provenance` | The name, type (spec), lineage, and annotations an object carries beyond its raw representation, and `raw()` as its access to that representation. |
+| II.5 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space, with its `BatchSpec`. |
+| II.6 | Structure | `NamedTree` | The named, ordered tree addressed by path that every structured object is built on, owning the leaf-keyed mapping contract and navigation. |
+| II.7 | Dispatch | dispatch & registries | Registry-based multiple dispatch that selects an implementation by the types involved, and the catalog that makes every registry discoverable. The shared mechanism behind the operations, converters, inference selection, and bijector factories. |
 
-## II.1 — `NamedTree`
+## II.1 — Term specifications: `TermSpec`
 
 ### Contract
 
-Values in ProbPipe are represented as named, ordered trees.  ProbPipe uses the following standardized **terminology** to refer to components of these trees:
+A **term specification** ("term spec") describes the typing information available for a mathematical term and validates whether an object satisfies it.
+
+The specs partition into the **base kinds** and the **batch kinds**. Every base kind has exactly one term spec, one **base form**, and one **batch form**. Since a batch of batches is a batch, the base form and batch form of a `Batch` are identical.
+
+**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any symbolic dimensions is **polymorphic**; one with none is **concrete**. A spec can *report* the names still unbound, *substitute* explicit sizes for names, and *bind* names by unification against a value, reading the sizes off that value's spec. Binding is one unification over everything bound together: a name takes its size from its first occurrence, every later occurrence must agree, a disagreement raises, and a bound name never rebinds.
+
+The base API is validation plus the dimension protocol:
+
+```python
+class TermSpec(ABC):
+    @abstractmethod
+    def is_valid(self, value: Any) -> bool: ...      # structural validity such as kind, rank, dtype
+
+    # the symbolic-dimension protocol: report, substitute, bind
+    @property
+    def free_dims(self) -> frozenset[str]: ...       # report: the unbound symbolic dimensions
+    @property
+    def is_concrete(self) -> bool: ...               # True when free_dims is empty
+    def with_dims(self, **sizes: int) -> Self: ...   # substitute explicit sizes
+    def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
+```
+
+### Rationale
+
+One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to functions, distributions, and values`), and defining each concrete spec beside the kind it describes keeps this layer generic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule is `D2 – Generality first`: every result can be tracked and every collection of draws stacked, so nothing an operation produces falls outside the system. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it; hence cross-field equalities travel with the term, and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
+
+## II.2 — Input and output declarations: `InputSpec`, `OutputSpec`
+
+### Contract
+
+An `InputSpec` is a flat mapping from names to term specs: the independently bindable slots a map-like term takes in. An `OutputSpec` is a term spec plus a required name for the produced term.
+
+```python
+class InputSpec(Mapping[str, TermSpec]): ...   # named slots; keys are Python identifiers
+
+class OutputSpec:
+    name: str        # an identifier naming the produced term
+    spec: TermSpec
+```
+
+### Rationale
+
+Requiring a name on every output declaration serves `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows` together: the produced term's name is fixed where the producer is declared.
+
+## II.3 — Numeric values: `Numeric`, `NumericSpec`, `Constraint`
+
+### Contract
+
+**The `Numeric` interface.** The numeric kinds share one flat-vector interface: `to_vector` lays a value out as one flat vector in canonical order, `vector_size` is that vector's length, and `from_vector` rebuilds a value from it. The coordinate protocols expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions apply to the numeric kinds at the coordinates and return bare arrays. A bare array passed where a `Numeric` value is expected is promoted to the appropriate numeric type. Two routes therefore meet at a numeric value: a foreign function sees the coordinates and returns a bare array, while ProbPipe's own operators and elementwise `map` preserve structure and return tracked terms.
+
+```python
+class Numeric(ABC):                         # the flat-vector interface of the numeric kinds
+    @property
+    @abstractmethod
+    def vector_size(self) -> int: ...       # total flat dimension; defined only when concrete
+    @abstractmethod
+    def to_vector(self) -> Array: ...       # the coordinates: one flat vector, canonical order
+
+    # supplied once, so no kind restates them: numpy and JAX see to_vector
+    def __array__(self) -> np.ndarray: ...  # and therefore return bare arrays
+    def __jax_array__(self) -> Array: ...
+```
+
+**The `NumericSpec` mixin.** The spec-side counterpart to `Numeric` marks the specs whose values implement it. A `NumericSpec` carries `vector_size` and the shapes `from_vector` unflattens into; the layout itself is the kind's, fixed once by `Numeric`. Construction from coordinates stays with the value types, since a spec describes and never builds. The mixin is abstract and specifies no kind of its own.
+
+```python
+class NumericSpec(TermSpec, ABC):   # mixin: the specs whose values implement Numeric
+    @property
+    def vector_size(self) -> int: ...   # total flat dimension; defined only when concrete
+    # the flat dimension and shapes the kind's to_vector / from_vector read; the layout is the kind's
+```
+
+A numeric kind may also specify the **support** of its values with a `Constraint`, which compares and hashes by value.
+
+```python
+class Constraint(ABC):
+    @abstractmethod
+    def check(self, value: ArrayLike) -> Array: ...   # elementwise membership
+```
+
+### Rationale
+
+One flat-vector interface over the numeric kinds is `D2 – Generality first`: everything that consumes flat numeric values types against it once, and the coordinate protocols keep foreign array functions usable with no ProbPipe-specific code (`C3 – Computational detail hidden by default, available on demand`). The spec-side mixin is the same generality at the type level, whether the event is one array or a named tree of them. Both are abstract bases rather than protocols, which keeps the pair symmetric and follows the rule the library uses throughout: an interface a closed set of ProbPipe kinds implements is a base, while an open claim any object may make is a structural protocol. The base also holds the shared coordinate protocols once rather than four times (`D6 – Single source of truth`). A constraint is data, not behavior: comparing and hashing by value lets a support key a registry, so the bijector factories select by the mathematics rather than by class identity (`D3 – Capability-based operations`).
+
+## II.4 — Identity, type & metadata: `TrackedTerm`, `Provenance`
+
+### Contract
+
+`TrackedTerm` is the one mixin that carries identity, type, and metadata, so every tracked term carries the same four things and no kind opts in or out:
+1. a **name**: what the object is called;
+2. a **spec**: the declaration of its type (II.1);
+3. a **provenance**: how it was produced;
+4. **annotations**: free-form auxiliary information supplied by the user or an algorithm.
+
+Every object an operation consumes or produces is a `TrackedTerm`; structural helpers such as specs are not.
+
+A tracked term's name is supplied by the user at explicit construction, as the required first argument, and derived deterministically from the inputs when an operation produces the object. The `name_is_auto` flag records which, since the two behave differently: a structure-changing transform re-derives an auto-derived name from its result, and composition may rename it again, while a user-given name is preserved. `with_name` renames the object itself. A name is a label, not an identity: nothing resolves an object by name, derived names need no escaping scheme, and two objects may share a name unless field uniqueness forces them apart.
+
+The `spec` slot is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
+
+Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec, the name, and `name_is_auto`. A kind whose representation is not itself a ProbPipe object has a **raw host**, which `raw()` returns — for example, the backing array or the wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
+
+Reaching into a container returns a **view**, for example a record field or a batch element. A view is a tracked term named from the accessor, which is the field key for a record and the selected levels for a batch, and it is marked `name_is_auto`; its provenance records the container and the source term where one was supplied.
+
+**A tracked term is immutable.** Assignment and deletion raise with the name of the class the caller touched. Every transformation, including each `with_*` method, returns a new term that shares the representation, so nothing is relabelled in place. `TrackedTerm` carries the guard itself, so no subclass can report a different rule than its base.
+
+Identity is **boundary-attached** under compiled execution. Inside a `jit` or `vmap` trace a term presents as its raw representation with only its spec as static data, so name, provenance, and annotations never enter a trace and a name can never affect compilation-cache identity; the tracked result is minted at the enclosing call boundary.
+
+```python
+class TrackedTerm:
+    name:         str
+    name_is_auto: bool
+    spec:         TermSpec                       # the single stored source of the term's type (II.1)
+    provenance:   Provenance | None              # write-once via with_provenance(...)
+    annotations:  Mapping[str, Any] | None       # free-form; the one store written after construction
+    def with_name(self, name: str) -> Self: ...  # sets name_is_auto = False
+    def with_provenance(self, p: Provenance) -> Self: ...
+    def raw(self) -> Any: ...                    # the representation, detached from the workflow
+    # immutable: __setattr__ / __delattr__ raise; state round-trips through the
+    # attributes the term holds, so copy and pickle need nothing from the class
+
+class Provenance:
+    operation: str                       # the operation that produced the object
+    parents:   tuple[ParentInfo, ...]    # descriptors of the tracked inputs
+    controls:  Mapping[str, Any]         # the resolved controls: PRNG key, sample count, selected method, ...
+    inputs:    Mapping[str, ParentInfo]  # plain (untracked) arguments, keyed by parameter name
+
+class ParentInfo:
+    type_name:   str
+    name:        str
+    fingerprint: str            # best-effort content hash
+    fingerprint_is_weak: bool   # True when the fingerprint is only object identity
+    parent:      Any | None     # optional reference to original parent
+```
+
+The **annotations** store is the one exception to immutability: it can be written after construction, so a diagnostic can attach its result to the object it examined, and by convention it is append-only. Annotations are otherwise inert: no operation reads them to decide behavior, they do not propagate to results because lineage is recorded in `provenance`, and they never enter a compiled trace.
+
+Fingerprints are best-effort and tiered, from a content hash, through the code hash of a closure-free callable, down to object identity, with `fingerprint_is_weak` marking the weakest tier. **The provenance mode, not the operation, sets the tier.** The default lightweight mode records identity-tier descriptors for every operation's parents with no content hashing; the full mode retains parent references and content-verifiable fingerprints, computed lazily at export since the objects are held; off records nothing. Every operation behaves identically under a given mode, so provenance cost is one user-visible setting rather than a property of what ran.
+
+### Rationale
+
+`TrackedTerm` serves the two non-mathematical principles, `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D6 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. Recording the resolved controls, not just the parents, turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`), and boundary attachment keeps names inert in computation, so a name never decides what gets compiled. Immutability is `C2 – Functional interface over immutable objects` embodied, and confining the one writable store to a container that no operation reads keeps that contract intact in substance. Carrying annotations on the base makes every tracked term annotatable, including a batch of draws. `raw()` is `B3 – Tracked forms out by default` for a term already in hand: the representation is one explicit call away and never the default.
+
+### Notes
+
+- *Reconstruction.* `pickle` and `copy` restore a term by assigning its state back rather than through its constructor, so a schema fixed by an explicit declaration, a class decided at construction, and a field written afterward all survive the round-trip. A term declares any memo as transient and any store written in place (annotations) as decoupled, so a copy takes its own container.
+
+## II.5 — `Batch`
+
+### Contract
+
+A `Batch` is the generic `TrackedTerm` nd-array of shape `batch_shape`, holding objects of a common element type. `batch_shape` is nonempty. A concrete batch specifies how it stores its elements and adds whatever its element type affords, including indexing into the elements' fields. Since a batch is a *collection* of its elements, `len`, `iter`, `batch_shape`, and `batch_size` operate on the batch axes only. `BatchSpec` is the batch kind's term spec (II.1), carrying the spec the elements satisfy together with the named multiplicity:
+
+```python
+class BatchSpec(TermSpec):         # the batch kind's spec; is_valid accepts a matching batch
+    element_spec: TermSpec                          # the spec every element satisfies
+    axis_groups: tuple[tuple[int | str, ...], ...]  # the multiplicity, tiled into levels below;
+                                                    #   a str names a symbolic dimension (II.1)
+    level_names: tuple[str, ...]
+```
+
+Construction checks every element against `element_spec` and reports the position that failed, since the batch asserts that spec of all of them.
+
+**`[]` dispatch.** A key is either a **position** or a **name**; the two namespaces never collide, since an axis has no name and a field no position. A position is an integer, a slice, or a tuple of those, and it addresses the batch axes, which `Batch` itself handles. A name is a string, or a tuple of strings for a path, and it addresses a field within every element; it applies only to a batch whose elements have fields. A tuple mixing the two is invalid.
+
+```python
+class Batch[E](TrackedTerm):
+    @property
+    def spec(self) -> BatchSpec: ...
+    @property
+    def element_spec(self) -> TermSpec: ...              # view on spec: what every element satisfies
+    @property
+    def batch_shape(self) -> tuple[int, ...]: ...
+    @property
+    def batch_size(self) -> int: ...                    # total element count, prod(batch_shape)
+    @property
+    def axis_groups(self) -> tuple[tuple[int, ...], ...]: ...   # batch_shape tiled into levels, outermost first
+    @property
+    def level_names(self) -> tuple[str, ...]: ...       # one name per level, aligned with axis_groups
+    def with_level_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
+    # rename levels old -> new; shapes and elements unchanged, as with_path_names is for fields
+    def __len__(self) -> int: ...                       # leading-axis size, batch_shape[0]
+    def __iter__(self) -> Iterator[E | Self]: ...       # over the leading batch axis
+    def __repr__(self) -> str: ...                      # the class, the name, and each level with its sizes
+    def __getitem__(self, key: Any) -> Any: ...         # a position indexes the axes, a name the elements' fields
+    def at_levels(self, /, **levels: int | slice | None | tuple[int | slice | None, ...]) -> E | Self: ...
+    # index by named level (a view); unnamed levels kept whole, None means the whole axis (:)
+    def raw(self) -> Any: ...
+    # the storage view: the elements' raw values in their native stacked layout
+```
+
+**Axis groups.** A batch's axes are partitioned into ordered **levels**: `axis_groups` tiles `batch_shape` into contiguous groups with the outermost level first, and `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, such as flat vectorization, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and positional `[]` address the leading **axis**, which is `batch_shape[0]`, rather than the leading level; the two coincide when the outermost level holds one axis, so iterating `(N,)` of `(S,)` runs over the `N` and yields each inner batch of `S` as a view. When the outermost level spans several axes, indexing drops the leading axis and leaves the level in place with one axis fewer.
+
+**The batch's own type.** A batch stores its `BatchSpec`; `element_spec`, `axis_groups`, and `level_names` are views on it. `spec` is the batch's own type rather than its element's, which keeps `OpaqueBatch` well typed although its elements carry no structure.
+
+**The raw view.** `raw()` returns the **storage view**, which holds the elements' raw values in their native stacked layout — for example, one array for array-valued elements and an object array for opaque-valued ones.
+
+**A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, as a `NumericArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds: "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A live `Batch` may not be polymorphic, since it holds elements at positions; construction refuses a spec with free dimensions, and `batch_size` is undefined until they are bound.
+
+**Level names.** Each level carries a name, listed in order by `level_names`. Names are unique within a batch and are identifiers, since `at_levels` addresses a level by keyword. An operation names the level it mints after itself, and a constructor such as `stack` takes the name to give it. A name already in use raises, as does a rename onto one, so the caller renames first or supplies another. `with_level_names` renames levels, shapes and elements unchanged, re-reading its own derived name under the new ones so that it and any view taken from it agree; renaming a *view* is refused when the new name belongs to a level the view derives its name from but no longer carries, and `with_name` renames it instead. Level names are the key by which operations align batched operands (V.10), and they are independent of the field names within an element.
+
+**View identity.** A view of a batch, whether an element or a sub-batch, derives its name from the batch it was taken from and the positions it selects, naming the level each selection addresses. Take a batch named `posterior`, with a `chain` level of `(4,)` over a `draw` level of `(1000,)`:
+
+```python
+posterior.at_levels(chain=0).name           # "posterior[chain=0]"          — a sub-batch of draws
+posterior.at_levels(chain=0, draw=7).name   # "posterior[chain=0, draw=7]"  — an element
+posterior.at_levels(draw=slice(1, 3)).name  # "posterior[draw=1:3]"         — both levels kept
+```
+
+The derived name states what was selected rather than how it was reached. Levels selected whole are left out, so selecting all of a batch derives the batch's own name, and the levels that appear are listed in the batch's own order rather than the order they were indexed in; hence two routes to one selection read alike, and two different selections never do. Whether a batch *stores* an element outright or *materializes* it on demand, as columnar storage builds a row, indexing returns a view (II.4); storage is invisible to access. A *sub-batch* is a view in the same way, being the batch's own selection rather than an object a caller put there.
+
+**Selecting by level.** `at_levels(**levels)` indexes a batch along its named levels as the by-name counterpart of positional `[]`. It is distinct from `select`, which splats a `Record`'s fields, and it returns an element only when the selection indexes down to one. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order: an integer drops its axis, and a slice or `None` keeps it. `None` stands for the whole axis here and only here, since a keyword cannot take a `:` literal and positional `[]` refuses `None`. A shorter tuple fills the leading axes and leaves the rest whole, so `draw=i` on a two-axis `draw` level means `draw=(i, None)`. A level whose axes are all dropped is removed, yielding the inner batch or element as positional indexing does; a level left unnamed is kept whole.
+
+### Rationale
+
+`Batch` satisfies `D1 – Mathematical fidelity` by keeping how many objects there are separate from what one object contains. Levels extend the same fidelity to collections of collections: how many objects sit at each level is a mathematical distinction, so `N` laws with `S` draws each are `(N,)` of `(S,)` rather than one anonymous `(N, S)`. Naming the levels is `C5 – Naming for unambiguous meaning` on that axis: a user can say which multiplicity is which, and operations align batches by meaning rather than by position. A suffixing rule for a taken name, such as `draw2`, was rejected on the same ground: it would state the order the levels were added in, which is a fact about the computation path rather than about meaning. The `batch_*` names are kept rather than a numpy-style `.shape` / `size`, which could cover the batch axes, the per-element content, or both. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). Indexing and iteration yield views at every level, to satisfy `D6 – Single source of truth`. The obligation falls on the concrete batch, since only it knows its storage, and its sub-batch method shares the store wherever the storage affords it (`B4 – No copying at boundaries`). Hence selecting all of a batch needs no special case: it calls the same method as any other selection, and a view costs nothing there.
+
+### Notes
+
+- *Relation to xarray.* `at_levels` parallels `isel` in indexing by name and by position, with `level_names` in the role of dimension names; there is no label-based counterpart, since batch levels carry no coordinate labels, and a tuple here addresses a level's axes in order, where `isel` reads one as several positions of a single dimension.
+
+## II.6 — `NamedTree`
+
+### Contract
+
+Structured values in ProbPipe are represented as named, ordered trees. The following terminology refers to components of these trees:
 - A **field** is one named leaf — a single object in the collection.
 - A **path** is a `/`-joined sequence which can address either a field or an interior node.
 - A **key** is a path that specifically addresses a *field*. Every key is a path but a path for an interior node is not a key.
 - A **child** of a node is an entry directly under that node.
 - The **canonical order** of a tree is a depth-first walk visiting children in insertion order.
 
-Naming, addressing, traversal, and structure-preserving transforms are defined once in the `NamedTree` class. Specifically, a `NamedTree` implements the `Mapping` interface, with keys exactly its leaf paths, in canonical order, so `keys()`, `values()`, `items()`, `len`, `in`, and `[]` all agree on that one key set, as for a plain `dict`. A leaf path may be equivalently written as a string (`"a/b"`) or a tuple (`("a", "b")`). Since interior nodes are *not* keys, `[]` raises on an interior path. Interior nodes are instead accessed via either the one-level `children` view or `at_path`, which can access any leaf or subtree. So, for example, the invariants  `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold. Sibling names are distinct, so every path identifies at most one node. Distinct subtrees may reuse a name, as in `a/c` and `b/c`, and a bare name is then ambiguous on its own.
+Naming, addressing, traversal, and structure-preserving transforms are defined once, in `NamedTree`. A `NamedTree` implements the `Mapping` interface with keys exactly its leaf paths, and a leaf path may be written as a string (`"a/b"`) or as a tuple (`("a", "b")`). Since interior nodes are not keys, `[]` raises on an interior path; interior nodes are reached through the one-level `children` view or through `at_path`, which reaches any leaf or subtree. So the invariants `x.children["a"].children["b"] == x.at_path("a", "b") == x.at_path("a/b")` hold, and navigation returns views. Sibling names are distinct, so every path identifies at most one node; distinct subtrees may reuse a name, as in `a/c` and `b/c`.
 
 ```python
 class NamedTree[L]:
@@ -49,7 +271,8 @@ class NamedTree[L]:
 
     # structure-preserving transforms — return the same family
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
-    # rename nodes, old -> new; keys are paths, or bare names when unambiguous
+    # rename or move nodes, old -> new; keys are paths, or bare names when unambiguous;
+    # a new name may itself be a path, which moves the node there
     def map(self, f: Callable[[L], L], /, *args, **kwargs) -> Self: ...
     def map_with_keys(self, f: Callable[[str, L], L], /, *args, **kwargs) -> Self: ...
     def replace(self, path: str | tuple[str, ...], leaf: L | Self) -> Self: ...
@@ -60,297 +283,57 @@ class NamedTree[L]:
     def to_nested_dict(self) -> dict[str, Any]: ...
 
     @classmethod
-    def _node_type(cls) -> type[Self]: ...         # the family's own node type
+    def _node_type(cls) -> type[Self]: ...         # the family's own node type: every navigator and transform returns the same family
     @classmethod
     def _leaf_type(cls) -> type | UnionType: ...   # the family's declared leaf type
 ```
 
+The parameter `L` declares the leaf type, the one axis on which families differ and what `values()`, `[]`, and `map` accept and return; interior nodes are always the family's own class. Implementations should check leaves against the declared leaf type at construction.
+
+`with_path_names` renames the fields *within* a tree, whereas `with_name` renames the object itself (II.4). `at_path` has a level analogue in `Batch.at_levels` (II.5), and the two are alike: a path addresses a position and returns a leaf or a subtree, and named level indexers address positions and return an element or a sub-batch.
+
+`with_path_names` renames or moves nodes by `old="new"` pairs. A key may be a bare name, resolving to the unique node so named and raising on ambiguity; keyword pairs cover the common case, and the positional mapping form addresses any path. A target may itself be a path: `with_path_names({"group/mu": "mu"})` promotes the field to the top level and `{"mu": "group/mu"}` demotes it under `group`, creating intermediate nodes as needed and dissolving an interior node a move empties, since a tree holds no empty subtrees. All substitutions apply simultaneously, so sources resolve against the original tree and swaps and simultaneous ancestor–descendant moves are well-defined. Every target is checked against the result: a collision raises, as a rename onto an existing sibling does, and so do a move into the moved node's own subtree and two targets where one is a prefix of the other. Ordering is deterministic: an in-place rename keeps its position, and a moved node appends at the end of its new parent's children.
+
 ### Rationale
 
-Using named paths is necessary to satisfy `C5 – Naming for unambiguous meaning`. Housing the collection contract in one shared class ensures `D7 – Single source of truth` is satisfied — the type- and value-level structures built on it cannot drift apart on how a field is named or a path is resolved.
+Named paths satisfy `C5 – Naming for unambiguous meaning`. Housing the collection contract in one shared class ensures the type- and value-level structures built on it cannot drift apart on how a field is named or a path is resolved (`C1 – Uniform interface to functions, distributions, and values`).
+
 ### Notes
 
-- *Same-family closure.* Every navigator and transform returns the same family, enforced by `_node_type()`.
-- *Leaf type versus node type.* The parameter `L` declares the leaf type, the only axis on which tree families differ: it is what `values()`, `[]`, and `map` traffic in. The node type is not a second parameter, since interior nodes are always instances of the family's own class, which is what `_node_type()` reports. The runtime partition therefore uses the node type alone: a field value is an interior node when it is an instance of `_node_type()`, and a leaf otherwise. Validation is handled once in `NamedTree` rather than by each family: construction checks every leaf against the family's declared leaf type, reported by `_leaf_type()`, so a malformed tree fails at construction rather than at first navigation. A family whose leaves are arbitrary values declares `object`, making the check vacuous.
-- *Navigation yields views.* `children`, `at_path`, and `[]` return a subtree or leaf that is a *view* into the same underlying store, derived on demand rather than copied out.
-- *Mappings are never leaves.* Construction materializes a mapping-valued field into a subtree, so a nested mapping and its `to_nested_dict` export round-trip faithfully through the constructor — there is no separate nested-dict reader.
-- *Mapping protocol, not `Mapping` ABC.* `NamedTree` implements the `Mapping` interface but is deliberately **not** a `collections.abc.Mapping` instance: construction detects tree structure with `isinstance(value, Mapping)`, which must capture a mapping-valued leaf to materialize while leaving a nested tree to nest as a child.
-- *Abstract substrate.* `NamedTree` provides no constructor logic and is not directly instantiable; each concrete family's constructor owns storage and validation policy.
-- *Bare-name reference.* `with_path_names` renames by `old="new"` pairs, where a key may be a bare name instead of a full path: a bare name resolves to the unique node so named and raises when the tree contains it more than once. Keyword pairs therefore cover the common case, while the positional mapping form addresses any path, as in `with_path_names({"group1/mu": "loc"})`. The `Mapping` interface itself is untouched, with `[]` and `keys()` keyed by full path.
+- *Mappings are never leaves.* Construction should materialize a mapping-valued field into a subtree. The need for this mapping check is why `NamedTree` implements the `Mapping` interface without registering as a `collections.abc.Mapping`, ensuring a nested mapping and its `to_nested_dict` export round-trip through the constructor.
 
-## II.2 — Value specifications: `ValueSpec`, `TermSpec`
-
-### Contract
-
-A **value specification** types one value: what a single field may hold, and what an operation's result is declared to be. The base class declares validation once:
-
-```python
-class ValueSpec(ABC):
-    @abstractmethod
-    def is_valid(self, value: Any) -> bool: ...
-```
-
-Value specs come in two families. A **raw-value spec** types the raw host value held by a ProbPipe kind: a numeric array or an opaque Python object. A `NumericArraySpec` declares a shape, a dtype, and a support. An `OpaqueSpec` is the fallback, admitting any non-mapping value.
-
-```python
-class NumericArraySpec(ValueSpec):  # a numeric array leaf
-    shape: tuple[int | str, ...]   # a str names a symbolic dimension (II.3)
-    dtype: DType
-    support: Constraint
-
-class OpaqueSpec(ValueSpec):  # the fallback spec; is_valid accepts any non-mapping value
-    meta: Hashable
-```
-
-The support is a `Constraint`, an elementwise membership test. A constraint compares and hashes by value, so an instance can serve as a registry key.
-
-```python
-class Constraint(ABC):
-    @abstractmethod
-    def check(self, value: ArrayLike) -> Array: ...   # elementwise membership
-```
-
-A **term spec** types a tracked term, one concrete class per kind. `TermSpec` subclasses `ValueSpec` as a marker, since a tracked term is still one value that can occupy a leaf. Two consequences follow: `is_valid` stays declared once, on `ValueSpec`, and anywhere a leaf is accepted, a term spec is accepted unchanged.
-
-A batch is a tracked term too, so it has a term spec of its own: `BatchSpec` types the *collection*, carrying the spec its elements satisfy together with the named multiplicity. It is what keeps the storage rule below universal — a batch's own type is not its element's type, and `OpaqueBatch` still has one even though its raw host accepts arbitrary Python objects.
-
-**Every base value kind has a raw host, a tracked class, and a tracked batch form.** The hierarchy is `raw value → tracked term → tracked batch`: an array is held by `NumericArray` and collected by `NumericArrayBatch`; an arbitrary non-mapping object is held by `Opaque` and collected by `OpaqueBatch`; and a callable is held by `Function` and collected by `FunctionBatch`. `Record` is the composite rather than another base kind: a mapping is tracked as a `Record`, a collection as a `RecordBatch`, and its raw form applies the same hierarchy recursively to its fields. The present `ValueSpec` / `TermSpec` marker split remains for this stack; it does not make either raw-value family kindless.
-
-The tracked class is what an operation **returns**. A raw-value spec describes the value that class holds, while a term spec describes an already tracked value. This distinction does not change record storage or navigation; it fixes the operation boundary, where a result declared as `NumericArraySpec` is returned as a `NumericArray`.
-
-```python
-class TermSpec(ValueSpec): ...      # marker; adds nothing, is_valid inherited
-
-class RecordSpec(TermSpec):  # a Record; is_valid accepts a matching Record
-    event_template: EventTemplate
-
-class FunctionSpec(TermSpec):  # a callable; is_valid accepts any callable
-    input_template: EventTemplate | None   # None: that side's structure unspecified
-    output_spec: ValueSpec | None          # the output declaration, stored as a spec;
-                                           #   construction wraps an EventTemplate as RecordSpec(template)
-
-class BatchSpec(TermSpec):     # a Batch; is_valid accepts a matching batch
-    element_spec: ValueSpec               # the spec every element satisfies
-    axis_groups: tuple[tuple[int | str, ...], ...]  # the multiplicity, tiled into levels (II.5);
-                                          #   a str names a symbolic dimension, as in NumericArraySpec
-    level_names: tuple[str, ...]
-# DistributionSpec and ConditionalDistributionSpec are the other two term specs (Part III).
-```
-
-Specs and event templates are mutually recursive: a template's leaves are specs, and a kind spec's parameters are templates (II.3). Both are finite trees, so the recursion grounds.
-
-A term spec plays one of two roles, fixed by its position.
-
-- **As data.** At a named leaf of a template, a term spec types a field that holds a term. A `Distribution` stored inside a record is a leaf value.
-- **As result.** As an output declaration, a term spec states that the result *is* a term of that kind. A fitted mapping declares that it returns a `Function` this way.
-
-A `Distribution`'s event declaration is an output declaration: it types what `sample` returns. The two roles therefore settle every draw kind. `Distribution(name, DistributionSpec(t))` declares a random measure, whose draws are `Distribution`s. `Distribution(name, EventTemplate(x=DistributionSpec(t)))` declares a record law, whose draws are `Record`s holding a distribution-valued field `x`.
-
-The two spaces are isomorphic, but the draw kinds differ. The declaration alone decides which, never the runtime type of `_sample`'s return. A wrong-kind result raises the kind error, a schema mismatch its own.
-
-A declaration is *stored* as a spec. A bare `EventTemplate` is accepted wherever a record declaration is meant, and construction wraps it as `RecordSpec(template)`. The two forms denote the same space, and after construction only the spec remains, so the declared kind is the stored spec's class.
-
-The same storage rule holds for the tracked types. Each carries the spec of its kind as the single stored source of its type: the slot is `TrackedTerm.spec` (II.4), declared once on the tracked base and narrowed by each kind to its own spec class. Convenience accessors expose that spec's properties, and so differ by kind:
-
-| Type | Accessors |
-|---|---|
-| `Record` | `event_template` |
-| `Function` | `input_template`, `output_spec` |
-| `Distribution` | `event_spec` |
-| `ConditionalDistribution` | `given_template`, `event_spec` |
-
-Each accessor is a view on the one stored object, so none can disagree with it.
-
-`RecordSpec(τ)` and the template `τ` denote the same space. The tag, not the denotation, fixes the kind and the operations. Two rules then govern record-valued positions. **Raw mappings are never leaves**: a raw `dict` flattens to nested tree structure. **A tracked term as a field value stays a term-valued leaf**, at every kind, so its identity (name, provenance, capabilities) is never dropped implicitly.
-
-A `FunctionSpec` types a callable by its input and output structure, either side optional: `None` leaves it unspecified, so a bare `FunctionSpec()` describes any callable. The input side is an explicit `EventTemplate`, written out even for a single-field signature, so a function's field names are caller-chosen and meaningful. The output side accepts any value specification, so a function may declare a term result of any kind or a raw-value result, with a record output the common case. A declaration fixes the output kind: `NumericArraySpec` produces a `NumericArray`, `OpaqueSpec` an `Opaque`, and each term spec its own tracked class. The output side is unchecked — validity is callability alone — so nothing there is expressible but unsatisfiable, unlike an event declaration, which `DistributionSpec` checks and therefore keeps record-valued. Validity is callability alone: the value-layer specs stay callable-generic, and it is the spec's identity as a `FunctionSpec`, not `is_valid`, that tells the wrap boundary to wrap a raw callable result into a `Function`. The two sides are independent, so a callable may map a space to itself or between two spaces.
-
-### Rationale
-
-One `is_valid` contract across raw values and terms keeps validation uniform (`C1 – Uniform interface to distributions and values`). A term spec being a value spec is what lets a term occupy a field anywhere a plain value can.
-
-Storing every declaration as a spec, and the spec on the term itself, is `D7 – Single source of truth`. The declared kind is a stored class rather than an inference, and every accessor is a view that cannot drift.
-
-## II.3 — `EventTemplate`
-
-### Contract
-
-An `EventTemplate` is a `NamedTree` whose leaves are value specifications (II.2). It defines the *shape of one event*, such as a draw or a stored datum, and it is the *schema*: the structure that indexes a kind. It is never one of its own leaves.
-
-When every leaf is a `NumericArraySpec`, the template is fully numeric and construction auto-promotes it to a `NumericEventTemplate`. The promotion is re-derived whenever a transform constructs a new template, so a replacement that removes the last non-numeric leaf promotes the result and one that introduces a non-numeric leaf demotes it: the numeric axis is an invariant of the current leaves, not of the object's history. Beyond the inherited `NamedTree` interface (with `L = ValueSpec`), `EventTemplate` adds construction, lossy template inference from a value, and projection to `NumericEventTemplate`:
-
-```python
-class EventTemplate(NamedTree[ValueSpec]):
-    def __init__(self, field_specs: Mapping[str, Any] | None = None, /,
-                 **fields: ValueSpec | EventTemplate | tuple[int, ...] | None) -> None: ...
-    # sugar: a bare shape tuple means NumericArraySpec(shape) and None means OpaqueSpec();
-    # the positional mapping form accepts "/"-path keys and names that collide with keywords
-
-    @classmethod
-    def infer_from(cls, value: Any) -> EventTemplate: ...   # best-effort, possibly lossy
-    @property
-    def is_numeric(self) -> bool: ...
-    @property
-    def is_concrete(self) -> bool: ...                      # False when any dimension is symbolic
-    @property
-    def free_dims(self) -> frozenset[str]: ...              # the unbound symbolic dimensions
-    def with_dims(self, **sizes: int) -> EventTemplate: ... # bind them; a new template
-    def numeric_subset(self) -> NumericEventTemplate: ...   # remove non-NumericArraySpec leaves
-```
-
-`NumericEventTemplate` further provides a flat (vectorized) layout of the leaves:
-
-```python
-class NumericEventTemplate(EventTemplate):
-    @property
-    def leaf_shapes(self) -> dict[str, tuple[int, ...]]: ...   # per-field array shapes, canonical order
-    @property
-    def vector_size(self) -> int: ...                          # total flat dimension; defined only when concrete
-```
-
-**Symbolic dimensions.** A shape entry may be a **named symbolic dimension** instead of an integer. `NumericArraySpec(shape=("obs", "features"))` fixes the rank and gives each dimension an identity while deferring its size. Within one template a name refers to one dimension: fields `X: ("obs", "features")` and `coefficients: ("features",)` share the dimension `features`, an equality no pair of concrete integers can express. A template with any symbolic entry is **polymorphic**, with `is_concrete` false and `free_dims` listing the unbound names. Templates carry no scope object beyond the names themselves, so they serialize as plain data.
-
-Checking a value against a polymorphic template cannot be done leaf by leaf, because a symbolic name constrains several leaves at once. Validation therefore runs a single pass over all fields, resolving each name to one size: a name is bound the first time it is seen, every later occurrence must agree, and a disagreement raises. Bound names never rebind.
-
-The work splits accordingly. A leaf's `is_valid` checks its own rank and dtype, and nothing else — a `NumericArraySpec`'s `support` is descriptive metadata, unchecked. Sizes belong to the one pass, since only it sees every occurrence of a name.
-
-**Every spec reports, substitutes, and binds its own dimensions.** `ValueSpec.free_dims` gives the names one spec declares, and a template's are the union over its fields. A term spec's schema therefore lies inside the scope: a name declared within a `DistributionSpec` is the same dimension as that name beside it, so it binds once and a disagreement raises. The outcome does not depend on the order the fields were declared in. Keeping all three with the spec is what reaches a spec the schema layer cannot name — a batch axis, declared one layer out — so every dimension a template reports is one some spec can bind.
-
-Binding returns a new template rather than mutating the original, so refinement is monotone. `with_dims(**sizes)` binds explicitly, naming any dimension left unbound; a value binds by unification. Until every name is bound the template is not concrete, so a `NumericEventTemplate` has no flat layout: an operation that needs sizes raises, naming the free dimensions.
-
-### Rationale
-
-As the *type layer*, an `EventTemplate` is the explicit structure that travels with a value and with the producers and consumers of values (`D5 – Explicit, carried structure`). It separates the structure of one event from the orthogonal axes of *multiplicity* and *identity*, keeping those distinctions explicit (`D1 – Mathematical fidelity`). A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it, so cross-field equalities travel with the term and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
-
----
-
-## II.4 — Identity, type & metadata: `TrackedTerm`, `Annotated`, `Provenance`
-
-### Contract
-
-Identity, type & metadata is the cross-cutting layer that lets any object carry, alongside its raw representation, four things: a **name** (what the object is called), a **spec** (the declaration of its type, II.2), a **provenance** (how it was produced), and free-form **annotations** (auxiliary information supplied by the user or an algorithm). The structure is provided by two mixins: `TrackedTerm` (name, spec, and provenance) and `Annotated` (annotations). Every first-class object, the kind an operation consumes and produces, must be a `TrackedTerm`, while structural helpers such as templates and specs are not. We call any such object a **tracked term**: a value, distribution, conditional distribution, linear operator, or batch that carries a name, its spec, and provenance.
-
-Annotation metadata is a free-form mapping, and the **one exception to
-immutability**: the store is written after construction by inference backends,
-validators, and diagnostic operations, and mutated in place, so the channel is
-append-only by convention — a writer adds under its own key and never overwrites
-mathematical state or another writer's entries. Being written in place is also
-why a copy takes its own container: otherwise a write on one term would show
-through on the term it was copied from.
-
-```python
-class Annotated:
-    annotations: Mapping[str, Any] | None
-```
-
-A tracked term's name must be provided by the user when constructed explicitly (as the required first argument to the constructor). When an operation produces an object, it must provide a meaningful, deterministic name derived from its inputs. The `name_is_auto` flag records which, because the two behave differently: a structure-changing transform re-derives an auto-derived name from its result, and composition into a larger object may rename it again, while a user-given name is preserved. A *nested* object (i.e., a sub-object of a `NamedTree`) takes its name from the field key it sits under. For example, a sub-object reached at `parameters` is itself named `parameters`. `with_name` renames the object itself, unlike `NamedTree.with_path_names`, which renames the fields within it. A name is a human label rather than an identity: nothing resolves an object by name, derived names need no escaping scheme, and two objects may share a name wherever field uniqueness does not force distinctness. The provenance of a tracked term stores pointers to descriptors of the parent objects that created it, along with the operation. Optionally, it can also provide references to the parents themselves.
-
-The `spec` slot is the term's type, stored once (II.2). Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
-
-**A tracked term is immutable, and that is a property of being one** (`C2 – Functional interface over immutable objects`): assignment and deletion raise, naming the class the caller touched, and every transformation returns a new term. `TrackedTerm` therefore carries the immutability itself rather than each kind opting in — one guard, so a subclass cannot report a different rule than its base. Immutability obliges a second thing, since `pickle` and `copy` restore an object by assigning its state back: a term reconstructs by allocating its resolved class and restoring the state it actually holds, rather than by rebuilding through its constructor. So a reconstruction cannot re-derive a schema an explicit declaration had pinned, cannot re-decide a class from arguments the state no longer carries, and cannot omit a field — including one written after construction, which no constructor argument names. A term declares any *memo* it holds as transient, keeping a cache out of the round-trip, and any *store written in place* as decoupled, so a copy takes its own container rather than sharing one. Annotations are the one such store (below).
-
-```python
-class TrackedTerm:
-    name:         str
-    name_is_auto: bool
-    spec:         TermSpec                       # the single stored source of the term's type (II.2)
-    provenance:   Provenance | None              # write-once via with_provenance(...)
-    def with_name(self, name: str) -> Self: ...  # shallow copy with name_is_auto = False
-    def with_provenance(self, p: Provenance) -> Self: ...
-    # immutable: __setattr__ / __delattr__ raise; state round-trips through the
-    # attributes the term holds, so copy and pickle need nothing from the class
-
-class Provenance:
-    operation: str                       # the operation that produced the object
-    parents:   tuple[ParentInfo, ...]    # descriptors of the tracked inputs
-    controls:  Mapping[str, Any]         # the resolved controls: PRNG key, sample count, selected method, ...
-    inputs:    Mapping[str, ParentInfo]  # plain (untracked) arguments, keyed by parameter name
-
-class ParentInfo:
-    type_name:   str
-    name:        str
-    fingerprint: str            # best-effort content hash
-    fingerprint_is_weak: bool   # True when the fingerprint is only object identity
-    parent:      Any | None     # optional reference to original parent
-```
-
-A provenance records everything its operation resolved: the tracked parents, the plain arguments, and the **controls** the run actually used, the PRNG key, sample counts, and any selected method among them, so a result can be reproduced from its record. Fingerprints are best-effort, in tiers: a content hash for arrays and records, the qualified name and code hash for a closure-free callable, and object identity otherwise, with `fingerprint_is_weak` marking that last tier.
-
-### Rationale
-
-`TrackedTerm` serves the two non-mathematical principles: `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows`. Housing the spec on the tracked base is `D7 – Single source of truth` for a term's type: one slot, declared once, that every kind's accessors are views on. The guarantee behind `C6 – Traceable and reproducible workflows` is a single rule: **every object a ProbPipe operation natively returns is a tracked term** (whether or not it is also `Annotated`), so the provenance chain is never broken. Recording the resolved controls, not just the parents, is what turns traceability into reproducibility: re-running the recorded operation on the recorded inputs with the recorded controls reproduces the result. Auto-derived names keep every intermediate object identifiable without forcing the user to label it (`C5 – Naming for unambiguous meaning`). Because identity and metadata are orthogonal to *what* an object is mathematically, they are defined uniformly across classes.
-
-## II.5 — `Batch`
-
-### Contract
-
-A `Batch` is the generic `TrackedTerm` nd array of shape `batch_shape` that holds objects of a common element type. `batch_shape` is nonempty: a batch has at least one batch axis. It could also be `Annotated` if applications for it arise. A concrete batch implementation must specify how to store the elements. Since a batch is a *collection* of its elements, `len` / `iter` / `batch_shape` / `batch_size` operate only on the batch axes. The `batch_*` names are kept deliberately rather than a numpy-style `.shape` / `size`, which could ambiguously cover both the batch axes and the per-element content. A concrete batch adds whatever its element type affords in that element's own section, indexing into the elements' fields included.
-
-**What `[]` dispatches on.** A key is either a **position** or a **name**, and the two namespaces never collide: an axis has no name, and a field no position. A position — an integer, a slice, or a tuple of those — addresses the batch axes, which `Batch` itself answers. A name — a string, or a tuple of strings for a path — addresses a field within every element, which only a batch whose elements have fields can answer; the default reports that they have none, and a batch of records supplies the reading. A tuple mixing the two addresses neither, and is refused as a mix rather than as a wrong number of indices.
-
-```python
-class Batch[E](TrackedTerm):
-    @property
-    def spec(self) -> BatchSpec: ...                     # the single stored source of the type
-    @property
-    def element_spec(self) -> ValueSpec: ...             # view on spec: what every element satisfies
-    @property
-    def batch_shape(self) -> tuple[int, ...]: ...
-    @property
-    def batch_size(self) -> int: ...                    # total element count, prod(batch_shape)
-    @property
-    def axis_groups(self) -> tuple[tuple[int, ...], ...]: ...   # batch_shape tiled into levels, outermost first
-    @property
-    def level_names(self) -> tuple[str, ...]: ...       # one name per level, aligned with axis_groups
-    def with_level_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
-    # shallow copy renaming levels old -> new; shapes and elements unchanged, as with_path_names is for fields
-    def __len__(self) -> int: ...                       # leading-axis size, batch_shape[0]
-    def __iter__(self) -> Iterator[E | Self]: ...       # over the leading batch axis
-    def __repr__(self) -> str: ...                      # the class, the name, and each level with its sizes
-    def raw(self) -> Any: ...                           # a view of the concrete backing storage
-    def __getitem__(self, key: Any) -> Any: ...         # a position indexes the axes, a name the elements' fields
-    def at_levels(self, /, **levels: int | slice | None | tuple[int | slice | None, ...]) -> E | Self: ...
-    # index by named level (a view); unnamed levels kept whole, None means the whole axis (:)
-```
-
-**Axis groups.** A batch's axes are partitioned into ordered **levels**. `axis_groups` tiles `batch_shape` into contiguous groups, outermost level first. It is what a batch *reports*, and what a `BatchSpec` stores — a declaration may leave the sizes symbolic, fixing the number of levels before the counts are known. A live batch holds elements at positions, so its sizes are already fixed by them: construction therefore takes `axes_per_level`, the axis count per level, and reads the sizes off the elements rather than having them restated. `batch_shape` stays their flat concatenation, so anything stated over `batch_shape`, flat vectorization above all, applies to a multi-level batch unchanged. A single-level batch has one group holding all its axes. `len`, `iter`, and positional `[]` address the leading **axis**, `batch_shape[0]`, rather than the leading level. The two coincide when the outermost level holds one axis: iterating `(N,)` of `(S,)` then walks the `N`, yielding each inner batch of `S` as a view. When the outermost level spans several axes, the leading axis is only the first of them, so indexing drops that axis and leaves the level in place, one axis shorter. Nesting needs no dedicated classes: a batch is itself a tracked term, so a batch whose elements are batches is already admitted, and grouped storage presents the levels as views into one store.
-
-**The batch's own type.** A batch stores a `BatchSpec` (II.2), which carries the element spec and the named multiplicity together; `element_spec`, `axis_groups`, and `level_names` are views on it. This keeps the storage rule reading the same way for a batch as for any other term — `spec` is the batch's *own* type, not its element's — which is what makes `OpaqueBatch` well typed even though an `OpaqueSpec` accepts arbitrary Python objects. It also mirrors the model, where a batch inhabits the *family* kind over its element's kind rather than the element kind itself.
-
-**Raw storage.** `raw()` returns a view of the concrete batch's backing storage, never another tracked wrapper and never a copy introduced merely to opt out of tracking. An array-backed batch returns its backing native array; `FunctionBatch` and `OpaqueBatch` return object arrays; and `RecordBatch` returns a nested mapping whose leaves are its columns' raw storage views. Other concrete batches, including distribution batches, define their own storage representation and return that representation through the same contract.
-
-**A polymorphic multiplicity.** An axis size may be a symbolic dimension name instead of an integer, exactly as a `NumericArraySpec` shape entry may, so a *declaration* can fix the number of levels while deferring how many elements each holds — "returns a batch of `S` draws" before `S` is known. The names share one scope with the element's schema, so a batch of `("n",)` over arrays of shape `("n",)` is square by declaration. A declaration may be polymorphic; a live `Batch` may not, since it holds elements at positions, so construction refuses a spec with free dimensions and `batch_size` is undefined until they are bound.
-
-**Level names.** Each level carries a name, listed in order by `level_names`, and names are unique within a batch. An operation that mints a level takes the name to give it; a name already in use raises, as does a rename onto one, so the caller supplies another. A suffixing rule was considered and rejected: `draw2` would state the order the levels were added in, a fact about the computation path rather than about meaning, and levels are named precisely so that operands align by meaning. `with_level_names` repins names on a shallow copy, shapes and elements unchanged, re-reading its own derived name under the new ones so that it and any view taken from it agree. Renaming a *view* is refused where the new name belongs to a level the view derives its name from but no longer carries, since the derived name would then be ambiguous; `with_name` re-roots it instead. Names must be identifiers, since `at_levels` addresses a level by keyword. Operations align batched operands by level name — two levels meant to correspond under different names are lined up by renaming one — and level names are independent of the field names within an element.
-
-**View identity.** A view of a batch — an element or a sub-batch — derives its name from the batch it was taken from and the positions it selects, naming the level each selection addresses. Take a batch named `posterior`, with a `chain` level of `(4,)` over a `draw` level of `(1000,)`:
-
-```python
-posterior.at_levels(chain=0).name           # "posterior[chain=0]"          — a sub-batch of draws
-posterior.at_levels(chain=0, draw=7).name   # "posterior[chain=0, draw=7]"  — an element
-posterior.at_levels(draw=slice(1, 3)).name  # "posterior[draw=1:3]"         — both levels kept
-```
-
-The derived name is marked `name_is_auto`, and it states what was selected rather than how it was reached: levels selected whole are left out, so selecting all of a batch derives the batch's own name, and the levels that do appear are listed in the batch's own order rather than the order they were indexed in. Two routes to one selection therefore read alike, and two different selections never do. Lineage needs no node of its own, since selecting computes nothing — a view carries the lineage of the batch it came out of, and which position it was is already stated by the name. Storage matters at one point only, and there it governs identity and lineage together. If the selected position stores a tracked term, indexing returns that same object with its existing identity. If it stores only a raw value, indexing materializes the value's tracked class under the derived selection identity and the batch's lineage. A *sub-batch* is a shared-storage view with its own derived identity either way.
-
-**Selecting by level.** `at_levels(**levels)` indexes a batch along its named levels and returns a view, the by-name counterpart of positional `[]`. It is the level analogue of `NamedTree.at_path` (II.1), and shares its shape: a path addresses a position and returns a leaf or a subtree, while named level indexers address positions and return an element or a sub-batch. The name is neither `select`, the field-splatting selector on `Record` (III.2) that a batch of records also carries, nor a name promising elements, which it returns only when the selection indexes down to one. Each indexer is an integer, a slice, `None`, or a tuple of these addressing the level's axes in order, where an integer drops its axis and a slice or `None` keeps it, `None` meaning the whole axis as `:` does. It means that here and only here: a keyword cannot take a `:` literal, so `None` is the spelling this form needs, while positional `[]` writes `:` and refuses `None`, which an unset argument would otherwise leave standing for *all of it*. A level spanning several axes takes one indexer per axis, and a shorter indexer fills the leading axes and leaves the rest whole, so a scalar `draw=i` on a two-axis `draw` level means `draw=(i, None)`. A level whose axes are all dropped is removed, so selecting a single-axis level by an integer — or every axis of a multi-axis level — yields the inner batch or element just as positional indexing and iteration do, while a level left unnamed is kept whole. This parallels xarray's `isel` in indexing by name and by position, with `level_names` in the role of xarray dimension names, and there is no label-based counterpart, since batch levels carry no coordinate labels. The tuple form departs from it: a tuple here addresses a level's axes in order, where `isel` reads one as several positions of a single dimension.
-
-### Rationale
-
-`Batch` is necessary to satisfy `D1 – Mathematical fidelity` by ensuring how many objects there are stays separate from what one object contains. The level structure extends the same fidelity to collections of collections: how many objects sit at each level is a mathematical distinction, so `N` laws with `S` draws each are `(N,)` of `(S,)` rather than one anonymous `(N, S)`. Naming the levels is `C5 – Naming for unambiguous meaning` on that axis, letting a user say which multiplicity is which and letting operations align batches by meaning rather than by position. An operation broadcasts across a batch by mapping over its elements, so a batch supports an operation exactly when its elements do (`D3 – Capability-based operations`). When those elements are array-backed and claim differentiation, the mapping is vectorized and differentiable end-to-end (`D6 – Differentiability as a capability`). To satisfy `D7 – Single source of truth`, indexing or iterating yields a *view*, the levels of a multi-level batch included. The obligation lands on the concrete batch, since only it knows its storage: the hook that presents a sub-batch shares the store rather than copying out of it, wherever the storage affords sharing. That is also why selecting all of a batch needs no special case — it reaches the same hook as any other selection, and a view costs nothing there.
-
-## II.6 — Dispatch and registries
+## II.7 — Dispatch and registries
 
 ### Contract
 
 Some operations have many possible implementations, and which one applies depends on the *types* of the objects involved rather than on an object's own class. A **dispatch registry** holds those implementations as named methods and selects one for a given call.
 
-Each **dispatch method** declares a unique `name`, the types it applies to via `supported_types`, a `check` function that probes feasibility without doing significant computation, an `execute` function that performs it, and a `priority` that orders auto-selection. Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in priority order and runs the first whose `check` reports feasible. Within one priority, the method whose declared types sit closest to the argument's class in method-resolution order wins, and any remaining tie falls to registration order. A caller can bypass auto-selection and name a method with `method="..."`. New methods are added by registration.
+Each **dispatch method** declares:
+1. a unique `name`;
+2. the types it applies to, via `supported_types`;
+3. a `check` function that probes feasibility without significant computation and reports, as a `MethodInfo`, whether the call is feasible and at what fidelity;
+4. an `execute` function that performs it;
+5. a **fidelity**: exact, approximate, or sampled, on one scale shared across the registries, declared where the method is registered and fixed for the method's life;
+6. a **priority**: an integer rank *within* a fidelity tier, and the one thing about a method a deployment may change at runtime.
+
+Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in **selection order** and runs the first whose `check` reports feasible. Selection order is the same in every registry:
+1. fidelity, exact above approximate above sampled, so exactness is never silently traded for anything below it;
+2. priority within the tier, higher first;
+3. specificity, favoring the method whose declared types are closest to the argument's class in method-resolution order;
+4. registration order.
+
+A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime within a tier, never across fidelities, and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
 
 ```python
+class Fidelity(Enum):     # how exact an answer is; totally ordered, EXACT the highest
+    EXACT       = "exact"
+    APPROXIMATE = "approximate"
+    SAMPLE      = "sample"
+
 class BaseDispatchMethod(ABC):
     name: str
-    priority: int   # defaults to opt-in-only (0)
+    fidelity: Fidelity            # declared at registration, fixed for the method's life
+    priority: int | None = None   # rank within the tier, higher first; None is opt-in-only
 
     @abstractmethod
     def check(self, *args, **kwargs) -> MethodInfo: ...
@@ -368,10 +351,12 @@ class MethodInfo:
     feasible:    bool
     method_name: str
     description: str
+    fidelity:    Fidelity | None   # what this call would achieve; None when infeasible
 
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
     def register(self, method: M) -> None: ...
+    def set_priorities(self, **priorities: int | None) -> None: ...   # within a tier only; warns on a move into or out of opt-in-only
     def execute(self, *args, method: str | None = None, **kwargs) -> Any: ...   # auto-select, or run the named method
     def check(self, *args, method: str | None = None, **kwargs) -> MethodInfo: ...
     def list_methods(self) -> list[str]: ...                           # names, in selection order
@@ -380,7 +365,7 @@ class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ..
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
 
-A single **catalog** makes every registry discoverable. It provides a list of registries, their entries with their priorities, and a one-line description, so a user can see which entries exist and how a given call will resolve. An **entry** is one registered item within a registry; the catalog uses this generic term rather than *method* because it spans registries whose items are not all type-dispatched methods. A registry can be added to the catalog if it implements `SupportsRegistryCataloging`. Satisfying the protocol is structural, while membership requires an explicit `register`.
+A single **catalog** makes every registry discoverable: it lists the registries, their entries with their priorities, and a one-line description each, so a user can see which entries exist and how a call will resolve. An **entry** is one registered item within a registry; the term is generic because the catalog spans registries whose items are not all type-dispatched methods. A registry can be cataloged if it implements `SupportsRegistryCataloging`; satisfying the protocol is structural, and membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so what ProbPipe can do and how a given call resolves are answered from one place.
 
 ```python
 @dataclass(frozen=True)
@@ -420,4 +405,4 @@ registry_catalog = RegistryCatalog()  # the global instance
 
 ### Rationale
 
-A registry is how `C3 – Computational detail hidden by default, available on demand` and `D3 – Capability-based operations` reach operations whose implementation cannot be chosen from a single object alone. The `check` probe keeps auto-selection safe, while `method="..."` leaves the choice in the user's hands. New implementations join by registering a method, so the supported set grows without touching the call sites that use it, which is `D2 – Generality first`. Gathering every registry under one catalog serves `D7 – Single source of truth`: there is one place to see which implementations exist and how a call resolves.
+A registry is how `C3 – Computational detail hidden by default, available on demand` and `D3 – Capability-based operations` apply to operations whose implementation cannot be chosen from a single object alone. The `check` probe keeps auto-selection safe, and `method="..."` leaves the choice in the user's hands. New implementations join by registration, so the supported set grows without touching the call sites (`D2 – Generality first`). One catalog over every registry is `D6 – Single source of truth`: one place to see which implementations exist and how a call resolves.
