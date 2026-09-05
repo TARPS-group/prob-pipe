@@ -106,7 +106,7 @@ A mixture supports an operation exactly when its components do, the same interse
 
 ### Contract
 
-Each evaluation rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy carrier for `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws. Whatever the rule, a linear map's result delegates `mean` and `cov` exactly.
+Each evaluation rule returns a family from this catalog. A closed-form rule returns a parametric result, with the linear-Gaussian case landing in the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy carrier for `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws.
 
 ```python
 class LinearPushforwardDistribution(Distribution):

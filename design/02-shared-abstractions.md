@@ -166,6 +166,8 @@ class BatchSpec(TermSpec):         # the batch kind's spec; is_valid accepts a m
     level_names: tuple[str, ...]
 ```
 
+Construction checks every element against `element_spec`, reporting the position that failed: the batch asserts that spec of all of them.
+
 **`[]` dispatch behavior.** A key is either a **position** or a **name**, and the two namespaces never collide: an axis has no name, and a field no position. A *position* (an integer, a slice, or a tuple of those) addresses the batch axes, which `Batch` itself answers. A *name* (a string, or a tuple of strings for a path) addresses a field within every element, which applies only to a batch whose elements have fields. A tuple mixing the two is invalid.
 
 ```python

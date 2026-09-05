@@ -89,16 +89,14 @@ A capability route names the operand it dispatches on, which is why no operation
 
 **What a caller writes, and what the framework adds.** An operation's authored parameters are its operands together with anything the result rule reads — `sample_shape`, an alignment mapping, the plurality of a level. Its **controls** are the same for every operation and are supplied by the framework rather than by each author: `raw`, `method` for route selection, the PRNG `key`, and the sampling controls a Monte Carlo route consumes. The rule is one line: **a parameter is authored exactly when the result rule reads it; everything else is a control.** So an operation's signature is its operand list plus one uniform control block, and no operation may spell a control differently or omit one.
 
-**The wrap boundary.** The boundary is kind-directed and wraps only the untracked.
+**The wrap boundary.** The result crosses the kind-directed wrap of IV.2 — a tracked term keeps its kind under the operation's fresh identity, a raw host wraps into its own kind, a backend distribution through its converter (III.14) — and two rules are the operation's own:
 
-- *A tracked term keeps its kind.* A `Record`, `Distribution`, `ConditionalDistribution`, `Function`, `NumericArray`, or `Opaque` an operation returns is never re-wrapped and never buried inside another kind. Keeping the kind is not keeping the identity: by the boundary law the result carries the operation's fresh name and provenance, while the term the route produced is left untouched.
-- *A raw host wraps into its own kind*, by the kind-directed wrap of the call boundary (IV.2): a bare array becomes a `NumericArray`, a raw mapping a structured `Record`, a raw callable a `Function`, and any other raw value an `Opaque`, the ordered fallback. A backend distribution enters through its converter, so a concrete family such as a `Normal` can be written in plain arrays with no hand-written schema.
 - *The planned declaration is enforced.* The result is coerced to the declaration planning computed and validated against it; a wrong kind and a schema mismatch raise distinct errors.
 - A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
 
 **Four raw mechanisms, one meaning.** *Raw* always means the representation layer, detached from the workflow; the mechanisms differ only in where they act. Route implementations are *written* over raw types (`T`); `apply` (III.3) *evaluates* a wrapped callable with no lifting, tracking, or provenance; `raw=True` *elides* the identity an operation would mint; and `raw()` (II.4) *detaches* an existing term.
 
-**Randomness.** No operation draws from ambient random state, and no operation carries a seed. An explicit PRNG `key` is caller-owned: the draw is consumed as given and reproducible from the key alone. With the key omitted, the draw is a **workflow-owned random event** (IV.3): its key derives structurally from the enclosing workflow scope, and a bare call outside any scope gets its own ephemeral scope. An operation whose contract is a deterministic quantity but whose resolved route samples takes its key the same way. The resolved key is recorded in `provenance`.
+**Randomness.** An operation's PRNG `key` is a control under the key rule of IV.3 — caller-owned when supplied, a workflow-owned random event when omitted — whether the operation's contract is a random draw or a deterministic quantity whose resolved route samples; the resolved key is recorded in `provenance`.
 
 **Listing the operations and their routes.** The operations are themselves a registry, so the vocabulary is discoverable the way every other extensible set in the library is (II.7). `operation_registry.list()` returns one summary per operation — each operand with the kinds it accepts, whether the operation is primitive or derived, and each route with its source, fidelity, and requirement — and `describe()` renders the same content as text, for one operation or for all of them. The registry satisfies `SupportsRegistryCataloging`, so it appears in the catalog beside the converters, evaluation rules, inference methods, and bijector factories, and a user asking what ProbPipe can do has one place to look.
 
@@ -149,7 +147,7 @@ Defining an operation by its operands, a result rule, and a set of routes is wha
 
 ### Contract
 
-`evaluate(f, v)` applies the map `f` to the operand `v`: for a value it returns `f(v)`; for a distribution, the law of `f(X)` for `X ~ v`, the pushforward `f♯v`; for a batch, the elementwise result. It is computed by the rule the registry selects, the sampling lift being the rule at the generic pair: a plain call for a value, the selected rule for a distribution, the sweep for a batch. The direct call `f(v)` resolves through the same registry, so it and `evaluate(f, v)` take the same route and agree in value and in selected rule; `evaluate` is the operation form, adding `method=` selection and its own outer record. The map `f` is a `Function`; `LinOp` is its linear subtype, and invertible maps claim `SupportsInverse`. `v`'s schema must conform to the map's input, unifying any symbolic dimensions, with the result carrying the map's output declaration under the resulting substitution. For a `LinOp`, `A @ v` is operator sugar for `evaluate(A, v)`. As with `*`, the meanings coexist by operand type: `@` composes two operators and evaluates the map on any other operand.
+`evaluate(f, v)` applies the map `f` to the operand `v`: for a value it returns `f(v)`; for a distribution, the law of `f(X)` for `X ~ v`, the pushforward `f♯v`; for a batch, the elementwise result. It is computed by the rule the registry selects: a plain call for a value, the selected rule for a distribution, the sweep for a batch. The direct call `f(v)` resolves through the same registry, so it and `evaluate(f, v)` take the same route and agree in value and in selected rule; `evaluate` is the operation form, adding `method=` selection and its own outer record. The map `f` is a `Function`; `LinOp` is its linear subtype, and invertible maps claim `SupportsInverse`. `v`'s schema must conform to the map's input, unifying any symbolic dimensions, with the result carrying the map's output declaration under the resulting substitution. For a `LinOp`, `A @ v` is operator sugar for `evaluate(A, v)`. `@` composes two operators and evaluates the map on any other operand.
 
 A map with more than one parameter is evaluated over exactly one of them, with `fixed_args` supplying the rest by name, as in `evaluate(predict, posterior, fixed_args={"x": X_new})`. `fixed_args` must leave exactly one parameter free, the one the operand maps to; leaving two unbound is an error. The registry keys on the map's own type and the fixed arguments pass through to each rule's feasibility check, so binding side arguments neither wraps the map nor loses its registered identity, and the single mapping parameter keeps the operation's controls separate from the map's arguments.
 
@@ -159,7 +157,7 @@ A map with more than one parameter is evaluated over exactly one of them, with `
 - **The sampling lift**, the rule registered at the generic pair, always applies: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key exposed as controls. It is the registry's floor, and the route every plain callable takes.
 - **The elementwise sweep** is the batch counterpart: the rule at the generic pair for a batch operand. A fused batched implementation, such as an operator's matrix–matrix routine or a single vectorized call over array-backed elements, registers above it.
 
-The selected rule records its name and fidelity in the result's provenance from either entry point; `evaluate`'s record adds its own outer operation entry, the one respect in which the two records differ. Rules need not be exact: an approximate scheme — quadrature, an unscented transform, quasi-Monte Carlo — registers at its recorded fidelity, and the sampling lift, at sampled fidelity on the generic pair, is the floor every exact or approximate rule ranks above.
+The selected rule records its name and fidelity in the result's provenance from either entry point; `evaluate`'s record adds its own outer operation entry, the one respect in which the two records differ. Rules need not be exact: an approximate scheme — quadrature, an unscented transform, quasi-Monte Carlo — registers at its recorded fidelity, above the lift.
 
 **Linear maps push moments exactly.** Whatever rule realizes `A @ d`, the result's `mean` and `cov` delegate exactly whenever `d` supports them, since `E[A X] = A E[X]` and `Cov(A X) = A Cov(X) Aᵀ`. An approximate linear pushforward therefore still reports exact first and second moments.
 
@@ -181,31 +179,29 @@ Two operations read a map's inverse structure.
 
 ### Rationale
 
-Reparameterization moves in both directions between a constrained and an unconstrained space, so the inverse must be reachable from user code, and the operation form keeps the capability's implementer methods private, per the V.0 convention. Returning the inverse as a `Function` keeps the system closed (`D4 – Closed system of objects under operations`): the inverse evaluates, composes, and pushes forward like any map. Splitting the Jacobian claim from invertibility is `D3 – Capability-based operations`: a map can be invertible without a tractable Jacobian determinant, and the determinant exists only for a differentiable map, so each claim stays honest on its own and change of variables requires exactly the pair.
+Reparameterization moves in both directions between a constrained and an unconstrained space, so the inverse must be reachable from user code, and the operation form keeps the capability's implementer methods private, per the V.0 convention. Returning the inverse as a `Function` keeps the system closed (`D4 – Closed system of objects under operations`): the inverse evaluates, composes, and pushes forward like any map.
 
 ## V.3 — `sample`
 
 ### Contract
 
 `sample(d, key=None, sample_shape=(), raw=False)` draws from a distribution.
-- With `sample_shape=()` it returns a single draw **at the declared kind**, tracked. The kind is the event declaration's class, fixed by the declaration and never by the runtime value: a `RecordSpec` draws a `Record`, a `DistributionSpec` a `Distribution`, a `FunctionSpec` a `Function`, a `NumericArraySpec` a `NumericArray`, and an `OpaqueSpec` an `Opaque`. Every spec names a class, so no kind is presented by wrapping it in another: a scalar law draws a `NumericArray`, not a single-field `Record`.
-- A non-empty `sample_shape` prepends batch axes and returns the tracked batch type of the draw's kind, with those leading dimensions on a level named for the operation that mints them, `sample`: a `RecordBatch` (`NumericRecordBatch` when numeric) for a record event, and the tracked batch form of the table below — a `DistributionBatch`, `FunctionBatch`, and so on — for a term-drawing law.
-- `sample(..., raw=True)` is the draw detached: the kind's raw value for `sample_shape=()`, and for a `Distribution`- or `ConditionalDistribution`-valued draw the law itself. For a non-empty `sample_shape` it is the **storage view** (II.5), the draws' raw values in their native stacked layout:
+- With `sample_shape=()` it returns a single draw, tracked, at the kind the declaration names (III.7); a non-empty `sample_shape` prepends batch axes and returns the tracked batch form of that kind, the leading dimensions on a level named `sample`. `sample(..., raw=True)` is the draw detached: the kind's raw value for a single draw — for a `Distribution`- or `ConditionalDistribution`-valued draw the law itself — and the **storage view** (II.5) for a batch:
 
-| declared kind | tracked batch | `raw=True` result |
-|---|---|---|
-| `NumericArraySpec` | `NumericArrayBatch` | the stacked array, batch axes leading |
-| `RecordSpec` | `RecordBatch` / `NumericRecordBatch` | the nested mapping of raw columns |
-| `DistributionSpec` | `DistributionBatch` | an object array of the drawn laws |
-| `ConditionalDistributionSpec` | `ConditionalDistributionBatch` | an object array of the drawn kernels |
-| `FunctionSpec` | `FunctionBatch` | an object array of the drawn callables |
-| `OpaqueSpec` | `OpaqueBatch` | an object array of the drawn objects |
+| declared kind | one draw | tracked batch | `raw=True`, batched |
+|---|---|---|---|
+| `NumericArraySpec` | `NumericArray` | `NumericArrayBatch` | the stacked array, batch axes leading |
+| `RecordSpec` | `Record` | `RecordBatch` / `NumericRecordBatch` | the nested mapping of raw columns |
+| `DistributionSpec` | `Distribution` | `DistributionBatch` | an object array of the drawn laws |
+| `ConditionalDistributionSpec` | `ConditionalDistribution` | `ConditionalDistributionBatch` | an object array of the drawn kernels |
+| `FunctionSpec` | `Function` | `FunctionBatch` | an object array of the drawn callables |
+| `OpaqueSpec` | `Opaque` | `OpaqueBatch` | an object array of the drawn objects |
 - Sampling requires a concrete declaration and raises with the free dimensions named; in the fused conditional path, the given value binds them first.
-- A caller-supplied PRNG `key` makes the draw reproducible from the key alone; with the key omitted, the draw is a workflow-owned random event (IV.3). Under a non-empty `sample_shape` the key splits by draw index, so the draws are jointly independent and reproducible together; inside a `Function`, the workflow scope supplies each draw's key by structural identity, so draws are never hand-threaded.
+- Under a non-empty `sample_shape` the key (IV.3) splits by draw index, so the draws are jointly independent and reproducible together.
 
 ### Rationale
 
-Every draw is reproducible from its inputs — from the key alone when the caller supplies one, and from the workflow scope's seed and the draw's structural identity otherwise (IV.3) — which is `C6 – Traceable and reproducible workflows`. Returning every draw as the tracked term of its declared kind serves `C1 – Uniform interface to functions, distributions, and values` without making the kinds uniform: what is the same across laws is that a draw is tracked and its type is fixed by the declaration, not that every draw is a `Record`. The `raw` opt-out is `B3 – Tracked forms out by default` at the sampling boundary: the wrapped, tracked draw is the default, and the bare value is an explicit ask.
+Every draw is reproducible from its record (IV.3), which is `C6 – Traceable and reproducible workflows`. Returning every draw as the tracked term of its declared kind serves `C1 – Uniform interface to functions, distributions, and values` without making the kinds uniform: what is the same across laws is that a draw is tracked and its type is fixed by the declaration, not that every draw is a `Record`. The `raw` opt-out is `B3 – Tracked forms out by default` at the sampling boundary: the wrapped, tracked draw is the default, and the bare value is an explicit ask.
 
 ## V.4 — `log_prob` and `unnormalized_log_prob`
 
@@ -299,8 +295,6 @@ Two operations read the parts of a structured or factored distribution. (The thi
 
 `mixture` is a **derived** operation (V.0), defined by the identity `mixture(K, mixing) = marginal(K * mixing, ...)` onto the kernel's produced slots, detached. That identity is its floor route, so its feasibility and its failure modes are those of `*` and `marginal` — a call resolves at worst when the composition is well-formed and the marginal has a route, and a mixing distribution that cannot be sampled and admits no exact marginal raises there rather than here. A direct route may realize a case in one step instead, as the Gaussian algebra does, ranking above the identity by fidelity and specificity. Slot matching, spec unification, and unmet givens therefore behave exactly as composition (III.12) and `marginal` fix them, with nothing separately defined: a given slot the mixing distribution does not meet stays unmet, and the result is then a `ConditionalDistribution` over the unmet givens. Exactness follows the same route — a finite mixing distribution yields the explicit `MixtureDistribution`, a closed family stays closed, as in the Gaussian algebra, and otherwise the result is the Monte Carlo empirical marginal through ancestral sampling.
 
-Mixing is always an explicit request: `condition_on` binds a supplied value as a value whatever its type (V.6), so no conditioning call ever mixes implicitly.
-
 ### Rationale
 
 Keeping the integral out of `condition_on` keeps conditioning single-valued — a supplied value always binds, and `μK` is always asked for by name — so neither call has a data-dependent meaning (`C1 – Uniform interface to functions, distributions, and values`). The name is the result's mathematical name: `μK` is the mixture of the kernel family with mixing distribution `μ`, which covers predictive, compound, and state-propagation uses without privileging one (`C5 – Naming for unambiguous meaning`, `D1 – Mathematical fidelity`). Defining the operation as the marginal of the composed joint adds no second semantics: one identity ties it to machinery already fixed, so every behavior has a single source (`D6 – Single source of truth`).
@@ -314,7 +308,7 @@ Every operation lifts to a `Batch` by mapping over its elements, which is the el
 - A moment over a `DistributionBatch` returns a batch of the corresponding values, such as a `LinOpBatch` for `cov`. A multi-level query nests the same way: `quantile(d_batch, q)` keeps the laws on the outer level and adds an inner level named `quantile` for the levels of `q`.
 - **Alignment.** A binary operation matches the operands' levels **by name**: a level in both must have broadcast-compatible shapes, with size-1 broadcasting; a level in only one operand broadcasts across the other; and an outer product is requested by explicit reshaping rather than implied. Because every level is named, there is no positional fallback, and two levels meant to correspond under different names are lined up by renaming one with `with_level_names` first, exactly as `joint` realigns fields for composition. So a flat batch of values on a `laws` level scores against the `laws` level of a nested sampling result. `given=` accepts a `RecordBatch` and yields the `DistributionBatch` of conditioned laws.
 - Two operands are exempt from batch lifting: the factors of composition (`*` and `joint`) and the map operand of `evaluate`, which are consumed as objects rather than swept.
-- Batched application resolves through the evaluation-rule registry: the elementwise map is the rule at the generic pair, and a fused implementation, a single vectorized call over array-backed elements or an operator's matrix–matrix routine, registers above it and is selected like any other rule.
+- Batched application resolves through the evaluation-rule registry (V.1).
 - An operation applied to a batch whose elements lack the required capability raises the same capability error a single element would.
 
 ### Rationale
