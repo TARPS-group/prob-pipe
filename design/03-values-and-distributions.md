@@ -702,7 +702,7 @@ A distribution may have more than one representation, and an operation or backen
 
 Conversion is also the entry route for raw distributions: a backend distribution supplied at a distribution-shaped position — an argument, a given, a record field — is converted on entry through the registry, exactly as a bare array is wrapped at an array-spec position.
 
-A converter declares the source types it converts *from* and the target types it converts *to* in the binary method's two slots, a cheap `check` that reports feasibility without converting, and the conversion as its `execute`. A conversion is rarely unique, so each carries a **fidelity** on the shared scale of II.7: `exact` for an equivalent representation, `approximate` where something is lost — moment matching, which preserves only low-order moments, is the common case — and `sample` for a Monte Carlo stand-in. Priority remains the registry's sole selection order, with converter priorities assigned from the fidelity tiers, `EXACT` in the exact tier and the inexact fidelities in descending bands below it, so higher fidelity is preferred through the existing mechanism rather than a second ordering. A caller can name a converter or set `min_fidelity`, a feasibility floor `check` enforces.
+A converter declares the source types it converts *from* and the target types it converts *to* in the binary method's two slots. A conversion is rarely unique, so each carries a **fidelity** on the shared scale of II.7: `exact` for an equivalent representation, `approximate` where something is lost — moment matching, which preserves only low-order moments, is the common case — and `sample` for a Monte Carlo stand-in. A caller may set `min_fidelity`, a feasibility floor `check` enforces.
 
 ```python
 @dataclass(frozen=True)
@@ -710,7 +710,7 @@ class ConversionInfo(MethodInfo):   # the feasibility probe's result; fidelity c
     ...
 
 class Converter(BinaryDispatchMethod):
-    name: str                            # unique within the registry; convert(..., method=name) selects it
+    name: str
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (source, target) types
     def check(self, source, target_type: type, *,
               min_fidelity: Fidelity | None = None) -> ConversionInfo: ...
