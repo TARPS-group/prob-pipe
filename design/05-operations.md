@@ -10,20 +10,24 @@ Parts II–IV fixed the *shared abstractions*, the *values and distributions*, a
 
 An **operation** is a `Function` that declares three things and is realized by a fourth:
 
-1. its **operand roles**: which arguments are the mathematical inputs, and the kind each expects;
+1. its **operand roles**: which parameters are the mathematical inputs, and the kinds each accepts, named by spec class because an operation is generic over a kind, so that `mean` takes any distribution whatever its event;
 2. its **applicability conditions**: what makes a call well-formed at the level of declarations;
-3. a **result rule**: computing the result's complete spec before anything runs;
+3. a **result rule**: computing the result's complete spec before anything runs, from the operands' actual specs and from any parameter that selects rather than supplies, such as `marginal`'s field path;
 
-and it is realized either by registered **routes** or, for a *derived* operation, by an identity defined in terms of those other operations.
+and it is realized either by registered **routes** or, for a *derived* operation, by an identity defined in terms of other operations.
 
-**The four laws.**
+**The call sequence.** Every call runs the steps below in order, and a failure ends the call at its step. Two failures are named, since a caller can act on them: `ApplicabilityError`, for a call malformed at the level of declarations, and `ResolutionError`, for a well-formed call that no route can realize. `op.check(...)` runs steps 1 to 6 without executing and reports what it found: which routes are feasible, what each infeasible route is missing, and which would be selected. It is the registry `check` (II.7) at the operation.
 
-- **Planning.** The result declaration is computed before any route runs. Its inputs are exactly what is static under compilation: operand specs and structure, declared capabilities, which paths an argument supplied, and the control values, and never traced array data. A result declaration is therefore `jit`-safe by construction and cannot depend on what the computation produces. The executed result must satisfy the declaration it was planned against.
-- **Resolution.** After applicability validation, a call succeeds when at least one route is **feasible**. Routes rank by fidelity, then specificity, then registration order, and the selected route records its name and fidelity in the result's provenance.
-- **Boundary.** `op(...)` returns a tracked term under fresh, derived identity, fully specified: its spec is the planned declaration, its `provenance` records the operation, its parent descriptors, and the selected route, and its name is auto-derived. Every result is tracked, a numeric summary included — a density returns as a `NumericArray`. `op(..., raw=True)` **is** that result detached (II.4), computed without constructing the identity it would discard.
-- **Lifting.** Substituting a `Distribution` or a `Batch` for a value operand lifts through the Part IV engine — the pushforward for a distribution, the elementwise sweep for a batch, co-sampling by root ancestor for several at once.
+1. **Bind.** The arguments bind to the operation's signature. The controls are read from their own namespace (IV.4), and they are the same for every operation, supplied by the framework rather than by its author: `raw`, `method` for route selection, the PRNG `key`, and the sampling controls a Monte Carlo route consumes. *Requires:* every argument binds to a parameter, and every control is one the framework defines. *On failure:* a binding error naming the parameter.
+2. **Admit.** Each operand is normalized to a tracked term: a tracked term as it is, a raw host wrapped into its kind (IV.2), and a backend object converted through its registered converter (III.14). Every kind's term is a `TrackedTerm`, so a bare object is refused here whatever methods it carries. *Requires:* the term's spec class is a kind the role accepts, or the term is a `Distribution` or a `Batch` over such a kind, which step 3 lifts. *On failure:* `ApplicabilityError`, naming the role, the kinds it accepts, and what arrived.
+3. **Lift.** Where a role holds a `Distribution` or a `Batch` over the kind it accepts, the engine (IV.2) applies the remaining steps per draw or per element, co-sampling by root ancestor, and assembles the results into an empirical distribution or a batch; the rule that realizes the lift is selected through the evaluation registry (V.1). *Requires:* a lifted distribution samples, and a batch's elements support the operation. *On failure:* the `ResolutionError` a single application would raise (V.10).
+4. **Validate applicability.** The operation's declared conditions are checked against specs, structure, and control values alone, for example that `evaluate`'s operand conforms to the map's input or that `sample`'s declaration is concrete. *Requires:* each condition holds. *On failure:* `ApplicabilityError`, naming the condition.
+5. **Plan.** The result rule computes the result declaration from what is static under compilation: operand specs and structure, declared capabilities, which paths an argument supplied, and the control values, and never traced array data. The declaration is therefore `jit`-safe and cannot depend on what the computation produces. *Requires:* the rule yields a complete spec, its symbolic dimensions bound by unification (II.1). *On failure:* `ApplicabilityError`, naming the dimensions in conflict or left free.
+6. **Resolve.** Each route's `check(call, result)` runs on the declarations. A capability route is feasible when its named operand satisfies its protocol, and protocol membership is the whole test, since step 2 settled the kind; a structural route when the declared structure supports it; a registry route when its registry's own check finds a method; a fallback route on its stated domain. Feasible routes rank by fidelity, then specificity, then registration order, with no within-tier priority at the operation, and `method=` names one outright. *Requires:* a feasible route, or the named one. *On failure:* `ResolutionError`, naming each route and what it was missing.
+7. **Execute.** The selected route's `execute(call, result)` runs over the operands' raw types and is the only step that reads values. An implementation tests nothing about its operand, since the sequence has established a tracked term of the role's kind that satisfies the protocol the route named. *Requires:* the route completes. *On failure:* the route's own error propagates, as for any numerical method.
+8. **Return.** The result crosses the kind-directed wrap (IV.2), where a tracked term keeps its kind under the operation's fresh identity, a raw host wraps into its own kind, and a backend distribution converts through its converter (III.14). It is coerced to the planned declaration and validated against it, and it receives identity: an auto-derived name, and a `provenance` recording the operation, its parent descriptors, the selected route with its fidelity, and the resolved controls, the key included. Every result is tracked, a numeric summary included, so a density returns as a `NumericArray`. With `raw=True` the identity is not constructed and the result returns detached (II.4). *Requires:* the result satisfies the planned declaration. *On failure:* a wrong kind and a schema mismatch raise distinct errors, and either is a route defect rather than a caller error.
 
-**Routes.** A route is one way to realize an operation. A route has the interface of a dispatch method (II.7), that is, `check`, `execute`, and a **fidelity**, but is bound to a call rather than to argument types. Routes come from four sources, and an operation may carry any combination:
+**Routes.** A route is one way to realize an operation. It has the interface of a dispatch method (II.7), that is, `check`, `execute`, and a **fidelity**, but is bound to a call rather than to argument types, and it is registered against the operation it realizes by upward registration, as for any registry. Routes come from four sources, and an operation may carry any combination:
 
 | route source | the implementation comes from | example |
 |---|---|---|
@@ -32,31 +36,7 @@ and it is realized either by registered **routes** or, for a *derived* operation
 | **registry** | a registered method selected by dispatch | the inference methods behind Bayes' rule; the evaluation rules behind `evaluate` |
 | **fallback** | a generic scheme applicable to a stated domain | Monte Carlo through a sampling operand |
 
-Where a route dispatches on a capability it names the operand it dispatches on, so an operation needs no single distinguished subject: `joint` has two peer operands, and `evaluate` resolves on the map and the operand together.
-
-**Failure modes.** A malformed call fails **applicability**, before planning. A call that is well-formed and mathematically meaningful but that no registered route can realize fails **resolution**, naming the requirements each route was missing. A resolved call may still fail in **execution**, as any numerical method may.
-
-**Checking feasible routes.** `op.check(...)` runs applicability and route feasibility for a bound call and reports what would happen: which routes are available, which are not and what each is missing, and which would be selected. It is the registry `check` (II.7) at the operation.
-
-**Primitive versus derived operations.** A **primitive** operation states its own contract and carries its own routes. A **derived** operation is instead defined by an identity over other operations; `mixture`, for example, is the detached `marginal` of a composed joint. That identity is what the operation *means*, so its result rule, feasibility, and failure modes follow from the operations it is defined by. The identity is itself a route, the one always available, and a derived operation may carry routes that realize it **directly** besides: a Gaussian mixture computed in closed form need not compose and then marginalize. Direct routes rank above the identity by fidelity and specificity in the usual way, and the identity is the floor (IV.2), as the sampling lift is under `evaluate`. Either way the operation adds its own outer provenance record, and the selected route records which path ran.
-
-**Operand roles are declared by kind, not by spec.** An operation's operands are named and typed, but not by an `InputSpec` (II.2), which maps names to *concrete* term specs. An operation is generic over a kind: `mean` takes any distribution whatever its event, and `DistributionSpec` cannot express that, since it carries an event declaration of its own. Some authored parameters are not terms at all, for example `marginal`'s field path or `joint`'s alignment mapping, and a declaration that types terms has nothing to say about them. So an operand role declares the kind it accepts, named by the spec *class*, since a spec's class fixes a term's kind and needs no event declaration of its own, together with what a route will require of it. The concrete typing happens per call, when the result rule reads the operands' actual specs. That is why planning is a rule rather than a stored declaration.
-
-**Declaring an operation.** An operation is created using the `@operation` decorator, which takes the result rule and registers the operation. The decorated function's parameters are its operands and declaration inputs; the controls are implemented universally by the framework. A primitive operation's body is empty; a derived operation's body is its identity.
-
-```python
-def _mean_result(d: DistributionSpec) -> TermSpec: ...
-# planning reads the operands' specs and the declaration inputs, and nothing traced (above)
-
-@operation(result=_mean_result)
-def mean(d: Distribution): ...              # primitive: no body; the registered routes implement it
-
-@operation(result=_mixture_result)
-def mixture(K: ConditionalDistribution, mixing: Distribution):
-    return marginal(K * mixing, ...)        # derived: the body is the identity, its floor route
-```
-
-**Registering routes.** A route is registered against the operation it realizes, by upward registration as for any registry (II.7). The split between a call's `specs` and its `operands` is what keeps feasibility cheap and planning static: `check` decides from the declarations alone, so it neither computes nor reads a traced value, while `execute` is the only side that reads the operands themselves.
+Where a route dispatches on a capability it names the operand it dispatches on, so an operation needs no single distinguished subject: `joint` has two peer operands, and `evaluate` resolves on the map and the operand together. The split between a call's `specs` and its `operands` is what keeps feasibility cheap and planning static, since `check` reads the declarations alone.
 
 ```python
 @dataclass(frozen=True)
@@ -85,18 +65,25 @@ condition_on.registry_route("bayes", registry=inference_method_registry)
 
 A registry route delegates selection to a registry of II.7, so the inference methods and the evaluation rules keep their own priorities and feasibility probes rather than having them restated here.
 
-**How a call resolves.** Every call runs the same steps, and each is a contract stated above: bind and normalize the arguments; validate applicability; plan the result declaration; collect the feasible routes by calling each `check`; select one; execute it; and cross the wrap boundary. Selection follows the shared order (II.7) without a within-tier priority, so routes rank by fidelity, then specificity, then registration order; `method=` names a route outright.
+**Primitive versus derived operations.** A **primitive** operation states its own contract and carries its own routes. A **derived** operation is instead defined by an identity over other operations; `mixture`, for example, is the detached `marginal` of a composed joint. That identity is what the operation *means*, so its result rule, feasibility, and failure modes follow from the operations it is defined by. The identity is itself a route, the one always available, and a derived operation may carry routes that realize it **directly** besides: a Gaussian mixture computed in closed form need not compose and then marginalize. Direct routes rank above the identity by fidelity and specificity in the usual way, and the identity is the floor (IV.2), as the sampling lift is under `evaluate`. Either way the operation adds its own outer provenance record, and the selected route records which path ran.
 
-**What a caller writes, and what the framework adds.** An operation's authored parameters are its operands together with anything the result rule reads, for example `sample_shape` or an alignment mapping. Its **controls** are the same for every operation and are supplied by the framework rather than by each author: `raw`, `method` for route selection, the PRNG `key`, and the sampling controls a Monte Carlo route consumes. The rule is one line: **a parameter is authored exactly when the result rule reads it; everything else is a control.**
+**Declaring an operation.** An operation is created with the `@operation` decorator, which takes the result rule and registers the operation. The decorated function's parameters are its operands together with anything the result rule reads, for example `sample_shape` or an alignment mapping; the controls are never authored (step 1), so **a parameter is authored exactly when the result rule reads it, and everything else is a control**. A primitive operation's body is empty, and a derived operation's body is its identity. For a `ConditionalDistribution` operand the framework also adds `given=` as the fused conditional path of III.9, which planning reads.
 
-**The wrap boundary.** The result crosses the kind-directed wrap of IV.2, where a tracked term keeps its kind under the operation's fresh identity, a raw host wraps into its own kind, and a backend distribution converts through its converter (III.14). Two rules are the operation's own:
+```python
+def _mean_result(d: DistributionSpec) -> TermSpec: ...
+# planning reads the operands' specs and the declaration inputs, and nothing traced (step 5)
 
-- *The planned declaration is enforced.* The result is coerced to the declaration planning computed and validated against it; a wrong kind and a schema mismatch raise distinct errors.
-- A `ConditionalDistribution` adds the `given=` fused paths over its `_conditional_*` methods.
+@operation(result=_mean_result)
+def mean(d: Distribution): ...              # primitive: no body; the registered routes implement it
+
+@operation(result=_mixture_result)
+def mixture(K: ConditionalDistribution, mixing: Distribution):
+    return marginal(K * mixing, ...)        # derived: the body is the identity, its floor route
+```
 
 **Four raw mechanisms, one meaning.** *Raw* always means the representation layer, detached from the workflow; the mechanisms differ only in where they act. Route implementations are *written* over raw types (`T`); `apply` (III.3) *evaluates* a wrapped callable with no lifting, tracking, or provenance; `raw=True` *skips* the identity an operation would mint; and `raw()` (II.4) *detaches* an existing term.
 
-**Randomness.** An operation's PRNG `key` is a control under the key rule of IV.3, caller-owned when supplied and a workflow-owned random event when omitted, whether the operation's contract is a random draw or a deterministic quantity whose resolved route samples. The resolved key is recorded in `provenance`.
+**Randomness.** An operation's PRNG `key` is a control under the key rule of IV.3, caller-owned when supplied and a workflow-owned random event when omitted, whether the operation's contract is a random draw or a deterministic quantity whose resolved route samples.
 
 **Listing the operations and their routes.** The operations are themselves a registry, so the vocabulary is discoverable the way every other extensible set in the library is (II.7). `operation_registry.list()` returns one summary per operation, covering each operand with the kinds it accepts, whether the operation is primitive or derived, and each route with its source, fidelity, and requirement; `describe()` renders the same content as text, for one operation or for all of them. The registry satisfies `SupportsRegistryCataloging`, so it appears in the catalog beside the other registries, and a user asking what ProbPipe can do has one place to look.
 
@@ -141,7 +128,7 @@ operation_registry: OperationRegistry     # the global instance
 
 ### Rationale
 
-Defining an operation by its operands, a result rule, and a set of routes is what keeps the vocabulary closed: adding an operation cannot add a mechanism, and adding an *implementation* is registering a route rather than amending a contract (`D2 – Generality first`). Separating what a call means from how it is realized makes totality a property of the routes available at call time rather than of the operation, so one rule says when a call can fail instead of per-operation exceptions. Planning the declaration before execution, from what is static under compilation, is `D5 – Explicit, carried structure` made checkable: the result's structure is known before the work starts and verified after it. Capability dispatch remains `D3 – Capability-based operations`, now as one route source among four rather than as the definition of an operation. Deriving the control block rather than authoring it per operation is `C1 – Uniform interface to functions, distributions, and values` at the operation layer: `raw` and `method` mean the same thing everywhere because no author writes them. Defining a derived operation by an identity gives its behavior a single definition (`D6 – Single source of truth`), and that every operation returns another tracked term is `D4 – Closed system of objects under operations`. The laws restate the boundary principles at the operation layer: binding and normalizing is `B1 – Either presentation in`, a route written over `T` is `B2 – Representations only inside`, and the boundary law is `B3 – Tracked forms out by default`; planning and lifting are what an operation promises beyond them.
+Defining an operation by its operands, a result rule, and a set of routes is what keeps the vocabulary closed: adding an operation cannot add a mechanism, and adding an *implementation* is registering a route rather than amending a contract (`D2 – Generality first`). Separating what a call means from how it is realized makes totality a property of the routes available at call time rather than of the operation, so one rule says when a call can fail instead of per-operation exceptions. Planning the declaration before execution, from what is static under compilation, is `D5 – Explicit, carried structure` made checkable: the result's structure is known before the work starts and verified after it. Capability dispatch remains `D3 – Capability-based operations`, now as one route source among four rather than as the definition of an operation. Deriving the control block rather than authoring it per operation is `C1 – Uniform interface to functions, distributions, and values` at the operation layer: `raw` and `method` mean the same thing everywhere because no author writes them. Defining a derived operation by an identity gives its behavior a single definition (`D6 – Single source of truth`), and that every operation returns another tracked term is `D4 – Closed system of objects under operations`. The sequence restates the boundary principles at the operation layer: admission is `B1 – Either presentation in`, execution over `T` is `B2 – Representations only inside`, and the return step is `B3 – Tracked forms out by default`; planning and lifting are what an operation promises beyond them.
 
 ## V.1 — `evaluate`
 
@@ -308,7 +295,7 @@ Every operation lifts to a `Batch` by mapping over its elements, which is the el
 - **Alignment.** A binary operation matches the operands' levels **by name**: a level in both must have broadcast-compatible shapes, with size-1 broadcasting; a level in only one operand broadcasts across the other; and an outer product is requested by explicit reshaping rather than implied. Because every level is named, there is no positional fallback, and two levels meant to correspond under different names are lined up by renaming one with `with_level_names` first, exactly as `joint` realigns fields for composition. So a flat batch of values on a `laws` level scores against the `laws` level of a nested sampling result. `given=` accepts a `RecordBatch` and yields the `DistributionBatch` of conditioned laws.
 - Two operands are exempt from batch lifting: the factors of composition (`*` and `joint`) and the map operand of `evaluate`, which are consumed as objects rather than swept.
 - Batched application resolves through the evaluation-rule registry (V.1).
-- An operation applied to a batch whose elements lack the required capability raises the same capability error a single element would.
+- An operation applied to a batch whose elements lack the required capability raises the `ResolutionError` a single element would.
 
 ### Rationale
 

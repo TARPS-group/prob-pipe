@@ -80,7 +80,8 @@ probpipe/
 │   └── _result.py             #   output wrapping, identity, provenance (IV.1, V.0)
 ├── operations/                # Part V — the operations
 │   ├── _operation.py          #   the @operation decorator, OperationRoute and its four
-│   │                          #     helpers, resolution, and the operation registry (V.0)
+│   │                          #     helpers, the call sequence with ApplicabilityError and
+│   │                          #     ResolutionError, and the operation registry (V.0)
 │   ├── _evaluate.py           #   evaluate and its rule registry (V.1)
 │   ├── _inverse.py            #   inverse, log_det_jacobian (V.2)
 │   ├── _sample.py             #   sample (V.3)
