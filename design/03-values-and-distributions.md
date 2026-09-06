@@ -45,7 +45,7 @@ The full set of array operators is safe here and only here: with no fields, an e
 
 ### Contract
 
-`Opaque` adds identity and nothing else: no attribute forwarding, no `__call__`, and `raw` as the one explicit accessor for the wrapped value. `OpaqueSpec` is the fallback spec, admitting any non-mapping value:
+`Opaque` adds identity and nothing else, and its `raw()` is the wrapped value. `OpaqueSpec` is the fallback spec, admitting any non-mapping value:
 
 ```python
 class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts any non-mapping value
@@ -62,7 +62,7 @@ The kind exists so that closure under operations holds for every return value (`
 
 ### Contract
 
-The function kind's base type is `Function`. A `Function` is a tracked term that wraps exactly one Python callable as its representation and carries a `FunctionSpec`, whose sides it exposes as the `input_spec` and `output_spec` views; either side is optional, as in the spec. A `Function` also carries a frozen `inspect.Signature`, which is authoritative for Python argument binding, since parameter kinds, defaults, and variadic parameters are not expressible in a value schema; the `input_spec` is authoritative for the value schema. Construction validates their one-for-one correspondence, so binding an argument binds a slot by name. The wrapped callable and its state stay private: no attribute forwarding, and no backend object escapes through an operation.
+The function kind's base type is `Function`. A `Function` is a tracked term that wraps exactly one Python callable as its representation and carries a `FunctionSpec`, whose sides it exposes as the `input_spec` and `output_spec` views; either side is optional, as in the spec. A `Function` also carries a frozen `inspect.Signature`, which is authoritative for Python argument binding, since parameter kinds, defaults, and variadic parameters are not expressible in a value schema; the `input_spec` is authoritative for the value schema. Construction validates their one-for-one correspondence, so binding an argument binds a slot by name. Its `raw()` is the wrapped callable.
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call path**, which is the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import. The base also carries its **controls** (IV.4), set at construction and revised functionally by `with_options`; it gives them no meaning, and the engine reads them at call time.
 

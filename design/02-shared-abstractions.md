@@ -179,7 +179,7 @@ class BatchSpec(TermSpec):         # the batch kind's spec; is_valid accepts a m
 
 Construction checks every element against `element_spec` and reports the position that failed, since the batch asserts that spec of all of them.
 
-**`[]` dispatch.** A key is either a **position** or a **name**; the two namespaces never collide, since an axis has no name and a field no position. A position is an integer, a slice, or a tuple of those, and it addresses the batch axes, which `Batch` itself handles. A name is a string, or a tuple of strings for a path, and it addresses a field within every element; it applies only to a batch whose elements have fields. A tuple mixing the two is invalid.
+**`[]` dispatch.** A key is either a **position** or a **name**; the two namespaces never collide, since an axis has no name and a field no position. A position is an integer, a slice, or a tuple of those, and it addresses the batch axes, which `Batch` itself handles. A name is a string, or a tuple of strings for a path, and it addresses a field within every element; it applies only to a batch whose elements have fields. A name returns the field's column as a view (II.4): a batch that keeps its container's levels, takes the field's spec in the element schema as its `element_spec`, and is named from the field key. A tuple mixing the two is invalid.
 
 ```python
 class Batch[E](TrackedTerm):
