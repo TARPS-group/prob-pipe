@@ -45,10 +45,10 @@ The full set of array operators is safe here and only here: with no fields, an e
 
 ### Contract
 
-`Opaque` adds identity and nothing else, and its `raw()` is the wrapped value. `OpaqueSpec` is the fallback spec, admitting any non-mapping value:
+`Opaque` adds identity and nothing else, and its `raw()` is the wrapped value. `OpaqueSpec` is the fallback spec: it admits a value that no other kind admits, so a collection such as a list, a tuple, or a set is opaque:
 
 ```python
-class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts any non-mapping value
+class OpaqueSpec(TermSpec):        # the fallback spec; is_valid accepts a value no other kind's spec class admits
     meta: Hashable
 ```
 
