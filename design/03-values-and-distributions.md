@@ -66,7 +66,7 @@ The function kind's base type is `Function`. A `Function` is a tracked term that
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call path**, which is the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import. The base also carries its **controls** (IV.4), set at construction and revised functionally by `with_options`; it gives them no meaning, and the engine reads them at call time.
 
-A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path. Three capability protocols accompany the base: `SupportsDifferentiation`, whose contract is given with the engine's differentiability claims in IV.1, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.15. All are claims declared at construction and checked by protocol membership, except that a claim with an instance guard is read through its predicate — `is_differentiable`, `is_invertible`. The base is the tracked *wrapper*, not a restriction on what may be wrapped. `FunctionSpec`, which is the function kind's term spec, admits any callable, so a `Function` is one such callable rather than the required type, and a `FunctionBatch` holds a collection of them. Its two sides are the declarations of II.2, and either may be omitted, so a bare `FunctionSpec()` describes any callable. Validity is callability alone: the sides document the schema, which is enforced at the call boundary rather than by `is_valid`.
+A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path. Three capability protocols accompany the base: `SupportsDifferentiation`, whose contract is given in IV.6, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.15. All are claims declared at construction and checked by protocol membership, except that a claim with an instance guard is read through its predicate — `is_differentiable`, `is_invertible`. The base is the tracked *wrapper*, not a restriction on what may be wrapped. `FunctionSpec`, which is the function kind's term spec, admits any callable, so a `Function` is one such callable rather than the required type, and a `FunctionBatch` holds a collection of them. Its two sides are the declarations of II.2, and either may be omitted, so a bare `FunctionSpec()` describes any callable. Validity is callability alone: the sides document the schema, which is enforced at the call boundary rather than by `is_valid`.
 
 ```python
 class FunctionSpec(TermSpec):      # the function kind's spec; is_valid accepts any callable
@@ -80,7 +80,7 @@ class Function(TrackedTerm):
                  input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
                  output_spec: OutputSpec | TermSpec | None = None,
                  differentiable: NumericSpec = ...) -> None: ...
-                 # optional differentiability claim; its contract is the engine's (IV.1)
+                 # optional differentiability claim (IV.6)
     @property
     def spec(self) -> FunctionSpec: ...
     @property

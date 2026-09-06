@@ -1,8 +1,8 @@
 # Part IV — Functions
 
-A **`Function`** (III.3) wraps an ordinary Python callable. This part describes its **engine**: the call semantics beyond plain evaluation, installed on the base at import, which lift the callable into ProbPipe's world of distributions and values. The user writes a plain function over its "natural" values, and wrapping it makes that callable (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. The operations of Part V are themselves `Function`s, which is why this part comes first: `sample`, `log_prob`, and `condition_on` inherit the lifting, tracking, randomness, dispatch, and orchestration defined here. `Function`s compose into a *workflow*.
+A **`Function`** (III.3) wraps an ordinary Python callable. This part describes its **engine**: the call semantics beyond plain evaluation, installed on the base at import, which lift the callable ProbPipe-native. The user writes a plain function over its "natural" values, and wrapping it makes that callable (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. `Function`s compose into a *workflow*.
 
-Wrapping a callable `f` as a `Function` adds five features, each defined in a section below:
+Wrapping a callable `f` as a `Function` adds six features, each defined in a section below:
 
 | §     | Concern                  | What it adds to `f`                                                                                                                                                                                     |
 | ----- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -11,6 +11,7 @@ Wrapping a callable `f` as a `Function` adds five features, each defined in a se
 | IV.3  | randomness               | every ProbPipe-caused draw takes a key derived structurally from a workflow scope, so results are reproducible, order-independent, and parallel-safe.                                                    |
 | IV.4  | controls vs. arguments   | ProbPipe controls (sample count, dispatch, …) are kept in a namespace separate from that of the arguments to `f`.                                                                                            |
 | IV.5  | dispatch & orchestration | *how* the per-draw calls run computationally and *whether* they are traced for lineage.                                                                                                                 |
+| IV.6  | differentiability        | a construction-time claim of which inputs gradients propagate through, read by the operations that need gradients before a backend trace runs. |
 
 ## IV.1 — `Function`
 
@@ -26,24 +27,6 @@ def predict(theta, x): ...                    # an ordinary callable over concre
 def predict(theta, x): ...
 ```
 
-Construction may also declare claims. The decorator's `differentiable` argument declares which inputs gradients propagate through: a non-empty `NumericSpec` covering exactly those values, which are array-native with no gradient-breaking operations. Omitting the argument makes no claim, and there is no shorthand for claiming every input, so a claim never widens as the function changes. The constructed `Function` then carries `SupportsDifferentiation` with that schema, read through `is_differentiable` wherever gradients are required. Like the declared sides, the declaration is fixed at construction: a claim, not a control.
-
-```python
-@runtime_checkable
-class SupportsDifferentiation(Protocol):
-    @property
-    def differentiable_template(self) -> NumericSpec: ...
-    # exactly the values gradients propagate through: a sub-schema of the numeric
-    # input slots (maps) or of the numeric event schema (distributions)
-
-def is_differentiable(x: Any, values: NamedTree | None = None) -> bool: ...
-# True when every value named in `values` lies in x's differentiable template;
-# with no `values`, when the template covers every numeric value. False when x
-# does not declare the capability.
-```
-
-The capability is cross-kind: the `differentiable_template` is a sub-schema of the numeric input slots for a map and of the numeric event schema for a distribution, so a linear operator claims its whole input schema and a distribution family claims the event values its sampling reparameterizes. The claim composes: a field view restricts its parent's schema to the viewed path, a joint assembles its factors' schemas under their field names, and a value is differentiable through a chain of steps exactly when every step claims it. An operation that needs gradients checks `is_differentiable` for the values it differentiates and names the first step that fails, before a backend trace runs; execution dispatch is a separate control, so `jax` vectorizes a call whether or not the object differentiates.
-
 A `Function` is a node in a directed graph: arguments that are themselves tracked terms become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse.
 
 **The engine.** The engine is one callable installed into the base's call path (III.3), once, at import. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance, so installing the engine never changes a result the base gives. Every call runs the sequence below in order, and a failure ends the call at its step. The sequence reads three declarations from the `Function` it runs: what each parameter **accepts**, the **result declaration**, and the **realization**. A `@function` accepts its declared input spec at each parameter and any value where a parameter is unannotated; its result declaration is the `output_spec` given at construction, bound per call by unification, or is read from the return when none was given; and it is realized by its body, with a lifted application realized by the rule the evaluation registry selects (V.1). An operation supplies richer declarations at the same three points (V.0). Two failures are named, since a caller can act on them: `ApplicabilityError`, for a call malformed at the level of declarations, and `ResolutionError` (II.7), for a well-formed call that no rule or route can realize. `f.check(...)` runs steps 1 to 5 without executing and reports what it found: which rules or routes are feasible, what each infeasible one is missing, and which would be selected.
@@ -58,11 +41,7 @@ A `Function` is a node in a directed graph: arguments that are themselves tracke
 
 ### Rationale
 
-This makes `C1 – Uniform interface to functions, distributions, and values` and `C4 – Function lifting` operational: a user writes mathematics as an ordinary, testable function, and ProbPipe lifts it to act on distributions and values without the function being rewritten. Making every `Function` a graph node delivers `C6 – Traceable and reproducible workflows`: each result records how it was produced, and a whole workflow can later be traced or re-run. Because the wrapper changes only invocation and tracking, the operations can be *defined* as `Function`s and inherit all of it. The sequence is the boundary principles made mechanical: admission is `B1 – Either presentation in`, execution over raw types is `B2 – Representations only inside`, and return is `B3 – Tracked forms out by default`; planning and the lift are what the engine promises beyond them. Stating the sequence once, in the engine, and letting an operation differ only in its declarations is `D6 – Single source of truth` for the call path, so a plain function and an operation fail at the same steps with the same errors. Differentiability as a declared claim is `D3 – Capability-based operations` applied to gradients: support is promised by the object and checked before a backend trace, never inferred from a value being numeric.
-
-### Open points
-
-- *Differentiability of sampling-based routes.* Whether a Monte Carlo fallback differentiates through its sampler's reparameterization is unsettled. So is the eventual `grad` operation the claims feed, with registered routes: a custom gradient method where an object supplies one, the automatic-differentiation route gated by the declared template, and finite differences as the fallback at approximate fidelity. Both are left to a dedicated pass.
+This makes `C1 – Uniform interface to functions, distributions, and values` and `C4 – Function lifting` operational: a user writes mathematics as an ordinary, testable function, and ProbPipe lifts it to act on distributions and values without the function being rewritten. Making every `Function` a graph node delivers `C6 – Traceable and reproducible workflows`: each result records how it was produced, and a whole workflow can later be traced or re-run. Because the wrapper changes only invocation and tracking, the operations can be *defined* as `Function`s and inherit all of it. The sequence is the boundary principles made mechanical: admission is `B1 – Either presentation in`, execution over raw types is `B2 – Representations only inside`, and return is `B3 – Tracked forms out by default`; planning and the lift are what the engine promises beyond them. Stating the sequence once, in the engine, and letting an operation differ only in its declarations is `D6 – Single source of truth` for the call path, so a plain function and an operation fail at the same steps with the same errors.
 
 ## IV.2 — Lifting over distributions and batches
 
@@ -189,3 +168,33 @@ Dispatch and orchestration are `C3 – Computational detail hidden by default, a
 ### Open points
 
 - *Non-array backends.* Lifting and dispatch are array-native, built for a differentiable array backend. First-class support for other tensor frameworks, for example a Torch model as the wrapped function with conversion at the boundary, is not yet settled, though it should be feasible through Keras.
+
+## IV.6 — Differentiability claims
+
+### Contract
+
+The decorator's `differentiable` argument declares which inputs gradients propagate through: a non-empty `NumericSpec` covering exactly those values, which are array-native with no gradient-breaking operations. Omitting the argument makes no claim, and there is no shorthand for claiming every input, so a claim never widens as the function changes. The constructed `Function` then carries `SupportsDifferentiation` with that schema, read through `is_differentiable` wherever gradients are required. Like the declared sides, the declaration is fixed at construction: a claim, not a control.
+
+```python
+@runtime_checkable
+class SupportsDifferentiation(Protocol):
+    @property
+    def differentiable_template(self) -> NumericSpec: ...
+    # exactly the values gradients propagate through: a sub-schema of the numeric
+    # input slots (maps) or of the numeric event schema (distributions)
+
+def is_differentiable(x: Any, values: NamedTree | None = None) -> bool: ...
+# True when every value named in `values` lies in x's differentiable template;
+# with no `values`, when the template covers every numeric value. False when x
+# does not declare the capability.
+```
+
+The capability is cross-kind: the `differentiable_template` is a sub-schema of the numeric input slots for a map and of the numeric event schema for a distribution, so a linear operator claims its whole input schema and a distribution family claims the event values its sampling reparameterizes. The claim composes: a field view restricts its parent's schema to the viewed path, a joint assembles its factors' schemas under their field names, and a value is differentiable through a chain of steps exactly when every step claims it. An operation that needs gradients checks `is_differentiable` for the values it differentiates and names the first step that fails, before a backend trace runs; execution dispatch is a separate control, so `jax` vectorizes a call whether or not the object differentiates.
+
+### Rationale
+
+Differentiability as a declared claim is `D3 – Capability-based operations` applied to gradients: support is promised by the object and checked before a backend trace, never inferred from a value being numeric.
+
+### Open points
+
+- *Differentiability of sampling-based routes.* Whether a Monte Carlo fallback differentiates through its sampler's reparameterization is unsettled. So is the eventual `grad` operation the claims feed, with registered routes: a custom gradient method where an object supplies one, the automatic-differentiation route gated by the declared template, and finite differences as the fallback at approximate fidelity. Both are left to a dedicated pass.
