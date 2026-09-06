@@ -40,7 +40,7 @@ One adapter with thin family constructors keeps the backend a computational deta
 
 An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
 
-Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap (an empirical source, resampled) and the parametric bootstrap (a fitted law, redrawn) in one interface, with `replicate_size` defaulting to the source's atom count when the source is empirical and required otherwise.
+Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap, where an empirical source is resampled, and the parametric bootstrap, where a fitted law is redrawn, in one interface; `replicate_size` defaults to the source's atom count when the source is empirical and is required otherwise.
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in `T`'s batch form.
 - A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure.
 
@@ -79,7 +79,7 @@ class KDEDistribution(Distribution[Array]):
 
 ### Rationale
 
-All four are genuine laws with exactly the capabilities they can provide (`D1 – Mathematical fidelity`), and the empirical family is the closure family for sampling-based operations (`D4 – Closed system of objects under operations`). Accepting any `SupportsSampling` source makes the parametric bootstrap the same object as the nonparametric one (`D2 – Generality first`).
+All four are genuine laws whose declared capabilities are those they can provide (`D1 – Mathematical fidelity`), and the empirical family is the closure family for sampling-based operations (`D4 – Closed system of objects under operations`). Accepting any `SupportsSampling` source makes the parametric bootstrap the same object as the nonparametric one (`D2 – Generality first`).
 
 ### Open points
 
@@ -105,7 +105,7 @@ A mixture supports an operation exactly when its components do, the same interse
 
 ### Contract
 
-Each evaluation rule returns a family from this catalog. A closed-form rule returns a parametric result, the linear-Gaussian case being a member of the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, the lazy representation of `A @ d` when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws.
+Each evaluation rule returns a family from this catalog. A closed-form rule returns a parametric result, the linear-Gaussian case being a member of the Gaussian algebra. The generic linear rule returns a `LinearPushforwardDistribution`, which represents `A @ d` lazily when no family-specific rule applies. The change-of-variables rule returns a `BijectorTransformedDistribution`. The sampling fallback returns an `EmpiricalDistribution` over the pushed draws.
 
 ```python
 class LinearPushforwardDistribution(Distribution):
@@ -146,13 +146,13 @@ class RandomMeasure[T](Distribution[Distribution[T]]):
 
 ### Rationale
 
-Both are ordinary distributions over nonstandard event types, claiming exactly the moments those types support (`D1 – Mathematical fidelity`, `D3 – Capability-based operations`).
+Both are ordinary distributions over nonstandard event types, claiming only the moments those types support (`D1 – Mathematical fidelity`, `D3 – Capability-based operations`).
 
 ## VI.6 — The Gaussian algebra
 
 ### Contract
 
-Three families form a closed algebra built on `LinOp`. A `MultivariateNormal`, from the parametric families, is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp`, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the random-function member: a `RandomFunction` whose finite-dimensional laws are Gaussian. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and an exact conversion to `MultivariateNormal` over the flat event is registered with the converter registry.
+Three families form a closed algebra built on `LinOp`. A `MultivariateNormal` from the parametric families is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp`, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the random-function member: a `RandomFunction` whose finite-dimensional laws are Gaussian. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and an exact conversion to `MultivariateNormal` over the flat event is registered with the converter registry.
 
 The algebra is closed under the operations: an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact. A composition of Gaussian pieces built before its dimensions are bound is an ordinary factored object holding its covariances as recipes; once binding makes the `LinOp` covariances constructible, refinement re-derives the most-specific class and the object joins the algebra as a `FactoredMultivariateGaussian`.
 
@@ -160,7 +160,7 @@ The algebra is closed under the operations: an affine pushforward of any member 
 class FactoredMultivariateGaussian(FactoredNumericDistribution): ...   # derived by `*` / `joint`, never constructed
 ```
 
-**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction`, the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
+**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, which is specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, which is `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction` as the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
 
 ```python
 class GaussianRandomFunction(RandomFunction[Array, Array], ABC):
@@ -188,7 +188,7 @@ Gaussian closure under affine maps, conditioning, and marginalization is a mathe
 
 ### Contract
 
-An inference result is an ordinary member of whichever family realizes it: a variational posterior is a parametric or bijector-transformed family, an MCMC or ABC posterior is empirical, and an amortized posterior is a learned conditional evaluated at the data. What the results share is a record: each carries `provenance` naming the method, the target, and the inputs, and each exposes exactly the capabilities its realizing family supports. Whether a result is exact or approximate, and relative to what, is read from that record.
+An inference result is an ordinary member of whichever family realizes it: a variational posterior is a parametric or bijector-transformed family, an MCMC or ABC posterior is empirical, and an amortized posterior is a learned conditional evaluated at the data. What the results share is a record: each carries `provenance` naming the method, the target, and the inputs, and each exposes the capabilities its realizing family supports. Whether a result is exact or approximate, and relative to what, is read from that record.
 
 ### Rationale
 
@@ -197,7 +197,7 @@ Approximation is a relation between a result and its target: a variational Gauss
 ### Open points
 
 - *Tagging approximate results.* `provenance` records how a result arose, and a lighter tag on top may be worth adding, either an `is_approximate` flag or a convention within `annotations`. Any such tag would span tracked terms generally, since conditional distributions and linear operators can be approximate too.
-- *Approximation error.* Capturing a result's approximation error (a bound, a diagnostic, a fitted estimate) has no generic representation yet. For now it is stored in `annotations`, keyed by the producing method.
+- *Approximation error.* Capturing a result's approximation error, for example a bound or a diagnostic, has no generic representation yet. For now it is stored in `annotations`, keyed by the producing method.
 
 ## VI.8 — Conditional families
 
@@ -206,7 +206,7 @@ Approximation is a relation between a result and its target: a variational Gauss
 The conditional members of the catalog are `ConditionalDistribution`s, each fixed by its (given, event) pair.
 
 - A **linear-Gaussian conditional distribution** is `s ↦ N(A @ s + b, Σ)` with `A` a `LinOp`. It is the conditional member of the Gaussian algebra: composed with a Gaussian prior it yields a `FactoredMultivariateGaussian`, and conditioning through it is exact.
-- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean, dispersion)` returns the law of conditionally independent observations, one per entry of `mean`, with `has_dispersion` declaring whether the family takes a dispersion parameter, such as a Gaussian scale. The likelihood's given slots are `X`, `β`, and the dispersion when the family has one, its event is the response vector, and its law is `family.build(link⁻¹(X @ β), dispersion)`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. `X` and the dispersion may instead be supplied to `glm_likelihood`, which fixes them at construction, exactly the exogenous curry of `condition_on` applied early. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
+- A **GLM likelihood** is assembled from a `GLMFamily`, a link, and the linear predictor. A `GLMFamily` is mean-parameterized: `build(name, mean, dispersion)` returns the law of conditionally independent observations, one per entry of `mean`, with `has_dispersion` declaring whether the family takes a dispersion parameter, such as a Gaussian scale. The likelihood's given slots are `X`, `β`, and the dispersion when the family has one, its event is the response vector, and its law is `family.build(link⁻¹(X @ β), dispersion)`, with the link defaulting to the family's canonical one: `GaussianFamily` with identity is linear regression, `BernoulliFamily` with logit is logistic regression, and `PoissonFamily` with log is Poisson regression. `X` and the dispersion may instead be supplied to `glm_likelihood`, which fixes them at construction as the exogenous curry of `condition_on` applied early. The pieces are the interface: changing the link or the family changes the likelihood without a new class.
 
 ```python
 class LinearGaussianConditional(ConditionalDistribution):
