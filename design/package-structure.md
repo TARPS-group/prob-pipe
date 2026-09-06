@@ -30,7 +30,7 @@ probpipe/
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.5)
 │   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.4)
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
-│   ├── _dispatch.py           #   dispatch methods and registries, Fidelity, MethodInfo (II.7)
+│   ├── _dispatch.py           #   dispatch methods and registries, Fidelity, MethodInfo, ResolutionError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
@@ -65,8 +65,8 @@ probpipe/
 │   └── _reparameterization.py #   bijector_for, register_bijector, is_invertible (III.15)
 ├── functions/                 # Part IV — Function and its engine
 │   ├── _function.py           #   the engine installed on Function at import; the wrapping decorator
-│   ├── _call.py               #   argument classification: the lifting trigger (IV.2)
-│   ├── _plan.py               #   broadcast planning, root-ancestor grouping (IV.2)
+│   ├── _call.py               #   binding and admission, the sequence's first two steps; ApplicabilityError (IV.1)
+│   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (IV.1, IV.2)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
 │   │                          #     populated upward by the families (V.1)
 │   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (IV.2)
@@ -77,11 +77,11 @@ probpipe/
 │   ├── _broker.py             #   managed work items: keys across threads, tasks, and flows (IV.3, IV.5)
 │   ├── _execution.py          #   jax / sequential / thread dispatch, the route contract (IV.5)
 │   ├── _orchestration.py      #   optional tracing (IV.5)
-│   └── _result.py             #   output wrapping, identity, provenance (IV.1, V.0)
+│   └── _result.py             #   declaration enforcement, kind-directed wrap, identity, provenance (IV.1)
 ├── operations/                # Part V — the operations
-│   ├── _operation.py          #   the @operation decorator, OperationRoute and its four
-│   │                          #     helpers, the call sequence with ApplicabilityError and
-│   │                          #     ResolutionError, and the operation registry (V.0)
+│   ├── _operation.py          #   the @operation decorator: roles, conditions, and result rule;
+│   │                          #     OperationRoute and its four helpers, route resolution, and the
+│   │                          #     operation registry (V.0)
 │   ├── _evaluate.py           #   evaluate and its rule registry (V.1)
 │   ├── _inverse.py            #   inverse, log_det_jacobian (V.2)
 │   ├── _sample.py             #   sample (V.3)
@@ -114,7 +114,7 @@ probpipe/
 - **`values/`** is the value layer of Part III, covering every leaf kind, `Function`'s base included (III.3); `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` is here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must be below the code that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Argument classification, planning and grouping, the sampling lift, the batch sweep, the workflow scopes and structural keys, replay and caching, execution dispatch, orchestration, and result wrapping are the stages of one call path, and they change together. It is above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Binding and admission, lift classification and planning, rule resolution, the sampling lift, the batch sweep, the workflow scopes and structural keys, replay and caching, execution dispatch, orchestration, and result wrapping are the steps of one call sequence (IV.1), and they change together. It is above `distributions/` because lifting samples distributions and materializes empirical results.
 - **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (V.1–V.9) above `_operation.py`, which holds V.0's decorator, route protocol, resolution, and registry. V.10's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry is defined with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** are outside the reference's parts: inference methods register into the V.6 registry, and diagnostics and validation are application layers over the public operations.
@@ -128,8 +128,9 @@ The main moves, for orientation; the target contracts above are authoritative.
 | Today | Target |
 |---|---|
 | `core/node.py` (`WorkflowFunction`, the decorator, `with_options`) | `functions/_function.py` |
-| `core/_workflow_call.py` | `functions/_call.py` |
+| `core/_workflow_call.py`, `core/_workflow_distribution_normalization.py` | `functions/_call.py` |
 | `core/_workflow_plan.py` | `functions/_plan.py` |
+| `core/_function_contract.py` | split: construction-time validation of the declared sides to `values/_function_base.py`; per-call binding and the result declaration to `functions/_plan.py`; output validation and declared wrapping to `functions/_result.py` |
 | `core/_workflow_distribution_broadcast.py` | `functions/_broadcast.py` |
 | `core/_workflow_sweep.py` | `functions/_sweep.py` |
 | `core/_workflow_rng.py` | `functions/_rng.py` |
@@ -137,7 +138,7 @@ The main moves, for orientation; the target contracts above are authoritative.
 | `core/_workflow_replay.py`, `core/_workflow_recipe.py` | `functions/_replay.py` |
 | `core/_workflow_broker.py`, `core/_workflow_managed.py` | `functions/_broker.py` |
 | `core/_workflow_execution.py`, `core/_workflow_execution_contract.py` | `functions/_execution.py` |
-| `core/_workflow_result.py`, `core/_workflow_distribution_normalization.py` | `functions/_result.py` |
+| `core/_workflow_result.py` | `functions/_result.py` |
 | `core/ops.py` | `operations/`, one module per operation section (V.1–V.9), plus `_operation.py` for the declaration, route, and registry code |
 | `core/distribution.py`, `core/_distribution_base.py` | `distributions/_distribution.py` |
 | `core/protocols.py` | `distributions/_capabilities.py` |

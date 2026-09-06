@@ -322,7 +322,7 @@ Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argume
 3. specificity, favoring the method whose declared types are closest to the argument's class in method-resolution order;
 4. registration order.
 
-A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime within a tier and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
+A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime within a tier and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing, and a named method that is infeasible raises the same. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
 
 ```python
 class Fidelity(Enum):     # how exact an answer is; totally ordered, EXACT the highest
@@ -352,6 +352,8 @@ class MethodInfo:
     method_name: str
     description: str
     fidelity:    Fidelity | None   # what this call would achieve; None when infeasible
+
+class ResolutionError(Exception): ...   # no feasible method, or a named method that is infeasible
 
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
