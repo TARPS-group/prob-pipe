@@ -8,15 +8,15 @@ Parts II–IV fixed the *shared abstractions*, the *values and distributions*, a
 
 ### Contract
 
-An **operation** is a `Function` whose declarations are richer than a `@function`'s at each of the three points the engine's call sequence reads them (IV.1):
+An **operation** is a `Function` with additional capabilities to provide a uniform interface over the function-level implementations: one call, `mean(d)`, whatever the kind of `d` and whichever implementation realizes it. Each capability answers one way in which the implementations differ, and the engine's call sequence reads each at a fixed step (IV.1):
 
-1. its **operand roles**: what each parameter accepts, stated as a kind named by spec class rather than as a concrete spec, since an operation is generic over a kind and `mean` takes any distribution whatever its event (step 2);
-2. its **applicability conditions** and **result rule**: what makes a call well-formed at the level of declarations, and how the result's complete spec is computed from the operands' specs and from any parameter that selects rather than supplies, such as `marginal`'s field path (step 4);
-3. its **routes**: how a call is realized, or, for a *derived* operation, an identity in terms of other operations (steps 5 and 6).
+1. **Operand roles.** The implementations differ in the kinds they handle, so a parameter cannot be typed by a concrete spec: `mean` takes any distribution whatever its event. A role names the kind a parameter accepts by spec class, and admission checks it (step 2).
+2. **Applicability conditions and a result rule.** The result depends on which operand arrived, so its declaration cannot be fixed at construction: the mean of a law is a value of the law's event kind. A result rule computes the result's complete spec per call from the operands' specs and from any parameter that selects rather than supplies, such as `marginal`'s field path, and the applicability conditions state what makes a call well-formed at the level of declarations before the rule runs (step 4).
+3. **Routes.** One interface fronts many implementations, so an operation is realized by a set of routes the engine selects among (steps 5 and 6), or, for a *derived* operation, by an identity in terms of other operations.
 
-The operation layer adds nothing at bind, classification, or return, so `op(...)` is a tracked term under fresh, derived identity whose spec is the planned declaration, `op(..., raw=True)` is that result detached, and `op.check(...)` is the engine's `check`. Admission (step 2) has established each operand as a tracked term of its role's kind, and resolution (step 5) has established the protocol a capability route names, so a route's `execute` tests nothing about its operands, and a capability route's `check` is protocol membership alone.
+Since the engine runs the sequence, `op(...)` is a tracked term under fresh, derived identity whose spec is the planned declaration, `op(..., raw=True)` is that result detached (II.4), and `op.check(...)` is the engine's `check`.
 
-**Routes.** A route is one way to realize an operation. It has the interface of a dispatch method (II.7), that is, `check`, `execute`, and a **fidelity**, but is bound to a call rather than to argument types, and it is registered against the operation it realizes by upward registration, as for any registry. Routes come from four sources, and an operation may carry any combination:
+**Routes.** The implementations behind one operation come from different places, and a route is the one interface that fronts them all. It has the interface of a dispatch method (II.7), that is, `check`, `execute`, and a **fidelity**, but is bound to a call rather than to argument types, and it is registered against the operation it realizes by upward registration, as for any registry. Routes come from four sources, and an operation may carry any combination:
 
 | route source | the implementation comes from | example |
 |---|---|---|
@@ -25,7 +25,7 @@ The operation layer adds nothing at bind, classification, or return, so `op(...)
 | **registry** | a registered method selected by dispatch | the inference methods behind Bayes' rule; the evaluation rules behind `evaluate` |
 | **fallback** | a generic scheme applicable to a stated domain | Monte Carlo through a sampling operand |
 
-Where a route dispatches on a capability it names the operand it dispatches on, so an operation needs no single distinguished subject: `joint` has two peer operands, and `evaluate` resolves on the map and the operand together. The split between a call's `specs` and its `operands` is what keeps feasibility cheap and planning static, since `check` reads the declarations alone. A capability route is feasible when its named operand satisfies its protocol; a structural route when the declared structure supports it; a registry route when its registry's own check finds a method; a fallback route on its stated domain. Routes rank in the engine's order (IV.1, step 5) with no within-tier priority at the operation, and a registry route delegates selection to its registry, so the inference methods and the evaluation rules keep their own priorities and feasibility probes.
+Where a route dispatches on a capability it names the operand it dispatches on, so an operation needs no single distinguished subject: `joint` has two peer operands, and `evaluate` resolves on the map and the operand together. A route is checked before it runs, on declarations alone: `check` reads a call's `specs` and only `execute` reads its `operands`, which is what keeps feasibility cheap and planning static. A capability route is feasible when its named operand satisfies its protocol; a structural route when the declared structure supports it; a registry route when its registry's own check finds a method; a fallback route on its stated domain. Admission (IV.1, step 2) has established each operand as a tracked term of its role's kind and resolution (step 5) the protocol a capability route names, so that check is protocol membership alone and a route's `execute` tests nothing about its operands. Routes rank in the engine's order with no within-tier priority at the operation, and a registry route delegates selection to its registry, so the inference methods and the evaluation rules keep their own priorities and feasibility probes.
 
 ```python
 @dataclass(frozen=True)
@@ -52,9 +52,9 @@ condition_on.structural_route("curry", check=_can_curry, execute=_curry, fidelit
 condition_on.registry_route("bayes", registry=inference_method_registry)
 ```
 
-**Primitive versus derived operations.** A **primitive** operation states its own contract and carries its own routes. A **derived** operation is instead defined by an identity over other operations; `mixture`, for example, is the detached `marginal` of a composed joint. That identity is what the operation *means*, so its result rule, feasibility, and failure modes follow from the operations it is defined by. The identity is itself a route, the one always available, and a derived operation may carry routes that realize it **directly** besides: a Gaussian mixture computed in closed form need not compose and then marginalize. Direct routes rank above the identity by fidelity and specificity in the usual way, and the identity is the floor (IV.2), as the sampling lift is under `evaluate`. Either way the operation adds its own outer provenance record, and the selected route records which path ran.
+**Primitive versus derived operations.** Some operations mean something in terms of others, and the interface keeps that definition visible. A **primitive** operation states its own contract and carries its own routes. A **derived** operation is instead defined by an identity over other operations; `mixture`, for example, is the detached `marginal` of a composed joint. That identity is what the operation *means*, so its result rule, feasibility, and failure modes follow from the operations it is defined by. The identity is itself a route, the one always available, and a derived operation may carry routes that realize it **directly** besides: a Gaussian mixture computed in closed form need not compose and then marginalize. Direct routes rank above the identity by fidelity and specificity in the usual way, and the identity is the floor (IV.2), as the sampling lift is under `evaluate`. Either way the operation adds its own outer provenance record, and the selected route records which path ran.
 
-**Declaring an operation.** An operation is created with the `@operation` decorator, which takes the result rule and registers the operation. The decorated function's parameters are its operands together with anything the result rule reads, for example `sample_shape` or an alignment mapping; the controls are never authored (IV.4), so **a parameter is authored exactly when the result rule reads it, and everything else is a control**. A primitive operation's body is empty, and a derived operation's body is its identity. For a `ConditionalDistribution` operand the framework also adds `given=` as the fused conditional path of III.9, which planning reads.
+**Declaring an operation.** The interface is uniform in its controls as well, so an author writes only what is specific to the operation. An operation is created with the `@operation` decorator, which takes the result rule and registers the operation. The decorated function's parameters are its operands together with anything the result rule reads, for example `sample_shape` or an alignment mapping; the controls are never authored (IV.4), so **a parameter is authored exactly when the result rule reads it, and everything else is a control**. A primitive operation's body is empty, and a derived operation's body is its identity. For a `ConditionalDistribution` operand the framework also adds `given=` as the fused conditional path of III.9, which planning reads.
 
 ```python
 def _mean_result(d: DistributionSpec) -> TermSpec: ...
@@ -177,7 +177,7 @@ Reparameterization moves in both directions between a constrained and an unconst
 
 Every draw is reproducible from its record (IV.3), which is `C6 – Traceable and reproducible workflows`. Returning every draw as the tracked term of its declared kind serves `C1 – Uniform interface to functions, distributions, and values` without making the kinds uniform: what is the same across laws is that a draw is tracked and its type is fixed by the declaration, not that every draw is a `Record`. The `raw` opt-out is `B3 – Tracked forms out by default` at the sampling boundary: the wrapped, tracked draw is the default, and the bare value is an explicit ask.
 
-## V.4 — `log_prob` and `unnormalized_log_prob`
+## V.4 — `log_prob`, `unnormalized_log_prob`, and the density variants
 
 ### Contract
 
@@ -185,10 +185,12 @@ Every draw is reproducible from its record (IV.3), which is `C6 – Traceable an
 - `log_prob` requires `SupportsLogProb` and returns the *normalized* log-density.
 - `unnormalized_log_prob` requires only `SupportsUnnormalizedLogProb` and returns the log-density up to an additive constant, which is what inference against an unnormalized target needs.
 - A scored value binds any symbolic event dimensions for that call only, so one law scores datasets of different sizes.
+- `prob` and `unnormalized_prob` are derived operations (V.0), defined by the identities `prob = exp ∘ log_prob` and `unnormalized_prob = exp ∘ unnormalized_log_prob`; a family with a stable density may register a direct route above the identity.
+- `random_log_prob(M)` and `random_unnormalized_log_prob(M)` take a random measure `M` (VI.5) and return the law of `x ↦ log D(x)` for `D ~ M`, a `RandomFunction`, through capability routes on `SupportsRandomLogProb` and `SupportsRandomUnnormalizedLogProb` (III.8). The density at a point is that random function called at the point (VI.5), so neither takes a value.
 
 ### Rationale
 
-Splitting `log_prob` from `unnormalized_log_prob` makes each capability claim only what it provides (`D1 – Mathematical fidelity`): a distribution that knows its normalizing constant offers the true density, while one that does not still serves inference, which needs the density only up to a constant.
+Splitting `log_prob` from `unnormalized_log_prob` makes each capability claim only what it provides (`D1 – Mathematical fidelity`): a distribution that knows its normalizing constant offers the true density, while one that does not still serves inference, which needs the density only up to a constant. Deriving `prob` from `log_prob` gives the density one definition, which a family overrides only where it has a better one (`D6 – Single source of truth`).
 
 ## V.5 — Distribution functionals: `mean`, `variance`, `cov`, `quantile`, `expectation`
 
@@ -223,7 +225,7 @@ When `given` names several fields, the cases combine: the exact bindings (curry 
 
 `condition_on` always binds the supplied value as the field's fixed value, whatever the value's type; the mixture `∫ K(s, ·) μ(ds)` over a mixing distribution is requested explicitly through the separate `mixture` operation.
 
-**The inference-method registry.** The Bayes' rule case is dispatched through the **inference-method registry**, a `UnaryDispatchRegistry` keyed on the model's type whose methods are inference algorithms such as MCMC or variational families.
+**The inference-method registry.** The Bayes' rule case is dispatched through the **inference-method registry**, a `UnaryDispatchRegistry` keyed on the model's type whose methods are inference algorithms such as MCMC or variational families. An inference method's parameters, such as the number of draws or the warmup length, are controls (IV.4): the result rule does not read them, so they are set through `with_options` and passed to the selected method.
 
 **Fidelity.** An inference method's declared fidelity (II.7) is what its result targets: `exact` for a method that targets the posterior itself, as MCMC does in the limit of its run, and `approximate` for one that targets a surrogate, as a variational family does.
 
@@ -272,7 +274,17 @@ Exposing them as named operations rather than as indexing is what separates the 
 
 Keeping the integral out of `condition_on` keeps conditioning single-valued, since a supplied value always binds and `μK` is always asked for by name, so neither call has a data-dependent meaning (`C1 – Uniform interface to functions, distributions, and values`). The name is the result's mathematical name: `μK` is the mixture of the kernel family with mixing distribution `μ`, which covers predictive, compound, and state-propagation uses without privileging one (`C5 – Naming for unambiguous meaning`, `D1 – Mathematical fidelity`). Defining the operation as the marginal of the composed joint adds no second semantics: one identity ties it to operations already fixed, so every behavior has a single source (`D6 – Single source of truth`).
 
-## V.10 — Batched operations
+## V.10 — `convert`
+
+### Contract
+
+`convert(d, target)` returns `d` as a distribution of the `target` class. Its one route is a registry route on the converter registry (III.14), so the conversion's fidelity is the selected converter's, recorded in the result's provenance, and the route-selection controls `method` and `min_fidelity` (IV.4) choose or floor the converter. When `d` already has the target class the result is `d` under fresh identity. The entry conversion of III.14, a backend distribution supplied at a distribution-shaped position, is this operation applied by admission (IV.1, step 2), so a conversion the user requests and one the engine performs on entry resolve the same way and leave the same record.
+
+### Rationale
+
+Exposing conversion as an operation gives a change of representation the same record as any other result (`C6 – Traceable and reproducible workflows`), and routing it through the registry keeps the set of convertible pairs open to registration (`D2 – Generality first`).
+
+## V.11 — Batched operations
 
 ### Contract
 

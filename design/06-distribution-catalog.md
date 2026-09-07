@@ -232,3 +232,18 @@ def glm_likelihood(name: str, family: GLMFamily, link: Function | None = None,
 ### Rationale
 
 Assembling conditional families from uniform pieces is `D2 – Generality first`: a mean-parameterized family, a link bijector, and a linear predictor compose into an entire model class with nothing new defined.
+
+## VI.9 — Program-defined families
+
+### Contract
+
+A **program-defined distribution** wraps a probabilistic program as a `Distribution`: `StanModel` holds a Stan program through BridgeStan, and `PyMCModel` holds a PyMC model-building function. Its event is the numeric record of the program's variables, the parameter blocks and the data blocks under their program names, so a draw is one assignment to all of them. It claims what the program provides: `SupportsUnnormalizedLogProb` from the program's log-density, `SupportsLogProb` when the program normalizes it, and `SupportsSampling` where the program can draw its own variables. Conditioning on the data fields is the Bayes' rule case of V.6, dispatched through the inference registry, whose Stan and PyMC methods run the program's own samplers, and the unconstrained view a gradient-based method works in is the reparameterization of III.15 applied to the program's constrained parameters.
+
+```python
+class StanModel(Distribution): ...    # a Stan program through BridgeStan; the event's fields are its parameter and data blocks
+class PyMCModel(Distribution): ...    # a PyMC model-building function; the event's fields are its free and observed variables
+```
+
+### Rationale
+
+A program is a joint law written in another language, and wrapping it as an ordinary distribution is `C1 – Uniform interface to functions, distributions, and values`: the same `condition_on`, `sample`, and `log_prob` apply to it, and the program's own inference engine enters as a registered method rather than through a parallel model class (`D2 – Generality first`).

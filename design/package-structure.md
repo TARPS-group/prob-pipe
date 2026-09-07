@@ -90,7 +90,8 @@ probpipe/
 │   ├── _condition.py          #   condition_on, the inference registry (V.6)
 │   ├── _joint.py              #   joint (V.7)
 │   ├── _marginal.py           #   marginal, factor (V.8)
-│   └── _mixture.py            #   mixture (V.9)
+│   ├── _mixture.py            #   mixture (V.9)
+│   └── _convert.py            #   convert (V.10)
 ├── families/                  # Part VI — the distribution catalog
 │   ├── _backend.py            #   TFPDistribution, the backend adapter (VI.1)
 │   ├── _continuous.py         #   Normal, Gamma, … (VI.1)
@@ -102,6 +103,7 @@ probpipe/
 │   ├── _random_functions.py   #   RandomFunction, RandomMeasure (VI.5)
 │   ├── _gaussian.py           #   the Gaussian algebra (VI.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VI.8)
+│   ├── _programs.py           #   StanModel, PyMCModel: program-defined joints (VI.9)
 │   └── _converters.py         #   the shipped converters (III.14)
 ├── inference/                 # the registered inference methods (V.6)
 ├── diagnostics/               # diagnostics over inference results
@@ -115,9 +117,10 @@ probpipe/
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` is here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must be below the code that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
 - **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Binding and admission, lift classification and planning, rule resolution, the sampling lift, the batch sweep, the workflow scopes and structural keys, replay and caching, execution dispatch, orchestration, and result wrapping are the steps of one call sequence (IV.1), and they change together. It is above `distributions/` because lifting samples distributions and materializes empirical results.
-- **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (V.1–V.9) above `_operation.py`, which holds V.0's decorator, route protocol, resolution, and registry. V.10's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry is defined with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
+- **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (V.1–V.10) above `_operation.py`, which holds V.0's decorator, route protocol, resolution, and registry. V.11's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry is defined with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** are outside the reference's parts: inference methods register into the V.6 registry, and diagnostics and validation are application layers over the public operations.
+- **Experimental, placement to be decided.** `Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, and `Module.dag()` in `core/node.py` form a container of `Function`s with shared inputs and a Graphviz view of their graph. They stay outside the reference until their role is settled, at low priority.
 
 A handful of private helper modules (dtypes, array utilities) support the packages and carry no design contract.
 
@@ -127,7 +130,8 @@ The main moves, for orientation; the target contracts above are authoritative.
 
 | Today | Target |
 |---|---|
-| `core/node.py` (`WorkflowFunction`, the decorator, `with_options`) | `functions/_function.py` |
+| `core/node.py` (`Function`, the decorator, `with_options`) | `functions/_function.py` |
+| `core/node.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
 | `core/_workflow_call.py`, `core/_workflow_distribution_normalization.py` | `functions/_call.py` |
 | `core/_workflow_plan.py` | `functions/_plan.py` |
 | `core/_function_contract.py` | split: construction-time validation of the declared sides to `values/_function_base.py`; per-call binding and the result declaration to `functions/_plan.py`; output validation and declared wrapping to `functions/_result.py` |
@@ -139,7 +143,7 @@ The main moves, for orientation; the target contracts above are authoritative.
 | `core/_workflow_broker.py`, `core/_workflow_managed.py` | `functions/_broker.py` |
 | `core/_workflow_execution.py`, `core/_workflow_execution_contract.py` | `functions/_execution.py` |
 | `core/_workflow_result.py` | `functions/_result.py` |
-| `core/ops.py` | `operations/`, one module per operation section (V.1–V.9), plus `_operation.py` for the declaration, route, and registry code |
+| `core/ops.py` | `operations/`, one module per operation section (V.1–V.10), plus `_operation.py` for the declaration, route, and registry code |
 | `core/distribution.py`, `core/_distribution_base.py` | `distributions/_distribution.py` |
 | `core/protocols.py` | `distributions/_capabilities.py` |
 | `core/_distribution_array.py`, `core/_broadcast_distributions.py` | `distributions/_batches.py` |
@@ -148,7 +152,11 @@ The main moves, for orientation; the target contracts above are authoritative.
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
 | `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_numeric.py`, `core/_constraints.py` (II.1–II.3, III.5) |
+| `modeling/_stan.py`, `modeling/_pymc.py` | `families/_programs.py` (VI.9) |
+| `modeling/_glm.py` | `families/_conditional.py` (VI.8) |
+| `modeling/_base.py`, `modeling/_simple.py`, `modeling/_simple_generative.py`, and `Likelihood`, `ConditionallyIndependentLikelihood`, `GenerativeLikelihood` in `core/protocols.py` | retired: a model is a program-defined family (VI.9) or a factored joint (III.11), and a learned likelihood is a `ConditionalDistribution` (III.9) |
+| `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
 
 ### Open points
 
-- *Model-construction helpers.* The GLM assembly is in the catalog; whether the remaining model-building conveniences warrant a package is settled by the catalog consolidation.
+- *Incremental conditioning.* `IncrementalConditioner` (`modeling/_likelihood.py`) is a fold of `condition_on` over data batches; whether it is written as a derived operation or as a workflow recipe is settled together with `iterate`.
