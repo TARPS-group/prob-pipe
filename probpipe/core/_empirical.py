@@ -46,7 +46,6 @@ import jax.numpy as jnp
 import numpy as np
 
 from .._dtype import _as_float_array
-from .._utils import _is_numeric_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
@@ -94,6 +93,19 @@ def _event_template_from_data(
     return EventTemplate(specs)
 
 
+def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
+    """Apply *op* to each leaf of a Record, returning a :class:`NumericRecord`.
+
+    All-numeric outputs by construction; returning a ``NumericRecord``
+    lets single-field consumers use ``jnp.asarray(result)`` /
+    ``float(result)`` directly via the existing single-field shims.
+    Leaf-keyed, so nested structure is preserved.
+    """
+    return Record(
+        record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()}, name_is_auto=True
+    )
+
+
 def _index_record(record_data: Record, idx) -> NumericRecord:
     """Index every leaf of a Record with the same indices.
 
@@ -108,17 +120,17 @@ def _index_record(record_data: Record, idx) -> NumericRecord:
     )
 
 
-def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
-    """Apply *op* to each leaf of a Record, returning a :class:`NumericRecord`.
+def _is_numeric_array(x: object) -> bool:
+    """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
 
-    All-numeric outputs by construction; returning a ``NumericRecord``
-    lets single-field consumers use ``jnp.asarray(result)`` /
-    ``float(result)`` directly via the existing single-field shims.
-    Leaf-keyed, so nested structure is preserved.
+    Numpy object arrays (used for generic non-array samples in
+    ``EmpiricalDistribution``) return ``False``.
     """
-    return Record(
-        record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()}, name_is_auto=True
-    )
+    if isinstance(x, jax.Array):
+        return True
+    if isinstance(x, np.ndarray):
+        return x.dtype != object
+    return False
 
 
 def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:
