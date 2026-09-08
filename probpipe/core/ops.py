@@ -115,14 +115,14 @@ def sample(
         return _drawn_at_its_batch_form(
             _workflow_descendants.sample_captured_consumer(captured, key, sample_shape),
             sample_shape,
-            name=dist.name,
-            name_is_auto=dist.name_is_auto,
+            name=getattr(dist, "name", "sample"),
+            name_is_auto=getattr(dist, "name_is_auto", True),
         )
     return _drawn_at_its_batch_form(
         dist._sample(key, sample_shape),
         sample_shape,
-        name=dist.name,
-        name_is_auto=dist.name_is_auto,
+        name=getattr(dist, "name", "sample"),
+        name_is_auto=getattr(dist, "name_is_auto", True),
     )
 
 

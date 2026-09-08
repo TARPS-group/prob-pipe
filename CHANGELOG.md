@@ -284,6 +284,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Explicit-key `sample` calls accept structural `SupportsSampling` objects
+  without `name` or `name_is_auto` attributes. Missing result names default to
+  `sample`, and missing naming flags default to automatic (#446).
+
 - Sweeps returning `NumericArray`, including nested numeric operations such as
   `log_prob`, now aggregate under `auto` and `jax` dispatch. Numeric row
   declarations and named batch levels survive aggregation across dispatch modes;
