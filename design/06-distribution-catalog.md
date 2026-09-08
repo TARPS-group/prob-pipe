@@ -17,16 +17,17 @@ Parts III and V fixed what a distribution *is* and what the operations do to one
 
 ### Contract
 
-A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its `event_spec` from its parameters, including shape, dtype, and the support `Constraint`, and auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists, and its `raw()` is the wrapped backend distribution (II.4).
+A single backend adapter, `TFPDistribution`, implements the capability set on raw arrays, and every parametric family is a thin constructor over it: continuous (`Normal`, `Beta`, `Gamma`, `InverseGamma`, `Exponential`, `LogNormal`, `StudentT`, `Uniform`, `Cauchy`, `Laplace`, `HalfNormal`, `HalfCauchy`, `Pareto`, `TruncatedNormal`), discrete (`Bernoulli`, `Binomial`, `Poisson`, `Categorical`, `NegativeBinomial`), and multivariate (`MultivariateNormal`, `Dirichlet`, `Multinomial`, `Wishart`, `VonMisesFisher`). Each family derives its event term spec from its parameters, including shape, dtype, and support, and wraps it in the component declaration of II.2. The optional `component` constructor argument names an array event independently of the object label; omission captures the initial object name once (II.2). Each family auto-promotes to a `NumericDistribution`. The adapter is the only class that knows the backend exists, and its `raw()` is the wrapped backend distribution (II.4).
 
 ```python
 class TFPDistribution(Distribution[Array]):
-    def __init__(self, name: str, backend_dist: Any) -> None: ...   # the wrapped backend object
+    def __init__(self, name: str, backend_dist: Any, *, component: str | None = None) -> None: ...   # the wrapped backend object
     # closed-form _sample, _log_prob, _mean, _variance, and _quantile;
     # _cov and _marginal where the family defines them
 
 class Normal(TFPDistribution):
-    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike) -> None: ...
+    def __init__(self, name: str, loc: ArrayLike, scale: ArrayLike, *,
+                 component: str | None = None) -> None: ...
 # and likewise for each family above: parameters in, event spec and capabilities derived
 ```
 
@@ -38,17 +39,18 @@ One adapter with thin family constructors keeps the backend a computational deta
 
 ### Contract
 
-An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
+An `EmpiricalDistribution[T]` is a finite, possibly weighted set of atoms of any event type. It samples by weighted resampling, its moments are weighted sample estimates when the event is numeric, and its marginals are exact. Atoms are stored in the event type's native batch form, with the weights a parallel array. An explicit `event_spec` preserves component names and exposure form; atoms alone determine the returned term kind but cannot recover an independent whole-term component name. Without a declaration, record atoms expose their fields and other atoms use the captured constructor-name default (II.2). It doesn't support log probability calculations, since an empirical measure doesn't, in general, have a density.
 
 Two bootstrap forms share one convention: the **source** may be any distribution implementing `SupportsSampling`, which covers the nonparametric bootstrap, where an empirical source is resampled, and the parametric bootstrap, where a fitted law is redrawn, in one interface; `replicate_size` defaults to the source's atom count when the source is empirical and is required otherwise.
 - A `BootstrapReplicateDistribution` is the `replicate_size`-fold iid product of the source law: a draw is one **replicate**, `replicate_size` draws from the source in `T`'s batch form.
-- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure.
+- A `BootstrapDistribution` is the corresponding random measure: a draw is the empirical measure of one replicate, an `EmpiricalDistribution`. The bootstrap distribution of a statistic is `evaluate(stat, ...)` over whichever form the statistic reads, a replicate dataset or a replicate measure. Replicate batches preserve the source event's term kind, and empirical measures built from replicates carry the source's complete event declaration. A new bootstrap or replicate object label never renames those components.
 
 A `KDEDistribution` smooths the atoms with a **smoothing kernel**: a mean-zero density `K` recentered at each atom and scaled by the bandwidth, so its law is the weighted mixture `Σᵢ wᵢ h⁻ᵈ K((x − xᵢ)/h)`. `SmoothingKernel` carries a uniform construction contract: `build_kernels(centers, scales)` returns the bank of placed copies, one per atom, whatever the concrete kernel, so the KDE holds the kernel class and never reads kernel-specific parameters. `bandwidth` accepts a value, the name of a selection rule such as `"scott"` or `"silverman"`, or `None` for the default rule, and is resolved before the copies are built. The bank supplies indexed sampling and per-copy log-densities with the scale Jacobian included. On the KDE, `_sample` draws an atom by weight and then a draw from that copy, exact for the KDE law, and `_log_prob` is the weighted log-sum-exp of the per-copy densities, also exact. The mean is the weighted atom mean, and the variance adds `h²` times the kernel's variance to the atoms' weighted sample variance. Numeric events only.
 
 ```python
 class EmpiricalDistribution[T](Distribution[T]):
-    def __init__(self, name: str, atoms: Batch | Array, weights: Array | None = None) -> None: ...
+    def __init__(self, name: str, atoms: Batch | Array, weights: Array | None = None, *,
+                 event_spec: OutputSpec | None = None) -> None: ...
     # atoms are given in T's batch form; weights default to uniform
 
 class BootstrapReplicateDistribution(Distribution):
@@ -89,7 +91,7 @@ All four are genuine laws whose declared capabilities are those they can provide
 
 ### Contract
 
-A `MixtureDistribution` is a convex combination of component distributions over one shared event spec. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `mixture` returns for a finite mixing distribution, and the form a dependent joint's detached marginal takes under finite mixing.
+A `MixtureDistribution` is a convex combination of component distributions over one shared event declaration, including names, kind, and packaging. Component object labels may differ. A rename or event transformation is explicit when their declarations differ. It implements `_sample` when all of its components do, and the same holds for `_log_prob` (as the weighted log-sum-exp). Moments combine componentwise when every component provides them: the mean is `Σ wᵢ mᵢ` and the covariance is `Σ wᵢ (Σᵢ + mᵢ mᵢᵀ) − m mᵀ`. It is what `mixture` returns for a finite mixing distribution, and the form a dependent joint's detached marginal takes under finite mixing.
 
 ```python
 class MixtureDistribution(Distribution[T]):
@@ -152,7 +154,7 @@ Both are ordinary distributions over nonstandard event types, claiming only the 
 
 ### Contract
 
-Three families form a closed algebra built on `LinOp`. A `MultivariateNormal` from the parametric families is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp`, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the random-function member: a `RandomFunction` whose finite-dimensional laws are Gaussian. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and an exact conversion to `MultivariateNormal` over the flat event is registered with the converter registry.
+Three families form a closed algebra built on `LinOp`. A `MultivariateNormal` from the parametric families is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp`, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the random-function member: a `RandomFunction` whose finite-dimensional laws are Gaussian. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and its flat-coordinate pushforward is a `MultivariateNormal` obtained through the declared isomorphism of III.7. A converter may change its family while preserving the original event declaration (III.14).
 
 The algebra is closed under the operations: an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact. A composition of Gaussian pieces built before its dimensions are bound is an ordinary factored object holding its covariances as recipes; once binding makes the `LinOp` covariances constructible, refinement re-derives the most-specific class and the object joins the algebra as a `FactoredMultivariateGaussian`.
 
@@ -160,7 +162,7 @@ The algebra is closed under the operations: an affine pushforward of any member 
 class FactoredMultivariateGaussian(FactoredNumericDistribution): ...   # derived by `*` / `joint`, never constructed
 ```
 
-**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, which is specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, which is `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction` as the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
+**The Gaussian random function.** A `GaussianRandomFunction` is abstract, covering any model with Gaussian predictions rather than Gaussian processes alone. A concrete member implements `predict_mean` and `predict_variance`, and `predict_covariance` when it supports joint evaluation; `__call__` assembles these into the exact finite-dimensional law, a `Normal` at a single point and a `MultivariateNormal` over stacked points when the covariance is available. These laws preserve the evaluated function's output component name independently of their distribution labels. Its `mean` is the mean function and its `variance` the pointwise variance function, the event-typed moments of a random function. A `GaussianProcess`, which is specified by a mean function and a covariance kernel, is the canonical member; a `LinearBasisFunction`, which is `f(x) = φ(x)ᵀw` with Gaussian weights `w`, is another. Conditioning on noisy linear observations of finitely many evaluations is exact and yields another `GaussianRandomFunction` as the posterior law, and shifts, scalings, output-side linear maps, and sums of independent members are again members by closed-form evaluation rules.
 
 ```python
 class GaussianRandomFunction(RandomFunction[Array, Array], ABC):
@@ -188,7 +190,7 @@ Gaussian closure under affine maps, conditioning, and marginalization is a mathe
 
 ### Contract
 
-An inference result is an ordinary member of whichever family realizes it: a variational posterior is a parametric or bijector-transformed family, an MCMC or ABC posterior is empirical, and an amortized posterior is a learned conditional evaluated at the data. What the results share is a record: each carries `provenance` naming the method, the target, and the inputs, and each exposes the capabilities its realizing family supports. Whether a result is exact or approximate, and relative to what, is read from that record.
+An inference result is an ordinary member of whichever family realizes it: a variational posterior is a parametric or bijector-transformed family, an MCMC or ABC posterior is empirical, and an amortized posterior is a learned conditional evaluated at the data. Results preserve the target event's component names and packaging independently of their new object labels. What the results share is a record: each carries `provenance` naming the method, the target, and the inputs, and each exposes the capabilities its realizing family supports. Whether a result is exact or approximate, and relative to what, is read from that record.
 
 ### Rationale
 
@@ -196,7 +198,7 @@ Approximation is a relation between a result and its target: a variational Gauss
 
 ### Open points
 
-- *Tagging approximate results.* `provenance` records how a result arose, and a lighter tag on top may be worth adding, either an `is_approximate` flag or a convention within `annotations`. Any such tag would span tracked terms generally, since conditional distributions and linear operators can be approximate too.
+- *Fidelity presentation.* II.7 fixes the recorded local guarantees and upstream history. A compact user-facing summary may be useful, but it must identify its target and derive from provenance rather than add an independent truth in `annotations`.
 - *Approximation error.* Capturing a result's approximation error, for example a bound or a diagnostic, has no generic representation yet. For now it is stored in `annotations`, keyed by the producing method.
 
 ## VI.8 — Conditional families
@@ -237,13 +239,20 @@ Assembling conditional families from uniform pieces is `D2 – Generality first`
 
 ### Contract
 
-A **program-defined distribution** wraps a probabilistic program as a `Distribution`: `StanModel` holds a Stan program through BridgeStan, and `PyMCModel` holds a PyMC model-building function. Its event is the numeric record of the program's variables, the parameter blocks and the data blocks under their program names, so a draw is one assignment to all of them. It claims what the program provides: `SupportsUnnormalizedLogProb` from the program's log-density, `SupportsLogProb` when the program normalizes it, and `SupportsSampling` where the program can draw its own variables. Conditioning on the data fields is the Bayes' rule case of V.6, dispatched through the inference registry, whose Stan and PyMC methods run the program's own samplers, and the unconstrained view a gradient-based method works in is the reparameterization of III.15 applied to the program's constrained parameters.
+A **program-defined model** exposes what its backend provides. A program with a joint law over modeled variables, including modeled observations, may expose a `Distribution`. A program supplying a parameter target for given data exposes a `ConditionalDistribution` over those data inputs, or the data-bound `Distribution`. Data sizes, covariates, and arbitrary data-block entries are not automatically random event components.
+
+`StanModel` uses BridgeStan and `PyMCModel` uses a PyMC model-building function. Each adapter declares its data inputs separately from the event variables, whose program names determine the output components. A model named `regression_model` may have the one-field event `OutputSpec(RecordSpec(beta=beta_spec))`; its draws remain records, and composition matches `beta`, not the model label. The existing Stan adapter's parameter-only event and separately supplied data follow the data-bound form; exposing an unbound or generative model requires the corresponding explicit declaration, not merely moving data into its event.
+
+The adapter claims the density and sampling capabilities the program supplies. It declares unnormalized density unless normalization is established. Inference methods register against the backend interface they require; they do not require a public factor graph unless they use one (V.6). A method records which data were bound, its target, controls, and local fidelity, and its result preserves the target event declaration (VI.7). An unconstrained parameterization is an explicit invertible map of that event (III.7, III.15).
 
 ```python
-class StanModel(Distribution): ...    # a Stan program through BridgeStan; the event's fields are its parameter and data blocks
-class PyMCModel(Distribution): ...    # a PyMC model-building function; the event's fields are its free and observed variables
+# Adapter contracts; constructors bind backend data separately from event variables.
+class StanModel(Distribution): ...  # data-bound parameter target through BridgeStan
+class PyMCModel(Distribution): ...  # data-bound target from a PyMC model-building function
+# An adapter exposing unbound data implements ConditionalDistribution instead;
+# a joint-law form requires an explicit generative contract over its modeled events.
 ```
 
 ### Rationale
 
-A program is a joint law written in another language, and wrapping it as an ordinary distribution is `C1 – Uniform interface to functions, distributions, and values`: the same `condition_on`, `sample`, and `log_prob` apply to it, and the program's own inference engine enters as a registered method rather than through a parallel model class (`D2 – Generality first`).
+A backend program participates through the interface it supplies (`D1 – Mathematical fidelity`). Registering its inference method by capability rather than requiring an exposed factor graph extends the same conditioning operation to opaque backend representations (`C1 – Uniform interface to functions, distributions, and values`, `D3 – Capability-based operations`).

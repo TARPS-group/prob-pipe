@@ -5,7 +5,7 @@ Part II introduces the shared abstractions the rest of the library is built on.
 | § | Category | Abstraction | Role |
 |---|---|---|---|
 | II.1 | Typing | `TermSpec` | The term-specification base every field and declaration is typed by, with the symbolic-dimension protocol. Each kind's concrete spec is defined beside the kind it describes. |
-| II.2 | Declarations | `InputSpec` / `OutputSpec` | The input and output declarations of the map-like kinds: named slots in, one named produced term out. |
+| II.2 | Declarations | `InputSpec` / `OutputSpec` | The input and output declarations of the map-like kinds: named input slots and the component interface of one produced term. |
 | II.3 | Numeric values | `Numeric` / `NumericSpec` / `Constraint` | The flat-vector interface the numeric kinds share, its spec-side mixin, and the elementwise support constraint. |
 | II.4 | Identity | `TrackedTerm` / `Provenance` | The name, type (spec), lineage, and annotations an object carries beyond its raw representation, and `raw()` as its access to that representation. |
 | II.5 | Multiplicity | `Batch` | The generic multiplicity axis: an indexed collection of *separate* objects, distinct from one object over a structured space, with its `BatchSpec`. |
@@ -52,19 +52,44 @@ One `is_valid` contract across the kinds keeps validation uniform (`C1 – Unifo
 
 ### Contract
 
-An `InputSpec` is a flat mapping from names to term specs: the independently bindable slots a map-like term takes in. An `OutputSpec` is a term spec plus a required name for the produced term.
+An `InputSpec` is a flat mapping from names to term specs: the independently bindable input slots. An `OutputSpec` declares one returned term and the named components it exposes. Component names belong to declaration positions, not to the underlying term specs or the producing object's label.
 
 ```python
 class InputSpec(Mapping[str, TermSpec]): ...   # named slots; keys are Python identifiers
 
 class OutputSpec:
-    name: str        # an identifier naming the produced term
-    spec: TermSpec
+    @overload
+    def __init__(self, record_spec: RecordSpec, /) -> None: ...
+    @overload
+    def __init__(self, **components: TermSpec) -> None: ...
+    @property
+    def spec(self) -> TermSpec: ...            # the actual returned term's type
+    @property
+    def components(self) -> Mapping[str, TermSpec]: ...  # ordered, immediate components
 ```
+
+**Construction.** One keyword names the entire returned term. Two or more keywords declare an exposed `RecordSpec` of those components, in keyword order. A positional `RecordSpec` exposes its immediate children, even when it has only one field. The forms normalize at construction; no later step guesses the packaging from component count.
+
+```python
+OutputSpec(beta=beta_spec)                      # array out; beta is the whole array
+OutputSpec(RecordSpec(beta=beta_spec))          # record out; beta is its field
+OutputSpec(beta=beta_spec, sigma=sigma_spec)    # same as the next line
+OutputSpec(RecordSpec(beta=beta_spec, sigma=sigma_spec))
+OutputSpec(parameters=RecordSpec(beta=beta_spec, sigma=sigma_spec))
+# record out; parameters is the whole record, exposed as one component
+```
+
+The keyword form requires at least one entry. The positional form accepts exactly one `RecordSpec` and no keywords. Component names are identifiers; `name`, `spec`, and `components` are legal names, since no constructor keyword is reserved for metadata. A caller constructing a record declaration from a variable number of fields uses the positional form to keep the result record-valued regardless of field count. A nested record stays nested: exposure never recursively flattens it. An empty record, where admitted by the record contract, is declared explicitly.
+
+**Packaging and projections.** The canonical declaration stores either one named whole term or an exposed record schema. `spec` and `components` are derived views of that declaration, not independent stores. The engine's internal extraction and reconstruction read it: a whole-term component uses the identity projection; an exposed record uses its immediate children. Reconstructing all extracted components restores the value's kind, structure, and coordinates. A singleton never collapses, and all projections from one producer share that producer's value or draw. Composition (III.12) uses extraction to assemble a joint and reconstruction to supply each factor's original event to its density implementation.
+
+**Names.** An object label never participates in component matching. A distribution named `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`; either exports `beta`. A higher-order component such as `OutputSpec(posterior=DistributionSpec(...))` does not expose the contained law's event components. Renaming components is an explicit interface transformation, separate from renaming the object.
+
+**Defaults.** When a declaration is omitted, the side is completed by rule. An omitted `InputSpec` leaves the input side unspecified: every parameter accepts any kind, and only the lifting trigger reads the parameter annotations (IV.5). An omitted `OutputSpec` is completed from the returned term at return (IV.10): a record exposes its top-level fields as its components, and any other term is one whole-term component named after the producing function's or law's initial `name`, captured once at construction so that `with_name` never moves it. A bare term spec supplied where an `OutputSpec` is expected is completed the same way before anything runs: a `RecordSpec` is exposed, and any other spec becomes a whole term under that captured name. A distribution's event declaration is never omitted, though it may be given as a bare spec (III.7).
 
 ### Rationale
 
-Requiring a name on every output declaration serves `C5 – Naming for unambiguous meaning` and `C6 – Traceable and reproducible workflows` together: the produced term's name is fixed where the producer is declared.
+Separate object and component names serve `C5 – Naming for unambiguous meaning`: a model's label and its variables answer different questions. Retaining the returned kind alongside its interface preserves packaging (`D1 – Mathematical fidelity`), while deriving the interface and projections from one declaration is `D6 – Single source of truth`. The same interface composes every output kind without a composition rule per kind (`D2 – Generality first`).
 
 ## II.3 — Numeric values: `Numeric`, `NumericSpec`, `Constraint`
 
@@ -72,7 +97,7 @@ Requiring a name on every output declaration serves `C5 – Naming for unambiguo
 
 **The `Numeric` interface.** The numeric kinds share one flat-vector interface: `to_vector` lays a value out as one flat vector in canonical order, `vector_size` is that vector's length, and `from_vector` rebuilds a value from it. The coordinate protocols expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions apply to the numeric kinds at the coordinates and return bare arrays. A bare array passed where a `Numeric` value is expected is promoted to the appropriate numeric type. Two routes therefore meet at a numeric value: a foreign function sees the coordinates and returns a bare array, while ProbPipe's own operators and elementwise `map` preserve structure and return tracked terms.
 
-**The array-backend registry.** A numeric host the duck path cannot read, such as an xarray `DataArray` or a pandas object, is recognized through a registry keyed on its type. A registered backend answers whether an instance holds numeric data, its event shape and dtype without materializing it, its conversion to the backend array at the compute boundary, and the metadata it carries, which the wrap of IV.4 reads. Backends register at import (II.7), and NumPy and JAX arrays need none.
+**The array-backend registry.** A numeric host the duck path cannot read, such as an xarray `DataArray` or a pandas object, is recognized through a registry keyed on its type. A registered backend answers whether an instance holds numeric data, its event shape and dtype without converting it, its conversion to the backend array at the compute boundary, and the metadata it carries, which the wrap of IV.4 reads. Backends register at import (II.7), and NumPy and JAX arrays need none.
 
 ```python
 class Numeric(ABC):                         # the flat-vector interface of the numeric kinds
@@ -148,7 +173,7 @@ class TrackedTerm:
 class Provenance:
     operation: str                       # the operation that produced the object
     parents:   tuple[ParentInfo, ...]    # descriptors of the tracked inputs
-    controls:  Mapping[str, Any]         # the resolved controls: PRNG key, sample count, selected method, ...
+    controls:  Mapping[str, Any]         # the resolved controls, and the derived key of each draw: sample count, selected method, ...
     inputs:    Mapping[str, ParentInfo]  # plain (untracked) arguments, keyed by parameter name
 
 class ParentInfo:
@@ -319,24 +344,23 @@ Some operations have many possible implementations, and which one applies depend
 Each **dispatch method** declares:
 1. a unique `name`;
 2. the types it applies to, via `supported_types`;
-3. a `check` function that probes feasibility without significant computation and reports, as a `MethodInfo`, whether the call is feasible and at what fidelity;
+3. a `check` function that probes feasibility without significant computation and reports, as a `MethodInfo`, whether the call is feasible, infeasible, or **unresolved**, which means the declarations the probe needs are not yet available, and at what fidelity;
 4. an `execute` function that performs it;
-5. a **fidelity**: exact, approximate, or sampled, on one scale shared across the registries, declared where the method is registered and fixed for the method's life;
+5. a **fidelity**: exact or approximate, on one scale shared across the registries, declared where the method is registered and fixed for the method's life;
 6. a **priority**: an integer rank *within* a fidelity tier, and the one thing about a method a deployment may change at runtime.
 
-Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes the matching methods in **selection order** and runs the first whose `check` reports feasible. Selection order is the same in every registry:
-1. fidelity, exact above approximate above sampled, so exactness is never silently traded for anything below it;
+Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes matching methods in **selection order** and runs the first whose `check` establishes feasibility. An unresolved higher-ranked candidate prevents a probe from claiming which method will run; execution resolves prerequisite plans first or reports unavailable requirements (IV.9). Selection order is the same in every registry:
+1. fidelity, exact above approximate, so exactness is never silently traded for anything below it;
 2. priority within the tier, higher first;
 3. specificity, favoring the method whose declared types are closest to the argument's class in method-resolution order;
 4. registration order.
 
-A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime within a tier and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing, and a named method that is infeasible raises the same. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
+A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime within a tier and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing, and a named method that is infeasible raises the same. A non-executing probe may instead report unresolved requirements (IV.1); it must not report those as either feasibility or mathematical nonexistence. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
 
 ```python
 class Fidelity(Enum):     # how exact an answer is; totally ordered, EXACT the highest
     EXACT       = "exact"
     APPROXIMATE = "approximate"
-    SAMPLE      = "sample"
 
 class BaseDispatchMethod(ABC):
     name: str
@@ -356,12 +380,14 @@ class BinaryDispatchMethod(BaseDispatchMethod):   # still abstract
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (left, right) types
 
 class MethodInfo:
-    feasible:    bool
+    feasible:    bool | None   # None when required declarations are not yet available
     method_name: str
     description: str
-    fidelity:    Fidelity | None   # what this call would achieve; None when infeasible
+    fidelity:    Fidelity | None   # local guarantee; None when not yet determined
+    pending:     tuple[str, ...]   # unresolved feasibility requirements
 
-class ResolutionError(Exception): ...   # no feasible method, or a named method that is infeasible
+class ResolutionError(Exception): ...   # no available implementation under the requested controls
+class MathematicalDomainError(ValueError): ...  # the mathematical operation is known to be undefined
 
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
@@ -374,6 +400,12 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ...    # keys on one argument's type
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
+
+**Fidelity and validity.** Exact means that the returned representation denotes the requested mathematical result; for a draw-producing operation it means an exact draw in law, not equality of draws across different algorithms. Approximate means a stand-in for that result. Sampling is a method property, not a third fidelity tier: a finite empirical posterior or pushforward is approximate, while sampling from that empirical law may be exact for the law it is. Approximate methods state their assumptions, such as integrability for a Monte Carlo mean. Finite MCMC output is approximate even when the chain has the desired invariant law. Asymptotic targets and convergence assumptions are recorded method guarantees, not exactness tags. `min_fidelity=Fidelity.EXACT` excludes approximate methods.
+
+Provenance records each step's local fidelity and its target, preserving upstream approximation history. Exact downstream work cannot erase an earlier approximation relative to an upstream target, and an upstream approximation does not make a later exact calculation on the returned law locally approximate. Derived routes and registry routes report the fidelity of their selected implementation chain; a wrapper cannot upgrade it.
+
+**Two failures.** A known mathematical nonexistence raises `MathematicalDomainError`, for example a requested mean known not to exist. Computational unavailability raises `ResolutionError`; failure to establish existence does not establish nonexistence. A numerical execution failure propagates as such, and neither it nor a missing capability is silently reclassified as a mathematical domain error. Structural admission errors and return-contract defects are specified at their engine steps (IV.4, IV.10).
 
 A single **catalog** makes every registry discoverable: it lists the registries, their entries with their priorities, and a one-line description each, so a user can see which entries exist and how a call will resolve. An **entry** is one registered item within a registry; the term is generic because the catalog spans registries whose items are not all type-dispatched methods. A registry can be cataloged if it implements `SupportsRegistryCataloging`; satisfying the protocol is structural, and membership requires an explicit `register`. The operation vocabulary is cataloged the same way, so what ProbPipe can do and how a given call resolves are answered from one place.
 
@@ -415,4 +447,4 @@ registry_catalog = RegistryCatalog()  # the global instance
 
 ### Rationale
 
-A registry is how `C3 – Computational detail hidden by default, available on demand` and `D3 – Capability-based operations` apply to operations whose implementation cannot be chosen from a single object alone. The `check` probe keeps auto-selection safe, and `method="..."` leaves the choice in the user's hands. New implementations join by registration, so the supported set grows without changing the call sites (`D2 – Generality first`). One catalog over every registry is `D6 – Single source of truth`: one place to see which implementations exist and how a call resolves.
+A registry is how `C3 – Computational detail hidden by default, available on demand` and `D3 – Capability-based operations` apply to operations whose implementation cannot be chosen from a single object alone. The guarded `check` probe keeps auto-selection safe, and `method="..."` leaves the choice in the user's hands. New implementations join by registration, so the supported set grows without changing the call sites (`D2 – Generality first`). Keeping undefinedness distinct from unavailability is `D1 – Mathematical fidelity`, and recording fidelity with its target serves `C6 – Traceable and reproducible workflows`. One catalog over every registry is `D6 – Single source of truth`: one place to see which implementations exist and how a call resolves.

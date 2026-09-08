@@ -16,6 +16,8 @@ ProbPipe is built around a small number of mathematical objects, their specializ
 | function | `f : X → Y` | `Function` |
 | linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp`, the linear `Function` subtype |
 
+Object labels and component names are independent: composition matches the component interface declared by `OutputSpec`, never the producer's label (II.2).
+
 Each object also has an indexed-collection form (a *batch*), and every function lifts to batches elementwise. Structured values, distributions, and conditional distributions additionally have **numeric** specializations, such as `NumericRecord` and `NumericDistribution`, covering the all-array case: they identify the event space with a flat vector space, where `LinOp` acts and differentiation applies.
 
 Some important mathematical operations supported by ProbPipe include the following:
@@ -36,7 +38,7 @@ Some important mathematical operations supported by ProbPipe include the followi
 The document has six parts, a package-structure companion, and one more part planned:
 
 - **[Part I — Design Principles](01-design-principles.md)** — the high-level commitments that drive every downstream design decision. They are stated without reference to any specific class, type, or API.
-- **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic abstractions the rest of the library is built on: the term-specification layer with the input/output declarations and the `Numeric` interface, identity, provenance, and metadata, batching, the named-tree abstraction, and the dispatch registries.
+- **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic abstractions the rest of the library is built on: the term-specification layer with named input/output component declarations and the `Numeric` interface, identity, provenance, and metadata, batching, the named-tree abstraction, and the dispatch registries.
 - **[Part III — Values and Distributions](03-values-and-distributions.md)** — the term kinds and the probability domain in dependency order: the base value kinds, functions and linear operators, records and record batches, distributions, conditional distributions, composition, and the classification of distribution kinds, each with a precise contract that must align with the design principles.
 - **[Part IV — Functions](04-functions.md)** — how an ordinary Python callable is lifted into ProbPipe: the engine's stack, then each step in order, controls, binding, normalization, lifting, planning, resolution, randomness, execution, and return, and the differentiability claim. This is the layer the operations build on.
 - **[Part V — Operations](05-operations.md)** — precise contracts for the core operations, functions before distributions: function evaluation, inversion, sampling, density evaluation, distribution functionals, conditioning, joints, marginals and factors, mixtures, conversion between representations, and batched operations.

@@ -66,7 +66,7 @@ The function kind's base type is `Function`. A `Function` is a tracked term that
 
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call path**, which is the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import. The base also carries its **controls** (IV.2), set at construction and revised functionally by `with_options`; it gives them no meaning, and the engine reads them at call time.
 
-A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path. Three capability protocols accompany the base: `SupportsDifferentiation`, whose contract is given in IV.11, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.15. All are claims declared at construction and checked by protocol membership, except that a claim with an instance guard is read through its predicate — `is_differentiable`, `is_invertible`. The base is the tracked *wrapper*, not a restriction on what may be wrapped. `FunctionSpec`, which is the function kind's term spec, admits any callable, so a `Function` is one such callable rather than the required type, and a `FunctionBatch` holds a collection of them. Its two sides are the declarations of II.2, and either may be omitted, so a bare `FunctionSpec()` describes any callable. Validity is callability alone: the sides document the schema, which is enforced at the call boundary rather than by `is_valid`.
+A `Function` is constructed directly or using the `@function` decorator. `FunctionSpec`, which is the function kind's term spec, admits any callable.
 
 ```python
 class FunctionSpec(TermSpec):      # the function kind's spec; is_valid accepts any callable
@@ -112,7 +112,7 @@ Defining the base in the value layer keeps the layering strict: the representati
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces and the linear subtype of `Function` (III.3). It therefore applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a `Numeric` conforming to its input schema and returns the matching form, with the operator's parameters as private state. `matvec`, `matmat`, `rmatvec`, and `rmatmat` are the linear-algebra names for the action and its transpose, and `matmat` is the operator's registered batched rule. Its domain and codomain schemas are the `NumericSpec`s (II.3) of the single slot each inherited side declares, and there is no operator-specific accessor beside them. It therefore maps whatever `Numeric` its sides declare, for example a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws needs no single-field placeholder. The two sides coincide for an endomorphism such as a covariance or Hessian, which the operator algebra reads as the fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces and the linear subtype of `Function` (III.3). It therefore applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a `Numeric` conforming to its input schema and returns the matching form, with the operator's parameters as private state. `matvec`, `matmat`, `rmatvec`, and `rmatmat` are the linear-algebra names for the action and its transpose, and `matmat` is the operator's registered batched rule. Its domain is the `NumericSpec` (II.3) of its single input slot, and its codomain is `output_spec.spec`; an exposed record output may have several components while remaining one numeric value. There is no operator-specific accessor beside these declarations. It therefore maps whatever `Numeric` its sides declare, for example a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws needs no single-field placeholder. The two sides coincide for an endomorphism such as a covariance or Hessian, which the operator algebra reads as the fact that operands compose or act on the same space.
 
 Its schemas are always concrete, and construction from a schema with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
@@ -128,7 +128,7 @@ class LinOp(Function, ABC):        # the linear subtype of the III.3 base
     def to_dense(self) -> Array: ...
 
     def matvec(self, x: Numeric) -> Numeric: ...
-    # syntactic sugar for apply: A x, with a Numeric flattened through
+    # shorthand for apply: A x, with a Numeric flattened through
     # the input schema and the result matching the argument's form
     def matmat(self, X: Array) -> Array: ...
     # A X on stacked columns, the operator's registered batched rule;
@@ -323,13 +323,13 @@ It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a 
 
 ### Contract
 
-A `Distribution[T]` is a single random law, a probability measure over values of type `T`; `T` is the implementer-side draw type fixed below. Its `DistributionSpec` carries `event_spec`, which is the output declaration of one draw (an `OutputSpec`, II.2) and is exposed as a view. That is the same declaration type a `Function` carries as its `output_spec`, and the two are named apart because a function's output is what one call *returns*, whereas a law's event is the space its draws inhabit. Construction normalizes the event declaration to an `OutputSpec` whose name defaults from the law's own constructor `name`, and the stored spec's class fixes the draw kind.
+A `Distribution[T]` is a probability measure over values of type `T`, where `T` is the implementer-side draw type fixed below. Its `DistributionSpec` carries the draw's `OutputSpec` as `event_spec`, exposed as a view. The declaration determines both the returned kind and its component interface (II.2). It is the same declaration type a `Function` carries as `output_spec`; the names distinguish a draw from a function's return. A bare spec is completed as II.2 states, and an explicit `OutputSpec` supplies the component names.
 
 It declares the operations it supports as **capabilities** (III.8), so operational support is decoupled from the class. Its `raw()` is the law detached (II.4), so a field view's `raw()` is the detached marginal rather than a reference into its parent. A draw is a tracked term of the kind the event declaration names, never wrapped in another kind to make draws uniform.
 
-**A slot is not a field.** Every law has exactly one **produced slot**, which is the name its `OutputSpec` declares: composition matches on it, `include_inputs` labels with it, and `with_path_names` renames it by bare name. A **field** is a named part of one draw, that is, a path in the event schema, and only a **record-drawing** law has any; its top-level fields are what `d[path]`, `marginal`, and the field views address. So a record-drawing law has both, while a **term-drawing** law has a slot and no fields: `Normal("x", 0, 1)` composes and renames under `x`, but offers no field interface, since projecting an atomic draw is the draw. The two never merge, and neither is derived from the other.
+**Components and fields.** The law's produced slots are exactly `event_spec.components` (II.2); its object name never participates in matching. A field is a path within a record-valued draw, and only a record-valued draw has that field interface. Thus `OutputSpec(beta=beta_spec)` and `OutputSpec(RecordSpec(beta=beta_spec))` both export `beta`, but the former draws an array and the latter a record. `d[path]` and `marginal` address paths in the draw, not the enclosing interface: projecting the entire array needs no field query. A record exposed as `OutputSpec(parameters=RecordSpec(beta=...))` has output slot `parameters` and event field `beta`; composition extracts and reconstructs it using II.2.
 
-Fields are renamed or moved with `with_path_names`, where a path-valued target restructures the event (II.6), and the result is the same law under the canonical relabeling of its event space; on a factored joint it is a relabeling view over the stored factors. `with_path_names` never changes the event's kind: an atomic event stays atomic, a record event stays a record, so a path-valued target on the output name raises. A distribution whose declaration is polymorphic is legal, binding exactly as II.1 fixes — by value, or explicitly through `with_dims`.
+`with_path_names` renames or moves event fields under the rules of II.6 and renames a whole-term output component by its declared name. On an exposed record, its component names are derived from the renamed immediate children. On a named whole record, renaming the outer component leaves the record's own fields unchanged. An unqualified name that could address both is ambiguous and raises; the caller disambiguates with a full event path where available. Restructuring never silently changes the event kind or the declaration's exposure form: a path-valued target for a whole-term component is refused. `with_name` changes only the object label. A polymorphic law is legal and binds as II.1 specifies.
 
 **The draw type `T`.** `T` is the implementer-side draw type, derived from the event spec's kind rather than declared independently: the spec is the source, and the bracket is typing documentation. Writing the tracked kind (`Distribution[NumericArray]`) or its raw host (`Distribution[Array]`) names the same array kind: either notation is read at the kind level. Per kind, the implementer type is the kind's raw host, except where the host cannot carry the structure the mathematics needs:
 
@@ -342,13 +342,12 @@ Fields are renamed or moved with `with_path_names`, where a path-valued target r
 | `DistributionSpec` | `Distribution` — a draw's own raw form |
 | `ConditionalDistributionSpec` | `ConditionalDistribution` |
 
-A `NumericDistribution` is a `Distribution` whose event spec is a `NumericSpec` (II.3), so its draws implement `Numeric` and the flat-vector interface applies — a scalar `Normal`'s `NumericArraySpec` event qualifies exactly as a record event does.
+A `NumericDistribution` is a `Distribution` whose `event_spec.spec` is a `NumericSpec` (II.3), so its draws implement `Numeric` and the flat-vector interface applies; a scalar `Normal`'s `NumericArraySpec` event qualifies as a record event does.
 
 ```python
 class Distribution[T](TrackedTerm):
     def __init__(self, name: str, event_spec: OutputSpec | TermSpec | Mapping) -> None: ...
-        # the event declaration, normalized to an OutputSpec (name defaulted from
-        # the law's own name)
+        # the event declaration and component-name defaults follow II.2
 
     @property
     def spec(self) -> DistributionSpec: ...
@@ -358,7 +357,7 @@ class Distribution[T](TrackedTerm):
     def event_shape(self) -> tuple[int, ...]: ...    # defined only when a draw is a single array
 
     def with_path_names(self, mapping: Mapping[str, str] | None = None, /, **kwargs: str) -> Self: ...
-    # rename the produced slot by bare name, or rename and move event fields;
+    # rename output components or event fields; ambiguous names raise;
     # keys and path-valued targets resolve as for NamedTree.with_path_names (II.6),
     # and the law is unchanged
     def with_dims(self, **sizes: int) -> Self: ...
@@ -371,7 +370,7 @@ class NumericDistribution(Distribution): ...   # marker: the event spec is a Num
 
 **Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. The capabilities a view offers are derived from its parent's, one by one (III.8).
 
-**The flat view.** A numeric law's law over its coordinates is `evaluate(to_vector, d)`: `to_vector` (II.3) is a bijection with unit Jacobian, so the pushforward's density is exact under the change-of-variables rule (IV.7), and `from_vector` is its inverse. An inference method that works on ℝᵈ composes it with the reparameterization of III.15.
+**The flat view.** A numeric law's law over its coordinates is `evaluate(to_vector, d)`, with the map specialized to `d.event_spec.spec` and carrying an explicitly named array output declaration. Its inverse reconstructs that original event, including singleton and nested record packaging. The map claims the inverse and unit-Jacobian capabilities, so the change-of-variables rule preserves an available density (IV.7). This changes the event space by a declared isomorphism; an ordinary representation conversion preserves the event declaration (III.14). An inference method that works on ℝᵈ also applies the reparameterization of III.15.
 
 ```python
 class FieldView(Distribution):
@@ -396,13 +395,13 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 ### Open points
 
-- *Structuring an atomic event.* Demoting a term-drawing law's output name into a group (`with_path_names({"x": "group/x"})`) is mathematically well-defined, being the canonical isomorphism with the one-field product, but changes the draw's kind, so the rule above excludes it. A producer that wants the structure declares a one-field `RecordSpec` instead; revisit only if a concrete consumer appears.
+- *Structuring an atomic event.* Demoting a term-drawing law's output name into a group (`with_path_names({"x": "group/x"})`) is mathematically well-defined, being the canonical isomorphism with the one-field product, but changes the draw's kind, so the rule above excludes it. A producer that wants the structure declares an exposed one-field record output (II.2) instead; revisit only if a concrete consumer appears.
 
 ## III.8 — Distribution capabilities
 
 ### Contract
 
-Each operation on a distribution is a **capability**: for each operation it supports, a distribution implements an underscore method such as `_sample` or `_mean` over `T` (III.7), and the matching operation calls it through a capability route (V.0).
+For each operation it supports, a distribution supplies a **capability**: an underscore implementation such as `_sample` or `_mean` over `T` (III.7). Where support is partial the capability carries a **guard**, the per-instance predicate that narrows the claim, as squareness narrows a `LinOp`'s invertibility (III.15). The matching operation calls the capability through its route (V.0): protocol membership establishes that the implementation exists, and the guard establishes support for the requested call.
 
 ```python
 @runtime_checkable
@@ -476,7 +475,7 @@ The projection rows are exact whenever the parent's answer is, and the density r
 
 ### Rationale
 
-Making each operation a *capability* rather than a base-class method follows `D3 – Capability-based operations`. Because support is structural (tested by `isinstance(dist, SupportsX)`, not subclassing), a distribution gains an operation just by implementing its method. A transform that preserves the event exposes exactly the capabilities of whatever it wraps, and a field view offers those its parent's capabilities can derive, so advertised support matches actual support in both cases.
+Making each operation a *capability* rather than a base-class method follows `D3 – Capability-based operations`. Structural protocol membership identifies an implementation without requiring inheritance; its guard determines the calls it supports (V.0). A transform that preserves the event exposes exactly the capabilities of whatever it wraps, and a field view offers those its parent's capabilities can derive, so advertised support matches actual support in both cases.
 
 ## III.9 — `ConditionalDistribution`
 
@@ -484,9 +483,9 @@ Making each operation a *capability* rather than a base-class method follows `D3
 
 A `ConditionalDistribution[S, T]` is a *probability kernel* `K : S → P(T)` — a family of distributions p(· | s) indexed by a *conditioning value* `s : S`. Supply a value for what it conditions on and it yields an ordinary `Distribution` over what it produces. A `Distribution` is the empty-given case, a kernel with nothing to condition on, so its marginal law exists and the unconditional operations apply; a kernel with a non-empty given has none. The two are distinct tracked types, and neither inherits from the other. A `ConditionalDistribution` and its spec always carry a non-empty `given_spec`, since binding the last given field returns a `Distribution` directly; the empty-given case is `DistributionSpec`'s.
 
-A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of independently bindable slots it conditions on (II.2), and an `event_spec`, which is the output declaration of one produced draw `T` and is read as for a `Distribution` (III.7); both are views on its stored `ConditionalDistributionSpec`. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles*, the value conditioned on and the law produced, so their field names stay disjoint even when the two spaces coincide. A Markov kernel with `S = T` uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two sides jointly, so a name shared between given and event fields is one dimension, bound by `with_dims` or, in the fused conditional paths, from the given value at call time. `with_path_names` renames or moves names across both sides, returning the same kernel: the event side behaves exactly as a `Distribution`'s, and on the given side a path-valued target may split or group slots, since a kernel carries no signature to fix its top level. A `Function`'s input slots are fixed by its signature instead (III.3), so restructuring across its top level is not a rename but a new signature, obtained by wrapping the callable in one that takes the parameters wanted.
+A `ConditionalDistribution` carries a `given_spec`, which is the `InputSpec` of independently bindable slots it conditions on (II.2), and an `event_spec`, which is the output declaration of one produced draw `T` and is read as for a `Distribution` (III.7); both are views on its stored `ConditionalDistributionSpec`. Unlike a function's domain and codomain, a kernel's given and event are distinct *roles*, the value conditioned on and the law produced, so their given-slot and produced-component names stay disjoint even when the two spaces coincide. A Markov kernel with `S = T` uses names like `state → next_state` rather than `state → state`, for the same reason we write `K(x, dy)` rather than `K(x, dx)`. Symbolic dimensions are scoped over the two sides jointly, so a name shared between given and event fields is one dimension, bound by `with_dims` or, in the fused conditional paths, from the given value at call time. `with_path_names` renames or moves names across both sides, returning the same kernel: the event side behaves exactly as a `Distribution`'s, and on the given side a path-valued target may split or group slots, since a kernel carries no signature to fix its top level. A `Function`'s input slots are fixed by its signature instead (III.3), so restructuring across its top level is not a rename but a new signature, obtained by wrapping the callable in one that takes the parameters wanted.
 
-Users never call a method on the `ConditionalDistribution`. Instead, they use the existing operations. `condition_on(K, s)` binds the given fields and evaluates the kernel to a `Distribution` with no inference. `sample(K, given=s)`, `log_prob(K, y, given=s)`, and `mean(K, given=s)` are the **fused conditional paths**, with the invariant `op(K, given=s) == op(condition_on(K, s))`: bitwise under a shared PRNG key in the exact cases, and in law when inference is involved. Binding a subset of the given slots *curries* to a smaller `ConditionalDistribution` (V.6).
+Users never call a method on the `ConditionalDistribution`. Instead, they use the existing operations. `condition_on(K, s)` binds the given fields and evaluates the kernel to a `Distribution` with no inference. `sample(K, given=s)`, `log_prob(K, y, given=s)`, and `mean(K, given=s)` are the **fused conditional paths**, with the invariant `op(K, given=s) == op(condition_on(K, s))`: draw for draw when both take the same exact route under one workflow scope (IV.8), and in law for exact routes that differ. An approximate path records its route and assumptions; it does not promise equality in law merely because it targets the same conditional. Binding a subset of the given slots *curries* to a smaller `ConditionalDistribution` (V.6).
 
 ```python
 class ConditionalDistribution[S, T](TrackedTerm):
@@ -567,7 +566,7 @@ This is `D1 – Mathematical fidelity` on the distribution layer: a `Distributio
 
 A *factored distribution* is a distribution **built from named sub-distributions**: beyond being an ordinary distribution, it carries an explicit factorization into its parts, marked by the capability `SupportsFactors`, which `FactoredDistribution` and `FactoredConditionalDistribution` implement generically.
 
-Both carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint's event declaration is the disjoint union of the factors' produced slots (III.12): a record-drawing factor contributes its top-level fields with their internal structure, and any other factor contributes the single field its `OutputSpec` names. Factor names are unique across the list. Conditioning a `FactoredConditionalDistribution` on all of its given fields yields a `FactoredDistribution`. Sampling and the log-prob capabilities are the intersection of the factors'. The moment capabilities are decided at construction and are present exactly when the joint's structure makes the moment derivable. An edge-free joint derives its moments componentwise, so it has a moment exactly when every factor does; jointly Gaussian factors are exact (VI.6); any other dependent joint carries no moment capability, since factor-wise conditional moments do not compose into a closed form. For example, with `x ~ Normal(0, 1)` and `y | x ~ Normal(exp(x), 1)`, `E[y] = e^{1/2}` is not computable from the factors' means.
+Both carry an ordered list of factors, each a `Distribution` or a `ConditionalDistribution`. The dependence graph is *derived* by matching each factor's given fields against the fields produced by earlier factors, rather than stored. The joint's event declaration is an exposed `RecordSpec` over the disjoint union of the factors' declared output components (II.2, III.12). Extraction and reconstruction preserve each factor's event packaging. Factor names are unique across the list. Conditioning a `FactoredConditionalDistribution` on all of its given fields yields a `FactoredDistribution`. Sampling and the log-prob capabilities are the intersection of the factors'. The moment capabilities are decided at construction and are present exactly when the joint's structure makes the moment derivable. An edge-free joint derives its moments componentwise, so it has a moment exactly when every factor does; jointly Gaussian factors are exact (VI.6); any other dependent joint carries no moment capability, since factor-wise conditional moments do not compose into a closed form. For example, with `x ~ Normal(0, 1)` and `y | x ~ Normal(exp(x), 1)`, `E[y] = e^{1/2}` is not computable from the factors' means.
 
 ```python
 @runtime_checkable
@@ -598,7 +597,7 @@ class FactoredFullyNumericConditionalDistribution(
 2. the reduction lies within a single factor and delegates to that factor's own `SupportsMarginals`;
 3. the affected factors admit closed-form integration, as when they are jointly Gaussian.
 
-On any other path `_marginal` raises.
+On any other path the exact route's guard declines before `_marginal` runs, and the fallback resolves (V.8).
 
 ### Rationale
 
@@ -614,7 +613,7 @@ Factorization is an *optional capability*, `SupportsFactors`, rather than a base
 
 Composition builds a factored distribution from parts, written as an *expression*: a single binary operator `*` combines `Distribution`s and `ConditionalDistribution`s into one joint. The *kind* of the result is **derived** from the operands and never chosen by hand, and every result is itself a `Distribution` or a `ConditionalDistribution`. The base objects expose `*` as a thin `__mul__` that delegates to the operator.
 
-**The `*` operator.** `A * B` composes two operands into a joint. It is **conditional-first**: the left operand may condition on the right, so `lik * prior` reads as the density p(y | β) · p(β), while the reverse, a consumer before its producer, is an error. Characterize each operand by its **produced slots** `F`, which are the top-level fields of a record-drawing operand or the single name its `OutputSpec` declares, and its **unmet given slots** `G`, which are empty for a `Distribution` and the given slots for a `ConditionalDistribution`. The composition is then fixed by the name sets alone:
+**The `*` operator.** `A * B` composes two operands into a joint. It is **conditional-first**: the left operand may condition on the right, so `lik * prior` reads as the density p(y | β) · p(β), while the reverse, with the producer on the left of its consumer, is an error. Characterize each operand by its **produced slots** `F`, which are exactly the keys of its `event_spec.components` (II.2), and its **unmet given slots** `G`, which are empty for a `Distribution` and the given slots for a `ConditionalDistribution`. The dependency topology is fixed by the name sets; matched specs must also unify:
 
 ```
 bound  = G_A ∩ F_B            # dependency edges: left A conditions on a name that right B produces
@@ -633,9 +632,11 @@ The result has two mathematical degrees of freedom, *conditional?* (`unmet ≠ �
 
 `*` returns the **most specific** class, recomputed from the *flattened* factor graph at each step. `A * B * C` builds one flat N-factor joint, with independent factors commuting and dependent ones kept in conditional-first order. Same-named unmet givens unify into one slot of the joint: their specs must unify, a disagreement raising at composition, and binding the slot feeds every factor that names it — two givens that are different quantities are renamed apart first, as fields and levels already require. Symbolic dimensions never unify by name across operands, since two factors may both call something `"obs"` and mean different dimensions. Each operand's dimensions instead enter the joint under a deterministic factor-qualified renaming, shared fields and shared unmet givens contribute the only identifications, and the joint stores the factors so refined. The renaming is canonical, so derived names and fingerprints stay deterministic.
 
+**Packing the joint.** The output is an exposed record of the components in canonical factor order, preserving each declaration's component order. Assembly extracts components from each factor's one draw; scoring reconstructs that factor's original event value before calling its density method. In particular, an array and a one-field record may both export `beta`, but their density implementations receive different declared event kinds. Multiple connections from one factor share the same draw. A name match is insufficient by itself: the supplying component's spec must unify with the receiving input slot's spec. The joint retains the declarations needed for reconstruction and never infers packaging from the number of fields.
+
 **Naming the result.** A joint is *derived*, not created by the user, so `*` **auto-derives** its `name` deterministically from its factors. The factors are listed in **canonical order**, which is the conditional-first topological order of the flattened factor graph with incomparable factors ordered lexicographically by the fields they produce, and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` produce the same joint distribution.
 
-Re-composition reads `name_is_auto`. An auto-named operand is **flattened**: its factors enter the new joint directly, its old name is discarded, and a fresh name is derived from the full factor list. An operand whose name the user has set with `with_name` is **not** flattened. It enters as a single factor under that name, and that name appears as one token in the parent's derived name. So `(lik * prior).with_name("posterior")` both labels the joint and, in any later composition, keeps it as the single factor `posterior`.
+Re-composition reads `name_is_auto`. An auto-named factored operand is **flattened**: its factors enter the new joint directly, its old name is discarded, and a fresh name is derived from the full factor list. An operand whose name the user has set with `with_name` is **not** flattened. It enters as a single factor under that name, and that name appears as one token in the parent's derived name. This grouping does not change its produced-component interface or any name-based connection; factor labels and component names are distinct. So `(lik * prior).with_name("posterior")` both labels the joint and, in any later composition, keeps it as the single factor `posterior`.
 
 ```python
 def __mul__(self, other: Distribution | ConditionalDistribution) -> FactoredDistribution | FactoredConditionalDistribution: ...
@@ -681,16 +682,23 @@ The hierarchy embodies `D2 – Generality first`: one base refined by *optional 
 
 ### Contract
 
-A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*. The registry is an ordinary binary dispatch registry keyed on `(type(source), target)`; the target is already a type. The target may also be a capability protocol (III.8): a protocol target admits every converter whose target class satisfies the protocol, ranked as usual, and a source that already satisfies it converts to itself at exact fidelity.
+A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*. The registry is an ordinary binary dispatch registry keyed on `(type(source), target)`; the target is already a type. The target may also be a capability protocol (III.8): a protocol target considers converters that promise the required guarded capability, ranked as usual, and a source already satisfying that claim needs no conversion.
+
+Every converter preserves the full event declaration, including component names, returned kind, and packaging. Flattening a record event into an array instead requires a declared transformation with an inverse (III.7). A converter never rebuilds event names from the source's object label.
+
+**Planning conversion.** The non-executing probe returns a `ConversionInfo` containing the promised target spec, representation class when known, and capabilities guaranteed on the result. Unknown facts are listed as pending requirements; no sampling, fitting, or density evaluation is allowed in the probe. Normalization carries this plan until execution, which constructs and validates the target before dependent numerical work runs (IV.4, IV.9). A protocol target is feasible only when its required claim and guard can be established, either on the source or on the converter's promised result. Class membership alone does not establish an instance-dependent capability.
 
 Conversion is also the entry route for raw distributions: a backend distribution supplied at a distribution-shaped position, for example an argument or a record field, is converted on entry through the registry, exactly as a bare array is wrapped at an array-spec position.
 
-A converter declares the source types it converts *from* and the target types it converts *to* in the binary method's two slots. A conversion is rarely unique, so each carries a **fidelity** on the shared scale of II.7: `exact` for an equivalent representation, `approximate` where something is lost, moment matching being the common case, and `sample` for a Monte Carlo stand-in. A caller may set `min_fidelity` as a feasibility floor, which `check` enforces.
+A converter declares the source types it converts *from* and the target types it converts *to* in the binary method's two slots. A conversion is rarely unique, so each carries a **fidelity** on the shared scale of II.7: `exact` for an equivalent representation, `approximate` for a stand-in, including moment matching and Monte Carlo representations. A caller may set `min_fidelity` as a feasibility floor, which `check` enforces. Numerical sampling is method information, not a separate fidelity tier.
 
 ```python
 @dataclass(frozen=True)
-class ConversionInfo(MethodInfo):   # the feasibility probe's result; fidelity comes from MethodInfo
-    ...
+class ConversionInfo(MethodInfo):
+    target_spec: DistributionSpec | None   # None when still unresolved
+    target_class: type | None
+    capabilities: tuple[type, ...]         # claims guaranteed by this conversion
+    # pending requirements and local fidelity are inherited from MethodInfo
 
 class Converter(BinaryDispatchMethod):
     name: str
@@ -709,7 +717,7 @@ converter_registry: ConverterRegistry   # the global instance
 
 ### Rationale
 
-Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity makes the approximation explicit, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while an `approximate` or `sample` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`). Realizing the registry as a subclass of the shared dispatch registry gives conversion registration, feasibility probing, prioritized selection, and cataloging without duplicating any of them (`D6 – Single source of truth`). Entry conversion is how `B1 – Either presentation in` is realized for distributions: the registry is the kind-directed wrap at a distribution-shaped position.
+Conversion makes `C3 – Computational detail hidden by default, available on demand` concrete on the distribution layer: a representation is a computational choice, so the library converts as needed and the user rarely converts by hand. Recording each conversion's fidelity makes the approximation explicit, which is `D1 – Mathematical fidelity`, since an `exact` conversion loses nothing while an `approximate` conversion is a stated approximation the caller can see and control. New representations interoperate by registering converters, so the set of convertible pairs grows without changing the distributions themselves (`D2 – Generality first`). Realizing the registry as a subclass of the shared dispatch registry gives conversion registration, feasibility probing, prioritized selection, and cataloging without duplicating any of them (`D6 – Single source of truth`). Entry conversion is how `B1 – Either presentation in` is realized for distributions: the registry is the kind-directed wrap at a distribution-shaped position.
 
 ## III.15 — Constraint reparameterization
 
@@ -717,7 +725,7 @@ Conversion makes `C3 – Computational detail hidden by default, available on de
 
 Many inference algorithms, for example gradient-based optimization and Hamiltonian Monte Carlo, operate on an unconstrained space ℝᵈ, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint`, which is the support a `NumericArraySpec` carries, to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims the two capabilities below. `bijector_for(constraint)` returns the canonical one, and `register_bijector` plugs in a factory for a constraint type or a specific instance, instance registrations taking precedence.
 
-Invertibility and the Jacobian determinant are two separate capabilities. A `Function` claims `SupportsInverse` by providing the inverse map, its own `apply` serving as the forward; `SupportsLogDetJacobian` provides the log-determinant of the Jacobian, which exists only for a differentiable map, and a map can be invertible without it. Change of variables requires exactly the pair, and both are typed over the `Numeric` interface (II.3). A `LinOp` claims them only when they apply: the claim is guarded per instance by squareness, its inverse comes from the operator algebra, and its `logdet` is the log-Jacobian. `is_invertible` reads the claim together with its guard, while singularity, which no construction-time check decides, is raised at call time as `LinAlgError`, as for `solve`. A slot checks the claims it needs at construction and raises a capability error otherwise: the bijector of a transformed distribution requires both, the link of a GLM likelihood `is_invertible` alone.
+Invertibility and the Jacobian determinant are two separate capabilities. A `Function` claims `SupportsInverse` by providing the inverse map, its own `apply` serving as the forward; `SupportsLogDetJacobian` provides the log-determinant of the Jacobian, which exists only for a differentiable map, and a map can be invertible without it. Change of variables requires exactly the pair, and both are typed over the `Numeric` interface (II.3). A `LinOp` claims them only when they apply: the claim is guarded per instance by squareness, its inverse comes from the operator algebra, and its `logdet` is the log-Jacobian. `is_invertible` reads the claim together with its guard, while singularity, which no construction-time check decides, is raised at call time as `LinAlgError`, as for `solve`. A slot checks the claims it needs at construction and raises `ResolutionError` when unavailable (II.7): the bijector of a transformed distribution requires both, the link of a GLM likelihood `is_invertible` alone.
 
 ```python
 @runtime_checkable

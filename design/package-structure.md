@@ -25,14 +25,14 @@ probpipe/
 ├── core/                      # Part II — shared abstractions
 │   ├── _named_tree.py         #   NamedTree (II.6)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
-│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.1), InputSpec, OutputSpec (II.2)
+│   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.1), InputSpec, OutputSpec and component projection contracts (II.2)
 │   ├── _kinds.py              #   the kind table: register_kind, term_class_for_spec, batch_class_for_spec (II.1)
 │   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.3)
 │   ├── _array_backend.py      #   the array-backend registry for native numeric leaves (II.3)
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.5)
 │   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.4)
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
-│   ├── _dispatch.py           #   dispatch methods and registries, Fidelity, MethodInfo, ResolutionError (II.7)
+│   ├── _dispatch.py           #   dispatch methods and registries, Fidelity, MethodInfo, ResolutionError, MathematicalDomainError (II.7)
 │   ├── _catalog.py            #   EntrySummary, RegistryCatalog (II.7)
 │   └── _config.py             #   library configuration
 ├── values/                    # the value layer (III.1–III.6; LinOp, III.4, is in linalg/)
@@ -67,7 +67,7 @@ probpipe/
 │   └── _reparameterization.py #   bijector_for, register_bijector, is_invertible (III.15)
 ├── functions/                 # Part IV — Function and its engine
 │   ├── _function.py           #   the engine installed on Function at import; the decorator; with_options (IV.1, IV.2)
-│   ├── _call.py               #   binding, and normalization as wrap, convert, admit; ApplicabilityError (IV.3, IV.4)
+│   ├── _call.py               #   binding, wrap, conversion planning, admission; ApplicabilityError (IV.3, IV.4)
 │   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (IV.5, IV.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
 │   │                          #     populated upward by the families (IV.7)
@@ -79,7 +79,7 @@ probpipe/
 │   ├── _broker.py             #   managed work items: keys across threads, tasks, and flows (IV.8, IV.9)
 │   ├── _execution.py          #   the jax / sequential / thread dispatch modes, the execution contract (IV.9)
 │   ├── _orchestration.py      #   optional tracing (IV.9)
-│   └── _result.py             #   assembly, declaration enforcement, kind-directed wrap, identity, provenance (IV.10)
+│   └── _result.py             #   assembly, output inference, declaration enforcement and errors, kind-directed wrap, identity (IV.10)
 ├── operations/                # Part V — the operations
 │   ├── _operation.py          #   the @operation decorator: roles, conditions, and result rule;
 │   │                          #     OperationRoute and its four helpers, route resolution, and the
@@ -105,7 +105,7 @@ probpipe/
 │   ├── _random_functions.py   #   RandomFunction, RandomMeasure (VI.5)
 │   ├── _gaussian.py           #   the Gaussian algebra (VI.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VI.8)
-│   ├── _programs.py           #   StanModel, PyMCModel: program-defined joints (VI.9)
+│   ├── _programs.py           #   StanModel, PyMCModel: backend models with explicit given/event contracts (VI.9)
 │   └── _converters.py         #   the shipped converters (III.14)
 ├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (V.6)
@@ -136,7 +136,7 @@ Every module with a design contract, with where it goes; the target contracts ab
 |---|---|
 | `core/node.py` (`Function`, the decorator, `with_options`) | `functions/_function.py` |
 | `core/node.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
-| `core/_workflow_call.py`, `core/_workflow_distribution_normalization.py` | `functions/_call.py` |
+| `core/_workflow_call.py`, `core/_workflow_distribution_normalization.py` | `functions/_call.py`; conversion executes later under the III.14 plan |
 | `core/_workflow_plan.py` | `functions/_plan.py` |
 | `core/_function_contract.py` | split: construction-time validation of the declared sides to `values/_function_base.py`; per-call binding and the result declaration to `functions/_plan.py`; output validation and declared wrapping to `functions/_result.py` |
 | `core/_workflow_distribution_broadcast.py` | `functions/_broadcast.py` |
@@ -160,7 +160,7 @@ Every module with a design contract, with where it goes; the target contracts ab
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
 | `core/_record_distribution.py` | `distributions/_views.py` (`FieldView`, III.7); `RecordDistribution` is retired (III.13) |
 | `core/_numeric_record_distribution.py` | the numeric marker to `distributions/_distribution.py` (III.7) and `BootstrapDistribution` to `families/_resampling.py` (VI.2); `FlatNumericRecordDistribution`, `FlattenedDistributionView`, and `NumericRecordDistributionView` are retired, the flat view being `evaluate(to_vector, d)` (III.7) |
-| `modeling/_stan.py`, `modeling/_pymc.py` | `families/_programs.py` (VI.9) |
+| `modeling/_stan.py`, `modeling/_pymc.py` | `families/_programs.py` (VI.9), retaining separate data inputs and declared event variables |
 | `modeling/_glm.py` | `families/_conditional.py` (VI.8) |
 | `modeling/_base.py`, `modeling/_simple.py`, `modeling/_simple_generative.py`, and `Likelihood`, `ConditionallyIndependentLikelihood`, `GenerativeLikelihood` in `core/protocols.py` | retired: a model is a program-defined family (VI.9) or a factored joint (III.11), and a learned likelihood is a `ConditionalDistribution` (III.9) |
 | `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
