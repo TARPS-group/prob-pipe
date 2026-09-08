@@ -22,7 +22,7 @@ The specs partition into the **base kinds** and the **batch kinds**. Every base 
 
 **The kind table.** The correspondence is declared once, in a table each kind's module fills at import (II.7): `register_kind` records the tracked class and the batch form of a spec class, and `term_class_for_spec` and `batch_class_for_spec` look them up through the spec's class and its bases, so a spec subclass inherits its base's kind unless it registers its own. A second registration that disagrees raises, since a kind has one tracked class and one batch form. `RecordSpec` registers `RecordBatch`, whose numeric specialization is chosen at construction (III.6). The kind-directed wrap (IV.4) and the enforcement of a planned declaration (IV.10) resolve a kind through this table and through nothing else.
 
-**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any symbolic dimensions is **polymorphic**; one with none is **concrete**. A spec can *report* the names still unbound, *substitute* explicit sizes for names, and *bind* names by unification against a value, reading the sizes off that value's spec. Binding is one unification over everything bound together: a name takes its size from its first occurrence, every later occurrence must agree, a disagreement raises, and a bound name never rebinds.
+**Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any symbolic dimensions is **polymorphic**; one with none is **concrete**. A spec can *report* the names still unbound, *substitute* explicit sizes for names, and *bind* names by unification against a value, reading the sizes off that value's spec, or against another spec, as when an operand's schema meets a map's input (V.1). Binding is one unification over everything bound together: a name takes its size from its first occurrence, every later occurrence must agree, a disagreement raises, and a bound name never rebinds.
 
 The base API is validation plus the dimension protocol:
 
@@ -38,6 +38,7 @@ class TermSpec(ABC):
     def is_concrete(self) -> bool: ...               # True when free_dims is empty
     def with_dims(self, **sizes: int) -> Self: ...   # substitute explicit sizes
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
+    def bind_dims_from_spec(self, other: TermSpec) -> Self: ...   # bind by unification against another spec
 
 def register_kind(spec_type: type[TermSpec], *, term_class: type, batch_class: type) -> None: ...
 def term_class_for_spec(spec: TermSpec) -> type: ...    # the tracked class of the spec's kind
@@ -182,11 +183,14 @@ class ParentInfo:
     fingerprint: str            # best-effort content hash
     fingerprint_is_weak: bool   # True when the fingerprint is only object identity
     parent:      Any | None     # optional reference to original parent
+
+def provenance_ancestors(term: TrackedTerm) -> list[ParentInfo]: ...   # every ancestor reachable through parents
+def provenance_dag(term: TrackedTerm) -> Any: ...                       # the chain rendered as a Graphviz graph
 ```
 
 The **annotations** store is the one exception to immutability: it can be written after construction, so a diagnostic can attach its result to the object it examined, and by convention it is append-only. Annotations are otherwise inert: no operation reads them to decide behavior, they do not propagate to results because lineage is recorded in `provenance`, and they never enter a compiled trace.
 
-Fingerprints are best-effort and tiered, from a content hash, through the code hash of a closure-free callable, down to object identity, with `fingerprint_is_weak` marking the weakest tier. **The provenance mode, not the operation, sets the tier.** The default lightweight mode records identity-tier descriptors for every operation's parents with no content hashing; the full mode retains parent references and content-verifiable fingerprints, computed lazily at export since the objects are held; off records nothing. Every operation behaves identically under a given mode, so provenance cost is one user-visible setting rather than a property of what ran.
+Fingerprints are best-effort and tiered, from a content hash, through the code hash of a closure-free callable, down to object identity, with `fingerprint_is_weak` marking the weakest tier. **The provenance mode, not the operation, sets the tier.** The default lightweight mode records identity-tier descriptors for every operation's parents with no content hashing; the full mode retains parent references and content-verifiable fingerprints, computed lazily at export since the objects are held; off records nothing. Every operation behaves identically under a given mode, so provenance cost is one user-visible setting rather than a property of what ran. Two functions read the record: `provenance_ancestors` returns every ancestor reachable through the parents, and `provenance_dag` renders that chain as a graph.
 
 ### Rationale
 
