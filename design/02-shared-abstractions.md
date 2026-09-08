@@ -20,6 +20,8 @@ A **term specification** ("term spec") describes the typing information availabl
 
 The specs partition into the **base kinds** and the **batch kinds**. Every base kind has exactly one term spec, one **base form**, and one **batch form**. Since a batch of batches is a batch, the base form and batch form of a `Batch` are identical.
 
+**The kind table.** The correspondence is declared once, in a table each kind's module fills at import (II.7): `register_kind` records the tracked class and the batch form of a spec class, and `term_class_for_spec` and `batch_class_for_spec` look them up through the spec's class and its bases, so a spec subclass inherits its base's kind unless it registers its own. A second registration that disagrees raises, since a kind has one tracked class and one batch form. `RecordSpec` registers `RecordBatch`, whose numeric specialization is chosen at construction (III.6). The kind-directed wrap (IV.4) and the enforcement of a planned declaration (IV.10) resolve a kind through this table and through nothing else.
+
 **Symbolic dimensions.** A dimension size for a numeric value may be an integer or a **named symbolic dimension**: a name that fixes a dimension's identity while deferring its size. A spec with any symbolic dimensions is **polymorphic**; one with none is **concrete**. A spec can *report* the names still unbound, *substitute* explicit sizes for names, and *bind* names by unification against a value, reading the sizes off that value's spec. Binding is one unification over everything bound together: a name takes its size from its first occurrence, every later occurrence must agree, a disagreement raises, and a bound name never rebinds.
 
 The base API is validation plus the dimension protocol:
@@ -36,11 +38,15 @@ class TermSpec(ABC):
     def is_concrete(self) -> bool: ...               # True when free_dims is empty
     def with_dims(self, **sizes: int) -> Self: ...   # substitute explicit sizes
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
+
+def register_kind(spec_type: type[TermSpec], *, term_class: type, batch_class: type) -> None: ...
+def term_class_for_spec(spec: TermSpec) -> type: ...    # the tracked class of the spec's kind
+def batch_class_for_spec(spec: TermSpec) -> type: ...   # its batch form
 ```
 
 ### Rationale
 
-One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to functions, distributions, and values`), and defining each concrete spec beside the kind it describes keeps this layer generic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule is `D2 – Generality first`: every result can be tracked and every collection of draws stacked, so nothing an operation produces falls outside the system. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it; hence cross-field equalities travel with the term, and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`).
+One `is_valid` contract across the kinds keeps validation uniform (`C1 – Uniform interface to functions, distributions, and values`), and defining each concrete spec beside the kind it describes keeps this layer generic (`D2 – Generality first`). Naming the base for the terms it types is `C5 – Naming for unambiguous meaning` applied to the library's own vocabulary: every spec types a tracked term, and *value* stays reserved for the mathematical kind. The kind rule is `D2 – Generality first`: every result can be tracked and every collection of draws stacked, so nothing an operation produces falls outside the system. A symbolic dimension carries a dimension's identity, which is mathematical structure, while deferring its size to the data that determines it; hence cross-field equalities travel with the term, and sizes bind when their producer appears (`D5 – Explicit, carried structure`, `C3 – Computational detail hidden by default, available on demand`). Declaring the kind correspondence once, where each kind is defined, is `D6 – Single source of truth`: the wrap, the declaration enforcement, and the batch constructors read one table, so widening a kind widens all of them.
 
 ## II.2 — Input and output declarations: `InputSpec`, `OutputSpec`
 

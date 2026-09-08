@@ -26,6 +26,7 @@ probpipe/
 │   ├── _named_tree.py         #   NamedTree (II.6)
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
 │   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.1), InputSpec, OutputSpec (II.2)
+│   ├── _kinds.py              #   the kind table: register_kind, term_class_for_spec, batch_class_for_spec (II.1)
 │   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.3)
 │   ├── _array_backend.py      #   the array-backend registry for native numeric leaves (II.3)
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.5)
@@ -129,7 +130,7 @@ A handful of private helper modules (dtypes, array utilities) support the packag
 
 ### Correspondence to the implementation
 
-The main moves, for orientation; the target contracts above are authoritative.
+Every module with a design contract, with where it goes; the target contracts above are authoritative.
 
 | Today | Target |
 |---|---|
@@ -149,7 +150,8 @@ The main moves, for orientation; the target contracts above are authoritative.
 | `core/ops.py` | `operations/`, one module per operation section (V.1–V.10), plus `_operation.py` for the declaration, route, and registry code |
 | `core/distribution.py`, `core/_distribution_base.py` | `distributions/_distribution.py` |
 | `core/protocols.py` | `distributions/_capabilities.py` |
-| `core/_distribution_array.py`, `core/_broadcast_distributions.py` | `distributions/_batches.py` |
+| `core/_distribution_array.py` | `distributions/_batches.py` (III.10) |
+| `core/_broadcast_distributions.py` | split: `BroadcastDistribution` is retired, the lift's joint result being an `EmpiricalDistribution` (IV.10, VI.2); the row aggregator `_make_stack` to `functions/_result.py` (IV.10); the mixture and record marginals to `operations/_marginal.py` and `families/_mixture.py` (V.8, VI.3) |
 | `core/_empirical.py` | `distributions/_empirical.py` |
 | `inference/_registry.py` (the registry object, today imported upward by `core/ops.py`) | `operations/_condition.py`; the methods stay in `inference/`, and the edge points downward |
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
@@ -165,6 +167,25 @@ The main moves, for orientation; the target contracts above are authoritative.
 | `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (III.14): `ConversionMethod` becomes `Fidelity`, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
 | `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (III.14) |
 | `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `core/_distribution_base.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VI.2); `set_default_num_evaluations` becomes the sample-count default in `core/_config.py` (IV.2) |
+| `core/_kinds.py`, `core/_array_backend.py` | `core/`, in place: the kind table (II.1) and the array-backend registry (II.3) |
+| `core/_immutable.py`, `core/_fingerprint.py` | `core/_identity.py` (II.4) |
+| `core/config.py` | `core/_config.py` |
+| `core/_workflow_callable.py`, `core/_workflow_descendants.py` | `functions/_replay.py` for the callable anchors and `functions/_plan.py` for the root-ancestor capture (IV.5, IV.8) |
+| `core/_workflow_errors.py` | `functions/`, each error beside the step that raises it (IV.1) |
+| `core/_random_functions.py`, `core/_random_measures.py` | `families/_random_functions.py` (VI.5) |
+| `distributions/_product.py`, `distributions/_sequential_joint.py`, `distributions/_joint_utils.py`, `distributions/joint.py` | `distributions/_factored.py` (III.11): `ProductDistribution` and `SequentialJointDistribution` become `FactoredDistribution` |
+| `distributions/_joint_gaussian.py`, `distributions/gaussian_random_function.py` | `families/_gaussian.py` (VI.6): `JointGaussian` becomes `FactoredMultivariateGaussian` |
+| `distributions/_joint_empirical.py` | `distributions/_empirical.py` (VI.2): an empirical joint is an `EmpiricalDistribution` over a record event, and its conditioning, if kept, is a capability route of `condition_on` |
+| `distributions/_tfp_base.py` | `families/_backend.py` (VI.1) |
+| `distributions/continuous.py`, `distributions/discrete.py`, `distributions/multivariate.py` | `families/_continuous.py`, `families/_discrete.py`, `families/_multivariate.py` (VI.1) |
+| `distributions/kde.py` | `families/_resampling.py` (VI.2) |
+| `distributions/transformed.py` | `families/_transformed.py` (VI.4) |
+| `distributions/_bijector_dispatch.py` | `distributions/_reparameterization.py` (III.15) |
+| `linalg/linear_operator.py`, `linalg/operations.py`, `linalg/utils.py` | `linalg/_linop.py`, `linalg/_structured.py`, `linalg/_composites.py`; the free-function queries become `LinOp` methods (III.4) |
+| `inference/_approximate_distribution.py`, `inference/_minibatch.py` | `inference/`, in place: `ApproximateDistribution` becomes an `EmpiricalDistribution` carrying provenance and annotations (VI.7), and `MinibatchedDistribution` is a `RandomMeasure` member (VI.5) |
+| `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | open, with the incremental-conditioning point below |
+| `_weights.py`, `_array_utils.py`, `_dtype.py`, `_utils.py` | private helpers, unchanged |
+| `diagnostics/`, `validation/` | unchanged |
 
 ### Open points
 
