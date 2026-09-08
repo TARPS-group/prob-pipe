@@ -33,6 +33,7 @@ from . import (
 from ._batch import Batch
 from ._broadcast_distributions import _make_stack, _row_at_its_kind
 from ._distribution_array import DistributionArray, _make_distribution_array
+from ._numeric_array import NumericArray
 from ._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ._record_batch import RecordBatch, _MappedBatchColumns
 from .config import WorkflowKind, prefect_config
@@ -325,8 +326,8 @@ def mapped_row_body(
 
     A row's batched-record argument is rebuilt from raw leaf columns inside the
     traced call, so nothing infers a batch axis on the way in. On the way out the
-    row takes the kind of its own return, as a row-wise row does, and a record or
-    a batch is then taken apart into :class:`_MappedBatchColumns` or
+    row takes the kind of its own return, as a row-wise row does, and a numeric
+    array, record, or batch is then taken apart into :class:`_MappedBatchColumns` or
     :class:`_MappedBatchStore`: the map is about to add an axis that neither
     class's unflatten hook could name, and the executor names it afterwards from
     the sweep's levels.
@@ -350,6 +351,8 @@ def mapped_row_body(
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)
         if isinstance(out, NumericArrayBatch):
+            return _MappedBatchStore.of(out)
+        if isinstance(out, NumericArray):
             return _MappedBatchStore.of(out)
         return out
 

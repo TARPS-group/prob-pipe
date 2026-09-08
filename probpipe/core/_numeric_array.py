@@ -145,15 +145,16 @@ class NumericArray(TrackedTerm, Annotated):
         """The value as a ``jax.Array`` — the single conversion point.
 
         A value already stored as one passes through, tracers included; a
-        native container converts through its registered backend once and is
-        memoised for this instance.
+        native container converts through its registered backend. Concrete
+        conversions are memoised; traced conversions stay within their transform.
         """
         if isinstance(self._value, jax.Array):
             return self._value
         cached = getattr(self, "_jax_cache", None)
         if cached is None:
             cached = _to_jax_array(self._value)
-            object.__setattr__(self, "_jax_cache", cached)
+            if not isinstance(cached, jax.core.Tracer):
+                object.__setattr__(self, "_jax_cache", cached)
         return cached
 
     @property

@@ -284,6 +284,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Sweeps returning `NumericArray`, including nested numeric operations such as
+  `log_prob`, now aggregate under `auto` and `jax` dispatch. Numeric row
+  declarations and named batch levels survive aggregation across dispatch modes;
+  conflicting numeric row declarations raise an actionable error. Native-backed
+  numeric arrays no longer cache temporary traced conversions (#446).
+
 - **The kind table is the single answer to which batch form a field has (#398).**
   `RecordBatch` construction listed the admissible field kinds inline while the
   reading end asked the registry, so registering a kind widened one and not the
