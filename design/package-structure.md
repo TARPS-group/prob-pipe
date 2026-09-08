@@ -83,7 +83,7 @@ probpipe/
 │   ├── _operation.py          #   the @operation decorator: roles, conditions, and result rule;
 │   │                          #     OperationRoute and its four helpers, route resolution, and the
 │   │                          #     operation registry (V.0)
-│   ├── _evaluate.py           #   evaluate and its rule registry (V.1)
+│   ├── _evaluate.py           #   evaluate (V.1); its registry is functions/_rules.py
 │   ├── _inverse.py            #   inverse, log_det_jacobian (V.2)
 │   ├── _sample.py             #   sample (V.3)
 │   ├── _density.py            #   log_prob, unnormalized_log_prob (V.4)
@@ -118,7 +118,7 @@ probpipe/
 - **`values/`** is the value layer of Part III, covering every leaf kind, `Function`'s base included (III.3); `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` is here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must be below the code that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Controls, binding, normalization, lift classification, planning, rule resolution, the workflow scopes and structural keys, replay and caching, execution under a dispatch mode, orchestration, and return are the steps of one stack (IV.1), and they change together. It is above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Controls, binding, normalization, lift classification, planning, route resolution, the workflow scopes and structural keys, replay and caching, execution under a dispatch mode, orchestration, and return are the steps of one stack (IV.1), and they change together. It is above `distributions/` because lifting samples distributions and materializes empirical results.
 - **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (V.1–V.10) above `_operation.py`, which holds V.0's decorator, route protocol, resolution, and registry. V.11's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry is defined with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** are outside the reference's parts: inference methods register into the V.6 registry, and diagnostics and validation are application layers over the public operations.

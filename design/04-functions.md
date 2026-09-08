@@ -12,9 +12,9 @@ Wrapping a callable `f` as a `Function` runs one **stack** of steps on every cal
 | IV.4  | normalization     | wrapping raw hosts into their kinds, converting distributions, and admitting each argument (step 3)             |
 | IV.5  | lifting           | which arguments are lifted, how they group, and the regime that results (step 4)                                |
 | IV.6  | planning          | validating the declarations and computing the result declaration before anything runs (step 5)                 |
-| IV.7  | resolution        | the evaluation-rule registry and the selection of the rule or route that realizes the call (step 6)             |
+| IV.7  | resolution        | the evaluation-rule registry and the selection of the route that realizes the call (step 6)             |
 | IV.8  | randomness        | workflow scopes and the structural keys the executed points consume                                             |
-| IV.9  | execution         | running the points under a dispatch mode, optionally traced (step 7)                                             |
+| IV.9  | execution         | applying the function under a dispatch mode, optionally traced (step 7)                                             |
 | IV.10 | return            | assembling, validating, wrapping, and identifying the result, or detaching it under `raw=True` (step 8)          |
 | IV.11 | differentiability | the construction-time claim of which inputs gradients propagate through                                          |
 
@@ -32,20 +32,18 @@ def predict(theta, x): ...                    # an ordinary callable over concre
 def predict(theta, x): ...
 ```
 
-A `Function` is a node in a directed graph whose edges are its tracked arguments (IV.3), and that graph is what provenance and orchestration traverse.
-
-**The engine.** The engine is one callable installed into the base's call path (III.3), once, at import. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance. Every call runs the stack below in order, and a failure ends the call at its step. The stack reads three declarations from the `Function` it runs: what each parameter **accepts**, the **result declaration**, and the **realization**. A `@function` accepts its declared input spec at each parameter and any value where a parameter is unannotated; its result declaration is the `output_spec` given at construction, bound per call by unification, or is read from the return when none was given; and its realization is its body or, for a lifted application, the rule the evaluation registry selects (IV.7). An operation supplies richer declarations at the same three points (V.0).
+**The engine.** The engine is one callable installed into the base's call path (III.3), once, at import. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance. Every call runs the stack below in order, and a failure ends the call at its step. The stack reads three declarations from the `Function` it runs: what each parameter **accepts**, the **result declaration**, and the **realization**. For a `@function` the three are as follows. A parameter accepts its declared input spec, or any value where it is unannotated. The result declaration is the `output_spec` given at construction, bound per call by unification, or is read from the return when none was given. The realization is the body, or, for a lifted application, the route the evaluation registry selects (IV.7).
 
 1. **Configure** (IV.2). The effective controls are resolved: the framework's defaults, the decorator's values, and a `with_options` view, in that order.
 2. **Bind** (IV.3). The arguments bind to the wrapped function's signature, tracked arguments as dependencies and the rest as inputs.
 3. **Normalize** (IV.4). Each argument is wrapped into its kind, a distribution is converted where its parameter names another class, and the result is admitted against what the parameter accepts.
 4. **Classify the lift** (IV.5). The lifted arguments are found and grouped, resulting in one of the following lifting regimes: a plain call, a broadcast, a sweep, or a nested sweep.
-5. **Plan** (IV.6). The declarations are validated and the result declaration is computed from static information under compilation.
-6. **Resolve** (IV.7). The rule or route that realizes the call is selected among the feasible candidates.
-7. **Execute** (IV.9). The selected rule runs over the points under the dispatch mode, each point with its key (IV.8).
+5. **Plan** (IV.6). The declarations are validated and the result declaration is computed from information that is static under compilation.
+6. **Resolve** (IV.7). The route that realizes the call is selected among the feasible candidates.
+7. **Execute** (IV.9). The selected route runs over the points under the dispatch mode, each point with its key (IV.8).
 8. **Return** (IV.10). The points are assembled, validated against the planned declaration, wrapped, and given identity, or detached under `raw=True`.
 
-**Checking feasibility.** The `f.check(...)` method runs steps 1 to 6 without executing and reports which rules or routes are feasible, what each infeasible one is missing, and which would be selected.
+**Checking feasibility.** The `f.check(...)` method runs steps 1 to 6 without executing and reports which routes are feasible, what each infeasible one is missing, and which would be selected.
 
 ### Rationale
 
@@ -55,7 +53,7 @@ This makes `C1 – Uniform interface to functions, distributions, and values` an
 
 ### Contract
 
-A `Function` keeps two namespaces strictly apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which no wrapped function declares. The controls are the sample count (`n_broadcast_samples`), the `include_inputs` switch (IV.6), `method` for rule or route selection and `min_fidelity` as a fidelity floor on it (IV.7), `conversions` for the per-parameter conversion settings of IV.4, the `raw` opt-out read at return (IV.10), and the dispatch and orchestration selectors (IV.9). Randomness is not a control: seeding belongs to the workflow scope, and an explicit `key` is an argument of the operations that draw, caller-owned when supplied (IV.8).
+A `Function` keeps two namespaces strictly apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which no wrapped function declares. The controls are the sample count (`n_broadcast_samples`), the `include_inputs` switch (IV.6), `method` for route selection and `min_fidelity` as a fidelity floor on it (IV.7), `conversions` for the per-parameter conversion settings of IV.4, the `raw` opt-out read at return (IV.10), and the dispatch and orchestration selectors (IV.9). Randomness is not a control: seeding belongs to the workflow scope, and an explicit `key` is an argument of the operations that draw, caller-owned when supplied (IV.8).
 
 **Setting a control.** Each control's effective value is resolved before any argument is read, from three layers: the framework's default, then the decorator or constructor, then a `with_options` view, which returns a callable with the controls revised for the calls made through it and leaves the `Function` itself unchanged. Every control has a default, so a bare decorator and a bare call are complete.
 
@@ -114,7 +112,7 @@ A `Function` compares each admitted argument against the kind its parameter expe
 
 ### Rationale
 
-This is `C4 – Function lifting` realized in both of its cases: replacing an argument of `f` with a distribution over that argument's type leaves `f` well-defined and returns the pushforward, and replacing one with a batch over that type leaves it equally well-defined and returns the broadcast: one substitution rule, differing only in whether the multiplicity is a law or a collection. Realizing the first by sampling and the second by the sweep keeps the contract general (`D2 – Generality first`): it works for any `f`, any number of lifted arguments, and any distribution that samples, with exact rules registering above those floors, and it leaves the user's function unchanged. The annotation trigger makes the lifting boundary explicit in the signature, where the author already states intent. Co-sampling by root ancestor is what makes the lift *correct* rather than merely type-correct: it is the same correlation-preserving mechanism the field views rest on, so passing sibling views through a function transports their joint law.
+This is `C4 – Function lifting` realized in both of its cases: replacing an argument of `f` with a distribution over that argument's type leaves `f` well-defined and returns the pushforward, and replacing one with a batch over that type leaves it equally well-defined and returns the broadcast: one substitution rule, differing only in whether the multiplicity is a law or a collection. Realizing the first by sampling and the second by the sweep keeps the contract general (`D2 – Generality first`): it works for any `f`, any number of lifted arguments, and any distribution that samples, with exact routes registering above those floors, and it leaves the user's function unchanged. The annotation trigger makes the lifting boundary explicit in the signature, where the author already states intent. Co-sampling by root ancestor is what makes the lift *correct* rather than merely type-correct: it is the same correlation-preserving mechanism the field views rest on, so passing sibling views through a function transports their joint law.
 
 ## IV.6 — Planning (step 5)
 
@@ -165,17 +163,17 @@ Planning the declaration before execution, from what is static under compilation
 
 ### Contract
 
-Resolution selects the rule or route that realizes the call. Every candidate is checked on the declarations alone, and the feasible candidates rank by fidelity, then specificity, then registration order (II.7); `method=` names one outright and `min_fidelity=` excludes those below a floor (IV.2). A plain call of a plain function has its body as its one candidate, and an operation resolves among its routes (V.0). A lifted application, which is the direct call `f(d)` or `f(batch)`, resolves through the **evaluation-rule registry**: a `BinaryDispatchRegistry` keyed on the map's and the operand's types whose methods are **evaluation rules**. `evaluate` (V.1) exposes the same registry as an operation, so the direct call and `evaluate` take the same route. The rules, in selection order:
+Resolution selects the route that realizes the call. Every candidate is checked on the declarations alone, and the feasible candidates rank by fidelity, then specificity, then registration order (II.7); `method=` names one outright and `min_fidelity=` excludes those below a floor (IV.2). A plain call of a plain function has its body as its one candidate, and an operation resolves among its routes (V.0). A lifted application, which is the direct call `f(d)` or `f(batch)`, resolves through the **evaluation-rule registry**: a `BinaryDispatchRegistry` keyed on the map's and the operand's types whose methods are **evaluation rules**, each a route of the lifted application. `evaluate` (V.1) exposes the same registry as an operation, so the direct call and `evaluate` take the same route. The rules, in selection order:
 - **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
 - **Change of variables** applies when the map is invertible and carries the Jacobian claim (`is_invertible` and `SupportsLogDetJacobian`), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
 - **The sampling lift** is the rule registered at the generic pair for a distribution operand and always applies: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key as controls. It is the route every plain callable takes, and grouped, multi-distribution lifts always take it, which is what co-sampling requires (IV.5).
 - **The elementwise sweep** is the batch counterpart: the rule at the generic pair for a batch operand. A fused batched implementation, such as an operator's matrix–matrix routine or a single vectorized call over array-backed elements, registers above it.
 
-The **floor** of a registry is its always-feasible rule, which ranks last: the sampling lift for a distribution operand and the elementwise sweep for a batch, so a lift never fails to resolve while its operand samples. Rules need not be exact: an approximate scheme, for example quadrature or an unscented transform, registers at its recorded fidelity, above the lift. The selected rule records its name and fidelity in the result's provenance (IV.10). *Requires:* a feasible candidate, or the named one. *On failure:* `ResolutionError`, naming each candidate and what it was missing.
+The **floor** is the always-feasible route, which ranks last: in the evaluation registry, the sampling lift for a distribution operand and the elementwise sweep for a batch, so a lift never fails to resolve while its operand samples. Rules need not be exact: an approximate scheme, for example quadrature or an unscented transform, registers at its recorded fidelity, above the lift. The selected route records its name and fidelity in the result's provenance (IV.10). *Requires:* a feasible candidate, or the named one. *On failure:* `ResolutionError`, naming each candidate and what it was missing.
 
 ### Rationale
 
-Dispatching over pairs of map and operand types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form or a fused batched routine gets it automatically, while every other pair still resolves through the floors. Registration grows the exact set without changing call sites (`D2 – Generality first`), and recording the producing rule makes the approximation explicit (`D1 – Mathematical fidelity`).
+Dispatching over pairs of map and operand types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form or a fused batched routine gets it automatically, while every other pair still resolves through the floors. Registration grows the exact set without changing call sites (`D2 – Generality first`), and recording the producing route makes the approximation explicit (`D1 – Mathematical fidelity`).
 
 ## IV.8 — Randomness: workflow scopes and structural keys
 
@@ -218,12 +216,12 @@ Scoped, structural randomness is `C6 – Traceable and reproducible workflows` m
 
 ### Contract
 
-Execution runs the selected rule over the points: once for a plain call, per draw for a broadcast, and per element for a sweep, each point with its key (IV.8). This is the only step that reads values. The points run under two orthogonal computational settings, both with defaults so a user need not set them:
+Execution runs the selected route over the points: once for a plain call, per draw for a broadcast, and per element for a sweep, each point with its key (IV.8). This is the only step that reads values. The points run under two orthogonal computational settings, both with defaults so a user need not set them:
 
 - **Dispatch mode: how the points run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is traced end-to-end, and it differentiates end-to-end when the `Function` claims `SupportsDifferentiation`. Because keys attach to structure (IV.8), the result is identical across `jax`, `sequential`, and `thread` up to the floating-point effects of evaluation order, and parallel execution contends for no mutable random state. Each dispatch mode's versioned capability contract (IV.8) is checked before sampling begins, so an unsupported mode is refused up front rather than approximated.
 - **Orchestration: whether the call is traced.** Off by default. A `Function` can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result. Work that crosses a thread, task, or orchestrated-flow boundary travels as a **managed work item** extending the occurrence path (IV.8), so orchestrated and distributed runs draw from the same structural stream as local ones.
 
-*Requires:* the rule completes. *On failure:* the body's or route's own error propagates, as for any numerical method.
+*Requires:* the route completes. *On failure:* the route's own error propagates, as for any numerical method.
 
 ### Rationale
 
@@ -237,7 +235,7 @@ Dispatch and orchestration are `C3 – Computational detail hidden by default, a
 
 ### Contract
 
-Return assembles the points into the declared result and returns it tracked. Each point's result is validated against the planned declaration and the points are assembled into the result IV.6 declares. The result then crosses the kind-directed wrap of IV.4: a tracked term keeps its kind under the call's fresh, derived identity, so a `Distribution` or a `NumericArray` the body produced is the result rather than a field inside a fresh `Record`, and a raw return takes the kind it is. An opaque output samples downstream but carries none of the numeric interface, so a function whose output deserves structure returns a mapping or declares it (IV.6). The result receives identity: an auto-derived name, and a `provenance` recording the `Function`, its dependencies as parents and its inputs by name (IV.3), the selected rule with its fidelity (IV.7), and the resolved controls. With `raw=True` the identity is not constructed and the result returns detached (II.4); the enclosing call never re-wraps it. *Requires:* the result satisfies the planned declaration. *On failure:* a wrong kind and a schema mismatch raise distinct errors, and either is a defect of the body or route rather than of the caller.
+Return assembles the points into the declared result and returns it tracked. Each point's result is validated against the planned declaration and the points are assembled into the result IV.6 declares. The result then crosses the kind-directed wrap of IV.4: a tracked term keeps its kind under the call's fresh, derived identity, so a `Distribution` or a `NumericArray` the body produced is the result rather than a field inside a fresh `Record`, and a raw return takes the kind it is. An opaque output samples downstream but carries none of the numeric interface, so a function whose output deserves structure returns a mapping or declares it (IV.6). The result receives identity: an auto-derived name, and a `provenance` recording the `Function`, its dependencies as parents and its inputs by name (IV.3), the selected route with its fidelity (IV.7), and the resolved controls. With `raw=True` the identity is not constructed and the result returns detached (II.4); the enclosing call never re-wraps it. *Requires:* the result satisfies the planned declaration. *On failure:* a wrong kind and a schema mismatch raise distinct errors, and either is a defect of the route rather than of the caller.
 
 ### Rationale
 
