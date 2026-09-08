@@ -272,7 +272,7 @@ Keeping the integral out of `condition_on` keeps conditioning single-valued, sin
 
 ### Contract
 
-`convert(d, target)` returns `d` as a distribution of the `target` class. Its one route is a registry route on the converter registry (III.14), so the conversion's fidelity is the selected converter's, recorded in the result's provenance, and the route-selection controls `method` and `min_fidelity` (IV.2) choose or floor the converter. When `d` already has the target class the result is `d` under fresh identity. The entry conversion of III.14, a backend distribution supplied at a distribution-shaped position, is this operation applied at normalization (IV.4), so a conversion the user requests and one the engine performs on entry resolve the same way and leave the same record.
+`convert(d, target)` returns `d` as a distribution of the `target` class, or, when `target` is a capability protocol (III.8), as a distribution that satisfies it. Its one route is a registry route on the converter registry (III.14), so the conversion's fidelity is the selected converter's, recorded in the result's provenance, and the route-selection controls `method` and `min_fidelity` (IV.2) choose or floor the converter. When `d` already has the target class or satisfies the protocol, the result is `d` under fresh identity. The entry conversion of III.14, a backend distribution supplied at a distribution-shaped position, is this operation applied at normalization (IV.4), so a conversion the user requests and one the engine performs on entry resolve the same way and leave the same record.
 
 ### Rationale
 

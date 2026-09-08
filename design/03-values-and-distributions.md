@@ -681,7 +681,7 @@ The hierarchy embodies `D2 – Generality first`: one base refined by *optional 
 
 ### Contract
 
-A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*. The registry is an ordinary binary dispatch registry keyed on `(type(source), target)`; the target is already a type.
+A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*. The registry is an ordinary binary dispatch registry keyed on `(type(source), target)`; the target is already a type. The target may also be a capability protocol (III.8): a protocol target admits every converter whose target class satisfies the protocol, ranked as usual, and a source that already satisfies it converts to itself at exact fidelity.
 
 Conversion is also the entry route for raw distributions: a backend distribution supplied at a distribution-shaped position, for example an argument or a record field, is converted on entry through the registry, exactly as a bare array is wrapped at an array-spec position.
 
@@ -700,7 +700,7 @@ class Converter(BinaryDispatchMethod):
     def execute(self, source, target_type: type) -> Distribution: ...             # the conversion itself
 
 class ConverterRegistry(BinaryDispatchRegistry[Converter]):
-    # keyed on (type(source), target): the second key is the target type itself
+    # keyed on (type(source), target): the target is a distribution class, or a capability protocol (III.8)
     def convert(self, source, target_type: type,
                 method: str | None = None, min_fidelity: Fidelity | None = None) -> Distribution: ...
 

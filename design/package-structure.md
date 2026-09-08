@@ -162,6 +162,9 @@ The main moves, for orientation; the target contracts above are authoritative.
 | `modeling/_glm.py` | `families/_conditional.py` (VI.8) |
 | `modeling/_base.py`, `modeling/_simple.py`, `modeling/_simple_generative.py`, and `Likelihood`, `ConditionallyIndependentLikelihood`, `GenerativeLikelihood` in `core/protocols.py` | retired: a model is a program-defined family (VI.9) or a factored joint (III.11), and a learned likelihood is a `ConditionalDistribution` (III.9) |
 | `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
+| `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (III.14): `ConversionMethod` becomes `Fidelity`, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
+| `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (III.14) |
+| `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `core/_distribution_base.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VI.2); `set_default_num_evaluations` becomes the sample-count default in `core/_config.py` (IV.2) |
 
 ### Open points
 
