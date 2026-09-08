@@ -27,6 +27,7 @@ probpipe/
 │   ├── _constraints.py        #   Constraint and the constraint factories (II.3)
 │   ├── _specs.py              #   TermSpec, NumericArraySpec, OpaqueSpec (II.1), InputSpec, OutputSpec (II.2)
 │   ├── _numeric.py            #   Numeric and its spec-side mixin NumericSpec (II.3)
+│   ├── _array_backend.py      #   the array-backend registry for native numeric leaves (II.3)
 │   ├── _record_spec.py        #   RecordSpec, NumericRecordSpec, unification (III.5)
 │   ├── _identity.py           #   TrackedTerm, Provenance, fingerprints (II.4)
 │   ├── _batch.py              #   Batch, BatchSpec: axis groups, level names, at_levels (II.5)
@@ -64,20 +65,20 @@ probpipe/
 │   ├── _conversion.py         #   Converter, ConverterRegistry (III.14)
 │   └── _reparameterization.py #   bijector_for, register_bijector, is_invertible (III.15)
 ├── functions/                 # Part IV — Function and its engine
-│   ├── _function.py           #   the engine installed on Function at import; the wrapping decorator
-│   ├── _call.py               #   binding and admission, the sequence's first two steps; ApplicabilityError (IV.1)
-│   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (IV.1, IV.2)
+│   ├── _function.py           #   the engine installed on Function at import; the decorator; with_options (IV.1, IV.2)
+│   ├── _call.py               #   binding, and normalization as wrap, convert, admit; ApplicabilityError (IV.3, IV.4)
+│   ├── _plan.py               #   lift classification, root-ancestor grouping, and the result declaration (IV.5, IV.6)
 │   ├── _rules.py              #   the evaluation-rule registry: consulted by the engine,
-│   │                          #     populated upward by the families (V.1)
-│   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (IV.2)
-│   ├── _sweep.py              #   the batch sweep (IV.2)
-│   ├── _rng.py                #   structural event identity, the versioned key derivation (IV.3)
-│   ├── _context.py            #   workflow scopes and frames: workflow_run (IV.3)
-│   ├── _replay.py             #   replay_run, replay records and anchors; the cache key (IV.3)
-│   ├── _broker.py             #   managed work items: keys across threads, tasks, and flows (IV.3, IV.5)
-│   ├── _execution.py          #   jax / sequential / thread dispatch, the route contract (IV.5)
-│   ├── _orchestration.py      #   optional tracing (IV.5)
-│   └── _result.py             #   declaration enforcement, kind-directed wrap, identity, provenance (IV.1)
+│   │                          #     populated upward by the families (IV.7)
+│   ├── _broadcast.py          #   the sampling lift over distributions, include_inputs (IV.9, IV.10)
+│   ├── _sweep.py              #   the batch sweep (IV.9, IV.10)
+│   ├── _rng.py                #   structural event identity, the versioned key derivation (IV.8)
+│   ├── _context.py            #   workflow scopes and frames: workflow_run (IV.8)
+│   ├── _replay.py             #   replay_run, replay records and anchors; the cache key (IV.8)
+│   ├── _broker.py             #   managed work items: keys across threads, tasks, and flows (IV.8, IV.9)
+│   ├── _execution.py          #   the jax / sequential / thread dispatch modes, the execution contract (IV.9)
+│   ├── _orchestration.py      #   optional tracing (IV.9)
+│   └── _result.py             #   assembly, declaration enforcement, kind-directed wrap, identity, provenance (IV.10)
 ├── operations/                # Part V — the operations
 │   ├── _operation.py          #   the @operation decorator: roles, conditions, and result rule;
 │   │                          #     OperationRoute and its four helpers, route resolution, and the
@@ -105,6 +106,7 @@ probpipe/
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VI.8)
 │   ├── _programs.py           #   StanModel, PyMCModel: program-defined joints (VI.9)
 │   └── _converters.py         #   the shipped converters (III.14)
+├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (V.6)
 ├── diagnostics/               # diagnostics over inference results
 └── validation/                # predictive checks and model comparison
@@ -116,10 +118,11 @@ probpipe/
 - **`values/`** is the value layer of Part III, covering every leaf kind, `Function`'s base included (III.3); `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
 - **`distributions/`** is the distribution layer of Part III, through composition, conversion, and reparameterization. `EmpiricalDistribution` is here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must be below the code that uses it. Its Part VI entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Binding and admission, lift classification and planning, rule resolution, the sampling lift, the batch sweep, the workflow scopes and structural keys, replay and caching, execution dispatch, orchestration, and result wrapping are the steps of one call sequence (IV.1), and they change together. It is above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Controls, binding, normalization, lift classification, planning, rule resolution, the workflow scopes and structural keys, replay and caching, execution under a dispatch mode, orchestration, and return are the steps of one stack (IV.1), and they change together. It is above `distributions/` because lifting samples distributions and materializes empirical results.
 - **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (V.1–V.10) above `_operation.py`, which holds V.0's decorator, route protocol, resolution, and registry. V.11's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry is defined with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** are outside the reference's parts: inference methods register into the V.6 registry, and diagnostics and validation are application layers over the public operations.
+- **`designs/`** builds a `Batch` of any element kind from per-field candidate sets combined by a rule, the full factorial being the Cartesian product, on a level named `design`; a design is a distinct concept from the batch it produces, and its section is to be written.
 - **Experimental, placement to be decided.** `Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, and `Module.dag()` in `core/node.py` form a container of `Function`s with shared inputs and a Graphviz view of their graph. They stay outside the reference until their role is settled, at low priority.
 
 A handful of private helper modules (dtypes, array utilities) support the packages and carry no design contract.
@@ -152,6 +155,9 @@ The main moves, for orientation; the target contracts above are authoritative.
 | `core/named_tree.py`, `core/tracked.py`, `core/provenance.py`, `core/_registry.py` | `core/`, one module per II section |
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
 | `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_numeric.py`, `core/_constraints.py` (II.1–II.3, III.5) |
+| `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
+| `core/_record_distribution.py` | `distributions/_views.py` (`FieldView`, III.7); `RecordDistribution` is retired (III.13) |
+| `core/_numeric_record_distribution.py` | the numeric marker to `distributions/_distribution.py` (III.7) and `BootstrapDistribution` to `families/_resampling.py` (VI.2); `FlatNumericRecordDistribution`, `FlattenedDistributionView`, and `NumericRecordDistributionView` are retired, the flat view being `evaluate(to_vector, d)` (III.7) |
 | `modeling/_stan.py`, `modeling/_pymc.py` | `families/_programs.py` (VI.9) |
 | `modeling/_glm.py` | `families/_conditional.py` (VI.8) |
 | `modeling/_base.py`, `modeling/_simple.py`, `modeling/_simple_generative.py`, and `Likelihood`, `ConditionallyIndependentLikelihood`, `GenerativeLikelihood` in `core/protocols.py` | retired: a model is a program-defined family (VI.9) or a factored joint (III.11), and a learned likelihood is a `ConditionalDistribution` (III.9) |

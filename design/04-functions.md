@@ -2,18 +2,23 @@
 
 A **`Function`** (III.3) wraps an ordinary Python callable. This part describes its **engine**: the call semantics beyond plain evaluation, installed on the base at import, which lift the callable ProbPipe-native. The user writes a plain function over its "natural" values, and wrapping it makes that callable (i) **lift** automatically over distribution- and batch-valued arguments and (ii) **act** as a tracked node in a computation graph, so its result carries provenance. `Function`s therefore compose into a workflow.
 
-Wrapping a callable `f` as a `Function` adds six features, each defined in a section below:
+Wrapping a callable `f` as a `Function` runs one **stack** of steps on every call. IV.1 states the stack and what it reads from the `Function`; the sections that follow describe each step in the order it runs, with what it requires and what happens when that fails; the last states the construction-time claim the operations read.
 
-| §     | Concern                  | What it adds to `f`                                                                                                                                                                                     |
-| ----- | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| IV.1  | the wrapper              | `f` becomes a tracked node in a computation graph, and a plain call returns a `TrackedTerm` result with provenance.                                                                                |
-| IV.2  | lifting                  | a distribution passed where a value is expected is sampled and `f` applied per draw, a batch is swept, and correlated arguments co-sample. |
-| IV.3  | randomness               | every ProbPipe-caused draw takes a key derived structurally from a workflow scope, so results are reproducible, order-independent, and parallel-safe.                                                    |
-| IV.4  | controls vs. arguments   | ProbPipe controls (sample count, dispatch, …) are kept in a namespace separate from that of the arguments to `f`.                                                                                            |
-| IV.5  | dispatch & orchestration | *how* the per-draw calls run computationally and *whether* they are traced for lineage.                                                                                                                 |
-| IV.6  | differentiability        | a construction-time claim of which inputs gradients propagate through, read by the operations that need gradients before a backend trace runs. |
+| §     | Step or concern   | What it covers                                                                                                  |
+| ----- | ----------------- | --------------------------------------------------------------------------------------------------------------- |
+| IV.1  | the stack         | the `Function`, its engine, the three declarations the engine reads, and the steps in order                     |
+| IV.2  | controls          | how the framework's controls are set and resolved apart from the arguments of `f` (step 1)                      |
+| IV.3  | binding           | how arguments bind to the signature and become dependencies or inputs (step 2)                                  |
+| IV.4  | normalization     | wrapping raw hosts into their kinds, converting distributions, and admitting each argument (step 3)             |
+| IV.5  | lifting           | which arguments are lifted, how they group, and the regime that results (step 4)                                |
+| IV.6  | planning          | validating the declarations and computing the result declaration before anything runs (step 5)                 |
+| IV.7  | resolution        | the evaluation-rule registry and the selection of the rule or route that realizes the call (step 6)             |
+| IV.8  | randomness        | workflow scopes and the structural keys the executed points consume                                             |
+| IV.9  | execution         | running the points under a dispatch mode, optionally traced (step 7)                                             |
+| IV.10 | return            | assembling, validating, wrapping, and identifying the result, or detaching it under `raw=True` (step 8)          |
+| IV.11 | differentiability | the construction-time claim of which inputs gradients propagate through                                          |
 
-## IV.1 — `Function`
+## IV.1 — The `Function` and its engine
 
 ### Contract
 
@@ -29,38 +34,95 @@ def predict(theta, x): ...
 
 A `Function` is a node in a directed graph: arguments that are themselves tracked terms become graph **dependencies**, and the rest are plain **inputs**. That graph is what provenance and orchestration traverse.
 
-**The engine.** The engine is one callable installed into the base's call path (III.3), once, at import. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance. Every call runs the sequence below in order. The sequence reads three declarations from the `Function` it runs: what each parameter **accepts**, the **result declaration**, and the **realization**. A `@function` accepts its declared input spec at each parameter and any value where a parameter is unannotated; its result declaration is the `output_spec` given at construction, bound per call by unification, or is read from the return when none was given; and it is realized by its body, with a lifted application realized by the rule the evaluation registry selects (V.1). An operation supplies richer declarations at the same three points (V.0).
+**The engine.** The engine is one callable installed into the base's call path (III.3), once, at import. On concrete values it agrees with plain evaluation, adding only the wrap and the provenance. Every call runs the stack below in order, and a failure ends the call at its step. The stack reads three declarations from the `Function` it runs: what each parameter **accepts**, the **result declaration**, and the **realization**. A `@function` accepts its declared input spec at each parameter and any value where a parameter is unannotated; its result declaration is the `output_spec` given at construction, bound per call by unification, or is read from the return when none was given; and it is realized by its body, with a lifted application realized by the rule the evaluation registry selects (IV.7). An operation supplies richer declarations at the same three points (V.0).
 
-1. **Bind.** The arguments bind to the signature while the controls are read from their own namespace (IV.4). *Requires:* every argument binds to a parameter, and every control is one the framework defines. *On failure:* a binding error naming the parameter.
-2. **Admit.** Each argument is normalized to a tracked term, with raw wrapped as its kind, and a backend object converted through its registered converter. Every kind's term is a `TrackedTerm`, and an object no kind admits becomes an `Opaque` (III.2), so a bare object passes a parameter only where `Opaque` is accepted, whatever methods it carries. *Requires:* the term's kind is one the parameter accepts, or the term is a `Distribution` or a `Batch` over such a kind, which step 3 lifts. *On failure:* `ApplicabilityError`, naming the parameter, what it accepts, and what arrived.
-3. **Classify the lift.** A `Distribution` or a `Batch` where a value is expected is lifted (IV.2): the lifted arguments are grouped by root ancestor, the swept batches are aligned by level name (V.11), and the regime follows, a broadcast, a sweep, or a nested sweep of broadcasts. *Requires:* the aligned levels have broadcast-compatible shapes. *On failure:* `ApplicabilityError`, naming the level.
-4. **Plan.** The declarations are validated and the result declaration is computed, once per call, from what is static under compilation: the specs of the arguments, a lifted argument contributing its element spec, declared capabilities, the paths an argument supplied, and the control values, and never traced array data. The declaration is therefore `jit`-safe and cannot depend on what the computation produces. *Requires:* every argument conforms to what its parameter accepts under one unification (II.1), every condition the `Function` declares holds, and the result declaration is complete, its symbolic dimensions bound. *On failure:* `ApplicabilityError`, naming the condition, or the dimensions in conflict or left free.
-5. **Resolve.** The rules or routes that could realize the call are checked on the declarations and ranked by fidelity, then specificity, then registration order, and `method=` names one outright, while `min_fidelity=` excludes the candidates below a floor. A plain call of a plain function has one candidate, its body; a lifted application has the evaluation registry's rules (V.1), whose floors are the sampling lift and the elementwise sweep; an operation has its routes (V.0). *Requires:* a feasible candidate, or the named one. *On failure:* `ResolutionError`, naming each candidate and what it was missing.
-6. **Execute.** The selected rule runs the body or route over the points under the dispatch mode (IV.5), once for a plain call, per draw for a broadcast, and per element for a sweep, each with its key (IV.3). This is the only step that reads values. *Requires:* it completes. *On failure:* the body's or route's own error propagates, as for any numerical method.
-7. **Return.** Each point's result is validated against the planned declaration, the points are assembled as IV.2 states, and the result crosses the kind-directed wrap (IV.2) and receives identity: an auto-derived name, and a `provenance` recording the `Function`, its parents, the selected rule with its fidelity, and the resolved controls. With `raw=True` the identity is not constructed and the result returns detached (II.4), and the enclosing call never re-wraps it. *Requires:* the result satisfies the planned declaration. *On failure:* a wrong kind and a schema mismatch raise distinct errors, and either is a defect of the body or route rather than of the caller.
+1. **Configure** (IV.2). The effective controls are resolved: the framework's defaults, the decorator's values, and a `with_options` view, in that order.
+2. **Bind** (IV.3). The arguments bind to the wrapped function's signature, tracked arguments as dependencies and the rest as inputs.
+3. **Normalize** (IV.4). Each argument is wrapped into its kind, a distribution is converted where its parameter names another class, and the result is admitted against what the parameter accepts.
+4. **Classify the lift** (IV.5). The lifted arguments are found and grouped, and the regime follows: a plain call, a broadcast, a sweep, or a nested sweep.
+5. **Plan** (IV.6). The declarations are validated and the result declaration is computed, once, from what is static under compilation.
+6. **Resolve** (IV.7). The rule or route that realizes the call is selected among the feasible candidates.
+7. **Execute** (IV.9). The selected rule runs over the points under the dispatch mode, each point with its key (IV.8).
+8. **Return** (IV.10). The points are assembled, validated against the planned declaration, wrapped, and given identity, or detached under `raw=True`.
 
-**Checking feasibility.** The `f.check(...)` method runs steps 1 to 5 without executing and reports back which rules or routes are feasible, what each infeasible one is missing, and which would be selected.
+**Checking feasibility.** The `f.check(...)` method runs steps 1 to 6 without executing and reports back which rules or routes are feasible, what each infeasible one is missing, and which would be selected.
 
 ### Rationale
 
-This makes `C1 – Uniform interface to functions, distributions, and values` and `C4 – Function lifting` operational: a user writes mathematics as an ordinary, testable function, and ProbPipe lifts it to act on distributions and values without the function being rewritten. Making every `Function` a graph node delivers `C6 – Traceable and reproducible workflows`: each result records how it was produced, and a whole workflow can later be traced or re-run. Because the wrapper changes only invocation and tracking, the operations can be *defined* as `Function`s and inherit all of it. The sequence is the boundary principles made mechanical: admission is `B1 – Either presentation in`, execution over raw types is `B2 – Representations only inside`, and return is `B3 – Tracked forms out by default`; planning and the lift are what the engine promises beyond them. Stating the sequence once, in the engine, and letting an operation differ only in its declarations is `D6 – Single source of truth` for the call path, so a plain function and an operation fail at the same steps with the same errors.
+This makes `C1 – Uniform interface to functions, distributions, and values` and `C4 – Function lifting` operational: a user writes mathematics as an ordinary, testable function, and ProbPipe lifts it to act on distributions and values without the function being rewritten. Making every `Function` a graph node delivers `C6 – Traceable and reproducible workflows`: each result records how it was produced, and a whole workflow can later be traced or re-run. Because the wrapper changes only invocation and tracking, the operations can be *defined* as `Function`s and inherit all of it. The sequence is the boundary principles made mechanical: normalization is `B1 – Either presentation in`, execution over raw types is `B2 – Representations only inside`, and return is `B3 – Tracked forms out by default`; planning and the lift are what the engine promises beyond them. Stating the stack once, in the engine, and letting an operation differ only in its declarations is `D6 – Single source of truth` for the call path, so a plain function and an operation fail at the same steps with the same errors.
 
-## IV.2 — Lifting over distributions and batches
+## IV.2 — Controls (step 1)
 
 ### Contract
 
-A `Function` compares each argument against the type its function expects, and lifts where they differ. A single-distribution application resolves through the evaluation-rule registry (V.1), so a plain callable lifts by **sampling** and a typed map takes its registered rule; a batched application resolves through the same registry, where the elementwise sweep is the **floor**, which is the always-feasible rule that ranks last. Grouped, multi-distribution lifts always take the sampling path, which is what co-sampling requires.
+A `Function` keeps two namespaces strictly apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which no wrapped function declares. The controls are the sample count (`n_broadcast_samples`), the `include_inputs` switch (IV.6), `method` for rule or route selection and `min_fidelity` as a fidelity floor on it (IV.7), `conversions` for the per-parameter conversion settings of IV.4, the `raw` opt-out read at return (IV.10), and the dispatch and orchestration selectors (IV.9). Randomness is not a control: seeding belongs to the workflow scope, and an explicit `key` is an argument of the operations that draw, caller-owned when supplied (IV.8).
 
-**The trigger.** A raw argument is normalized to its kind on entry, before types are read; a backend distribution enters through its registered converter and therefore lifts as its converted form does. A parameter that is unannotated, or annotated with a value type, expects a value, so a distribution passed in that position is lifted. A parameter annotated `Distribution`, `Distribution[...]`, or a distribution capability protocol of III.8 declares that the function consumes the distribution itself, which then passes through unlifted. The function capabilities of III.3 and III.15 annotate `Function`-valued parameters, which are values, so the value rule above governs them. Per draw, the function receives what `sample` returns, the draw, at the kind the law's event declaration names.
+**Resolution.** Each control's effective value is resolved before any argument is read, in three layers: the framework's default, the value given on the decorator or constructor, and the value given through a `with_options` view, which returns a callable with the controls revised for the calls made through it and leaves the `Function` itself unchanged. Every control has a default, so a bare decorator and a bare call are complete.
 
-- **A distribution where a value is expected → broadcast.** The distribution is sampled `n` times and the function is applied to each draw. The result is an **empirical distribution** over the outputs, which approximates the pushforward of the input through `f`.
-- **A batch where one element is expected → sweep.** The function is mapped over the batch's elements, returning a batch of outputs whose `element_spec` is the declared output bound for the call or, with no declaration, the spec the wrapped row results share (II.5).
-- **Both at once → a nested sweep of broadcasts.** The function is mapped over the batch's elements, with a broadcast performed within each.
-- **Neither → a plain call.** A `ConditionalDistribution`-valued argument is an error rather than a plain call, since a kernel has no marginal law to lift over.
+```python
+predict.with_options(n_broadcast_samples=1000)(theta=prior, x=x_obs)
+# controls go to with_options; theta and x bind to the wrapped function
+```
+
+*Requires:* every control set is one the framework defines, and its value is admissible, for example a positive sample count or a known dispatch mode. *On failure:* a `TypeError` or `ValueError` at the decorator or at `with_options`, before any call.
+
+### Rationale
+
+A `Function` must wrap an *ordinary* function with no naming restrictions (`C5 – Naming for unambiguous meaning`): a user should never have to rename a `seed` parameter because the framework wanted that word. Holding the controls in a separate namespace removes the collision while keeping the bare decorator and a single call site convenient, and with seeding scoped rather than carried (IV.8), ProbPipe claims no `seed` argument at all.
+
+### Open points
+
+- *Default sample count.* How many draws a broadcast takes by default is unsettled; the default is a speed-versus-accuracy ceiling, and an explicit per-call override is always available. The default should signal "rough estimate," not "tuned."
+
+## IV.3 — Binding (step 2)
+
+### Contract
+
+The arguments bind to the wrapped function's signature by Python's own rules; the signature is authoritative for that binding and the declared input side for the value schema (III.3). An argument that is a tracked term becomes a graph **dependency** and any other a plain **input**; the dependencies are the result's provenance parents and the inputs are recorded by parameter name (IV.10). *Requires:* every argument binds to a parameter. *On failure:* Python's binding error, naming the parameter.
+
+### Rationale
+
+Binding by the ordinary signature is what lets the wrapped function stay ordinary (`C1 – Uniform interface to functions, distributions, and values`), and classifying the arguments at binding is what gives every result its lineage (`C6 – Traceable and reproducible workflows`).
+
+## IV.4 — Normalization (step 3)
+
+### Contract
+
+Normalization brings each bound argument to a tracked term its parameter accepts, in three sub-steps that run in order for every argument.
+
+**3a. Wrap.** A raw argument is wrapped into the kind it is by the **kind-directed** table, the same table that wraps a return (IV.10): a tracked term is kept as it is; a raw callable becomes a `Function`; a raw mapping becomes a `Record` (III.5); a raw array becomes a `NumericArray`; a backend distribution passes to 3b; and a value no other kind admits becomes an `Opaque` (III.2), as a list, a tuple, or a set does. A numeric host is recognized through the array-backend registry (II.3), registry first and duck typing second: a registered container supplies its event shape and dtype without being materialized, its named dimensions bind the spec's symbolic dimensions (II.1), and its remaining metadata, such as coordinates and attributes, is carried as annotations (II.4). The value itself stays native until execution converts it (III.5). *Requires:* the host constructs as its kind. *On failure:* that kind's construction error, for example a mapping keyed by a name that is no identifier.
+
+**3b. Convert.** A distribution-shaped argument whose class is not the one its parameter names is converted through the converter registry, which is the `convert` operation (V.10) applied on entry: a backend distribution to its ProbPipe form, and a ProbPipe distribution to the class the parameter names. The pre-conversion law becomes a provenance parent of the converted one. The parameter's entry in the `conversions` control (IV.2) selects the converter by name, floors its fidelity, and passes any converter-specific arguments, and the framework's defaults apply where the control is silent. *Requires:* a converter feasible at or above the floor. *On failure:* `ResolutionError` from the registry (II.7), naming the converters tried.
+
+**3c. Admit.** The normalized argument's kind is checked against what the parameter accepts, which is the kind of its declared spec for a `@function`, any kind where the parameter is unannotated, and the kinds its role names for an operation (V.0). A `Distribution` or a `Batch` over an accepted kind is admitted for lifting (IV.5), whereas a `ConditionalDistribution` at a value parameter is refused, since a kernel has no marginal law to lift over. Every kind's term is a `TrackedTerm`, and an object no kind admits is an `Opaque`, so a bare object passes a parameter only where `Opaque` is accepted, whatever methods it carries. *Requires:* the kind is accepted, directly or as the element kind of a lifted argument. *On failure:* `ApplicabilityError`, naming the parameter, what it accepts, and what arrived.
+
+### Rationale
+
+Normalization is `B1 – Either presentation in` made mechanical, in the order the information becomes available: a raw host says what kind it is, a distribution says what class it has, and only then can the parameter's acceptance be judged. Keeping conversion a step of its own keeps the two registries that serve entry visible as registries (`D2 – Generality first`), and reading a container's named dimensions into the declaration is `D5 – Explicit, carried structure` carried from the data upward.
+
+## IV.5 — Lifting (step 4)
+
+### Contract
+
+A `Function` compares each admitted argument against the kind its parameter expects and lifts where they differ. A `Distribution` where a value is expected is **broadcast**: it is sampled `n` times and the function applied to each draw, so the result approximates the pushforward of the input through `f`. A `Batch` where one element is expected is **swept**: the function is mapped over its elements. Both at once give a **nested** sweep of broadcasts, one broadcast within each element, and neither gives a plain call.
+
+**The trigger.** A parameter that is unannotated, or annotated with a value type, expects a value, so a distribution passed in that position is lifted. A parameter annotated `Distribution`, `Distribution[...]`, or a distribution capability protocol of III.8 declares that the function consumes the distribution itself, which then passes through unlifted. The function capabilities of III.3 and III.15 annotate `Function`-valued parameters, which are values, so the value rule above governs them. Per draw, the function receives what `sample` returns, the draw, at the kind the law's event declaration names.
 
 **Grouping and correlation.** The lifted arguments are grouped by **root ancestor**, transitively: sibling views of one parent, the same distribution passed twice, and a parent passed alongside its own view all fall in one group. Each group contributes one joint draw per repetition, so dependence between its members is preserved through `f` rather than broken by independent sampling. A view lifts by sampling its parent, so its parent must itself sample. Groups with no common ancestor draw independently: the lift samples the **product law**, and, as a corollary, detached marginals of one joint lift independently while its views co-sample. For example, `f(d, d["x"])` forms one group, and each repetition evaluates `f` on a joint draw and its own projection, while `f(d1, d2)` for unrelated `d1` and `d2` samples the product of their laws. The number of lifted arguments changes only the grouping.
 
-**The output wrapping.** The output is wrapped by the **kind-directed** boundary, the same boundary every operation's result crosses: a raw value is wrapped into the ProbPipe kind it is, so wrapping depends on what the return already is. A **tracked term** keeps its kind under the call's fresh, derived identity like any output: a `Distribution` or `NumericArray` the callable produced is the result, not a field inside a fresh `Record`. A **raw callable** becomes a `Function`. A raw **mapping** becomes a `Record` (III.5). A raw **array** becomes a `NumericArray`, and a return no other kind admits becomes an `Opaque` (III.2), as a list, a tuple, or a set does. An opaque output samples downstream but carries none of the numeric interface, so a function whose output deserves structure returns a mapping or declares it. The optional `output_spec=` on the decorator declares what the producer knows and inference cannot recover: an `OutputSpec` (II.2), or a bare term spec with the name defaulted to the function's own, captured once. Its spec declares the result's kind, for example a `FunctionSpec` for a fitted mapping, and a `RecordSpec` declares field structure such as a constrained support or a shared symbolic dimension. The declaration is bound per call by unification, which validates the output, and a tracked record supplied at a record-shaped position is stored with its identity kept (III.5). For a non-record output, the declaration's name is the result's field name wherever one is required, as in the joint layout below and composition's produced slots (III.12), so no field name derives from the function's renamable label.
+**Alignment.** Swept batches align by level name, as V.11 states for batched operations, and the classification fixes the regime and the groups without reading any value. *Requires:* the aligned levels have broadcast-compatible shapes. *On failure:* `ApplicabilityError`, naming the level.
+
+### Rationale
+
+This is `C4 – Function lifting` realized in both of its cases: replacing an argument of `f` with a distribution over that argument's type leaves `f` well-defined and returns the pushforward, and replacing one with a batch over that type leaves it equally well-defined and returns the broadcast — one substitution rule, differing only in whether the multiplicity is a law or a collection. Realizing the first by sampling and the second by the sweep keeps the contract fully general (`D2 – Generality first`): it works for any `f`, any number of lifted arguments, and any distribution that samples, with exact rules registering above those floors, and it leaves the user's function unchanged. The annotation trigger makes the lifting boundary explicit in the one place the author already states intent, the signature. Co-sampling by root ancestor is what makes the lift *correct* rather than merely type-correct: it is the same correlation-preserving mechanism the field views rest on, so passing sibling views through a function transports their joint law.
+
+## IV.6 — Planning (step 5)
+
+### Contract
+
+Planning validates the declarations and computes the **result declaration**, once per call and before anything runs, from what is static under compilation: the specs of the arguments, a lifted argument contributing its element spec, declared capabilities, the paths an argument supplied, and the control values, and never traced array data. The declaration is therefore `jit`-safe and cannot depend on what the computation produces, and the executed result must satisfy it (IV.10).
+
+**The declared output.** The optional `output_spec=` on the decorator declares what the producer knows and inference cannot recover: an `OutputSpec` (II.2), or a bare term spec with the name defaulted to the function's own, captured once. Its spec declares the result's kind, for example a `FunctionSpec` for a fitted mapping, and a `RecordSpec` declares field structure such as a constrained support or a shared symbolic dimension. The declaration is bound per call by unification, which validates the output, and a tracked record supplied at a record-shaped position is stored with its identity kept (III.5). For a non-record output, the declaration's name is the result's field name wherever one is required, as in the joint layout below and composition's produced slots (III.12), so no field name derives from the function's renamable label.
 
 ```python
 @function(output_spec=RecordSpec(rate=NumericArraySpec(("obs",), float32, positive)))
@@ -69,6 +131,8 @@ def rate(x):
 # inference alone would read the support as real; the declaration carries support=positive
 # and binds "obs" to the actual output length on each call
 ```
+
+**The result of a lift.** A broadcast's result declaration is an empirical distribution over the output declaration, or the joint below under `include_inputs`; a sweep's is a batch on the swept levels whose `element_spec` is the output declaration bound for the call or, with no declaration, the spec the row results share (II.5); a nested sweep's is a batch of empiricals. An operation's result declaration is its result rule (V.0).
 
 **Including the inputs.** By default the result holds only the outputs. With `include_inputs=True` it is instead the **joint** empirical distribution over the sampled inputs and the outputs: one top-level field per lifted parameter, named by the parameter, whose subtree is that argument's event schema, plus the output fields. A single-field argument still nests, so the layout never depends on the argument's field count. A term-drawing law has no fields to include, so a parameter drawn from one contributes its draw as a single term-valued field. A plain-value argument contributes no field, since it is recorded in provenance rather than sampled. Sibling uniqueness applies across the lifted-parameter names and the output names, and a collision, such as an output declared under the name of one of its own lifted parameters, is an error, raised at construction when the declaration makes it knowable and at result construction otherwise. Grouping affects only how the draws are taken.
 
@@ -91,15 +155,29 @@ result = predict(theta=posterior, x=X_new)   # X_new: a plain (20, 5) array, not
 
 Each atom is one joint draw, so the result couples every sampled input with its own output, which is what a predictive check or a sensitivity analysis reads off it.
 
+*Requires:* every argument conforms to what its parameter accepts under one unification (II.1), every condition the `Function` declares holds, and the result declaration is complete, its symbolic dimensions bound. *On failure:* `ApplicabilityError`, naming the condition, or the dimensions in conflict or left free.
+
 ### Rationale
 
-This is `C4 – Function lifting` realized in both of its cases: replacing an argument of `f` with a distribution over that argument's type leaves `f` well-defined and returns the pushforward, and replacing one with a batch over that type leaves it equally well-defined and returns the broadcast — one substitution rule, differing only in whether the multiplicity is a law or a collection. Realizing the first by sampling and the second by the sweep keeps the contract fully general (`D2 – Generality first`): it works for any `f`, any number of lifted arguments, and any distribution that samples, with exact rules registering above those floors, and it leaves the user's function unchanged. The annotation trigger makes the lifting boundary explicit in the one place the author already states intent, the signature. Co-sampling by root ancestor is what makes the lift *correct* rather than merely type-correct: it is the same correlation-preserving mechanism the field views rest on, so passing sibling views through a function transports their joint law. Declared output structure is `D5 – Explicit, carried structure` at the lift boundary: inference from a returned value is lossy, so the producer that knows the support or the dimension identities declares them, and they travel with the result.
+Planning the declaration before execution, from what is static under compilation, is `D5 – Explicit, carried structure` made checkable: the result's structure is known before the work starts and verified after it. Declared output structure is `D5 – Explicit, carried structure` at the lift boundary: inference from a returned value is lossy, so the producer that knows the support or the dimension identities declares them, and they travel with the result.
 
-### Open points
+## IV.7 — Resolution (step 6)
 
-- *Default sample count.* How many draws a broadcast takes by default is unsettled; the default is a speed-versus-accuracy ceiling, and an explicit per-call override is always available. The default should signal "rough estimate," not "tuned."
+### Contract
 
-## IV.3 — Randomness: workflow scopes and structural keys
+Resolution selects the rule or route that realizes the call. Every candidate is checked on the declarations alone and never on values, and the feasible candidates rank by fidelity, then specificity, then registration order (II.7); `method=` names one outright and `min_fidelity=` excludes those below a floor (IV.2). A plain call of a plain function has one candidate, its body. An operation resolves among its routes (V.0). A lifted application, the direct call `f(d)` or `f(batch)`, resolves through the **evaluation-rule registry**, a `BinaryDispatchRegistry` keyed on the map's and the operand's types whose methods are **evaluation rules**; `evaluate` (V.1) exposes the same registry as an operation, so the direct call and `evaluate` take the same route. The rules, in selection order:
+- **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
+- **Change of variables** applies when the map is invertible and carries the Jacobian claim (`is_invertible` and `SupportsLogDetJacobian`), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
+- **The sampling lift** is the rule registered at the generic pair for a distribution operand and always applies: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count and PRNG key as controls. It is the route every plain callable takes, and grouped, multi-distribution lifts always take it, which is what co-sampling requires (IV.5).
+- **The elementwise sweep** is the batch counterpart: the rule at the generic pair for a batch operand. A fused batched implementation, such as an operator's matrix–matrix routine or a single vectorized call over array-backed elements, registers above it.
+
+The **floor** of a registry is its always-feasible rule, which ranks last: the sampling lift for a distribution operand and the elementwise sweep for a batch, so a lift never fails to resolve while its operand samples. Rules need not be exact: an approximate scheme, for example quadrature or an unscented transform, registers at its recorded fidelity, above the lift. The selected rule records its name and fidelity in the result's provenance (IV.10). *Requires:* a feasible candidate, or the named one. *On failure:* `ResolutionError`, naming each candidate and what it was missing.
+
+### Rationale
+
+Dispatching over pairs of map and operand types realizes `C3 – Computational detail hidden by default, available on demand`, since a pair with a known closed form or a fused batched routine gets it automatically, while every other pair still resolves through the floors. Registration grows the exact set without changing call sites (`D2 – Generality first`), and recording the producing rule makes the approximation explicit (`D1 – Mathematical fidelity`).
+
+## IV.8 — Randomness: workflow scopes and structural keys
 
 ### Contract
 
@@ -119,7 +197,7 @@ with replay_run(result.provenance):      # re-runs one recorded call on its reco
 
 **Structural event identity.** A workflow-owned key is a pure function of the scope's root seed and the event's identity, three structural coordinates:
 1. the **occurrence path**: the invocation's position in the workflow, extended by nesting and by managed work items, with repeated or recursive invocations of the same call distinguished by a deterministic logical ordinal;
-2. the **stochastic source**: which co-sampling group of IV.2 is drawing;
+2. the **stochastic source**: which co-sampling group of IV.5 is drawing;
 3. the **logical unit**: which broadcast repetition or sweep cell consumes the draw.
 
 Identity follows the workflow's logical structure: ordinals are fixed by program order, no key is drawn twice, and the same call produces the same draws under any dispatch mode, thread count, or orchestration.
@@ -136,32 +214,16 @@ Identity follows the workflow's logical structure: ordinals are fixed by program
 
 Scoped, structural randomness is `C6 – Traceable and reproducible workflows` made mechanical: one seed reproduces a workflow, one provenance record replays a call, and identity-derived keys make the result independent of execution order, so reproducibility survives parallelism and orchestration rather than trading off against them. Key management is `C3 – Computational detail hidden by default, available on demand` applied to randomness: with the key omitted, draws are fresh and reproducible on demand, while an explicit key hands the caller full manual control. Versioning the derivation makes reproduction exact: a run reproduces under the contract that produced it or refuses.
 
-## IV.4 — Controls vs. arguments
+## IV.9 — Execution (step 7)
 
 ### Contract
 
-A `Function` keeps two namespaces strictly apart:
+Execution runs the selected rule over the points: once for a plain call, per draw for a broadcast, and per element for a sweep, each point with its key (IV.8). This is the only step that reads values. The points run under two orthogonal computational settings, both with defaults so a user need not set them:
 
-- **The wrapped function's arguments.** Every positional and keyword argument of a call binds to the wrapped function.
-- **ProbPipe controls.** The controls are the sample count (`n_broadcast_samples`), the `include_inputs` switch, `method` for rule or route selection and `min_fidelity` as a fidelity floor on it (IV.1), the `raw` opt-out the engine reads at the return step (IV.1), and the dispatch and orchestration selectors. Each is set on the decorator at construction or, for a single call, through a `with_options` view (III.3), which covers every control; the controls are stored on the `Function`, and the engine reads them at call time. Randomness is not a control, since seeding belongs to the workflow scope (IV.3):
+- **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is traced end-to-end, and it differentiates end-to-end when the `Function` claims `SupportsDifferentiation`; dispatch never changes the result beyond floating-point effects of evaluation order. Because keys attach to structure (IV.8), the result is identical across `jax`, `sequential`, and `thread`, and parallel execution contends for no mutable random state. Each dispatch mode's versioned capability contract (IV.8) is checked before sampling begins, so an unsupported mode is refused up front rather than approximated.
+- **Orchestration — *whether* the call is traced.** Off by default. A `Function` can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result. Work that crosses a thread, task, or orchestrated-flow boundary travels as a **managed work item** extending the occurrence path (IV.8), so orchestrated and distributed runs draw from the same structural stream as local ones.
 
-```python
-predict.with_options(n_broadcast_samples=1000)(theta=prior, x=x_obs)
-# controls go to with_options; theta and x bind to the wrapped function
-```
-
-### Rationale
-
-A `Function` must wrap an *ordinary* function with no naming restrictions (`C5 – Naming for unambiguous meaning`): a user should never have to rename a `seed` parameter because the framework wanted that word. Holding the controls in a separate namespace removes the collision while keeping the bare decorator and a single call site convenient, and with seeding scoped rather than carried (IV.3), ProbPipe claims no `seed` argument at all.
-
-## IV.5 — Dispatch and orchestration
-
-### Contract
-
-Two orthogonal computational concerns underlie a lifted call, both with defaults so a user need not set them:
-
-- **Dispatch — *how* the per-draw / per-element calls run.** `jax` vectorizes them (one `vmap`); `sequential` runs them one at a time; `thread` runs them on a thread pool; `auto` probes whether the call is array-traceable and picks `jax`, falling back to `sequential`. Under `jax`, a lifted call is traced end-to-end, and it differentiates end-to-end when the `Function` claims `SupportsDifferentiation`; dispatch never changes the result beyond floating-point effects of evaluation order. Because keys attach to structure (IV.3), the result is identical across `jax`, `sequential`, and `thread`, and parallel execution contends for no mutable random state. Each route's versioned capability contract (IV.3) is checked before sampling begins, so an unsupported route is refused up front rather than approximated.
-- **Orchestration — *whether* the call is traced.** Off by default. A `Function` can instead run as a traced task or flow, recording the computation graph for lineage and scheduling. Tracing never changes the result. Work that crosses a thread, task, or orchestrated-flow boundary travels as a **managed work item** extending the occurrence path (IV.3), so orchestrated and distributed runs draw from the same structural stream as local ones.
+*Requires:* the rule completes. *On failure:* the body's or route's own error propagates, as for any numerical method.
 
 ### Rationale
 
@@ -171,7 +233,17 @@ Dispatch and orchestration are `C3 – Computational detail hidden by default, a
 
 - *Non-array backends.* Lifting and dispatch are array-native, built for a differentiable array backend. First-class support for other tensor frameworks, for example a Torch model as the wrapped function with conversion at the boundary, is not yet settled, though it should be feasible through Keras.
 
-## IV.6 — Differentiability claims
+## IV.10 — Return (step 8)
+
+### Contract
+
+Return assembles the points into the planned result and hands it back tracked. Each point's result is validated against the planned declaration (IV.6), and the points are assembled by regime: a plain call's result is the point itself; a broadcast's is the empirical distribution over the outputs, or the joint over inputs and outputs under `include_inputs`; a sweep's is the batch of results on the swept levels; a nested sweep's is a batch of empiricals. The result then crosses the kind-directed wrap, the table of IV.4: a tracked term keeps its kind under the call's fresh, derived identity, so a `Distribution` or a `NumericArray` the body produced is the result rather than a field inside a fresh `Record`, and a raw return takes the kind it is. An opaque output samples downstream but carries none of the numeric interface, so a function whose output deserves structure returns a mapping or declares it (IV.6). The result receives identity: an auto-derived name, and a `provenance` recording the `Function`, its dependencies as parents and its inputs by name (IV.3), the selected rule with its fidelity (IV.7), and the resolved controls. With `raw=True` the identity is not constructed and the result returns detached (II.4), and the enclosing call never re-wraps it. *Requires:* the result satisfies the planned declaration. *On failure:* a wrong kind and a schema mismatch raise distinct errors, and either is a defect of the body or route rather than of the caller.
+
+### Rationale
+
+Return is `B3 – Tracked forms out by default` at the one boundary every call crosses, and attaching provenance there is what makes every result record how it was produced (`C6 – Traceable and reproducible workflows`).
+
+## IV.11 — Differentiability claims
 
 ### Contract
 

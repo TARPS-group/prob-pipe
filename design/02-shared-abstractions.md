@@ -66,6 +66,8 @@ Requiring a name on every output declaration serves `C5 – Naming for unambiguo
 
 **The `Numeric` interface.** The numeric kinds share one flat-vector interface: `to_vector` lays a value out as one flat vector in canonical order, `vector_size` is that vector's length, and `from_vector` rebuilds a value from it. The coordinate protocols expose the same layout to foreign libraries, so `np.*` and `jnp.*` functions apply to the numeric kinds at the coordinates and return bare arrays. A bare array passed where a `Numeric` value is expected is promoted to the appropriate numeric type. Two routes therefore meet at a numeric value: a foreign function sees the coordinates and returns a bare array, while ProbPipe's own operators and elementwise `map` preserve structure and return tracked terms.
 
+**The array-backend registry.** A numeric host the duck path cannot read, such as an xarray `DataArray` or a pandas object, is recognized through a registry keyed on its type. A registered backend answers whether an instance holds numeric data, its event shape and dtype without materializing it, its conversion to the backend array at the compute boundary, and the metadata it carries, which the wrap of IV.4 reads: named dimensions bind symbolic dimensions (II.1), and the rest is carried as annotations (II.4). Backends register at import (II.7), and NumPy and JAX arrays need none.
+
 ```python
 class Numeric(ABC):                         # the flat-vector interface of the numeric kinds
     @property

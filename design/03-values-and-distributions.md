@@ -64,9 +64,9 @@ The kind exists so that closure under operations holds for every return value (`
 
 The function kind's base type is `Function`. A `Function` is a tracked term that wraps exactly one Python callable as its representation and carries a `FunctionSpec`, whose sides it exposes as the `input_spec` and `output_spec` views; either side is optional, as in the spec. A `Function` also carries a frozen `inspect.Signature`, which is authoritative for Python argument binding, since parameter kinds, defaults, and variadic parameters are not expressible in a value schema; the `input_spec` is authoritative for the value schema. Construction validates their one-for-one correspondence, so binding an argument binds a slot by name. Its `raw()` is the wrapped callable.
 
-A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call path**, which is the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import. The base also carries its **controls** (IV.4), set at construction and revised functionally by `with_options`; it gives them no meaning, and the engine reads them at call time.
+A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call path**, which is the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import. The base also carries its **controls** (IV.2), set at construction and revised functionally by `with_options`; it gives them no meaning, and the engine reads them at call time.
 
-A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path. Three capability protocols accompany the base: `SupportsDifferentiation`, whose contract is given in IV.6, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.15. All are claims declared at construction and checked by protocol membership, except that a claim with an instance guard is read through its predicate — `is_differentiable`, `is_invertible`. The base is the tracked *wrapper*, not a restriction on what may be wrapped. `FunctionSpec`, which is the function kind's term spec, admits any callable, so a `Function` is one such callable rather than the required type, and a `FunctionBatch` holds a collection of them. Its two sides are the declarations of II.2, and either may be omitted, so a bare `FunctionSpec()` describes any callable. Validity is callability alone: the sides document the schema, which is enforced at the call boundary rather than by `is_valid`.
+A `Function` is authored with the `@function` decorator or produced by an operation; both use the same call path. Three capability protocols accompany the base: `SupportsDifferentiation`, whose contract is given in IV.11, and `SupportsInverse` and `SupportsLogDetJacobian`, whose contracts are given with constraint reparameterization in III.15. All are claims declared at construction and checked by protocol membership, except that a claim with an instance guard is read through its predicate — `is_differentiable`, `is_invertible`. The base is the tracked *wrapper*, not a restriction on what may be wrapped. `FunctionSpec`, which is the function kind's term spec, admits any callable, so a `Function` is one such callable rather than the required type, and a `FunctionBatch` holds a collection of them. Its two sides are the declarations of II.2, and either may be omitted, so a bare `FunctionSpec()` describes any callable. Validity is callability alone: the sides document the schema, which is enforced at the call boundary rather than by `is_valid`.
 
 ```python
 class FunctionSpec(TermSpec):      # the function kind's spec; is_valid accepts any callable
@@ -80,7 +80,7 @@ class Function(TrackedTerm):
                  input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
                  output_spec: OutputSpec | TermSpec | None = None,
                  differentiable: NumericSpec = ...) -> None: ...
-                 # optional differentiability claim (IV.6)
+                 # optional differentiability claim (IV.11)
     @property
     def spec(self) -> FunctionSpec: ...
     @property
@@ -370,6 +370,8 @@ class NumericDistribution(Distribution): ...   # marker: the event spec is a Num
 ```
 
 **Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. The capabilities a view offers are derived from its parent's, one by one (III.8).
+
+**The flat view.** A numeric law's law over its coordinates is `evaluate(to_vector, d)`: `to_vector` (II.3) is a bijection with unit Jacobian, so the pushforward's density is exact under the change-of-variables rule (IV.7), and `from_vector` is its inverse. An inference method that works on ℝᵈ composes it with the reparameterization of III.15.
 
 ```python
 class FieldView(Distribution):
