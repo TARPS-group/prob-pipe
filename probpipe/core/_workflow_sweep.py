@@ -350,9 +350,7 @@ def mapped_row_body(
                 return _MappedBatchColumns.of_record(out)
         if isinstance(out, RecordBatch):
             return _MappedBatchColumns.of(out)
-        if isinstance(out, NumericArrayBatch):
-            return _MappedBatchStore.of(out)
-        if isinstance(out, NumericArray):
+        if isinstance(out, (NumericArray, NumericArrayBatch)):
             return _MappedBatchStore.of(out)
         return out
 
