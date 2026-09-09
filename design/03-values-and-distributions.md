@@ -64,6 +64,19 @@ The kind exists so that closure under operations holds for every return value (`
 
 The function kind's base type is `Function`. A `Function` is a tracked term that wraps exactly one Python callable as its representation and carries a `FunctionSpec`, whose sides it exposes as the `input_spec` and `output_spec` views; either side is optional, as in the spec. A `Function` also carries a frozen `inspect.Signature`, which is authoritative for Python argument binding, since parameter kinds, defaults, and variadic parameters are not expressible in a value schema; the `input_spec` is authoritative for the value schema. Construction validates their one-for-one correspondence, so binding an argument binds a slot by name. Its `raw()` is the wrapped callable.
 
+A `Function` also carries an `output_name`, which is the label its results receive and is separate from its own `name` and from its `output_spec`. Under `@function`, `name` defaults to the callable's `__name__` and `output_name` to the initial `name`, captured once at construction, so `with_name` changes only the function's label, and renaming a result changes only that result's label. Neither label enters spec equality, but a whole-term result's component defaults to `output_name`, captured once at construction; `OutputSpec(mean=None)` names it otherwise. A function an operation derives, such as `inverse(f)`, fixes its result label at construction, and its output declaration follows the operation's result rule (V.0).
+
+```python
+@function(name="predict", output_name="prediction",
+          output_spec=OutputSpec(mean=None))
+def predict_impl(theta, x):
+    return x @ theta
+
+prediction = predict_impl(theta, x)
+# predict_impl.name == "predict"; prediction.name == "prediction"
+# output component: mean; the inferred return is an array, not a record
+```
+
 A `Function` is invoked two ways. `apply` evaluates the wrapped callable at a point: given values that conform to `input_spec`, it returns one conforming to `output_spec`, with no tracking or lifting — the raw map that operations such as change of variables build on. `__call__` runs the **call path**, which is the base's one extension point: the base fills it with plain evaluation, and the engine layer (Part IV) replaces it once, at import. The base also carries its **controls** (IV.2), set at construction and revised functionally by `with_options`; it gives them no meaning, and the engine reads them at call time.
 
 A `Function` is constructed directly or using the `@function` decorator. `FunctionSpec`, which is the function kind's term spec, admits any callable.
@@ -79,6 +92,7 @@ class Function(TrackedTerm):
     def __init__(self, name: str, fn: Callable, *,
                  input_spec: InputSpec | Mapping[str, TermSpec] | None = None,
                  output_spec: OutputSpec | TermSpec | None = None,
+                 output_name: str | None = None,
                  differentiable: NumericSpec = ...) -> None: ...
                  # optional differentiability claim (IV.11)
     @property
@@ -87,6 +101,8 @@ class Function(TrackedTerm):
     def input_spec(self) -> InputSpec | None: ...                   # view on spec
     @property
     def output_spec(self) -> OutputSpec | None: ...                 # view on spec
+    @property
+    def output_name(self) -> str: ...                              # result label, outside spec
     @property
     def options(self) -> Mapping[str, Any]: ...          # the controls; opaque to the base
     def with_options(self, **controls) -> Self: ...      # functional update
@@ -112,7 +128,7 @@ Defining the base in the value layer keeps the layering strict: the representati
 
 ### Contract
 
-A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces and the linear subtype of `Function` (III.3). It therefore applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a `Numeric` conforming to its input schema and returns the matching form, with the operator's parameters as private state. `matvec`, `matmat`, `rmatvec`, and `rmatmat` are the linear-algebra names for the action and its transpose, and `matmat` is the operator's registered batched rule. Its domain is the `NumericSpec` (II.3) of its single input slot, and its codomain is `output_spec.spec`; an exposed record output may have several components while remaining one numeric value. There is no operator-specific accessor beside these declarations. It therefore maps whatever `Numeric` its sides declare, for example a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws needs no single-field placeholder. The two sides coincide for an endomorphism such as a covariance or Hessian, which the operator algebra reads as the fact that operands compose or act on the same space.
+A `LinOp` is a lazy linear map `A : ℝⁿ → ℝᵐ` between flat numeric spaces and the linear subtype of `Function` (III.3). It therefore applies, composes, and evaluates like any map; the operator algebra and the structured queries below are what linearity adds. Its action is the map the base carries: `apply` evaluates the operator at a `Numeric` conforming to its input schema and returns the matching form, with the operator's parameters as private state. `matvec`, `matmat`, `rmatvec`, and `rmatmat` are the linear-algebra names for the action and its transpose, and `matmat` is the operator's registered batched rule. Its output declaration names its component; a constructor given only a codomain shape declares the output whole under the operator's `output_name` (III.3). Its domain is the `NumericSpec` (II.3) of its single input slot, and its codomain is `output_spec.spec`; an exposed record output may have several components while remaining one numeric value. There is no operator-specific accessor beside these declarations. It therefore maps whatever `Numeric` its sides declare, for example a bare array under a `NumericArraySpec` side, so an operator over a scalar law's draws needs no single-field placeholder. The two sides coincide for an endomorphism such as a covariance or Hessian, which the operator algebra reads as the fact that operands compose or act on the same space.
 
 Its schemas are always concrete, and construction from a schema with unbound dimensions raises. A consumer whose sizes are not yet known holds the operator as a recipe, the operator class and its size-free parameters, and mints the instance once the sizes are bound. The base fixes the action and the square-only queries, and every query raises `LinAlgError` where it is undefined:
 
@@ -146,9 +162,9 @@ class LinOp(Function, ABC):        # the linear subtype of the III.3 base
     def with_flag(self, flag: str) -> Self: ... # functional; construction otherwise fixes the flags
 ```
 
-**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators that defer to their parts: `ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` swaps them. Composite operators are tracked terms like any other, with names derived from their operands.
+**The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators that defer to their parts: `ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` exchanges the term specs of the two sides: its one input slot accepts the original output's packaging, and its output is the original input, offered whole under that slot's name. The component mappings themselves are not swapped, since an `InputSpec` and an `OutputSpec` are different contracts (II.2). Composite operators are tracked terms like any other, with names derived from their operands.
 
-**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. Each also fixes the kind's `raw()` (II.4) as its stored parameterization, for example the matrix for `DenseLinOp` or the diagonal for `DiagonalLinOp`; a composite's `raw()` is its operand tuple, since laziness is its representation.
+**Structured subclasses.** `DenseLinOp`, `DiagonalLinOp`, `TriangularLinOp`, `CholeskyLinOp`, `RootLinOp`, and `DiagonalRootLinOp` each override the queries their structure accelerates, such as a triangular solve or a diagonal log-determinant. A constructor from arrays derives the output declaration from the matrix shape, whole under the operator's `output_name`, and accepts an `output_spec` that names the component otherwise or fills a type hole; a consumer that knows the event declaration, such as covariance construction (VI.6), passes it. Each also fixes the kind's `raw()` (II.4) as its stored parameterization, for example the matrix for `DenseLinOp` or the diagonal for `DiagonalLinOp`; a composite's `raw()` is its operand tuple, since laziness is its representation.
 
 **The batch form.** `LinOpBatch` is the element batch over operators, a thin `Batch[LinOp]` whose elements share both schemas. It is what a batched `cov` returns. Application is elementwise: a single operator maps over a batch's elements, and a `LinOpBatch` zips with a broadcast-compatible batch of numeric values, element by element in both cases. The queries lift the same way, elementwise to batched results.
 
@@ -323,11 +339,11 @@ It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a 
 
 ### Contract
 
-A `Distribution[T]` is a probability measure over values of type `T`, where `T` is the implementer-side draw type fixed below. Its `DistributionSpec` carries the draw's `OutputSpec` as `event_spec`, exposed as a view. The declaration determines both the returned kind and its component interface (II.2). It is the same declaration type a `Function` carries as `output_spec`; the names distinguish a draw from a function's return. A bare spec is completed as II.2 states, and an explicit `OutputSpec` supplies the component names.
+A `Distribution[T]` is a probability measure over values of type `T`, where `T` is the implementer-side draw type fixed below. Its `DistributionSpec` carries the draw's `OutputSpec` as `event_spec`, exposed as a view. The declaration determines both the returned kind and its component interface (II.2). It is the same declaration type a `Function` carries as `output_spec`; the names distinguish a draw from a function's return. A bare term spec is accepted and completed at construction: a `RecordSpec` exposes its fields, and any other spec is a whole-term event whose component is the law's `name`, captured once so that `with_name` never moves it (C5). An `OutputSpec`, or a family constructor's `component_name`, names the component otherwise; a constructor fills a type hole from its parameters and stores only the complete declaration.
 
 It declares the operations it supports as **capabilities** (III.8), so operational support is decoupled from the class. Its `raw()` is the law detached (II.4), so a field view's `raw()` is the detached marginal rather than a reference into its parent. A draw is a tracked term of the kind the event declaration names, never wrapped in another kind to make draws uniform.
 
-**Components and fields.** The law's produced slots are exactly `event_spec.components` (II.2); its object name never participates in matching. A field is a path within a record-valued draw, and only a record-valued draw has that field interface. Thus `OutputSpec(beta=beta_spec)` and `OutputSpec(RecordSpec(beta=beta_spec))` both export `beta`, but the former draws an array and the latter a record. `d[path]` and `marginal` address paths in the draw, not the enclosing interface: projecting the entire array needs no field query. A record exposed as `OutputSpec(parameters=RecordSpec(beta=...))` has output slot `parameters` and event field `beta`; composition extracts and reconstructs it using II.2.
+**Components and fields.** The law's produced slots are exactly `event_spec.components` (II.2); its object name never participates in matching. A field is a path within a record-valued draw, and only a record-valued draw has that field interface. Thus `OutputSpec(beta=beta_spec)` and `OutputSpec(RecordSpec(beta=beta_spec))` both export `beta`, but the former draws an array and the latter a record. `d[name]` and `marginal` address components and, within a record-valued draw, paths: for an exposed record, `d["beta"]` is the marginal law of that field under the component `beta`, and for a whole term named `beta` it is `d` itself, so a consumer addresses a law by component whatever its packaging. A projection onto one path returns the leaf or subtree whole, under a component named by the path's final segment; a selection of several paths returns an exposed record of those fields. Neither reads the object label. A record exposed as `OutputSpec(parameters=RecordSpec(beta=...))` has output slot `parameters` and event field `beta`; composition extracts and reconstructs it using II.2.
 
 `with_path_names` renames or moves event fields under the rules of II.6 and renames a whole-term output component by its declared name. On an exposed record, its component names are derived from the renamed immediate children. On a named whole record, renaming the outer component leaves the record's own fields unchanged. An unqualified name that could address both is ambiguous and raises; the caller disambiguates with a full event path where available. Restructuring never silently changes the event kind or the declaration's exposure form: a path-valued target for a whole-term component is refused. `with_name` changes only the object label. A polymorphic law is legal and binds as II.1 specifies.
 
@@ -346,8 +362,8 @@ A `NumericDistribution` is a `Distribution` whose `event_spec.spec` is a `Numeri
 
 ```python
 class Distribution[T](TrackedTerm):
-    def __init__(self, name: str, event_spec: OutputSpec | TermSpec | Mapping) -> None: ...
-        # the event declaration and component-name defaults follow II.2
+    def __init__(self, name: str, event_spec: OutputSpec | TermSpec) -> None: ...
+        # event declaration completion follows II.2; labels never supply components
 
     @property
     def spec(self) -> DistributionSpec: ...
@@ -362,7 +378,7 @@ class Distribution[T](TrackedTerm):
     # and the law is unchanged
     def with_dims(self, **sizes: int) -> Self: ...
     # bind named symbolic dimensions (II.1); a conflict with an existing binding raises
-    def __getitem__(self, path: str | tuple[str, ...]) -> FieldView: ...
+    def __getitem__(self, key: str | tuple[str, ...]) -> Distribution: ...
     # the field view at a leaf or group path; raises on a term-drawing law, which has no fields
 
 class NumericDistribution(Distribution): ...   # marker: the event spec is a NumericSpec
@@ -489,7 +505,7 @@ Users never call a method on the `ConditionalDistribution`. Instead, they use th
 
 ```python
 class ConditionalDistribution[S, T](TrackedTerm):
-    def __init__(self, name: str, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec | Mapping) -> None: ...
+    def __init__(self, name: str, given_spec: InputSpec | Mapping[str, TermSpec], event_spec: OutputSpec | TermSpec) -> None: ...
         # given before event, as in FunctionSpec
     @property
     def spec(self) -> ConditionalDistributionSpec: ...
@@ -632,7 +648,7 @@ The result has two mathematical degrees of freedom, *conditional?* (`unmet ≠ �
 
 `*` returns the **most specific** class, recomputed from the *flattened* factor graph at each step. `A * B * C` builds one flat N-factor joint, with independent factors commuting and dependent ones kept in conditional-first order. Same-named unmet givens unify into one slot of the joint: their specs must unify, a disagreement raising at composition, and binding the slot feeds every factor that names it — two givens that are different quantities are renamed apart first, as fields and levels already require. Symbolic dimensions never unify by name across operands, since two factors may both call something `"obs"` and mean different dimensions. Each operand's dimensions instead enter the joint under a deterministic factor-qualified renaming, shared fields and shared unmet givens contribute the only identifications, and the joint stores the factors so refined. The renaming is canonical, so derived names and fingerprints stay deterministic.
 
-**Packing the joint.** The output is an exposed record of the components in canonical factor order, preserving each declaration's component order. Assembly extracts components from each factor's one draw; scoring reconstructs that factor's original event value before calling its density method. In particular, an array and a one-field record may both export `beta`, but their density implementations receive different declared event kinds. Multiple connections from one factor share the same draw. A name match is insufficient by itself: the supplying component's spec must unify with the receiving input slot's spec. The joint retains the declarations needed for reconstruction and never infers packaging from the number of fields.
+**Packing the joint.** The output is an exposed record of the components in canonical factor order, preserving each declaration's component order. Assembly extracts components from each factor's one draw; scoring reconstructs that factor's original event value before calling its density method. Extraction reads the declaration: a whole-term component is the draw itself, and an exposed record's components are its immediate children, so reconstructing all of a factor's components restores the draw's kind, structure, and coordinates. In particular, an array and a one-field record may both export `beta`, but their density implementations receive different declared event kinds. Multiple connections from one factor share the same draw. A name match is insufficient by itself: the supplying component's spec must unify with the receiving input slot's spec. The joint retains the declarations needed for reconstruction and never infers packaging from the number of fields.
 
 **Naming the result.** A joint is *derived*, not created by the user, so `*` **auto-derives** its `name` deterministically from its factors. The factors are listed in **canonical order**, which is the conditional-first topological order of the flattened factor graph with incomparable factors ordered lexicographically by the fields they produce, and their names are joined by `·`. So `lik * prior` is named `lik·prior`, and because neither association nor the ordering of independent factors changes the canonical list, `A * B * C`, `(A * B) * C`, and `A * (B * C)` produce the same joint distribution.
 
@@ -684,7 +700,7 @@ The hierarchy embodies `D2 – Generality first`: one base refined by *optional 
 
 A distribution may have more than one representation, and an operation or backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current type to a requested target type, resolved by the **converter registry** whose methods are *converters*. The registry is an ordinary binary dispatch registry keyed on `(type(source), target)`; the target is already a type. The target may also be a capability protocol (III.8): a protocol target considers converters that promise the required guarded capability, ranked as usual, and a source already satisfying that claim needs no conversion.
 
-Every converter preserves the full event declaration, including component names, returned kind, and packaging. Flattening a record event into an array instead requires a declared transformation with an inverse (III.7). A converter never rebuilds event names from the source's object label.
+Every converter preserves the full event declaration, including component names, returned kind, and packaging. Flattening a record event into an array instead requires a declared transformation with an inverse (III.7). A converter never rebuilds event names from the source's object label. A raw backend object with no event interface requires a declared target interface or constructor metadata that supplies it; backend shape information alone cannot supply a whole-term component.
 
 **Planning conversion.** The non-executing probe returns a `ConversionInfo` containing the promised target spec, representation class when known, and capabilities guaranteed on the result. Unknown facts are listed as pending requirements; no sampling, fitting, or density evaluation is allowed in the probe. Normalization carries this plan until execution, which constructs and validates the target before dependent numerical work runs (IV.4, IV.9). A protocol target is feasible only when its required claim and guard can be established, either on the source or on the converter's promised result. Class membership alone does not establish an instance-dependent capability.
 

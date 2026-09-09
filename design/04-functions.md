@@ -53,7 +53,7 @@ This makes `C1 – Uniform interface to functions, distributions, and values` an
 
 ### Contract
 
-A `Function` keeps two namespaces apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which select realization, execution, or presentation. The controls are `n_broadcast_samples`, `include_inputs`, `method`, `min_fidelity`, the per-parameter `conversions`, `raw`, and the dispatch and orchestration selectors, together with the numerical budgets a registered method defines. There is no framework key or seed argument or control on a call; every ProbPipe-caused draw's key comes from the workflow scope (IV.8). A wrapped function remains free to declare its own `key` or `seed` parameter, which binds as an ordinary argument and does not configure framework randomness.
+A `Function` keeps two namespaces apart: the wrapped function's arguments, which are every positional and keyword argument of a call, and the framework's **controls**, which select realization, execution, or presentation. The construction metadata `name`, `output_name`, and `output_spec` are not controls and cannot be changed with `with_options`. The controls are `n_broadcast_samples`, `include_inputs`, `method`, `min_fidelity`, the per-parameter `conversions`, `raw`, and the dispatch and orchestration selectors, together with the numerical budgets a registered method defines. There is no framework key or seed argument or control on a call; every ProbPipe-caused draw's key comes from the workflow scope (IV.8). A wrapped function remains free to declare its own `key` or `seed` parameter, which binds as an ordinary argument and does not configure framework randomness.
 
 **Setting a control.** Each control's effective value is resolved from the framework's default, then the decorator or constructor, then a `with_options` view. The view leaves the original `Function` unchanged. Every control has a default. Per-call controls go through `with_options` for both ordinary functions and operations; direct call keywords always bind to the authored signature. Thus a wrapped function's own `raw` parameter remains an argument, distinct from the framework's control of that name.
 
@@ -78,7 +78,7 @@ A `Function` must wrap an *ordinary* function with no naming restrictions (`C5 �
 
 ### Contract
 
-The arguments bind to the wrapped function's signature by Python's own rules (III.3). An argument that is a tracked term becomes a graph **dependency** and any other a plain **input**; the dependencies are the result's provenance parents and the inputs are recorded by parameter name (IV.10). *Requires:* every argument binds to a parameter. *On failure:* Python's binding error, naming the parameter.
+The arguments bind to the wrapped function's signature by Python's own rules (III.3). An absent `input_spec` adds no schema constraints: the arguments bind by the signature alone, and the parameter annotations still determine conversion targets (IV.4) and lifting (IV.5). An argument that is a tracked term becomes a graph **dependency** and any other a plain **input**; the dependencies are the result's provenance parents and the inputs are recorded by parameter name (IV.10). *Requires:* every argument binds to a parameter. *On failure:* Python's binding error, naming the parameter.
 
 ### Rationale
 
@@ -120,7 +120,7 @@ Explicit argument binding uses the draw's term spec, not the names in its output
 
 ### Rationale
 
-This is `C4 – Function lifting` realized in both of its cases: replacing an argument of `f` with a distribution over that argument's type leaves `f` well-defined and returns the pushforward, and replacing one with a batch over that type leaves it equally well-defined and returns a batch: one substitution rule, differing only in whether the multiplicity is a law or a collection. Providing sampling and elementwise sweep as the generic routes keeps the contract general (`D2 – Generality first`): it works for any `f`, any number of lifted arguments, and any distribution that samples, with exact routes registering above those floors, and it leaves the user's function unchanged. The annotation trigger makes the lifting boundary explicit in the signature, where the author already states intent. Co-sampling by root ancestor is what makes the lift *correct* rather than merely type-correct: it is the same correlation-preserving mechanism the field views rest on, so passing sibling views through a function transports their joint law.
+This is `C4 – Function lifting` realized in both of its cases: replacing an argument of `f` with a distribution over that argument's type leaves `f` well-defined and returns the pushforward, and replacing one with a batch over that type leaves it equally well-defined and returns a batch: one substitution rule, differing only in whether the multiplicity is a law or a collection. Providing sampling and elementwise sweep as the generic routes keeps the contract general (`D2 – Generality first`): it works for any `f`, any number of lifted arguments, and any distribution that samples, with exact routes registering above those floors, and it leaves the user's function body unchanged. The annotation trigger makes the lifting boundary explicit in the signature, where the author already states intent. Co-sampling by root ancestor is what makes the lift *correct* rather than merely type-correct: it is the same correlation-preserving mechanism the field views rest on, so passing sibling views through a function transports their joint law.
 
 ## IV.6 — Planning (step 5)
 
@@ -128,7 +128,7 @@ This is `C4 – Function lifting` realized in both of its cases: replacing an ar
 
 Planning unifies the available declarations and computes the **result declaration** as far as they determine it. It reads argument specs, the event or element spec of a lifted argument, declared capabilities and representation metadata, the parameters the result rule reads, such as paths, and controls. It never evaluates the body or reads traced array contents. What the declarations leave open is a check deferred to return, never an invented spec. Resolution chooses the representation that realizes the declaration (IV.7).
 
-**The declared output.** `output_spec=` accepts an `OutputSpec` or a bare term spec, completed as II.2 states. Dimensions shared with inputs bind before execution; output-only dimensions bind from the returned term, and all bindings are checked together at return. Without an output declaration the result's kind and structure are read from the return (IV.10), so a route that needs them earlier is unavailable until they are declared. Under compilation a value-dependent shape the backend cannot represent is refused rather than promised as `jit`-safe.
+**The declared output.** `output_spec=` accepts an `OutputSpec` or a bare term spec, completed at construction: a `RecordSpec` exposes its fields and any other spec declares a whole term under the function's `output_name` (III.3). `OutputSpec(mean=None)` declares the whole-term component `mean` and leaves its type to be inferred (II.2); the hole is filled from the returned term at return (IV.10), per call, without mutating the declaration. Without any declaration the result's kind and structure are read from the return: a record return completes to its exposed fields, and any other return to a whole term under the function's `output_name` (III.3). Dimensions shared with inputs bind before execution; output-only dimensions bind from the returned term, and all bindings are checked together at return. A route that needs the declaration earlier is unavailable until it is declared. Under compilation a value-dependent shape the backend cannot represent is refused rather than promised as `jit`-safe.
 
 ```python
 @function(output_spec=OutputSpec(rate=NumericArraySpec(("obs",), float32, positive)))
@@ -138,14 +138,15 @@ def rate(x):
 # and binds "obs" to the actual output length on each call
 ```
 
-**The result of a lift.** A distributional lift plans a `DistributionSpec` over the function's output declaration, not an empirical family. An exact rule may return a Gaussian or transformed law; the sampling route constructs an empirical approximation. A sweep plans a batch of the declared output kind, retaining the swept levels. With no output declaration, row results must agree on one inferred spec; an empty sweep requires an explicit declaration sufficient to construct the result. A nested sweep returns a batch of laws. An operation's result rule follows the same distinction between declared type and chosen representation (V.0).
+**The result of a lift.** A distributional lift plans a `DistributionSpec` over the function's output declaration, not an empirical family. An exact rule may return a Gaussian or transformed law; the sampling route constructs an empirical approximation. With no output declaration the planned law's whole-term component is the function's `output_name`, and its type is completed at return. A sweep plans a batch of the declared output kind, retaining the swept levels. With no output declaration, row results must agree on one inferred spec; an empty sweep requires an explicit declaration sufficient to construct the result, so a name-only type hole is insufficient. A nested sweep returns a batch of laws. An operation's result rule follows the same distinction between declared type and chosen representation (V.0).
 
 **Including the inputs.** With `include_inputs=True`, the sampling lift returns a joint empirical law over inputs and outputs. Each lifted parameter contributes one component containing its complete draw, named by the parameter. A record draw remains nested even when it has one field. The output contributes exactly the components its `OutputSpec` exposes (II.2); a record exposed under `parameters` remains under that name. Plain inputs contribute no fields, since provenance records them. A collision between parameter and output component names raises at planning when known and at return otherwise. This control requires a joint-producing route; the ordinary output-only exact rules cannot silently discard the requested inputs. Grouping determines co-sampling, not layout.
 
 ```python
 # posterior.event_spec.spec == RecordSpec(beta=NumericArraySpec(shape=(5,), dtype=float32, support=real))
 
-@function(include_inputs=True, n_broadcast_samples=200)
+@function(output_name="prediction", output_spec=OutputSpec(mean=None),
+          include_inputs=True, n_broadcast_samples=200)
 def predict(theta, x):
     return x @ theta["beta"]      # theta arrives as the Record a posterior draw is
 
@@ -154,12 +155,12 @@ result = predict(theta=posterior, x=X_new)   # X_new: a plain (20, 5) array, not
 # result: empirical over 200 atoms, each one joint draw (theta_s, predict(theta_s, X_new)):
 #   RecordSpec(
 #       theta=RecordSpec(beta=NumericArraySpec(shape=(5,), dtype=float32, support=real)),
-#       predict=NumericArraySpec(shape=(20,), dtype=float32, support=real),
+#       mean=NumericArraySpec(shape=(20,), dtype=float32, support=real),
 #   )
-# so the fields are theta/beta and predict; X_new is recorded in provenance, not in the law
+# so the fields are theta/beta and mean; X_new is recorded in provenance, not in the law
 ```
 
-Each atom is one joint draw, so the result couples every sampled input with its own output, which is what a predictive check or a sensitivity analysis reads off it.
+The result label is `prediction`, independently of its output field `mean` and the function label `predict`. Each atom is one joint draw, so the result couples every sampled input with its own output, which is what a predictive check or a sensitivity analysis reads off it.
 
 *Requires:* the arguments unify, the declared applicability conditions hold, and every declaration needed before execution is available; a check may be deferred to return only when the selected route allows it. *On failure:* `ApplicabilityError` for invalid arguments or conflicting declarations; a missing implementation is a resolution failure (IV.7), and mathematical undefinedness is distinct (II.7).
 
@@ -243,7 +244,9 @@ Dispatch and orchestration are `C3 – Computational detail hidden by default, a
 
 ### Contract
 
-Return binds deferred output dimensions, infers undeclared output structure where permitted, and validates the produced terms. It assembles lifted results according to their declarations and the selected routes. The kind-directed wrap reads `OutputSpec.spec`, never the number of exposed components: an array named `beta` stays an array, while a one-field record stays a record (II.2). A tracked return keeps its kind under the call's fresh identity. The result receives an auto-derived object name and provenance recording the function, dependencies, named inputs, resolved controls, and the selected route's fidelity and target (II.7). With `with_options(raw=True)` the result is returned detached (II.4), without constructing the outer identity. *Requires:* the result satisfies the completed declaration. *On failure:* `ResultKindError` for a wrong returned kind, or `ResultSchemaError` for incompatible structure, dimensions, support, or a violated declared output interface. Both are return-contract defects, not caller admission failures.
+Return binds deferred output dimensions, infers undeclared output structure where permitted, and validates the produced terms. It assembles lifted results according to their declarations and the selected routes. The kind-directed wrap reads the completed return term spec, which is `OutputSpec.spec` where declared, and never the number of exposed components: an array named `beta` stays an array, while a one-field record stays a record (II.2). A tracked return keeps its kind under the call's fresh identity.
+
+The result is labeled by the function's `output_name`, for a lift the outer law or batch included, and an operation's result by its result rule (V.0); a label never completes a component. The result receives provenance recording the function, dependencies, named inputs, resolved controls, and the selected route's fidelity and target (II.7). With `with_options(raw=True)` the result is returned detached (II.4), without constructing the outer identity. *Requires:* the result satisfies the completed declaration. *On failure:* `ResultKindError` for a wrong returned kind, or `ResultSchemaError` for incompatible structure, dimensions, support, or a violated declared output interface. Both are return-contract defects, not caller admission failures.
 
 ```python
 class ResultKindError(TypeError): ...

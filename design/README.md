@@ -16,7 +16,7 @@ ProbPipe is built around a small number of mathematical objects, their specializ
 | function | `f : X → Y` | `Function` |
 | linear operator | `A : ℝⁿ → ℝᵐ` | `LinOp`, the linear `Function` subtype |
 
-Object labels and component names are independent: composition matches the component interface declared by `OutputSpec`, never the producer's label (II.2).
+Labels and component names are distinct sorts of name (C5): composition matches the component interface declared by `OutputSpec` and never reads a label.
 
 Each object also has an indexed-collection form (a *batch*), and every function lifts to batches elementwise. Structured values, distributions, and conditional distributions additionally have **numeric** specializations, such as `NumericRecord` and `NumericDistribution`, covering the all-array case: they identify the event space with a flat vector space, where `LinOp` acts and differentiation applies.
 
