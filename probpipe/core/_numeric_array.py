@@ -121,7 +121,7 @@ class NumericArray(TrackedTerm, Annotated):
             )
         # A bare Python scalar carries no metadata to read, so it is the one
         # thing normalised at construction — as ``NumericRecord`` normalises it.
-        stored = _to_jax_array(value) if isinstance(value, (int, float, complex, bool)) else value
+        stored = _to_jax_array(value) if type(value) in (int, float, complex, bool) else value
         shape, dtype = _event_shape_of(stored), _numpy_dtype_of(stored)
         if spec is None:
             spec = NumericArraySpec(shape=shape, dtype=dtype)
