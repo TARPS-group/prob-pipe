@@ -682,6 +682,7 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
     field the others have and misnaming their axes.
     """
     first = outs[0]
+    family = None
     # The family, not the exact class: a RecordBatch and a NumericRecordBatch row
     # hold the same thing, and only one of them says so in its name. An
     # OpaqueBatch and a FunctionBatch share their storage but not their element
@@ -690,7 +691,7 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
         if isinstance(first, candidate):
             family = candidate
             break
-    if not all(isinstance(o, family) for o in outs):
+    if family is None or not all(isinstance(o, family) for o in outs):
         kinds = sorted({type(o).__name__ for o in outs})
         raise TypeError(
             f"{field_name}: some rows returned a batch and some did not "
