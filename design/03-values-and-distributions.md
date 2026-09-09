@@ -339,7 +339,7 @@ It claims only the batch axis and never the leaf-keyed `Mapping` contract, so a 
 
 ### Contract
 
-A `Distribution[T]` is a probability measure over values of type `T`, where `T` is the implementer-side draw type fixed below. Its `DistributionSpec` carries the draw's `OutputSpec` as `event_spec`, exposed as a view. The declaration determines both the returned kind and its component interface (II.2). It is the same declaration type a `Function` carries as `output_spec`; the names distinguish a draw from a function's return. A bare term spec is accepted and completed at construction: a `RecordSpec` exposes its fields, and any other spec is a whole-term event whose component is the law's `name`, captured once so that `with_name` never moves it (C5). An `OutputSpec`, or a family constructor's `component_name`, names the component otherwise; a constructor fills a type hole from its parameters and stores only the complete declaration.
+A `Distribution[T]` is a probability measure over values of type `T`, where `T` is the implementer-side draw type fixed below. Its `DistributionSpec` carries the draw's `OutputSpec` as `event_spec`, exposed as a view. The declaration determines both the returned kind and its component interface (II.2). It is the same declaration type a `Function` carries as `output_spec`; the names distinguish a draw from a function's return. A bare term spec is accepted and completed at construction: a `RecordSpec` exposes its fields, and any other spec is a whole-term event whose component is the law's `name`, captured once so that `with_name` never moves it. An `OutputSpec`, or a family constructor's `component_name`, names the component otherwise; a constructor fills a type hole from its parameters and stores only the complete declaration.
 
 It declares the operations it supports as **capabilities** (III.8), so operational support is decoupled from the class. Its `raw()` is the law detached (II.4), so a field view's `raw()` is the detached marginal rather than a reference into its parent. A draw is a tracked term of the kind the event declaration names, never wrapped in another kind to make draws uniform.
 
@@ -407,7 +407,7 @@ class DistributionSpec(TermSpec):  # a Distribution; is_valid accepts a matching
 
 ### Rationale
 
-Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – No copying at boundaries` at a field, and deriving its capabilities from its parent's ensures a view advertises only what it can compute (`D3 – Capability-based operations`). The draw-type table is `B2 – Representations only inside` per kind: an implementer writes over `T` and never sees a tracked draw.
+Including a `Distribution` class is necessary to satisfy `C1 – Uniform interface to functions, distributions, and values`. A field view is `B4 – No copying at boundaries` at a field, and deriving its capabilities from its parent's ensures a view advertises only what it can compute (`D3 – Capability-based operations`). The draw-type table is `B2 – Representations only inside` per kind: an implementer writes over `T` and never sees a tracked draw. Defaulting a whole-term component to the label and capturing it once serves `C5 – Naming for unambiguous meaning` on both counts: a draw is addressable by a meaningful component without a second name in the common case, and the label never enters the mathematics afterward.
 
 ### Open points
 

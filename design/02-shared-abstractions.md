@@ -83,7 +83,7 @@ The keyword form requires at least one entry. The positional form accepts exactl
 
 **Packaging.** The declaration stores either one named whole term or an exposed record schema; `spec` and `components` are derived views of it, and the extraction and reconstruction of a produced value read it (III.12).
 
-**Names.** Component names are the only names a declaration carries, and an object's label never enters matching (C5): a distribution named `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. A higher-order component such as `OutputSpec(posterior=DistributionSpec(...))` does not expose the contained law's event components. Components are renamed by `with_path_names` (III.7) and the object by `with_name` (II.4).
+**Names.** Component names are the only names a declaration carries, and an object's label never enters matching: a distribution named `regression_model` may declare `OutputSpec(beta=beta_spec)` or `OutputSpec(RecordSpec(beta=beta_spec))`, and either exports `beta`. A higher-order component such as `OutputSpec(posterior=DistributionSpec(...))` does not expose the contained law's event components. Components are renamed by `with_path_names` (III.7) and the object by `with_name` (II.4).
 
 **Type holes.** `OutputSpec(mean=None)` declares the component `mean` with its term spec pending. `None` is permitted only in this single-keyword form, so an exposed record takes a `RecordSpec` or fully specified keyword fields. A constructor fills the hole from its parameters (III.7) and the engine from the returned term (IV.6).
 
