@@ -8,11 +8,18 @@ import scipy.stats
 
 from probpipe import (
     BootstrapDistribution,
+    EmpiricalDistribution,
     MultivariateNormal,
     Normal,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
+    Opaque,
+    OpaqueBatch,
     ProductDistribution,
     RecordEmpiricalDistribution,
     SequentialJointDistribution,
+    SupportsSampling,
 )
 from probpipe.core import ops
 
@@ -55,6 +62,40 @@ class TestSample:
     def test_sample_with_shape(self, normal):
         s = ops.sample(normal, key=jax.random.PRNGKey(0), sample_shape=(50,))
         assert s.shape == (50,)
+        assert s.name == normal.name
+        assert s.name_is_auto == normal.name_is_auto
+
+    @pytest.mark.parametrize("sample_shape", [(), (3,), (2, 3)])
+    @pytest.mark.parametrize("sampler_name", [None, "custom"])
+    def test_sample_accepts_structural_samplers(self, sample_shape, sampler_name):
+        class Sampler:
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key: jax.Array, sample_shape: tuple[int, ...] = ()) -> jax.Array:
+                return jnp.ones(sample_shape, dtype=jnp.float32)
+
+        sampler = Sampler()
+        if sampler_name is not None:
+            sampler.name = sampler_name
+        assert isinstance(sampler, SupportsSampling)
+
+        result = ops.sample(sampler, key=jax.random.PRNGKey(0), sample_shape=sample_shape)
+
+        np.testing.assert_array_equal(np.asarray(result), np.ones(sample_shape, dtype=np.float32))
+        assert result.name_is_auto
+        assert result.provenance is not None
+        if sample_shape:
+            assert isinstance(result, NumericArrayBatch)
+            assert result.name == (sampler_name or "sample")
+            assert result.batch_shape == sample_shape
+            assert result.level_names == ("sample",)
+            assert result.axis_groups == (sample_shape,)
+            assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        else:
+            assert isinstance(result, NumericArray)
+            assert result.name == "sample"
+            assert result.spec == NumericArraySpec((), dtype=np.float32)
 
     def test_sample_mvn(self, mvn):
         s = ops.sample(mvn, key=jax.random.PRNGKey(0), sample_shape=(10,))
@@ -63,6 +104,29 @@ class TestSample:
     def test_sample_empirical(self, empirical):
         s = ops.sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(5,))
         assert s.shape == (5, 2)
+
+    @pytest.mark.parametrize("sample_shape", [(), (3,), (2, 3), (0,)])
+    @pytest.mark.parametrize(
+        "event", [("a", "b"), (("a", "b"), ("c", "d")), ()], ids=["pair", "matrix", "empty"]
+    )
+    def test_sample_preserves_complete_opaque_events(self, sample_shape, event):
+        law = EmpiricalDistribution([event], name="objects")
+
+        result = ops.sample(law, key=jax.random.PRNGKey(0), sample_shape=sample_shape)
+
+        expected = np.asarray(event, dtype=object)
+        if not sample_shape:
+            assert isinstance(result, Opaque)
+            np.testing.assert_array_equal(result.value, expected)
+        else:
+            assert isinstance(result, OpaqueBatch)
+            assert result.batch_shape == sample_shape
+            assert result.level_names == ("sample",)
+            assert result.axis_groups == (sample_shape,)
+            assert result.name == "objects"
+            assert not result.name_is_auto
+            for index in np.ndindex(sample_shape):
+                np.testing.assert_array_equal(result[index], expected)
 
     def test_sample_shape_scalar_int_matches_1tuple(self, normal, mvn, empirical):
         """Scalar ``sample_shape=N`` is sugar for ``(N,)``.

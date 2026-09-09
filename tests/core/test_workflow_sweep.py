@@ -15,15 +15,20 @@ from probpipe import (
     EventTemplate,
     Function,
     Normal,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
     Record,
     RecordBatch,
+    log_prob,
     mean,
 )
 from probpipe.core import _workflow_call, _workflow_execution, _workflow_sweep
 from probpipe.core._record_batch import _MappedBatchColumns
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
+from probpipe.core.constraints import positive
 
 
 def _numeric_record_batch(
@@ -453,3 +458,139 @@ class TestASweptBodyThatReturnsABatch:
                     level_name="k",
                 )
             )(jnp.arange(4.0))
+
+
+@pytest.fixture(
+    params=[
+        ((3,), ("row",), (1,)),
+        ((2, 3), ("chain", "draw"), (1, 1)),
+        ((2, 3, 2), ("chain", "draw"), (1, 2)),
+    ],
+    ids=["one-level", "two-levels", "multi-axis-level"],
+)
+def numeric_sweep_source(request):
+    shape, levels, axes_per_level = request.param
+    values = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape) / 4
+    return NumericRecordBatch(
+        "inputs",
+        {"x": values},
+        levels,
+        element_spec=EventTemplate(x=NumericArraySpec((), dtype=np.float32)),
+        axes_per_level=axes_per_level,
+    )
+
+
+class TestNumericArraySweep:
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    @pytest.mark.parametrize("representation", ["raw", "tracked", "declared"])
+    @pytest.mark.parametrize("event_shape", [(), (2,)], ids=["scalar", "vector"])
+    def test_numeric_results_keep_their_declaration_and_levels(
+        self, numeric_sweep_source, dispatch, representation, event_shape
+    ):
+        source = numeric_sweep_source
+        declared = NumericArraySpec(event_shape, dtype=np.float64, support=positive)
+
+        def body(row):
+            value = row["x"] * 2 + 1
+            if event_shape:
+                value = jnp.stack([value, value + 1])
+            if representation == "raw":
+                return value
+            return NumericArray(
+                "row-result", value, spec=declared if representation == "declared" else None
+            )
+
+        result = Function(func=body, name="shift", dispatch=dispatch)(source)
+
+        expected = np.asarray(source["x"]) * 2 + 1
+        if event_shape:
+            expected = np.stack([expected, expected + 1], axis=-1)
+        expected_spec = (
+            declared
+            if representation == "declared"
+            else NumericArraySpec(event_shape, dtype=np.float32)
+        )
+        assert isinstance(result, NumericArrayBatch)
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        assert result.element_spec == expected_spec
+        assert result.name == "shift" and result.name_is_auto
+        assert result.provenance is not None
+        np.testing.assert_array_equal(np.asarray(result), expected)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_nested_density_results_compose_after_the_sweep(self, numeric_sweep_source, dispatch):
+        source = numeric_sweep_source
+        law = Normal(0.0, 1.0, name="x")
+        result = Function(
+            func=lambda row: log_prob(law, row["x"]), name="score", dispatch=dispatch
+        )(source)
+
+        expected = -0.5 * np.asarray(source["x"], dtype=np.float64) ** 2 - 0.5 * np.log(2 * np.pi)
+        assert isinstance(result, NumericArrayBatch)
+        assert result.axis_groups == source.axis_groups
+        assert result.level_names == source.level_names
+        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        assert result.name == "score" and result.name_is_auto
+        np.testing.assert_allclose(np.asarray(result), expected, rtol=2e-7, atol=1e-7)
+
+        shifted = Function(func=lambda value: value + 1, dispatch="sequential")(result)
+        assert shifted.axis_groups == source.axis_groups
+        assert shifted.level_names == source.level_names
+        np.testing.assert_allclose(np.asarray(shifted), expected + 1, rtol=2e-7, atol=1e-7)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_native_numeric_results_keep_their_source(self, numeric_sweep_source, dispatch):
+        pd = pytest.importorskip("pandas")
+        native = pd.Series([1.0, 2.0], index=[5, 7])
+        declared = NumericArraySpec((2,), dtype=np.float64, support=positive)
+        value = NumericArray("original", native, spec=declared)
+
+        result = Function(func=lambda row: value, name="repeated", dispatch=dispatch)(
+            numeric_sweep_source
+        )
+
+        assert result.element_spec == declared
+        assert result.axis_groups == numeric_sweep_source.axis_groups
+        assert result.level_names == numeric_sweep_source.level_names
+        np.testing.assert_array_equal(
+            np.asarray(result), np.broadcast_to([1.0, 2.0], (*numeric_sweep_source.batch_shape, 2))
+        )
+        assert value.value is native
+        assert value.name == "original"
+        assert value.spec == declared
+        assert value.provenance is None
+
+    @pytest.mark.parametrize(
+        "other_spec",
+        [
+            NumericArraySpec((), dtype=np.float32, support=positive),
+            NumericArraySpec((), dtype=np.float64),
+        ],
+        ids=["dtype", "support"],
+    )
+    def test_disagreeing_numeric_row_declarations_are_refused(self, other_spec):
+        declared = NumericArraySpec((), dtype=np.float64, support=positive)
+        first = NumericArray("first", jnp.asarray(1.0), spec=declared)
+        second = NumericArray("second", jnp.asarray(2.0), spec=other_spec)
+        source = _numeric_record_batch("x", range(2))
+
+        with pytest.raises(ValueError, match=r"numeric.*declarations"):
+            Function(
+                func=lambda row: first if float(row["x"]) == 0 else second,
+                name="different",
+                dispatch="sequential",
+            )(source)
+
+    def test_a_raw_numeric_row_does_not_erase_a_tracked_rows_declaration(self):
+        declared = NumericArraySpec((), dtype=np.float64, support=positive)
+        value = NumericArray("held", jnp.asarray(2.0), spec=declared)
+        result = Function(
+            func=lambda row: 1.0 if float(row["x"]) == 0 else value,
+            name="mixed",
+            dispatch="sequential",
+        )(_numeric_record_batch("x", range(2)))
+
+        assert result.element_spec == declared
+        np.testing.assert_array_equal(np.asarray(result), [1.0, 2.0])

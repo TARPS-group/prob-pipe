@@ -29,6 +29,7 @@ from ._empirical import (
 )
 from ._function_batch import FunctionBatch
 from ._immutable import constructing, transient_memo
+from ._numeric_array import NumericArray
 from ._numeric_array_batch import NumericArrayBatch, _MappedBatchStore
 from ._numeric_record_batch import NumericRecordBatch
 from ._object_batch import _from_iterable, _is_object_array, _ObjectBatch
@@ -681,6 +682,7 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
     field the others have and misnaming their axes.
     """
     first = outs[0]
+    family = None
     # The family, not the exact class: a RecordBatch and a NumericRecordBatch row
     # hold the same thing, and only one of them says so in its name. An
     # OpaqueBatch and a FunctionBatch share their storage but not their element
@@ -689,7 +691,7 @@ def _agreeing_batch_rows(outs: list, *, field_name: str) -> Any:
         if isinstance(first, candidate):
             family = candidate
             break
-    if not all(isinstance(o, family) for o in outs):
+    if family is None or not all(isinstance(o, family) for o in outs):
         kinds = sorted({type(o).__name__ for o in outs})
         raise TypeError(
             f"{field_name}: some rows returned a batch and some did not "
@@ -908,6 +910,7 @@ def _make_stack(
                     name or field_name,
                     store.reshape(batch_shape + store.shape[1:]),
                     (*level_names, *first.level_names),
+                    element_spec=first.element_spec,
                     axes_per_level=_ranks_of((*sweep_groups, *first.axis_groups)),
                     name_is_auto=True,
                 )
@@ -1030,11 +1033,27 @@ def _make_stack(
 
         if stacked is not None:
             event_shape = tuple(stacked.shape[1:])
+            element_spec = None
+            for output in outs:
+                if not isinstance(output, NumericArray):
+                    continue
+                if element_spec is None:
+                    element_spec = output.spec
+                elif output.spec != element_spec:
+                    raise ValueError(
+                        f"{field_name}: numeric rows returned declarations that disagree "
+                        f"({element_spec!r} and {output.spec!r}); return numeric rows with "
+                        "one shared declaration"
+                    )
             return NumericArrayBatch(
                 name or field_name,
                 stacked.reshape(batch_shape + event_shape),
                 level_names,
-                element_spec=NumericArraySpec(event_shape, dtype=stacked.dtype),
+                element_spec=(
+                    element_spec
+                    if element_spec is not None
+                    else NumericArraySpec(event_shape, dtype=stacked.dtype)
+                ),
                 axes_per_level=_ranks_of(sweep_groups),
                 name_is_auto=True,
             )

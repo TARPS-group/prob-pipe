@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import operator
+from math import prod
 from typing import Any
 
 import jax
@@ -115,14 +116,14 @@ def sample(
         return _drawn_at_its_batch_form(
             _workflow_descendants.sample_captured_consumer(captured, key, sample_shape),
             sample_shape,
-            name=dist.name,
-            name_is_auto=dist.name_is_auto,
+            name=getattr(dist, "name", "sample"),
+            name_is_auto=getattr(dist, "name_is_auto", True),
         )
     return _drawn_at_its_batch_form(
         dist._sample(key, sample_shape),
         sample_shape,
-        name=dist.name,
-        name_is_auto=dist.name_is_auto,
+        name=getattr(dist, "name", "sample"),
+        name_is_auto=getattr(dist, "name_is_auto", True),
     )
 
 
@@ -188,7 +189,7 @@ def _drawn_at_its_batch_form(
         # Stored draws aggregate exactly as a sweep's rows do — each element at
         # its own kind, under the one level the operation mints.
         aggregate = _make_stack(
-            list(drawn.reshape(-1)),
+            list(drawn.reshape((prod(sample_shape), *drawn.shape[n_draw_axes:]))),
             batch_shape=tuple(sample_shape),
             level_names=(SAMPLE_LEVEL,),
             field_name=name,

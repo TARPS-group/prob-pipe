@@ -195,7 +195,7 @@ jobs:
             # unit-tested resolver (scripts/ci/import_graph.py; tests in tests/ci/).
             # It transitively expands over the import graph, then maps each
             # affected module: subpackage modules (probpipe/core/node.py) ->
-            # tests/core/; root-level modules (probpipe/_utils.py) -> the root
+            # tests/core/; root-level modules (probpipe/_array_utils.py) -> the root
             # tests/test_*.py files; and the inference subpackage by filename
             # convention (_foo.py -> tests/inference/test_foo.py; the __init__
             # registration facade -> the registry integration tests) so a single

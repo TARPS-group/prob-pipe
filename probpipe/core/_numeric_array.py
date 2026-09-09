@@ -121,7 +121,7 @@ class NumericArray(TrackedTerm, Annotated):
             )
         # A bare Python scalar carries no metadata to read, so it is the one
         # thing normalised at construction — as ``NumericRecord`` normalises it.
-        stored = _to_jax_array(value) if isinstance(value, (int, float, complex, bool)) else value
+        stored = _to_jax_array(value) if type(value) in (int, float, complex, bool) else value
         shape, dtype = _event_shape_of(stored), _numpy_dtype_of(stored)
         if spec is None:
             spec = NumericArraySpec(shape=shape, dtype=dtype)
@@ -145,15 +145,16 @@ class NumericArray(TrackedTerm, Annotated):
         """The value as a ``jax.Array`` — the single conversion point.
 
         A value already stored as one passes through, tracers included; a
-        native container converts through its registered backend once and is
-        memoised for this instance.
+        native container converts through its registered backend. Concrete
+        conversions are memoised; traced conversions stay within their transform.
         """
         if isinstance(self._value, jax.Array):
             return self._value
         cached = getattr(self, "_jax_cache", None)
         if cached is None:
             cached = _to_jax_array(self._value)
-            object.__setattr__(self, "_jax_cache", cached)
+            if not isinstance(cached, jax.core.Tracer):
+                object.__setattr__(self, "_jax_cache", cached)
         return cached
 
     @property

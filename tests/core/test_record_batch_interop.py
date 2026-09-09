@@ -23,12 +23,14 @@ from probpipe import (
     EventTemplate,
     Function,
     FunctionBatch,
+    FunctionSpec,
     Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
     NumericRecord,
     OpaqueBatch,
+    OpaqueSpec,
     ProductDistribution,
     Record,
     function,
@@ -973,12 +975,88 @@ class TestBatchValuedRowAggregation:
             element_spec=EventTemplate(y=NumericArraySpec(shape=())),
         )
 
-    def test_mixing_batch_and_non_batch_rows_is_refused(self):
-        def body(x):
-            return self._inner(2) if float(x["x"]) < 1.5 else Record("r", y=0.0)
+    @staticmethod
+    def _inner_objects(kind: str):
+        if kind == "opaque":
+            return OpaqueBatch(
+                "labels",
+                ["north", "south-east"],
+                "item",
+                element_spec=OpaqueSpec(meta="authoritative"),
+            )
+        return FunctionBatch(
+            "functions",
+            [lambda x: x + 1, lambda x: x * 2],
+            "item",
+            element_spec=FunctionSpec(
+                input_template=EventTemplate(x=()), output_spec=NumericArraySpec(())
+            ),
+        )
 
-        with pytest.raises(TypeError, match="some rows returned a batch and some did not"):
-            Function(func=body, dispatch="sequential")(x=self._rows())
+    @pytest.mark.parametrize("kind", ["record", "numeric", "opaque", "function"])
+    @pytest.mark.parametrize("single", [1.0, Record("r", y=0.0)], ids=["scalar", "record"])
+    def test_mixing_batch_and_non_batch_rows_is_refused(self, kind, single):
+        if kind == "record":
+            inner = self._inner(2)
+        elif kind == "numeric":
+            inner = self._inner_array(2)
+        else:
+            inner = self._inner_objects(kind)
+        messages = []
+        for batch_first in (True, False):
+
+            def body(x, *, batch_first=batch_first):
+                return inner if (float(x["x"]) == 0) == batch_first else single
+
+            with pytest.raises(
+                TypeError, match="some rows returned a batch and some did not"
+            ) as exc:
+                Function(func=body, dispatch="sequential")(x=self._rows(2))
+            messages.append(str(exc.value))
+        assert messages[0] == messages[1]
+
+    @pytest.mark.parametrize("kind", ["opaque", "function"])
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential"])
+    def test_object_batch_rows_keep_their_declaration(self, kind, dispatch):
+        inner = self._inner_objects(kind)
+
+        result = Function(func=lambda x: inner, name="collect", dispatch=dispatch)(x=self._rows())
+
+        assert type(result) is type(inner)
+        assert result.element_spec == inner.element_spec
+        assert result.batch_shape == (3, 2)
+        assert result.level_names == ("row", "item")
+        assert result.axis_groups == ((3,), (2,))
+        assert result.name == "collect" and result.name_is_auto
+        for row in range(3):
+            for item in range(2):
+                assert result[row, item] is inner[item]
+
+        if kind == "opaque":
+            evaluate = len
+            expected = [5, 10]
+        else:
+
+            def evaluate(f):
+                return f(3)
+
+            expected = [4, 6]
+        downstream = Function(func=evaluate, dispatch="sequential")(result)
+        assert downstream.level_names == result.level_names
+        assert downstream.axis_groups == result.axis_groups
+        np.testing.assert_array_equal(np.asarray(downstream), np.tile(expected, (3, 1)))
+
+    @pytest.mark.parametrize("kind", ["opaque", "function"])
+    def test_object_batch_rows_with_conflicting_declarations_are_refused(self, kind):
+        first = self._inner_objects(kind)
+        other_spec = OpaqueSpec(meta="different") if kind == "opaque" else FunctionSpec()
+        second = type(first)("other", list(first), "item", element_spec=other_spec)
+
+        def body(x):
+            return first if float(x["x"]) == 0 else second
+
+        with pytest.raises(ValueError, match="returned batches that disagree"):
+            Function(func=body, dispatch="sequential")(x=self._rows(2))
 
     @pytest.mark.parametrize(
         "second",
