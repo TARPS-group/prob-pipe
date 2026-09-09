@@ -909,6 +909,7 @@ def _make_stack(
                     name or field_name,
                     store.reshape(batch_shape + store.shape[1:]),
                     (*level_names, *first.level_names),
+                    element_spec=first.element_spec,
                     axes_per_level=_ranks_of((*sweep_groups, *first.axis_groups)),
                     name_is_auto=True,
                 )
