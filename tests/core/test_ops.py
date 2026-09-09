@@ -8,11 +8,14 @@ import scipy.stats
 
 from probpipe import (
     BootstrapDistribution,
+    EmpiricalDistribution,
     MultivariateNormal,
     Normal,
     NumericArray,
     NumericArrayBatch,
     NumericArraySpec,
+    Opaque,
+    OpaqueBatch,
     ProductDistribution,
     RecordEmpiricalDistribution,
     SequentialJointDistribution,
@@ -101,6 +104,29 @@ class TestSample:
     def test_sample_empirical(self, empirical):
         s = ops.sample(empirical, key=jax.random.PRNGKey(0), sample_shape=(5,))
         assert s.shape == (5, 2)
+
+    @pytest.mark.parametrize("sample_shape", [(), (3,), (2, 3), (0,)])
+    @pytest.mark.parametrize(
+        "event", [("a", "b"), (("a", "b"), ("c", "d")), ()], ids=["pair", "matrix", "empty"]
+    )
+    def test_sample_preserves_complete_opaque_events(self, sample_shape, event):
+        law = EmpiricalDistribution([event], name="objects")
+
+        result = ops.sample(law, key=jax.random.PRNGKey(0), sample_shape=sample_shape)
+
+        expected = np.asarray(event, dtype=object)
+        if not sample_shape:
+            assert isinstance(result, Opaque)
+            np.testing.assert_array_equal(result.value, expected)
+        else:
+            assert isinstance(result, OpaqueBatch)
+            assert result.batch_shape == sample_shape
+            assert result.level_names == ("sample",)
+            assert result.axis_groups == (sample_shape,)
+            assert result.name == "objects"
+            assert not result.name_is_auto
+            for index in np.ndindex(sample_shape):
+                np.testing.assert_array_equal(result[index], expected)
 
     def test_sample_shape_scalar_int_matches_1tuple(self, normal, mvn, empirical):
         """Scalar ``sample_shape=N`` is sugar for ``(N,)``.

@@ -284,6 +284,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Batched sampling preserves complete opaque events, including array-shaped
+  events, by flattening only sampling axes during aggregation (#446).
+
 - Explicit-key `sample` calls accept structural `SupportsSampling` objects
   without `name` or `name_is_auto` attributes. Missing result names default to
   `sample`, and missing naming flags default to automatic (#446).
