@@ -1,19 +1,19 @@
-# Part VI — The Distribution Catalog
+# Part VII — The Distribution Catalog
 
-Parts III and V fixed what a distribution *is* and what the operations do to one. Part VI catalogs the **concrete families** the library ships: for each, its event kind, its place on the axes of the `Distribution` hierarchy, the capabilities it implements and how, and the way instances arise, whether by constructor or as the result of an operation. Every family here is an ordinary `Distribution` or `ConditionalDistribution`, and the catalog adds no new base classes.
+Parts III, IV, and VI fixed what a distribution *is* and what the operations do to one. Part VII catalogs the **concrete families** the library ships: for each, its event kind, its place on the axes of the `Distribution` hierarchy, the capabilities it implements and how, and the way instances arise, whether by constructor or as the result of an operation. Every family here is an ordinary `Distribution` or `ConditionalDistribution`, and the catalog adds no new base classes.
 
 | §     | Family                            | Event                                  | Factored?                          | Capabilities                                        | Arises by                                             |
 | ----- | --------------------------------- | -------------------------------------- | ---------------------------------- | --------------------------------------------------- | ----------------------------------------------------- |
-| VI.1  | parametric (`Normal`, …)          | one array field, or a fixed record     | no                                 | closed form throughout                              | constructor                                            |
-| VI.2  | empirical, bootstrap, KDE         | any                                    | no                                 | sampling, sample moments, exact marginals           | constructor, or as a sampling result                   |
-| VI.3  | mixture                           | the components' shared event           | no                                 | what the components jointly support                 | `mixture`, dependent marginals, or constructor      |
-| VI.4  | evaluation results                | the map's output schema              | no                                 | per rule: exact density, exact moments, or sampling | `evaluate`                                             |
-| VI.5  | random functions, random measures | a `FunctionSpec` or `DistributionSpec` event declaration | no                             | mean function / marginalized law, sampling          | constructor                                            |
-| VI.6  | the Gaussian algebra              | numeric                                | yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `evaluate`    |
-| VI.7  | inference-produced                | any                                    | as realized                        | whatever the realizing family supports              | `condition_on` (inference)                             |
-| VI.8  | conditional families              | (given, event) pairs          | some                               | the conditional capabilities                        | constructor or composition                             |
+| VII.1  | parametric (`Normal`, …)          | one array field, or a fixed record     | no                                 | closed form throughout                              | constructor                                            |
+| VII.2  | empirical, bootstrap, KDE         | any                                    | no                                 | sampling, sample moments, exact marginals           | constructor, or as a sampling result                   |
+| VII.3  | mixture                           | the components' shared event           | no                                 | what the components jointly support                 | `mixture`, dependent marginals, or constructor      |
+| VII.4  | evaluation results                | the map's output schema              | no                                 | per rule: exact density, exact moments, or sampling | `evaluate`                                             |
+| VII.5  | random functions, random measures | a `FunctionSpec` or `DistributionSpec` event declaration | no                             | mean function / marginalized law, sampling          | constructor                                            |
+| VII.6  | the Gaussian algebra              | numeric                                | yes | closed form, exact conditioning and marginals       | constructor, `*`, `condition_on`, linear `evaluate`    |
+| VII.7  | inference-produced                | any                                    | as realized                        | whatever the realizing family supports              | `condition_on` (inference)                             |
+| VII.8  | conditional families              | (given, event) pairs          | some                               | the conditional capabilities                        | constructor or composition                             |
 
-## VI.1 — Parametric families
+## VII.1 — Parametric families
 
 ### Contract
 
@@ -35,7 +35,7 @@ class Normal(TFPDistribution):
 
 One adapter with thin family constructors keeps the backend a computational detail (`C3 – Computational detail hidden by default, available on demand`) and makes a new family a constructor rather than a class (`D2 – Generality first`).
 
-## VI.2 — Empirical and resampling
+## VII.2 — Empirical and resampling
 
 ### Contract
 
@@ -90,7 +90,7 @@ All four are genuine laws whose declared capabilities are those they can provide
 
 - *Bandwidth shape.* Whether `bandwidth` admits a matrix / linear operator, with the kernel applied in the whitened space, is open.
 
-## VI.3 — Mixtures
+## VII.3 — Mixtures
 
 ### Contract
 
@@ -106,7 +106,7 @@ class MixtureDistribution(Distribution[T]):
 
 A mixture supports an operation exactly when its components do, the same intersection rule the factored classes use (`D3 – Capability-based operations`).
 
-## VI.4 — Evaluation results
+## VII.4 — Evaluation results
 
 ### Contract
 
@@ -135,7 +135,7 @@ Typing evaluation results as catalog families keeps the operation closed and its
 
 - *Lazy sampling results.* The sampling rule materializes an `EmpiricalDistribution` with a fixed atom count. A lazy alternative that remains exactly samplable, drawing an input and applying the map on demand, would suit unbounded resampling such as bootstrap statistics; whether that is the sampling rule's result or an opt-in form is open.
 
-## VI.5 — Random functions and random measures
+## VII.5 — Random functions and random measures
 
 ### Contract
 
@@ -153,11 +153,11 @@ class RandomMeasure[T](Distribution[Distribution[T]]):
 
 Both are ordinary distributions over nonstandard event types, claiming only the moments those types support (`D1 – Mathematical fidelity`, `D3 – Capability-based operations`).
 
-## VI.6 — The Gaussian algebra
+## VII.6 — The Gaussian algebra
 
 ### Contract
 
-Three families form a closed algebra built on `LinOp`. A `MultivariateNormal` from the parametric families is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp` whose domain is the event term spec and whose codomain carries the completed event declaration, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the random-function member: a `RandomFunction` whose finite-dimensional laws are Gaussian. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and its flat-coordinate pushforward is a `MultivariateNormal` obtained through the declared isomorphism of III.7. A converter may change its family while preserving the original event declaration (III.14).
+Three families form a closed algebra built on `LinOp`. A `MultivariateNormal` from the parametric families is the atomic member: its constructor accepts `cov: LinOp | Array`, a dense array wraps as a `DenseLinOp` whose domain is the event term spec and whose codomain carries the completed event declaration, and `_cov` returns the `LinOp` with its structure preserved. A `GaussianRandomFunction` is the random-function member: a `RandomFunction` whose finite-dimensional laws are Gaussian. A `FactoredMultivariateGaussian` is the factored joint whose factors are jointly Gaussian, with closed-form `log_prob`, moments, and sampling, and exact conditioning and marginals. It is derived, never constructed: `*` and `joint` return it as the most-specific class whenever every factor is a Gaussian or a linear-Gaussian conditional distribution, and its flat-coordinate pushforward is a `MultivariateNormal` obtained through the declared isomorphism of III.7. A converter may change its family while preserving the original event declaration (IV.4).
 
 The algebra is closed under the operations: an affine pushforward of any member is again a member by a closed-form rule, and `condition_on` with a Gaussian prior and a linear-Gaussian observation is exact. A composition of Gaussian pieces built before its dimensions are bound is an ordinary factored object holding its covariances as recipes; once binding makes the `LinOp` covariances constructible, refinement re-derives the most-specific class and the object joins the algebra as a `FactoredMultivariateGaussian`.
 
@@ -191,7 +191,7 @@ class LinearBasisFunction(GaussianRandomFunction):
 
 Gaussian closure under affine maps, conditioning, and marginalization is a mathematical fact, stated as class structure so that dispatch exploits it automatically (`D1 – Mathematical fidelity`, `C3 – Computational detail hidden by default, available on demand`).
 
-## VI.7 — Inference-produced distributions
+## VII.7 — Inference-produced distributions
 
 ### Contract
 
@@ -206,7 +206,7 @@ Approximation is a relation between a result and its target: a variational Gauss
 - *Fidelity presentation.* II.7 fixes the recorded local guarantees and upstream history. A compact user-facing summary may be useful, but it must identify its target and derive from provenance rather than add an independent truth in `annotations`.
 - *Approximation error.* Capturing a result's approximation error, for example a bound or a diagnostic, has no generic representation yet. For now it is stored in `annotations`, keyed by the producing method.
 
-## VI.8 — Conditional families
+## VII.8 — Conditional families
 
 ### Contract
 
@@ -242,7 +242,7 @@ def glm_likelihood(name: str, family: GLMFamily, link: Function | None = None,
 
 Assembling conditional families from uniform pieces is `D2 – Generality first`: a mean-parameterized family, a link bijector, and a linear predictor compose into an entire model class with nothing new defined.
 
-## VI.9 — Program-defined families
+## VII.9 — Program-defined families
 
 ### Contract
 
@@ -250,7 +250,7 @@ A **program-defined model** exposes what its backend provides. A program with a 
 
 `StanModel` uses BridgeStan and `PyMCModel` uses a PyMC model-building function. Each adapter declares its data inputs separately from the event variables, whose program names determine the output components. A model named `regression_model` may have the one-field event `OutputSpec(RecordSpec(beta=beta_spec))`; its draws remain records, and composition matches `beta`, not the model label. The existing Stan adapter's parameter-only event and separately supplied data follow the data-bound form; exposing an unbound or generative model requires the corresponding explicit declaration, not merely moving data into its event.
 
-The adapter claims the density and sampling capabilities the program supplies. It declares unnormalized density unless normalization is established. Inference methods register against the backend interface they require; they do not require a public factor graph unless they use one (V.6). A method records which data were bound, its target, controls, and local fidelity, and its result preserves the target event declaration (VI.7). An unconstrained parameterization is an explicit invertible map of that event (III.7, III.15).
+The adapter claims the density and sampling capabilities the program supplies. It declares unnormalized density unless normalization is established. Inference methods register against the backend interface they require; they do not require a public factor graph unless they use one (VI.6). A method records which data were bound, its target, controls, and local fidelity, and its result preserves the target event declaration (VII.7). An unconstrained parameterization is an explicit invertible map of that event (III.7, IV.5).
 
 ```python
 # Adapter contracts; constructors bind backend data separately from event variables.

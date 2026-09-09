@@ -39,18 +39,19 @@ The document has six parts, a package-structure companion, and one more part pla
 
 - **[Part I — Design Principles](01-design-principles.md)** — the high-level commitments that drive every downstream design decision. They are stated without reference to any specific class, type, or API.
 - **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic abstractions the rest of the library is built on: the term-specification layer with named input/output component declarations and the `Numeric` interface, identity, provenance, and metadata, batching, the named-tree abstraction, and the dispatch registries.
-- **[Part III — Values and Distributions](03-values-and-distributions.md)** — the term kinds and the probability domain in dependency order: the base value kinds, functions and linear operators, records and record batches, distributions, conditional distributions, composition, and the classification of distribution kinds, each with a precise contract that must align with the design principles.
-- **[Part IV — Functions](04-functions.md)** — how an ordinary Python callable is lifted into ProbPipe: the engine's stack, then each step in order, controls, binding, normalization, lifting, planning, resolution, randomness, execution, and return, and the differentiability claim. This is the layer the operations build on.
-- **[Part V — Operations](05-operations.md)** — precise contracts for the core operations, functions before distributions: function evaluation, inversion, sampling, density evaluation, distribution functionals, conditioning, joints, marginals and factors, mixtures, conversion between representations, and batched operations.
-- **[Part VI — The Distribution Catalog](06-distribution-catalog.md)** — the concrete families placed on the hierarchy's axes: parametric, empirical, mixtures, evaluation results, random functions and measures, the Gaussian algebra, inference-produced distributions, and the conditional families, including GLM likelihoods.
-- **Part VII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow.
+- **[Part III — Term Kinds](03-term-kinds.md)** — the term kinds in dependency order: the base value kinds, functions and linear operators, records and record batches, distributions and their capabilities, conditional distributions, and their batch forms, each with a precise contract that must align with the design principles.
+- **[Part IV — Distributions](04-distributions.md)** — what the distribution kinds add beyond their definitions: factored distributions, composition with `*`, the classification of distribution kinds, conversion between representations, and constraint reparameterization.
+- **[Part V — Functions](05-functions.md)** — how an ordinary Python callable is lifted into ProbPipe: the engine's stack, then each step in order, controls, binding, normalization, lifting, planning, resolution, randomness, execution, and return, and the differentiability claim. This is the layer the operations build on.
+- **[Part VI — Operations](06-operations.md)** — precise contracts for the core operations, functions before distributions: function evaluation, inversion, sampling, density evaluation, distribution functionals, conditioning, joints, marginals and factors, mixtures, conversion between representations, and batched operations.
+- **[Part VII — The Distribution Catalog](07-distribution-catalog.md)** — the concrete families placed on the hierarchy's axes: parametric, empirical, mixtures, evaluation results, random functions and measures, the Gaussian algebra, inference-produced distributions, and the conditional families, including GLM likelihoods.
+- **Part VIII — Agentic Interface (planned)** — A higher-level agentic interface to help guide the process of designing, building, and auditing a ProbPipe workflow.
 - **[Package Structure](package-structure.md)** — the target package and module layout realizing the parts: the layered import graph, upward registration, and the public-API conventions.
 
 ### Conventions
 
 #### Structure
 
-Every numbered section in Parts II through VI leads with a **Contract** subsection, which describes what the abstraction or operation is, and its precise public interface, in plain language and typed signatures. Next, the **Rationale** subsection describes the reasoning for the design and how it aligns with the Part I design principles. **Notes** and **Open points** subsections appear only where necessary.
+Every numbered section in Parts II through VII leads with a **Contract** subsection, which describes what the abstraction or operation is, and its precise public interface, in plain language and typed signatures. Next, the **Rationale** subsection describes the reasoning for the design and how it aligns with the Part I design principles. **Notes** and **Open points** subsections appear only where necessary.
 
 #### Formatting
 
