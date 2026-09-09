@@ -284,6 +284,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native NumPy scalars retain their storage and precision in `NumericArray`.
+  Object-batch aggregation retains agreed element declarations, and mixed batch
+  and non-batch rows report the same schema error in either order (#446).
+
 - Batched sampling preserves complete opaque events, including array-shaped
   events, by flattening only sampling axes during aggregation (#446).
 

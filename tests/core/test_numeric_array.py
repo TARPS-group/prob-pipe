@@ -80,6 +80,27 @@ class TestNumericArrayStoresNativeForm:
             is raw
         )
 
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            np.float64(1e100),
+            np.complex128(complex(1e100, 1e100)),
+            np.float32(1.25),
+            np.complex64(1 + 2j),
+            np.int64(7),
+            np.bool_(True),
+        ],
+        ids=["float64", "complex128", "float32", "complex64", "int64", "bool"],
+    )
+    def test_numpy_scalars_keep_native_storage_with_jax_x64_disabled(self, raw):
+        with jax.enable_x64(False):
+            value = NumericArray("native", raw)
+
+        assert value.value is raw
+        assert value.dtype == raw.dtype
+        assert value.spec == NumericArraySpec((), dtype=raw.dtype)
+        assert np.isfinite(value.value)
+
     def test_a_container_keeps_its_own_metadata(self):
         xr = pytest.importorskip("xarray")
         data = xr.DataArray(np.arange(3.0), dims=["t"], coords={"t": [10, 20, 30]})
@@ -98,15 +119,14 @@ class TestNumericArrayStoresNativeForm:
             np.arange(3.0),
         ).shape == (3,)
 
-    def test_a_bare_scalar_is_normalised(self):
+    @pytest.mark.parametrize("raw", [2, 2.5, 1 + 2j, True], ids=["int", "float", "complex", "bool"])
+    def test_a_bare_scalar_is_normalised(self, raw):
         """It carries no metadata to read, so it is normalised."""
-        assert isinstance(
-            NumericArray(
-                "v",
-                2.5,
-            ).value,
-            jax.Array,
-        )
+        value = NumericArray("v", raw)
+
+        assert isinstance(value.value, jax.Array)
+        assert value.shape == ()
+        np.testing.assert_array_equal(np.asarray(value.value), raw)
 
     def test_conversion_happens_once_and_is_memoised(self):
         value = NumericArray(
