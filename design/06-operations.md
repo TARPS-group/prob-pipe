@@ -292,7 +292,7 @@ Leaving the integral out of `condition_on` keeps conditioning single-valued, sin
 
 ### Contract
 
-`convert(d, target)` returns a distribution of the requested class or satisfying the requested capability protocol (III.8). Its registry route uses the converter plan and event-preservation contract of IV.4. `with_options(method=..., min_fidelity=...)` controls selection, and provenance records the selected converter's local fidelity. A source already satisfying the target needs no numerical conversion and returns under fresh identity. Entry normalization plans the same conversion; execution constructs it and records it by the same contract (V.4, V.9).
+`convert(d, target)` returns a distribution of the requested class or satisfying the requested capability protocol (III.8). Its registry route uses the converter plan and event-preservation contract of IV.3. `with_options(method=..., min_fidelity=...)` controls selection, and provenance records the selected converter's local fidelity. A source already satisfying the target needs no numerical conversion and returns under fresh identity. Entry normalization plans the same conversion; execution constructs it and records it by the same contract (V.4, V.9).
 
 ### Rationale
 

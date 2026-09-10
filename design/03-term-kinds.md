@@ -1,6 +1,6 @@
 # Part III — Term Kinds
 
-Part III introduces the **term kinds**: the values, functions, and distributions a user constructs and operates on. Each is built on the shared abstractions of Part II and introduced in dependency order, and each section states only what its kind adds — everything else is Part II's contract. The final two sections cover the registries that act across these objects: cross-type conversion and constraint reparameterization.
+Part III introduces the **term kinds**: the values, functions, and distributions a user constructs and operates on.
 
 | §      | Category                       | Contents                                                                                              | Role                                                                                                            |
 | ------ | --------------------------- | ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
@@ -113,11 +113,25 @@ def install_call_engine(engine: Callable[..., Any]) -> None: ...
     # plain evaluation on concrete values.
 ```
 
- `FunctionBatch` is the function kind's batch form, storing its elements exactly as `OpaqueBatch` does (III.2); an element is a `Function` whatever callable the slot holds, and `raw()` is an object array of the stored callables.
+`FunctionBatch` is the function kind's batch form, storing its elements exactly as `OpaqueBatch` does (III.2); an element is a `Function` whatever callable the slot holds, and `raw()` is an object array of the stored callables.
+
+**Capabilities.** As a distribution declares the operations it supports (III.8), a `Function` may claim capabilities beyond evaluation. A `Function` claims `SupportsInverse` by providing the inverse map, its own `apply` serving as the forward. In addition, `SupportsLogDetJacobian` provides the log-determinant of the Jacobian, which exists only for a differentiable map. Both are typed over the `Numeric` interface (II.3).
+
+```python
+@runtime_checkable
+class SupportsInverse(Protocol):            # an invertible map; the forward is the claiming Function's apply
+    def _inverse(self, y: Numeric) -> Numeric: ...
+
+@runtime_checkable
+class SupportsLogDetJacobian(Protocol):     # a map with a tractable Jacobian determinant
+    def _log_det_jacobian(self, x: Numeric) -> Array: ...
+
+def is_invertible(f: Any) -> bool: ...      # the claim together with its instance guard
+```
 
 ### Rationale
 
-Defining the base in the value layer keeps the layering strict: the representation is fixed here, the call engine arrives by upward registration (`D2 – Generality first`), and `LinOp` and the specs reference `Function` downward — the split the package structure realizes as `values/_function_base.py` and `functions/`.
+Defining the base in the value layer keeps the layering strict: the representation is fixed here, the call engine arrives by upward registration (`D2 – Generality first`), and `LinOp` and the specs reference `Function` downward — the split the package structure realizes as `values/_function_base.py` and `functions/`. Invertibility as a capability is `D3 – Capability-based operations`: an invertible map is an ordinary `Function` that additionally claims `SupportsInverse`, so it evaluates, composes, and pushes forward like any other, with *bijector* reserved for the mathematical statement. The Jacobian determinant is a separate claim for the same reason, since a map can be invertible without a tractable determinant, and change of variables asks for exactly the pair.
 
 ## III.4 — `LinOp`
 
@@ -156,6 +170,8 @@ class LinOp(Function, ABC):        # the linear subtype of the III.3 base
     def flags(self) -> frozenset[str]: ...      # structure metadata, e.g. "symmetric", "positive_definite"
     def with_flag(self, flag: str) -> Self: ... # functional; construction otherwise fixes the flags
 ```
+
+A `LinOp` claims `SupportsInverse` and `SupportsLogDetJacobian` (III.3) only when they apply: the claim is guarded per instance by squareness, its inverse comes from the operator algebra, and its `logdet` is the log-Jacobian. Singularity, which no construction-time check decides, is raised at call time as `LinAlgError`, as for `solve`.
 
 **The operator algebra.** `A @ B`, `A + B`, `c * A`, and `A.T` return lazy composite operators that defer to their parts: `ProductLinOp`, `SumLinOp`, `ScaledLinOp`, and a transpose view. The algebra checks and propagates the schemas: `A @ B` requires `B`'s output schema to equal `A`'s input schema and declares `B`'s input schema and `A`'s output schema as its own sides, `A + B` requires both pairs to match, and `A.T` exchanges the term specs of the two sides: its one input slot accepts the original output's packaging, and its output is the original input, offered whole under that slot's name. The component mappings themselves are not swapped, since an `InputSpec` and an `OutputSpec` are different contracts (II.2). Composite operators are tracked terms like any other, with names derived from their operands.
 
@@ -373,6 +389,7 @@ class Distribution[T](TrackedTerm):
     # and the law is unchanged
     def with_dims(self, **sizes: int) -> Self: ...
     # bind named symbolic dimensions (II.1); a conflict with an existing binding raises
+    def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions before composing (IV.2)
     def __getitem__(self, key: str | tuple[str, ...]) -> Distribution: ...
     # the field view at a leaf or group path; raises on a term-drawing law, which has no fields
 
@@ -381,7 +398,7 @@ class NumericDistribution(Distribution): ...   # marker: the event spec is a Num
 
 **Field views.** `d[path]` returns a `FieldView`: a `Distribution` over the field or field group at `path`, holding a reference to its parent rather than a detached law. Sibling views co-sample from one parent draw, so correlation between them is preserved. The capabilities a view offers are derived from its parent's, one by one (III.8).
 
-**The flat view.** A numeric law's law over its coordinates is `evaluate(to_vector, d)`, with the map specialized to `d.event_spec.spec` and carrying an explicitly named array output declaration. Its inverse reconstructs that original event, including singleton and nested record packaging. The map claims the inverse and unit-Jacobian capabilities, so the change-of-variables rule preserves an available density (V.7). This changes the event space by a declared isomorphism; an ordinary representation conversion preserves the event declaration (IV.4). An inference method that works on ℝᵈ also applies the reparameterization of IV.5.
+**The flat view.** A numeric law's law over its coordinates is `evaluate(to_vector, d)`, with the map specialized to `d.event_spec.spec` and carrying an explicitly named array output declaration. Its inverse reconstructs that original event, including singleton and nested record packaging. The map claims the inverse and unit-Jacobian capabilities, so the change-of-variables rule preserves an available density (V.7). This changes the event space by a declared isomorphism; an ordinary representation conversion preserves the event declaration (IV.3). An inference method that works on ℝᵈ also applies the reparameterization of V.12.
 
 ```python
 class FieldView(Distribution):
@@ -412,7 +429,7 @@ Including a `Distribution` class is necessary to satisfy `C1 – Uniform interfa
 
 ### Contract
 
-For each operation it supports, a distribution supplies a **capability**: an underscore implementation such as `_sample` or `_mean` over `T` (III.7). Where support is partial the capability carries a **guard**, the per-instance predicate that narrows the claim, as squareness narrows a `LinOp`'s invertibility (IV.5). The matching operation calls the capability through its route (VI.0): protocol membership establishes that the implementation exists, and the guard establishes support for the requested call.
+For each operation it supports, a distribution supplies a **capability**: an underscore implementation such as `_sample` or `_mean` over `T` (III.7). Where support is partial the capability carries a **guard**, the per-instance predicate that narrows the claim, as squareness narrows a `LinOp`'s invertibility (V.12). The matching operation calls the capability through its route (VI.0): protocol membership establishes that the implementation exists, and the guard establishes support for the requested call.
 
 ```python
 @runtime_checkable
@@ -508,6 +525,7 @@ class ConditionalDistribution[S, T](TrackedTerm):
     def given_spec(self) -> InputSpec: ...               # view on spec
     @property
     def event_spec(self) -> OutputSpec: ...              # view on spec: the event declaration
+    def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions on both sides (II.1)
     def _condition_on(self, given: S, /, **kwargs) -> Distribution[T] | ConditionalDistribution: ...
     # the required primitive: the law K(given, ·), or a curried kernel for a partial given
 

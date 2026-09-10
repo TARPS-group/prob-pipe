@@ -17,6 +17,7 @@ Wrapping a callable `f` as a `Function` runs one **stack** of steps on every cal
 | V.9  | execution         | applying the function under a dispatch mode, optionally traced (step 7)                                             |
 | V.10 | return            | assembling, validating, wrapping, and identifying the result, or detaching it under `raw=True` (step 8)          |
 | V.11 | differentiability | the construction-time claim of which inputs gradients propagate through                                          |
+| V.12 | reparameterization | the constraint-to-bijector factory                                                                            |
 
 ## V.1 — The `Function` and its engine
 
@@ -88,11 +89,11 @@ Binding by the ordinary signature is what lets the wrapped function stay ordinar
 
 ### Contract
 
-Normalization wraps each bound argument and plans any required conversion, then admits the resulting kind. A planned conversion stands for its declared target until execution (IV.4). The three sub-steps run in order for every argument.
+Normalization wraps each bound argument and plans any required conversion, then admits the resulting kind. A planned conversion stands for its declared target until execution (IV.3). The three sub-steps run in order for every argument.
 
 **3a. Wrap.** A raw argument is wrapped into the kind it is by the **kind-directed** table, the same table that wraps a return (V.10): a tracked term is kept as it is; a raw callable becomes a `Function`; a raw mapping becomes a `Record` (III.5); a raw array becomes a `NumericArray`; a backend distribution passes to 3b; and a value no other kind admits becomes an `Opaque` (III.2), as a list, a tuple, or a set does. A numeric host is recognized through the array-backend registry (II.3), registry first and duck typing second: a registered container supplies its event shape and dtype without being converted, its named dimensions bind the spec's symbolic dimensions (II.1), and its remaining metadata, such as coordinates and attributes, is carried as annotations (II.4). *Requires:* the host constructs as its kind. *On failure:* that kind's construction error, for example a mapping keyed by a name that is no identifier.
 
-**3b. Plan conversion.** A distribution-shaped argument whose class differs from the one its parameter names uses the converter registry's non-executing plan (IV.4). This covers backend distributions entering ProbPipe and conversions between ProbPipe representations. The parameter's `conversions` control selects the converter, fidelity floor, and converter-specific options. Admission and planning read the target spec and promised capabilities without constructing the converted law. Conversion executes in step 7 and records its source and local fidelity. *Requires:* a converter satisfying the requested constraints. *On failure:* `ResolutionError`; a probe with insufficient target information reports unresolved requirements (V.1).
+**3b. Plan conversion.** A distribution-shaped argument whose class differs from the one its parameter names uses the converter registry's non-executing plan (IV.3). This covers backend distributions entering ProbPipe and conversions between ProbPipe representations. A backend object carries no event declaration: the parameter's declared spec supplies it, and at an unannotated parameter the adapter derives the event type from the object and the component defaults as III.7 states. The parameter's `conversions` control selects the converter, fidelity floor, and converter-specific options. Admission and planning read the target spec and promised capabilities without constructing the converted law. Conversion executes in step 7 and records its source and local fidelity. *Requires:* a converter satisfying the requested constraints. *On failure:* `ResolutionError`; a probe with insufficient target information reports unresolved requirements (V.1).
 
 **3c. Admit.** The wrapped argument's kind, or the planned conversion's target kind, is checked against what the parameter accepts, which is the kind of its declared spec for a `@function`, any kind where the parameter is unannotated, and the kinds its role names for an operation (VI.0). A `Distribution` or a `Batch` over an accepted kind is admitted for lifting (V.5), whereas a `ConditionalDistribution` at a value parameter is refused, since a kernel has no marginal law to lift over. Every kind's term is a `TrackedTerm`, so a bare object, which 3a wrapped as an `Opaque`, passes only a parameter that accepts `Opaque`, whatever methods it carries. *Requires:* the kind is accepted, directly or as the element kind of a lifted argument. *On failure:* `ApplicabilityError`, naming the parameter, what it accepts, and what arrived.
 
@@ -110,7 +111,7 @@ Normalization is `B1 – Either presentation in` made mechanical, in the order t
 
 A `Function` compares each admitted argument against the kind its parameter expects and lifts where they differ. A `Distribution` where a value is expected induces a **broadcast**, whose result is the pushforward through `f`. Its generic route samples `n` draws and applies the function to each; exact routes may realize the law directly (V.7). A `Batch` where one element is expected is **swept**: the function is mapped over its elements. Both at once give a **nested** sweep of broadcasts, one broadcast within each element, and neither gives a plain call.
 
-**The trigger.** A parameter that is unannotated, or annotated with a value type, expects a value, so a distribution passed in that position is lifted. A parameter annotated `Distribution`, `Distribution[...]`, or a distribution capability protocol of III.8 declares that the function consumes the distribution itself, which then passes through unlifted. The function capabilities of III.3 and IV.5 annotate `Function`-valued parameters, which are values, so the value rule above governs them. Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names.
+**The trigger.** A parameter that is unannotated, or annotated with a value type, expects a value, so a distribution passed in that position is lifted. A parameter annotated `Distribution`, `Distribution[...]`, or a distribution capability protocol of III.8 declares that the function consumes the distribution itself, which then passes through unlifted. A parameter annotated `Function` (III.3) or with a function capability expects a value, so the value rule above governs it. Per draw, the function receives the draw as `sample` returns it (VI.3), at the kind the law's event declaration names.
 
 Explicit argument binding uses the draw's term spec, not the names in its output interface. In `predict(theta=prior)`, `theta` names the receiving parameter even when the prior's output component is `beta`. Name-based connection is composition's contract (IV.2).
 
@@ -174,7 +175,7 @@ Carrying known structure forward and validating deferred output information at i
 
 Resolution selects the route that realizes the call. Candidates are checked on the static information admitted by V.6, including capability guards. Selection follows II.7, including registry priority; operation routes use the convention in VI.0. The controls `method` and `min_fidelity` select or floor the route (V.2). A plain call of a plain function has its body as its one candidate, and an operation resolves among its routes (VI.0). A lifted application, which is the direct call `f(d)` or `f(batch)`, resolves through the **evaluation-rule registry**: a `BinaryDispatchRegistry` keyed on the map's and the operand's types whose methods are **evaluation rules**, each a route of the lifted application. `evaluate` (VI.1) exposes the same registry as an operation, so the direct call and `evaluate` take the same route. The built-in rule families are:
 - **Closed-form rules** return an exact parametric result. For example, `A @ d` for a Gaussian `d` is again Gaussian, with mean `A @ mean(d)` and covariance `A Σ Aᵀ` built lazily through the operator algebra.
-- **Change of variables** applies when the map is invertible and carries the Jacobian claim (`is_invertible` and `SupportsLogDetJacobian`), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
+- **Change of variables** applies when the map is invertible and carries the Jacobian claim (`is_invertible` and `SupportsLogDetJacobian`, III.3), returning a transformed distribution whose `log_prob` is exact via the log-determinant of the Jacobian.
 - **The sampling lift** is the generic rule for an operand that samples, subject to the call's controls and deferred checks: draws from `d` are pushed through the map, returning an empirical distribution over the outputs, with the sample count as a control. It is the route every plain callable takes, and grouped, multi-distribution lifts always take it, which is what co-sampling requires (V.5).
 - **The elementwise sweep** is the batch counterpart: the rule at the generic pair for a batch operand. A fused batched implementation, such as an operator's matrix–matrix routine or a single vectorized call over array-backed elements, registers above it.
 
@@ -286,3 +287,27 @@ Differentiability as a declared claim is `D3 – Capability-based operations` ap
 ### Open points
 
 - *Differentiability of sampling-based routes.* Whether a Monte Carlo fallback differentiates through its sampler's reparameterization is unsettled. So is the eventual `grad` operation the claims feed, with registered routes: a custom gradient method where an object supplies one, the automatic-differentiation route gated by the declared template, and finite differences as the fallback at approximate fidelity. Both are left to a dedicated pass.
+
+## V.12 — Constraint reparameterization
+
+### Contract
+
+Many inference algorithms, for example gradient-based optimization and Hamiltonian Monte Carlo, operate on an unconstrained space ℝᵈ, so a constrained support must be reparameterized. The **constraint-to-bijector factory** maps a `Constraint`, which is the support a `NumericArraySpec` carries, to a *bijector*: a `Function` that takes `ℝⁿ` onto that support and claims the inverse and Jacobian capabilities of III.3. `bijector_for(constraint)` returns the canonical one, and `register_bijector` plugs in a factory for a constraint type or a specific instance, instance registrations taking precedence.
+
+A slot checks the claims it needs at construction and raises `ResolutionError` when unavailable (II.7): the bijector of a transformed distribution requires both `SupportsInverse` and `SupportsLogDetJacobian` (III.3), the link of a GLM likelihood `is_invertible` alone.
+
+```python
+def bijector_for(constraint: Constraint) -> Function: ...   # the canonical map ℝⁿ → support(constraint)
+def register_bijector(key: type[Constraint] | Constraint,
+                      factory: Callable[[Constraint], Function]) -> None: ...
+```
+
+The factory keys on constraint instances and types rather than dispatching on argument types alone, so it is not a dispatch registry; it still satisfies `SupportsRegistryCataloging` and appears in the registry catalog alongside the dispatch registries.
+
+### Rationale
+
+A bijector for every constraint lets inference run in an unconstrained space while a model stays stated in its natural, constrained one, which is `C3 – Computational detail hidden by default, available on demand`: the reparameterization an algorithm needs is supplied for it rather than written into the model. Keeping the factory open through `register_bijector` is `D2 – Generality first`: a new constrained support becomes inference-ready by registering its reparameterization, without changing the distributions that use it.
+
+### Open points
+
+- *Round-trip fidelity.* The forward map (bijector to support) and this inverse map (support to bijector) are not strict inverses for every constraint, so a reparameterized support can drift to a coarser one. Whether to unify the two is unsettled.

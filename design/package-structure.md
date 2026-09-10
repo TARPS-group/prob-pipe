@@ -53,7 +53,7 @@ probpipe/
 │   ├── _structured.py         #   Dense / Diagonal / Triangular / Cholesky / Root …
 │   ├── _composites.py         #   Product / Sum / Scaled / Transpose — the operator algebra
 │   └── _batch.py              #   LinOpBatch
-├── distributions/             # the distribution layer (III.7–IV.5)
+├── distributions/             # the distribution layer (III.7–IV.3)
 │   ├── _distribution.py       #   Distribution, NumericDistribution, DistributionSpec (III.7)
 │   ├── _views.py              #   FieldView (III.7–III.8)
 │   ├── _capabilities.py       #   the Supports* protocols (III.8)
@@ -63,8 +63,7 @@ probpipe/
 │   ├── _composition.py        #   the * engine behind __mul__ (IV.2)
 │   ├── _empirical.py          #   EmpiricalDistribution (VII.2) — the closure family the
 │   │                          #     lift and the Monte Carlo fallbacks construct
-│   ├── _conversion.py         #   Converter, ConverterRegistry (IV.4)
-│   └── _reparameterization.py #   bijector_for, register_bijector, is_invertible (IV.5)
+│   └── _conversion.py         #   Converter, ConverterRegistry (IV.3)
 ├── functions/                 # Part V — Function and its engine
 │   ├── _function.py           #   the engine installed on Function at import; the decorator; with_options (V.1, V.2)
 │   ├── _call.py               #   binding, wrap, conversion planning, admission; ApplicabilityError (V.3, V.4)
@@ -79,7 +78,8 @@ probpipe/
 │   ├── _broker.py             #   managed work items: keys across threads, tasks, and flows (V.8, V.9)
 │   ├── _execution.py          #   the jax / sequential / thread dispatch modes, the execution contract (V.9)
 │   ├── _orchestration.py      #   optional tracing (V.9)
-│   └── _result.py             #   assembly, output inference, declaration enforcement and errors, kind-directed wrap, identity (V.10)
+│   ├── _result.py             #   assembly, output inference, declaration enforcement and errors, kind-directed wrap, identity (V.10)
+│   └── _reparameterization.py #   bijector_for, register_bijector (V.12)
 ├── operations/                # Part VI — the operations
 │   ├── _operation.py          #   the @operation decorator: roles, conditions, and result rule;
 │   │                          #     OperationRoute and its four helpers, route resolution, and the
@@ -106,7 +106,7 @@ probpipe/
 │   ├── _gaussian.py           #   the Gaussian algebra (VII.6)
 │   ├── _conditional.py        #   LinearGaussianConditional, the GLM assembly (VII.8)
 │   ├── _programs.py           #   StanModel, PyMCModel: backend models with explicit given/event contracts (VII.9)
-│   └── _converters.py         #   the shipped converters (IV.4)
+│   └── _converters.py         #   the shipped converters (IV.3)
 ├── designs/                   # designs: batches materialized from per-field candidate sets, over any element spec
 ├── inference/                 # the registered inference methods (VI.6)
 ├── diagnostics/               # diagnostics over inference results
@@ -118,8 +118,8 @@ probpipe/
 - **`core/`** is Part II plus `RecordSpec` (III.5), which the shared layer needs: generic, type-agnostic, and importable by everything.
 - **`values/`** is the value layer of Part III, covering every leaf kind, `Function`'s base included (III.3); `LinOp` subclasses it and the spec references it, both below the distribution layer.
 - **`linalg/`** is the linear subtype and its operator algebra, kept as its own package because the structured subclasses and composites are a coherent domain of their own.
-- **`distributions/`** is the distribution layer of Parts III and IV, through composition, conversion, and reparameterization. `EmpiricalDistribution` is here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must be below the code that uses it. Its Part VII entry is unchanged, and the placement is the single exception to part-per-package.
-- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Controls, binding, normalization, lift classification, planning, route resolution, the workflow scopes and structural keys, replay and caching, execution under a dispatch mode, orchestration, and return are the steps of one stack (V.1), and they change together. It is above `distributions/` because lifting samples distributions and materializes empirical results.
+- **`distributions/`** is the distribution layer of Parts III and IV, through composition and conversion. `EmpiricalDistribution` is here rather than with the other families: it is the closure family that the lift and every Monte Carlo fallback construct, so it must be below the code that uses it. Its Part VII entry is unchanged, and the placement is the single exception to part-per-package.
+- **`functions/`** is the `Function` engine, installed on the III.3 base at import, one package because it is one machine. Controls, binding, normalization, lift classification, planning, route resolution, the workflow scopes and structural keys, replay and caching, execution under a dispatch mode, orchestration, and return are the steps of one stack (V.1), and they change together. The constraint-to-bijector factory is here too, since a bijector is a `Function` (V.12). It is above `distributions/` because lifting samples distributions and materializes empirical results.
 - **`operations/`** is thin by design, matching what the operations are: a declaration wrapped by the decorator with its routes registered beside it, one module per operation section (VI.1–VI.10) above `_operation.py`, which holds VI.0's decorator, route protocol, resolution, and registry. VI.11's batching is the engine's sweep, so it is no module here. The inference-method registry is defined here with `condition_on` and populated from above; the evaluation-rule registry is defined with the engine (`functions/_rules.py`), which consults it, with `evaluate` as its operation form.
 - **`families/`** implements the catalog: constructors and capability implementations, registering its evaluation rules and converters upward at import.
 - **`inference/`**, **`diagnostics/`**, and **`validation/`** are outside the reference's parts: inference methods register into the VI.6 registry, and diagnostics and validation are application layers over the public operations.
@@ -136,7 +136,7 @@ Every module with a design contract, with where it goes; the target contracts ab
 |---|---|
 | `core/node.py` (`Function`, the decorator, `with_options`) | `functions/_function.py` |
 | `core/node.py` (`Module`, `AbstractModule`, `workflow_method`, `abstract_workflow_method`, `Module.dag()`) | experimental; placement to be decided |
-| `core/_workflow_call.py`, `core/_workflow_distribution_normalization.py` | `functions/_call.py`; conversion executes later under the IV.4 plan |
+| `core/_workflow_call.py`, `core/_workflow_distribution_normalization.py` | `functions/_call.py`; conversion executes later under the IV.3 plan |
 | `core/_workflow_plan.py` | `functions/_plan.py` |
 | `core/_function_contract.py` | split: construction-time validation of the declared sides to `values/_function_base.py`; per-call binding and the result declaration to `functions/_plan.py`; output validation and declared wrapping to `functions/_result.py` |
 | `core/_workflow_distribution_broadcast.py` | `functions/_broadcast.py` |
@@ -158,14 +158,14 @@ Every module with a design contract, with where it goes; the target contracts ab
 | `core/_numeric_array.py`, `core/_opaque.py`, `core/record.py`, and their batch modules | `values/`, one module per III section |
 | `core/event_template.py`, `core/constraints.py` | split in place: `core/_specs.py`, `core/_record_spec.py`, `core/_numeric.py`, `core/_constraints.py` (II.1–II.3, III.5) |
 | `record/design.py` | `designs/`, generalized from `RecordBatch` to any element spec |
-| `core/_record_distribution.py` | `distributions/_views.py` (`FieldView`, III.7); `RecordDistribution` is retired (IV.3) |
+| `core/_record_distribution.py` | `distributions/_views.py` (`FieldView`, III.7); `RecordDistribution` is retired, since draw structure is declared in `event_spec` (III.7) |
 | `core/_numeric_record_distribution.py` | the numeric marker to `distributions/_distribution.py` (III.7) and `BootstrapDistribution` to `families/_resampling.py` (VII.2); `FlatNumericRecordDistribution`, `FlattenedDistributionView`, and `NumericRecordDistributionView` are retired, the flat view being `evaluate(to_vector, d)` (III.7) |
 | `modeling/_stan.py`, `modeling/_pymc.py` | `families/_programs.py` (VII.9), retaining separate data inputs and declared event variables |
 | `modeling/_glm.py` | `families/_conditional.py` (VII.8) |
 | `modeling/_base.py`, `modeling/_simple.py`, `modeling/_simple_generative.py`, and `Likelihood`, `ConditionallyIndependentLikelihood`, `GenerativeLikelihood` in `core/protocols.py` | retired: a model is a program-defined family (VII.9) or a factored joint (IV.1), and a learned likelihood is a `ConditionalDistribution` (III.9) |
 | `modeling/_likelihood.py` (`IncrementalConditioner`) | retired as a class; a fold of `condition_on` over data batches, settled with `iterate` |
-| `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (IV.4): `ConversionMethod` becomes `Fidelity`, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
-| `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (IV.4) |
+| `converters/_registry.py`, `converters/_protocol.py` | `distributions/_conversion.py` (IV.3): `ConversionMethod` becomes `Fidelity`, `Converter.convert` becomes `execute`, and the protocol resolver becomes protocol targets |
+| `converters/_probpipe.py`, `converters/_scipy.py`, `converters/_tfp.py` | `families/_converters.py` (IV.3) |
 | `expectation`'s `return_dist` and `set_return_approx_dist` (`core/ops.py`, `core/_distribution_base.py`) | retired: the error of a Monte Carlo estimate is taken explicitly through the bootstrap (VII.2); `set_default_num_evaluations` becomes the sample-count default in `core/_config.py` (V.2) |
 | `core/_kinds.py`, `core/_array_backend.py` | `core/`, in place: the kind table (II.1) and the array-backend registry (II.3) |
 | `core/_immutable.py`, `core/_fingerprint.py` | `core/_identity.py` (II.4) |
@@ -180,7 +180,7 @@ Every module with a design contract, with where it goes; the target contracts ab
 | `distributions/continuous.py`, `distributions/discrete.py`, `distributions/multivariate.py` | `families/_continuous.py`, `families/_discrete.py`, `families/_multivariate.py` (VII.1) |
 | `distributions/kde.py` | `families/_resampling.py` (VII.2) |
 | `distributions/transformed.py` | `families/_transformed.py` (VII.4) |
-| `distributions/_bijector_dispatch.py` | `distributions/_reparameterization.py` (IV.5) |
+| `distributions/_bijector_dispatch.py` | `functions/_reparameterization.py` (V.12) |
 | `linalg/linear_operator.py`, `linalg/operations.py`, `linalg/utils.py` | `linalg/_linop.py`, `linalg/_structured.py`, `linalg/_composites.py`; the free-function queries become `LinOp` methods (III.4) |
 | `inference/_approximate_distribution.py`, `inference/_minibatch.py` | `inference/`, in place: `ApproximateDistribution` becomes an `EmpiricalDistribution` carrying provenance and annotations (VII.7), and `MinibatchedDistribution` is a `RandomMeasure` member (VII.5) |
 | `core/transition.py` (`iterate`, `with_conversion`, `with_resampling`) | open, with the incremental-conditioning point below |

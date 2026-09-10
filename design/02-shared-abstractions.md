@@ -20,7 +20,7 @@ A **term specification** ("term spec") describes the typing information availabl
 
 **Base and batch kinds.** The specs partition into the **base kinds** and the **batch kinds**. Every base kind has exactly one term spec, one **base form**, and one **batch form**. Since a batch of batches is a batch, the base form and batch form of a batch are identical. The correspondence is recorded in the **kind table**: `register_kind` records the tracked class and the batch form of a spec class, and `term_class_for_spec` and `batch_class_for_spec` look them up through the spec's class and its bases, so a spec subclass inherits its base's kind unless it registers its own. A second registration that disagrees raises.
 
-**Symbolic dimensions.** A dimension size for a numeric value spec may be an integer or a **named symbolic dimension**. A spec with any symbolic dimensions is **polymorphic**; one with none is **concrete**. A spec can *report* the names still unbound, *substitute* explicit sizes for names, and *bind* names by unification against a value, reading the sizes off that value's spec, or against another spec. In binding, a name takes its size from its first occurrence, and a later occurrence that disagrees raises.
+**Symbolic dimensions.** A dimension size for a numeric value spec may be an integer or a **named symbolic dimension**. A spec with any symbolic dimensions is **polymorphic**; one with none is **concrete**. A spec can *report* the names still unbound, *substitute* explicit sizes for names, *rename* a dimension, and *bind* names by unification against a value, reading the sizes off that value's spec, or against another spec. In binding, a name takes its size from its first occurrence, and a later occurrence that disagrees raises. Names form one scope wherever specs meet: within a schema (III.5), between a batch and its element (II.5), across the slots of one map (V.6), and across the operands of a composition (IV.2). Two dimensions that are different quantities are renamed apart before they meet.
 
 The base API is validation plus the dimension protocol:
 
@@ -29,12 +29,13 @@ class TermSpec(ABC):
     @abstractmethod
     def is_valid(self, value: Any) -> bool: ...      # structural validity such as kind, rank, dtype
 
-    # the symbolic-dimension protocol: report, substitute, bind
+    # the symbolic-dimension protocol: report, substitute, rename, bind
     @property
     def free_dims(self) -> frozenset[str]: ...       # report: the unbound symbolic dimensions
     @property
     def is_concrete(self) -> bool: ...               # True when free_dims is empty
     def with_dims(self, **sizes: int) -> Self: ...   # substitute explicit sizes
+    def with_dim_names(self, **names: str) -> Self: ...   # rename symbolic dimensions, old=new
     def bind_dims_from_value(self, value: Any) -> Self: ...   # bind by unification against a value
     def bind_dims_from_spec(self, other: TermSpec) -> Self: ...   # bind by unification against another spec
 
