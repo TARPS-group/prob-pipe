@@ -35,7 +35,7 @@ Some important mathematical operations supported by ProbPipe include the followi
 
 ### Contents
 
-The document has six parts, a package-structure companion, and one more part planned:
+The document has seven parts, a package-structure companion, and one more part planned:
 
 - **[Part I — Design Principles](01-design-principles.md)** — the high-level commitments that drive every downstream design decision. They are stated without reference to any specific class, type, or API.
 - **[Part II — Shared Abstractions](02-shared-abstractions.md)** — the generic, type-agnostic abstractions the rest of the library is built on: the term-specification layer with named input/output component declarations and the `Numeric` interface, identity, provenance, and metadata, batching, the named-tree abstraction, and the dispatch registries.
