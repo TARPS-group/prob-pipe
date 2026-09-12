@@ -302,6 +302,23 @@ class TestJaxBoundary:
         assert type(out) is NumericRecord
         np.testing.assert_allclose(out["temps"], [2.0, 4.0, 6.0])
 
+    @pytest.mark.parametrize("nested", [False, True], ids=["flat", "nested"])
+    def test_first_conversion_inside_jit_can_be_reused(self, da, nested):
+        native = pd.Series([4.0, 5.0])
+        fields = {"values": {"x": da}} if nested else {"x": da}
+        fields["y"] = native
+        nr = NumericRecord("native", fields)
+
+        np.testing.assert_array_equal(
+            jax.jit(lambda: nr.to_vector() * 2)(), [2.0, 4.0, 6.0, 8.0, 10.0]
+        )
+        assert nr["values/x" if nested else "x"] is da
+        assert nr["y"] is native
+        np.testing.assert_array_equal(nr.to_vector(), [1.0, 2.0, 3.0, 4.0, 5.0])
+        np.testing.assert_array_equal(
+            jax.jit(lambda: nr.to_vector() + 1)(), [2.0, 3.0, 4.0, 5.0, 6.0]
+        )
+
 
 # ---------------------------------------------------------------------------
 # Lazy conversion: no materialisation at construction; set-once cache

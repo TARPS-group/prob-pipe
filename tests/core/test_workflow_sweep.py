@@ -583,14 +583,52 @@ class TestNumericArraySweep:
                 dispatch="sequential",
             )(source)
 
-    def test_a_raw_numeric_row_does_not_erase_a_tracked_rows_declaration(self):
-        declared = NumericArraySpec((), dtype=np.float64, support=positive)
-        value = NumericArray("held", jnp.asarray(2.0), spec=declared)
+    @pytest.mark.parametrize("raw_value", [-1.0, 1.0], ids=["negative", "positive"])
+    @pytest.mark.parametrize("tracked_first", [False, True], ids=["raw-first", "tracked-first"])
+    @pytest.mark.parametrize("event_shape", [(), (2,)], ids=["scalar", "vector"])
+    def test_mixed_numeric_rows_infer_the_aggregate_spec(
+        self, raw_value, tracked_first, event_shape
+    ):
+        declared = NumericArraySpec(event_shape, dtype=np.float64, support=positive)
+        value = NumericArray("held", jnp.full(event_shape, 2.0), spec=declared)
+        raw = jnp.full(event_shape, raw_value) if event_shape else raw_value
+        source = _numeric_record_batch("x", range(2))
         result = Function(
-            func=lambda row: 1.0 if float(row["x"]) == 0 else value,
+            func=lambda row: value if (float(row["x"]) == 0) == tracked_first else raw,
             name="mixed",
             dispatch="sequential",
-        )(_numeric_record_batch("x", range(2)))
+        )(source)
 
-        assert result.element_spec == declared
-        np.testing.assert_array_equal(np.asarray(result), [1.0, 2.0])
+        expected = np.stack([np.full(event_shape, raw_value), np.full(event_shape, 2.0)])
+        if tracked_first:
+            expected = expected[::-1]
+        assert result.element_spec == NumericArraySpec(event_shape, dtype=result.values.dtype)
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        np.testing.assert_array_equal(np.asarray(result), expected)
+
+    @pytest.mark.parametrize("raw_position", [0, 1, 2], ids=["raw-first", "raw-middle", "raw-last"])
+    def test_mixed_numeric_rows_do_not_adopt_conflicting_partial_declarations(self, raw_position):
+        outputs = [
+            NumericArray(
+                "positive",
+                jnp.asarray(2.0),
+                spec=NumericArraySpec((), dtype=np.float64, support=positive),
+            ),
+            NumericArray("unconstrained", jnp.asarray(3.0), spec=NumericArraySpec(())),
+        ]
+        outputs.insert(raw_position, -1.0)
+        source = _numeric_record_batch("x", range(3))
+
+        result = Function(
+            func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+        )(source)
+
+        expected = [2.0, 3.0]
+        expected.insert(raw_position, -1.0)
+        assert result.element_spec == NumericArraySpec((), dtype=result.values.dtype)
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        np.testing.assert_array_equal(np.asarray(result), expected)

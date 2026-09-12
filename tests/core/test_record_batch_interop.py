@@ -1137,6 +1137,25 @@ class TestBatchValuedRowAggregation:
         assert (out.batch_shape, out.level_names) == ((3, 2), ("sweep", "inner"))
         np.testing.assert_allclose(np.asarray(out.values)[2], [3.0, 6.0])
 
+    def test_native_batch_rows_remain_usable_after_a_sweep_inside_jit(self):
+        pd = pytest.importorskip("pandas")
+        native = pd.Series([1.0, 2.0])
+        inner = NumericArrayBatch(
+            "held", native, "inner", element_spec=NumericArraySpec((), dtype=np.float64)
+        )
+        source = self._rows()
+        collect = Function(func=lambda row: inner, name="collect", dispatch="sequential")
+        expected = np.tile([1.0, 2.0], (3, 1))
+
+        np.testing.assert_array_equal(jax.jit(lambda: collect(source).as_jax())(), expected)
+        assert inner.values is native
+        np.testing.assert_array_equal(inner.as_jax(), [1.0, 2.0])
+        result = collect(source)
+        assert result.level_names == ("row", "inner")
+        assert result.axis_groups == ((3,), (2,))
+        assert result.element_spec == inner.element_spec
+        np.testing.assert_array_equal(np.asarray(result), expected)
+
     def test_array_batch_rows_disagreeing_on_their_multiplicity_are_refused(self):
         def body(x):
             return self._inner_array(2) if float(x["x"]) < 0.5 else self._inner_array(3)

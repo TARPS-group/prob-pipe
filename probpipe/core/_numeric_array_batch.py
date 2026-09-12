@@ -206,15 +206,16 @@ class NumericArrayBatch(Batch[NumericArray]):
         """The store as a ``jax.Array`` — the single conversion point.
 
         A store already held as one passes through, tracers included; a native
-        container converts through its registered backend once and is memoised
-        for this instance, as a :class:`NumericArray`'s value is.
+        container converts through its registered backend. Concrete conversions
+        are memoised; traced conversions stay within their transform.
         """
         if isinstance(self._values, jax.Array):
             return self._values
         cached = getattr(self, "_jax_cache", None)
         if cached is None:
             cached = _to_jax_array(self._values)
-            object.__setattr__(self, "_jax_cache", cached)
+            if not isinstance(cached, jax.core.Tracer):
+                object.__setattr__(self, "_jax_cache", cached)
         return cached
 
     def __jax_array__(self) -> Any:

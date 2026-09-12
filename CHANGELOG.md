@@ -296,10 +296,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sample`, and missing naming flags default to automatic (#446).
 
 - Sweeps returning `NumericArray`, including nested numeric operations such as
-  `log_prob`, now aggregate under `auto` and `jax` dispatch. Numeric row
-  declarations and named batch levels survive aggregation across dispatch modes;
-  conflicting numeric row declarations raise an actionable error. Native-backed
-  numeric arrays no longer cache temporary traced conversions (#446).
+  `log_prob`, now aggregate under `auto` and `jax` dispatch with named batch levels
+  preserved. When every numeric row is tracked, shared declarations survive
+  aggregation and conflicting declarations raise an actionable error. Mixed raw
+  and tracked numeric rows infer the aggregate's shape and dtype without adopting
+  a partial support declaration. Native-backed `NumericArray`, `NumericArrayBatch`, and
+  `NumericRecord` cache only concrete conversions, so values first converted
+  inside a JAX transform remain usable afterward (#446).
 
 - **The kind table is the single answer to which batch form a field has (#398).**
   `RecordBatch` construction listed the admissible field kinds inline while the

@@ -917,8 +917,8 @@ def _make_stack(
             if isinstance(first, NumericArrayBatch):
                 # One store rather than columns, so the rows stack directly. Each
                 # row converts through ``as_jax``, not through the backend on its
-                # raw store: the conversion is the batch's own and is cached
-                # set-once there, so a row aggregated again is not converted again.
+                # raw store: the batch reuses concrete conversions and keeps
+                # traced conversions within their transform.
                 store = jnp.stack([o.as_jax() for o in outs], axis=0)
                 return NumericArrayBatch(
                     name or field_name,
@@ -1033,27 +1033,21 @@ def _make_stack(
 
         if stacked is not None:
             event_shape = tuple(stacked.shape[1:])
-            element_spec = None
-            for output in outs:
-                if not isinstance(output, NumericArray):
-                    continue
-                if element_spec is None:
-                    element_spec = output.spec
-                elif output.spec != element_spec:
-                    raise ValueError(
-                        f"{field_name}: numeric rows returned declarations that disagree "
-                        f"({element_spec!r} and {output.spec!r}); return numeric rows with "
-                        "one shared declaration"
-                    )
+            element_spec = NumericArraySpec(event_shape, dtype=stacked.dtype)
+            if all(isinstance(output, NumericArray) for output in outs):
+                element_spec = outs[0].spec
+                for output in outs:
+                    if output.spec != element_spec:
+                        raise ValueError(
+                            f"{field_name}: numeric rows returned declarations that disagree "
+                            f"({element_spec!r} and {output.spec!r}); return numeric rows with "
+                            "one shared declaration"
+                        )
             return NumericArrayBatch(
                 name or field_name,
                 stacked.reshape(batch_shape + event_shape),
                 level_names,
-                element_spec=(
-                    element_spec
-                    if element_spec is not None
-                    else NumericArraySpec(event_shape, dtype=stacked.dtype)
-                ),
+                element_spec=element_spec,
                 axes_per_level=_ranks_of(sweep_groups),
                 name_is_auto=True,
             )

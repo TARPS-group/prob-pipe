@@ -907,6 +907,24 @@ class TestNumericArrayBatchArrayShim:
         assert _batch().dtype == jnp.float32
 
 
+class TestNativeConversionAcrossTransforms:
+    @pytest.mark.parametrize("kind", ["array", "batch"])
+    def test_first_conversion_inside_jit_can_be_reused(self, kind):
+        pd = pytest.importorskip("pandas")
+        native = pd.Series([1.0, 2.0, 3.0])
+        if kind == "array":
+            value = NumericArray("native", native)
+        else:
+            value = NumericArrayBatch("native", native, "row", element_spec=NumericArraySpec(()))
+
+        np.testing.assert_array_equal(jax.jit(lambda: value.as_jax() * 2)(), [2.0, 4.0, 6.0])
+        assert (value.value if kind == "array" else value.values) is native
+        converted = value.as_jax()
+        np.testing.assert_array_equal(converted, [1.0, 2.0, 3.0])
+        assert value.as_jax() is converted
+        np.testing.assert_array_equal(jax.jit(lambda: value.as_jax() + 1)(), [2.0, 3.0, 4.0])
+
+
 class TestANativeBackedBatchCrossesJax:
     """The compute boundary converts, as it does for a single value.
 
