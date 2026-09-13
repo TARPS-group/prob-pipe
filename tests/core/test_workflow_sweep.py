@@ -515,6 +515,7 @@ class TestNumericArraySweep:
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
         assert result.element_spec == expected_spec
+        assert result.values.dtype == np.float32
         assert result.name == "shift" and result.name_is_auto
         assert result.provenance is not None
         np.testing.assert_array_equal(np.asarray(result), expected)

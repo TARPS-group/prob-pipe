@@ -26,9 +26,6 @@ from math import prod
 from types import MappingProxyType
 from typing import Any
 
-import jax
-import numpy as np
-
 from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
 from .._weights import Weights

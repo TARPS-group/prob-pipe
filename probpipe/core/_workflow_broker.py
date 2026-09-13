@@ -60,12 +60,11 @@ _PROBPIPE_DISTRIBUTION_PROVIDER_ABI = "probpipe.distribution/v1"
 
 class _RandomEventPlan(Protocol):
     """Structural event fields accepted by the broker."""
+
     @property
-    def stochastic_source_id(self) -> _StructuralRngId:
-        ...
+    def stochastic_source_id(self) -> _StructuralRngId: ...
     @property
-    def logical_unit_id(self) -> _StructuralRngId:
-        ...
+    def logical_unit_id(self) -> _StructuralRngId: ...
 
 
 @dataclass(frozen=True, slots=True)

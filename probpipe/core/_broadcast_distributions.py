@@ -800,6 +800,9 @@ def _make_stack(
     TypeError
         If the inner outputs can't be coerced into any of the three
         aggregate types. The error lists the observed types.
+    ValueError
+        If rows have incompatible declarations, shapes, or batch levels, or
+        the output shape does not match the requested batch shape and grouping.
     """
     from ._distribution_array import _make_distribution_array
     from .record import Record

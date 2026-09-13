@@ -12,7 +12,6 @@ from typing import Any
 
 import jax
 import jax.numpy as jnp
-
 import numpy as np
 
 from .custom_types import Array, ArrayLike

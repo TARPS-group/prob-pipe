@@ -371,9 +371,7 @@ class _MappedBatchStore:
 
     @classmethod
     def of(cls, value: NumericArrayBatch | NumericArray) -> _MappedBatchStore:
-        """Take *batch* apart, keeping what unflattening could not have inferred.
-        Or, carry one numeric event with its declaration and no inner batch levels.
-        """
+        """Carry *value*'s array, declaration, and any batch levels."""
         if isinstance(value, NumericArrayBatch):
             return cls(
                 value._name,
