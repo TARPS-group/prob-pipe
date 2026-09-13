@@ -303,7 +303,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   without `name` or `name_is_auto` attributes. Unnamed samplers use the automatic
   name `sample`; a supplied name defaults to explicit when its naming flag is
   absent. Single and batched raw draws retain the sampler's naming metadata
-  with either explicit or automatic keys (#446).
+  with either explicit or automatic keys (#446). Raw draws receive that metadata
+  during wrapping, so the name is checked at construction and sequence levels
+  retain their operation-derived names.
 
 - Sweeps returning `NumericArray`, including nested numeric operations such as
   `log_prob`, now aggregate under `auto` and `jax` dispatch with named batch levels

@@ -40,14 +40,19 @@ def _wrap_as_term(
     value: Any,
     field_name: str,
     output_template: EventTemplate | None = None,
+    *,
+    name: str | None = None,
+    name_is_auto: bool = True,
 ) -> Any:
     """Wrap a raw return as the tracked term of its own kind.
 
     A tracked term is returned as it is, every kind alike (design V.0). A raw
-    host takes the tracked class of its own kind.
+    host takes the tracked class of its own kind. The caller can supply *name*
+    and *name_is_auto* when it owns the result's naming; defaults retain the
+    workflow-derived names. The level of a returned sequence still takes
+    *field_name*, independently of the result's name.
 
-    The kinds, most specific first, each named after the function that produced
-    it:
+    The kinds, most specific first:
 
     - ``dict`` (non-empty) → a ``Record`` keyed by the caller's keys, a nested
       ``dict`` becoming a subtree since a mapping is a tree rather than a leaf.
@@ -60,11 +65,13 @@ def _wrap_as_term(
     They are ordered rather than disjoint: a callable is also a non-mapping
     value, and ``Opaque`` is the fallback.
     """
+    result_name = field_name if name is None else name
     if output_template is not None:
         return _wrap_declared_function_output(
             value,
-            function_name=field_name,
+            function_name=result_name,
             output_template=output_template,
+            name_is_auto=name_is_auto,
         )
 
     # -- already a term ----------------------------------------------------
@@ -79,7 +86,7 @@ def _wrap_as_term(
         # tree, and an ``OrderedDict`` or a ``Mapping`` subclass is one. Falling
         # through would reach ``Opaque``, which refuses mappings, so the return
         # would raise rather than be wrapped.
-        return Record(field_name, dict(value), name_is_auto=True)
+        return Record(result_name, dict(value), name_is_auto=name_is_auto)
     if isinstance(value, (list, tuple)):
         if not value:
             # No element to read a kind off, and every element spec holds
@@ -87,28 +94,33 @@ def _wrap_as_term(
             # can. Its own kind is still a batch, which is what the host says.
             from ._opaque_batch import OpaqueBatch
 
-            return OpaqueBatch(field_name, [], field_name, name_is_auto=True)
+            return OpaqueBatch(result_name, [], field_name, name_is_auto=name_is_auto)
         # A returned sequence ranges over nothing the call named, so the level
         # takes the function's own name. Errors are not caught here: the stack
         # has a batch form for every element kind, so what reaches this and
         # raises is the rows disagreeing — which is the caller's to see, not
         # something to record as one opaque value.
         return _make_stack(
-            list(value), n=len(value), level_names=(field_name,), field_name=field_name
+            list(value),
+            n=len(value),
+            level_names=(field_name,),
+            field_name=field_name,
+            name=name,
+            name_is_auto=name_is_auto,
         )
     # ``_is_numeric_leaf`` excludes duck-typed objects (``MagicMock`` and the
     # like) whose attribute probing recurses inside ``jnp.asarray``.
     if _is_numeric_leaf(value):
         from ._numeric_array import NumericArray
 
-        return NumericArray(field_name, value, name_is_auto=True)
+        return NumericArray(result_name, value, name_is_auto=name_is_auto)
     if callable(value):
         from .node import Function
 
-        return Function(func=value, name=field_name, name_is_auto=True)
+        return Function(func=value, name=result_name, name_is_auto=name_is_auto)
     from ._opaque import Opaque
 
-    return Opaque(field_name, value, name_is_auto=True)
+    return Opaque(result_name, value, name_is_auto=name_is_auto)
 
 
 def _coerce_output(

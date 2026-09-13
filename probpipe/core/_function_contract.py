@@ -518,11 +518,13 @@ def _wrap_declared_function_output(
     *,
     function_name: str,
     output_template: EventTemplate,
+    name_is_auto: bool = True,
 ) -> Record | Distribution:
     """Wrap a validated result under its declared template.
 
     A result that already carries a schema — a record, a batch of records, a
-    distribution — keeps its structure; anything else is given the declared one.
+    distribution — keeps its structure; anything else is given the declared one
+    and the caller's *function_name* and *name_is_auto*.
     """
     if isinstance(result, (Record, RecordBatch, Distribution)):
         return result
@@ -535,5 +537,5 @@ def _wrap_declared_function_output(
         function_name,
         fields,
         event_template=output_template,
-        name_is_auto=True,
+        name_is_auto=name_is_auto,
     )

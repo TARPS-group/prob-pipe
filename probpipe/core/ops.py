@@ -166,10 +166,7 @@ def _drawn_at_its_batch_form(
             return drawn
         from ._workflow_result import _wrap_as_term
 
-        result = _wrap_as_term(drawn, SAMPLE_LEVEL)
-        object.__setattr__(result, "_name", name)
-        object.__setattr__(result, "_name_is_auto", name_is_auto)
-        return result
+        return _wrap_as_term(drawn, SAMPLE_LEVEL, name=name, name_is_auto=name_is_auto)
 
     n_draw_axes = len(sample_shape)
     if isinstance(drawn, Record):
@@ -200,18 +197,14 @@ def _drawn_at_its_batch_form(
             return drawn
         # Stored draws aggregate exactly as a sweep's rows do — each element at
         # its own kind, under the one level the operation mints.
-        aggregate = _make_stack(
+        return _make_stack(
             list(drawn.reshape((prod(sample_shape), *drawn.shape[n_draw_axes:]))),
             batch_shape=tuple(sample_shape),
             level_names=(SAMPLE_LEVEL,),
             field_name=name,
             name=name,
+            name_is_auto=name_is_auto,
         )
-        # An aggregation names its result for the function that produced the rows
-        # and marks that auto. Here the name is the law's, so whether it was a
-        # caller's statement is the law's answer, not this boundary's.
-        object.__setattr__(aggregate, "_name_is_auto", name_is_auto)
-        return aggregate
 
     if isinstance(drawn, TrackedTerm) or not _is_numeric_leaf(drawn):
         return drawn
