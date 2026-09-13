@@ -290,6 +290,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Batched sampling preserves complete opaque events, including array-shaped
   events, by flattening only sampling axes during aggregation (#446).
+  Object-array draws whose leading axes do not match `sample_shape` are left
+  unchanged at the batch conversion boundary, matching numeric and record draws.
 
 - Explicit-key `sample` calls accept structural `SupportsSampling` objects
   without `name` or `name_is_auto` attributes. Unnamed samplers use the automatic

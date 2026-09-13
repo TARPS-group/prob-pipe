@@ -196,6 +196,8 @@ def _drawn_at_its_batch_form(
         )
 
     if _is_object_array(drawn):
+        if drawn.shape[:n_draw_axes] != tuple(sample_shape):
+            return drawn
         # Stored draws aggregate exactly as a sweep's rows do — each element at
         # its own kind, under the one level the operation mints.
         aggregate = _make_stack(

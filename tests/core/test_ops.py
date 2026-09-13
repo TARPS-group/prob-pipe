@@ -163,6 +163,25 @@ class TestSample:
             for index in np.ndindex(sample_shape):
                 np.testing.assert_array_equal(result[index], expected)
 
+    @pytest.mark.parametrize("explicit_key", [False, True], ids=["automatic-key", "explicit-key"])
+    def test_sample_keeps_object_values_with_mismatched_sample_axes(self, explicit_key):
+        drawn = np.asarray(["a", "b", "c", "d", "e"], dtype=object)
+
+        class Sampler:
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key, sample_shape=()):
+                return drawn
+
+        result = ops.sample(
+            Sampler(), key=jax.random.PRNGKey(0) if explicit_key else None, sample_shape=(3,)
+        )
+
+        assert isinstance(result, Opaque)
+        assert result.value is drawn
+        np.testing.assert_array_equal(result.value, ["a", "b", "c", "d", "e"])
+
     def test_sample_shape_scalar_int_matches_1tuple(self, normal, mvn, empirical):
         """Scalar ``sample_shape=N`` is sugar for ``(N,)``.
 

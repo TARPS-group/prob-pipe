@@ -174,7 +174,7 @@ class _WorkflowRunScope:
         root_kind: Literal["anonymous", "ephemeral"] = "anonymous",
     ):
         self._seed = seed
-        self._root_kind = root_kind
+        self._root_kind: Literal["anonymous", "ephemeral"] = root_kind
         self._frame: _WorkflowFrame | None = None
         self._token: Token[_WorkflowFrame | None] | None = None
 
