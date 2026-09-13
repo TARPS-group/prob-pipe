@@ -1039,22 +1039,33 @@ def _make_stack(
             event_shape = tuple(stacked.shape[1:])
             element_spec = NumericArraySpec(event_shape, dtype=stacked.dtype)
             if all(isinstance(output, NumericArray) for output in outs):
-                element_spec = outs[0].spec
+                specs = []
                 for output in outs:
-                    if output.spec == element_spec:
-                        continue
-                    if replace(output.spec, dtype=element_spec.dtype) != element_spec:
+                    spec = output.spec
+                    if spec.free_dims:
+                        bindings: dict[str, int] = {}
+                        spec.bind_dims_from_value(output, bindings, field_name)
+                        spec = spec.with_bound_dims(bindings)
+                    specs.append(spec)
+                element_spec = specs[0]
+                for spec in specs[1:]:
+                    if replace(spec, dtype=element_spec.dtype) != element_spec:
                         raise ValueError(
                             f"{field_name}: numeric rows returned declarations that disagree "
-                            f"({element_spec!r} and {output.spec!r}); return numeric rows with "
+                            f"({element_spec!r} and {spec!r}); return numeric rows with "
                             "one shared event shape and support"
                         )
-                    dtype = (
-                        np.result_type(element_spec.dtype, output.spec.dtype)
-                        if element_spec.dtype is not None and output.spec.dtype is not None
-                        else None
-                    )
-                    element_spec = replace(element_spec, dtype=dtype)
+                # Promote the complete set: pairwise NumPy promotion can depend
+                # on row order. JAX handles extended dtypes such as bfloat16.
+                dtypes = [spec.dtype for spec in specs]
+                if any(dtype is None for dtype in dtypes):
+                    dtype = None
+                else:
+                    try:
+                        dtype = np.result_type(*dtypes)
+                    except np.exceptions.DTypePromotionError:
+                        dtype = jnp.result_type(*dtypes)
+                element_spec = replace(element_spec, dtype=dtype)
             return NumericArrayBatch(
                 name or field_name,
                 stacked.reshape(batch_shape + event_shape),

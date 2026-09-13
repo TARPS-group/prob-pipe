@@ -371,7 +371,7 @@ class _MappedBatchStore:
 
     @classmethod
     def of(cls, value: NumericArrayBatch | NumericArray) -> _MappedBatchStore:
-        """Carry *value*'s array, declaration, and any batch levels."""
+        """Carry *value*'s array, bound event declaration, and any batch levels."""
         if isinstance(value, NumericArrayBatch):
             return cls(
                 value._name,
@@ -382,10 +382,15 @@ class _MappedBatchStore:
                 name_is_auto=value._name_is_auto,
             )
         if isinstance(value, NumericArray):
+            element_spec = value.spec
+            if element_spec.free_dims:
+                bindings: dict[str, int] = {}
+                element_spec.bind_dims_from_value(value, bindings, value.name)
+                element_spec = element_spec.with_bound_dims(bindings)
             return cls(
                 value.name,
                 value.as_jax(),
-                element_spec=value.spec,
+                element_spec=element_spec,
                 level_names=(),
                 axis_groups=(),
                 name_is_auto=value.name_is_auto,

@@ -308,10 +308,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Sweeps returning `NumericArray`, including nested numeric operations such as
   `log_prob`, now aggregate under `auto` and `jax` dispatch with named batch levels
   preserved. When every numeric row is tracked, shared declarations survive
-  aggregation, differing dtypes promote to their common NumPy dtype, and
-  conflicting event shapes or supports raise an actionable error. A row with an
-  unspecified dtype leaves the aggregate's declared dtype unspecified. Mixed raw
-  and tracked numeric rows infer the aggregate's shape and dtype without adopting
+  aggregation after symbolic event dimensions bind to the rows' actual shapes.
+  Differing dtypes promote together to their common NumPy dtype, independent of
+  row order, with JAX promotion for extended dtype combinations NumPy cannot
+  promote. Conflicting event shapes or supports raise an actionable error. A row
+  with an unspecified dtype leaves the aggregate's declared dtype unspecified.
+  Mixed raw and tracked numeric rows infer the aggregate's shape and dtype without adopting
   a partial support declaration. Native-backed `NumericArray`, `NumericArrayBatch`, and
   `NumericRecord` cache only concrete conversions, so values first converted
   inside a JAX transform remain usable afterward (#446).
