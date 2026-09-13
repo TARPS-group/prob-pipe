@@ -562,26 +562,103 @@ class TestNumericArraySweep:
         assert value.spec == declared
         assert value.provenance is None
 
-    @pytest.mark.parametrize(
-        "other_spec",
-        [
-            NumericArraySpec((), dtype=np.float32, support=positive),
-            NumericArraySpec((), dtype=np.float64),
-        ],
-        ids=["dtype", "support"],
-    )
-    def test_disagreeing_numeric_row_declarations_are_refused(self, other_spec):
+    def test_disagreeing_numeric_row_supports_are_refused(self):
         declared = NumericArraySpec((), dtype=np.float64, support=positive)
         first = NumericArray("first", jnp.asarray(1.0), spec=declared)
-        second = NumericArray("second", jnp.asarray(2.0), spec=other_spec)
+        second = NumericArray(
+            "second", jnp.asarray(2.0), spec=NumericArraySpec((), dtype=np.float64)
+        )
         source = _numeric_record_batch("x", range(2))
 
-        with pytest.raises(ValueError, match=r"numeric.*declarations"):
+        with pytest.raises(ValueError, match=r"different: numeric.*declarations"):
             Function(
                 func=lambda row: first if float(row["x"]) == 0 else second,
                 name="different",
                 dispatch="sequential",
             )(source)
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+    @pytest.mark.parametrize("x64", [False, True], ids=["x32", "x64"])
+    @pytest.mark.parametrize("event_shape", [(), (2,)], ids=["scalar", "vector"])
+    def test_native_and_jax_numeric_rows_promote_their_declared_dtypes(
+        self, reverse, x64, event_shape
+    ):
+        with jax.enable_x64(x64):
+            native = np.full(event_shape, 1.25, dtype=np.float64)
+            if not event_shape:
+                native = native[()]
+            first = NumericArray("native", native)
+            second = NumericArray("jax", jnp.full(event_shape, 2.5, dtype=jnp.float32))
+            outputs = [second, first] if reverse else [first, second]
+            source = _numeric_record_batch("x", range(2))
+
+            result = Function(
+                func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+            )(source)
+
+        expected = np.stack([np.full(event_shape, 1.25), np.full(event_shape, 2.5)])
+        if reverse:
+            expected = expected[::-1]
+        assert result.element_spec == NumericArraySpec(event_shape, dtype=np.float64)
+        assert result.dtype == np.dtype(np.float64 if x64 else np.float32)
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        np.testing.assert_array_equal(np.asarray(result), expected)
+        assert first.value is native
+        assert first.spec.dtype == np.dtype(np.float64)
+        assert second.spec.dtype == np.dtype(np.float32)
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+    @pytest.mark.parametrize(
+        "other_dtype, support, expected_dtype",
+        [(np.float32, positive, np.float64), (None, positive, None)],
+        ids=["promoted", "unspecified"],
+    )
+    def test_numeric_dtype_promotion_preserves_shared_support(
+        self, reverse, other_dtype, support, expected_dtype
+    ):
+        first = NumericArray(
+            "first",
+            jnp.asarray(1.0),
+            spec=NumericArraySpec((), dtype=np.float64, support=support),
+        )
+        second = NumericArray(
+            "second",
+            jnp.asarray(2.0),
+            spec=NumericArraySpec((), dtype=other_dtype, support=support),
+        )
+        outputs = [second, first] if reverse else [first, second]
+
+        result = Function(
+            func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+        )(_numeric_record_batch("x", range(2)))
+
+        assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=support)
+        np.testing.assert_array_equal(np.asarray(result), [2.0, 1.0] if reverse else [1.0, 2.0])
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+    @pytest.mark.parametrize("tracked_float", [False, True], ids=["raw-float", "tracked-float"])
+    def test_integer_and_float_numeric_rows_promote_without_losing_values(
+        self, reverse, tracked_float
+    ):
+        integer = NumericArray(
+            "integer",
+            jnp.asarray(1, dtype=jnp.int32),
+            spec=NumericArraySpec((), dtype=np.int32),
+        )
+        floating = jnp.asarray(2.5, dtype=jnp.float32)
+        outputs = [integer, NumericArray("float", floating) if tracked_float else floating]
+        if reverse:
+            outputs.reverse()
+
+        result = Function(
+            func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+        )(_numeric_record_batch("x", range(2)))
+
+        assert result.element_spec == NumericArraySpec(
+            (), dtype=np.float64 if tracked_float else np.float32
+        )
+        np.testing.assert_array_equal(np.asarray(result), [2.5, 1.0] if reverse else [1.0, 2.5])
 
     @pytest.mark.parametrize("raw_value", [-1.0, 1.0], ids=["negative", "positive"])
     @pytest.mark.parametrize("tracked_first", [False, True], ids=["raw-first", "tracked-first"])

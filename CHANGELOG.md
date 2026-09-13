@@ -292,13 +292,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   events, by flattening only sampling axes during aggregation (#446).
 
 - Explicit-key `sample` calls accept structural `SupportsSampling` objects
-  without `name` or `name_is_auto` attributes. Missing result names default to
-  `sample`, and missing naming flags default to automatic (#446).
+  without `name` or `name_is_auto` attributes. Unnamed samplers use the automatic
+  name `sample`; a supplied name defaults to explicit when its naming flag is
+  absent. Single and batched raw draws retain the sampler's naming metadata
+  with either explicit or automatic keys (#446).
 
 - Sweeps returning `NumericArray`, including nested numeric operations such as
   `log_prob`, now aggregate under `auto` and `jax` dispatch with named batch levels
   preserved. When every numeric row is tracked, shared declarations survive
-  aggregation and conflicting declarations raise an actionable error. Mixed raw
+  aggregation, differing dtypes promote to their common NumPy dtype, and
+  conflicting event shapes or supports raise an actionable error. A row with an
+  unspecified dtype leaves the aggregate's declared dtype unspecified. Mixed raw
   and tracked numeric rows infer the aggregate's shape and dtype without adopting
   a partial support declaration. Native-backed `NumericArray`, `NumericArrayBatch`, and
   `NumericRecord` cache only concrete conversions, so values first converted

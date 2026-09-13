@@ -194,15 +194,13 @@ class TestADerivedNameSaysSo:
 
 
 class TestAnOperationNamesItsResult:
-    """What an operation hands back is named, and marked auto — a caller named
-    the *inputs*, not this."""
+    """Sampling retains supplied names; summaries and densities derive theirs."""
 
     LAW = Normal(0.0, 1.0, name="height")
 
     @pytest.mark.parametrize(
         ("label", "compute"),
         [
-            ("sample", lambda d: sample(d, key=KEY)),
             ("mean", lambda d: mean(d)),
             ("variance", lambda d: variance(d)),
             ("log_prob", lambda d: log_prob(d, value=jnp.asarray(0.0))),
@@ -214,13 +212,7 @@ class TestAnOperationNamesItsResult:
         assert (result.name, result.name_is_auto) == (label, True)
 
     def test_a_record_law_result_is_named_for_the_law(self):
-        """Recorded rather than endorsed.
-
-        A record-drawing law builds its own value, already named for itself, and
-        the output boundary keeps a tracked term as it is. So the same operation
-        names its result for the operation over a scalar law and for the law over
-        a record-valued one.
-        """
+        """An already tracked draw retains the name and flag its producer set."""
         joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="joint")
 
         drawn = sample(joint, key=KEY)
@@ -231,16 +223,16 @@ class TestAnOperationNamesItsResult:
         """The load-bearing half: an invented name is a placeholder, so a later
         operation may replace it without discarding a caller's statement."""
         for compute in (
-            lambda d: sample(d, key=KEY),
             lambda d: mean(d),
             lambda d: variance(d),
         ):
             assert compute(self.LAW).name_is_auto is True
 
-    def test_a_name_taken_from_the_law_carries_the_laws_flag(self):
-        """A batch of draws is named for the law, so it is a caller's statement
+    @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
+    def test_a_name_taken_from_the_law_carries_the_laws_flag(self, sample_shape):
+        """Raw draws are named for the law, so it is a caller's statement
         exactly when the caller's name for the law was one."""
-        given = sample(Normal(0.0, 1.0, name="height"), sample_shape=(4,), key=KEY)
+        given = sample(Normal(0.0, 1.0, name="height"), sample_shape=sample_shape, key=KEY)
 
         assert (given.name, given.name_is_auto) == ("height", False)
 

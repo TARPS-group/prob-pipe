@@ -11,6 +11,7 @@ Provides:
 
 from __future__ import annotations
 
+from dataclasses import replace
 from math import prod
 from typing import Any
 
@@ -1037,12 +1038,20 @@ def _make_stack(
             if all(isinstance(output, NumericArray) for output in outs):
                 element_spec = outs[0].spec
                 for output in outs:
-                    if output.spec != element_spec:
+                    if output.spec == element_spec:
+                        continue
+                    if replace(output.spec, dtype=element_spec.dtype) != element_spec:
                         raise ValueError(
                             f"{field_name}: numeric rows returned declarations that disagree "
                             f"({element_spec!r} and {output.spec!r}); return numeric rows with "
-                            "one shared declaration"
+                            "one shared event shape and support"
                         )
+                    dtype = (
+                        np.result_type(element_spec.dtype, output.spec.dtype)
+                        if element_spec.dtype is not None and output.spec.dtype is not None
+                        else None
+                    )
+                    element_spec = replace(element_spec, dtype=dtype)
             return NumericArrayBatch(
                 name or field_name,
                 stacked.reshape(batch_shape + event_shape),
