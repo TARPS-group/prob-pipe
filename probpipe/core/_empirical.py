@@ -45,6 +45,7 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
@@ -118,19 +119,6 @@ def _index_record(record_data: Record, idx) -> NumericRecord:
         {k: jnp.asarray(v)[idx] for k, v in record_data.items()},
         name_is_auto=True,
     )
-
-
-def _is_numeric_array(x: object) -> bool:
-    """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
-
-    Numpy object arrays (used for generic non-array samples in
-    ``EmpiricalDistribution``) return ``False``.
-    """
-    if isinstance(x, jax.Array):
-        return True
-    if isinstance(x, np.ndarray):
-        return x.dtype != object
-    return False
 
 
 def _weighted_quantile(values: Array, weights: Array, q: Array) -> Array:

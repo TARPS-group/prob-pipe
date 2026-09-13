@@ -29,6 +29,7 @@ from typing import Any
 import jax
 import numpy as np
 
+from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
 from .._weights import Weights
 from ..core._record_distribution import RecordDistribution, _build_event_template
@@ -54,20 +55,6 @@ from ._joint_utils import (
 )
 
 __all__ = ["JointEmpirical", "NumericJointEmpirical"]
-
-
-# --- Shared helpers ---
-def _is_numeric_array(x: object) -> bool:
-    """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
-
-    Numpy object arrays (used for generic non-array samples in
-    ``EmpiricalDistribution``) return ``False``.
-    """
-    if isinstance(x, jax.Array):
-        return True
-    if isinstance(x, np.ndarray):
-        return x.dtype != object
-    return False
 
 
 class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning):
