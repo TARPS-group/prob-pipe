@@ -144,13 +144,13 @@ Every tracked term carries four things through the one mixin `TrackedTerm`:
 3. a **provenance**: how it was produced;
 4. **annotations**: free-form auxiliary information supplied by the user or an algorithm.
 
-A tracked term's name is supplied by the user at explicit construction, as the required first argument, and derived deterministically from the inputs when an operation produces the object. The result of a user-defined function is instead named by that function's `output_name` (III.3). The `name_is_auto` flag records which, since the two behave differently under one operation: a structure-changing transform re-derives an auto-derived name from its result and preserves a user-given one. Nothing else reads the flag, and no operation's structure depends on a name. `with_name` renames the object itself. A name is a label, not an identity: nothing resolves an object by name, derived names need no escaping scheme, and two objects may share a name.
+A tracked term's name is supplied by the user at explicit construction, as the required first argument, and derived deterministically from the inputs when an operation produces the object. The result of a user-defined function is instead named by that function's `output_name` (III.3). A name is set once, at construction, and every transform preserves it: a record with renamed fields, a realigned factor, or a converted law keeps the name it had, and only `with_name` replaces it. No operation reads a name to decide anything, so the origin of a name is never recorded. A name is a label, not an identity: nothing resolves an object by name, derived names need no escaping scheme, and two objects may share a name.
 
 The `spec` slot is the term's type, stored once. Each kind narrows it to its own spec class and exposes convenience accessors for its properties.
 
-Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec, the name, and `name_is_auto`. A kind whose representation is not itself a ProbPipe object has a **raw host**, which `raw()` returns — for example, a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
+Every tracked term exposes `raw()` as the single access point to the representation layer. It returns the term **detached** from the workflow. Detachment removes provenance, annotations, and any reference to a container or parent, and it keeps the spec and the name. A kind whose representation is not itself a ProbPipe object has a **raw host**, which `raw()` returns — for example, a backing array object or a wrapped callable. A kind whose representation is a ProbPipe object, such as a distribution, returns that object detached.
 
-Accessing a container returns a **view**, for example a record field or a batch element. A view is a tracked term named from the accessor, which is the field key for a record and the selected levels for a batch, and it is marked `name_is_auto`; its provenance records the container and the source term where one was supplied.
+Accessing a container returns a **view**, for example a record field or a batch element. A view is a tracked term named from the accessor, which is the field key for a record and the selected levels for a batch; its provenance records the container and the source term where one was supplied.
 
 **A tracked term is immutable.** `TrackedTerm` carries an immutability guard automatically, so assignment and deletion raise an error. Immutability requires that every transformation, including each `with_*` method, returns a new term that shares the representation.
 
@@ -159,11 +159,10 @@ Identity is **boundary-attached** under compiled execution. Inside a `jit` or `v
 ```python
 class TrackedTerm:
     name:         str
-    name_is_auto: bool
     spec:         TermSpec                       # the single stored source of the term's type (II.1)
     provenance:   Provenance | None              # write-once via with_provenance(...)
     annotations:  Mapping[str, Any] | None       # free-form; the one store written after construction
-    def with_name(self, name: str) -> Self: ...  # sets name_is_auto = False
+    def with_name(self, name: str) -> Self: ...  # the one way a name changes
     def with_provenance(self, p: Provenance) -> Self: ...
     def raw(self) -> Any: ...                    # the representation, detached from the workflow
     # immutable: __setattr__ / __delattr__ raise; state round-trips through the

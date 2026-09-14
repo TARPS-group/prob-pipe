@@ -243,10 +243,8 @@ Two records are equal when they share a class, a `RecordSpec`, and field-by-fiel
 class Record(NamedTree[Any], TrackedTerm):
     def __init__(self, name: str, fields: Mapping[str, Any] | None = None, /, *,
                  spec: RecordSpec | Mapping | None = None,
-                 name_is_auto: bool = False,
                  **kw_fields: Any) -> None: ...
-        # name is the required first argument (semantic identity)
-        # name_is_auto (II.4): user constructions leave it False
+        # name is the required first argument (II.4)
         # a mapping-valued field is a subtree, never a leaf (II.6)
         # Binds to the declaration if given (structural validation); nested mapping
         # data is normalized to a RecordSpec.
