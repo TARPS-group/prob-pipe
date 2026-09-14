@@ -387,7 +387,7 @@ probpipe/
 ├── converters/     # Distribution conversion registry
 ├── linalg/         # Linear algebra for random functions
 ├── custom_types.py # Array, PRNGKey, ArrayLike type aliases
-└── _utils.py, _array_utils.py, _weights.py  # Internal helpers
+└── _array_utils.py, _weights.py  # Internal helpers
 ```
 
 Within subpackages that contain multiple implementation files

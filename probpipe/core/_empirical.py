@@ -45,8 +45,8 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
-from .._utils import _is_numeric_array
 from .._weights import Weights
 from ..custom_types import Array, ArrayLike, PRNGKey
 from . import _distribution_base as _base
@@ -94,6 +94,19 @@ def _event_template_from_data(
     return EventTemplate(specs)
 
 
+def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
+    """Apply *op* to each leaf of a Record, returning a :class:`NumericRecord`.
+
+    All-numeric outputs by construction; returning a ``NumericRecord``
+    lets single-field consumers use ``jnp.asarray(result)`` /
+    ``float(result)`` directly via the existing single-field shims.
+    Leaf-keyed, so nested structure is preserved.
+    """
+    return Record(
+        record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()}, name_is_auto=True
+    )
+
+
 def _index_record(record_data: Record, idx) -> NumericRecord:
     """Index every leaf of a Record with the same indices.
 
@@ -105,19 +118,6 @@ def _index_record(record_data: Record, idx) -> NumericRecord:
         record_data.name,
         {k: jnp.asarray(v)[idx] for k, v in record_data.items()},
         name_is_auto=True,
-    )
-
-
-def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
-    """Apply *op* to each leaf of a Record, returning a :class:`NumericRecord`.
-
-    All-numeric outputs by construction; returning a ``NumericRecord``
-    lets single-field consumers use ``jnp.asarray(result)`` /
-    ``float(result)`` directly via the existing single-field shims.
-    Leaf-keyed, so nested structure is preserved.
-    """
-    return Record(
-        record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()}, name_is_auto=True
     )
 
 

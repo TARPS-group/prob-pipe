@@ -45,8 +45,9 @@ class NumericArray(TrackedTerm, Annotated):
     value : array-like
         The array this names, stored verbatim in its native form: a bare array,
         an ``xarray`` / ``pandas`` container, or any registered backend, so a
-        lazy or disk-backed value stays lazy. A bare Python scalar carries no
-        metadata to read and is normalised to a 0-d ``jax.Array``.
+        lazy or disk-backed value stays lazy. Python numeric scalars, including
+        subclasses, are normalised to a 0-d ``jax.Array``; NumPy scalars retain
+        their native form and dtype.
     name_is_auto : bool, default False
         Whether *name* is auto-derived rather than user-given — set by an
         operation that derives one, as the output boundary does when it names a
@@ -67,9 +68,11 @@ class NumericArray(TrackedTerm, Annotated):
 
     Notes
     -----
-    Construction validates against metadata alone, so the value materialises at
-    most once per instance and only at a compute boundary — the storage rule
-    :class:`~probpipe.NumericRecord` follows for its leaves.
+    Construction validates native arrays and NumPy scalars against metadata
+    alone, deferring JAX conversion to :meth:`as_jax`. NumPy scalars retain their
+    original precision in :attr:`value` and ``np.asarray(value)``. JAX conversion
+    follows its x64 configuration and can round or overflow; ``float(value)``
+    also goes through :meth:`as_jax`.
 
     It carries the full array surface: arithmetic, comparison, and the
     conversion hooks. With one value and no fields, ``arr + 1`` has a single
@@ -119,9 +122,12 @@ class NumericArray(TrackedTerm, Annotated):
             raise TypeError(
                 f"NumericArray holds one numeric array; {type(value).__name__} is not a numeric leaf"
             )
-        # A bare Python scalar carries no metadata to read, so it is the one
-        # thing normalised at construction — as ``NumericRecord`` normalises it.
-        stored = _to_jax_array(value) if isinstance(value, (int, float, complex, bool)) else value
+        # Normalise Python scalars and their subclasses, but preserve NumPy
+        # scalars: np.float64 and np.complex128 also inherit float and complex.
+        if isinstance(value, (int, float, complex, bool)) and not isinstance(value, np.generic):
+            stored = _to_jax_array(value)
+        else:
+            stored = value
         shape, dtype = _event_shape_of(stored), _numpy_dtype_of(stored)
         if spec is None:
             spec = NumericArraySpec(shape=shape, dtype=dtype)
@@ -145,15 +151,21 @@ class NumericArray(TrackedTerm, Annotated):
         """The value as a ``jax.Array`` — the single conversion point.
 
         A value already stored as one passes through, tracers included; a
-        native container converts through its registered backend once and is
-        memoised for this instance.
+        native container converts through its registered backend. Concrete
+        conversions are memoised; traced conversions stay within their transform.
+
+        Conversion follows JAX's x64 configuration, so a stored float64 can
+        become float32 and round or overflow when x64 is disabled. Enable x64
+        before the first conversion when float64 is required; an existing
+        concrete cache is reused even if that configuration later changes.
         """
         if isinstance(self._value, jax.Array):
             return self._value
         cached = getattr(self, "_jax_cache", None)
         if cached is None:
             cached = _to_jax_array(self._value)
-            object.__setattr__(self, "_jax_cache", cached)
+            if not isinstance(cached, jax.core.Tracer):
+                object.__setattr__(self, "_jax_cache", cached)
         return cached
 
     @property

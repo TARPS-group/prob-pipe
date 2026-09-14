@@ -26,8 +26,8 @@ from math import prod
 from types import MappingProxyType
 from typing import Any
 
+from .._array_utils import _is_numeric_array
 from .._dtype import _as_float_array
-from .._utils import _is_numeric_array
 from .._weights import Weights
 from ..core._record_distribution import RecordDistribution, _build_event_template
 from ..core.distribution import (

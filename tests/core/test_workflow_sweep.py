@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from itertools import permutations
 
 import jax
 import jax.numpy as jnp
@@ -15,15 +16,20 @@ from probpipe import (
     EventTemplate,
     Function,
     Normal,
+    NumericArray,
+    NumericArrayBatch,
+    NumericArraySpec,
     NumericRecord,
     NumericRecordBatch,
     Record,
     RecordBatch,
+    log_prob,
     mean,
 )
 from probpipe.core import _workflow_call, _workflow_execution, _workflow_sweep
 from probpipe.core._record_batch import _MappedBatchColumns
 from probpipe.core._workflow_plan import build_broadcast_plan, build_stochastic_plan
+from probpipe.core.constraints import positive
 
 
 def _numeric_record_batch(
@@ -453,3 +459,388 @@ class TestASweptBodyThatReturnsABatch:
                     level_name="k",
                 )
             )(jnp.arange(4.0))
+
+
+@pytest.fixture(
+    params=[
+        ((3,), ("row",), (1,)),
+        ((2, 3), ("chain", "draw"), (1, 1)),
+        ((2, 3, 2), ("chain", "draw"), (1, 2)),
+    ],
+    ids=["one-level", "two-levels", "multi-axis-level"],
+)
+def numeric_sweep_source(request):
+    shape, levels, axes_per_level = request.param
+    values = jnp.arange(np.prod(shape), dtype=jnp.float32).reshape(shape) / 4
+    return NumericRecordBatch(
+        "inputs",
+        {"x": values},
+        levels,
+        element_spec=EventTemplate(x=NumericArraySpec((), dtype=np.float32)),
+        axes_per_level=axes_per_level,
+    )
+
+
+class TestNumericArraySweep:
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    @pytest.mark.parametrize(
+        "declared_shape, event_shape",
+        [(("d",), (2,)), (("d", "d"), (2, 2)), (("d", 3), (2, 3))],
+        ids=["symbolic", "repeated-symbol", "partially-symbolic"],
+    )
+    def test_symbolic_numeric_rows_bind_their_event_dimensions(
+        self, numeric_sweep_source, dispatch, declared_shape, event_shape
+    ):
+        source = numeric_sweep_source
+        native = np.arange(1, np.prod(event_shape) + 1, dtype=np.float32).reshape(event_shape)
+        declared = NumericArraySpec(declared_shape, dtype=np.float64, support=positive)
+        value = NumericArray("original", native, spec=declared)
+
+        result = Function(func=lambda row: value, name="repeated", dispatch=dispatch)(source)
+
+        assert isinstance(result, NumericArrayBatch)
+        assert result.element_spec == NumericArraySpec(
+            event_shape, dtype=np.float64, support=positive
+        )
+        assert result.values.dtype == np.float32
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        assert result.name == "repeated" and result.name_is_auto
+        np.testing.assert_array_equal(
+            np.asarray(result), np.broadcast_to(native, (*source.batch_shape, *event_shape))
+        )
+        assert value.spec is declared
+        assert value.spec.shape == declared_shape
+        assert value.value is native
+        assert value.name == "original"
+        assert value.provenance is None
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+    def test_symbolic_and_concrete_numeric_rows_agree_after_binding(self, reverse):
+        declarations = [
+            NumericArraySpec(shape, dtype=np.float32, support=positive)
+            for shape in (("d",), ("other",), (2,))
+        ]
+        outputs = [
+            NumericArray("row", jnp.full((2,), i + 1, dtype=jnp.float32), spec=spec)
+            for i, spec in enumerate(declarations)
+        ]
+        if reverse:
+            outputs.reverse()
+        source = _numeric_record_batch("x", range(3))
+
+        result = Function(
+            func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+        )(source)
+
+        assert result.element_spec == NumericArraySpec((2,), dtype=np.float32, support=positive)
+        assert result.values.dtype == np.float32
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        expected = np.repeat([[1.0], [2.0], [3.0]], 2, axis=1)
+        np.testing.assert_array_equal(np.asarray(result), expected[::-1] if reverse else expected)
+        assert [output.spec for output in outputs] == (
+            declarations[::-1] if reverse else declarations
+        )
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    @pytest.mark.parametrize("representation", ["raw", "tracked", "declared"])
+    @pytest.mark.parametrize("event_shape", [(), (2,)], ids=["scalar", "vector"])
+    def test_numeric_results_keep_their_declaration_and_levels(
+        self, numeric_sweep_source, dispatch, representation, event_shape
+    ):
+        source = numeric_sweep_source
+        declared = NumericArraySpec(event_shape, dtype=np.float64, support=positive)
+
+        def body(row):
+            value = row["x"] * 2 + 1
+            if event_shape:
+                value = jnp.stack([value, value + 1])
+            if representation == "raw":
+                return value
+            return NumericArray(
+                "row-result", value, spec=declared if representation == "declared" else None
+            )
+
+        result = Function(func=body, name="shift", dispatch=dispatch)(source)
+
+        expected = np.asarray(source["x"]) * 2 + 1
+        if event_shape:
+            expected = np.stack([expected, expected + 1], axis=-1)
+        expected_spec = (
+            declared
+            if representation == "declared"
+            else NumericArraySpec(event_shape, dtype=np.float32)
+        )
+        assert isinstance(result, NumericArrayBatch)
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        assert result.element_spec == expected_spec
+        assert result.values.dtype == np.float32
+        assert result.name == "shift" and result.name_is_auto
+        assert result.provenance is not None
+        np.testing.assert_array_equal(np.asarray(result), expected)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_nested_density_results_compose_after_the_sweep(self, numeric_sweep_source, dispatch):
+        source = numeric_sweep_source
+        law = Normal(0.0, 1.0, name="x")
+        result = Function(
+            func=lambda row: log_prob(law, row["x"]), name="score", dispatch=dispatch
+        )(source)
+
+        expected = -0.5 * np.asarray(source["x"], dtype=np.float64) ** 2 - 0.5 * np.log(2 * np.pi)
+        assert isinstance(result, NumericArrayBatch)
+        assert result.axis_groups == source.axis_groups
+        assert result.level_names == source.level_names
+        assert result.element_spec == NumericArraySpec((), dtype=np.float32)
+        assert result.name == "score" and result.name_is_auto
+        np.testing.assert_allclose(np.asarray(result), expected, rtol=2e-7, atol=1e-7)
+
+        shifted = Function(func=lambda value: value + 1, dispatch="sequential")(result)
+        assert shifted.axis_groups == source.axis_groups
+        assert shifted.level_names == source.level_names
+        np.testing.assert_allclose(np.asarray(shifted), expected + 1, rtol=2e-7, atol=1e-7)
+
+    @pytest.mark.parametrize("dispatch", ["auto", "sequential", "jax"])
+    def test_native_numeric_results_keep_their_source(self, numeric_sweep_source, dispatch):
+        pd = pytest.importorskip("pandas")
+        native = pd.Series([1.0, 2.0], index=[5, 7])
+        declared = NumericArraySpec((2,), dtype=np.float64, support=positive)
+        value = NumericArray("original", native, spec=declared)
+
+        result = Function(func=lambda row: value, name="repeated", dispatch=dispatch)(
+            numeric_sweep_source
+        )
+
+        assert result.element_spec == declared
+        assert result.axis_groups == numeric_sweep_source.axis_groups
+        assert result.level_names == numeric_sweep_source.level_names
+        np.testing.assert_array_equal(
+            np.asarray(result), np.broadcast_to([1.0, 2.0], (*numeric_sweep_source.batch_shape, 2))
+        )
+        assert value.value is native
+        assert value.name == "original"
+        assert value.spec == declared
+        assert value.provenance is None
+
+    def test_disagreeing_numeric_row_supports_are_refused(self):
+        declared = NumericArraySpec((), dtype=np.float64, support=positive)
+        first = NumericArray("first", jnp.asarray(1.0), spec=declared)
+        second = NumericArray(
+            "second", jnp.asarray(2.0), spec=NumericArraySpec((), dtype=np.float64)
+        )
+        source = _numeric_record_batch("x", range(2))
+
+        with pytest.raises(ValueError, match=r"different: numeric.*declarations"):
+            Function(
+                func=lambda row: first if float(row["x"]) == 0 else second,
+                name="different",
+                dispatch="sequential",
+            )(source)
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+    @pytest.mark.parametrize("x64", [False, True], ids=["x32", "x64"])
+    @pytest.mark.parametrize("event_shape", [(), (2,)], ids=["scalar", "vector"])
+    def test_native_and_jax_numeric_rows_promote_their_declared_dtypes(
+        self, reverse, x64, event_shape
+    ):
+        with jax.enable_x64(x64):
+            native = np.full(event_shape, 1.25, dtype=np.float64)
+            if not event_shape:
+                native = native[()]
+            first = NumericArray("native", native)
+            second = NumericArray("jax", jnp.full(event_shape, 2.5, dtype=jnp.float32))
+            outputs = [second, first] if reverse else [first, second]
+            source = _numeric_record_batch("x", range(2))
+
+            result = Function(
+                func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+            )(source)
+
+        expected = np.stack([np.full(event_shape, 1.25), np.full(event_shape, 2.5)])
+        if reverse:
+            expected = expected[::-1]
+        assert result.element_spec == NumericArraySpec(event_shape, dtype=np.float64)
+        assert result.dtype == np.dtype(np.float64 if x64 else np.float32)
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        np.testing.assert_array_equal(np.asarray(result), expected)
+        assert first.value is native
+        assert first.spec.dtype == np.dtype(np.float64)
+        assert second.spec.dtype == np.dtype(np.float32)
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+    @pytest.mark.parametrize(
+        "other_dtype, support, expected_dtype",
+        [(np.float32, positive, np.float64), (None, positive, None)],
+        ids=["promoted", "unspecified"],
+    )
+    def test_numeric_dtype_promotion_preserves_shared_support(
+        self, reverse, other_dtype, support, expected_dtype
+    ):
+        first = NumericArray(
+            "first",
+            jnp.asarray(1.0),
+            spec=NumericArraySpec((), dtype=np.float64, support=support),
+        )
+        second = NumericArray(
+            "second",
+            jnp.asarray(2.0),
+            spec=NumericArraySpec((), dtype=other_dtype, support=support),
+        )
+        outputs = [second, first] if reverse else [first, second]
+
+        result = Function(
+            func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+        )(_numeric_record_batch("x", range(2)))
+
+        assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=support)
+        np.testing.assert_array_equal(np.asarray(result), [2.0, 1.0] if reverse else [1.0, 2.0])
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+    @pytest.mark.parametrize(
+        "other_dtype, expected_dtype",
+        [(jnp.float16, np.float32), (jnp.int32, jnp.bfloat16)],
+        ids=["float16", "int32"],
+    )
+    def test_jax_extended_numeric_dtypes_promote(self, reverse, other_dtype, expected_dtype):
+        outputs = [
+            NumericArray(
+                "row",
+                jnp.asarray(value, dtype=dtype),
+                spec=NumericArraySpec((), dtype=dtype, support=positive),
+            )
+            for value, dtype in ((1, jnp.bfloat16), (2, other_dtype))
+        ]
+        if reverse:
+            outputs.reverse()
+        source = _numeric_record_batch("x", range(2))
+
+        result = Function(
+            func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+        )(source)
+
+        assert result.element_spec == NumericArraySpec((), dtype=expected_dtype, support=positive)
+        assert result.values.dtype == np.dtype(expected_dtype)
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        np.testing.assert_array_equal(np.asarray(result), [2, 1] if reverse else [1, 2])
+
+    @pytest.mark.parametrize(
+        "dtypes",
+        list(permutations(("int8", "uint8", "float16"))),
+        ids=lambda dtypes: "-".join(dtypes),
+    )
+    def test_numeric_dtype_promotion_is_independent_of_row_order(self, dtypes):
+        source = _numeric_record_batch("x", range(3), level_name="row")
+        batches = []
+        for order in (dtypes, ("int8", "float16", "uint8")):
+            outputs = [
+                NumericArray(
+                    "row",
+                    jnp.asarray(1, dtype=dtype),
+                    spec=NumericArraySpec((), dtype=dtype, support=positive),
+                )
+                for dtype in order
+            ]
+            batch = Function(
+                func=lambda row, outputs=outputs: outputs[int(row["x"])],
+                name="mixed",
+                dispatch="sequential",
+            )(source)
+            batches.append(batch)
+            assert batch.element_spec == NumericArraySpec((), dtype=np.float16, support=positive)
+            assert batch.values.dtype == np.float16
+            assert batch.level_names == source.level_names
+            assert batch.axis_groups == source.axis_groups
+            np.testing.assert_array_equal(np.asarray(batch), [1, 1, 1])
+
+        result = Function(
+            func=lambda row: batches[int(row["x"])], name="combined", dispatch="sequential"
+        )(_numeric_record_batch("x", range(2), level_name="outer"))
+
+        assert result.element_spec == NumericArraySpec((), dtype=np.float16, support=positive)
+        assert result.values.dtype == np.float16
+        assert result.batch_shape == (2, 3)
+        assert result.level_names == ("outer", "row")
+        assert result.axis_groups == ((2,), (3,))
+        np.testing.assert_array_equal(np.asarray(result), np.ones((2, 3)))
+
+    @pytest.mark.parametrize("reverse", [False, True], ids=["forward", "reverse"])
+    @pytest.mark.parametrize("tracked_float", [False, True], ids=["raw-float", "tracked-float"])
+    def test_integer_and_float_numeric_rows_promote_without_losing_values(
+        self, reverse, tracked_float
+    ):
+        integer = NumericArray(
+            "integer",
+            jnp.asarray(1, dtype=jnp.int32),
+            spec=NumericArraySpec((), dtype=np.int32),
+        )
+        floating = jnp.asarray(2.5, dtype=jnp.float32)
+        outputs = [integer, NumericArray("float", floating) if tracked_float else floating]
+        if reverse:
+            outputs.reverse()
+
+        result = Function(
+            func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+        )(_numeric_record_batch("x", range(2)))
+
+        assert result.element_spec == NumericArraySpec(
+            (), dtype=np.float64 if tracked_float else np.float32
+        )
+        np.testing.assert_array_equal(np.asarray(result), [2.5, 1.0] if reverse else [1.0, 2.5])
+
+    @pytest.mark.parametrize("raw_value", [-1.0, 1.0], ids=["negative", "positive"])
+    @pytest.mark.parametrize("tracked_first", [False, True], ids=["raw-first", "tracked-first"])
+    @pytest.mark.parametrize("event_shape", [(), (2,)], ids=["scalar", "vector"])
+    def test_mixed_numeric_rows_infer_the_aggregate_spec(
+        self, raw_value, tracked_first, event_shape
+    ):
+        declared = NumericArraySpec(event_shape, dtype=np.float64, support=positive)
+        value = NumericArray("held", jnp.full(event_shape, 2.0), spec=declared)
+        raw = jnp.full(event_shape, raw_value) if event_shape else raw_value
+        source = _numeric_record_batch("x", range(2))
+        result = Function(
+            func=lambda row: value if (float(row["x"]) == 0) == tracked_first else raw,
+            name="mixed",
+            dispatch="sequential",
+        )(source)
+
+        expected = np.stack([np.full(event_shape, raw_value), np.full(event_shape, 2.0)])
+        if tracked_first:
+            expected = expected[::-1]
+        assert result.element_spec == NumericArraySpec(event_shape, dtype=result.values.dtype)
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        np.testing.assert_array_equal(np.asarray(result), expected)
+
+    @pytest.mark.parametrize("raw_position", [0, 1, 2], ids=["raw-first", "raw-middle", "raw-last"])
+    def test_mixed_numeric_rows_do_not_adopt_conflicting_partial_declarations(self, raw_position):
+        outputs = [
+            NumericArray(
+                "positive",
+                jnp.asarray(2.0),
+                spec=NumericArraySpec((), dtype=np.float64, support=positive),
+            ),
+            NumericArray("unconstrained", jnp.asarray(3.0), spec=NumericArraySpec(())),
+        ]
+        outputs.insert(raw_position, -1.0)
+        source = _numeric_record_batch("x", range(3))
+
+        result = Function(
+            func=lambda row: outputs[int(row["x"])], name="mixed", dispatch="sequential"
+        )(source)
+
+        expected = [2.0, 3.0]
+        expected.insert(raw_position, -1.0)
+        assert result.element_spec == NumericArraySpec((), dtype=result.values.dtype)
+        assert result.batch_shape == source.batch_shape
+        assert result.level_names == source.level_names
+        assert result.axis_groups == source.axis_groups
+        np.testing.assert_array_equal(np.asarray(result), expected)

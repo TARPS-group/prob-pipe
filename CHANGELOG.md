@@ -284,6 +284,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Native NumPy scalars retain their original dtype and precision in
+  `NumericArray` storage and NumPy conversion. `as_jax()` and `float(value)`
+  follow JAX's x64 configuration and may round or overflow; enable x64 before
+  the first conversion when float64 is required. Python numeric subclasses
+  continue to normalise at construction, with NumPy scalars excluded.
+  Sweeps of `OpaqueBatch` or `FunctionBatch` rows pass the rows' `element_spec`
+  to the aggregate constructor, preserving declarations previously replaced by
+  defaults. Mixed batch and non-batch rows report the same schema error in
+  either order (#446).
+
+- Batched sampling preserves complete opaque events, including array-shaped
+  events, by flattening only sampling axes during aggregation (#446).
+  Object-array draws whose leading axes do not match `sample_shape` are left
+  unchanged at the batch conversion boundary, matching numeric and record draws.
+
+- Explicit-key `sample` calls accept structural `SupportsSampling` objects
+  without `name` or `name_is_auto` attributes. Unnamed samplers use the automatic
+  name `sample`; a supplied name defaults to explicit when its naming flag is
+  absent. Single and batched raw draws retain the sampler's naming metadata
+  with either explicit or automatic keys (#446). Raw draws receive that metadata
+  during wrapping, so the name is checked at construction and sequence levels
+  retain their operation-derived names.
+
+- Sweeps returning `NumericArray`, including nested numeric operations such as
+  `log_prob`, now aggregate under `auto` and `jax` dispatch with named batch levels
+  preserved. When every numeric row is tracked, shared declarations survive
+  aggregation after symbolic event dimensions bind to the rows' actual shapes.
+  Differing dtypes promote together to their common NumPy dtype, independent of
+  row order, with JAX promotion for extended dtype combinations NumPy cannot
+  promote. Conflicting event shapes or supports raise an actionable error. A row
+  with an unspecified dtype leaves the aggregate's declared dtype unspecified.
+  Mixed raw and tracked numeric rows infer the aggregate's shape and dtype without adopting
+  a partial support declaration. Native-backed `NumericArray`, `NumericArrayBatch`, and
+  `NumericRecord` cache only concrete conversions, so values first converted
+  inside a JAX transform remain usable afterward (#446).
+
 - **The kind table is the single answer to which batch form a field has (#398).**
   `RecordBatch` construction listed the admissible field kinds inline while the
   reading end asked the registry, so registering a kind widened one and not the

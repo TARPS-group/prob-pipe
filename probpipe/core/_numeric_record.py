@@ -79,10 +79,10 @@ class NumericRecord(Record):
     :attr:`~Record.children`, and :meth:`~Record.at_path` never convert.
     Conversion to ``jax.Array`` happens at the compute boundary — the JAX
     pytree flatten that ``jit`` / ``vmap`` / ``grad`` traverse,
-    :meth:`to_vector`, and the single-field scalar shim — through a set-once
-    per-leaf cache, so each leaf materialises at most once **per record
-    instance**. A JAX transform
-    therefore returns a record with bare ``jax.Array`` leaves (unflatten
+    :meth:`to_vector`, and the single-field scalar shim — through a per-leaf
+    cache. Concrete conversions are memoised per record instance; traced
+    conversions stay within their transform. A JAX transform
+    returns a record with bare ``jax.Array`` leaves (unflatten
     cannot rebuild native containers); structural transforms
     (:meth:`~Record.without` / :meth:`~Record.merge` / :meth:`~Record.replace`
     / :meth:`~Record.with_path_names`) and pickling reuse the native leaves
@@ -95,8 +95,8 @@ class NumericRecord(Record):
     place after construction therefore reaches the record. Once the leaf has
     crossed a compute boundary, navigation and compute can disagree:
     navigation reflects the mutation, but compute reuses the ``jax.Array``
-    snapshot cached at first conversion. Records assume their data is not
-    externally mutated mid-pipeline; no defensive copies are made.
+    snapshot cached at the first concrete conversion. Records assume their data
+    is not externally mutated mid-pipeline; no defensive copies are made.
 
     Equality, hashing, and lazy leaves
     ----------------------------------
@@ -300,7 +300,8 @@ class NumericRecord(Record):
         boundary routes through. A leaf stored as a ``jax.Array`` (including a
         tracer inside a JAX transform) passes through untouched; a native
         container converts via its registered backend's ``to_jax`` (or
-        ``jnp.asarray``) exactly once, memoised in the set-once cache.
+        ``jnp.asarray``). Concrete conversions are memoised; traced conversions
+        stay within their transform.
         """
         val = self._tree[field_name]
         if isinstance(val, jnp.ndarray):
@@ -309,7 +310,8 @@ class NumericRecord(Record):
         arr = cache.get(field_name)
         if arr is None:
             arr = _to_jax_array(val)
-            cache[field_name] = arr
+            if not isinstance(arr, jax.core.Tracer):
+                cache[field_name] = arr
         return arr
 
     def _conversion_cache(self) -> dict[str, jnp.ndarray]:
@@ -355,8 +357,8 @@ class NumericRecord(Record):
         The numeric 1-D serialization: the record's numeric leaves, visited in
         canonical leaf order (:meth:`~probpipe.core.named_tree.NamedTree.keys` —
         insertion order, depth-first into nested records), each converted to
-        ``jax.Array`` (a compute boundary — lazy leaves materialise, once),
-        raveled, and concatenated into one dense vector. The inverse is
+        ``jax.Array`` at the compute boundary, raveled, and concatenated into
+        one dense vector. Concrete leaf conversions are memoised. The inverse is
         :meth:`from_vector`.
 
         This is distinct from ``list(record.values())``, which keeps each leaf
@@ -612,7 +614,7 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, s
 
     Children are emitted in the template's field order (matching
     :func:`~probpipe.core.record._record_flatten`), with each non-record leaf
-    converted to ``jax.Array`` through the set-once cache — this is the
+    converted to ``jax.Array`` through the conversion cache — this is the
     compute boundary where native containers materialise. Nested
     ``NumericRecord`` children pass through whole; JAX recurses into them via
     their own registration. The static aux is the

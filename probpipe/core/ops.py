@@ -19,6 +19,7 @@ Usage::
 from __future__ import annotations
 
 import operator
+from math import prod
 from typing import Any
 
 import jax
@@ -115,21 +116,21 @@ def sample(
         return _drawn_at_its_batch_form(
             _workflow_descendants.sample_captured_consumer(captured, key, sample_shape),
             sample_shape,
-            name=dist.name,
-            name_is_auto=dist.name_is_auto,
+            name=getattr(dist, "name", "sample"),
+            name_is_auto=getattr(dist, "name_is_auto", not hasattr(dist, "name")),
         )
     return _drawn_at_its_batch_form(
         dist._sample(key, sample_shape),
         sample_shape,
-        name=dist.name,
-        name_is_auto=dist.name_is_auto,
+        name=getattr(dist, "name", "sample"),
+        name_is_auto=getattr(dist, "name_is_auto", not hasattr(dist, "name")),
     )
 
 
 def _drawn_at_its_batch_form(
     drawn: Any, sample_shape: tuple[int, ...], *, name: str, name_is_auto: bool
 ) -> Any:
-    """Give a multi-draw result the batch form of the draw's kind.
+    """Wrap draws at their kind, retaining the law's naming metadata.
 
     A non-empty ``sample_shape`` puts those leading dimensions on one level named
     for the operation that mints them, ``sample`` (design V.2, V.9). The level is
@@ -142,7 +143,7 @@ def _drawn_at_its_batch_form(
     shape is symbolic until a draw binds it. The batch takes the law's own *name*,
     since the draws are that law's, and carries the law's *name_is_auto* with it:
     the name is a caller's statement exactly when the caller's name for the law
-    was one.
+    was one. A single raw draw takes the same name and flag when wrapped.
 
     A law that built its own batch already named the level, and a term of some
     other kind is left as it is.
@@ -157,8 +158,15 @@ def _drawn_at_its_batch_form(
     from .record import Record
     from .tracked import TrackedTerm
 
-    if not sample_shape or isinstance(drawn, Batch):
+    if isinstance(drawn, Batch):
         return drawn
+
+    if not sample_shape:
+        if isinstance(drawn, TrackedTerm):
+            return drawn
+        from ._workflow_result import _wrap_as_term
+
+        return _wrap_as_term(drawn, SAMPLE_LEVEL, name=name, name_is_auto=name_is_auto)
 
     n_draw_axes = len(sample_shape)
     if isinstance(drawn, Record):
@@ -185,20 +193,18 @@ def _drawn_at_its_batch_form(
         )
 
     if _is_object_array(drawn):
+        if drawn.shape[:n_draw_axes] != tuple(sample_shape):
+            return drawn
         # Stored draws aggregate exactly as a sweep's rows do — each element at
         # its own kind, under the one level the operation mints.
-        aggregate = _make_stack(
-            list(drawn.reshape(-1)),
+        return _make_stack(
+            list(drawn.reshape((prod(sample_shape), *drawn.shape[n_draw_axes:]))),
             batch_shape=tuple(sample_shape),
             level_names=(SAMPLE_LEVEL,),
             field_name=name,
             name=name,
+            name_is_auto=name_is_auto,
         )
-        # An aggregation names its result for the function that produced the rows
-        # and marks that auto. Here the name is the law's, so whether it was a
-        # caller's statement is the law's answer, not this boundary's.
-        object.__setattr__(aggregate, "_name_is_auto", name_is_auto)
-        return aggregate
 
     if isinstance(drawn, TrackedTerm) or not _is_numeric_leaf(drawn):
         return drawn

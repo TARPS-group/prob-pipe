@@ -80,6 +80,61 @@ class TestNumericArrayStoresNativeForm:
             is raw
         )
 
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            # These also inherit Python float/complex, exposing accidental conversion.
+            np.float64(1e100),
+            np.complex128(complex(1e100, 1e100)),
+            # Other NumPy scalar types exercise the same native-storage contract.
+            np.float32(1.25),
+            np.complex64(1 + 2j),
+            np.int64(7),
+            np.bool_(True),
+        ],
+        ids=["float64", "complex128", "float32", "complex64", "int64", "bool"],
+    )
+    def test_numpy_scalars_keep_native_storage_with_jax_x64_disabled(self, raw):
+        # Fix the conversion policy even when the test process enables x64.
+        with jax.enable_x64(False):
+            value = NumericArray("native", raw)
+
+        assert value.value is raw
+        assert value.dtype == raw.dtype
+        assert value.spec == NumericArraySpec((), dtype=raw.dtype)
+        assert np.isfinite(value.value)
+
+    @pytest.mark.parametrize("x64", [False, True], ids=["x32", "x64"])
+    @pytest.mark.parametrize(
+        "raw", [np.float64(0.1), np.float64(1e100)], ids=["rounding", "overflow"]
+    )
+    def test_native_precision_and_jax_conversion_have_separate_boundaries(self, raw, x64):
+        dtype = np.float64 if x64 else np.float32
+        with jax.enable_x64(x64), np.errstate(over="ignore"):
+            value = NumericArray("native", raw)
+            expected = np.asarray(raw, dtype=dtype)
+            converted = value.as_jax()
+            scalar = float(value)
+
+            assert isinstance(converted, jax.Array)
+            assert converted.shape == ()
+            assert converted.dtype == dtype
+            np.testing.assert_array_equal(np.asarray(converted), expected)
+            assert scalar == float(expected)
+            assert value.as_jax() is converted
+
+        if not x64:
+            if raw > np.finfo(np.float32).max:
+                assert np.isposinf(scalar)
+            else:
+                assert scalar != float(raw)
+        assert value.value is raw
+        assert value.dtype == raw.dtype
+        assert value.spec == NumericArraySpec((), dtype=raw.dtype)
+        native = np.asarray(value)
+        assert native.dtype == raw.dtype
+        np.testing.assert_array_equal(native, raw)
+
     def test_a_container_keeps_its_own_metadata(self):
         xr = pytest.importorskip("xarray")
         data = xr.DataArray(np.arange(3.0), dims=["t"], coords={"t": [10, 20, 30]})
@@ -98,15 +153,38 @@ class TestNumericArrayStoresNativeForm:
             np.arange(3.0),
         ).shape == (3,)
 
-    def test_a_bare_scalar_is_normalised(self):
+    @pytest.mark.parametrize("raw", [2, 2.5, 1 + 2j, True], ids=["int", "float", "complex", "bool"])
+    def test_a_bare_scalar_is_normalised(self, raw):
         """It carries no metadata to read, so it is normalised."""
-        assert isinstance(
-            NumericArray(
-                "v",
-                2.5,
-            ).value,
-            jax.Array,
-        )
+        value = NumericArray("v", raw)
+
+        assert isinstance(value.value, jax.Array)
+        assert value.shape == ()
+        np.testing.assert_array_equal(np.asarray(value.value), raw)
+
+    @pytest.mark.parametrize("x64", [False, True], ids=["x32", "x64"])
+    @pytest.mark.parametrize(
+        "scalar_type, raw, dtype32, dtype64",
+        [
+            (int, 2, np.int32, np.int64),
+            (float, 2.5, np.float32, np.float64),
+            (complex, 1 + 2j, np.complex64, np.complex128),
+        ],
+        ids=["int", "float", "complex"],
+    )
+    def test_python_scalar_subclasses_are_normalised(self, scalar_type, raw, dtype32, dtype64, x64):
+        class ScalarSubclass(scalar_type):
+            pass
+
+        with jax.enable_x64(x64):
+            value = NumericArray("subclass", ScalarSubclass(raw))
+
+        dtype = dtype64 if x64 else dtype32
+        assert isinstance(value.value, jax.Array)
+        assert value.shape == ()
+        assert value.dtype == dtype
+        assert value.spec == NumericArraySpec((), dtype=dtype)
+        np.testing.assert_array_equal(np.asarray(value.value), np.asarray(raw, dtype=dtype))
 
     def test_conversion_happens_once_and_is_memoised(self):
         value = NumericArray(
@@ -885,6 +963,24 @@ class TestNumericArrayBatchArrayShim:
 
     def test_dtype_reports_the_store(self):
         assert _batch().dtype == jnp.float32
+
+
+class TestNativeConversionAcrossTransforms:
+    @pytest.mark.parametrize("kind", ["array", "batch"])
+    def test_first_conversion_inside_jit_can_be_reused(self, kind):
+        pd = pytest.importorskip("pandas")
+        native = pd.Series([1.0, 2.0, 3.0])
+        if kind == "array":
+            value = NumericArray("native", native)
+        else:
+            value = NumericArrayBatch("native", native, "row", element_spec=NumericArraySpec(()))
+
+        np.testing.assert_array_equal(jax.jit(lambda: value.as_jax() * 2)(), [2.0, 4.0, 6.0])
+        assert (value.value if kind == "array" else value.values) is native
+        converted = value.as_jax()
+        np.testing.assert_array_equal(converted, [1.0, 2.0, 3.0])
+        assert value.as_jax() is converted
+        np.testing.assert_array_equal(jax.jit(lambda: value.as_jax() + 1)(), [2.0, 3.0, 4.0])
 
 
 class TestANativeBackedBatchCrossesJax:

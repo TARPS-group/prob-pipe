@@ -10,7 +10,9 @@ from __future__ import annotations
 
 from typing import Any
 
+import jax
 import jax.numpy as jnp
+import numpy as np
 
 from .custom_types import Array, ArrayLike
 
@@ -29,6 +31,19 @@ def _as_array(x: Any) -> Array:
             f"Input value: {x!r}\n"
             f"Original error: {e}"
         ) from e
+
+
+def _is_numeric_array(x: object) -> bool:
+    """Return ``True`` if *x* is a JAX or numpy array with a numeric dtype.
+
+    Numpy object arrays (used for generic non-array samples in
+    ``EmpiricalDistribution``) return ``False``.
+    """
+    if isinstance(x, jax.Array):
+        return True
+    if isinstance(x, np.ndarray):
+        return x.dtype != object
+    return False
 
 
 def _is_numpy_scalar(x: Any) -> bool:

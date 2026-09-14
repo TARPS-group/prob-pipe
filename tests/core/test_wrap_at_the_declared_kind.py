@@ -194,16 +194,32 @@ class TestASampleShapeGetsADrawLevel:
 
         assert isinstance(drawn, NumericRecordBatch)
 
-    def test_a_law_that_does_not_prepend_its_draws_is_left_alone(self):
-        """Rather than mis-splitting axes the law never laid out that way."""
+    @pytest.mark.parametrize("kind", ["numeric", "record", "object"])
+    @pytest.mark.parametrize(
+        "shape, sample_shape",
+        [
+            ((2, 7), (5,)),
+            ((5,), (3,)),
+            ((3, 2), (2, 3)),
+            ((6,), (2, 3)),
+            ((), (1,)),
+            ((0, 2), (2, 0)),
+        ],
+        ids=["event-axes", "count", "same-size", "missing-axis", "scalar", "empty"],
+    )
+    def test_a_law_that_does_not_prepend_its_draws_is_left_alone(self, kind, shape, sample_shape):
+        """Mismatched leading axes leave the original draw intact."""
         from probpipe.core.ops import _drawn_at_its_batch_form
 
-        # Leading axes that are not the requested sample_shape: nothing here can
-        # say which axes are draws, so the value is handed back untouched.
-        drawn = _drawn_at_its_batch_form(jnp.zeros((2, 7)), (5,), name="law", name_is_auto=False)
+        if kind == "object":
+            original = np.full(shape, "value", dtype=object)
+        else:
+            values = jnp.zeros(shape)
+            original = Record("law", x=values) if kind == "record" else values
 
-        assert not isinstance(drawn, NumericArray)
-        assert drawn.shape == (2, 7)
+        drawn = _drawn_at_its_batch_form(original, sample_shape, name="law", name_is_auto=False)
+
+        assert drawn is original
 
 
 class TestAnEmptyReturnKeepsItsHostsKind:

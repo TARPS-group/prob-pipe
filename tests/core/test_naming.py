@@ -18,6 +18,8 @@ import jax.numpy as jnp
 import pytest
 
 from probpipe import (
+    DistributionArray,
+    EventTemplate,
     Function,
     FunctionBatch,
     Normal,
@@ -32,6 +34,7 @@ from probpipe import (
     Record,
     RecordBatch,
 )
+from probpipe.core._workflow_result import _wrap_as_term
 from probpipe.core.event_template import NumericEventTemplate
 from probpipe.core.ops import (
     log_prob,
@@ -194,15 +197,13 @@ class TestADerivedNameSaysSo:
 
 
 class TestAnOperationNamesItsResult:
-    """What an operation hands back is named, and marked auto — a caller named
-    the *inputs*, not this."""
+    """Sampling retains supplied names; summaries and densities derive theirs."""
 
     LAW = Normal(0.0, 1.0, name="height")
 
     @pytest.mark.parametrize(
         ("label", "compute"),
         [
-            ("sample", lambda d: sample(d, key=KEY)),
             ("mean", lambda d: mean(d)),
             ("variance", lambda d: variance(d)),
             ("log_prob", lambda d: log_prob(d, value=jnp.asarray(0.0))),
@@ -214,13 +215,7 @@ class TestAnOperationNamesItsResult:
         assert (result.name, result.name_is_auto) == (label, True)
 
     def test_a_record_law_result_is_named_for_the_law(self):
-        """Recorded rather than endorsed.
-
-        A record-drawing law builds its own value, already named for itself, and
-        the output boundary keeps a tracked term as it is. So the same operation
-        names its result for the operation over a scalar law and for the law over
-        a record-valued one.
-        """
+        """An already tracked draw retains the name and flag its producer set."""
         joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="joint")
 
         drawn = sample(joint, key=KEY)
@@ -231,16 +226,16 @@ class TestAnOperationNamesItsResult:
         """The load-bearing half: an invented name is a placeholder, so a later
         operation may replace it without discarding a caller's statement."""
         for compute in (
-            lambda d: sample(d, key=KEY),
             lambda d: mean(d),
             lambda d: variance(d),
         ):
             assert compute(self.LAW).name_is_auto is True
 
-    def test_a_name_taken_from_the_law_carries_the_laws_flag(self):
-        """A batch of draws is named for the law, so it is a caller's statement
+    @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
+    def test_a_name_taken_from_the_law_carries_the_laws_flag(self, sample_shape):
+        """Raw draws are named for the law, so it is a caller's statement
         exactly when the caller's name for the law was one."""
-        given = sample(Normal(0.0, 1.0, name="height"), sample_shape=(4,), key=KEY)
+        given = sample(Normal(0.0, 1.0, name="height"), sample_shape=sample_shape, key=KEY)
 
         assert (given.name, given.name_is_auto) == ("height", False)
 
@@ -394,6 +389,100 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
         scored = density_op(self.LAW, jnp.zeros(3))
 
         assert not isinstance(scored, NumericArrayBatch)
+
+
+class TestRawDrawNaming:
+    @pytest.mark.parametrize("name_is_auto", [False, True], ids=["given", "derived"])
+    @pytest.mark.parametrize(
+        "make, kind, levels",
+        [
+            pytest.param(lambda: 2.0, NumericArray, None, id="numeric"),
+            pytest.param(lambda: {"x": 2.0}, Record, None, id="mapping"),
+            pytest.param(lambda: "tag", Opaque, None, id="opaque"),
+            pytest.param(lambda: lambda: 2.0, Function, None, id="callable"),
+            pytest.param(lambda: [], OpaqueBatch, ("sample",), id="empty-list"),
+            pytest.param(lambda: (), OpaqueBatch, ("sample",), id="empty-tuple"),
+            pytest.param(lambda: [1.0, 2.0], NumericArrayBatch, ("sample",), id="numeric-list"),
+            pytest.param(lambda: ("a", "b"), OpaqueBatch, ("sample",), id="opaque-tuple"),
+            pytest.param(lambda: [lambda: 1.0], FunctionBatch, ("sample",), id="callable-list"),
+            pytest.param(
+                lambda: [{"x": 1.0}, {"x": 2.0}],
+                NumericRecordBatch,
+                ("sample",),
+                id="numeric-record-list",
+            ),
+            pytest.param(
+                lambda: [{"x": "a"}, {"x": "b"}], RecordBatch, ("sample",), id="record-list"
+            ),
+            pytest.param(
+                lambda: [_named("NumericArrayBatch")],
+                NumericArrayBatch,
+                ("sample", "lvl"),
+                id="numeric-batch-list",
+            ),
+            pytest.param(
+                lambda: [_named("OpaqueBatch")],
+                OpaqueBatch,
+                ("sample", "lvl"),
+                id="opaque-batch-list",
+            ),
+            pytest.param(
+                lambda: [_named("NumericRecordBatch")],
+                NumericRecordBatch,
+                ("sample", "lvl"),
+                id="record-batch-list",
+            ),
+            pytest.param(
+                lambda: [Normal(0.0, 1.0, name="component")],
+                DistributionArray,
+                None,
+                id="distribution-list",
+            ),
+        ],
+    )
+    def test_a_raw_draw_takes_the_laws_name_without_renaming_levels(
+        self, name_is_auto, make, kind, levels
+    ):
+        class Sampler:
+            name = "law"
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key, sample_shape=()):
+                return make()
+
+        law = Sampler()
+        law.name_is_auto = name_is_auto
+        result = sample(law, key=KEY)
+
+        assert isinstance(result, kind)
+        assert (result.name, result.name_is_auto) == ("law", name_is_auto)
+        assert result.provenance is not None
+        if levels is not None:
+            assert result.level_names == levels
+
+    @pytest.mark.parametrize("name_is_auto", [False, True], ids=["given", "derived"])
+    @pytest.mark.parametrize("value", [2.0, {"x": 2.0}], ids=["scalar", "mapping"])
+    def test_a_declared_raw_result_takes_the_requested_name(self, name_is_auto, value):
+        template = EventTemplate(x=NumericArraySpec(()))
+        result = _wrap_as_term(value, "sample", template, name="law", name_is_auto=name_is_auto)
+
+        assert isinstance(result, Record)
+        assert (result.name, result.name_is_auto) == ("law", name_is_auto)
+        assert result.event_template == template
+        assert float(result["x"]) == 2.0
+
+    def test_a_raw_draws_name_is_validated_by_its_constructor(self):
+        class Sampler:
+            name = ""
+            _sampling_cost = "low"
+            _preferred_orchestration = None
+
+            def _sample(self, key, sample_shape=()):
+                return 2.0
+
+        with pytest.raises(TypeError, match=r"NumericArray\.__init__ must set a non-empty name"):
+            sample(Sampler(), key=KEY)
 
 
 class TestEveryAggregateIsNamedForItsFunction:
