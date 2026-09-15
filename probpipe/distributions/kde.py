@@ -92,7 +92,7 @@ class KDEDistribution(TFPDistribution):
         n, d = samples.shape
         self._samples = samples
         self._d = d
-        name, name_is_auto = auto_name(name, "kde")
+        name = auto_name(name, "kde")
 
         # Multi-field template support: when the caller supplies a template
         # with more than one field, preset ``_event_template`` so that
@@ -115,7 +115,7 @@ class KDEDistribution(TFPDistribution):
                 )
             object.__setattr__(self, "_event_template", event_template)
 
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        super().__init__(name=name)
 
         # Weights
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)

@@ -489,7 +489,6 @@ class NumericRecordDistribution(RecordDistribution):
             placeholder = Record(
                 self.name,
                 {name: jnp.zeros(_field_event_shape(tpl, name)) for name in tpl.fields},
-                name_is_auto=True,
             )
             td = jax.tree.structure(placeholder)
         object.__setattr__(self, "_treedef", td)
@@ -563,7 +562,7 @@ class NumericRecordDistribution(RecordDistribution):
 
             # ``_reconstruct_from_vector`` selects single (NumericRecord) vs
             # batched (NumericRecordBatch) from the rank of ``flat``.
-            return _reconstruct_from_vector("value", template, flat, name_is_auto=True)
+            return _reconstruct_from_vector("value", template, flat)
         # Single-field path
         if template is None or not template.fields:
             return flat[..., 0]
@@ -673,8 +672,8 @@ class BootstrapDistribution(
             weights=weights,
             log_weights=log_weights,
         )
-        name, name_is_auto = auto_name(name, "bootstrap_dist")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "bootstrap_dist")
+        super().__init__(name=name)
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -953,10 +952,8 @@ class FlattenedDistributionView(FlatNumericRecordDistribution):
 
     def __init__(self, base: Distribution):
         self._base = base
-        # Carry the base's identity through; ``base.name`` is guaranteed
-        # non-empty by the TrackedTerm metaclass check, and the view mirrors
-        # whether that name was auto-derived.
-        self._init_tracked(base.name, name_is_auto=base.name_is_auto)
+        # The view preserves the base's construction-time name.
+        self._init_tracked(base.name)
 
     @property
     def event_shape(self) -> tuple[int, ...]:
@@ -1065,7 +1062,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             # ``_reconstruct_from_vector`` selects single (NumericRecord, flat
             # is 1-D) vs batched (NumericRecordBatch, batch_shape ==
             # sample_shape) from the rank of ``flat``.
-            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
+            return _reconstruct_from_vector(self.name, self.event_template, flat)
 
         extra_methods["_sample"] = _sample
 
@@ -1095,7 +1092,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 self._base._mean(),
                 event_shape=self._base.event_shape,
             )
-            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
+            return _reconstruct_from_vector(self.name, self.event_template, flat)
 
         extra_methods["_mean"] = _mean
 
@@ -1109,7 +1106,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
                 self._base._variance(),
                 event_shape=self._base.event_shape,
             )
-            return _reconstruct_from_vector(self.name, self.event_template, flat, name_is_auto=True)
+            return _reconstruct_from_vector(self.name, self.event_template, flat)
 
         extra_methods["_variance"] = _variance
 
@@ -1171,7 +1168,7 @@ def _numeric_record_distribution_view_class_for_base(base: Distribution) -> type
             def _f_on_flat(flat_row):
                 from ._numeric_record import _reconstruct_from_vector
 
-                return f(_reconstruct_from_vector(dist_name, template, flat_row, name_is_auto=True))
+                return f(_reconstruct_from_vector(dist_name, template, flat_row))
 
             evals = jax.vmap(_f_on_flat)(flat_samples)
             rd = return_dist if return_dist is not None else _base.RETURN_APPROX_DIST
@@ -1243,8 +1240,8 @@ class NumericRecordDistributionView(NumericRecordDistribution):
         if name is not None:
             self._init_tracked(name)
         else:
-            # Fall back to the base's name, mirroring its auto flag.
-            self._init_tracked(base.name, name_is_auto=base.name_is_auto)
+            # Fall back to the base's name.
+            self._init_tracked(base.name)
         # Pre-set the user-supplied template so the auto-build path in
         # ``NumericRecordDistribution.event_template`` is skipped.
         object.__setattr__(self, "_event_template", template)

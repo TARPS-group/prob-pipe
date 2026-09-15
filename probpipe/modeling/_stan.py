@@ -160,8 +160,8 @@ class StanModel(ProbabilisticModel, SupportsLogProb):
         self._stan_data = data
         # Default to the class name when the caller does not supply one;
         # the default is an auto-derived name.
-        name, name_is_auto = auto_name(name or None, "StanModel")
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        name = auto_name(name or None, "StanModel")
+        self._init_tracked(name)
 
         # Compile and instantiate. BridgeStan's constructor takes the
         # ``.stan`` path directly (compiling on demand) and serializes a
@@ -267,7 +267,7 @@ class _UnconstrainedStanView(Distribution[Any], SupportsLogProb):
         self._model = model
         # ``base.name`` is guaranteed non-empty by the TrackedTerm
         # metaclass check — wrap with an ``_unconstrained`` suffix (derived, so auto).
-        self._init_tracked(f"{model.name}_unconstrained", name_is_auto=True)
+        self._init_tracked(f"{model.name}_unconstrained")
 
     @property
     def event_shape(self) -> tuple[int, ...]:

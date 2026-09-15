@@ -1076,7 +1076,7 @@ class TestTheProbeModelsItsExecutorsTransform:
     def _returns_a_batch(**controls):
         def body(x):
             return RecordBatch.stack(
-                [Record("r", {"y": x * k}, name_is_auto=True) for k in (1.0, 2.0, 3.0)],
+                [Record("r", {"y": x * k}) for k in (1.0, 2.0, 3.0)],
                 level_name="k",
             )
 
@@ -1139,7 +1139,7 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         def body(x, y):
             return RecordBatch.stack(
-                [Record("r", {"z": x * k + y}, name_is_auto=True) for k in (1.0, 2.0)],
+                [Record("r", {"z": x * k + y}) for k in (1.0, 2.0)],
                 level_name="k",
             )
 
@@ -1235,7 +1235,7 @@ class TestTheProbeModelsItsExecutorsTransform:
         of that path rather than of the mapped one.
         """
         law = RecordEmpiricalDistribution(
-            Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0}, name_is_auto=True)
+            Record("r", {"a": jnp.arange(6.0), "b": jnp.arange(6.0) + 10.0})
         )
         totals = Function(func=lambda r: r["a"] + r["b"], n_broadcast_samples=6)
         sequential = Function(
@@ -1256,12 +1256,12 @@ class TestTheProbeModelsItsExecutorsTransform:
 
         def body(p, x):
             return RecordBatch.stack(
-                [Record("r", {"y": p["a"] * x * k}, name_is_auto=True) for k in (1.0, 2.0)],
+                [Record("r", {"y": p["a"] * x * k}) for k in (1.0, 2.0)],
                 level_name="k",
             )
 
         rows = RecordBatch.stack(
-            [Record("p", {"a": jnp.asarray(float(i))}, name_is_auto=True) for i in range(3)],
+            [Record("p", {"a": jnp.asarray(float(i))}) for i in range(3)],
             level_name="row",
         )
         nested = Function(func=body, n_broadcast_samples=8)

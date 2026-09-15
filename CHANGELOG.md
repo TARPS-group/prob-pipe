@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- Names are set at construction and preserved by structural transforms;
+  `with_name` is the sole renaming operation. The `name_is_auto` attribute,
+  constructor keywords, and carried state are removed. `auto_name` now returns
+  only the resolved string. Existing pickles carrying the removed state are
+  unsupported.
+
 - **A batch's name is its first argument, and construction takes the axis
   partition rather than the sizes (#398).** Two changes to the same signatures.
 

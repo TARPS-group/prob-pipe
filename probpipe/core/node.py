@@ -253,11 +253,6 @@ class Function(Node, TrackedTerm, Annotated):
         orchestration.
     name : str or None
         Display name; defaults to ``func.__name__``.
-    name_is_auto : bool
-        Whether *name* is auto-derived rather than user-given. An omitted name is
-        auto-derived regardless; this states it for a caller that derives one, as
-        the output boundary does when it names a returned callable after the
-        function that produced it.
     bind : dict or None
         Construction-time keyword bindings (defaults / config).
     module : Module or None
@@ -319,7 +314,6 @@ class Function(Node, TrackedTerm, Annotated):
         func: Callable,
         workflow_kind: WorkflowKind = WorkflowKind.DEFAULT,
         name: str | None = None,
-        name_is_auto: bool = False,
         bind: dict[str, Any] | None = None,  # construction-time bindings (defaults/config)
         module: Any | None = None,  # typically a Module; kept as Any to avoid import cycles
         n_broadcast_samples: int | None = None,  # default number of samples for broadcasting
@@ -340,15 +334,12 @@ class Function(Node, TrackedTerm, Annotated):
             )
         signature_info = _workflow_call.make_signature_info(func)
         implementation = _CallableFunctionImplementation(func)
-        resolved_name, resolved_is_auto = auto_name(
-            name, getattr(func, "__name__", self.__class__.__name__)
-        )
+        resolved_name = auto_name(name, getattr(func, "__name__", self.__class__.__name__))
         self._initialize(
             implementation=implementation,
             signature_info=signature_info,
             workflow_kind=workflow_kind,
             name=resolved_name,
-            name_is_auto=name_is_auto or resolved_is_auto,
             bind=bind,
             module=module,
             n_broadcast_samples=n_broadcast_samples,
@@ -395,7 +386,6 @@ class Function(Node, TrackedTerm, Annotated):
             signature_info=_workflow_call.make_signature_info_from_signature(signature),
             workflow_kind=workflow_kind,
             name=name,
-            name_is_auto=False,
             bind=bind,
             module=module,
             n_broadcast_samples=n_broadcast_samples,
@@ -416,7 +406,6 @@ class Function(Node, TrackedTerm, Annotated):
         signature_info: _workflow_call.WorkflowSignatureInfo,
         workflow_kind: WorkflowKind,
         name: str,
-        name_is_auto: bool,
         bind: Mapping[str, Any] | None,
         module: Any | None,
         n_broadcast_samples: int | None,
@@ -458,7 +447,7 @@ class Function(Node, TrackedTerm, Annotated):
         )
 
         set_attribute = partial(object.__setattr__, self)
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        self._init_tracked(name)
         set_attribute("_annotations", {})
         set_attribute("_implementation", implementation)
         set_attribute("_signature_info", signature_info)
@@ -1120,7 +1109,6 @@ class Function(Node, TrackedTerm, Annotated):
                                 "draw",
                                 element_spec=template,
                                 axes_per_level=(1,),
-                                name_is_auto=True,
                             )
                         else:
                             root_probe = next(iter(columns.values()))

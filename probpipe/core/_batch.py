@@ -38,6 +38,9 @@ Levels selected whole are left out, and the levels that appear are listed in the
 batch's own order, so a derived name is a function of what the view selects: two
 routes to one selection read alike, and two selections never do.
 
+A view receives its name when selected. Renaming its levels preserves that
+name; the new level names apply when naming subsequent selections.
+
 **Storage is the concrete class's business, and only storage.** This module
 owns the level algebra: the shape invariants, the naming rules, index
 normalization for :meth:`Batch.at_levels`, and the identity a view derives. A
@@ -386,7 +389,6 @@ class Batch[E](TrackedTerm, ABC):
 
     __slots__ = (
         "_name",
-        "_name_is_auto",
         "_provenance",
         "_root_name",
         "_root_selection",
@@ -417,7 +419,6 @@ class Batch[E](TrackedTerm, ABC):
         spec: BatchSpec,
         *,
         name: str,
-        name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         """Store the batch's *spec* and identity (constructor helper).
@@ -454,7 +455,7 @@ class Batch[E](TrackedTerm, ABC):
         object.__setattr__(self, "_root_name", name)
         object.__setattr__(self, "_root_spec", spec)
         object.__setattr__(self, "_root_selection", _whole_of(spec))
-        self._init_tracked(name, name_is_auto=name_is_auto, provenance=provenance)
+        self._init_tracked(name, provenance=provenance)
 
     # -- the specification --------------------------------------------------
 
@@ -522,7 +523,7 @@ class Batch[E](TrackedTerm, ABC):
         -------
         Self
             A shallow copy over the same axes and elements, specified over the new
-            level names, with its own derived name re-read under them.
+            level names, preserving its own name.
 
         Raises
         ------
@@ -531,8 +532,8 @@ class Batch[E](TrackedTerm, ABC):
         ValueError
             If a level is renamed twice with different names, or a new name is
             empty, not an identifier, collides with a level that is being kept, is
-            the target of two renames, or — renaming a view — belongs to a level
-            the view derives its name from but no longer carries.
+            the target of two renames, or belongs to a dropped root level still
+            used to name subsequent selections from a view.
         TypeError
             If a new name is not a string.
 
@@ -575,7 +576,7 @@ class Batch[E](TrackedTerm, ABC):
     def with_name(self, name: str) -> Self:
         """Rename the batch, which becomes the root its view names derive from.
 
-        A user-given name overrides derivation, so the copy selects all of
+        The new name starts a new view root, so the copy selects all of
         itself: its own name is *name*, and a view of it reads
         ``name[level=...]`` rather than carrying any selection the original had
         accumulated. This is the way to rename a level a view derives its name
@@ -584,8 +585,7 @@ class Batch[E](TrackedTerm, ABC):
         Parameters
         ----------
         name : str
-            The new name, taken as user-given: the copy's ``name_is_auto`` is
-            ``False``, so no later transform re-derives it.
+            The new name, preserved by later transforms.
 
         Returns
         -------
@@ -783,7 +783,7 @@ class Batch[E](TrackedTerm, ABC):
 
         *name* is the identity this class derived for the element view, and the
         same split governs it as governs provenance below. A batch that
-        *materializes* an element gives it that name, marked auto-derived. A batch
+        *materializes* an element gives it that name. A batch
         that *stores* its elements hands back the stored object under the name it
         already carries: renaming it would mean returning a copy, and an object
         placed in a batch by name already means something. An element that is a
@@ -810,7 +810,7 @@ class Batch[E](TrackedTerm, ABC):
 
         *spec* is the view's own specification: the same ``element_spec`` over
         the surviving levels, with every integer-indexed axis already removed.
-        *name* is the derived identity, taken marked auto-derived. A subclass
+        *name* is the derived identity. A subclass
         stores both as given rather than recomputing either; the names a further
         view derives from are re-pointed at this view's own root afterwards.
 
@@ -897,7 +897,12 @@ class Batch[E](TrackedTerm, ABC):
 
         selection = self._compose_selection(normalized)
         label = _render_index(self._root_spec, selection)
-        name = f"{self._root_name}[{label}]" if label else self._root_name
+        if selection == self._root_selection:
+            name = self.name
+        elif label:
+            name = f"{self._root_name}[{label}]"
+        else:
+            name = self._root_name
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
@@ -911,11 +916,6 @@ class Batch[E](TrackedTerm, ABC):
         object.__setattr__(view, "_root_name", self._root_name)
         object.__setattr__(view, "_root_spec", self._root_spec)
         object.__setattr__(view, "_root_selection", selection)
-        if not label:
-            # Selecting the whole batch derives nothing, so the view keeps the
-            # name it came with: a user-given name stays user-given and is not
-            # re-derived by a later transform.
-            object.__setattr__(view, "_name_is_auto", self._name_is_auto)
         return self._inherit_provenance(view)
 
     def _compose_selection(self, normalized: list[int | range]) -> tuple[int | range, ...]:
@@ -985,9 +985,8 @@ class Batch[E](TrackedTerm, ABC):
         here: it runs no ``__init__`` and survives this class's immutability
         guard, so nothing is assumed about a subclass's constructor.
 
-        The names the copy's own name derives from are renamed with it, and its
-        name is re-derived, so a renamed view and any view taken from it read the
-        level the same way. The copy carries no provenance of its own beyond the
+        The root's level names are updated for subsequent indexing, while the
+        copy keeps its current name. The copy carries no provenance beyond the
         rename: the record of how the batch it was renamed from arose belongs to
         that batch.
 
@@ -1000,19 +999,14 @@ class Batch[E](TrackedTerm, ABC):
         if len(set(root_names)) != len(root_names):
             taken = sorted({name for name in root_names if root_names.count(name) > 1})
             raise ValueError(
-                f"level name {taken[0]!r} is already used by a level this view derives its "
-                f"name from but no longer carries; renaming onto it would make the derived "
-                f"name ambiguous. Rename it on the batch this view came from, or give the "
-                f"level another name"
+                f"level name {taken[0]!r} is already used by a dropped level in this view's "
+                f"root selection; reusing it would make names of subsequent selections "
+                f"ambiguous. Rename the level on the original batch, or give it another name"
             )
 
         renamed = self._shallow_copy()
         object.__setattr__(renamed, "_spec", replace(self._spec, level_names=level_names))
         object.__setattr__(renamed, "_root_spec", replace(self._root_spec, level_names=root_names))
-        label = _render_index(renamed._root_spec, self._root_selection)
-        object.__setattr__(
-            renamed, "_name", f"{self._root_name}[{label}]" if label else self._root_name
-        )
         object.__setattr__(renamed, "_provenance", None)
         renamed.with_provenance(Provenance.create("with_level_names", parents=[self]))
         return renamed

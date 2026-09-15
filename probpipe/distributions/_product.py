@@ -222,7 +222,6 @@ class ProductDistribution(
         cls,
         *positional,
         name: str | None = None,
-        _name_is_auto: bool | None = None,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
         **components,
@@ -240,7 +239,6 @@ class ProductDistribution(
         self,
         *positional,
         name: str | None = None,
-        _name_is_auto: bool | None = None,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
         **components,
@@ -266,16 +264,9 @@ class ProductDistribution(
                     f"All leaf components must be Distribution instances, got {type(leaf).__name__}"
                 )
         self._components = resolved
-        name, name_is_auto = auto_name(name, "product(" + ",".join(resolved.keys()) + ")")
-        # A reconstruction passes the stored flag: it always supplies *name*, so
-        # the derivation above would call a once-auto-derived name user-given.
-        # The three underscore-prefixed keywords are the reconstruction's only,
-        # and are documented on ``Distribution.__init__``.
-        if _name_is_auto is not None:
-            name_is_auto = _name_is_auto
+        name = auto_name(name, "product(" + ",".join(resolved.keys()) + ")")
         super().__init__(
             name=name,
-            name_is_auto=name_is_auto,
             _provenance=_provenance,
             _annotations=_annotations,
         )
@@ -289,7 +280,6 @@ class ProductDistribution(
             (
                 dict(self._components),
                 self._name,
-                self._name_is_auto,
                 self._provenance,
                 getattr(self, "_annotations", None),
             ),
@@ -331,7 +321,6 @@ class ProductDistribution(
                 "sample",
                 element_spec=self.event_template,
                 axes_per_level=(len(sample_shape),),
-                name_is_auto=True,
             )
 
         names = list(self._components.keys())
@@ -344,7 +333,7 @@ class ProductDistribution(
                 if isinstance(comp, dict)
                 else comp._sample(subkey, ())
             )
-        return Record(self.name, fields, name_is_auto=True)
+        return Record(self.name, fields)
 
     # -- Log-prob -----------------------------------------------------------
 
@@ -463,11 +452,6 @@ class ProductDistribution(
     ) -> ProductDistribution:
         new_components = _prune_leaves(self._components, set(observed_leaves.keys()))
         result = ProductDistribution(**new_components, name=self._name)
-        # The result inherits this joint's name, so it mirrors this joint's
-        # auto flag; the constructor would otherwise treat the inherited
-        # (possibly auto-derived) name as user-given. Set directly — the
-        # **components signature leaves no room for a name_is_auto keyword.
-        object.__setattr__(result, "_name_is_auto", self._name_is_auto)
         conditioned_names = [" > ".join(path) for path in observed_leaves]
         result.with_provenance(
             Provenance.create(
@@ -492,16 +476,11 @@ class ProductDistribution(
         return f"ProductDistribution({comp_str}{name_str})"
 
 
-def _unpickle_product_distribution(components, name, name_is_auto, provenance, annotations=None):
-    """Reconstruct a ProductDistribution (or dynamic subclass) from its components.
-
-    ``annotations`` is optional so a pickle written before they were serialized
-    still loads.
-    """
+def _unpickle_product_distribution(components, name, provenance, annotations):
+    """Reconstruct a ProductDistribution (or dynamic subclass) from its components."""
     return ProductDistribution(
         **components,
         name=name,
-        _name_is_auto=name_is_auto,
         _provenance=provenance,
         _annotations=annotations,
     )
@@ -645,7 +624,7 @@ def _sample_nested(name: str, components: dict, key) -> Record:
             if isinstance(comp, dict)
             else comp._sample(subkey, ())
         )
-    return Record(name, fields, name_is_auto=True)
+    return Record(name, fields)
 
 
 def _map_components(name: str, components: dict, fn) -> Record:
@@ -656,7 +635,7 @@ def _map_components(name: str, components: dict, fn) -> Record:
             fields[field_name] = _map_components(field_name, comp, fn)
         else:
             fields[field_name] = fn(comp)
-    return Record(name, fields, name_is_auto=True)
+    return Record(name, fields)
 
 
 # ---------------------------------------------------------------------------

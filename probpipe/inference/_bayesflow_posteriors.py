@@ -186,7 +186,7 @@ class BayesFlowModel(Distribution, SupportsConditioning):
         self._bijectors = bijectors or {}
         # The TrackedTerm metaclass check requires a non-empty name; the
         # derived default is an auto name.
-        self._init_tracked(f"BayesFlowModel({method})", name_is_auto=True)
+        self._init_tracked(f"BayesFlowModel({method})")
 
     @property
     def prior(self) -> Distribution:

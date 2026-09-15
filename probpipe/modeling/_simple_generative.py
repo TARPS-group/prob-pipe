@@ -97,8 +97,8 @@ class SimpleGenerativeModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsSampl
         self._likelihood = likelihood
         # Default to the class name when the caller does not supply one;
         # the default is an auto-derived name.
-        name, name_is_auto = auto_name(name or None, "SimpleGenerativeModel")
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        name = auto_name(name or None, "SimpleGenerativeModel")
+        self._init_tracked(name)
 
     # -- Distribution interface ---------------------------------------------
 

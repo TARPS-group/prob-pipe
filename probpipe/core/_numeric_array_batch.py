@@ -41,8 +41,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         The batch's name, **required**, as a :class:`~probpipe.Record`'s and an
         :class:`~probpipe.Opaque`'s are. A batch is what an operation hands back,
         and the name is what says which one it is; a class-name default would name
-        every batch in a pipeline alike. A caller that derives one says so with
-        *name_is_auto*.
+        every batch in a pipeline alike.
     values : array-like
         One array holding every element, shaped ``(*batch_shape, *event_shape)``.
         Stored verbatim in its native form, as a :class:`NumericArray`'s value
@@ -58,9 +57,6 @@ class NumericArrayBatch(Batch[NumericArray]):
         names as there are batch axes. The *sizes* are read off the elements
         rather than restated here — they are already fixed by the data, so the
         only thing left to say is where one level ends and the next begins.
-    name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given — set by an
-        operation that derives one, as a view does for a selected sub-batch.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -104,7 +100,6 @@ class NumericArrayBatch(Batch[NumericArray]):
         *,
         element_spec: NumericArraySpec,
         axes_per_level: Iterable[int] | None = None,
-        name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         if not isinstance(element_spec, NumericArraySpec):
@@ -161,7 +156,6 @@ class NumericArrayBatch(Batch[NumericArray]):
         self._init_batch(
             BatchSpec(element_spec, groups, names),
             name=name,
-            name_is_auto=name_is_auto,
             provenance=provenance,
         )
 
@@ -234,7 +228,7 @@ class NumericArrayBatch(Batch[NumericArray]):
 
         The materializing side of both rules
         :meth:`~probpipe.core._batch.Batch._element_at` states: the element
-        takes the derived *name*, marked auto, and inherits this batch's
+        takes the derived *name*, and inherits this batch's
         provenance. Selection goes through the backend, since ``[]`` is
         positional only on a numpy-protocol container.
         """
@@ -242,7 +236,6 @@ class NumericArrayBatch(Batch[NumericArray]):
             NumericArray(
                 name,
                 _take_at(self._values, index),
-                name_is_auto=True,
                 spec=self.element_spec,
             )
         )
@@ -259,7 +252,7 @@ class NumericArrayBatch(Batch[NumericArray]):
         """
         view = object.__new__(self._view_type)
         object.__setattr__(view, "_values", _take_at(self._values, index))
-        view._init_batch(spec, name=name, name_is_auto=True)
+        view._init_batch(spec, name=name)
         return view
 
 
@@ -276,7 +269,7 @@ def _numeric_array_batch_flatten(batch: NumericArrayBatch):
     ``__jax_array__`` is ever consulted, so a pandas- or xarray-backed batch
     could not enter a trace at all.
     """
-    return [batch.as_jax()], (batch._spec, batch._name, batch._name_is_auto)
+    return [batch.as_jax()], (batch._spec, batch._name)
 
 
 def _numeric_array_batch_unflatten(aux, children):
@@ -291,7 +284,7 @@ def _numeric_array_batch_unflatten(aux, children):
     - **Every batch axis removed**: the value is one element, so a
       :class:`NumericArray` is returned.
     """
-    spec, name, name_is_auto = aux
+    spec, name = aux
     (values,) = children
     element_spec = spec.element_spec
     event_rank = len(element_spec.shape)
@@ -300,7 +293,7 @@ def _numeric_array_batch_unflatten(aux, children):
         # A skeleton or sentinel has no shape to measure; rebuilt verbatim.
         view = object.__new__(NumericArrayBatch)
         object.__setattr__(view, "_values", values)
-        view._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        view._init_batch(spec, name=name)
         return view
     # The element's own axes are not the transform's to change. A rank check
     # alone would admit a store whose trailing axes no longer match what the
@@ -318,10 +311,10 @@ def _numeric_array_batch_unflatten(aux, children):
     if surviving == tuple(spec.batch_shape):
         view = object.__new__(NumericArrayBatch)
         object.__setattr__(view, "_values", values)
-        view._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        view._init_batch(spec, name=name)
         return view
     if not surviving:
-        return NumericArray(name, values, name_is_auto=name_is_auto, spec=element_spec)
+        return NumericArray(name, values, spec=element_spec)
     raise ValueError(
         f"a transform left this NumericArrayBatch over {surviving} where its levels account "
         f"for {tuple(spec.batch_shape)}. A batch keeps every batch axis or removes all of "
@@ -349,7 +342,7 @@ class _MappedBatchStore:
     Private and short-lived: wrapped and unwrapped within one call.
     """
 
-    __slots__ = ("axis_groups", "element_spec", "level_names", "name", "name_is_auto", "store")
+    __slots__ = ("axis_groups", "element_spec", "level_names", "name", "store")
 
     def __init__(
         self,
@@ -360,14 +353,12 @@ class _MappedBatchStore:
         element_spec: NumericArraySpec,
         level_names: tuple[str, ...],
         axis_groups: tuple[tuple[int, ...], ...],
-        name_is_auto: bool,
     ):
         self.store = store
         self.element_spec = element_spec
         self.level_names = level_names
         self.axis_groups = axis_groups
         self.name = name
-        self.name_is_auto = name_is_auto
 
     @classmethod
     def of(cls, value: NumericArrayBatch | NumericArray) -> _MappedBatchStore:
@@ -379,7 +370,6 @@ class _MappedBatchStore:
                 element_spec=value.element_spec,
                 level_names=tuple(value.level_names),
                 axis_groups=tuple(value.axis_groups),
-                name_is_auto=value._name_is_auto,
             )
         if isinstance(value, NumericArray):
             element_spec = value.spec
@@ -393,7 +383,6 @@ class _MappedBatchStore:
                 element_spec=element_spec,
                 level_names=(),
                 axis_groups=(),
-                name_is_auto=value.name_is_auto,
             )
         raise TypeError(
             f"NumericArrayBatch mapping transform carries one NumericArray or a "
@@ -407,12 +396,11 @@ def _mapped_batch_store_flatten(carried: _MappedBatchStore):
         carried.level_names,
         carried.axis_groups,
         carried.name,
-        carried.name_is_auto,
     )
 
 
 def _mapped_batch_store_unflatten(aux, children) -> _MappedBatchStore:
-    element_spec, level_names, axis_groups, name, name_is_auto = aux
+    element_spec, level_names, axis_groups, name = aux
     (store,) = children
     # No rank check, deliberately: the added axis is the point, and the caller
     # that added it is the one that can name it.
@@ -422,7 +410,6 @@ def _mapped_batch_store_unflatten(aux, children) -> _MappedBatchStore:
         element_spec=element_spec,
         level_names=level_names,
         axis_groups=axis_groups,
-        name_is_auto=name_is_auto,
     )
 
 

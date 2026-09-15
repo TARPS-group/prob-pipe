@@ -214,7 +214,7 @@ class _RecordDistributionView(Distribution):
             ) from exc
         # Bypass Distribution.__init__ validation; the view's name is
         # derived from the field key, not user-supplied, so it is auto.
-        self._init_tracked("/".join(key_path), name_is_auto=True)
+        self._init_tracked("/".join(key_path))
         self._parent = parent
         self._key = key_path[-1]
         self._key_path = key_path
@@ -335,7 +335,7 @@ class _RecordDistributionView(Distribution):
         from ._numeric_record import _reconstruct_from_vector
 
         result = _reconstruct_from_vector(
-            self._parent.name, self._parent.event_template, jnp.asarray(draws), name_is_auto=True
+            self._parent.name, self._parent.event_template, jnp.asarray(draws)
         )
         return jnp.asarray(self._extract(result))
 

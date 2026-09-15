@@ -176,8 +176,8 @@ class SequentialJointDistribution(
         self._raw_components: dict[str, Distribution | Callable[..., Distribution]] = dict(
             components
         )
-        name, name_is_auto = auto_name(name, "sequential(" + ",".join(components.keys()) + ")")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "sequential(" + ",".join(components.keys()) + ")")
+        super().__init__(name=name)
         self._conditioned_names: frozenset[str] = frozenset()
         self._conditioned_values: dict[str, Array] = {}
         self._sampleable_error: str | None = None
@@ -338,9 +338,8 @@ class SequentialJointDistribution(
                 "sample",
                 element_spec=self.event_template,
                 axes_per_level=(len(sample_shape),),
-                name_is_auto=True,
             )
-        return Record(self.name, fields, name_is_auto=True)
+        return Record(self.name, fields)
 
     def _eval_log_prob(self, value, *, components: str) -> Array:
         """Evaluate log-density over selected components.
@@ -427,16 +426,13 @@ class SequentialJointDistribution(
         samples.  This returns the prototype (prior-evaluated) means
         as an approximation.
         """
-        return Record(
-            self.name, {k: v._mean() for k, v in self._proto_components.items()}, name_is_auto=True
-        )
+        return Record(self.name, {k: v._mean() for k, v in self._proto_components.items()})
 
     def _variance(self) -> Record:
         """Per-component variances (approximate --- uses prototype components)."""
         return Record(
             self.name,
             {k: v._variance() for k, v in self._proto_components.items()},
-            name_is_auto=True,
         )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):

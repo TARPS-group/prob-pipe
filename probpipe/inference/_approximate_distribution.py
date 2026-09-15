@@ -268,7 +268,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
                     fields[field_name] = chunk.reshape(*flat.shape[:-1], *shape)
                 offset += size
             super().__init__(
-                Record(name or "posterior", fields, name_is_auto=True),
+                Record(name or "posterior", fields),
                 weights=weights,
                 name=name or "posterior",
             )
@@ -418,9 +418,7 @@ class ApproximateDistribution(RecordEmpiricalDistribution):
             # the concatenated draws (a matrix ``(n, vector_size)``).
             from ..core._numeric_record import _reconstruct_from_vector
 
-            return _reconstruct_from_vector(
-                self.name, self.event_template, samples, name_is_auto=True
-            )
+            return _reconstruct_from_vector(self.name, self.event_template, samples)
         return samples
 
     def __repr__(self) -> str:
