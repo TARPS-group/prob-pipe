@@ -38,6 +38,9 @@ Levels selected whole are left out, and the levels that appear are listed in the
 batch's own order, so a derived name is a function of what the view selects: two
 routes to one selection read alike, and two selections never do.
 
+A view receives its name when selected. Renaming its levels preserves that
+name; the new level names apply when naming subsequent selections.
+
 **Storage is the concrete class's business, and only storage.** This module
 owns the level algebra: the shape invariants, the naming rules, index
 normalization for :meth:`Batch.at_levels`, and the identity a view derives. A
@@ -529,8 +532,8 @@ class Batch[E](TrackedTerm, ABC):
         ValueError
             If a level is renamed twice with different names, or a new name is
             empty, not an identifier, collides with a level that is being kept, is
-            the target of two renames, or — renaming a view — belongs to a level
-            the view derives its name from but no longer carries.
+            the target of two renames, or belongs to a dropped root level still
+            used to name subsequent selections from a view.
         TypeError
             If a new name is not a string.
 
@@ -894,13 +897,12 @@ class Batch[E](TrackedTerm, ABC):
 
         selection = self._compose_selection(normalized)
         label = _render_index(self._root_spec, selection)
-        name = (
-            self.name
-            if selection == self._root_selection
-            else f"{self._root_name}[{label}]"
-            if label
-            else self._root_name
-        )
+        if selection == self._root_selection:
+            name = self.name
+        elif label:
+            name = f"{self._root_name}[{label}]"
+        else:
+            name = self._root_name
 
         dropped = tuple(i for i in normalized if isinstance(i, int))
         if len(dropped) == len(shape):
@@ -997,10 +999,9 @@ class Batch[E](TrackedTerm, ABC):
         if len(set(root_names)) != len(root_names):
             taken = sorted({name for name in root_names if root_names.count(name) > 1})
             raise ValueError(
-                f"level name {taken[0]!r} is already used by a level this view derives its "
-                f"name from but no longer carries; renaming onto it would make the derived "
-                f"name ambiguous. Rename it on the batch this view came from, or give the "
-                f"level another name"
+                f"level name {taken[0]!r} is already used by a dropped level in this view's "
+                f"root selection; reusing it would make names of subsequent selections "
+                f"ambiguous. Rename the level on the original batch, or give it another name"
             )
 
         renamed = self._shallow_copy()

@@ -968,10 +968,10 @@ class TestRenamingAView:
         assert renamed.provenance is not view.provenance
 
     def test_renaming_onto_a_dropped_root_level_name_says_why(self, nested):
-        """The view's own levels allow it, but the name it derives from would not."""
+        """A dropped root level still participates in naming subsequent selections."""
         view = nested[1]
         assert view.level_names == ("draw",)
-        with pytest.raises(ValueError, match="derives its name from but no longer carries"):
+        with pytest.raises(ValueError, match="names of subsequent selections ambiguous"):
             view.with_level_names(draw="chain")
 
     def test_the_same_rename_is_fine_once_the_view_is_its_own_root(self, nested):
