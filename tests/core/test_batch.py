@@ -45,11 +45,11 @@ def _spec(axis_groups, level_names, element_spec=_ELEMENT_SPEC):
 class _Leaf(TrackedTerm):
     """A minimal tracked element."""
 
-    __slots__ = ("_name", "_name_is_auto", "_provenance", "value")
+    __slots__ = ("_name", "_provenance", "value")
 
-    def __init__(self, value, name="leaf", *, name_is_auto=False):
+    def __init__(self, value, name="leaf"):
         object.__setattr__(self, "value", value)
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        self._init_tracked(name)
 
 
 class _ListBatch(Batch[_Leaf]):
@@ -57,9 +57,9 @@ class _ListBatch(Batch[_Leaf]):
 
     __slots__ = ("_store",)
 
-    def __init__(self, store, spec, *, name="b", name_is_auto=False):
+    def __init__(self, store, spec, *, name="b"):
         object.__setattr__(self, "_store", list(store))
-        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name)
 
     # -- the storage seam --
 
@@ -70,7 +70,7 @@ class _ListBatch(Batch[_Leaf]):
         return offset
 
     def _element_at(self, index, *, name):
-        built = _Leaf(self._store[self._flat(index)], name=name, name_is_auto=True)
+        built = _Leaf(self._store[self._flat(index)], name=name)
         return self._inherit_provenance(built)
 
     def _sub_batch_at(self, index, *, spec, name):
@@ -80,7 +80,7 @@ class _ListBatch(Batch[_Leaf]):
             self._store[self._flat(position)]
             for position in itertools.product(*_selected(index, self.batch_shape))
         ]
-        return type(self)(kept, spec, name=name, name_is_auto=True)
+        return type(self)(kept, spec, name=name)
 
 
 class _NestedBatch(_ListBatch):
@@ -130,9 +130,7 @@ class _ViewBatch(Batch[_Leaf]):
 
     __slots__ = ("_root_shape", "_root_store", "_store_selection")
 
-    def __init__(
-        self, store, spec, *, name="b", name_is_auto=False, root_shape=None, store_selection=None
-    ):
+    def __init__(self, store, spec, *, name="b", root_shape=None, store_selection=None):
         object.__setattr__(self, "_root_store", store)
         object.__setattr__(self, "_root_shape", root_shape or spec.batch_shape)
         object.__setattr__(
@@ -142,7 +140,7 @@ class _ViewBatch(Batch[_Leaf]):
             if store_selection is not None
             else tuple(range(size) for size in spec.batch_shape),
         )
-        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name)
 
     def _offset(self, index):
         """Where this view's positional *index* lands in the root store."""
@@ -162,7 +160,7 @@ class _ViewBatch(Batch[_Leaf]):
     # -- the storage seam --
 
     def _element_at(self, index, *, name):
-        built = _Leaf(self._root_store[self._offset(index)], name=name, name_is_auto=True)
+        built = _Leaf(self._root_store[self._offset(index)], name=name)
         return self._inherit_provenance(built)
 
     def _sub_batch_at(self, index, *, spec, name):
@@ -181,7 +179,6 @@ class _ViewBatch(Batch[_Leaf]):
             self._root_store,
             spec,
             name=name,
-            name_is_auto=True,
             root_shape=self._root_shape,
             store_selection=tuple(composed),
         )
@@ -199,15 +196,15 @@ class _StoringBatch(Batch[_Leaf]):
 
     __slots__ = ("_store",)
 
-    def __init__(self, elements, spec, *, name="b", name_is_auto=False):
+    def __init__(self, elements, spec, *, name="b"):
         object.__setattr__(self, "_store", list(elements))
-        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name)
 
     def _element_at(self, index, *, name):
         return self._store[index[0]]
 
     def _sub_batch_at(self, index, *, spec, name):
-        return type(self)(self._store[index[0]], spec, name=name, name_is_auto=True)
+        return type(self)(self._store[index[0]], spec, name=name)
 
 
 class _StringSlotsBatch(Batch[int]):
@@ -221,15 +218,15 @@ class _StringSlotsBatch(Batch[int]):
 
     __slots__ = "_store"  # a bare string, deliberately: the point of the double
 
-    def __init__(self, store, spec, *, name="b", name_is_auto=False):
+    def __init__(self, store, spec, *, name="b"):
         object.__setattr__(self, "_store", list(store))
-        self._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        self._init_batch(spec, name=name)
 
     def _element_at(self, index, *, name):
         return self._store[index[0]]
 
     def _sub_batch_at(self, index, *, spec, name):
-        return type(self)(self._store[index[0]], spec, name=name, name_is_auto=True)
+        return type(self)(self._store[index[0]], spec, name=name)
 
 
 class _DictBatch(_ListBatch):
@@ -397,7 +394,7 @@ class TestLevelNames:
         """The default is a shallow copy: no storage is rebuilt, no identity minted."""
         renamed = nested.with_level_names(chain="walker")
         assert renamed._store is nested._store
-        assert (renamed.name, renamed.name_is_auto) == (nested.name, nested.name_is_auto)
+        assert renamed.name == nested.name
 
     def test_renaming_leaves_the_original_alone(self, nested):
         nested.with_level_names(chain="walker")
@@ -548,7 +545,6 @@ class TestElementIdentity:
     def test_an_element_derives_the_level_it_was_selected_at(self, flat):
         element = flat[2]
         assert element.name == "b[draw=2]"
-        assert element.name_is_auto
 
     def test_nested_levels_name_every_level_selected(self, nested):
         assert nested[1][2].name == "b[chain=1, draw=2]"
@@ -558,7 +554,6 @@ class TestElementIdentity:
 
     def test_a_sub_batch_view_also_derives_its_name(self, nested):
         assert nested[1].name == "b[chain=1]"
-        assert nested[1].name_is_auto
 
     def test_a_negative_index_names_the_position_it_resolves_to(self, flat):
         assert flat[-1].name == flat[3].name == "b[draw=3]"
@@ -579,9 +574,6 @@ class TestElementIdentity:
     def test_selecting_the_whole_batch_derives_the_batch_s_own_name(self, nested):
         assert nested.at_levels().name == "b"
         assert nested[:].name == "b"
-
-    def test_a_user_given_name_survives_a_no_op_selection(self, nested):
-        assert not nested.at_levels().name_is_auto
 
     def test_a_renamed_batch_roots_the_names_of_its_own_views(self, nested):
         assert nested[1].with_name("inner")[2].name == "inner[draw=2]"
@@ -957,11 +949,16 @@ class TestSerialization:
 
 
 class TestRenamingAView:
-    def test_a_renamed_view_and_its_own_views_read_the_level_alike(self, nested):
-        renamed = nested[0:1].with_level_names(chain="group")
-        assert renamed.name == "b[group=0:1]"
-        assert renamed[0:1].name == "b[group=0:1]"
+    def test_level_renaming_keeps_the_view_name_and_names_new_selections(self, nested):
+        view = nested[0:1]
+        renamed = view.with_level_names(chain="group")
+        assert renamed.name == view.name == "b[chain=0:1]"
+        assert renamed[0:1].name == renamed.name
         assert renamed.at_levels().name == renamed.name
+        assert renamed.at_levels(group=0).name == "b[group=0]"
+        assert renamed.at_levels(group=0)[1].name == "b[group=0, draw=1]"
+        assert renamed.at_levels(group=0)[1].value == nested[0][1].value
+        assert view.level_names == ("chain", "draw")
 
     def test_renaming_records_itself_and_leaves_room_for_more(self, nested, full_provenance_mode):
         view = nested[1]
@@ -1162,7 +1159,11 @@ class TestDegenerateAxesInUse:
         assert [inner.name for inner in view] == ["b[chain=0, draw=0:0]", "b[chain=1, draw=0:0]"]
 
     def test_an_empty_level_can_still_be_renamed(self, nested):
-        assert nested.at_levels(draw=slice(1, 1)).with_level_names(draw="d").name == "b[d=0:0]"
+        view = nested.at_levels(draw=slice(1, 1))
+        renamed = view.with_level_names(draw="d")
+        assert renamed.name == view.name == "b[draw=0:0]"
+        assert renamed.at_levels().name == view.name
+        assert renamed.level_names == ("chain", "d")
 
     def test_reversing_a_single_element_axis_selects_all_of_it(self):
         """One position in the same order is the whole axis, so nothing is derived."""

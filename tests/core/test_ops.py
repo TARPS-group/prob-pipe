@@ -63,18 +63,15 @@ class TestSample:
         s = ops.sample(normal, key=jax.random.PRNGKey(0), sample_shape=(50,))
         assert s.shape == (50,)
         assert s.name == normal.name
-        assert s.name_is_auto == normal.name_is_auto
 
     @pytest.mark.parametrize("sample_shape", [(), (3,), (2, 3)])
     @pytest.mark.parametrize(
-        "sampler_name, name_is_auto",
-        [(None, None), ("custom", None), ("custom", True), ("custom", False)],
-        ids=["unnamed", "name-only", "auto-name", "explicit-name"],
+        "sampler_name",
+        [None, "custom"],
+        ids=["unnamed", "named"],
     )
     @pytest.mark.parametrize("explicit_key", [False, True], ids=["automatic-key", "explicit-key"])
-    def test_sample_accepts_structural_samplers(
-        self, sample_shape, sampler_name, name_is_auto, explicit_key
-    ):
+    def test_sample_accepts_structural_samplers(self, sample_shape, sampler_name, explicit_key):
         class Sampler:
             _sampling_cost = "low"
             _preferred_orchestration = None
@@ -85,8 +82,6 @@ class TestSample:
         sampler = Sampler()
         if sampler_name is not None:
             sampler.name = sampler_name
-        if name_is_auto is not None:
-            sampler.name_is_auto = name_is_auto
         assert isinstance(sampler, SupportsSampling)
 
         result = ops.sample(
@@ -96,8 +91,6 @@ class TestSample:
         )
 
         np.testing.assert_array_equal(np.asarray(result), np.ones(sample_shape, dtype=np.float32))
-        expected_auto = name_is_auto if name_is_auto is not None else sampler_name is None
-        assert result.name_is_auto == expected_auto
         assert result.name == (sampler_name or "sample")
         assert result.provenance is not None
         if sample_shape:
@@ -106,8 +99,7 @@ class TestSample:
             assert result.level_names == ("sample",)
             assert result.axis_groups == (sample_shape,)
             assert result.element_spec == NumericArraySpec((), dtype=np.float32)
-            if not expected_auto:
-                assert result.with_level_names(sample="draw").name == sampler_name
+            assert result.with_level_names(sample="draw").name == result.name
         else:
             assert isinstance(result, NumericArray)
             assert result.spec == NumericArraySpec((), dtype=np.float32)
@@ -126,7 +118,6 @@ class TestSample:
         result = ops.sample(Sampler(), key=jax.random.PRNGKey(0))
 
         assert result.name == drawn.name == "held"
-        assert not result.name_is_auto
         assert result is not drawn
         assert result.provenance is not None
         assert drawn.provenance is None
@@ -159,7 +150,6 @@ class TestSample:
             assert result.level_names == ("sample",)
             assert result.axis_groups == (sample_shape,)
             assert result.name == "objects"
-            assert not result.name_is_auto
             for index in np.ndindex(sample_shape):
                 np.testing.assert_array_equal(result[index], expected)
 

@@ -182,8 +182,8 @@ class DistributionArray[T](Distribution[T]):
         # storage-of-truth.
         self._backend = None
         self._event_template: EventTemplate | None = None
-        name, name_is_auto = auto_name(name, "distribution_array")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "distribution_array")
+        super().__init__(name=name)
         # A DistributionArray holding MC-marginal components inherits
         # their approximation status; if any component is approximate
         # (a _MixtureMarginal or RecordEmpiricalDistribution), so is
@@ -314,8 +314,6 @@ class DistributionArray[T](Distribution[T]):
             multi_t = tuple(int(x) for x in multi)
             cell_params = {k: _slice_leading_axes(v, multi_t) for k, v in batched_params.items()}
             cell = dist_cls(name=f"{name}_{flat}", **cell_params)
-            # The per-cell suffix is derived by this factory, not user-typed.
-            object.__setattr__(cell, "_name_is_auto", True)
             components.append(cell)
         return cls(components, batch_shape=batch_shape, name=name)
 
@@ -364,8 +362,8 @@ class DistributionArray[T](Distribution[T]):
         set_attribute("_batch_shape", tuple(backend.batch_shape))
         set_attribute("_backend", backend)
         set_attribute("_event_template", None)
-        name, name_is_auto = auto_name(name, "distribution_array")
-        Distribution.__init__(instance, name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "distribution_array")
+        Distribution.__init__(instance, name=name)
         # Approximation status flows from the backend. TFP-backed
         # arrays are exact; a future Record-backend (over a
         # ``RecordEmpiricalDistribution``) will report
@@ -551,7 +549,6 @@ class DistributionArray[T](Distribution[T]):
             new_components,
             batch_shape=sliced.shape,
             name=self._name,
-            name_is_auto=self._name_is_auto,
             event_template=self._event_template,
         )
 
@@ -685,7 +682,6 @@ def _make_distribution_array(
     *,
     batch_shape: tuple[int, ...] | None = None,
     name: str | None = None,
-    name_is_auto: bool | None = None,
     event_template: EventTemplate | None = None,
 ) -> DistributionArray:
     """Factory: build a ``DistributionArray``.
@@ -708,10 +704,6 @@ def _make_distribution_array(
         ``len(components)``.
     name : str, optional
         Name for provenance.
-    name_is_auto : bool, optional
-        Overrides the flag on the result — pass the parent's flag when the
-        result inherits a possibly-auto name (e.g. a slice). ``None`` keeps
-        the constructor's own resolution (auto iff *name* was omitted).
     event_template : EventTemplate, optional
         Authoritative template for a Function-produced aggregate. Every
         component must expose the same template.
@@ -726,6 +718,4 @@ def _make_distribution_array(
                     f"does not match declared template {event_template!r}"
                 )
         object.__setattr__(array, "_event_template", event_template)
-    if name_is_auto is not None:
-        object.__setattr__(array, "_name_is_auto", bool(name_is_auto))
     return array

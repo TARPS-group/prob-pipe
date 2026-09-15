@@ -203,14 +203,14 @@ class TestTheHostsInTheTree:
             pytest.param(lambda: EventTemplate(x=(2,), tag=None), id="event-template"),
             pytest.param(
                 lambda: RecordBatch.stack(
-                    [Record("r", {"x": jnp.ones(2), "tag": "m"}, name_is_auto=True)] * 2,
+                    [Record("r", {"x": jnp.ones(2), "tag": "m"})] * 2,
                     level_name="draw",
                 ),
                 id="record-batch",
             ),
             pytest.param(
                 lambda: NumericRecordBatch.stack(
-                    [NumericRecord("nr", {"x": jnp.ones(2)}, name_is_auto=True)] * 2,
+                    [NumericRecord("nr", {"x": jnp.ones(2)})] * 2,
                     level_name="draw",
                 ),
                 id="numeric-record-batch",
@@ -326,9 +326,7 @@ class TestEveryTrackedTermIsImmutable:
             del term._name
 
     def test_a_term_outside_that_layer_refuses_assignment_and_names_itself(self):
-        term = RecordBatch.stack(
-            [Record("r", {"x": jnp.ones(2)}, name_is_auto=True)] * 2, level_name="draw"
-        )
+        term = RecordBatch.stack([Record("r", {"x": jnp.ones(2)})] * 2, level_name="draw")
         with pytest.raises(AttributeError, match="RecordBatch is immutable"):
             term.attribute = 1
 

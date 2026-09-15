@@ -182,8 +182,8 @@ class TransformedDistribution(NumericRecordDistribution):
     ):
         self._base = base
         self._bijector = bijector
-        name, name_is_auto = auto_name(name, f"transformed({base.name})")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, f"transformed({base.name})")
+        super().__init__(name=name)
 
         if isinstance(base, TFPDistribution):
             self._tfp_transformed = tfd.TransformedDistribution(

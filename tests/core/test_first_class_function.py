@@ -53,7 +53,6 @@ class TestFunctionValueContract:
         assert isinstance(wrapped, TrackedTerm)
         assert isinstance(wrapped, Annotated)
         assert wrapped.name == "increment"
-        assert wrapped.name_is_auto
         assert wrapped.provenance is None
         assert wrapped.annotations == {}
         wrapped.annotations["note"] = "append-only metadata"
@@ -61,7 +60,7 @@ class TestFunctionValueContract:
         with pytest.raises(AttributeError, match="immutable"):
             wrapped._seed = 3
 
-    def test_decorator_name_is_auto_but_explicit_name_is_not(self):
+    def test_decorator_and_explicit_names_are_set_at_construction(self):
         @function
         def automatic(x):
             return x
@@ -69,9 +68,7 @@ class TestFunctionValueContract:
         named = Function(func=lambda x: x, name="chosen")
 
         assert automatic.name == "automatic"
-        assert automatic.name_is_auto
         assert named.name == "chosen"
-        assert not named.name_is_auto
 
     def test_rename_synchronizes_callable_metadata_and_records_provenance(
         self, full_provenance_mode

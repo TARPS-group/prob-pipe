@@ -39,8 +39,6 @@ class FunctionBatch(_ObjectBatch[Callable]):
         names as there are batch axes. The *sizes* are read off the elements
         rather than restated here — they are already fixed by the data, so the
         only thing left to say is where one level ends and the next begins.
-    name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -92,7 +90,6 @@ class FunctionBatch(_ObjectBatch[Callable]):
         *,
         element_spec: FunctionSpec | None = None,
         axes_per_level: Iterable[int] | None = None,
-        name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         if element_spec is None:
@@ -108,7 +105,6 @@ class FunctionBatch(_ObjectBatch[Callable]):
             level_names,
             element_spec=element_spec,
             axes_per_level=axes_per_level,
-            name_is_auto=name_is_auto,
             provenance=provenance,
         )
 

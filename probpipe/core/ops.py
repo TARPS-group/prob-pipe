@@ -117,19 +117,15 @@ def sample(
             _workflow_descendants.sample_captured_consumer(captured, key, sample_shape),
             sample_shape,
             name=getattr(dist, "name", "sample"),
-            name_is_auto=getattr(dist, "name_is_auto", not hasattr(dist, "name")),
         )
     return _drawn_at_its_batch_form(
         dist._sample(key, sample_shape),
         sample_shape,
         name=getattr(dist, "name", "sample"),
-        name_is_auto=getattr(dist, "name_is_auto", not hasattr(dist, "name")),
     )
 
 
-def _drawn_at_its_batch_form(
-    drawn: Any, sample_shape: tuple[int, ...], *, name: str, name_is_auto: bool
-) -> Any:
+def _drawn_at_its_batch_form(drawn: Any, sample_shape: tuple[int, ...], *, name: str) -> Any:
     """Wrap draws at their kind, retaining the law's naming metadata.
 
     A non-empty ``sample_shape`` puts those leading dimensions on one level named
@@ -141,9 +137,8 @@ def _drawn_at_its_batch_form(
 
     The event shape is read off the draw, which stays exact for a law whose event
     shape is symbolic until a draw binds it. The batch takes the law's own *name*,
-    since the draws are that law's, and carries the law's *name_is_auto* with it:
-    the name is a caller's statement exactly when the caller's name for the law
-    was one. A single raw draw takes the same name and flag when wrapped.
+    since the draws are that law's. A single raw draw takes the same name
+    when wrapped.
 
     A law that built its own batch already named the level, and a term of some
     other kind is left as it is.
@@ -166,7 +161,7 @@ def _drawn_at_its_batch_form(
             return drawn
         from ._workflow_result import _wrap_as_term
 
-        return _wrap_as_term(drawn, SAMPLE_LEVEL, name=name, name_is_auto=name_is_auto)
+        return _wrap_as_term(drawn, SAMPLE_LEVEL, name=name)
 
     n_draw_axes = len(sample_shape)
     if isinstance(drawn, Record):
@@ -189,7 +184,6 @@ def _drawn_at_its_batch_form(
             SAMPLE_LEVEL,
             element_spec=element_spec,
             axes_per_level=(len(sample_shape),),
-            name_is_auto=name_is_auto,
         )
 
     if _is_object_array(drawn):
@@ -203,7 +197,6 @@ def _drawn_at_its_batch_form(
             level_names=(SAMPLE_LEVEL,),
             field_name=name,
             name=name,
-            name_is_auto=name_is_auto,
         )
 
     if isinstance(drawn, TrackedTerm) or not _is_numeric_leaf(drawn):
@@ -221,7 +214,6 @@ def _drawn_at_its_batch_form(
             shape=shape[len(sample_shape) :], dtype=_numpy_dtype_of(drawn)
         ),
         axes_per_level=(len(sample_shape),),
-        name_is_auto=name_is_auto,
     )
 
 
@@ -259,7 +251,6 @@ def _at_the_operands_levels(computed: Any, operand: Any) -> Any:
             shape=shape[len(batch_shape) :], dtype=_numpy_dtype_of(computed)
         ),
         axes_per_level=_ranks_of(operand.axis_groups),
-        name_is_auto=operand.name_is_auto,
     )
 
 
@@ -646,7 +637,7 @@ def condition_on(
                     "Cannot provide both positional `observed` and named "
                     f"data kwargs ({', '.join(data_kwargs)})"
                 )
-            observed = Record("observed", data_kwargs, name_is_auto=True)
+            observed = Record("observed", data_kwargs)
         return inference_method_registry.execute(dist, observed, method=method, **inference_kwargs)
 
     # Exact conditioning (conjugate updates, joint marginalization, etc.)
@@ -663,7 +654,7 @@ def condition_on(
                 "Cannot provide both positional `observed` and named "
                 f"data kwargs ({', '.join(data_kwargs)})"
             )
-        observed = Record("observed", data_kwargs, name_is_auto=True)
+        observed = Record("observed", data_kwargs)
     return inference_method_registry.execute(dist, observed, **inference_kwargs)
 
 

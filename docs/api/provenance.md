@@ -17,11 +17,10 @@ lineage in a notebook.
 The identity attributes and methods are defined once, by two mixins in
 `probpipe.core.tracked`, and shared by every core object:
 
-- **`TrackedTerm`** — a `name`, a `name_is_auto` flag recording whether the name
-  was auto-derived by the operation that produced the object (`True`) or
-  supplied by the user (`False`), and a write-once `provenance` attached via
-  `with_provenance(...)`. `with_name(name)` returns a shallow copy under a
-  new user-given name, with provenance recording the rename. `Distribution`,
+- **`TrackedTerm`** — a `name` set at construction and preserved by every
+  transform, and a write-once `provenance` attached via `with_provenance(...)`.
+  Only `with_name(name)` replaces the name, returning a shallow copy with
+  provenance recording the rename. `Distribution`,
   `Record`/`NumericRecord`, and the batch types are all `TrackedTerm`.
 - **`Annotated`** — a free-form `annotations` mapping for auxiliary
   information attached after construction (diagnostics, validation results).
@@ -33,8 +32,7 @@ The identity attributes and methods are defined once, by two mixins in
 from probpipe import Normal
 
 n = Normal(loc=0.0, scale=1.0, name="weight")
-n.name          # "weight"
-n.name_is_auto  # False — user-given
+n.name  # "weight"
 m = n.with_name("prior_weight")
 m.provenance.operation  # "with_name"; the parent descriptor points at n
 ```

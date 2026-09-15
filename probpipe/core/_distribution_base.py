@@ -55,15 +55,14 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
     value type ``T``.
 
     Every distribution is a tracked term: it is
-    :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.name`, a
-    :attr:`~TrackedTerm.name_is_auto` flag, and a write-once
+    :class:`~probpipe.core.tracked.TrackedTerm` (a :attr:`~TrackedTerm.name` and a write-once
     :attr:`~TrackedTerm.provenance`) and
     :class:`~probpipe.core.tracked.Annotated` (free-form
     :attr:`~Annotated.annotations`).  Leaf distributions (Normal, Gamma,
     etc.) require an explicit ``name=`` argument; composite distributions
     (ProductDistribution, EmpiricalDistribution, etc.) auto-derive a
-    name from their components when one is not provided, and mark it with
-    ``name_is_auto=True``.
+    name from their components when one is not provided. Every transform
+    preserves the name; only ``with_name`` replaces it.
 
     Sampling and expectation capabilities are provided by the
     :class:`~probpipe.core.protocols.SupportsSampling` protocol.
@@ -72,10 +71,6 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
     ----------
     name : str
         Non-empty name for this distribution.
-    name_is_auto : bool, optional
-        ``True`` when *name* was auto-derived by the caller (a subclass
-        constructor or an operation) rather than supplied by the user.
-        Defaults to ``False``.
 
     Raises
     ------
@@ -112,7 +107,6 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
         self,
         *,
         name: str,
-        name_is_auto: bool = False,
         _provenance: Provenance | None = None,
         _annotations: Mapping[str, Any] | None = None,
     ):
@@ -123,7 +117,7 @@ class Distribution[T](TrackedTerm, Annotated, ABC):
         # is write-once, and annotations are written after construction, so a
         # rebuilt distribution would come back without either. Private, and the
         # reconstruction paths are the only callers.
-        self._init_tracked(name, name_is_auto=name_is_auto, provenance=_provenance)
+        self._init_tracked(name, provenance=_provenance)
         self._init_annotations(_annotations)
 
     # -- keyword-form value construction ------------------------------------

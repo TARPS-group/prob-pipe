@@ -140,8 +140,8 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 
         self._joint_samples = stored
         self._num_atoms = n
-        name, name_is_auto = auto_name(name, "joint_empirical(" + ",".join(samples.keys()) + ")")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "joint_empirical(" + ",".join(samples.keys()) + ")")
+        super().__init__(name=name)
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
         self._components = self._build_component_dists()
         if self._components is not None:
@@ -220,7 +220,7 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
 
         rows = self._resample_rows(key, sample_shape)
         if not sample_shape:
-            return Record(self.name, rows, name_is_auto=True)
+            return Record(self.name, rows)
         cls = (
             NumericRecordBatch
             if isinstance(self.event_template, NumericEventTemplate)
@@ -232,7 +232,6 @@ class JointEmpirical(RecordDistribution, SupportsSampling, SupportsConditioning)
             "sample",
             element_spec=self.event_template,
             axes_per_level=(len(sample_shape),),
-            name_is_auto=True,
         )
 
     def _resample_rows(
@@ -397,7 +396,6 @@ class NumericJointEmpirical(
         return Record(
             self.name,
             {cname: self._w.mean(arr) for cname, arr in self._joint_samples.items()},
-            name_is_auto=True,
         )
 
     def _variance(self) -> Record:
@@ -405,7 +403,6 @@ class NumericJointEmpirical(
         return Record(
             self.name,
             {cname: self._w.variance(arr) for cname, arr in self._joint_samples.items()},
-            name_is_auto=True,
         )
 
     def _expectation(self, f, *, key=None, num_evaluations=None, return_dist=None):

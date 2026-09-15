@@ -1,14 +1,8 @@
 """Naming across the tracked terms, the batches, and the operations.
 
-Every tracked term carries a name and a flag saying whether the name was given
-by a caller or derived for it. The flag is what tells a later operation whether
-it may rename: a derived name is a placeholder, a given one is a statement. The
-rules are spread over the classes that implement them, so they are pinned here
-in one place, where a divergence between two kinds is visible as two rows of the
-same table rather than as two files that never meet.
-
-The invariant that ties them together: **a name a caller did not give is marked
-auto, and a name a caller gave is never overwritten.**
+Every tracked term receives its name at construction and preserves it through
+structural transforms. Only ``with_name`` replaces it. New operation results
+and accessed views receive their names when constructed, across every kind.
 """
 
 from __future__ import annotations
@@ -109,7 +103,7 @@ EVERY_KIND = [
 ]
 
 
-class TestAGivenNameIsKeptAndMarkedGiven:
+class TestNamesAreKept:
     """The rule every kind shares, and the one an operation reads before renaming."""
 
     @pytest.mark.parametrize("kind", EVERY_KIND)
@@ -117,8 +111,21 @@ class TestAGivenNameIsKeptAndMarkedGiven:
         assert _named(kind).name == "given"
 
     @pytest.mark.parametrize("kind", EVERY_KIND)
-    def test_a_given_name_is_not_marked_auto(self, kind):
-        assert _named(kind).name_is_auto is False
+    def test_name_origin_is_not_part_of_the_public_term(self, kind):
+        term = _named(kind)
+        assert not hasattr(term, "name_is_auto")
+        assert not hasattr(term, "_name_is_auto")
+        renamed = term.with_name("replacement")
+        assert renamed.name == "replacement"
+        assert term.name == "given"
+        assert not hasattr(renamed, "name_is_auto")
+
+    @pytest.mark.parametrize("kind", [Record, NumericRecord])
+    def test_former_metadata_keyword_is_an_ordinary_record_field(self, kind):
+        record = kind("flags", name_is_auto=True)
+        assert tuple(record) == ("name_is_auto",)
+        assert bool(record["name_is_auto"])
+        assert record.name == "flags"
 
 
 class TestWhichKindsRequireAName:
@@ -126,7 +133,7 @@ class TestWhichKindsRequireAName:
 
     A record has fields and a batch has levels, but neither says *which* record
     or batch this is. Where the class can derive something meaningful — a
-    callable's own ``__name__`` — it does, and marks it auto.
+    callable's own ``__name__`` — it does at construction.
     """
 
     @pytest.mark.parametrize(
@@ -163,10 +170,7 @@ class TestWhichKindsRequireAName:
         def predict():
             return 1.0
 
-        assert (Function(func=predict).name, Function(func=predict).name_is_auto) == (
-            "predict",
-            True,
-        )
+        assert Function(func=predict).name == "predict"
 
 
 class TestADerivedNameSaysSo:
@@ -184,12 +188,12 @@ class TestADerivedNameSaysSo:
     def test_an_element_is_named_for_its_position(self):
         element = self._batch()[1]
 
-        assert (element.name, element.name_is_auto) == ("posterior[draw=1]", True)
+        assert element.name == "posterior[draw=1]"
 
     def test_a_sub_batch_is_named_for_its_slice(self):
         sub = self._batch()[1:3]
 
-        assert (sub.name, sub.name_is_auto) == ("posterior[draw=1:3]", True)
+        assert sub.name == "posterior[draw=1:3]"
 
     def test_a_derived_name_builds_on_the_given_one(self):
         """So the lineage reads back to the batch a caller actually named."""
@@ -212,32 +216,23 @@ class TestAnOperationNamesItsResult:
     def test_a_scalar_law_result_is_named_for_the_operation(self, label, compute):
         result = compute(self.LAW)
 
-        assert (result.name, result.name_is_auto) == (label, True)
+        assert result.name == label
 
     def test_a_record_law_result_is_named_for_the_law(self):
-        """An already tracked draw retains the name and flag its producer set."""
+        """An already tracked draw retains the name its producer set."""
         joint = ProductDistribution(a=Normal(0.0, 1.0, name="a"), name="joint")
 
         drawn = sample(joint, key=KEY)
 
-        assert (drawn.name, drawn.name_is_auto) == ("joint", True)
-
-    def test_a_name_the_operation_invented_is_marked_auto(self):
-        """The load-bearing half: an invented name is a placeholder, so a later
-        operation may replace it without discarding a caller's statement."""
-        for compute in (
-            lambda d: mean(d),
-            lambda d: variance(d),
-        ):
-            assert compute(self.LAW).name_is_auto is True
+        assert drawn.name == "joint"
 
     @pytest.mark.parametrize("sample_shape", [(), (4,)], ids=["single", "batch"])
-    def test_a_name_taken_from_the_law_carries_the_laws_flag(self, sample_shape):
+    def test_draws_take_the_laws_name(self, sample_shape):
         """Raw draws are named for the law, so it is a caller's statement
         exactly when the caller's name for the law was one."""
         given = sample(Normal(0.0, 1.0, name="height"), sample_shape=sample_shape, key=KEY)
 
-        assert (given.name, given.name_is_auto) == ("height", False)
+        assert given.name == "height"
 
 
 class TestTheOutputBoundaryNamesEveryKindAlike:
@@ -258,7 +253,7 @@ class TestTheOutputBoundaryNamesEveryKindAlike:
     def test_the_result_takes_the_functions_name(self, label, body):
         result = Function(func=body, name="myfunc")()
 
-        assert (result.name, result.name_is_auto) == ("myfunc", True)
+        assert result.name == "myfunc"
 
 
 class TestLevelsAreNamedForWhatMintsThem:
@@ -327,7 +322,7 @@ class TestLevelsAreNamedForWhatMintsThem:
             key=KEY,
         )
 
-        assert (drawn.name, drawn.name_is_auto) == ("atoms", False)
+        assert drawn.name == "atoms"
 
 
 class TestABatchOperandKeepsItsLevelsThroughAnOperation:
@@ -392,7 +387,6 @@ class TestABatchOperandKeepsItsLevelsThroughAnOperation:
 
 
 class TestRawDrawNaming:
-    @pytest.mark.parametrize("name_is_auto", [False, True], ids=["given", "derived"])
     @pytest.mark.parametrize(
         "make, kind, levels",
         [
@@ -440,9 +434,7 @@ class TestRawDrawNaming:
             ),
         ],
     )
-    def test_a_raw_draw_takes_the_laws_name_without_renaming_levels(
-        self, name_is_auto, make, kind, levels
-    ):
+    def test_a_raw_draw_takes_the_laws_name_without_renaming_levels(self, make, kind, levels):
         class Sampler:
             name = "law"
             _sampling_cost = "low"
@@ -452,23 +444,21 @@ class TestRawDrawNaming:
                 return make()
 
         law = Sampler()
-        law.name_is_auto = name_is_auto
         result = sample(law, key=KEY)
 
         assert isinstance(result, kind)
-        assert (result.name, result.name_is_auto) == ("law", name_is_auto)
+        assert result.name == "law"
         assert result.provenance is not None
         if levels is not None:
             assert result.level_names == levels
 
-    @pytest.mark.parametrize("name_is_auto", [False, True], ids=["given", "derived"])
     @pytest.mark.parametrize("value", [2.0, {"x": 2.0}], ids=["scalar", "mapping"])
-    def test_a_declared_raw_result_takes_the_requested_name(self, name_is_auto, value):
+    def test_a_declared_raw_result_takes_the_requested_name(self, value):
         template = EventTemplate(x=NumericArraySpec(()))
-        result = _wrap_as_term(value, "sample", template, name="law", name_is_auto=name_is_auto)
+        result = _wrap_as_term(value, "sample", template, name="law")
 
         assert isinstance(result, Record)
-        assert (result.name, result.name_is_auto) == ("law", name_is_auto)
+        assert result.name == "law"
         assert result.event_template == template
         assert float(result["x"]) == 2.0
 
@@ -489,7 +479,7 @@ class TestEveryAggregateIsNamedForItsFunction:
     """The naming table, widened across the axes that had diverged.
 
     A sweep's aggregate is built by the boundary, not by a caller, so its name is
-    the producing function's and is marked auto. Three paths disagreed: the
+    the producing function's. Three paths disagreed: the
     undeclared record aggregate took `stack`'s class-name default, and the scalar,
     opaque, and declared paths marked a derived name as user-given — which would
     stop a later operation renaming it.
@@ -522,7 +512,7 @@ class TestEveryAggregateIsNamedForItsFunction:
     def test_an_undeclared_aggregate_is_named_for_the_function(self, label, body):
         result = self._swept(body)
 
-        assert (result.name, result.name_is_auto) == ("double", True)
+        assert result.name == "double"
 
     def test_a_declared_aggregate_is_named_the_same_way(self):
         from probpipe import EventTemplate
@@ -531,7 +521,7 @@ class TestEveryAggregateIsNamedForItsFunction:
             lambda v: {"y": jnp.asarray(v["x"])}, output_template=EventTemplate(y=())
         )
 
-        assert (result.name, result.name_is_auto) == ("double", True)
+        assert result.name == "double"
 
     def test_a_multi_axis_sweep_is_named_the_same_way(self):
         """The re-cut to the sweep's own geometry is a separate construction, and
@@ -549,7 +539,7 @@ class TestEveryAggregateIsNamedForItsFunction:
             func=lambda v: {"y": jnp.asarray(v["x"])}, name="double", dispatch="sequential"
         )(v=grid)
 
-        assert (result.name, result.name_is_auto) == ("double", True)
+        assert result.name == "double"
         assert result.level_names == ("a", "b")
 
 
@@ -575,16 +565,16 @@ class TestNoKindInventsAName:
 
         batch = NumericRecordBatch.stack(rows, level_name="row")
 
-        assert (batch.name, batch.name_is_auto) == ("draw", True)
+        assert batch.name == "draw"
 
     def test_stack_takes_a_better_name_when_offered(self):
         rows = [NumericRecord("draw", a=float(i)) for i in range(3)]
 
         batch = NumericRecordBatch.stack(rows, level_name="row", name="posterior")
 
-        assert (batch.name, batch.name_is_auto) == ("posterior", False)
+        assert batch.name == "posterior"
 
-    def test_a_structural_transform_carries_the_name_and_its_flag(self):
+    def test_a_structural_transform_preserves_the_name(self):
         """There is no class-name default to re-derive from, and an auto name is
         something derived rather than a placeholder."""
         batch = NumericRecordBatch(
@@ -592,9 +582,8 @@ class TestNoKindInventsAName:
             {"a": jnp.zeros(3), "b": jnp.zeros(3)},
             "lvl",
             element_spec=NumericEventTemplate(a=(), b=()),
-            name_is_auto=True,
         )
 
         edited = batch.without("b")
 
-        assert (edited.name, edited.name_is_auto) == ("derived", True)
+        assert edited.name == "derived"

@@ -1027,7 +1027,6 @@ class TestBatchValuedRowAggregation:
         assert result.batch_shape == (3, 2)
         assert result.level_names == ("row", "item")
         assert result.axis_groups == ((3,), (2,))
-        assert result.name == "collect" and result.name_is_auto
         for row in range(3):
             for item in range(2):
                 assert result[row, item] is inner[item]

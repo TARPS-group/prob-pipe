@@ -68,8 +68,6 @@ class Opaque(TrackedTerm, Annotated):
     value : Any
         The value this names, held as given. Any non-mapping value; the value
         layer reads a mapping as a subtree.
-    name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given.
     spec : OpaqueSpec, optional
         What this value satisfies, carrying any opaque ``meta``. Defaults to a
         bare :class:`~probpipe.OpaqueSpec`.
@@ -92,7 +90,6 @@ class Opaque(TrackedTerm, Annotated):
     __slots__ = (
         "_annotations",
         "_name",
-        "_name_is_auto",
         "_provenance",
         "_spec",
         "_value",
@@ -104,7 +101,6 @@ class Opaque(TrackedTerm, Annotated):
         value: Any,
         /,
         *,
-        name_is_auto: bool = False,
         spec: OpaqueSpec | None = None,
         provenance: Provenance | None = None,
     ) -> None:
@@ -118,7 +114,7 @@ class Opaque(TrackedTerm, Annotated):
         spec = OpaqueSpec() if spec is None else spec
         object.__setattr__(self, "_value", value)
         object.__setattr__(self, "_spec", spec)
-        self._init_tracked(name, name_is_auto=name_is_auto, provenance=provenance)
+        self._init_tracked(name, provenance=provenance)
 
     @property
     def value(self) -> Any:

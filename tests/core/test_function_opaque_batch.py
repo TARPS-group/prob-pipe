@@ -109,16 +109,14 @@ class TestConstruction:
     def test_a_single_string_names_a_single_level(self, labels):
         assert labels.level_names == ("site",)
 
-    def test_a_given_name_is_not_auto(self, labels):
+    def test_a_given_name_is_kept(self, labels):
         assert labels.name == "s"
-        assert not labels.name_is_auto
 
-    def test_a_given_name_can_still_be_marked_auto(self):
+    def test_a_constructor_keeps_a_derived_name(self):
         """The shape an operation deriving a batch name needs: named, but re-derivable."""
-        batch = OpaqueBatch("given", ["a"], "site", name_is_auto=True)
+        batch = OpaqueBatch("given", ["a"], "site")
 
         assert batch.name == "given"
-        assert batch.name_is_auto
 
     def test_a_provenance_is_carried_as_given(self):
         record = Provenance.create("sample", parents=[])
@@ -355,7 +353,7 @@ class TestElements:
         """
 
         class _Named(TrackedTerm):
-            __slots__ = ("_name", "_name_is_auto", "_provenance")
+            __slots__ = ("_name", "_provenance")
 
             def __init__(self, name):
                 self._init_tracked(name)
@@ -507,9 +505,6 @@ class TestNaming:
     def test_a_view_is_named_by_what_it_selects(self, grid):
         assert grid.at_levels(chain=0).name == "post[chain=0]"
         assert grid.at_levels(draw=slice(1, 3)).name == "post[draw=1:3]"
-
-    def test_a_derived_name_is_auto(self, labels):
-        assert labels[0:2].name_is_auto
 
     def test_positional_and_named_indexing_derive_one_name(self, grid):
         assert grid[0].name == grid.at_levels(chain=0).name

@@ -62,7 +62,6 @@ def nested_batch(n: int = 3, name: str | None = None, **kwargs) -> NumericRecord
     """A `NumericRecordBatch` of *n* elements over `NESTED`."""
     if name is None:
         name = "batch"
-        kwargs.setdefault("name_is_auto", True)
     return NumericRecordBatch(
         name,
         {
@@ -273,9 +272,6 @@ class TestConstruction:
         batch = nested_batch()
         assert batch.element_spec is batch.spec.element_spec
         assert batch.event_template is batch.element_spec.event_template
-
-    def test_a_given_name_is_not_auto(self):
-        assert not nested_batch(name="post").name_is_auto
 
 
 # ---------------------------------------------------------------------------
@@ -795,9 +791,7 @@ class TestStructuralTransforms:
         """The transform restates both, rather than deriving a fresh name: an
         auto name stays auto and a caller's stays the caller's."""
         assert nested_batch(name="post").without("m").name == "post"
-        assert not nested_batch(name="post").without("m").name_is_auto
         assert nested_batch().without("m").name == "batch"
-        assert nested_batch().without("m").name_is_auto
 
 
 # ---------------------------------------------------------------------------
@@ -843,10 +837,9 @@ class TestElements:
         assert element["outer/b"] == 2.0
         assert element.event_template == NESTED
 
-    def test_an_element_takes_the_derived_name_marked_auto(self):
+    def test_an_element_takes_the_derived_name(self):
         element = nested_batch(name="post")[1]
         assert element.name == "post[draw=1]"
-        assert element.name_is_auto
 
     def test_an_element_shares_the_batchs_spec_object(self):
         """Materializing a row must not allocate a declaration.

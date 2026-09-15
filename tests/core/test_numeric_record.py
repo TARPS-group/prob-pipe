@@ -313,8 +313,8 @@ class TestPyTree:
         # NumericRecord uses its own pytree registration (separate from the
         # base Record's), so pin that a flatten/unflatten round-trip
         # preserves the leaf values, the template, and the full identity
-        # pair (name + name_is_auto) — not just the field names.
-        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0), name_is_auto=True)
+        # name as well as the field names.
+        nr = NumericRecord("nr", x=jnp.array([1.0, 2.0]), y=jnp.array(3.0))
         leaves, treedef = jax.tree.flatten(nr)
         nr2 = jax.tree.unflatten(treedef, leaves)
         assert isinstance(nr2, NumericRecord)
@@ -322,7 +322,6 @@ class TestPyTree:
         assert nr2 == nr  # structural equality: template + field values
         np.testing.assert_allclose(np.asarray(nr2["x"]), [1.0, 2.0])
         assert nr2.name == "nr"
-        assert nr2.name_is_auto is True
 
     def test_jit(self):
         nr = NumericRecord("nr", a=1.0, b=2.0)

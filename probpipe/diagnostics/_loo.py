@@ -611,7 +611,7 @@ def _add_log_likelihood(
             idx += size
         # Positional (path-keyed) construction so /-paths rebuild the nesting;
         # keyword construction would reject a key containing "/".
-        return Record("params", out, name_is_auto=True)
+        return Record("params", out)
 
     def _draws_to_flat(draws_c: Any) -> Any:
         """Stack all fields into a (n_draws, n_params) array."""
@@ -635,7 +635,7 @@ def _add_log_likelihood(
         JAX only traces the numeric computation inside
         ``per_datum_log_likelihood``, not the Record construction.
         """
-        datum = Record("datum", {"X": x_i, "y": y_i}, name_is_auto=True)
+        datum = Record("datum", {"X": x_i, "y": y_i})
         return ll.per_datum_log_likelihood(params_flat, datum)
 
     # Note: the per-datum record is constructed inside the vmapped
@@ -671,7 +671,7 @@ def _add_log_likelihood(
             for d in range(n_draws):
                 param_record = _flat_to_record(params_flat[d], _field_meta)
                 for i in range(n_obs):
-                    datum = Record("datum", {"X": X[i], "y": y[i]}, name_is_auto=True)
+                    datum = Record("datum", {"X": X[i], "y": y[i]})
                     log_lik[c, d, i] = float(ll.per_datum_log_likelihood(param_record, datum))
 
     log_lik_ds = _log_likelihood_to_dataset(log_lik, var_name=var_name)

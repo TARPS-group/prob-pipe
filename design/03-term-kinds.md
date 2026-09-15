@@ -336,7 +336,7 @@ class RecordBatch(Batch[Record]):
     # one level of (len(records),); the element spec is taken from the first record
     # when omitted, and every record's fields must be exactly its fields.
     # `name` is the one place a batch's name may be omitted: it is then derived
-    # from the first record's, and marked auto -- a batch of `draw` records is
+    # from the first record's -- a batch of `draw` records is
     # about `draw`, so no caller has to invent a name for it.
 ```
 

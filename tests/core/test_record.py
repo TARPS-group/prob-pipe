@@ -469,7 +469,6 @@ class TestGeneralDecomposition:
         v = Record("mine", theta=Record("theta", loc=jnp.array([0.0, 1.0]), label="p"), tag="t")
         rebuilt = Record.from_field_values(v.name, v.event_template, v.values())
         assert rebuilt.name == "mine"
-        assert rebuilt.name_is_auto is False
 
     def test_numeric_record_roundtrip(self):
         from probpipe import NumericRecord

@@ -154,7 +154,7 @@ def _canonical_dtype_str(leaf: Any) -> str:
 #: Constructor keywords that name a construction option rather than a field, so
 #: the keyword form of ``Record(...)`` does not read them as data. The positional
 #: dict form takes a field of any name, including these.
-_RESERVED_INIT_KWARGS = frozenset({"event_template", "name_is_auto", "_validate_leaves"})
+_RESERVED_INIT_KWARGS = frozenset({"event_template", "_validate_leaves"})
 
 
 class Record(NamedTree[Any], TrackedTerm, Annotated):
@@ -231,9 +231,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     Metadata: identity and annotations
     ----------------------------------
     A record is a tracked term: it is :class:`~probpipe.core.tracked.TrackedTerm`,
-    carrying a human-readable :attr:`name` — with :attr:`name_is_auto`
-    recording whether the name was auto-derived rather than user-given — and,
-    optionally, a :attr:`provenance`, the
+    carrying a human-readable :attr:`name` and, optionally, a :attr:`provenance`, the
     :class:`~probpipe.core.provenance.Provenance` describing how it was
     created, attached write-once via :meth:`with_provenance`. It is also
     :class:`~probpipe.core.tracked.Annotated`, so free-form
@@ -302,12 +300,12 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         The record's name — the required first positional argument on
         explicit construction (a user-given name). An operation that
         produces a record supplies a deterministic name derived from its
-        inputs and marks it via ``name_is_auto``.
+        inputs. Every structural transform preserves that name.
     _fields : Mapping, optional
         Fields as a positional mapping (any ``collections.abc.Mapping``, copied
         into a ``dict`` at construction) — an alternative to keyword ``**fields``
         (passing both raises). Use it when a field name would collide with the
-        ``event_template`` / ``name_is_auto`` keywords. Positional-only (the
+        ``event_template`` keyword. Positional-only (the
         leading underscore keeps it from shadowing a field literally named
         ``fields``).
     **fields
@@ -317,9 +315,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         takes its name from the field key it sits under. A ``Mapping`` value
         (e.g. a ``dict``) is never a leaf — it is materialised into a nested
         subtree.
-    name_is_auto : bool, optional
-        ``True`` when *name* was derived by the producing operation rather
-        than supplied by the user. Defaults to ``False``.
     event_template : EventTemplate or RecordSpec, optional
         The value's authoritative schema, as a bare template or as the
         :class:`RecordSpec` that stores one — the two denote the same space, and
@@ -357,7 +352,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     coincide when every field is an array (e.g. :class:`NumericRecord`).
 
     The PyTree registration's children are the field values and its static aux
-    data is the ``(spec, name, name_is_auto)`` triple, so the declared type and
+    data is the ``(spec, name)`` pair, so the declared type and
     the name survive a ``tree_flatten`` / ``tree_unflatten``
     round-trip. :attr:`provenance` and :attr:`annotations` do **not** cross a
     JAX transform boundary; re-attach provenance on the reconstructed Record
@@ -369,7 +364,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     __slots__ = (
         "_annotations",
         "_name",
-        "_name_is_auto",
         "_provenance",
         "_spec",
         "_tree",
@@ -425,7 +419,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         /,
         *,
         event_template: EventTemplate | RecordSpec | None = None,
-        name_is_auto: bool = False,
         _validate_leaves: bool = True,
         **fields: _FieldValue,
     ):
@@ -459,7 +452,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                     # A mapping value is nested tree structure, never a leaf:
                     # materialise it into a child collection.
                     field_map[field_name] = type(self)(
-                        field_name, value, event_template=sub_template, name_is_auto=True
+                        field_name, value, event_template=sub_template
                     )
                 elif (
                     sub_template is not None
@@ -483,7 +476,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                             field_name,
                             dict(value._tree),
                             event_template=sub_template,
-                            name_is_auto=True,
                         )
                 else:
                     if isinstance(value, Record):
@@ -495,7 +487,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 raise ValueError(f"at {field_name!r}: {error}") from None
 
         object.__setattr__(self, "_tree", field_map)
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        self._init_tracked(name)
         if event_template is None:
             event_template = EventTemplate.infer_from(field_map)
         else:
@@ -520,14 +512,12 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         A nested object takes its name from its field key. When the child
         already carries that name it is stored as-is; otherwise a shallow
         identity copy (fields and template shared) is stored under the key
-        name, marked auto — the name follows the key, so a later rename of
-        the field re-derives it.
+        name. Access names the nested view at its construction.
         """
         if child._name == field_name:
             return child
         renamed = child._shallow_copy()
         object.__setattr__(renamed, "_name", field_name)
-        object.__setattr__(renamed, "_name_is_auto", True)
         return renamed
 
     def _validate_event_template(
@@ -584,7 +574,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
 
     # -- Name & provenance --------------------------------------------------
     #
-    # ``name`` / ``name_is_auto`` / ``provenance`` / ``with_name`` /
+    # ``name`` / ``provenance`` / ``with_name`` /
     # ``with_provenance`` are provided by the
     # :class:`~probpipe.core.tracked.TrackedTerm` mixin, and ``annotations`` by
     # :class:`~probpipe.core.tracked.Annotated`. Semantic transformations
@@ -647,15 +637,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         return Record
 
     def _rebuild_node(self, leaves: Mapping[str, Any], *, node_name: str | None) -> Record:
-        # A nested node is named by its field key (auto — the name follows
-        # the key). The root follows the transform identity rule: a
-        # user-given name is preserved, an auto-derived one is re-derived
-        # from the result's field keys.
-        if node_name is not None:
-            return self._rebuild_class()(node_name, leaves, name_is_auto=True)
-        if self._name_is_auto:
-            return self._rebuild_class()(_derived_record_name(leaves), leaves, name_is_auto=True)
-        return self._rebuild_class()(self._name, leaves)
+        # A new nested view takes its field key; a transformed root keeps its name.
+        name = self._name if node_name is None else node_name
+        return self._rebuild_class()(name, leaves)
 
     # -- Selection ----------------------------------------------------------
 
@@ -717,19 +701,9 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     def _rebuild_root(self, children: Mapping[str, Any], event_template: EventTemplate) -> Record:
         """Rebuild the root of a structural transform, threading the template.
 
-        Applies the transform identity rule in one place: a user-given name
-        is preserved, while an auto-derived name is re-derived from the
-        result's top-level field keys — matching :meth:`_rebuild_node` (used
-        by :meth:`map`) so every structural edit agrees. Without this, a
-        transform that changes the field set (``without`` / ``merge`` /
-        ``with_path_names``) would keep an auto name describing the pre-edit
-        fields.
+        The rebuilt record preserves the root's name and derives its numeric
+        kind from the resulting template.
         """
-        if self._name_is_auto:
-            name = _derived_record_name(event_template.children)
-            return self._rebuild_class()(
-                name, children, event_template=event_template, name_is_auto=True
-            )
         return self._rebuild_class()(self._name, children, event_template=event_template)
 
     def without(self, *paths: str) -> Record:
@@ -856,7 +830,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             self._name,
             new_children,
             event_template=EventTemplate(specs),
-            name_is_auto=self._name_is_auto,
         )
 
     def _spec_of(self, value: _FieldValue) -> Any:
@@ -874,11 +847,8 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         node paths, or bare names when unambiguous; values are the new
         single-segment names; renames apply simultaneously. The authoritative
         :attr:`event_template` renames in lockstep, so the subtree invariant
-        holds on the result. The record's own identity follows the
-        :attr:`name_is_auto` rule: an auto-derived name is re-derived from the
-        new field names, while a user-given name is preserved (this renames
-        the fields *within* the record; ``with_name`` renames the record
-        itself). The result carries no provenance.
+        holds on the result. The record keeps its name; ``with_name`` renames
+        the record itself. The result carries no provenance.
         """
         renames = self._resolve_path_renames(mapping, kwargs)
         renamed = self._renamed_leaf_map(renames)
@@ -955,7 +925,6 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
                 field_name: val.to_numeric() if isinstance(val, Record) else val
                 for field_name, val in self._tree.items()
             },
-            name_is_auto=self._name_is_auto,
         )
 
     # -- Coercion -----------------------------------------------------------
@@ -970,7 +939,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         - anything else → a single-field record keyed ``data``
 
         A freshly wrapped value is named *name* when given; otherwise its
-        name is derived from the top-level field keys and marked auto.
+        name is derived from the top-level field keys at construction.
         """
         if isinstance(x, cls):
             return x
@@ -979,7 +948,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
         else:
             fields = {"data": x}
         if name is None:
-            return cls(_derived_record_name(fields), fields, name_is_auto=True)
+            return cls(_derived_record_name(fields), fields)
         return cls(name, fields)
 
     # -- Constructors -------------------------------------------------------
@@ -1035,19 +1004,17 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
             )
         leaf_iter = iter(values)
 
-        def _build(tpl: EventTemplate, node_name: str, node_is_auto: bool) -> Record:
+        def _build(tpl: EventTemplate, node_name: str) -> Record:
             fields = {
                 field_name: (
-                    _build(spec, field_name, True)
-                    if isinstance(spec, EventTemplate)
-                    else next(leaf_iter)
+                    _build(spec, field_name) if isinstance(spec, EventTemplate) else next(leaf_iter)
                 )
                 for field_name, spec in tpl.children.items()
             }
             # ``Record.__new__`` selects the class from the template.
-            return Record(node_name, fields, event_template=tpl, name_is_auto=node_is_auto)
+            return Record(node_name, fields, event_template=tpl)
 
-        return _build(template, name, False)
+        return _build(template, name)
 
     # -- Leaf-wise operations -----------------------------------------------
     #
@@ -1074,7 +1041,7 @@ class Record(NamedTree[Any], TrackedTerm, Annotated):
     # -- Call-forwarding shim for single-field Records ----------------------
     #
     # When a Function wraps a callable return as
-    # ``Record(fn_name, {fn_name: callable}, name_is_auto=True)``, the caller
+    # ``Record(fn_name, {fn_name: callable})``, the caller
     # can keep invoking it via ``result(args)``. Multi-field records raise —
     # unwrapping one of many fields would be ambiguous.
     def __call__(self, *args: Any, **kwargs: Any) -> Any:
@@ -1214,7 +1181,7 @@ def _pack_fields(
             f"{prefix}expected exactly the fields {tuple(fields)} — {'; '.join(parts)}."
         )
     field_map = {f: field_kwargs[f] for f in fields}
-    return Record(_derived_record_name(field_map), field_map, name_is_auto=True)
+    return Record(_derived_record_name(field_map), field_map)
 
 
 # ---------------------------------------------------------------------------
@@ -1227,14 +1194,14 @@ def _pack_fields(
 # ---------------------------------------------------------------------------
 
 
-def _record_flatten(v: Record) -> tuple[list, tuple[RecordSpec, str, bool]]:
+def _record_flatten(v: Record) -> tuple[list, tuple[RecordSpec, str]]:
     """Flatten Record for JAX pytree traversal.
 
     The children are the stored field values exactly as-is; JAX further
     traverses any nested ``Record`` children because ``Record`` is a
     registered pytree type, and non-pytree objects (strings, opaque objects,
     native containers) become pytree leaves themselves. The static aux data
-    is the ``(spec, name, name_is_auto)`` triple — the record's declared type
+    is the ``(spec, name)`` pair — the record's declared type
     and name survive a ``tree_flatten`` / ``tree_unflatten`` round-trip, while
     provenance and annotations do not cross a JAX transform boundary.
     (``NumericRecord`` registers its own flatten, which converts native
@@ -1245,10 +1212,10 @@ def _record_flatten(v: Record) -> tuple[list, tuple[RecordSpec, str, bool]]:
     # record built with an explicit template ordered differently would
     # otherwise zip each value against the wrong field name.
     children = [v._tree[name] for name in v.event_template.children]
-    return children, (v._spec, v._name, v._name_is_auto)
+    return children, (v._spec, v._name)
 
 
-def _record_unflatten(aux: tuple[RecordSpec, str, bool], children: list) -> Record:
+def _record_unflatten(aux: tuple[RecordSpec, str], children: list) -> Record:
     """Unflatten Record from JAX pytree traversal, threading the aux spec.
 
     Reconstructs a plain ``Record`` unconditionally — JAX requires the
@@ -1257,13 +1224,12 @@ def _record_unflatten(aux: tuple[RecordSpec, str, bool], children: list) -> Reco
     ``xarray.DataArray``, has a numeric template but was flattened as a
     plain ``Record``).
     """
-    spec, name, name_is_auto = aux
+    spec, name = aux
     r = object.__new__(Record)
     r.__init__(
         name,
         dict(zip(tuple(spec.event_template.children), children)),
         event_template=spec,
-        name_is_auto=name_is_auto,
         _validate_leaves=False,
     )
     return r

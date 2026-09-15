@@ -102,9 +102,7 @@ def _fieldwise_op(record_data: Record, op: Callable) -> NumericRecord:
     ``float(result)`` directly via the existing single-field shims.
     Leaf-keyed, so nested structure is preserved.
     """
-    return Record(
-        record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()}, name_is_auto=True
-    )
+    return Record(record_data.name, {k: op(jnp.asarray(v)) for k, v in record_data.items()})
 
 
 def _index_record(record_data: Record, idx) -> NumericRecord:
@@ -117,7 +115,6 @@ def _index_record(record_data: Record, idx) -> NumericRecord:
     return Record(
         record_data.name,
         {k: jnp.asarray(v)[idx] for k, v in record_data.items()},
-        name_is_auto=True,
     )
 
 
@@ -198,7 +195,7 @@ def _wrap_numeric_array_as_record(
         n = prod(sample_shape)
         event_shape = arr.shape[n_sample_dims:]
         arr = arr.reshape(n, *event_shape)
-    return Record(name, {name: arr}, name_is_auto=True), name
+    return Record(name, {name: arr}), name
 
 
 def _validate_record_samples(record_data: Record) -> int:
@@ -329,8 +326,8 @@ class EmpiricalDistribution[T](
         if n == 0:
             raise ValueError("samples must be a non-empty sequence.")
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        name, name_is_auto = auto_name(name, "empirical")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "empirical")
+        super().__init__(name=name)
         self._approximate = True
 
     _sampling_cost: str = "low"
@@ -528,7 +525,7 @@ class RecordEmpiricalDistribution(
                 path: column.reshape((rows, *column.shape[len(samples.batch_shape) :]))
                 for path, column in samples._raw_columns().items()
             }
-            samples = Record(samples.name, columns, name_is_auto=True)
+            samples = Record(samples.name, columns)
         if not isinstance(samples, Record):
             if not _is_numeric_array(samples):
                 raise TypeError(
@@ -551,10 +548,10 @@ class RecordEmpiricalDistribution(
         self._record_data = samples
         self._num_atoms = n
         self._w = Weights(n=n, weights=weights, log_weights=log_weights)
-        name, name_is_auto = auto_name(name, "empirical(" + ",".join(samples.fields) + ")")
+        name = auto_name(name, "empirical(" + ",".join(samples.fields) + ")")
         # Skip EmpiricalDistribution.__init__ (different storage shape);
         # call Distribution.__init__ directly for name registration.
-        Distribution.__init__(self, name=name, name_is_auto=name_is_auto)
+        Distribution.__init__(self, name=name)
         self._approximate = True
         # A batch already declares what one element is, pinned dtypes and all;
         # re-deriving it from the stacked leaves would lose whatever inference
@@ -599,7 +596,6 @@ class RecordEmpiricalDistribution(
             cached = Record(
                 self.name,
                 {k: jnp.asarray(v) for k, v in self._record_data.items()},
-                name_is_auto=True,
             )
             object.__setattr__(self, "_samples_record", cached)
         return cached
@@ -723,7 +719,7 @@ class RecordEmpiricalDistribution(
         # ``sample_shape`` ranges over. Building the batch here instead would put
         # a named multiplicity inside a ``vmap``, whose pytree validation refuses
         # the rank change it cannot name.
-        return Record(self.name, fields, name_is_auto=True)
+        return Record(self.name, fields)
 
     # -- moments ------------------------------------------------------------
 
@@ -962,8 +958,8 @@ class BootstrapReplicateDistribution[T](
             if replicate_size < 1:
                 raise ValueError(f"replicate_size must be positive, got {replicate_size}")
             self._replicate_size = replicate_size
-        name, name_is_auto = auto_name(name, "bootstrap")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, "bootstrap")
+        super().__init__(name=name)
         if self._source_kind == "sampleable":
             self._source_size = None
         else:
@@ -1366,7 +1362,7 @@ class RecordBootstrapReplicateDistribution(
         for f in self._record_data.fields:
             arrs = jnp.stack([jnp.asarray(r[f]) for r in results])
             stacked[f] = arrs.reshape(*sample_shape, *arrs.shape[1:])
-        return Record(self.name, stacked, name_is_auto=True)
+        return Record(self.name, stacked)
 
     def _unwrap_dataset(self, dataset: Any) -> Any:
         """Unwrap a single-field auto-wrap dataset to its bare array.

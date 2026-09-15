@@ -1,7 +1,7 @@
 """Contract tests for the ``TrackedTerm`` / ``Annotated`` identity mixins.
 
 Asserts the identity-and-metadata contract shared by every tracked term:
-``name`` / ``name_is_auto`` semantics (user-given vs. auto-derived),
+construction-time names and preservation through transforms,
 ``with_name`` copy semantics, ``with_provenance`` write-once behaviour, and
 the ``annotations`` store.
 """
@@ -66,7 +66,7 @@ class TestMixinMembership:
 
 
 # ===========================================================================
-# 2. name_is_auto — user-given vs. auto-derived
+# 2. Construction-time names
 # ===========================================================================
 
 
@@ -91,22 +91,20 @@ class TestNameEnforcement:
 
 class TestAutoNameHelper:
     def test_supplied_name_is_user_given(self):
-        assert auto_name("mine", "default") == ("mine", False)
+        assert auto_name("mine", "default") == "mine"
 
-    def test_missing_name_takes_default_as_auto(self):
-        assert auto_name(None, "default") == ("default", True)
+    def test_missing_name_takes_default(self):
+        assert auto_name(None, "default") == "default"
 
 
-class TestNameIsAuto:
-    def test_user_named_distribution_is_not_auto(self):
+class TestNameLifecycle:
+    def test_distribution_keeps_explicit_name(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
         assert n.name == "x"
-        assert n.name_is_auto is False
 
-    def test_user_named_record_is_not_auto(self):
+    def test_record_keeps_explicit_name(self):
         r = Record("mine", a=1.0)
         assert r.name == "mine"
-        assert r.name_is_auto is False
 
     def test_constructor_requires_name(self):
         # The name guard fires in ``Record.__new__`` before promotion picks a
@@ -116,14 +114,11 @@ class TestNameIsAuto:
         with pytest.raises(TypeError, match="Record requires its name"):
             Record(a=1.0)
 
-    def test_operation_derived_record_is_auto(self):
-        # ``Record(..., name_is_auto=True)`` is the operation-side constructor: the
-        # op supplies a name and the record is marked auto-derived.
-        r = Record("sample", {"a": 1.0, "b": 2.0}, name_is_auto=True)
+    def test_record_keeps_operation_name(self):
+        r = Record("sample", {"a": 1.0, "b": 2.0})
         assert r.name == "sample"
-        assert r.name_is_auto is True
 
-    def test_a_derived_batch_name_is_auto(self):
+    def test_batch_keeps_its_construction_name(self):
         """A caller that derives a name says so; there is no unnamed batch."""
         ra = RecordBatch(
             "derived",
@@ -131,9 +126,8 @@ class TestNameIsAuto:
             level_names="draw",
             axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
-            name_is_auto=True,
         )
-        assert ra.name_is_auto is True
+        assert ra.name == "derived"
         named = RecordBatch(
             "mine",
             {"a": jnp.zeros((3,))},
@@ -141,73 +135,70 @@ class TestNameIsAuto:
             axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
         )
-        assert named.name_is_auto is False
+        assert named.name == "mine"
 
-    def test_unnamed_composite_distribution_is_auto(self):
+    def test_composite_distribution_derives_default_name(self):
         joint = ProductDistribution(
             mu=Normal(loc=0.0, scale=1.0, name="mu"),
             sigma=Normal(loc=0.0, scale=1.0, name="sigma"),
         )
         assert joint.name == "product(mu,sigma)"
-        assert joint.name_is_auto is True
 
-    def test_named_composite_distribution_is_not_auto(self):
+    def test_composite_distribution_keeps_explicit_name(self):
         joint = ProductDistribution(
             mu=Normal(loc=0.0, scale=1.0, name="mu"),
             name="my_joint",
         )
-        assert joint.name_is_auto is False
+        assert joint.name == "my_joint"
 
-    def test_unnamed_empirical_is_auto(self):
+    def test_empirical_derives_default_name(self):
         # Opaque (object) samples take the base EmpiricalDistribution path,
         # which auto-derives the name "empirical" when none is given.
         emp = EmpiricalDistribution(["heads", "tails", "heads"])
         assert emp.name == "empirical"
-        assert emp.name_is_auto is True
 
-    def test_structural_edits_rederive_auto_names(self):
-        # An auto-derived name describes the current field keys, so a
-        # transform that changes the field set must re-derive it — the same
-        # rule ``map`` follows. Keeping the pre-edit name would advertise
-        # fields that no longer exist.
-        r = Record("record(a,b)", {"a": jnp.array(1.0), "b": jnp.array(2.0)}, name_is_auto=True)
-        assert r.without("b").name == "record(a)"
-        assert r.map(lambda x: x).name == "record(a,b)"
-        merged = Record("record(a)", {"a": jnp.array(1.0)}, name_is_auto=True).merge(
-            Record("record(c)", {"c": jnp.array(3.0)}, name_is_auto=True)
-        )
-        assert merged.name == "record(a,c)"
-        assert r.with_path_names(a="z").name == "record(z,b)"
+    @pytest.mark.parametrize("name", [None, "mine"], ids=["derived", "supplied"])
+    @pytest.mark.parametrize(
+        "transform, expected",
+        [
+            pytest.param(lambda r: r.without("b"), {"a": 1.0}, id="without"),
+            pytest.param(lambda r: r.map(lambda x: x + 1), {"a": 2.0, "b": 3.0}, id="map"),
+            pytest.param(lambda r: r.replace(a=3.0), {"a": 3.0, "b": 2.0}, id="replace"),
+            pytest.param(
+                lambda r: r.merge(Record("other", c=3.0)),
+                {"a": 1.0, "b": 2.0, "c": 3.0},
+                id="merge",
+            ),
+            pytest.param(lambda r: r.with_path_names(a="z"), {"z": 1.0, "b": 2.0}, id="rename"),
+        ],
+    )
+    def test_structural_transforms_preserve_names_and_apply_the_edit(
+        self, name, transform, expected
+    ):
+        record = Record.ensure({"a": jnp.array(1.0), "b": jnp.array(2.0)}, name=name)
 
-    def test_structural_edits_preserve_user_names(self):
-        # A user-given name is the object's identity, not a field summary,
-        # so structural edits keep it verbatim and never flip name_is_auto.
-        r = Record("mine", a=jnp.array(1.0), b=jnp.array(2.0))
-        for edited in (
-            r.without("b"),
-            r.merge(Record("o", c=jnp.array(3.0))),
-            r.with_path_names(a="z"),
-        ):
-            assert edited.name == "mine"
-            assert edited.name_is_auto is False
+        result = transform(record)
+
+        assert result.name == record.name
+        assert {key: float(value) for key, value in result.items()} == expected
+        assert {key: float(value) for key, value in record.items()} == {"a": 1.0, "b": 2.0}
 
     def test_nested_auto_name_derives_from_top_level_keys(self):
         # The derived name uses top-level field keys (not full leaf paths),
         # so every transform agrees regardless of nesting depth.
         nested = Record(
             "record(a)",
-            {"a": Record("a", {"b": jnp.array(1.0), "c": jnp.array(2.0)}, name_is_auto=True)},
-            name_is_auto=True,
+            {"a": Record("a", {"b": jnp.array(1.0), "c": jnp.array(2.0)})},
         )
         assert nested.name == "record(a)"
         assert nested.with_path_names({"a/b": "z"}).name == "record(a)"
         assert nested.map(lambda x: x).name == "record(a)"
 
-    def test_name_is_auto_survives_record_pickle(self):
-        auto = Record("record(a)", {"a": 1.0}, name_is_auto=True)
+    def test_record_names_survive_pickle(self):
+        auto = Record("record(a)", {"a": 1.0})
         named = Record("mine", a=1.0)
-        assert pickle.loads(pickle.dumps(auto)).name_is_auto is True
-        assert pickle.loads(pickle.dumps(named)).name_is_auto is False
+        assert pickle.loads(pickle.dumps(auto)).name == auto.name
+        assert pickle.loads(pickle.dumps(named)).name == named.name
 
 
 # ===========================================================================
@@ -223,14 +214,10 @@ class TestWithName:
         assert m.name == "y"
         assert n.name == "x"
 
-    def test_with_name_clears_auto_flag(self):
-        r = Record("record(a)", {"a": 1.0}, name_is_auto=True)  # operation-derived (auto) name
-        assert r.name_is_auto is True
+    def test_with_name_replaces_a_derived_name(self):
+        r = Record("record(a)", {"a": 1.0})  # operation-derived (auto) name
         r2 = r.with_name("mine")
         assert r2.name == "mine"
-        assert r2.name_is_auto is False
-        # the original keeps its auto flag
-        assert r.name_is_auto is True
 
     def test_with_name_records_provenance(self):
         n = Normal(loc=0.0, scale=1.0, name="x")
@@ -303,16 +290,13 @@ class TestWithNameOnBatchTypes:
             level_names="draw",
             axes_per_level=(1,),
             element_spec=EventTemplate(a=()),
-            name_is_auto=True,
         )
         ra2 = ra.with_name("mine")
         assert ra2 is not ra
         assert ra2.name == "mine"
-        assert ra2.name_is_auto is False
         assert ra2["a"] is ra["a"]
         assert ra2.batch_shape == ra.batch_shape
         assert ra2.event_template is ra.event_template
-        assert ra.name_is_auto is True  # original unchanged
 
     def test_numeric_record_batch(self):
         nrb = NumericRecordBatch(
@@ -324,7 +308,6 @@ class TestWithNameOnBatchTypes:
         )
         nra2 = nrb.with_name("new")
         assert nra2.name == "new"
-        assert nra2.name_is_auto is False
         assert nra2["a"] is nrb["a"]
         assert nrb.name == "orig"
 
@@ -332,7 +315,6 @@ class TestWithNameOnBatchTypes:
         da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="batch")
         da2 = da.with_name("renamed_batch")
         assert da2.name == "renamed_batch"
-        assert da2.name_is_auto is False
         assert da2.batch_shape == da.batch_shape
         assert da.name == "batch"
 
@@ -354,7 +336,6 @@ class TestWithNameOnCustomNewHosts:
         t = TransformedDistribution(Normal(loc=0.0, scale=1.0, name="x"), tfb.Exp())
         t2 = t.with_name("y")
         assert t2.name == "y"
-        assert t2.name_is_auto is False
         key = jax.random.PRNGKey(0)
         assert jnp.allclose(jnp.asarray(t._sample(key, (5,))), jnp.asarray(t2._sample(key, (5,))))
 
@@ -365,7 +346,6 @@ class TestWithNameOnCustomNewHosts:
         flat = mvn.as_flat_distribution()
         renamed = flat.with_name("theta_flat")
         assert renamed.name == "theta_flat"
-        assert renamed.name_is_auto is False
         assert renamed.event_shape == flat.event_shape
 
     def test_record_distribution_view(self):
@@ -376,26 +356,22 @@ class TestWithNameOnCustomNewHosts:
         view = joint["mu"]
         renamed = view.with_name("mu_view")
         assert renamed.name == "mu_view"
-        assert renamed.name_is_auto is False
 
     def test_empirical_router(self):
         emp = EmpiricalDistribution(["a", "b", "c"])
         renamed = emp.with_name("labels")
         assert renamed.name == "labels"
-        assert renamed.name_is_auto is False
-        assert emp.name_is_auto is True
 
 
 # ===========================================================================
-# 3c. name_is_auto propagation through derived objects
+# 3c. Name preservation through derived objects
 # ===========================================================================
 
 
-class TestFlagPropagation:
-    """Operations that build a new object from a parent keep the identity
-    flag consistent with where the name actually came from."""
+class TestNamePreservation:
+    """Transformations preserve the names assigned by their constructors."""
 
-    def test_minibatched_distribution_default_name_is_auto(self):
+    def test_minibatched_distribution_default_and_explicit_names(self):
         import tensorflow_probability.substrates.jax.glm as tfp_glm
 
         from probpipe import MultivariateNormal
@@ -408,47 +384,42 @@ class TestFlagPropagation:
         lik = GLMLikelihood(tfp_glm.Bernoulli(), x=X)
         m = MinibatchedDistribution(prior, lik, Record("r", X=X, y=y), batch_size=2)
         assert m.name == "MinibatchedDistribution(batch_size=2)"
-        assert m.name_is_auto is True
         named = MinibatchedDistribution(
             prior, lik, Record("r", X=X, y=y), batch_size=2, name="mine"
         )
-        assert named.name_is_auto is False
+        assert named.name == "mine"
 
-    def test_product_conditioning_mirrors_flag(self):
+    def test_product_conditioning_preserves_names(self):
         auto_joint = ProductDistribution(
             mu=Normal(loc=0.0, scale=1.0, name="mu"),
             sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
         )
         cond = auto_joint._condition_on(mu=0.5)
-        assert cond.name_is_auto is True
+        assert cond.name == auto_joint.name
         named_joint = ProductDistribution(
             mu=Normal(loc=0.0, scale=1.0, name="mu"),
             sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
             name="my_joint",
         )
         cond_named = named_joint._condition_on(mu=0.5)
-        assert cond_named.name_is_auto is False
+        assert cond_named.name == named_joint.name
 
-    def test_distribution_array_slice_mirrors_flag(self):
+    def test_distribution_array_slice_preserves_names(self):
         da = Normal.from_batched_params(loc=jnp.zeros(4), scale=1.0, name="batch")
-        assert da.name_is_auto is False
-        assert da[0:2].name_is_auto is False
-        # An auto-named array (e.g. a sweep product) keeps auto on slices.
-        object.__setattr__(da, "_name_is_auto", True)
-        assert da[0:2].name_is_auto is True
+        assert da[0:2].name == da.name
+        renamed = da.with_name("renamed")
+        assert renamed[0:2].name == "renamed"
 
-    def test_from_batched_params_cells_are_auto(self):
+    def test_from_batched_params_cells_derive_names(self):
         da = Normal.from_batched_params(loc=jnp.zeros(3), scale=1.0, name="x")
         cell = da[0]
         assert cell.name == "x_0"
-        assert cell.name_is_auto is True
 
-    def test_full_factorial_design_name_is_auto(self):
+    def test_full_factorial_design_derives_name(self):
         from probpipe.record import FullFactorialDesign
 
         design = FullFactorialDesign(a=jnp.arange(2.0), b=jnp.arange(3.0))
         assert design.name.startswith("FullFactorialDesign")
-        assert design.name_is_auto is True
 
 
 # ===========================================================================
@@ -509,22 +480,19 @@ class TestAnnotated:
 
 
 class TestProductPickleRoundTrip:
-    def test_auto_named_product_keeps_auto_flag(self):
+    def test_product_keeps_derived_name_through_pickle(self):
         joint = ProductDistribution(
             mu=Normal(loc=0.0, scale=1.0, name="mu"),
             sigma=Normal(loc=1.0, scale=0.5, name="sigma"),
         )
-        assert joint.name_is_auto is True
         back = pickle.loads(pickle.dumps(joint))
         assert back.name == joint.name
-        assert back.name_is_auto is True
 
     def test_user_named_product_keeps_identity_and_provenance(self):
         joint = ProductDistribution(mu=Normal(loc=0.0, scale=1.0, name="mu"), name="my_joint")
         joint.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(joint))
         assert back.name == "my_joint"
-        assert back.name_is_auto is False
         assert back.provenance.operation == "op"
 
 
@@ -540,5 +508,4 @@ class TestBatchPickleRoundTrip:
         nrb.with_provenance(Provenance("op"))
         back = pickle.loads(pickle.dumps(nrb))
         assert back.name == "mine"
-        assert back.name_is_auto is False
         assert back.provenance.operation == "op"

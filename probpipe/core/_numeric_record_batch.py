@@ -74,7 +74,6 @@ class NumericRecordBatch(RecordBatch):
         *,
         element_spec: RecordSpec | EventTemplate,
         axes_per_level: Iterable[int] | None = None,
-        name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         template = _record_element_spec(element_spec, kind=type(self).__name__).event_template
@@ -90,7 +89,6 @@ class NumericRecordBatch(RecordBatch):
             level_names,
             element_spec=element_spec,
             axes_per_level=axes_per_level,
-            name_is_auto=name_is_auto,
             provenance=provenance,
         )
 

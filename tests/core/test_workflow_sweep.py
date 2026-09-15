@@ -300,14 +300,14 @@ class TestASweptBodyThatReturnsABatch:
     @staticmethod
     def _rows(n: int, *, level_name: str = "row") -> RecordBatch:
         return RecordBatch.stack(
-            [Record("p", {"x": jnp.asarray(float(i))}, name_is_auto=True) for i in range(n)],
+            [Record("p", {"x": jnp.asarray(float(i))}) for i in range(n)],
             level_name=level_name,
         )
 
     @staticmethod
     def _body(p):
         return RecordBatch.stack(
-            [Record("r", {"y": p["x"] * k}, name_is_auto=True) for k in (1.0, 2.0, 3.0)],
+            [Record("r", {"y": p["x"] * k}) for k in (1.0, 2.0, 3.0)],
             level_name="k",
         )
 
@@ -401,13 +401,13 @@ class TestASweptBodyThatReturnsABatch:
 
         def body(p, q):
             return RecordBatch.stack(
-                [Record("r", {"z": p["x"] * q["w"] * k}, name_is_auto=True) for k in (1.0, 2.0)],
+                [Record("r", {"z": p["x"] * q["w"] * k}) for k in (1.0, 2.0)],
                 level_name="k",
             )
 
         first = self._rows(2, level_name="a")
         second = RecordBatch.stack(
-            [Record("q", {"w": jnp.asarray(float(i))}, name_is_auto=True) for i in range(3)],
+            [Record("q", {"w": jnp.asarray(float(i))}) for i in range(3)],
             level_name="b",
         )
 
@@ -424,7 +424,7 @@ class TestASweptBodyThatReturnsABatch:
 
         def body(p):
             return RecordBatch.stack(
-                [Record("r", {"inner": {"y": p["x"] * k}}, name_is_auto=True) for k in (1.0, 2.0)],
+                [Record("r", {"inner": {"y": p["x"] * k}}) for k in (1.0, 2.0)],
                 level_name="k",
             )
 
@@ -455,7 +455,7 @@ class TestASweptBodyThatReturnsABatch:
         with pytest.raises(ValueError, match="belongs to no level"):
             jax.vmap(
                 lambda v: RecordBatch.stack(
-                    [Record("r", {"y": v * k}, name_is_auto=True) for k in (1.0, 2.0)],
+                    [Record("r", {"y": v * k}) for k in (1.0, 2.0)],
                     level_name="k",
                 )
             )(jnp.arange(4.0))
@@ -506,7 +506,6 @@ class TestNumericArraySweep:
         assert result.batch_shape == source.batch_shape
         assert result.level_names == source.level_names
         assert result.axis_groups == source.axis_groups
-        assert result.name == "repeated" and result.name_is_auto
         np.testing.assert_array_equal(
             np.asarray(result), np.broadcast_to(native, (*source.batch_shape, *event_shape))
         )
@@ -580,7 +579,6 @@ class TestNumericArraySweep:
         assert result.axis_groups == source.axis_groups
         assert result.element_spec == expected_spec
         assert result.values.dtype == np.float32
-        assert result.name == "shift" and result.name_is_auto
         assert result.provenance is not None
         np.testing.assert_array_equal(np.asarray(result), expected)
 
@@ -597,7 +595,6 @@ class TestNumericArraySweep:
         assert result.axis_groups == source.axis_groups
         assert result.level_names == source.level_names
         assert result.element_spec == NumericArraySpec((), dtype=np.float32)
-        assert result.name == "score" and result.name_is_auto
         np.testing.assert_allclose(np.asarray(result), expected, rtol=2e-7, atol=1e-7)
 
         shifted = Function(func=lambda value: value + 1, dispatch="sequential")(result)

@@ -37,30 +37,22 @@ from .provenance import Provenance
 __all__ = ["Annotated", "TrackedTerm", "auto_name"]
 
 
-def auto_name(name: str | None, default: str) -> tuple[str, bool]:
-    """Resolve an optional user-supplied name against an auto-derived default.
-
-    The standard idiom for a constructor whose ``name`` may be omitted:
-    returns ``(name, False)`` when *name* was supplied (a user-given name)
-    and ``(default, True)`` when it was ``None`` (an auto-derived name),
-    ready to pass to ``__init__(name=..., name_is_auto=...)`` or
-    :meth:`TrackedTerm._init_tracked`.
+def auto_name(name: str | None, default: str) -> str:
+    """Resolve an optional name against its construction-time default.
 
     Parameters
     ----------
     name : str or None
         The caller-supplied name, or ``None`` to use *default*.
     default : str
-        The auto-derived name to fall back on.
+        The name to use when none was supplied.
 
     Returns
     -------
-    tuple of (str, bool)
-        The resolved name and the matching ``name_is_auto`` flag.
+    str
+        The supplied name or its default.
     """
-    if name is None:
-        return default, True
-    return name, False
+    return default if name is None else name
 
 
 def _decoupled_annotations(annotations: Mapping[str, Any]) -> Mapping[str, Any]:
@@ -133,15 +125,10 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     object is a *tracked term* — the kind of object ProbPipe operations
     consume and produce.
 
-    The name is either **user-given** or **auto-derived**, recorded by
-    :attr:`name_is_auto`: a user constructing an object explicitly supplies
-    its name, while an operation that produces an object derives a
-    deterministic name from its inputs and marks it auto. The two behave
-    differently downstream — an auto-derived name may be re-derived when the
-    object is combined into a larger one, while a user-given name is
-    preserved. :meth:`with_name` renames the object itself (returning a copy
-    marked user-named); this is distinct from ``with_path_names`` on the named-tree
-    types, which renames the *fields within* an object.
+    The name is set at construction, either supplied by the caller or derived
+    from the inputs. Every transform preserves it; only :meth:`with_name`
+    replaces it, returning a copy. ``with_path_names`` on the named-tree types
+    renames the fields within an object and preserves the object's name.
 
     Provenance is **write-once**: it is attached at most once via
     :meth:`with_provenance`, and a subsequent attempt raises. Transformations
@@ -159,10 +146,6 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     ----------
     name : str
         Human-readable name of this object.
-    name_is_auto : bool
-        ``True`` when :attr:`name` was auto-derived by the operation that
-        produced this object; ``False`` when it was supplied by the user
-        (including via :meth:`with_name`).
     provenance : Provenance or None
         How this object was produced, or ``None`` if no provenance has been
         attached (an original user-constructed object, or provenance tracking
@@ -171,7 +154,7 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
     Notes
     -----
     The mixin holds no per-instance storage of its own (``__slots__ = ()``);
-    the state lives in the ``_name`` / ``_name_is_auto`` / ``_provenance``
+    the state lives in the ``_name`` / ``_provenance``
     attributes, which a host class declares in its ``__slots__`` (when it uses
     slots) and initializes via :meth:`_init_tracked`. All writes go through
     ``object.__setattr__`` so the mixin also works on immutable hosts that
@@ -189,18 +172,16 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         self,
         name: str,
         *,
-        name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         """Initialize the identity state (constructor helper for host classes).
 
-        Assigns ``_name``, ``_name_is_auto``, and ``_provenance`` via
+        Assigns ``_name`` and ``_provenance`` via
         ``object.__setattr__`` so immutable hosts can call it from their
         constructor. Performs no validation — the host constructor owns its
         own ``name`` policy (required vs. auto-derived default).
         """
         object.__setattr__(self, "_name", name)
-        object.__setattr__(self, "_name_is_auto", bool(name_is_auto))
         object.__setattr__(self, "_provenance", provenance)
 
     # -- identity ------------------------------------------------------------
@@ -210,22 +191,11 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
         """Human-readable name of this object."""
         return self._name
 
-    @property
-    def name_is_auto(self) -> bool:
-        """Whether :attr:`name` was auto-derived rather than user-given.
-
-        ``True`` when the operation that produced this object derived the
-        name from its inputs; ``False`` when the user supplied it — at
-        construction or via :meth:`with_name`.
-        """
-        return getattr(self, "_name_is_auto", False)
-
     def with_name(self, name: str) -> Self:
-        """Return a copy of this object under a new user-given name.
+        """Return a copy of this object under a new name.
 
         The copy is shallow: it shares its data with the original but has
-        ``name`` set to *name* and :attr:`name_is_auto` set to ``False`` (a
-        rename is always a user choice). The copy's :attr:`provenance`
+        ``name`` set to *name*. The copy's :attr:`provenance`
         records the rename, with the original as parent, so the lineage
         chain is preserved. On an ``Annotated`` host the annotations
         *container* is its own (its entries are shared), so annotations
@@ -255,7 +225,6 @@ class TrackedTerm(Immutable, metaclass=_TrackedTermMeta):
             raise TypeError(f"{type(self).__name__}.with_name() requires a non-empty string name")
         clone = self._shallow_copy()
         object.__setattr__(clone, "_name", name)
-        object.__setattr__(clone, "_name_is_auto", False)
         object.__setattr__(clone, "_provenance", None)
         clone.with_provenance(
             Provenance.create(
