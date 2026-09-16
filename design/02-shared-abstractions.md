@@ -349,26 +349,22 @@ Each **dispatch method** declares:
 2. the types it applies to, via `supported_types`;
 3. a `check` function that probes feasibility without significant computation and reports, as a `MethodInfo`, whether the call is feasible, infeasible, or **unresolved**, which means the declarations the probe needs are not yet available, and at what fidelity;
 4. an `execute` function that performs it;
-5. a **fidelity**: exact or approximate, on one scale shared across the registries, declared where the method is registered and fixed for the method's life;
-6. a **priority**: an integer rank *within* a fidelity tier, and the one thing about a method a deployment may change at runtime.
+5. whether it is **exact**: a method either returns a representation of the requested result or a stand-in for it, declared where the method is registered and fixed for the method's life;
+6. a **priority**: an integer rank among the methods of the same exactness, and the one thing about a method a deployment may change at runtime.
 
 Dispatch is by argument type: a `UnaryDispatchRegistry` keys on the first argument's type, and a `BinaryDispatchRegistry` on the first two. The registry takes matching methods in **selection order** and runs the first whose `check` establishes feasibility. An unresolved higher-ranked candidate prevents a probe from claiming which method will run; execution resolves prerequisite plans first or reports unavailable requirements (V.9). Selection order is the same in every registry:
-1. fidelity, exact above approximate, so exactness is never silently traded for anything below it;
-2. priority within the tier, higher first;
+1. exact methods before approximate ones, so exactness is never silently traded away;
+2. priority among methods of the same exactness, higher first;
 3. specificity, favoring the method whose declared types are closest to the argument's class in method-resolution order;
 4. registration order.
 
-A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime within a tier and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing, and a named method that is infeasible raises the same. A non-executing probe may instead report unresolved requirements (V.1); it must not report those as either feasibility or mathematical nonexistence. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
+A method whose priority is `None` is **opt-in-only**, skipped by auto-selection and reachable only by name. That is the default, so registering a method never silently changes what runs until a contributor ranks it. `set_priorities` re-ranks at runtime, by mapping or by keyword since a method name need not be an identifier, without changing whether a method is exact, and warns when a method moves into or out of opt-in-only. A caller can bypass auto-selection with `method="..."`. A call with no feasible method raises `ResolutionError`, naming the methods tried and what each was missing, and a named method that is infeasible raises the same. A non-executing probe may instead report unresolved requirements (V.1); it must not report those as either feasibility or mathematical nonexistence. New methods are added by registration at import, by whichever layer owns the implementation, so a registry gains its providers without importing them.
 
 ```python
-class Fidelity(Enum):     # how exact an answer is; totally ordered, EXACT the highest
-    EXACT       = "exact"
-    APPROXIMATE = "approximate"
-
 class BaseDispatchMethod(ABC):
     name: str
-    fidelity: Fidelity            # declared at registration, fixed for the method's life
-    priority: int | None = None   # rank within the tier, higher first; None is opt-in-only
+    exact: bool                   # declared at registration, fixed for the method's life
+    priority: int | None = None   # rank among methods of the same exactness, higher first; None is opt-in-only
 
     @abstractmethod
     def check(self, *args, **kwargs) -> MethodInfo: ...
@@ -386,7 +382,7 @@ class MethodInfo:
     feasible:    bool | None   # None when required declarations are not yet available
     method_name: str
     description: str
-    fidelity:    Fidelity | None   # local guarantee; None when not yet determined
+    exact:       bool | None   # the local guarantee; None when not yet determined
     pending:     tuple[str, ...]   # unresolved feasibility requirements
 
 class ResolutionError(Exception): ...   # no available implementation under the requested controls
@@ -395,18 +391,19 @@ class MathematicalDomainError(ValueError): ...  # the mathematical operation is 
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     # the public interface is concrete; arity subclasses supply key extraction and matching
     def register(self, method: M) -> None: ...
-    def set_priorities(self, **priorities: int | None) -> None: ...   # within a tier only; warns on a move into or out of opt-in-only
-    def execute(self, *args, method: str | None = None, **kwargs) -> Any: ...   # auto-select, or run the named method
-    def check(self, *args, method: str | None = None, **kwargs) -> MethodInfo: ...
+    def set_priorities(self, priorities: Mapping[str, int | None] | None = None, /,
+                       **kwargs: int | None) -> None: ...   # ranks only; warns on a move into or out of opt-in-only
+    def execute(self, *args, method: str | None = None, exact_only: bool = False, **kwargs) -> Any: ...   # auto-select, or run the named method
+    def check(self, *args, method: str | None = None, exact_only: bool = False, **kwargs) -> MethodInfo: ...
     def list_methods(self) -> list[str]: ...                           # names, in selection order
 
 class UnaryDispatchRegistry[M: UnaryDispatchMethod](BaseDispatchRegistry[M]): ...    # keys on one argument's type
 class BinaryDispatchRegistry[M: BinaryDispatchMethod](BaseDispatchRegistry[M]): ...  # keys on the first two
 ```
 
-**Fidelity and validity.** Exact means that the returned representation denotes the requested mathematical result; for a draw-producing operation it means an exact draw in law, not equality of draws across different algorithms. Approximate means a stand-in for that result. Sampling is a method property, not a third fidelity tier: a finite empirical posterior or pushforward is approximate, while sampling from that empirical law may be exact for the law it is. Approximate methods state their assumptions, such as integrability for a Monte Carlo mean. Finite MCMC output is approximate even when the chain has the desired invariant law. Asymptotic targets and convergence assumptions are recorded method guarantees, not exactness tags. `min_fidelity=Fidelity.EXACT` excludes approximate methods.
+**Fidelity and validity.** Exact means that the returned representation denotes the requested mathematical result; for a draw-producing operation it means an exact draw in law, not equality of draws across different algorithms. Approximate means a stand-in for that result. Sampling is a method property, not a third level of exactness: a finite empirical posterior or pushforward is approximate, while sampling from that empirical law may be exact for the law it is. Approximate methods state their assumptions, such as integrability for a Monte Carlo mean. Finite MCMC output is approximate even when the chain has the desired invariant law. Asymptotic targets and convergence assumptions are recorded method guarantees, not exactness tags. Exactness is therefore a fact about a returned representation and not a scale, so it is one boolean, `exact`, and `exact_only=True` excludes approximate methods.
 
-Provenance records each step's local fidelity and its target, preserving upstream approximation history. Exact downstream work cannot erase an earlier approximation relative to an upstream target, and an upstream approximation does not make a later exact calculation on the returned law locally approximate. Derived routes and registry routes report the fidelity of their selected implementation chain; a wrapper cannot upgrade it.
+Provenance records whether each step was exact and its target, preserving upstream approximation history. Exact downstream work cannot erase an earlier approximation relative to an upstream target, and an upstream approximation does not make a later exact calculation on the returned law locally approximate. Derived routes and registry routes report the exactness of their selected implementation chain; a wrapper cannot upgrade it.
 
 **Two failures.** A known mathematical nonexistence raises `MathematicalDomainError`, for example a requested mean known not to exist. Computational unavailability raises `ResolutionError`; failure to establish existence does not establish nonexistence. A numerical execution failure propagates as such, and neither it nor a missing capability is silently reclassified as a mathematical domain error. Structural admission errors and return-contract defects are specified at their engine steps (V.4, V.10).
 

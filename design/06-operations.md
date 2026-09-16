@@ -18,7 +18,7 @@ A result rule declares the result's components independently of its label. It ca
 
 Since the engine runs the stack, `op(...)` is a tracked term under fresh, derived identity whose spec satisfies the completed declaration, `op.with_options(raw=True)(...)` is that result detached (II.4), and `op.check(...)` is the engine's `check`.
 
-**Routes.** The implementations behind one operation come from different places, and a route is the one form they all take. It has the interface of a dispatch method (II.7), that is, `check`, `execute`, and a **fidelity**, but is bound to a call rather than to argument types, and it is registered against the operation it realizes by upward registration, as for any registry. Routes come from four sources, and an operation may carry any combination:
+**Routes.** The implementations behind one operation come from different places, and a route is the one form they all take. It has the interface of a dispatch method (II.7), that is, `check`, `execute`, and an **exact** flag, but is bound to a call rather than to argument types, and it is registered against the operation it realizes by upward registration, as for any registry. Routes come from four sources, and an operation may carry any combination:
 
 | route source | the implementation comes from | example |
 |---|---|---|
@@ -29,7 +29,7 @@ Since the engine runs the stack, `op(...)` is a tracked term under fresh, derive
 
 Where a route dispatches on a capability it names the operand it dispatches on. Its check reads the call's specs, the parameters the result rule reads, the controls, and declared representation metadata such as a factorization or a guarded capability (III.8), and it never evaluates the body. A capability route requires protocol membership plus the capability's guard, and membership alone where the capability is total on its domain. A structural route checks declared structure, a registry route delegates its probe to that registry, and a fallback checks its stated domain and assumptions. Missing declarations are reported as unresolved (V.1), and execution never catches a failure and tries another route.
 
-Routes use II.7's fidelity, specificity, and registration order, with no configurable within-tier priority at the operation itself. Registry routes retain their registry's priorities. Their local fidelity is the selected method's; derived routes likewise use the selected chain's guarantee rather than a fixed exact tag on the wrapper.
+Routes use II.7's exactness, specificity, and registration order, with no configurable priority at the operation itself. Registry routes retain their registry's priorities. Their local fidelity is the selected method's; derived routes likewise use the selected chain's guarantee rather than a fixed exact tag on the wrapper.
 
 ```python
 @dataclass(frozen=True)
@@ -47,19 +47,17 @@ class BoundCall:                   # one call, after binding and normalization
 class OperationRoute(Protocol):    # one interface; the helpers below are construction shorthand
     name:     str
     source:   RouteSource
-    fidelity: Fidelity | None     # None for a delegated route until its plan selects a method
+    exact: bool | None            # None for a delegated route until its plan selects a method
     def check(self, call: BoundCall, result: OutputSpec | None) -> MethodInfo: ...
     def execute(self, call: BoundCall, result: OutputSpec | None) -> Any: ...
 
 mean.capability_route("closed_form", operand="d", protocol=SupportsMean, method="_mean",
-                      fidelity=Fidelity.EXACT)
-mean.fallback_route("monte_carlo", check=_can_sample, execute=_mc_mean,
-                    fidelity=Fidelity.APPROXIMATE)
+                      exact=True)
+mean.fallback_route("monte_carlo", check=_can_sample, execute=_mc_mean, exact=False)
 marginal.capability_route("exact", operand="d", protocol=SupportsMarginals,
-                          method="_marginal", check=_can_marginalize_path,
-                          fidelity=Fidelity.EXACT)
+                          method="_marginal", check=_can_marginalize_path, exact=True)
 # An omitted capability guard means membership suffices on the declared domain.
-condition_on.structural_route("curry", check=_can_curry, execute=_curry, fidelity=Fidelity.EXACT)
+condition_on.structural_route("curry", check=_can_curry, execute=_curry, exact=True)
 condition_on.registry_route("bayes", registry=inference_method_registry)
 ```
 
@@ -104,7 +102,7 @@ class OperandSummary:
 class RouteSummary:
     name:     str
     source:   RouteSource
-    fidelity: Fidelity | None    # None until a delegated route is resolved (II.7)
+    exact:    bool | None        # None until a delegated route is resolved (II.7)
     requires: tuple[type, ...]   # the protocols a capability route needs; empty otherwise
     condition: str               # the feasibility condition in words, for the routes that types cannot state
 
@@ -292,7 +290,7 @@ Leaving the integral out of `condition_on` keeps conditioning single-valued, sin
 
 ### Contract
 
-`convert(d, target)` returns a distribution of the requested class or satisfying the requested capability protocol (III.8). Its registry route uses the converter plan and event-preservation contract of IV.3. `with_options(method=..., min_fidelity=...)` controls selection, and provenance records the selected converter's local fidelity. A source already satisfying the target needs no numerical conversion and returns under fresh identity. Entry normalization plans the same conversion; execution constructs it and records it by the same contract (V.4, V.9).
+`convert(d, target)` returns a distribution of the requested class or satisfying the requested capability protocol (III.8). Its registry route uses the converter plan and event-preservation contract of IV.3. `with_options(method=..., exact_only=...)` controls selection, and provenance records the selected converter's local fidelity. A source already satisfying the target needs no numerical conversion and returns under fresh identity. Entry normalization plans the same conversion; execution constructs it and records it by the same contract (V.4, V.9).
 
 ### Rationale
 

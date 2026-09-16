@@ -101,7 +101,7 @@ Reifying both degrees of freedom would force a 2×2 of joint classes. By `D2 –
 
 ### Contract
 
-A distribution may have more than one representation, and an operation or a backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current class to a requested target while preserving its law and its event declaration. A **converter** is a binary dispatch method (II.7) that declares the source types it converts *from* and the target types it converts *to*. A conversion is rarely unique, so each converter carries a **fidelity** on the shared scale of II.7: `exact` for an equivalent representation, `approximate` for a stand-in such as moment matching or a Monte Carlo representation. A caller may set `min_fidelity` as a floor, which `check` enforces.
+A distribution may have more than one representation, and an operation or a backend sometimes needs a different one than the user holds. **Conversion** moves a distribution from its current class to a requested target while preserving its law and its event declaration. A **converter** is a binary dispatch method (II.7) that declares the source types it converts *from* and the target types it converts *to*. A conversion is rarely unique, so each converter declares whether it is **exact** (II.7): exact for an equivalent representation, approximate for a stand-in such as moment matching or a Monte Carlo representation. A caller may set `exact_only`, which `check` enforces.
 
 **The registry.** The **converter registry** is the binary dispatch registry keyed on `(type(source), target)`. A target is a distribution class or a capability protocol (III.8). For a protocol target the registry considers the converters that promise the required guarded capability, and a source already satisfying the claim needs no conversion. A protocol target is feasible only when its claim and guard can be established, on the source or on the converter's promised result; class membership alone does not establish an instance-dependent capability.
 
@@ -115,19 +115,19 @@ class ConversionInfo(MethodInfo):
     target_spec: DistributionSpec | None   # None when still unresolved
     target_class: type | None
     capabilities: tuple[type, ...]         # claims guaranteed by this conversion
-    # pending requirements and local fidelity are inherited from MethodInfo
+    # pending requirements and exactness are inherited from MethodInfo
 
 class Converter(BinaryDispatchMethod):
     name: str
     def supported_types(self) -> tuple[tuple[type, ...], tuple[type, ...]]: ...   # (source, target) types
     def check(self, source, target_type: type, *,
-              min_fidelity: Fidelity | None = None) -> ConversionInfo: ...
+              exact_only: bool = False) -> ConversionInfo: ...
     def execute(self, source, target_type: type) -> Distribution: ...             # the conversion itself
 
 class ConverterRegistry(BinaryDispatchRegistry[Converter]):
     # keyed on (type(source), target): the target is a distribution class, or a capability protocol (III.8)
     def convert(self, source, target_type: type,
-                method: str | None = None, min_fidelity: Fidelity | None = None) -> Distribution: ...
+                method: str | None = None, exact_only: bool = False) -> Distribution: ...
 
 converter_registry: ConverterRegistry   # the global instance
 ```
