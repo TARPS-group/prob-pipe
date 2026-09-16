@@ -34,7 +34,7 @@ import jax.numpy as jnp
 import jax.scipy.linalg as jsl
 import numpy as np
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import MethodInfo
 from ..core.distribution import Distribution
 from ..custom_types import Array, ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior

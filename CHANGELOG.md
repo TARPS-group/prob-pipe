@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed (breaking)
 
+- **A dispatch method declares whether it is exact; the integer priority
+  tiers are gone.** `probpipe.core._registry` is now `probpipe.core._dispatch`.
+  Every `BaseDispatchMethod` declares `exact: bool` at registration, fixed for
+  its life, and `priority: int | None` ranks methods of the same exactness,
+  `None` (the default) meaning opt-in only. Selection is exact before
+  approximate, then priority, then registration order, in every registry.
+  `check` and `execute` take `exact_only=True` to exclude approximate methods.
+  `set_priorities` accepts a positional mapping as well as keywords, since a
+  method name need not be an identifier, and cannot change exactness.
+  `MethodInfo` gains `exact: bool | None` and `pending: tuple[str, ...]`, and
+  `feasible` may be `None` while required declarations are unavailable.
+  A call with no feasible method raises `ResolutionError` where it raised
+  `TypeError`; `MathematicalDomainError(ValueError)` is defined beside it for
+  known mathematical nonexistence and is never raised by the registry itself.
+  `OPT_IN_ONLY_PRIORITY` is removed. Every built-in inference method declares
+  `exact = False` through `InferenceMethod`; the former priority-0 methods
+  (`blackjax_hmc`, `blackjax_sghmc`, `pymc_advi`, `tfp_nuts`, `tfp_hmc`) are
+  `None`, and the other ranks are unchanged, so auto-selection is unchanged.
+
 - Names are set at construction and preserved by structural transforms;
   `with_name` is the sole renaming operation. The `name_is_auto` attribute,
   constructor keywords, and carried state are removed. `auto_name` now returns

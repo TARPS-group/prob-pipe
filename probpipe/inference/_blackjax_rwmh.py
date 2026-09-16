@@ -33,7 +33,7 @@ import jax.scipy.linalg as jsl
 import numpy as np
 from blackjax.adaptation.mass_matrix import welford_algorithm
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array, ArrayLike

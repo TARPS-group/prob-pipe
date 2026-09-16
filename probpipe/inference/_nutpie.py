@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import MethodInfo
 from ..core.node import function
 from ..custom_types import ArrayLike
 from ._approximate_distribution import ApproximateDistribution, make_posterior

@@ -1,6 +1,6 @@
 """BlackJAX-backed stochastic-gradient MCMC methods.
 
-Two :class:`~probpipe.core._registry.UnaryDispatchMethod` subclasses registered with
+Two :class:`~probpipe.core._dispatch.UnaryDispatchMethod` subclasses registered with
 :data:`~probpipe.inference.inference_method_registry`:
 
 * ``blackjax_sgld`` — Stochastic Gradient Langevin Dynamics
@@ -34,8 +34,8 @@ import blackjax
 import jax
 import jax.numpy as jnp
 
+from ..core._dispatch import MethodInfo
 from ..core._random_measures import RandomMeasure
-from ..core._registry import MethodInfo
 from ..custom_types import PRNGKey
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import as_prng_key, get_init_state, is_simple_model
@@ -87,7 +87,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
     """
 
     _method_name: str = ""
-    _method_priority: int = 0
+    _method_priority: int | None = None
 
     @property
     def name(self) -> str:
@@ -101,7 +101,7 @@ class _BlackJAXSGMCMCMethod(InferenceMethod):
         return (Distribution,)
 
     @property
-    def priority(self) -> int:
+    def priority(self) -> int | None:
         return self._method_priority
 
     # -- feasibility checks --------------------------------------------------
@@ -269,7 +269,7 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
     ``num_integration_steps`` (default 10), ``alpha`` (default 0.01),
     ``beta`` (default 0.0). Tier 41-50 by algorithm category
     (refinement-based: asymptotically exact as the step-size schedule
-    decays), but registered at the opt-in-only sentinel ``priority=0``.
+    decays), but registered at ``priority=None``, opt-in-only.
     Reasoning: SGHMC's ``check()`` is identical to ``blackjax_sgld``
     (same ``SimpleModel`` + ``ConditionallyIndependentLikelihood`` +
     ``batch_size=`` gate); with SGLD at 45, SGHMC is structurally
@@ -280,7 +280,7 @@ class BlackJAXSGHMCMethod(_BlackJAXSGMCMCMethod):
     """
 
     _method_name = "blackjax_sghmc"
-    _method_priority = 0
+    _method_priority = None
 
     def _build_algorithm(self, grad_estimator, **kwargs: Any):
         num_integration_steps: int = kwargs.get("num_integration_steps", 10)

@@ -71,31 +71,40 @@ itself, not an instance.
 ## Custom inference methods
 
 `InferenceMethod` subclasses register with
-`inference_method_registry` and declare `supported_types`, a
-`priority`, and `check()` / `execute()` methods. When [`condition_on`](operations.md#conditioning) runs, the
-registry tries methods in descending priority order and the first whose
-`check()` reports feasibility wins. The built-in methods table is on
+`inference_method_registry` and declare `supported_types`, whether they are
+`exact`, a `priority`, and `check()` / `execute()` methods. When
+[`condition_on`](operations.md#conditioning) runs, the registry walks the
+methods in selection order and runs the first whose `check()` reports
+feasibility. The built-in methods table is on
 [Modeling and inference → Inference methods](inference.md#inference-methods).
 
-### Setting priority for a new method
+### Exactness, then rank
 
-The integer returned by `priority` carries semantics: it tells the registry
-whether your method should auto-dispatch, and if so, where it ranks
-against the alternatives.
+A method declares two things about where it stands, and they are separate.
 
-- **`priority > 50`** — *exact*: auto-dispatched, higher = preferred
-  among exact alternatives.
-- **`0 < priority <= 50`** — *inexact*: auto-dispatched, higher =
-  preferred among inexact alternatives. The `50` break is documentary;
-  the registry walks every positive priority uniformly.
-- **`priority == 0`** — *opt-in only*: the registry skips the method
-  during auto-dispatch. The method is reachable by name via
-  `method="..."`. This is the default; an `InferenceMethod` subclass
-  that doesn't override `priority` gets opt-in behaviour automatically.
+- **`exact`** says whether the result denotes the requested mathematical
+  object or stands in for it. Exact methods are always tried before
+  approximate ones, and `exact_only=True` on a call excludes the
+  approximate ones. Every built-in inference method is approximate:
+  a finite MCMC, SG-MCMC, slice, ABC, or variational output stands in for
+  the conditional law whatever its asymptotic guarantee. `InferenceMethod`
+  declares `exact = False` for you; a method that returns a representation
+  of the conditional law itself overrides it.
+- **`priority`** ranks methods of the same exactness, higher first; it is
+  only a rank and carries no other meaning. `None`, the default, is
+  **opt-in only**: the registry skips the method during auto-dispatch and
+  it runs only when named via `method="..."`. A method that does not
+  override `priority` is opt-in until a contributor ranks it, so registering
+  one never changes what runs.
 
-#### Selection criteria
+Ties keep registration order. `inference_method_registry.set_priorities(...)`
+re-ranks at runtime, by keyword or by a mapping for names that are not
+identifiers; it cannot change whether a method is exact.
 
-Choose a number with these axes in mind, roughly in order of weight:
+#### Choosing a rank
+
+Rank among the approximate methods with these axes in mind, roughly in
+order of weight:
 
 1. **Robustness when applicable** — how often the method gives a usable
    answer without per-model tuning, conditional on `check()` passing.
@@ -106,70 +115,51 @@ Choose a number with these axes in mind, roughly in order of weight:
    *engineering* specialisation — same algorithm, faster backend
    (nutpie's Rust-backed NUTS vs. BlackJAX's; Stan's compiled gradients
    vs. JAX traces).
-3. **Approximation quality** — analytical exact > controlled-error
-   approximations > asymptotically-exact MCMC > intrinsic approximations.
+3. **Approximation quality** — controlled-error approximations >
+   asymptotically-exact MCMC > intrinsic approximations. These are
+   guarantees a method documents, not a further exactness level.
 4. **Diagnostic richness** — methods that fail silently rank below
    methods with built-in failure signals, all else equal.
 5. **Model-class breadth** as a tiebreaker only. A broader-applicability
-   method does not need a higher priority than a narrow one; whichever
+   method does not need a higher rank than a narrow one; whichever
    applies wins via `check()`.
 
-#### Tier ranges — exact (51–100)
-
-Five tiers, each 10 wide. Criteria are stated as positive properties of
-the method.
-
-| Range | Criterion |
-|---|---|
-| 91–100 | Per-call cost in a strictly better complexity class than general-purpose alternatives; the speedup comes from exploiting model structure. |
-| 81–90 | Optimised implementation of a more general algorithm; lower constant-factor cost than the reference implementation within its applicable model class. |
-| 71–80 | Self-tuning; converges robustly without per-model hyperparameter selection. |
-| 61–70 | Well-understood with strong convergence theory; performs well once hand-tuned. |
-| 51–60 | Slow per effective sample or unreliable in typical use. |
-
-#### Tier ranges — inexact (1–50)
-
-Four named tiers ordered by the strength of the asymptotic-to-exact
-story. The slot at 11–20 is intentionally reserved for methods with
-intermediate guarantees that don't fit cleanly into a named tier.
-
-| Range | Criterion |
-|---|---|
-| 41–50 | Asymptotically exact under algorithmic refinement; bias is a knob the user can tighten (step size, mini-batch size). |
-| 31–40 | Particle-based approximation refinable by particle count; quality improves with more particles, though convergence may be slow or unstable. |
-| 21–30 | Parametric posterior approximation; error bounded by family expressiveness or by regularity conditions on the posterior shape. |
-| 11–20 | *(reserved for methods with intermediate guarantees not covered by neighbouring tiers)* |
-| 1–10 | No asymptotic-to-exact guarantee in practice; quality bounded by intrinsic information loss (summary statistics, fixed tolerance, learned representations). |
+The built-in ranks are anchors: `nutpie_nuts` 88, `blackjax_nuts` 85,
+`cmdstan_nuts` and `pymc_nuts` 82, `blackjax_elliptical_slice` 75,
+`blackjax_rwmh` 55, `blackjax_sgld` 45, `pyabc_smcabc` 6. Place a new
+method relative to the nearest of these.
 
 #### Setting `priority` on an `InferenceMethod` subclass
 
 ```python
 class MyNutsMethod(InferenceMethod):
     @property
-    def priority(self) -> int:
-        # Tier 71-80 (self-tuning, broadly applicable).
+    def priority(self) -> int | None:
+        # Self-tuning and broadly applicable: beside blackjax_elliptical_slice.
         return 75
 ```
 
 A method that should not auto-dispatch — perhaps it's experimental, has
 sharp failure modes, or exists only for `method=` testing — leaves
-`priority` at the inherited default of `0`. The registry will exclude
-it from the auto-dispatch walk; users can still invoke it explicitly by
-name.
+`priority` at the inherited default of `None`.
 
-::: probpipe.core._registry.BaseDispatchRegistry
+::: probpipe.core._dispatch.BaseDispatchRegistry
 
-::: probpipe.core._registry.UnaryDispatchRegistry
+::: probpipe.core._dispatch.UnaryDispatchRegistry
 
-::: probpipe.core._registry.BinaryDispatchRegistry
+::: probpipe.core._dispatch.BinaryDispatchRegistry
 
-::: probpipe.core._registry.BaseDispatchMethod
+::: probpipe.core._dispatch.BaseDispatchMethod
 
-::: probpipe.core._registry.UnaryDispatchMethod
+::: probpipe.core._dispatch.UnaryDispatchMethod
 
-::: probpipe.core._registry.BinaryDispatchMethod
+::: probpipe.core._dispatch.BinaryDispatchMethod
 
-::: probpipe.core._registry.MethodInfo
+::: probpipe.core._dispatch.MethodInfo
+
+::: probpipe.core._dispatch.ResolutionError
+
+::: probpipe.core._dispatch.MathematicalDomainError
 
 ## Custom converters
 

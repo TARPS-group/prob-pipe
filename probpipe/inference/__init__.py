@@ -8,7 +8,7 @@ empirical distributions, and the inference method registry for
 
 from __future__ import annotations
 
-from ..core._registry import (
+from ..core._dispatch import (
     BaseDispatchMethod,
     BaseDispatchRegistry,
     BinaryDispatchMethod,
@@ -67,7 +67,7 @@ __all__ = [
 # Register built-in inference methods
 # ---------------------------------------------------------------------------
 
-# TFP-backed MCMC — registered at priority 0 (opt-in only); BlackJAX
+# TFP-backed MCMC — registered with ``priority=None`` (opt-in only); BlackJAX
 # methods below win auto-dispatch.
 from ._tfp_mcmc import TFPHmcMethod, TFPNutsMethod
 

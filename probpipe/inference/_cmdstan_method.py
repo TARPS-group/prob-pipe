@@ -7,7 +7,7 @@ from typing import Any
 import arviz_base as azb
 import jax.numpy as jnp
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import MethodInfo
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._registry import InferenceMethod
 

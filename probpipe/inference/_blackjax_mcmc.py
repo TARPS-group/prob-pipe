@@ -1,6 +1,6 @@
 """BlackJAX-backed gradient MCMC methods: NUTS and HMC.
 
-Two :class:`~probpipe.core._registry.UnaryDispatchMethod` subclasses registered with
+Two :class:`~probpipe.core._dispatch.UnaryDispatchMethod` subclasses registered with
 :data:`~probpipe.inference.inference_method_registry`:
 
 * ``blackjax_nuts`` — No-U-Turn Sampler with window-adapted step size and
@@ -48,7 +48,7 @@ from blackjax.mcmc.dynamic_hmc import (
     init as _dynamic_hmc_init,
 )
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import MethodInfo
 from ..core.distribution import Distribution
 from ..core.protocols import SupportsUnnormalizedLogProb
 from ..custom_types import Array
@@ -291,7 +291,7 @@ def _extract_blackjax_sample_stats(
 class _BlackJAXMCMCMethod(InferenceMethod):
     """Base for BlackJAX gradient MCMC methods (NUTS, HMC)."""
 
-    def __init__(self, algorithm: Algorithm, method_name: str, method_priority: int):
+    def __init__(self, algorithm: Algorithm, method_name: str, method_priority: int | None):
         self._algorithm = algorithm
         self._method_name = method_name
         self._method_priority = method_priority
@@ -304,7 +304,7 @@ class _BlackJAXMCMCMethod(InferenceMethod):
         return (Distribution,)
 
     @property
-    def priority(self) -> int:
+    def priority(self) -> int | None:
         return self._method_priority
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
@@ -387,7 +387,7 @@ def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
 
     Tier 61-70 by algorithm category (well-understood, hand-tuned step
     size; trajectory length randomized around a hand-set mean), but
-    registered at the opt-in-only sentinel ``priority=0``. Reasoning:
+    registered at ``priority=None``, opt-in-only. Reasoning:
     HMC's ``check()`` is identical to ``blackjax_nuts`` (same
     ``SupportsUnnormalizedLogProb`` + JAX-traceability gate), so with
     NUTS at 85, HMC is structurally unreachable in auto-dispatch. Keeping
@@ -397,4 +397,4 @@ def BlackJAXHmcMethod() -> _BlackJAXMCMCMethod:
     Halton-quasi-random number of leapfrog steps so a fixed-``L``
     resonance cannot silently stall mixing.
     """
-    return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", 0)
+    return _BlackJAXMCMCMethod("hmc", "blackjax_hmc", None)

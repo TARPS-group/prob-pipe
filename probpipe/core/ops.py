@@ -602,8 +602,10 @@ def condition_on(
     2. **Exact conditioning** — if *dist* implements
        ``SupportsConditioning``, its ``_condition_on`` is called for a
        closed-form result (e.g., conjugate updates, joint marginalization).
-    3. **Registry auto-select** — the inference method registry picks
-       the highest-priority feasible algorithm (NUTS, HMC, RWMH, etc.).
+    3. **Registry auto-select** — the inference method registry runs the
+       first feasible method in selection order: exact methods before
+       approximate ones, then by priority (NUTS, HMC, RWMH, etc.). A call
+       with no feasible method raises ``ResolutionError``.
 
     Parameters
     ----------

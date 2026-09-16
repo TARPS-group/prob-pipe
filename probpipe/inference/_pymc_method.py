@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ..core._registry import MethodInfo
+from ..core._dispatch import MethodInfo
 from ._approximate_distribution import ApproximateDistribution, make_posterior
 from ._inference_utils import extract_chain_columns, posterior_var_order
 from ._registry import InferenceMethod
@@ -107,15 +107,15 @@ class PyMCADVIMethod(InferenceMethod):
         return (self._model_type,)
 
     @property
-    def priority(self) -> int:
+    def priority(self) -> int | None:
         # Tier 21-30 by algorithm category (parametric variational
         # approximation; quality bounded by the mean-field family), but
-        # registered at the opt-in-only sentinel ``priority=0``. ADVI is
+        # registered at ``priority=None``, opt-in-only. ADVI is
         # a deliberate bias-for-speed tradeoff the user should choose
         # explicitly; auto-dispatching into it when (e.g.) ``pymc_nuts``
         # happens to fail would surface VI silently in MCMC's place.
         # Callers who want ADVI pin ``method="pymc_advi"``.
-        return 0
+        return None
 
     def check(self, dist: Any, observed: Any, **kwargs: Any) -> MethodInfo:
         if not isinstance(dist, self._model_type):

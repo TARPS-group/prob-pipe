@@ -600,7 +600,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | `Function` | Immutable first-class `TrackedTerm` / `Annotated`, schema-aware computation term. It owns a frozen Python `signature`, optional authoritative input/output `EventTemplate`s, and an implementation object. `apply` performs one raw evaluation; `__call__` adds lifting, variadic slot planning, sweeps, orchestration, wrapping, and Function-first provenance. Prefect is off by default; views are grouped by parent for correlated broadcasting. |
 | `Module` | Stateful workflow-aware base class (see `@workflow_method`) |
 | Protocols | `SupportsSampling`, `SupportsLogProb`, `SupportsMean`, `SupportsConditioning`, etc.; dynamic inclusion on `ProductDistribution` and `TransformedDistribution` |
-| `BaseDispatchRegistry` | Abstract base for priority-based registries: holds registration, priority management (incl. opt-in-only sentinel + override warnings), and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
+| `BaseDispatchRegistry` | Abstract base for the dispatch registries: holds registration, exactness-then-rank ordering, opt-in filtering (`priority=None`) with override warnings, and the `check`/`execute` loop. Arity-specific subclasses override `_cache_key`, `_find_methods`, and `_format_key`. |
 | `UnaryDispatchRegistry` | Single-argument dispatch registry; dispatches on the type of the first positional argument. Used by the inference method registry. |
 | `BinaryDispatchRegistry` | Two-argument dispatch registry; dispatches on the joint type of the first two positional args via paired `((left_types,), (right_types,))` pre-filters. |
 | `ProbabilisticModel` | Base for models (extends `Distribution`; provides `fields`) |
@@ -613,8 +613,8 @@ uv build packaging/probpipe   # probpipe (metapackage)
 
 `condition_on` dispatches inference via a pluggable **inference method
 registry** (`inference_method_registry`).  Each method declares
-`supported_types`, a `priority`, and `check()`/`execute()` methods.
-The registry tries methods in descending priority order; the first
+`supported_types`, whether it is `exact`, a `priority`, and `check()`/`execute()`
+methods. The registry walks methods in selection order; the first
 whose `check()` returns `feasible=True` wins.
 
 Models no longer implement `_condition_on` directly — conditioning is
@@ -622,12 +622,13 @@ handled entirely by registered methods.  The removed protocol
 `SupportsConditionableComponents` is no longer part of the public API;
 use `fields` and the inference registry instead.
 
-Priorities follow a semantic convention (issue #189): values above
-``50`` mark *exact* methods, values in ``(0, 50]`` mark *inexact*
-methods, and ``0`` is the opt-in-only sentinel (selectable by name but
-skipped during auto-dispatch). The contributor-facing tier criteria
-for picking a number when registering a new method live under
-[Extending ProbPipe → Setting priority for a new method](docs/api/extending.md#setting-priority-for-a-new-method).
+Selection order is exact methods before approximate ones, then priority,
+then registration order. Every built-in inference method declares
+`exact = False`, so its priority is a rank among approximate methods and
+nothing more; `None` is opt-in-only (selectable by name but skipped during
+auto-dispatch). A call with no feasible method raises `ResolutionError`.
+The contributor-facing criteria for ranking a new method live under
+[Extending ProbPipe → Exactness, then rank](docs/api/extending.md#exactness-then-rank).
 
 Built-in methods:
 
@@ -641,11 +642,11 @@ Built-in methods:
 | 55 | `blackjax_rwmh` | BlackJAX | Any `SupportsLogProb` (eager fallback for non-traceable targets) |
 | 45 | `blackjax_sgld` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=` |
 | 6 | `pyabc_smcabc` | pyabc | `SimpleGenerativeModel` with a flattenable prior (requires the `[pyabc]` extra) |
-| 0 | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
-| 0 | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
-| 0 | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
-| 0 | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
-| 0 | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| None | `blackjax_hmc` | BlackJAX | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| None | `blackjax_sghmc` | BlackJAX | `SimpleModel` + `ConditionallyIndependentLikelihood` + `batch_size=`; opt-in only via `method=` |
+| None | `pymc_advi` | PyMC | `PyMCModel`; opt-in only via `method=` |
+| None | `tfp_nuts` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
+| None | `tfp_hmc` | TFP | Any `SupportsLogProb` (JAX-traceable); opt-in only via `method=` |
 
 **Amortized SBI dispatches two ways.** Trained amortized posterior estimators
 (`learn_amortized_posterior` → `BayesFlowModel`, the `[bayesflow]` extra)
