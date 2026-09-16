@@ -585,9 +585,10 @@ class TestMethodInfo:
         with pytest.raises(ValueError, match="pending"):
             MethodInfo(feasible=None)
 
-    def test_infeasible_accepts_either(self):
+    def test_only_unresolved_carries_pending(self):
         MethodInfo(feasible=False)
-        MethodInfo(feasible=False, pending=("x",))
+        with pytest.raises(ValueError, match="only an unresolved"):
+            MethodInfo(feasible=False, pending=("x",))
 
     def test_exact_defaults_to_none_and_round_trips(self):
         assert MethodInfo(feasible=True).exact is None

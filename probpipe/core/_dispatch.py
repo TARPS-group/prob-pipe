@@ -69,10 +69,23 @@ class MathematicalDomainError(ValueError):
 class MethodInfo:
     """What a method's ``check`` reports about one call.
 
-    ``feasible`` is ``True`` when the method applies, ``False`` when it
-    does not, and ``None`` when the declarations the probe needs are not
-    yet available, in which case ``pending`` names them. ``exact`` is the
-    method's local guarantee for this call, ``None`` while undetermined.
+    ``feasible`` has three values. ``True``: the method applies. ``False``:
+    it does not, and ``description`` says why, for example ``"needs a
+    density"``. ``None``: the probe could not decide, because a declaration
+    it reads is not yet available, and ``pending`` names those declarations.
+
+    ``pending`` holds one entry per missing declaration, phrased as the
+    thing whose arrival would settle the verdict: ``"output spec of f"``
+    for a result declaration the return will complete, ``"dimension obs"``
+    for a symbolic dimension no value has bound, ``"conversion plan for
+    theta"`` for a converter not yet resolved. It is non-empty exactly when
+    ``feasible`` is ``None``; a feasible or infeasible verdict carries no
+    pending entries, so a reader never has to decide which of the two
+    fields is authoritative.
+
+    ``exact`` is the method's guarantee for this call, ``None`` while it is
+    undetermined; the registry fills it from the method when the check left
+    it blank.
     """
 
     feasible: bool | None
@@ -82,10 +95,10 @@ class MethodInfo:
     pending: tuple[str, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
-        if self.feasible is True and self.pending:
-            raise ValueError("a feasible MethodInfo cannot carry pending requirements")
         if self.feasible is None and not self.pending:
-            raise ValueError("an unresolved MethodInfo must name its pending requirements")
+            raise ValueError("an unresolved MethodInfo must name its pending declarations")
+        if self.feasible is not None and self.pending:
+            raise ValueError("only an unresolved MethodInfo carries pending declarations")
 
     @property
     def unresolved(self) -> bool:
@@ -174,14 +187,28 @@ class BinaryDispatchMethod(BaseDispatchMethod):
 class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
     """Arity-independent registry logic.
 
-    Holds registration, ranking, the opt-in filter, and the ``check`` /
-    ``execute`` walk. The arity subclasses supply :meth:`_cache_key`,
-    :meth:`_find_methods`, and :meth:`_format_key`.
+    Everything that does not depend on how many arguments select the method
+    lives here: registration, ranking, the opt-in filter, ``set_priorities``,
+    and the ``check`` / ``execute`` walk. Three hooks are left to the arity
+    subclasses, and they are the only place arity enters:
+
+    - :meth:`_cache_key` turns the positional arguments into the **dispatch
+      key**, the type or types a method's ``supported_types`` is matched
+      against, and raises ``TypeError`` when there are too few arguments;
+    - :meth:`_find_methods` returns the auto-dispatchable methods whose
+      ``supported_types`` admit a key, in selection order, memoized per key
+      in ``_type_cache``, which :meth:`_sort_methods` clears whenever the
+      order can change;
+    - :meth:`_format_key` renders a key for error messages.
+
+    The walk then reads only the list ``_find_methods`` returns, so a
+    subclass never touches ranking, the opt-in filter, or the errors.
 
     ``check`` with no positional arguments returns an infeasible
-    :class:`MethodInfo`, the natural "is anything dispatchable here?"
-    probe. Fewer arguments than the arity requires is a contract violation
-    and raises ``TypeError`` from both ``check`` and ``execute``.
+    :class:`MethodInfo` rather than raising, since there is nothing to
+    dispatch on; ``execute`` raises ``TypeError`` in the same case. Fewer
+    arguments than the arity requires, for example one argument to a binary
+    registry, is a contract violation and raises ``TypeError`` from both.
     """
 
     def __init__(self) -> None:
@@ -402,17 +429,29 @@ class BaseDispatchRegistry[M: BaseDispatchMethod](ABC):
 
     @abstractmethod
     def _cache_key(self, args: tuple[Any, ...]) -> Any:
-        """The dispatch key for the positional arguments."""
+        """The dispatch key for the positional arguments.
+
+        A type for a unary registry, a pair of types for a binary one; the
+        key is what ``supported_types`` is matched against and what the
+        method cache is indexed by. Raises ``TypeError`` when ``args`` has
+        fewer entries than the arity needs.
+        """
         ...
 
     @abstractmethod
     def _find_methods(self, key: Any) -> list[M]:
-        """Auto-dispatchable methods matching the key, in selection order, cached."""
+        """The auto-dispatchable methods admitting ``key``, in selection order.
+
+        Filters ``self._methods``, which :meth:`_sort_methods` keeps in
+        selection order, to those passing :meth:`_is_auto_dispatchable` and
+        whose ``supported_types`` admit the key by ``issubclass``, and
+        memoizes the result in ``self._type_cache[key]``.
+        """
         ...
 
     @abstractmethod
     def _format_key(self, key: Any) -> str:
-        """The key as it appears in error messages."""
+        """``key`` as it appears in error messages, such as ``(Left, Right)``."""
         ...
 
 
