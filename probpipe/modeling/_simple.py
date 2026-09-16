@@ -74,8 +74,8 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
         self._likelihood = likelihood
         # Default to the class name when the caller does not supply one;
         # the default is an auto-derived name.
-        name, name_is_auto = auto_name(name or None, "SimpleModel")
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        name = auto_name(name or None, "SimpleModel")
+        self._init_tracked(name)
 
         # Build merged event_template: prior params + likelihood data fields.
         # This makes fields include both parameter and data names,
@@ -219,7 +219,7 @@ class SimpleModel[P, D](ProbabilisticModel[tuple[P, D]], SupportsLogProb):
                     f"positionally instead."
                 )
             params = self._prior._pack_value(**{f: value[f] for f in self._prior_fields})
-            data = Record("data", {f: value[f] for f in data_fields}, name_is_auto=True)
+            data = Record("data", {f: value[f] for f in data_fields})
             return params, data
         raise TypeError(
             f"SimpleModel._log_prob expects a Record over {self.fields} or a "

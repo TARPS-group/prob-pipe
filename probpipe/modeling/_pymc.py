@@ -77,8 +77,8 @@ class PyMCModel(ProbabilisticModel):
         self._model_fn = model_fn
         # Default to the class name when the caller does not supply one;
         # the default is an auto-derived name.
-        name, name_is_auto = auto_name(name or None, "PyMCModel")
-        self._init_tracked(name, name_is_auto=name_is_auto)
+        name = auto_name(name or None, "PyMCModel")
+        self._init_tracked(name)
 
         # Discover observed variable names from the model function signature.
         # Parameters with default value None are treated as observed variables

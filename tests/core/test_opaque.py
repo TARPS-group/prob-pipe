@@ -83,20 +83,20 @@ class TestOpaqueAddsIdentityAndNothingElse:
 
 
 class TestOpaqueCarriesIdentity:
-    def test_a_name_is_kept_and_marked_user_given(self):
+    def test_a_name_is_kept(self):
         wrapped = Opaque("model", _Payload())
 
-        assert (wrapped.name, wrapped.name_is_auto) == ("model", False)
+        assert wrapped.name == "model"
 
     def test_a_name_is_required(self):
         """The name is what says which opaque value this is."""
         with pytest.raises(TypeError):
             Opaque(_Payload())
 
-    def test_a_derived_name_is_marked_auto(self):
-        wrapped = Opaque("batch[draw=0]", _Payload(), name_is_auto=True)
+    def test_a_derived_name_is_kept(self):
+        wrapped = Opaque("batch[draw=0]", _Payload())
 
-        assert wrapped.name_is_auto is True
+        assert wrapped.name == "batch[draw=0]"
 
     def test_provenance_is_write_once(self):
         wrapped = Opaque("p", _Payload()).with_provenance(Provenance.create("fit", parents=[]))

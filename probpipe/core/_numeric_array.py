@@ -40,18 +40,13 @@ class NumericArray(TrackedTerm, Annotated):
         The value's name, **required**, as a :class:`~probpipe.Record`'s and an
         :class:`~probpipe.Opaque`'s are. A value carries no fields to describe it,
         so the name is what says which one it is; a class-name default would name
-        every array in a pipeline alike. A caller that derives one says so with
-        *name_is_auto*.
+        every array in a pipeline alike.
     value : array-like
         The array this names, stored verbatim in its native form: a bare array,
         an ``xarray`` / ``pandas`` container, or any registered backend, so a
         lazy or disk-backed value stays lazy. Python numeric scalars, including
         subclasses, are normalised to a 0-d ``jax.Array``; NumPy scalars retain
         their native form and dtype.
-    name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given — set by an
-        operation that derives one, as the output boundary does when it names a
-        result after the function that produced it.
     spec : NumericArraySpec, optional
         What this value satisfies. Derived from the array's shape and dtype when
         omitted, with an unconstrained support.
@@ -95,7 +90,6 @@ class NumericArray(TrackedTerm, Annotated):
         "_annotations",
         "_jax_cache",
         "_name",
-        "_name_is_auto",
         "_provenance",
         "_spec",
         "_value",
@@ -110,7 +104,6 @@ class NumericArray(TrackedTerm, Annotated):
         value: Any,
         /,
         *,
-        name_is_auto: bool = False,
         spec: NumericArraySpec | None = None,
         provenance: Provenance | None = None,
     ) -> None:
@@ -138,7 +131,7 @@ class NumericArray(TrackedTerm, Annotated):
             )
         object.__setattr__(self, "_value", stored)
         object.__setattr__(self, "_spec", spec)
-        self._init_tracked(name, name_is_auto=name_is_auto, provenance=provenance)
+        self._init_tracked(name, provenance=provenance)
 
     # -- what it holds ------------------------------------------------------
 
@@ -292,22 +285,20 @@ NumericArray.__hash__ = None  # type: ignore[assignment]
 
 def _numeric_array_flatten(
     value: NumericArray,
-) -> tuple[list, tuple[NumericArraySpec, str, bool]]:
+) -> tuple[list, tuple[NumericArraySpec, str]]:
     """Flatten for JAX traversal: the array, keyed by the declaration and identity.
 
-    The aux triple every tracked class flattens to. The declaration rides along
+    The aux pair every tracked class flattens to. The declaration rides along
     rather than being re-read off the child, because it is not recoverable from
     one: ``is_valid`` admits a same-kind cast, so a float32 value under a
     float64 declaration would come back declaring float32.
     """
     # The boundary presents a bare array, as a ``NumericRecord``'s does: this
     # is one of the compute boundaries native form converts at.
-    return [value.as_jax()], (value._spec, value._name, value._name_is_auto)
+    return [value.as_jax()], (value._spec, value._name)
 
 
-def _numeric_array_unflatten(
-    aux: tuple[NumericArraySpec, str, bool], children: list
-) -> NumericArray:
+def _numeric_array_unflatten(aux: tuple[NumericArraySpec, str], children: list) -> NumericArray:
     """Rebuild without converting or validating the child.
 
     JAX unflattens with whatever it carries, and a skeleton from
@@ -317,12 +308,12 @@ def _numeric_array_unflatten(
     spec a rebuilt value carries is the one it was declared with rather than one
     read off the child: on this path a shape is transform-relative.
     """
-    spec, name, name_is_auto = aux
+    spec, name = aux
     (array,) = children
     value = object.__new__(NumericArray)
     object.__setattr__(value, "_value", array)
     object.__setattr__(value, "_spec", spec)
-    value._init_tracked(name, name_is_auto=name_is_auto)
+    value._init_tracked(name)
     return value
 
 

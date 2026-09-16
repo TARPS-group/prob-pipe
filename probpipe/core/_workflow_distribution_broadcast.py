@@ -581,7 +581,7 @@ def _index_sample(s: Any, i: int) -> Any:
         # Index each leaf field's batch row; rebuild by path key so a nested
         # sample is reconstructed with its structure intact. A row of a batch is
         # a single record, so the rebuild is the same either way.
-        return Record(s.name, {p: s[p][i] for p in s.event_template}, name_is_auto=True)
+        return Record(s.name, {p: s[p][i] for p in s.event_template})
     return s[i]
 
 

@@ -156,7 +156,6 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
             columns,
             DATUM_LEVEL,
             element_spec=data.element_spec,
-            name_is_auto=True,
         )
     if isinstance(data, Record):
         columns = {path: jnp.asarray(leaf)[indices] for path, leaf in data.children.items()}
@@ -164,9 +163,7 @@ def _index_along_leading(data: Any, indices: Array) -> Any:
         # that template with the rows axis taken off — carried, not re-derived,
         # so a pinned dtype or support reaches the per-datum call.
         element = _reshaped_template(data.event_template, lambda shape: shape[1:])
-        return _batch_class_for(element)(
-            data.name, columns, DATUM_LEVEL, element_spec=element, name_is_auto=True
-        )
+        return _batch_class_for(element)(data.name, columns, DATUM_LEVEL, element_spec=element)
     return jnp.asarray(data)[indices]
 
 
@@ -287,8 +284,8 @@ class MinibatchedDistribution(
         self._with_replacement = bool(with_replacement)
         self._rescale_factor = float(self._n / batch_size)
 
-        name, name_is_auto = auto_name(name, f"MinibatchedDistribution(batch_size={batch_size})")
-        super().__init__(name=name, name_is_auto=name_is_auto)
+        name = auto_name(name, f"MinibatchedDistribution(batch_size={batch_size})")
+        super().__init__(name=name)
 
     # -- read-only metadata --------------------------------------------------
 
@@ -347,7 +344,6 @@ class MinibatchedDistribution(
             batch=batch,
             rescale_factor=self._rescale_factor,
             name=f"{self.name}/draw",
-            name_is_auto=True,
         )
 
     # -- SupportsRandomUnnormalizedLogProb -----------------------------------
@@ -404,11 +400,10 @@ class _FixedMinibatchDistribution(
         rescale_factor: float,
         *,
         name: str | None = None,
-        name_is_auto: bool = False,
     ):
         if not name:
-            name, name_is_auto = "fixed_minibatch_distribution", True
-        super().__init__(name=name, name_is_auto=name_is_auto)
+            name = "fixed_minibatch_distribution"
+        super().__init__(name=name)
         self._prior = prior
         self._likelihood = likelihood
         self._batch = batch
@@ -474,7 +469,7 @@ class _RandomMinibatchLogProb(
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution):
-        super().__init__(name=f"{measure.name}/random_log_prob", name_is_auto=True)
+        super().__init__(name=f"{measure.name}/random_log_prob")
         self._measure = measure
 
     # -- RandomFunction.__call__ --------------------------------------------
@@ -533,7 +528,7 @@ class _MinibatchLogProbAtPoint(Distribution[Array], SupportsSampling):
     _preferred_orchestration: str | None = None
 
     def __init__(self, measure: MinibatchedDistribution, theta: Any):
-        super().__init__(name=f"{measure.name}@theta", name_is_auto=True)
+        super().__init__(name=f"{measure.name}@theta")
         self._measure = measure
         self._theta = theta
 

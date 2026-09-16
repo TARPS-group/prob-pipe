@@ -495,7 +495,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
    confusing errors.
 6. **Every object is a tracked term** — Functions, distributions, records,
    and the batch types all carry the `TrackedTerm` identity attributes and methods
-   (`name`, `name_is_auto`, write-once `provenance` via
+   (`name`, write-once `provenance` via
    `with_provenance`, `with_name`) from `probpipe.core.tracked`, and
    the mixin's metaclass enforces a non-empty `name` at construction
    for every host. `Function` is an immutable, schema-aware computation term;
@@ -505,21 +505,18 @@ uv build packaging/probpipe   # probpipe (metapackage)
    explicit `name=` at construction.  Composite distributions
    (ProductDistribution, EmpiricalDistribution, TransformedDistribution,
    etc.) auto-derive a name from their components when one is not
-   provided and record that with `name_is_auto=True`; an operation that
-   builds a new object from a parent keeps the flag consistent with
-   where the name came from.  `ProductDistribution` validates that each
+   provided. Names are set at construction and preserved by every transform;
+   only `with_name` replaces them. `ProductDistribution` validates that each
    component distribution's `name` matches its keyword key (e.g.,
    `ProductDistribution(x=Normal(0, 1, name="x"))`).  `Record` and
    `NumericRecord` take the name as the required first positional
    argument (`Record(name, ...)`); an operation that produces a record
    supplies a meaningful name — the producing distribution's or model's
-   name, or a domain term such as `"data"` / `"observed"` — and passes
-   `name_is_auto=True` so later composition can re-derive it. A nested
-   record stored as a field is renamed to its field key (also flagged
-   auto-derived).
+   name, or a domain term such as `"data"` / `"observed"`. A nested
+   record view takes its field key as its name at construction.
 7. **Every return is wrapped at its own kind** — a `@function` return becomes
-   the tracked term of the kind it already is, named for the function and
-   marked auto. A numeric value becomes a `NumericArray`, a mapping a `Record`,
+   the tracked term of the kind it already is, named for the function.
+   A numeric value becomes a `NumericArray`, a mapping a `Record`,
    a callable a `Function`, and anything else an `Opaque`; a sequence, or a
    sweep, aggregates at the rows' kind through `_make_stack`. The kind follows
    the host's *type*, so an empty mapping is still a `Record`.
@@ -583,7 +580,7 @@ uv build packaging/probpipe   # probpipe (metapackage)
 | Abstraction | Description |
 |-------------|-------------|
 | `NamedTree` | Shared name-keyed tree substrate (`probpipe.core.named_tree`): immutable ordered tree with `/`-path navigation, the leaf-keyed mapping interface, structural edits (`merge` / `without` / `replace` / `with_path_names`), and nested-dict export (`to_nested_dict`) that the constructor reads back. `EventTemplate` and `Record` are its two families; each declares its leaf type (`ValueSpec` vs arbitrary values), and mappings are never leaves. |
-| `TrackedTerm` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `TrackedTerm` carries `name`, `name_is_auto`, and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Function`, `Distribution`, and `Record` mix in both; the batch types are tracked terms through their bases. |
+| `TrackedTerm` / `Annotated` | Identity and metadata mixins (`probpipe.core.tracked`): `TrackedTerm` carries `name` and write-once `provenance` (`with_name` / `with_provenance`); `Annotated` carries the free-form `annotations` mapping. `Function`, `Distribution`, and `Record` mix in both; the batch types are tracked terms through their bases. |
 | `Distribution[T]` | Generic base parameterized by value type; provides `event_template` and the `TrackedTerm` / `Annotated` identity attributes |
 | `Record` | Named, immutable, JAX-pytree container for structured non-random values; constructed name-first (`Record(name, ...)`); leaves stored verbatim (no coercion). All-numeric construction auto-promotes to `NumericRecord`; an explicit non-numeric `event_template=` pins a plain `Record`. `Record.from_field_values(name, template, values)` is the general (de)composition inverse of `list(record.values())`; `select()` for Function splatting |
 | `NumericRecord` (subclass of `Record`) | Post-construction invariant: every leaf is numeric, **stored in native form** (jax / numpy arrays, xarray, pandas, registered backends — nothing coerced; a bare Python scalar normalises to a 0-d `jax.Array`). Conversion to `jax.Array` happens lazily at the compute boundary (pytree flatten, `to_vector`, the scalar shim) through a set-once per-leaf cache. Adds `to_vector` / `vector_size` and the classmethod inverse `NumericRecord.from_vector(name, template, vec)` (the numeric 1-D serialization). `to_numeric()` is the identity on it; `Record.to_numeric()` validates (never converts), and native containers are read back directly from the fields. |

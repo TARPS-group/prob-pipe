@@ -165,17 +165,13 @@ class TestWithPathNames:
         assert isinstance(renamed, NumericRecord)
         assert tuple(renamed.keys()) == ("alpha",)
 
-    def test_auto_name_rederives_user_name_preserved(self):
-        auto = Record(
-            "record(a,b)", {"a": 1.0, "b": 2.0}, name_is_auto=True
-        )  # operation-derived (auto)
+    def test_field_renaming_preserves_both_default_and_explicit_names(self):
+        auto = Record("record(a,b)", {"a": 1.0, "b": 2.0})  # operation-derived (auto)
         renamed = auto.with_path_names(a="alpha")
-        assert renamed.name == "record(alpha,b)"
-        assert renamed.name_is_auto is True
+        assert renamed.name == auto.name
         named = Record("mine", a=1.0, b=2.0)
         renamed_named = named.with_path_names(a="alpha")
         assert renamed_named.name == "mine"
-        assert renamed_named.name_is_auto is False
 
     def test_explicit_template_metadata_survives(self):
         spec = NumericArraySpec((), dtype=jnp.float32)
@@ -267,16 +263,13 @@ class TestPytreeAuxSplit:
         back = jax.tree_util.tree_unflatten(treedef, leaves)
         assert back.event_template["a"] == spec  # explicit template threaded, not re-inferred
         assert back.name == "mine"
-        assert back.name_is_auto is False
 
-    def test_auto_flag_survives_roundtrip(self):
+    def test_derived_name_survives_roundtrip(self):
         import jax
 
-        r = Record(
-            "record(a)", {"a": jnp.array(1.0)}, name_is_auto=True
-        )  # operation-derived (auto)
+        r = Record("record(a)", {"a": jnp.array(1.0)})  # operation-derived (auto)
         back = jax.tree_util.tree_unflatten(*reversed(jax.tree_util.tree_flatten(r)))
-        assert back.name_is_auto is True
+        assert back.name == r.name
 
     def test_provenance_and_annotations_do_not_cross(self):
         import jax
@@ -411,7 +404,6 @@ class TestValueLevelEntryPoints:
         rebuilt = Record.from_field_values(r.name, r.event_template, r.values())
         assert rebuilt == r
         assert rebuilt.name == "mine"
-        assert rebuilt.name_is_auto is False
 
     def test_from_field_values_numeric_template_promotes(self):
         tpl = EventTemplate(a=(), b=(2,))
@@ -428,7 +420,6 @@ class TestValueLevelEntryPoints:
         back = NumericRecord.from_vector("mine", nr.event_template, nr.to_vector())
         assert back == nr
         assert back.name == "mine"
-        assert back.name_is_auto is False
 
     def test_numeric_record_from_vector_rejects_batched(self):
         nr = NumericRecord("nr", x=jnp.arange(3.0))

@@ -93,9 +93,6 @@ class RecordBatch(Batch[Record]):
         names as there are batch axes. The *sizes* are read off the elements
         rather than restated here — they are already fixed by the data, so the
         only thing left to say is where one level ends and the next begins.
-    name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given, which is what an
-        operation naming its own result states.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -172,7 +169,6 @@ class RecordBatch(Batch[Record]):
         *,
         element_spec: RecordSpec | EventTemplate,
         axes_per_level: Iterable[int] | None = None,
-        name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         kind = type(self).__name__
@@ -193,7 +189,6 @@ class RecordBatch(Batch[Record]):
         self._init_batch(
             BatchSpec(spec, groups, names),
             name=name,
-            name_is_auto=name is None or name_is_auto,
             provenance=provenance,
         )
 
@@ -280,7 +275,7 @@ class RecordBatch(Batch[Record]):
         A row of columnar storage does not exist until it is built, so this is
         the *materializing* side of both rules
         :meth:`~probpipe.core._batch.Batch._element_at` states: the element takes
-        the derived *name*, marked auto, and inherits this batch's provenance.
+        the derived *name*, and inherits this batch's provenance.
 
         The element is constructed against :attr:`element_spec` itself, so it
         stores the very object this batch stores rather than an equal copy: a
@@ -294,7 +289,6 @@ class RecordBatch(Batch[Record]):
                 name,
                 row,
                 event_template=self.element_spec,
-                name_is_auto=True,
                 # The columns were checked against the element spec at
                 # construction, so re-checking each row's leaves repeats work that
                 # iteration pays per element.
@@ -318,7 +312,7 @@ class RecordBatch(Batch[Record]):
         object.__setattr__(
             view, "_columns", {path: column[index] for path, column in self._columns.items()}
         )
-        view._init_batch(spec, name=name, name_is_auto=True)
+        view._init_batch(spec, name=name)
         return view
 
     def _at_fields(self, path: tuple[str, ...]) -> Any:
@@ -423,7 +417,6 @@ class RecordBatch(Batch[Record]):
         view._init_batch(
             BatchSpec(_to_record_declaration(template), self.axis_groups, self.level_names),
             name=f"{self.name}[{path!r}]",
-            name_is_auto=True,
         )
         return self._inherit_provenance(view)
 
@@ -444,7 +437,6 @@ class RecordBatch(Batch[Record]):
                 self.level_names,
             ),
             name=f"{self.name}[{key!r}]",
-            name_is_auto=True,
         )
         return self._inherit_provenance(view)
 
@@ -657,11 +649,8 @@ class RecordBatch(Batch[Record]):
         numeric is a ``NumericRecordBatch``, so an edit that removes the last
         non-numeric field promotes and one that introduces a non-numeric field
         demotes — which also makes a mixed ``merge`` give the same answer whichever
-        way round it is written. The **name** is carried over with the flag that
-        says where it came from. It used to be dropped when auto, for the
-        constructor to re-derive — but there is no class-name default to re-derive
-        from now, and an auto name is one something derived from real content
-        rather than a placeholder, so carrying it is better than having none.
+        way round it is written. The **name** is preserved by every structural
+        transform.
         """
         return _batch_class_for(template)(
             self.name,
@@ -669,7 +658,6 @@ class RecordBatch(Batch[Record]):
             self.level_names,
             element_spec=template,
             axes_per_level=_ranks_of(self.axis_groups),
-            name_is_auto=self.name_is_auto,
         )
 
     # -- construction from elements -----------------------------------------
@@ -697,8 +685,7 @@ class RecordBatch(Batch[Record]):
             omitted, which is exact whenever the records were built against a
             shared declaration.
         name : str, optional
-            The batch's name. Taken from the first record when omitted and marked
-            auto — a batch of ``draw`` records is about ``draw``, so the name is
+            The batch's name. Taken from the first record when omitted — a batch of ``draw`` records is about ``draw``, so the name is
             derived from what is being stacked rather than invented. A caller with
             a better name passes one.
 
@@ -753,7 +740,6 @@ class RecordBatch(Batch[Record]):
             columns,
             (level_name,),
             element_spec=spec,
-            name_is_auto=name is None,
         )
 
     # -- equality -----------------------------------------------------------
@@ -1128,19 +1114,19 @@ def _check_array_column(column: Any, spec: NumericArraySpec, *, path: str, kind:
 # ---------------------------------------------------------------------------
 
 
-def _record_batch_flatten(batch: RecordBatch) -> tuple[list, tuple[BatchSpec, str, bool]]:
+def _record_batch_flatten(batch: RecordBatch) -> tuple[list, tuple[BatchSpec, str]]:
     """Flatten for JAX pytree traversal: the columns, keyed by the aux spec.
 
     Children are the columns in the template's canonical order, so they realign
     with the aux spec on unflatten. The static aux is the
-    ``(spec, name, name_is_auto)`` triple, matching ``Record``: the batch's own
+    ``(spec, name)`` pair, matching ``Record``: the batch's own
     type and its name survive a round-trip, while provenance does not cross a
     JAX transform boundary.
     """
     # ``_columns`` is already in the template's canonical order at every
     # construction site, so the order the aux spec expects needs no second walk —
     # this runs at every jit / vmap / grad boundary and every ``tree_map``.
-    return list(batch._columns.values()), (batch._spec, batch._name, batch._name_is_auto)
+    return list(batch._columns.values()), (batch._spec, batch._name)
 
 
 def _unflatten_with(cls: type[RecordBatch]):
@@ -1181,8 +1167,8 @@ def _unflatten_with(cls: type[RecordBatch]):
     raw columns and building each row explicitly instead.
     """
 
-    def _unflatten(aux: tuple[BatchSpec, str, bool], children: list) -> RecordBatch | Record:
-        spec, name, name_is_auto = aux
+    def _unflatten(aux: tuple[BatchSpec, str], children: list) -> RecordBatch | Record:
+        spec, name = aux
         element_spec = spec.element_spec
         assert isinstance(element_spec, RecordSpec)
         template = element_spec.event_template
@@ -1228,7 +1214,6 @@ def _unflatten_with(cls: type[RecordBatch]):
                 name,
                 element,
                 event_template=element_spec,
-                name_is_auto=name_is_auto,
                 _validate_leaves=False,
             )
         surviving = _surviving_batch_shape(columns, rank)
@@ -1249,7 +1234,7 @@ def _unflatten_with(cls: type[RecordBatch]):
             )
         batch = object.__new__(cls)
         object.__setattr__(batch, "_columns", columns)
-        batch._init_batch(spec, name=name, name_is_auto=name_is_auto)
+        batch._init_batch(spec, name=name)
         return batch
 
     return _unflatten
@@ -1400,7 +1385,7 @@ class _MappedBatchColumns:
     return and unwraps it in the same call, so this never reaches a caller.
     """
 
-    __slots__ = ("axis_groups", "columns", "element_spec", "level_names", "name", "name_is_auto")
+    __slots__ = ("axis_groups", "columns", "element_spec", "level_names", "name")
 
     def __init__(
         self,
@@ -1411,14 +1396,12 @@ class _MappedBatchColumns:
         element_spec: RecordSpec,
         level_names: tuple[str, ...],
         axis_groups: tuple[tuple[int, ...], ...],
-        name_is_auto: bool,
     ):
         self.columns = columns
         self.element_spec = element_spec
         self.level_names = level_names
         self.axis_groups = axis_groups
         self.name = name
-        self.name_is_auto = name_is_auto
 
     @classmethod
     def of(cls, batch: RecordBatch) -> _MappedBatchColumns:
@@ -1429,7 +1412,6 @@ class _MappedBatchColumns:
             element_spec=batch.element_spec,
             level_names=tuple(batch.level_names),
             axis_groups=tuple(batch.axis_groups),
-            name_is_auto=batch._name_is_auto,
         )
 
     @classmethod
@@ -1446,7 +1428,6 @@ class _MappedBatchColumns:
             element_spec=record.spec,
             level_names=(),
             axis_groups=(),
-            name_is_auto=record._name_is_auto,
         )
 
 
@@ -1457,12 +1438,11 @@ def _mapped_batch_columns_flatten(carried: _MappedBatchColumns):
         carried.level_names,
         carried.axis_groups,
         carried.name,
-        carried.name_is_auto,
     )
 
 
 def _mapped_batch_columns_unflatten(aux, children) -> _MappedBatchColumns:
-    paths, element_spec, level_names, axis_groups, name, name_is_auto = aux
+    paths, element_spec, level_names, axis_groups, name = aux
     # No rank check, deliberately: the added axis is the point, and the caller
     # that added it is the one that can name it.
     return _MappedBatchColumns(
@@ -1471,7 +1451,6 @@ def _mapped_batch_columns_unflatten(aux, children) -> _MappedBatchColumns:
         element_spec=element_spec,
         level_names=level_names,
         axis_groups=axis_groups,
-        name_is_auto=name_is_auto,
     )
 
 

@@ -587,7 +587,7 @@ class TestCanonicalConvenience:
         from probpipe.core.record import Record
 
         expected = jax.tree.structure(
-            Record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))}, name_is_auto=True)
+            Record("two_field", {"a": jnp.zeros(()), "b": jnp.zeros((2,))})
         )
         assert multi_leaf_dist.treedef == expected
 

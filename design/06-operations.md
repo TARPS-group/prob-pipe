@@ -268,11 +268,11 @@ Realignment is an exact rename: `with_path_names` returns the same law under new
 Two operations read the parts of a structured or factored distribution; the view `d[field]` is not an operation (III.7).
 
 - `marginal(d, field)` returns the **detached** marginal of a field or field group, a standalone `Distribution` with no reference back to `d`. It carries a capability route on `SupportsMarginals` guarded at the requested path (IV.1), and a Monte Carlo fallback route through `_sample`, projecting draws onto the field and returning an empirical marginal. When the capability is absent, or the path has no exact route within it, the fallback resolves, and a distribution that cannot sample either raises `ResolutionError`.
-- `factor(d, name)` returns a building-block **factor** of a joint, keyed by factor name, either a `Distribution` or a `ConditionalDistribution` for a dependent edge. Its capability route is `SupportsFactors`, so a distribution that exposes no factors raises `ResolutionError`.
+- `factor(d, component_name)` returns the complete building-block **factor** producing the named output component of a joint (IV.1), either a `Distribution` or a `ConditionalDistribution` for a dependent edge. Its capability route is `SupportsFactors`, so a distribution that exposes no factors raises `ResolutionError`.
 
 ### Rationale
 
-Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` ensures that only a distribution built from named parts offers it (`D3 – Capability-based operations`).
+Exposing them as named operations rather than as indexing is what separates the detached query from the correlation-preserving `d[field]` view (`D1 – Mathematical fidelity`). Dispatching `marginal` on `SupportsMarginals` opens the detached query to any distribution that knows its marginals, factored or not. Gating `factor` on `SupportsFactors` ensures that only a distribution with an explicit factorization offers it (`D3 – Capability-based operations`).
 
 ## VI.9 — `mixture`
 

@@ -156,7 +156,6 @@ def execute_sweep(
         per_row_marginals,
         batch_shape=plan.sweep_batch_shape,
         name=workflow_name or "sweep",
-        name_is_auto=True,
         event_template=output_template,
     )
     provenance = make_sweep_provenance(
@@ -338,8 +337,7 @@ def mapped_row_body(
 
     def one_row(array_slice_leaves):
         replacements = {
-            ref: Record(ref.label, leaves, name_is_auto=True)
-            for ref, leaves in zip(array_args, array_slice_leaves)
+            ref: Record(ref.label, leaves) for ref, leaves in zip(array_args, array_slice_leaves)
         }
         out = func(**_workflow_call.replace_input_refs(values, replacements))
         if not output_is_declared:

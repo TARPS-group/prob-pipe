@@ -106,7 +106,7 @@ class TestTheKindsAreOrderedNotDisjoint:
                 jnp.arange(3.0),
             ),
             lambda: Opaque("held", object()),
-            lambda: Record("held", {"x": jnp.asarray(1.0)}, name_is_auto=True),
+            lambda: Record("held", {"x": jnp.asarray(1.0)}),
         ],
     )
     def test_the_rule_is_the_same_for_every_kind(self, make):
@@ -217,7 +217,7 @@ class TestASampleShapeGetsADrawLevel:
             values = jnp.zeros(shape)
             original = Record("law", x=values) if kind == "record" else values
 
-        drawn = _drawn_at_its_batch_form(original, sample_shape, name="law", name_is_auto=False)
+        drawn = _drawn_at_its_batch_form(original, sample_shape, name="law")
 
         assert drawn is original
 

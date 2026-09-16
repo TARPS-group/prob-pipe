@@ -229,13 +229,13 @@ class TestNumericArrayStoresNativeForm:
 
 
 class TestNumericArrayCarriesIdentity:
-    def test_a_name_is_kept_and_marked_user_given(self):
+    def test_a_name_is_kept(self):
         value = NumericArray(
             "draw",
             jnp.arange(3.0),
         )
 
-        assert (value.name, value.name_is_auto) == ("draw", False)
+        assert value.name == "draw"
 
     def test_a_name_is_required(self):
         """A value carries no fields to describe it, so the name is what says
@@ -243,11 +243,11 @@ class TestNumericArrayCarriesIdentity:
         with pytest.raises(TypeError, match="name"):
             NumericArray()
 
-    def test_a_derived_name_is_marked_auto(self):
+    def test_a_derived_name_is_kept(self):
         """Set by an operation that derives one, as the output boundary does."""
-        value = NumericArray("outer", jnp.arange(3.0), name_is_auto=True)
+        value = NumericArray("outer", jnp.arange(3.0))
 
-        assert (value.name, value.name_is_auto) == ("outer", True)
+        assert value.name == "outer"
 
     def test_provenance_is_write_once(self):
         value = NumericArray(
@@ -549,7 +549,7 @@ class TestNumericArrayBatchSelection:
         element = _batch(name="posterior")[1]
 
         assert element.name == "posterior[draw=1]"
-        assert element.name_is_auto is True
+        pass
 
     def test_an_element_inherits_the_batch_lineage(self):
         """Selecting computes nothing, so the element carries the batch's lineage."""
@@ -774,7 +774,7 @@ class TestNumericArrayIsAPyTree:
         rebuilt = jax.tree_util.tree_unflatten(treedef, leaves)
 
         assert isinstance(rebuilt, NumericArray)
-        assert (rebuilt.name, rebuilt.name_is_auto) == ("draw", False)
+        assert rebuilt.name == "draw"
         np.testing.assert_array_equal(np.asarray(rebuilt), np.arange(3.0))
 
     def test_a_transform_that_changes_the_shape_keeps_the_declaration(self):
@@ -881,13 +881,13 @@ class TestABatchIsNamed:
     def test_a_given_name_is_marked_user_given(self):
         batch = _batch(name="posterior")
 
-        assert (batch.name, batch.name_is_auto) == ("posterior", False)
+        assert batch.name == "posterior"
 
     def test_a_derived_name_says_so(self):
         """A view derives its name, and marks it, rather than defaulting."""
         sub = _batch(name="posterior")[1:3]
 
-        assert (sub.name, sub.name_is_auto) == ("posterior[draw=1:3]", True)
+        assert sub.name == "posterior[draw=1:3]"
 
 
 class TestNumericArrayBatchIsAPyTree:

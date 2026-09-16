@@ -54,9 +54,6 @@ class _ObjectBatch[E](Batch[E]):
         names as there are batch axes. The *sizes* are read off the elements
         rather than restated here — they are already fixed by the data, so the
         only thing left to say is where one level ends and the next begins.
-    name_is_auto : bool, default False
-        Whether *name* is auto-derived rather than user-given, which is what an
-        operation naming its own result states.
     provenance : Provenance, optional
         How this batch was produced.
 
@@ -103,7 +100,6 @@ class _ObjectBatch[E](Batch[E]):
         *,
         element_spec: ValueSpec,
         axes_per_level: Iterable[int] | None = None,
-        name_is_auto: bool = False,
         provenance: Provenance | None = None,
     ) -> None:
         store = _as_object_array(elements, kind=type(self).__name__)
@@ -117,7 +113,6 @@ class _ObjectBatch[E](Batch[E]):
         self._init_batch(
             BatchSpec(element_spec, groups, names),
             name=name,
-            name_is_auto=name_is_auto,
             provenance=provenance,
         )
 
@@ -141,7 +136,7 @@ class _ObjectBatch[E](Batch[E]):
         # own ``__new__`` may select a class from constructor arguments.
         batch = object.__new__(cls)
         object.__setattr__(batch, "_store", store)
-        batch._init_batch(spec, name=name, name_is_auto=True)
+        batch._init_batch(spec, name=name)
         return batch
 
     # -- the storage seam ---------------------------------------------------
@@ -178,7 +173,7 @@ class _ObjectBatch[E](Batch[E]):
         # must not run again where there are none.
         view = object.__new__(type(self))
         object.__setattr__(view, "_store", self._store[index])
-        view._init_batch(spec, name=name, name_is_auto=True)
+        view._init_batch(spec, name=name)
         return view
 
 

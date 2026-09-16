@@ -138,15 +138,12 @@ class NumericRecord(Record):
     _fields : Mapping, optional
         Fields as a positional mapping — an alternative to keyword ``**fields``
         (passing both raises). As on :class:`Record`, use it when a field name
-        would collide with the ``event_template`` / ``name_is_auto`` keywords.
+        would collide with the ``event_template`` keyword.
     **fields
         Named numeric values: a numeric array or container (``jax`` /
         ``numpy`` / ``xarray`` / ``pandas`` / registered backends), a numeric
         Python scalar, or a nested ``NumericRecord``. At least one field is
         required.
-    name_is_auto : bool, optional
-        ``True`` when *name* was derived by the producing operation rather
-        than supplied by the user. Defaults to ``False``.
     event_template : NumericEventTemplate or RecordSpec, optional
         The value's authoritative schema, as a bare template or as the
         :class:`RecordSpec` that stores one. When omitted it is inferred from
@@ -174,7 +171,7 @@ class NumericRecord(Record):
     The compute boundary presents a plain PyTree of arrays: the JAX pytree
     children are the converted leaves, so ``jit`` / ``vmap`` / ``grad`` see
     exactly the ProbPipe structure. As on :class:`Record`, the PyTree aux
-    carries the ``(spec, name, name_is_auto)`` triple, so the declared type
+    carries the ``(spec, name)`` pair, so the declared type
     and the name survive a flatten/unflatten round-trip;
     :attr:`provenance`, :attr:`annotations`, and the native container types
     do not cross a JAX transform boundary.
@@ -194,7 +191,6 @@ class NumericRecord(Record):
         /,
         *,
         event_template: EventTemplate | RecordSpec | None = None,
-        name_is_auto: bool = False,
         _validate_leaves: bool = True,
         **fields: ArrayLike | NumericRecord,
     ):
@@ -226,9 +222,7 @@ class NumericRecord(Record):
                     child = declared_template.children.get(field_name)
                     if isinstance(child, EventTemplate):
                         sub_template = child
-                raw_fields[field_name] = type(self)(
-                    field_name, value, event_template=sub_template, name_is_auto=True
-                )
+                raw_fields[field_name] = type(self)(field_name, value, event_template=sub_template)
             else:
                 raw_fields[field_name] = value
         validated = self._validate(raw_fields)
@@ -236,7 +230,6 @@ class NumericRecord(Record):
             name,
             validated,
             event_template=event_template,
-            name_is_auto=name_is_auto,
             _validate_leaves=_validate_leaves,
         )
         # Cache vector_size, reading only container metadata (shapes) — a
@@ -411,7 +404,7 @@ class NumericRecord(Record):
                 f"got shape {tuple(vec.shape)}. Reconstruct a batch with "
                 f"NumericRecordBatch.from_vector."
             )
-        return _reconstruct_from_vector(name, template, vec, name_is_auto=False)
+        return _reconstruct_from_vector(name, template, vec)
 
     def to_numeric(self) -> NumericRecord:
         """Return ``self`` — a ``NumericRecord`` is already numeric (identity)."""
@@ -507,9 +500,7 @@ def _value_treedef(template: NumericEventTemplate) -> jax.tree_util.PyTreeDef:
         # template may pin another dtype (int32 / bool) — this skeleton exists
         # only to capture the treedef structure, and the real leaves are cast
         # to the field dtype in ``_reconstruct_from_vector``.
-        return Record(
-            "value", fields, event_template=tpl, name_is_auto=True, _validate_leaves=False
-        )
+        return Record("value", fields, event_template=tpl, _validate_leaves=False)
 
     return jax.tree_util.tree_structure(_build(template))
 
@@ -519,7 +510,6 @@ def _reconstruct_from_vector(
     template: NumericEventTemplate,
     vec: Array,
     *,
-    name_is_auto: bool,
     level_names: str | Iterable[str] = "sample",
 ) -> NumericRecord | Any:
     """Reconstruct a numeric value from its flat vector, under *name*.
@@ -591,11 +581,9 @@ def _reconstruct_from_vector(
             names,
             element_spec=template,
             axes_per_level=(len(batch_shape),) if len(names) == 1 else None,
-            name_is_auto=name_is_auto,
         )
     value = jax.tree_util.tree_unflatten(_value_treedef(template), leaves)
     object.__setattr__(value, "_name", name)
-    object.__setattr__(value, "_name_is_auto", name_is_auto)
     return value
 
 
@@ -609,7 +597,7 @@ def _reconstruct_from_vector(
 # ---------------------------------------------------------------------------
 
 
-def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, str, bool]]:
+def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, str]]:
     """Flatten NumericRecord for JAX pytree traversal, converting at the boundary.
 
     Children are emitted in the template's field order (matching
@@ -618,24 +606,23 @@ def _numeric_record_flatten(v: NumericRecord) -> tuple[list, tuple[RecordSpec, s
     compute boundary where native containers materialise. Nested
     ``NumericRecord`` children pass through whole; JAX recurses into them via
     their own registration. The static aux is the
-    ``(spec, name, name_is_auto)`` triple; provenance, annotations,
+    ``(spec, name)`` pair; provenance, annotations,
     and the native container types do not cross a JAX transform boundary.
     """
     children = [
         child if isinstance(child, Record) else v._child_field_as_jax(name)
         for name, child in ((n, v._tree[n]) for n in v.event_template.children)
     ]
-    return children, (v._spec, v._name, v._name_is_auto)
+    return children, (v._spec, v._name)
 
 
-def _numeric_record_unflatten(aux: tuple[RecordSpec, str, bool], children: list) -> NumericRecord:
+def _numeric_record_unflatten(aux: tuple[RecordSpec, str], children: list) -> NumericRecord:
     """Unflatten NumericRecord from JAX pytree traversal, threading the aux spec."""
-    spec, name, name_is_auto = aux
+    spec, name = aux
     return NumericRecord(
         name,
         dict(zip(tuple(spec.event_template.children), children)),
         event_template=spec,
-        name_is_auto=name_is_auto,
         _validate_leaves=False,
     )
 
